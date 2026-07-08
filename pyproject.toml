@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "code-factory"
+version = "0.1.0"
+description = "The connective layer that snaps SpecLine, ForgeLine, HSF and Prestige together into one spec-to-artifact assembly line. Each module stays independent; factoryline lines them up."
+requires-python = ">=3.10"
+readme = "README.md"
+license = "Apache-2.0"
+
+[project.scripts]
+factory = "factoryline.cli:main"
+
+[tool.setuptools]
+packages = ["factoryline"]

@@ -1,0 +1,160 @@
+"""factoryline.meter — real, receipted cost measurement. No invented numbers.
+
+The factory's value claim is "saves time and tokens." That claim is only credible
+if the numbers are *measured on your own runs*, not marketed. This module records
+what actually happened and computes the savings against an explicit, stated
+baseline — so every figure in the summary table traces to a receipt.
+
+Two things are measured per stage:
+  - wall_ms      : real elapsed time (measured here, always honest)
+  - model_calls / tokens : reported BY each module in its receipt's `meter` block
+                   (0 if the module made no model call — which is the whole point:
+                    HSF compiles once and runs at zero token cost thereafter)
+
+The savings model is explicit and conservative:
+  baseline = "an agent re-derives context and re-generates every run"
+  factory  = "compile/verify once, then run deterministically at zero token cost"
+Savings are reported per the baseline you declare, and the baseline is printed in
+the summary so no one can accuse the number of hiding its assumptions.
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+from pathlib import Path
+import json
+import time
+
+from .contract import LAYOUT, Meter
+
+
+@dataclass
+class StageTiming:
+    module: str
+    stage: str
+    wall_ms: int
+    model_calls: int
+    tokens_in: int
+    tokens_out: int
+    ok: bool
+
+
+class MeterLog:
+    """Append-only meter log at <root>/.factory/meter.jsonl."""
+
+    def __init__(self, root: Path):
+        self.root = Path(root)
+        self.path = self.root / LAYOUT["state"] / "meter.jsonl"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def record(self, t: StageTiming) -> None:
+        with self.path.open("a") as f:
+            f.write(json.dumps(t.__dict__) + "\n")
+
+    def stages(self) -> list[StageTiming]:
+        if not self.path.exists():
+            return []
+        out = []
+        for line in self.path.read_text().splitlines():
+            if line.strip():
+                out.append(StageTiming(**json.loads(line)))
+        return out
+
+
+class stopwatch:
+    """Context manager: measures real wall time in ms. Always honest."""
+    def __enter__(self):
+        self._t0 = time.monotonic(); return self
+    def __exit__(self, *a):
+        self.wall_ms = int((time.monotonic() - self._t0) * 1000)
+
+
+def summarize(root: Path, *, baseline_tokens_per_run: int = 4000,
+              runs_projected: int = 1000) -> dict:
+    """Aggregate the meter log into a real, assumptions-stated savings summary.
+
+    baseline_tokens_per_run: what a *stateless agent* would spend re-deriving and
+        re-generating this workflow every single run (declare your own; default is
+        a deliberately conservative 4k).
+    runs_projected: how many production runs you project (savings compound here).
+    """
+    log = MeterLog(root)
+    stages = log.stages()
+    total = Meter()
+    for s in stages:
+        total = total.merge(Meter(s.wall_ms, s.model_calls, s.tokens_in, s.tokens_out))
+
+    # Honesty guard: with no measured stages, there is nothing to compare. Refuse
+    # to print a savings percentage rather than show a misleading "100%".
+    if not stages:
+        return {
+            "stages_measured": 0,
+            "status": "no measured runs yet",
+            "note": "Run `factory assemble <feature>` first. Savings are computed only "
+                    "from real measured runs — factoryline never reports a percentage "
+                    "against zero data.",
+        }
+
+    # Factory cost is paid ONCE (compile + verify). Production runs cost 0 tokens
+    # for the compiled decision path (HSF's H=0 guarantee).
+    factory_one_time_tokens = total.tokens_in + total.tokens_out
+    baseline_total_tokens = baseline_tokens_per_run * runs_projected
+    factory_total_tokens = factory_one_time_tokens  # + 0 per run for compiled path
+    tokens_saved = max(baseline_total_tokens - factory_total_tokens, 0)
+    pct_saved = (tokens_saved / baseline_total_tokens * 100) if baseline_total_tokens else 0.0
+
+    # Second honesty guard: if modules reported no token usage, say so explicitly
+    # rather than implying the savings are proven. wall_ms is always real.
+    tokens_reported = factory_one_time_tokens > 0
+    return {
+        "stages_measured": len(stages),
+        "build_wall_ms": total.wall_ms,
+        "build_model_calls": total.model_calls,
+        "build_tokens": factory_one_time_tokens,
+        "tokens_reported_by_modules": tokens_reported,
+        "assumptions": {
+            "baseline_tokens_per_run": baseline_tokens_per_run,
+            "runs_projected": runs_projected,
+            "baseline_model": "stateless agent re-derives+regenerates every run",
+            "factory_model": "compile/verify once, then 0 tokens per compiled run (HSF H=0)",
+        },
+        "baseline_total_tokens": baseline_total_tokens,
+        "factory_total_tokens": factory_total_tokens,
+        "tokens_saved": tokens_saved,
+        "pct_tokens_saved": round(pct_saved, 1),
+        "note": ("All wall_ms are measured. " + (
+            "Token counts are reported by each module." if tokens_reported else
+            "NOTE: no module reported token usage on these runs, so the token-savings "
+            "figure reflects the MODEL (compile-once → 0/run), not measured token "
+            "deltas. Wire per-module token reporting for measured token savings.") +
+            " Savings depend on the declared baseline above. Nothing here is fabricated."),
+    }
+
+
+def summary_table(summary: dict) -> str:
+    """Render the summary as a plain-text table (portable, paste-anywhere)."""
+    if summary.get("stages_measured", 0) == 0:
+        return ("FACTORY COST & SAVINGS\n" + "-" * 52 + "\n"
+                + summary.get("status", "no data") + "\n" + summary.get("note", ""))
+    a = summary["assumptions"]
+    tok_line = (f"one-time build tokens  : {summary['build_tokens']:,}"
+                if summary.get("tokens_reported_by_modules")
+                else "one-time build tokens  : (not reported by modules on these runs)")
+    lines = [
+        "FACTORY COST & SAVINGS (measured on your runs)",
+        "-" * 52,
+        f"stages measured        : {summary['stages_measured']}",
+        f"one-time build time    : {summary['build_wall_ms']} ms",
+        f"one-time model calls   : {summary['build_model_calls']}",
+        tok_line,
+        "",
+        "SAVINGS MODEL (assumptions stated)",
+        "-" * 52,
+        f"baseline / run         : {a['baseline_tokens_per_run']:,} tokens  ({a['baseline_model']})",
+        f"runs projected         : {a['runs_projected']:,}",
+        f"baseline total         : {summary['baseline_total_tokens']:,} tokens",
+        f"factory total          : {summary['factory_total_tokens']:,} tokens  ({a['factory_model']})",
+        f"tokens saved (model)   : {summary['tokens_saved']:,}",
+        f"percent saved (model)  : {summary['pct_tokens_saved']}%",
+        "",
+        summary["note"],
+    ]
+    return "\n".join(lines)
