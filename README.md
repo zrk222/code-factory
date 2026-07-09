@@ -1,5 +1,8 @@
 # code-factory
 
+> New in 0.2: deterministic per-node failure attribution and an enforced H=0
+> boundary. See [FAILURE_ATTRIBUTION.md](FAILURE_ATTRIBUTION.md).
+
 **A code factory built like Lego.** Five small, independent, open-source pieces that
 snap together into one assembly line: describe a feature in plain language, and the
 line checks it for ambiguity, builds it, runs a gauntlet of gates, actually *runs*

@@ -4,6 +4,9 @@ from pathlib import Path
 from factoryline.contract import ensure_layout, LAYOUT, Receipt, Meter, MODULES, STAGES
 from factoryline.assembly import detect, assemble, DEFAULT_CHAIN
 from factoryline.meter import summarize, summary_table, MeterLog, StageTiming
+from factoryline.attribution import Attribution, FailureClass, UnitResult
+from factoryline.assembly import rollup_attributions
+from factoryline.boundary import assert_no_attribution_in_artifact
 
 
 def test_layout_created(tmp_path):
@@ -71,3 +74,53 @@ def test_missing_module_is_skipped_not_fatal(tmp_path, monkeypatch):
     report = assemble(tmp_path, "feat", dry_run=True)
     hsf_stages = [s for s in report["stages"] if s["module"] == "hsf"]
     assert all(s["status"] == "skipped" for s in hsf_stages)
+
+
+def test_attribution_validation_and_deterministic_tie():
+    empty = Attribution("smoke", 0, 0, [])
+    assert empty.rate == 0.0
+    units = [
+        UnitResult("a", "smoke", False, "timeout after 1s", FailureClass.RUNTIME_TIMEOUT),
+        UnitResult("b", "smoke", False, "exit 1", FailureClass.RUNTIME_CRASH),
+    ]
+    attr = Attribution("smoke", 2, 0, units)
+    assert attr.rate == 0.0
+    assert attr.dominant_failure_class() is FailureClass.RUNTIME_CRASH
+    assert attr.dominant_failure_class() is FailureClass.RUNTIME_CRASH
+
+
+def test_failed_unit_requires_class_and_evidence():
+    import pytest
+    with pytest.raises(ValueError):
+        UnitResult("a", "smoke", False, "", None)
+
+
+def test_receipt_without_attribution_is_backward_compatible(tmp_path):
+    path = Receipt("hsf", "compile", "f", True).write(tmp_path)
+    assert json.loads(path.read_text())["attribution"] is None
+
+
+def test_rollup_recommends_earliest_failure_not_worst_rate():
+    early = Attribution("strict", 10, 9, [
+        *[UnitResult(f"r{i}", "strict", True, "typed") for i in range(9)],
+        UnitResult("r9", "strict", False, "vague", FailureClass.AMBIGUOUS_REQUIREMENT),
+    ]).to_dict()
+    late = Attribution("smoke", 2, 0, [
+        UnitResult("a", "smoke", False, "exit 1", FailureClass.RUNTIME_CRASH),
+        UnitResult("b", "smoke", False, "exit 1", FailureClass.RUNTIME_CRASH),
+    ]).to_dict()
+    result = rollup_attributions([
+        {"module": "specline", "stage": "strict", "attribution": early},
+        {"module": "forgeline", "stage": "smoke", "attribution": late},
+    ])
+    assert result["earliest_failing_stage"] == "specline:strict"
+
+
+def test_h0_boundary_rejects_learning_symbols(tmp_path):
+    artifact = tmp_path / "artifact.py"
+    artifact.write_text("def decide(x): return x\n")
+    assert_no_attribution_in_artifact(artifact)
+    artifact.write_text("attribution = {}\n")
+    import pytest
+    with pytest.raises(ValueError):
+        assert_no_attribution_in_artifact(artifact)

@@ -108,6 +108,7 @@ class Receipt:
     inputs: dict = field(default_factory=dict)
     outputs: dict = field(default_factory=dict)
     meter: Meter = field(default_factory=Meter)
+    attribution: dict | None = None
     ts: str = field(default_factory=lambda: _dt.datetime.now(_dt.timezone.utc).isoformat())
 
     def write(self, root: Path) -> Path:

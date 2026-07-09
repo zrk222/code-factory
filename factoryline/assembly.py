@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .contract import MODULES, STAGES, ensure_layout, Receipt
 from .meter import MeterLog, StageTiming, stopwatch
+from .attribution import Attribution, FailureClass
 
 
 @dataclass
@@ -94,3 +95,37 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False) -> dic
             report["halted_at"] = f"{module}:{stage_name}"
             break
     return report
+
+
+def rollup_attributions(stages: list[dict]) -> dict:
+    """Aggregate module attribution in declared pipeline order.
+
+    Older receipts without attribution remain visible but do not crash the line.
+    The recommendation is always the earliest failing stage, never the worst rate.
+    """
+    rows = []
+    for index, stage in enumerate(stages):
+        raw = stage.get("attribution")
+        if not raw:
+            rows.append({**stage, "rate": None, "dominant_failure_class": None})
+            continue
+        attr = Attribution.from_dict(raw)
+        dominant = attr.dominant_failure_class()
+        rows.append({
+            **stage,
+            "order": index,
+            "rate": attr.rate,
+            "n_checked": attr.n_checked,
+            "n_passed": attr.n_passed,
+            "dominant_failure_class": dominant.value if dominant else None,
+        })
+    first = next((row for row in rows if row["rate"] is not None and row["rate"] < 1.0), None)
+    return {
+        "stages": rows,
+        "earliest_failing_stage": (
+            f"{first['module']}:{first['stage']}" if first else None
+        ),
+        "recommended_edit_class": (
+            "structural" if first and first["dominant_failure_class"] else None
+        ),
+    }
