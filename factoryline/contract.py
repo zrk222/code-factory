@@ -119,6 +119,31 @@ class Receipt:
         p.write_text(json.dumps(payload, indent=2, sort_keys=True))
         return p
 
+    @classmethod
+    def from_dict(cls, payload: dict) -> "Receipt":
+        required = {"module", "stage", "feature", "ok"}
+        missing = required - payload.keys()
+        if missing:
+            raise ValueError(f"receipt missing required fields: {sorted(missing)}")
+        attribution = payload.get("attribution")
+        if attribution is not None:
+            from .attribution import Attribution
+            Attribution.from_dict(attribution)
+        meter = payload.get("meter", {})
+        if isinstance(meter, dict):
+            meter = Meter(**meter)
+        return cls(
+            module=payload["module"],
+            stage=payload["stage"],
+            feature=payload["feature"],
+            ok=bool(payload["ok"]),
+            inputs=payload.get("inputs", {}),
+            outputs=payload.get("outputs", {}),
+            meter=meter,
+            attribution=attribution,
+            ts=payload.get("ts", _dt.datetime.now(_dt.timezone.utc).isoformat()),
+        )
+
 
 def ensure_layout(root: Path) -> None:
     root = Path(root)

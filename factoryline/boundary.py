@@ -9,3 +9,15 @@ def assert_no_attribution_in_artifact(artifact_path: Path) -> None:
     leaked = sorted(symbol for symbol in BUILD_TIME_ONLY if symbol in source)
     if leaked:
         raise ValueError(f"build-time symbols leaked into artifact: {', '.join(leaked)}")
+
+
+def assert_build_metadata_locations(root: Path) -> None:
+    registry = Path(root) / "registry"
+    if not registry.exists():
+        return
+    offenders = [
+        path for path in registry.rglob("*")
+        if path.is_file() and any(token in path.name for token in BUILD_TIME_ONLY)
+    ]
+    if offenders:
+        raise ValueError(f"build metadata found in registry: {offenders}")

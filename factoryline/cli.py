@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from .contract import MODULES, STAGES, ensure_layout, LAYOUT
-from .assembly import detect, assemble, DEFAULT_CHAIN
+from .assembly import detect, assemble, DEFAULT_CHAIN, rollup_receipts
 from .meter import summarize, summary_table
 
 
@@ -70,6 +70,10 @@ def main(argv=None) -> int:
     s.add_argument("--runs", type=int, default=1000, help="projected production runs")
     s.add_argument("--baseline", type=int, default=4000, help="baseline tokens per run (declare your real agent cost)")
 
+    s = sub.add_parser("rollup", help="aggregate per-node attribution from receipts")
+    s.add_argument("feature")
+    s.add_argument("--root", default=".")
+
     a = p.parse_args(argv)
 
     if a.cmd == "doctor":
@@ -89,6 +93,9 @@ def main(argv=None) -> int:
     if a.cmd == "meter":
         summ = summarize(Path(a.root), baseline_tokens_per_run=a.baseline, runs_projected=a.runs)
         print(summary_table(summ))
+        return 0
+    if a.cmd == "rollup":
+        print(json.dumps(rollup_receipts(Path(a.root), a.feature), indent=2))
         return 0
     p.print_help()
     return 0

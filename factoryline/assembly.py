@@ -46,11 +46,29 @@ def _run_cli(cli: str, args: list[str], cwd: Path) -> tuple[bool, str]:
         return False, f"{cli} timed out"
 
 
+def _attribution_from_output(output: str) -> dict | None:
+    """Find a structured attribution block in a CLI's JSON output."""
+    decoder = __import__("json").JSONDecoder()
+    for offset, char in enumerate(output):
+        if char != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(output[offset:])
+        except ValueError:
+            continue
+        if isinstance(payload, dict):
+            raw = payload.get("attribution")
+            if isinstance(raw, dict):
+                Attribution.from_dict(raw)
+                return raw
+    return None
+
+
 # The default pipeline: (module, cli-args-template). {f} = feature.
 # Only stages whose module is installed run; UI stage runs only if smoke/<f>.ui exists.
 DEFAULT_CHAIN = [
     ("specline",  ["new", "{f}"]),
-    ("specline",  ["strict", "{f}"]),
+    ("specline",  ["strict", "{f}", "--json"]),
     ("specline",  ["gate", "spec", "{f}"]),
     ("forgeline", ["architect", "{f}"]),
     ("forgeline", ["review", "{f}"]),
@@ -85,16 +103,43 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False) -> dic
             continue
         with stopwatch() as sw:
             ok, out = _run_cli(cli, args, root)
+        attribution_block = _attribution_from_output(out)
         meterlog.record(StageTiming(module, stage_name, sw.wall_ms, 0, 0, 0, ok))
         Receipt(module=module, stage=stage_name, feature=feature, ok=ok,
-                outputs={"log_tail": out[-400:]}).write(root)
+                outputs={"log_tail": out[-400:]},
+                attribution=attribution_block).write(root)
         report["stages"].append({"module": module, "stage": stage_name,
                                  "status": "ok" if ok else "failed",
-                                 "wall_ms": sw.wall_ms})
+                                 "wall_ms": sw.wall_ms,
+                                 "attribution": attribution_block})
         if not ok:
             report["halted_at"] = f"{module}:{stage_name}"
             break
+    report["rollup"] = rollup_attributions(report["stages"])
     return report
+
+
+def rollup_receipts(root: Path, feature: str) -> dict:
+    """Load compatible factory receipts and roll up the latest stage records."""
+    receipt_dir = Path(root) / "receipts"
+    latest: dict[tuple[str, str], tuple[float, dict]] = {}
+    for path in receipt_dir.glob(f"*-{feature}-*.json"):
+        try:
+            payload = __import__("json").loads(path.read_text(encoding="utf-8"))
+            receipt = Receipt.from_dict(payload)
+        except (ValueError, TypeError, OSError):
+            continue
+        latest[(receipt.module, receipt.stage)] = (
+            path.stat().st_mtime,
+            {
+                "module": receipt.module,
+                "stage": receipt.stage,
+                "status": "ok" if receipt.ok else "failed",
+                "attribution": receipt.attribution,
+            },
+        )
+    stages = [item[1] for item in sorted(latest.values(), key=lambda item: item[0])]
+    return rollup_attributions(stages)
 
 
 def rollup_attributions(stages: list[dict]) -> dict:

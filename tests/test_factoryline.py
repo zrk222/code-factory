@@ -5,8 +5,8 @@ from factoryline.contract import ensure_layout, LAYOUT, Receipt, Meter, MODULES,
 from factoryline.assembly import detect, assemble, DEFAULT_CHAIN
 from factoryline.meter import summarize, summary_table, MeterLog, StageTiming
 from factoryline.attribution import Attribution, FailureClass, UnitResult
-from factoryline.assembly import rollup_attributions
-from factoryline.boundary import assert_no_attribution_in_artifact
+from factoryline.assembly import rollup_attributions, rollup_receipts, _attribution_from_output
+from factoryline.boundary import assert_no_attribution_in_artifact, assert_build_metadata_locations
 
 
 def test_layout_created(tmp_path):
@@ -97,7 +97,9 @@ def test_failed_unit_requires_class_and_evidence():
 
 def test_receipt_without_attribution_is_backward_compatible(tmp_path):
     path = Receipt("hsf", "compile", "f", True).write(tmp_path)
-    assert json.loads(path.read_text())["attribution"] is None
+    payload = json.loads(path.read_text())
+    assert payload["attribution"] is None
+    assert Receipt.from_dict(payload).ok is True
 
 
 def test_rollup_recommends_earliest_failure_not_worst_rate():
@@ -124,3 +126,53 @@ def test_h0_boundary_rejects_learning_symbols(tmp_path):
     import pytest
     with pytest.raises(ValueError):
         assert_no_attribution_in_artifact(artifact)
+
+
+def test_output_ingestion_and_receipt_rollup(tmp_path):
+    attr = Attribution("strict", 1, 0, [
+        UnitResult("R1", "strict", False, "vague", FailureClass.AMBIGUOUS_REQUIREMENT)
+    ]).to_dict()
+    assert _attribution_from_output("note\n" + json.dumps({"attribution": attr})) == attr
+    Receipt("specline", "strict", "f", False, attribution=attr).write(tmp_path)
+    result = rollup_receipts(tmp_path, "f")
+    assert result["earliest_failing_stage"] == "specline:strict"
+
+
+def test_factory_refine_plateau_and_rejection_rates(tmp_path):
+    from factoryline.refinement import refine
+    state = {"rates": {"specline:strict": 0.5}, "tree": b"before"}
+    result = refine(
+        lambda: dict(state["rates"]),
+        lambda rates: ("specline:strict", FailureClass.AMBIGUOUS_REQUIREMENT),
+        lambda edit: state["tree"],
+        lambda snapshot: state.__setitem__("tree", snapshot),
+        tmp_path,
+    )
+    assert result == {"converged": False, "reason": "plateau", "iters": 2}
+    entries = [json.loads(line) for line in
+               (tmp_path / ".factory" / "rejection_ledger.jsonl").read_text().splitlines()]
+    assert entries[0]["before_rates"] == entries[0]["after_rates"]
+    assert entries[0]["edit"]["edit_class"] == "structural"
+
+
+def test_build_metadata_never_lives_in_registry(tmp_path):
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    (registry / "artifact.py").write_text("def decide(): return True")
+    assert_build_metadata_locations(tmp_path)
+    (registry / "rejection_ledger.json").write_text("{}")
+    import pytest
+    with pytest.raises(ValueError):
+        assert_build_metadata_locations(tmp_path)
+
+
+def test_meter_identical_with_attribution_receipts(tmp_path):
+    from factoryline.meter import summarize, MeterLog, StageTiming
+    MeterLog(tmp_path).record(StageTiming("hsf", "compile", 10, 0, 0, 0, True))
+    before = summarize(tmp_path)
+    Receipt("hsf", "compile", "f", True, attribution=Attribution(
+        "compile", 1, 1, [UnitResult("compile", "compile", True, "green")]
+    ).to_dict()).write(tmp_path)
+    after = summarize(tmp_path)
+    assert before["build_tokens"] == after["build_tokens"]
+    assert before["build_model_calls"] == after["build_model_calls"]
