@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
   <title id="title">Code Factory PRD-to-App Builder</title>
-  <desc id="desc">A visual workflow showing a PRD converted into a full stack scaffold through SpecLine, ForgeLine, HSF, Prestige, and Factoryline gates, with evidence bar graphs.</desc>
+  <desc id="desc">A visual workflow showing a PRD converted into a full stack scaffold through SpecLine, ForgeLine, HSF, Prestige, and Factoryline gates, with illustrative readiness bars.</desc>
   <defs>
     <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
       <stop offset="0" stop-color="#eef2ff"/>

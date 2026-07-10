@@ -77,6 +77,7 @@ factory plan            # print the assembly pipeline
 factory init .          # lay down the shared workspace
 factory assemble my_feature   # run the line (skips any missing brick)
 factory meter           # receipted cost + savings, computed on YOUR runs
+factory rollup my_feature      # aggregate receipt attribution for debugging
 factory trace my_feature       # hash-link receipts into a proof bundle
 factory verify-trace .factory/traces/my_feature.trace.json
 factory replay .factory/traces/my_feature.trace.json --changed smoke/my_feature.json
@@ -94,6 +95,8 @@ launch links, see [PUBLICATION_GUIDE.md](PUBLICATION_GUIDE.md).
 
 `factory app` is the one-shot app-builder workflow: PRD or prompt in,
 full-stack starter out, with gates and evidence hooks already attached.
+Treat the output as app-shaped starting state that must still move through
+SpecLine, ForgeLine, HSF, Prestige, and Factoryline proof before release.
 
 ```bash
 factory app from-prompt "Build an expense approval app with manager review, audit logs, and policy-based approvals" --out expense-approval
@@ -103,8 +106,7 @@ factory app from-prd PRD.md --stack nextjs-fastapi-postgres --purpose healthcare
 It generates `app_blueprint.json`, `PRD.md`, frontend/backend/db starter files,
 smoke tests, and a workflow guide. The point is not to bypass engineering
 judgment; the point is to make the first app-shaped repo appear instantly while
-preserving the factory contract: PRD optimization, architecture hardening,
-deterministic decision candidates, design brief, runtime smoke, and PR evidence.
+preserving the factory contract.
 
 See [docs/APP_BUILDER.md](docs/APP_BUILDER.md) for the visual workflow,
 illustrative readiness model, generated file tree, and follow-up commands.
@@ -148,10 +150,14 @@ deterministic proof bundle over the latest compatible receipts for that feature.
 Each trace node records the stage, command, receipt hash, declared artifact
 hashes, previous node hash, and attribution summary. The chain head makes receipt
 or artifact tampering visible.
+`factory rollup <feature>` is the lower-level receipt attribution view for
+debugging failed stages; `factory evidence <feature>` is the public-safe view for
+PRs, release notes, and README claims.
 
 ```bash
 factory trace checkout_flow
 factory verify-trace .factory/traces/checkout_flow.trace.json
+factory rollup checkout_flow
 factory risk-diff --changed smoke/checkout_flow.json
 factory replay .factory/traces/checkout_flow.trace.json --changed smoke/checkout_flow.json
 factory replay .factory/traces/checkout_flow.trace.json --changed smoke/checkout_flow.json --execute
