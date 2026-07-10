@@ -387,3 +387,34 @@ def test_cli_doctor_is_windows_console_safe(capsys):
     assert main(["doctor"]) == 0
     out = capsys.readouterr().out
     assert "installed" in out or "missing" in out
+
+
+def test_policy_writes_hollow_gate_defaults(tmp_path):
+    from factoryline.optimizer import write_policy
+
+    path = write_policy(tmp_path)
+    payload = json.loads(path.read_text())
+    assert payload["quality"]["require_hollow_tests"] is True
+    assert payload["quality"]["require_hollow_validators"] is True
+    assert payload["risk"]["default"] == "supervised"
+
+
+def test_optimize_pr_adds_design_and_release_stages(tmp_path):
+    from factoryline.optimizer import optimize_pr
+
+    plan = optimize_pr(tmp_path, changed=["app/page.tsx", "pyproject.toml"], feature="f")
+    assert "prestige:audit" in plan["recommended_stages"]
+    assert "factoryline:release-readiness" in plan["recommended_stages"]
+    assert plan["loop"]["max_iterations"] == 5
+    assert "must not merge" in plan["loop"]["authority"]
+
+
+def test_pr_pack_writes_reviewer_markdown(tmp_path):
+    from factoryline.optimizer import pr_pack
+
+    _write_proof_fixture(tmp_path)
+    packet = pr_pack(tmp_path, "f")
+    text = Path(packet["packet_path"]).read_text()
+    assert packet["evidence"]["verified"] is True
+    assert "PR Evidence: f" in text
+    assert "Deterministic gates run before AI review loops." in text

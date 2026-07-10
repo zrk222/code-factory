@@ -28,6 +28,7 @@ from .proof import (
     risk_for_paths,
     verify_trace,
 )
+from .optimizer import optimize_pr, pr_pack, write_policy
 
 
 def _doctor() -> int:
@@ -123,6 +124,25 @@ def main(argv=None) -> int:
     s = sub.add_parser("attest", help="export in-toto/SLSA-shaped proof statements for a trace")
     s.add_argument("trace")
     s.add_argument("--out-dir", default="dist/attestations")
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("policy", help="write or show factory.policy.json")
+    s.add_argument("--root", default=".")
+    s.add_argument("--force", action="store_true")
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("pr-pack", help="write a reviewer-ready PR evidence packet")
+    s.add_argument("feature")
+    s.add_argument("--root", default=".")
+    s.add_argument("--trace", help="trace path; defaults to .factory/traces/<feature>.trace.json")
+    s.add_argument("--out", help="markdown output path")
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("optimize-pr", help="plan bounded PR hardening from the current diff")
+    s.add_argument("--root", default=".")
+    s.add_argument("--base", default="main")
+    s.add_argument("--changed", action="append", default=[])
+    s.add_argument("--feature")
     s.add_argument("--json", action="store_true")
 
     a = p.parse_args(argv)
@@ -234,6 +254,43 @@ def main(argv=None) -> int:
             print("proof attestations written")
             for name, path in outputs.items():
                 print(f"  {name}: {path}")
+        return 0
+    if a.cmd == "policy":
+        path = write_policy(Path(a.root), force=a.force)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if a.json:
+            print(json.dumps({"path": str(path), "policy": payload}, indent=2))
+        else:
+            print(f"factory policy: {path}")
+            print(f"risk default      : {payload['risk']['default']}")
+            print(f"hollow tests      : {payload['quality']['require_hollow_tests']}")
+            print(f"hollow validators : {payload['quality']['require_hollow_validators']}")
+        return 0
+    if a.cmd == "pr-pack":
+        try:
+            packet = pr_pack(
+                Path(a.root),
+                a.feature,
+                trace_path=Path(a.trace) if a.trace else None,
+                out=Path(a.out) if a.out else None,
+            )
+        except FileNotFoundError as exc:
+            print(f"pr-pack failed: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(packet, indent=2) if a.json else f"PR evidence packet written: {packet['packet_path']}")
+        return 0 if packet["evidence"]["verified"] else 1
+    if a.cmd == "optimize-pr":
+        plan = optimize_pr(Path(a.root), base=a.base, changed=a.changed, feature=a.feature)
+        if a.json:
+            print(json.dumps(plan, indent=2))
+        else:
+            print("factory PR optimization plan")
+            print("=" * 44)
+            print(f"base: {plan['base']}")
+            print(f"changed paths: {len(plan['changed_paths'])}")
+            for stage in plan["recommended_stages"]:
+                print(f"  - {stage}")
+            print("loop: max 5 iterations; no merge/publish/deploy without approval")
         return 0
     p.print_help()
     return 0

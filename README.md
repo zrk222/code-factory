@@ -79,10 +79,26 @@ factory trace my_feature       # hash-link receipts into a proof bundle
 factory verify-trace .factory/traces/my_feature.trace.json
 factory replay .factory/traces/my_feature.trace.json --changed smoke/my_feature.json
 factory evidence my_feature    # public-safe proof for a PR or release note
+factory policy                 # write default policy-as-code thresholds
+factory optimize-pr --changed specs/my_feature.md --feature my_feature
+factory pr-pack my_feature     # reviewer-ready PR_EVIDENCE.md
 ```
 
 For publication order, GitHub release steps, Claude Code/Codex setup, and
 launch links, see [PUBLICATION_GUIDE.md](PUBLICATION_GUIDE.md).
+
+## PR optimization control plane
+
+Senior review is now a factory surface. `factory optimize-pr` turns a diff into
+a bounded hardening plan: changed paths, invalidated gates, design/release
+checks, terminal states, and the no-auto-merge authority boundary. It is
+deterministic and safe to run before opening or updating a PR.
+
+`factory pr-pack <feature>` writes a public-safe reviewer packet from the
+hash-linked trace: what changed, which receipts proved it, what the meter can
+honestly measure, and which claims remain scoped. `factory policy` keeps the
+team rules visible: hollow-test proof, hollow-validator proof, release
+readiness, design purpose, and approval boundaries.
 
 ## Why Lego, not a monolith
 
