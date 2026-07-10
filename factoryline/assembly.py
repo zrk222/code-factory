@@ -69,6 +69,7 @@ def _attribution_from_output(output: str) -> dict | None:
 DEFAULT_CHAIN = [
     ("specline",  ["new", "{f}"]),
     ("specline",  ["strict", "{f}", "--json"]),
+    ("specline",  ["verify-validators", "{f}", "--json"]),
     ("specline",  ["gate", "spec", "{f}"]),
     ("forgeline", ["architect", "{f}", "{f}.ssat.yaml"]),
     ("forgeline", ["review", "{f}", "{f}.ssat.yaml"]),

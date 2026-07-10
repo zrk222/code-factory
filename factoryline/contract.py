@@ -66,6 +66,7 @@ LAYOUT = {
 STAGES = [
     ("specline", "new",     "scaffold a spec + plan for the feature"),
     ("specline", "strict",  "reject ambiguity before the coder (input contract)"),
+    ("specline", "verify-validators", "prove strict validators kill requirement mutants"),
     ("specline", "gate",    "seal the spec/plan gate"),
     ("specline", "tasks",   "emit task packets for agents"),
     ("forgeline", "architect", "SSAT / architecture-as-code"),

@@ -35,8 +35,8 @@ def _doctor() -> int:
     print("factoryline doctor — Lego assembly status\n" + "=" * 44)
     any_missing = False
     for m in mods:
-        mark = "✓ installed" if m.installed else "✗ missing"
-        print(f"  [{mark:>11}]  {m.name:<10} ({m.cli}) — {m.role}")
+        mark = "installed" if m.installed else "missing"
+        print(f"  [{mark:>9}]  {m.name:<10} ({m.cli}) - {m.role}")
         if not m.installed:
             any_missing = True
     if any_missing:
@@ -45,7 +45,9 @@ def _doctor() -> int:
             if not m.installed:
                 print(f"  pip install {MODULES[m.name]['pip']}")
     else:
-        print("\nAll four pieces installed — full assembly line available.")
+        print("\nAll four pieces installed - full assembly line available.")
+        print("\nThe factory works with whatever is present; missing pieces are skipped.")
+        return 0
     print("\nThe factory works with whatever is present; missing pieces are skipped.")
     return 0
 
@@ -55,8 +57,8 @@ def _plan() -> int:
     installed = {m.name: m.installed for m in detect()}
     for module, args in DEFAULT_CHAIN:
         cli = MODULES[module]["cli"]
-        tag = "" if installed.get(module) else "   (skipped — not installed)"
-        print(f"  {module:<10} → {cli} {' '.join(args)}{tag}")
+        tag = "" if installed.get(module) else "   (skipped - not installed)"
+        print(f"  {module:<10} -> {cli} {' '.join(args)}{tag}")
     print("\nEach arrow is a Lego seam: the output of one stage is the input of the next,")
     print("passed on disk under the shared factory layout (portable across IDE/agent/OS).")
     return 0

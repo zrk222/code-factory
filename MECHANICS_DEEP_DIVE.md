@@ -35,11 +35,12 @@ Current strength:
 
 - Requirement-level and function-level attribution makes vague specs and drift
   local instead of global.
+- `specline verify-validators <feature>` performs reverse-classical spec
+  mutation: delete or invert one requirement and require strict lint to catch
+  the mutant. Surviving mutants report `HOLLOW_VALIDATOR`.
 
 Best next upgrades:
 
-- Add spec mutation checks: remove or invert one requirement and prove the
-  strict gate notices the missing validator.
 - Export AKU validator coverage directly from strict JSON so governance level
   is derived, not hand-labeled.
 - Add token-density receipts per packet: tokens used, requirements covered, and
@@ -119,8 +120,6 @@ Best next upgrades:
   need browser rendering proof.
 - Add per-section purpose traces, so the report says where reassurance, proof,
   CTA, and anti-pattern failures occur.
-- Add generated design briefs: `prestige brief --purpose healthcare --workflow
-  trust` to output a build-ready design contract before markup exists.
 
 ## 5. Factoryline
 
@@ -133,8 +132,11 @@ Implemented in this pass:
 
 - The default assembly chain now includes ForgeLine `verify-tests` before
   `smoke`.
+- The default assembly chain now includes SpecLine `verify-validators` after
+  `strict` and before spec gate signoff.
 - The shared failure-class baseplate recognizes `hollow_test` and
-  `hollow_manifest`.
+  `hollow_manifest`, plus `hollow_validator` for spec mutants that survive
+  strict lint.
 - `factory trace <feature>` writes `.factory/traces/<feature>.trace.json`, a
   hash-linked proof bundle over the latest compatible receipts.
 - `factory verify-trace <trace>` detects receipt tampering, artifact tampering,
@@ -154,8 +156,8 @@ Implemented in this pass:
 
 Best next upgrades:
 
-- Add `factory doctor` to check installed CLI versions, expected commands, and
-  whether the five packages are mutually compatible.
+- Extend `factory doctor` with per-brick version checks and expected-command
+  compatibility checks.
 - Add generated Mermaid trace diagrams from receipts.
 - Attach generated proof traces and attestations beside wheel/sdist assets for
   release-specific factory runs.

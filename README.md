@@ -129,6 +129,21 @@ with, `verify-trace` fails before anyone trusts the PR. `factory attest` exports
 unsigned in-toto/SLSA-shaped JSON statements for teams that want supply-chain
 evidence attached beside a PR, release, or wheel.
 
+## Spec validator mutation
+
+The assembly line now validates the spec instrument itself:
+
+```bash
+specline strict checkout_flow --json
+specline verify-validators checkout_flow --json
+```
+
+`verify-validators` deletes or inverts one requirement at a time and requires
+strict lint to kill the mutant. A requirement whose mutant still passes reports
+`hollow_validator`: the spec looked valid, but no validator proved that
+requirement mattered. In the default factory chain, this runs after
+`specline:strict` and before spec gate signoff or downstream build stages.
+
 ## Cross-platform
 
 Every brick's CI runs on **Ubuntu, Windows, and macOS x Python 3.10-3.12**. Green everywhere,

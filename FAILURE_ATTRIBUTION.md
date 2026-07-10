@@ -5,6 +5,7 @@ concrete evidence. Attribution explains a gate verdict; it never changes it.
 
 ```text
 specline:strict      0.83 (10/12)  ambiguous_requirement
+specline:verify-validators 0.92 (11/12)  hollow_validator
 forgeline:smoke      0.50 ( 2/4 )  runtime_timeout
 forgeline:verify_tests 0.67 (2/3)  hollow_test
 hsf:accuracy         0.93 (37/40)  wrong_output
@@ -45,3 +46,15 @@ Rollup recommendations use canonical pipeline order, not display order or
 receipt timestamp order. `forgeline:verify_tests` precedes `forgeline:smoke`,
 so a `hollow_test` dominates a downstream runtime failure in the same feature:
 the instrument must be validated before the smoke result is trusted.
+
+## Reverse-Classical Spec Verification
+
+SpecLine `verify-validators` mutates one requirement at a time before the spec is
+gated. It removes the requirement and, when possible, inverts a literal or bound.
+The strict contract must reject those mutants. If a mutant still passes, the
+requirement has no observable validator and reports `hollow_validator`.
+
+This is the spec-level counterpart to `hollow_test`: a hollow test passes against
+an empty implementation; a hollow validator passes against a mutilated spec.
+Factory rollup treats `specline:verify-validators` as a structural failure after
+`specline:strict` and before spec gate signoff or downstream ForgeLine stages.

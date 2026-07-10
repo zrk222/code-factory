@@ -20,6 +20,7 @@ class FailureClass(str, Enum):
     WRONG_OUTPUT = "wrong_output"
     HOLLOW_TEST = "hollow_test"
     HOLLOW_MANIFEST = "hollow_manifest"
+    HOLLOW_VALIDATOR = "hollow_validator"
     ACCURACY_REGRESSION = "accuracy_regression"
     NONDETERMINISM = "nondeterminism"
     SECURITY_FINDING = "security_finding"

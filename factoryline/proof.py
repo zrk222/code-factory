@@ -275,6 +275,7 @@ def risk_for_paths(paths: Iterable[str]) -> dict:
         if path.startswith(("specs/", "plans/", "handoff/")):
             stages.extend([
                 ("specline", "strict", "spec contract changed"),
+                ("specline", "verify-validators", "spec validator coverage changed"),
                 ("specline", "gate", "sealed spec evidence changed"),
                 ("forgeline", "architect", "architecture may need regeneration"),
                 ("forgeline", "review", "architecture review may be stale"),
@@ -311,6 +312,7 @@ def risk_for_paths(paths: Iterable[str]) -> dict:
         else:
             stages.extend([
                 ("specline", "strict", "unknown change; safest minimal entry is input contract"),
+                ("specline", "verify-validators", "unknown change may affect validator coverage"),
                 ("forgeline", "smoke", "unknown change may affect behavior"),
             ])
 

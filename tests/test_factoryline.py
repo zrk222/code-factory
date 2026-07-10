@@ -207,6 +207,39 @@ def test_hollow_test_attribution_round_trips_and_selects_structural_edit():
     assert select_edit("forgeline:verify_tests", FailureClass.HOLLOW_TEST).edit_class == "structural"
 
 
+def test_hollow_validator_attribution_round_trips_and_selects_structural_edit():
+    from factoryline.refinement import select_edit
+
+    payload = Attribution("validator_mutation", 1, 0, [
+        UnitResult(
+            "R4",
+            "validator_mutation",
+            False,
+            "deletion mutant survived strict",
+            FailureClass.HOLLOW_VALIDATOR,
+        )
+    ]).to_dict()
+    attr = Attribution.from_dict(payload)
+    assert attr.dominant_failure_class() is FailureClass.HOLLOW_VALIDATOR
+    assert select_edit("specline:verify-validators", FailureClass.HOLLOW_VALIDATOR).edit_class == "structural"
+
+
+def test_rollup_prioritizes_verify_validators_before_spec_gate():
+    hollow = Attribution("validator_mutation", 2, 1, [
+        UnitResult("R1", "validator_mutation", True, "mutant killed"),
+        UnitResult("R2", "validator_mutation", False, "mutant survived", FailureClass.HOLLOW_VALIDATOR),
+    ]).to_dict()
+    smoke = Attribution("smoke", 1, 0, [
+        UnitResult("runtime", "smoke", False, "timeout", FailureClass.RUNTIME_TIMEOUT),
+    ]).to_dict()
+    result = rollup_attributions([
+        {"module": "forgeline", "stage": "smoke", "attribution": smoke},
+        {"module": "specline", "stage": "verify-validators", "attribution": hollow},
+    ])
+    assert result["earliest_failing_stage"] == "specline:verify-validators"
+    assert result["recommended_edit_class"] == "structural"
+
+
 def test_build_metadata_never_lives_in_registry(tmp_path):
     registry = tmp_path / "registry"
     registry.mkdir()
@@ -309,6 +342,12 @@ def test_risk_diff_maps_ssat_changes_to_stub_identity_and_smoke():
     assert "forgeline:smoke" in stages
 
 
+def test_risk_diff_maps_spec_changes_to_validator_mutation():
+    risk = risk_for_paths(["specs/f.md"])
+    stages = [f"{item['module']}:{item['stage']}" for item in risk["rerun_stages"]]
+    assert stages[:2] == ["specline:strict", "specline:verify-validators"]
+
+
 def test_public_evidence_is_human_readable_and_public_safe(tmp_path):
     trace = _write_proof_fixture(tmp_path)
     evidence = public_evidence(tmp_path, "f")
@@ -340,3 +379,11 @@ def test_cli_replay_execute_refuses_tampered_trace(tmp_path, capsys):
     code = main(["replay", str(trace_path), "--root", str(tmp_path), "--changed", "smoke/f.json", "--execute"])
     assert code == 1
     assert "trace verification failed" in capsys.readouterr().out
+
+
+def test_cli_doctor_is_windows_console_safe(capsys):
+    from factoryline.cli import main
+
+    assert main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "installed" in out or "missing" in out
