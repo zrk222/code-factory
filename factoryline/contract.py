@@ -71,6 +71,7 @@ STAGES = [
     ("forgeline", "architect", "SSAT / architecture-as-code"),
     ("forgeline", "review",  "judge + adversary + QA audit"),
     ("forgeline", "arch-gate", "architecture CI gate"),
+    ("forgeline", "verify-tests", "prove behavioral smoke checks fail on the SSAT scaffold"),
     ("forgeline", "smoke",   "runtime behavior verification"),
     ("prestige",  "score",   "design-quality gate (only if UI in scope)"),
     ("hsf",       "compile", "compile decision table → deterministic artifact"),

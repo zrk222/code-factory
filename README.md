@@ -1,7 +1,8 @@
 # code-factory
 
-> New in 0.2: deterministic per-node failure attribution and an enforced H=0
-> boundary. See [FAILURE_ATTRIBUTION.md](FAILURE_ATTRIBUTION.md).
+> New: proof-carrying PRs. Factoryline can now turn receipts into a
+> hash-linked trace, verify that trace, plan the minimum replay after a change,
+> and print public-safe evidence. AI code that brings receipts.
 
 **A code factory built like Lego.** Five small, independent, open-source pieces that
 snap together into one assembly line: describe a feature in plain language, and the
@@ -74,6 +75,10 @@ factory plan            # print the assembly pipeline
 factory init .          # lay down the shared workspace
 factory assemble my_feature   # run the line (skips any missing brick)
 factory meter           # receipted cost + savings, computed on YOUR runs
+factory trace my_feature       # hash-link receipts into a proof bundle
+factory verify-trace .factory/traces/my_feature.trace.json
+factory replay .factory/traces/my_feature.trace.json --changed smoke/my_feature.json
+factory evidence my_feature    # public-safe proof for a PR or release note
 ```
 
 For publication order, GitHub release steps, Claude Code/Codex setup, and
@@ -97,6 +102,32 @@ launch links, see [PUBLICATION_GUIDE.md](PUBLICATION_GUIDE.md).
 - It prints the **baseline assumption** inline, so no number hides what it's compared against.
 
 Wall-clock time is always measured. Projections are always labeled. Nothing is fabricated.
+
+## Proof-carrying PRs
+
+`factory trace <feature>` writes `.factory/traces/<feature>.trace.json`: a
+deterministic proof bundle over the latest compatible receipts for that feature.
+Each trace node records the stage, command, receipt hash, declared artifact
+hashes, previous node hash, and attribution summary. The chain head makes receipt
+or artifact tampering visible.
+
+```bash
+factory trace checkout_flow
+factory verify-trace .factory/traces/checkout_flow.trace.json
+factory risk-diff --changed smoke/checkout_flow.json
+factory replay .factory/traces/checkout_flow.trace.json --changed smoke/checkout_flow.json
+factory replay .factory/traces/checkout_flow.trace.json --changed smoke/checkout_flow.json --execute
+factory attest .factory/traces/checkout_flow.trace.json
+factory evidence checkout_flow
+```
+
+This is the enterprise Lego layer: the factory can say which guarantee a change
+invalidates, which minimum stages must rerun, whether the trace still verifies,
+and what public evidence can be shown without leaking raw logs. If a smoke check
+is hollow, the public evidence can say `hollow_test`; if the trace was tampered
+with, `verify-trace` fails before anyone trusts the PR. `factory attest` exports
+unsigned in-toto/SLSA-shaped JSON statements for teams that want supply-chain
+evidence attached beside a PR, release, or wheel.
 
 ## Cross-platform
 

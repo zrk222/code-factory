@@ -14,13 +14,18 @@ Implemented:
   target gate improves and no other gate regresses.
 - Factory rollup chooses the earliest failing stage, not the noisiest downstream
   symptom.
+- Proof-carrying PR traces hash-link stage receipts and declared artifacts, then
+  verify receipt integrity, artifact integrity, stage order, and the H=0 boundary.
+- Proof traces can be exported as unsigned in-toto/SLSA-shaped statements for
+  release attachment or enterprise ingestion.
+- Replay execution is available behind an explicit `--execute` flag and refuses
+  to run if `verify-trace` fails.
 
 Best next upgrades:
 
-- Add a signed `factory trace` envelope that links each stage receipt by hash:
-  SpecLine packet -> ForgeLine gate -> HSF artifact -> Prestige audit.
-- Add `factory replay <trace>` to re-run only the minimal stage set affected by
-  a changed file.
+- Add DSSE/Sigstore wrapping for the current JSON attestation payloads.
+- Add replay execution receipts that summarize exactly which minimal rerun
+  commands were executed.
 - Add a CI matrix job that installs the five packages together and runs a tiny
   cross-module proof project end to end.
 
@@ -130,12 +135,27 @@ Implemented in this pass:
   `smoke`.
 - The shared failure-class baseplate recognizes `hollow_test` and
   `hollow_manifest`.
+- `factory trace <feature>` writes `.factory/traces/<feature>.trace.json`, a
+  hash-linked proof bundle over the latest compatible receipts.
+- `factory verify-trace <trace>` detects receipt tampering, artifact tampering,
+  chain-head drift, and H=0 metadata leakage into registry artifacts.
+- `factory replay <trace> --changed <path>` maps changed files to the minimum
+  canonical stages that must rerun before the trace should be trusted again.
+- `factory risk-diff` exposes the same invalidated-guarantee map without needing
+  a trace file.
+- `factory evidence <feature>` prints public-safe PR evidence: trace hash,
+  chain head, stage verdicts, failure classes, savings model, and scope limits
+  without raw logs.
+- `factory attest <trace>` exports in-toto/SLSA-shaped proof statements.
+- `factory replay <trace> --execute` verifies the trace before running the
+  minimal invalidated stages.
+- `.github/workflows/publish.yml` builds, tests, checks, attaches release
+  artifacts, and publishes to PyPI through Trusted Publishing.
 
 Best next upgrades:
 
 - Add `factory doctor` to check installed CLI versions, expected commands, and
   whether the five packages are mutually compatible.
 - Add generated Mermaid trace diagrams from receipts.
-- Add `factory evidence --public` to print only public-safe proof: test counts,
-  CI links, artifact names, receipt hashes, and known scope limits.
-
+- Attach generated proof traces and attestations beside wheel/sdist assets for
+  release-specific factory runs.

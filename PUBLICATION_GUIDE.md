@@ -57,6 +57,39 @@ factory assemble my_feature
 factory meter
 ```
 
+## PyPI Trusted Publishing
+
+This repo publishes with PyPI Trusted Publishing through GitHub Actions. The
+workflow is `.github/workflows/publish.yml`; it runs on a published GitHub
+release, builds the wheel/sdist, checks them with Twine, attaches them to the
+GitHub release, and publishes to PyPI through OIDC. No PyPI API token or
+`.pypirc` file is required.
+
+For a brand-new PyPI project, create a pending publisher on pypi.org before
+publishing the first release:
+
+```text
+PyPI project name : code-factory
+Owner             : zrk222
+Repository name   : code-factory
+Workflow name     : publish.yml
+Environment name  : pypi
+```
+
+Then publish a GitHub release from a version tag such as `v0.3.0`. The first
+successful publish creates the PyPI project and converts the pending publisher
+into the normal publisher for future releases.
+
+Useful checks before release:
+
+```bash
+python -m pytest -q
+python -m build
+python -m twine check dist/*
+pip install dist/code_factory-*.whl
+factory --help
+```
+
 ## Claude Code And Codex
 
 Use SpecLine to write agent instructions into the repo:
@@ -149,7 +182,7 @@ __pycache__/
 After publishing:
 
 1. Add the demo GIF near the top of the compile repo README.
-2. Publish packages to PyPI so `pip install ...` works.
+2. Confirm PyPI published successfully so `pip install code-factory` works.
 3. Create GitHub releases for all five repos.
 4. Create a Zenodo record for the architecture/release artifact.
 5. Post the Show HN only after all install links and CI badges work.

@@ -7,6 +7,15 @@ from factoryline.meter import summarize, summary_table, MeterLog, StageTiming
 from factoryline.attribution import Attribution, FailureClass, UnitResult
 from factoryline.assembly import rollup_attributions, rollup_receipts, _attribution_from_output
 from factoryline.boundary import assert_no_attribution_in_artifact, assert_build_metadata_locations
+from factoryline.proof import (
+    build_trace,
+    export_attestations,
+    public_evidence,
+    public_evidence_text,
+    replay_plan,
+    risk_for_paths,
+    verify_trace,
+)
 
 
 def test_layout_created(tmp_path):
@@ -118,6 +127,32 @@ def test_rollup_recommends_earliest_failure_not_worst_rate():
     assert result["earliest_failing_stage"] == "specline:strict"
 
 
+def test_rollup_prioritizes_verify_tests_before_smoke_even_if_displayed_later():
+    smoke = Attribution("smoke", 4, 2, [
+        UnitResult("runtime", "smoke", False, "timeout after 300s", FailureClass.RUNTIME_TIMEOUT),
+        UnitResult("output", "smoke", False, "wrong output", FailureClass.WRONG_OUTPUT),
+        UnitResult("boot", "smoke", True, "started"),
+        UnitResult("route", "smoke", True, "served"),
+    ]).to_dict()
+    verify_tests = Attribution("verify_tests", 3, 2, [
+        UnitResult("real_behavior", "verify_tests", True, "failed on stub"),
+        UnitResult("imports", "verify_tests", True, "exempt structural check"),
+        UnitResult(
+            "assert_true",
+            "verify_tests",
+            False,
+            "check passed against generated empty SSAT scaffold",
+            FailureClass.HOLLOW_TEST,
+        ),
+    ]).to_dict()
+    result = rollup_attributions([
+        {"module": "forgeline", "stage": "smoke", "attribution": smoke},
+        {"module": "forgeline", "stage": "verify_tests", "attribution": verify_tests},
+    ])
+    assert result["earliest_failing_stage"] == "forgeline:verify_tests"
+    assert result["recommended_edit_class"] == "structural"
+
+
 def test_h0_boundary_rejects_learning_symbols(tmp_path):
     artifact = tmp_path / "artifact.py"
     artifact.write_text("def decide(x): return x\n")
@@ -193,3 +228,115 @@ def test_meter_identical_with_attribution_receipts(tmp_path):
     after = summarize(tmp_path)
     assert before["build_tokens"] == after["build_tokens"]
     assert before["build_model_calls"] == after["build_model_calls"]
+
+
+def _write_proof_fixture(root: Path) -> dict:
+    ensure_layout(root)
+    artifact = root / "registry" / "f-output.py"
+    artifact.write_text("def run():\n    return 'ok'\n")
+    MeterLog(root).record(StageTiming("forgeline", "verify-tests", 12, 1, 100, 20, True))
+    Receipt(
+        "forgeline",
+        "verify-tests",
+        "f",
+        True,
+        attribution=Attribution(
+            "verify_tests",
+            1,
+            1,
+            [UnitResult("behavior", "verify_tests", True, "failed on generated stub")],
+        ).to_dict(),
+    ).write(root)
+    Receipt(
+        "hsf",
+        "compile",
+        "f",
+        True,
+        outputs={"paths": ["registry/f-output.py"]},
+        attribution=Attribution(
+            "compile",
+            1,
+            1,
+            [UnitResult("compile", "compile", True, "artifact built")],
+        ).to_dict(),
+    ).write(root)
+    return build_trace(root, "f")
+
+
+def test_proof_trace_hash_chain_verifies_receipts_and_artifacts(tmp_path):
+    trace = _write_proof_fixture(tmp_path)
+    trace_path = tmp_path / ".factory" / "traces" / "f.trace.json"
+    result = verify_trace(trace_path, root=tmp_path)
+    assert result["valid"] is True
+    assert result["trace_sha256"] == trace["trace_sha256"]
+    assert result["nodes_verified"] == 2
+
+
+def test_proof_trace_detects_receipt_tampering(tmp_path):
+    trace = _write_proof_fixture(tmp_path)
+    receipt_path = tmp_path / trace["nodes"][0]["receipt_path"]
+    receipt_path.write_text(receipt_path.read_text() + "\n")
+    result = verify_trace(tmp_path / ".factory" / "traces" / "f.trace.json", root=tmp_path)
+    assert result["valid"] is False
+    assert any("receipt hash mismatch" in error for error in result["errors"])
+
+
+def test_proof_trace_detects_stage_order_tampering(tmp_path):
+    _write_proof_fixture(tmp_path)
+    trace_path = tmp_path / ".factory" / "traces" / "f.trace.json"
+    payload = json.loads(trace_path.read_text())
+    payload["nodes"][0]["order"] = 99
+    trace_path.write_text(json.dumps(payload))
+    result = verify_trace(trace_path, root=tmp_path)
+    assert result["valid"] is False
+    assert any("stage order mismatch" in error for error in result["errors"])
+
+
+def test_replay_plan_starts_smoke_manifest_changes_at_verify_tests(tmp_path):
+    trace = _write_proof_fixture(tmp_path)
+    plan = replay_plan(trace, ["smoke/f.json"])
+    commands = [item["command"] for item in plan["commands"]]
+    assert commands[:2] == [
+        "forge verify-tests f f.ssat.yaml",
+        "forge smoke f",
+    ]
+
+
+def test_risk_diff_maps_ssat_changes_to_stub_identity_and_smoke():
+    risk = risk_for_paths(["f.ssat.yaml"])
+    stages = [f"{item['module']}:{item['stage']}" for item in risk["rerun_stages"]]
+    assert "forgeline:verify-tests" in stages
+    assert "forgeline:smoke" in stages
+
+
+def test_public_evidence_is_human_readable_and_public_safe(tmp_path):
+    trace = _write_proof_fixture(tmp_path)
+    evidence = public_evidence(tmp_path, "f")
+    rendered = public_evidence_text(evidence)
+    assert evidence["verified"] is True
+    assert trace["trace_sha256"] in rendered
+    assert "PROOF-CARRYING PR EVIDENCE" in rendered
+    assert "log_tail" not in rendered
+
+
+def test_attestation_export_writes_in_toto_and_slsa_statements(tmp_path):
+    trace = _write_proof_fixture(tmp_path)
+    outputs = export_attestations(trace, out_dir=tmp_path / "attestations")
+    in_toto = json.loads(Path(outputs["in_toto"]).read_text())
+    slsa = json.loads(Path(outputs["slsa"]).read_text())
+    assert in_toto["_type"] == "https://in-toto.io/Statement/v1"
+    assert in_toto["predicate"]["trace_sha256"] == trace["trace_sha256"]
+    assert slsa["predicateType"] == "https://slsa.dev/provenance/v1"
+
+
+def test_cli_replay_execute_refuses_tampered_trace(tmp_path, capsys):
+    from factoryline.cli import main
+
+    _write_proof_fixture(tmp_path)
+    trace_path = tmp_path / ".factory" / "traces" / "f.trace.json"
+    payload = json.loads(trace_path.read_text())
+    payload["chain_head"] = "bad"
+    trace_path.write_text(json.dumps(payload))
+    code = main(["replay", str(trace_path), "--root", str(tmp_path), "--changed", "smoke/f.json", "--execute"])
+    assert code == 1
+    assert "trace verification failed" in capsys.readouterr().out

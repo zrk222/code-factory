@@ -80,6 +80,21 @@ DEFAULT_CHAIN = [
 ]
 
 
+def _stage_order(module: str, stage: str) -> tuple[int, str, str]:
+    """Return canonical pipeline order for a module stage.
+
+    Receipt rollups can arrive in display order, filesystem timestamp order, or
+    mixed legacy spellings. Failure diagnosis still follows pipeline order:
+    instrument verification precedes trusting runtime smoke output.
+    """
+    normalized = stage.replace("_", "-")
+    order = {
+        (mod, args[0].replace("_", "-")): index
+        for index, (mod, args) in enumerate(DEFAULT_CHAIN)
+    }
+    return (order.get((module, normalized), len(DEFAULT_CHAIN)), module, normalized)
+
+
 def assemble(root: Path, feature: str, chain=None, dry_run: bool = False) -> dict:
     """Run the assembly line for a feature. Returns a per-stage report.
     Missing modules are skipped with a clear note (Lego stud left open)."""
@@ -144,28 +159,38 @@ def rollup_receipts(root: Path, feature: str) -> dict:
 
 
 def rollup_attributions(stages: list[dict]) -> dict:
-    """Aggregate module attribution in declared pipeline order.
+    """Aggregate module attribution with canonical pipeline failure priority.
 
     Older receipts without attribution remain visible but do not crash the line.
     The recommendation is always the earliest failing stage, never the worst rate.
     """
     rows = []
-    for index, stage in enumerate(stages):
+    for stage in stages:
         raw = stage.get("attribution")
         if not raw:
-            rows.append({**stage, "rate": None, "dominant_failure_class": None})
+            rows.append({
+                **stage,
+                "order": _stage_order(stage["module"], stage["stage"])[0],
+                "rate": None,
+                "dominant_failure_class": None,
+            })
             continue
         attr = Attribution.from_dict(raw)
         dominant = attr.dominant_failure_class()
         rows.append({
             **stage,
-            "order": index,
+            "order": _stage_order(stage["module"], stage["stage"])[0],
             "rate": attr.rate,
             "n_checked": attr.n_checked,
             "n_passed": attr.n_passed,
             "dominant_failure_class": dominant.value if dominant else None,
         })
-    first = next((row for row in rows if row["rate"] is not None and row["rate"] < 1.0), None)
+    failures = [row for row in rows if row["rate"] is not None and row["rate"] < 1.0]
+    first = min(
+        failures,
+        key=lambda row: _stage_order(row["module"], row["stage"]),
+        default=None,
+    )
     return {
         "stages": rows,
         "earliest_failing_stage": (

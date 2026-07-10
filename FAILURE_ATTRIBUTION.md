@@ -34,3 +34,14 @@ ForgeLine `verify_tests` uses two additional stable classes:
 
 Both are build-time attribution only. They guide structural test rewrites and
 roll up like any other ForgeLine gate.
+
+The `hollow_test` guarantee is exact because ForgeLine materializes the mutant
+with the same `scaffold_from_ssat` generator used by the normal `SCAFFOLDED`
+state, and the regression suite checks the generated stub tree is byte-identical
+to that scaffold. If that identity breaks, the reverse-classical gate is no
+longer allowed to claim certainty.
+
+Rollup recommendations use canonical pipeline order, not display order or
+receipt timestamp order. `forgeline:verify_tests` precedes `forgeline:smoke`,
+so a `hollow_test` dominates a downstream runtime failure in the same feature:
+the instrument must be validated before the smoke result is trusted.

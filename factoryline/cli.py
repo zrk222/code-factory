@@ -4,6 +4,7 @@
     factory plan              # print the assembly pipeline (no execution)
     factory assemble <feat>   # run the chain for a feature (skips missing modules)
     factory meter [--runs N --baseline T]   # real savings summary from your runs
+    factory trace <feat>      # write a hash-linked proof-carrying PR trace
     factory init <root>       # create the shared factory layout
 """
 from __future__ import annotations
@@ -15,6 +16,18 @@ from pathlib import Path
 from .contract import MODULES, STAGES, ensure_layout, LAYOUT
 from .assembly import detect, assemble, DEFAULT_CHAIN, rollup_receipts
 from .meter import summarize, summary_table
+from .proof import (
+    build_trace,
+    execute_replay,
+    export_attestations,
+    git_changed_paths,
+    load_trace,
+    public_evidence,
+    public_evidence_text,
+    replay_plan,
+    risk_for_paths,
+    verify_trace,
+)
 
 
 def _doctor() -> int:
@@ -74,6 +87,42 @@ def main(argv=None) -> int:
     s.add_argument("feature")
     s.add_argument("--root", default=".")
 
+    s = sub.add_parser("trace", help="write a proof-carrying PR trace from receipts")
+    s.add_argument("feature")
+    s.add_argument("--root", default=".")
+    s.add_argument("--out", help="trace output path; defaults to .factory/traces/<feature>.trace.json")
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("verify-trace", help="verify a proof-carrying PR trace")
+    s.add_argument("trace")
+    s.add_argument("--root", default=None)
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("replay", help="plan or execute the minimal rerun set for changed paths")
+    s.add_argument("trace")
+    s.add_argument("--root", default=None)
+    s.add_argument("--changed", action="append", default=[], help="changed path; repeat as needed")
+    s.add_argument("--base", help="git base ref for changed paths, e.g. main")
+    s.add_argument("--execute", action="store_true", help="verify trace, then execute the replay plan")
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("evidence", help="print public-safe proof for a feature")
+    s.add_argument("feature")
+    s.add_argument("--root", default=".")
+    s.add_argument("--trace", help="trace path; defaults to .factory/traces/<feature>.trace.json")
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("risk-diff", help="map changed paths to invalidated factory guarantees")
+    s.add_argument("--root", default=".")
+    s.add_argument("--base", default="main")
+    s.add_argument("--changed", action="append", default=[], help="changed path; repeat as needed")
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("attest", help="export in-toto/SLSA-shaped proof statements for a trace")
+    s.add_argument("trace")
+    s.add_argument("--out-dir", default="dist/attestations")
+    s.add_argument("--json", action="store_true")
+
     a = p.parse_args(argv)
 
     if a.cmd == "doctor":
@@ -96,6 +145,93 @@ def main(argv=None) -> int:
         return 0
     if a.cmd == "rollup":
         print(json.dumps(rollup_receipts(Path(a.root), a.feature), indent=2))
+        return 0
+    if a.cmd == "trace":
+        trace = build_trace(Path(a.root), a.feature, out=Path(a.out) if a.out else None)
+        if a.json:
+            print(json.dumps(trace, indent=2))
+        else:
+            print(f"proof trace written: {trace['trace_path']}")
+            print(f"trace_sha256       : {trace['trace_sha256']}")
+            print(f"chain_head         : {trace['chain_head']}")
+            print(f"nodes              : {len(trace['nodes'])}")
+            print(f"earliest failure   : {trace['rollup'].get('earliest_failing_stage') or 'none'}")
+        return 0
+    if a.cmd == "verify-trace":
+        result = verify_trace(Path(a.trace), root=Path(a.root) if a.root else None)
+        if a.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"trace      : {result['trace']}")
+            print(f"valid      : {result['valid']}")
+            print(f"chain_head : {result['chain_head']}")
+            if result["errors"]:
+                print("errors:")
+                for error in result["errors"]:
+                    print(f"  - {error}")
+        return 0 if result["valid"] else 1
+    if a.cmd == "replay":
+        trace_path = Path(a.trace)
+        trace_root = Path(a.root) if a.root else Path(load_trace(trace_path).get("root", "."))
+        changed = list(a.changed)
+        if a.base:
+            changed.extend(git_changed_paths(trace_root, a.base))
+        plan = replay_plan(load_trace(trace_path), changed)
+        if a.execute:
+            verification = verify_trace(trace_path, root=trace_root)
+            if not verification["valid"]:
+                print(json.dumps(verification, indent=2) if a.json else "trace verification failed; replay refused")
+                return 1
+            result = execute_replay(plan, root=trace_root)
+            print(json.dumps(result, indent=2) if a.json else "\n".join(
+                f"{item['module']}:{item['stage']} {item['status']}" for item in result["results"]
+            ))
+            return 0 if result["ok"] else 1
+        if a.json:
+            print(json.dumps(plan, indent=2))
+        else:
+            print("factory replay plan")
+            print("=" * 44)
+            if not plan["commands"]:
+                print("no changed paths supplied; verify the trace, no replay planned")
+            for item in plan["commands"]:
+                print(f"{item['module']}:{item['stage']}")
+                for reason in item["reasons"]:
+                    print(f"  reason: {reason}")
+                if item["command"]:
+                    print(f"  run   : {item['command']}")
+        return 0
+    if a.cmd == "evidence":
+        evidence = public_evidence(Path(a.root), a.feature, trace_path=Path(a.trace) if a.trace else None)
+        print(json.dumps(evidence, indent=2) if a.json else public_evidence_text(evidence))
+        return 0 if evidence["verified"] else 1
+    if a.cmd == "risk-diff":
+        changed = list(a.changed)
+        if not changed:
+            try:
+                changed = git_changed_paths(Path(a.root), a.base)
+            except RuntimeError as exc:
+                print(f"risk-diff failed: {exc}", file=sys.stderr)
+                return 1
+        risk = risk_for_paths(changed)
+        if a.json:
+            print(json.dumps(risk, indent=2))
+        else:
+            print("factory risk diff")
+            print("=" * 44)
+            for stage in risk["rerun_stages"]:
+                print(f"{stage['module']}:{stage['stage']}")
+                for reason in stage["reasons"]:
+                    print(f"  reason: {reason}")
+        return 0
+    if a.cmd == "attest":
+        outputs = export_attestations(load_trace(Path(a.trace)), out_dir=Path(a.out_dir))
+        if a.json:
+            print(json.dumps(outputs, indent=2))
+        else:
+            print("proof attestations written")
+            for name, path in outputs.items():
+                print(f"  {name}: {path}")
         return 0
     p.print_help()
     return 0
