@@ -418,3 +418,39 @@ def test_pr_pack_writes_reviewer_markdown(tmp_path):
     assert packet["evidence"]["verified"] is True
     assert "PR Evidence: f" in text
     assert "Deterministic gates run before AI review loops." in text
+
+
+def test_app_builder_scaffolds_full_stack_repo(tmp_path):
+    from factoryline.app_builder import app_from_prompt
+
+    result = app_from_prompt(
+        "Build a clinical prior auth portal with patient status and audit logs.",
+        out_dir=tmp_path / "prior-auth",
+        purpose="auto",
+    )
+    files = set(result["files"])
+    assert "app_blueprint.json" in files
+    assert "frontend/app/page.tsx" in files
+    assert "backend/main.py" in files
+    assert "db/schema.sql" in files
+    assert "smoke/clinical-prior-auth-portal-patient.json" in files
+    blueprint = json.loads((tmp_path / "prior-auth" / "app_blueprint.json").read_text())
+    assert blueprint["app"]["purpose"] == "healthcare"
+    assert "hollow_tests" in blueprint["app"]["required_gates"]
+
+
+def test_cli_app_from_prompt_outputs_json(tmp_path, capsys):
+    from factoryline.cli import main
+
+    code = main([
+        "app",
+        "from-prompt",
+        "Build a developer API dashboard with GitHub receipts.",
+        "--out",
+        str(tmp_path / "api-dash"),
+        "--json",
+    ])
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["app"] == "developer-api-dashboard-github-receipts"
+    assert (tmp_path / "api-dash" / "docs" / "WORKFLOW.md").exists()

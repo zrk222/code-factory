@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">Code Factory PRD-to-App Builder</title>
+  <desc id="desc">A visual workflow showing a PRD converted into a full stack scaffold through SpecLine, ForgeLine, HSF, Prestige, and Factoryline gates, with evidence bar graphs.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#eef2ff"/>
+      <stop offset="0.55" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#ecfeff"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" x2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#0f172a" flood-opacity="0.14"/>
+    </filter>
+    <style>
+      .label{font-family:Inter,Segoe UI,Arial,sans-serif;fill:#172033}
+      .small{font-size:18px}
+      .tiny{font-size:15px;fill:#475569}
+      .title{font-size:42px;font-weight:800}
+      .card-title{font-size:21px;font-weight:800}
+      .pill{font-size:14px;font-weight:700;fill:#1e40af}
+      .card{fill:#ffffff;stroke:#dbeafe;stroke-width:1.4;filter:url(#shadow)}
+      .arrow{stroke:#2563eb;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#arrow)}
+      .bar-bg{fill:#e2e8f0}
+      .bar{fill:url(#blue)}
+    </style>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto">
+      <path d="M2,2 L12,7 L2,12 Z" fill="#2563eb"/>
+    </marker>
+  </defs>
+  <rect width="1280" height="760" rx="0" fill="url(#bg)"/>
+  <text class="label title" x="64" y="82">PRD-to-App Factory</text>
+  <text class="label small" x="64" y="118">One prompt becomes a full-stack starter, then gates turn it into reviewable software.</text>
+  <g transform="translate(64 170)">
+    <rect class="card" width="190" height="118" rx="16"/>
+    <text class="label card-title" x="24" y="38">1. PRD</text>
+    <text class="label tiny" x="24" y="70">Prompt or product</text>
+    <text class="label tiny" x="24" y="92">requirements</text>
+  </g>
+  <path class="arrow" d="M266 229 H333"/>
+  <g transform="translate(344 170)">
+    <rect class="card" width="190" height="118" rx="16"/>
+    <text class="label card-title" x="24" y="38">2. Blueprint</text>
+    <text class="label tiny" x="24" y="70">Stack, roles, gates,</text>
+    <text class="label tiny" x="24" y="92">workflows</text>
+  </g>
+  <path class="arrow" d="M546 229 H613"/>
+  <g transform="translate(624 170)">
+    <rect class="card" width="190" height="118" rx="16"/>
+    <text class="label card-title" x="24" y="38">3. Scaffold</text>
+    <text class="label tiny" x="24" y="70">Frontend, backend,</text>
+    <text class="label tiny" x="24" y="92">db, tests</text>
+  </g>
+  <path class="arrow" d="M826 229 H893"/>
+  <g transform="translate(904 170)">
+    <rect class="card" width="250" height="118" rx="16"/>
+    <text class="label card-title" x="24" y="38">4. Evidence</text>
+    <text class="label tiny" x="24" y="70">Smoke, design, PR pack,</text>
+    <text class="label tiny" x="24" y="92">receipts</text>
+  </g>
+  <g transform="translate(82 365)">
+    <rect class="card" width="520" height="268" rx="18"/>
+    <text class="label card-title" x="26" y="42">Factory Gates</text>
+    <text class="label tiny" x="26" y="72">The app builder does not skip engineering discipline.</text>
+    <g transform="translate(26 108)">
+      <rect width="144" height="32" rx="16" fill="#dbeafe"/><text class="label pill" x="19" y="22">SpecLine</text>
+      <rect x="164" width="144" height="32" rx="16" fill="#ccfbf1"/><text class="label pill" x="183" y="22">ForgeLine</text>
+      <rect x="328" width="144" height="32" rx="16" fill="#fef3c7"/><text class="label pill" x="366" y="22">HSF</text>
+    </g>
+    <g transform="translate(26 158)">
+      <rect width="144" height="32" rx="16" fill="#fce7f3"/><text class="label pill" x="19" y="22">Prestige</text>
+      <rect x="164" width="200" height="32" rx="16" fill="#e0e7ff"/><text class="label pill" x="186" y="22">Factoryline</text>
+    </g>
+    <text class="label tiny" x="26" y="236">Result: a repo that is fast to try and easy to review.</text>
+  </g>
+  <g transform="translate(676 365)">
+    <rect class="card" width="490" height="268" rx="18"/>
+    <text class="label card-title" x="26" y="42">Evidence Readiness</text>
+    <g transform="translate(26 74)">
+      <text class="label tiny" x="0" y="18">PRD clarity</text>
+      <rect class="bar-bg" x="160" y="2" width="260" height="20" rx="10"/>
+      <rect class="bar" x="160" y="2" width="260" height="20" rx="10"/>
+      <text class="label tiny" x="432" y="18">100%</text>
+    </g>
+    <g transform="translate(26 116)">
+      <text class="label tiny" x="0" y="18">Architecture</text>
+      <rect class="bar-bg" x="160" y="2" width="260" height="20" rx="10"/>
+      <rect class="bar" x="160" y="2" width="234" height="20" rx="10"/>
+      <text class="label tiny" x="432" y="18">90%</text>
+    </g>
+    <g transform="translate(26 158)">
+      <text class="label tiny" x="0" y="18">Runtime smoke</text>
+      <rect class="bar-bg" x="160" y="2" width="260" height="20" rx="10"/>
+      <rect class="bar" x="160" y="2" width="234" height="20" rx="10"/>
+      <text class="label tiny" x="432" y="18">90%</text>
+    </g>
+    <g transform="translate(26 200)">
+      <text class="label tiny" x="0" y="18">Design fit</text>
+      <rect class="bar-bg" x="160" y="2" width="260" height="20" rx="10"/>
+      <rect class="bar" x="160" y="2" width="208" height="20" rx="10"/>
+      <text class="label tiny" x="432" y="18">80%</text>
+    </g>
+    <g transform="translate(26 242)">
+      <text class="label tiny" x="0" y="18">PR evidence</text>
+      <rect class="bar-bg" x="160" y="2" width="260" height="20" rx="10"/>
+      <rect class="bar" x="160" y="2" width="260" height="20" rx="10"/>
+      <text class="label tiny" x="432" y="18">100%</text>
+    </g>
+  </g>
+  <text class="label tiny" x="64" y="710">Command: factory app from-prd PRD.md --stack nextjs-fastapi-postgres --purpose saas</text>
+</svg>

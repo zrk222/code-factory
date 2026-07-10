@@ -1,0 +1,107 @@
+# PRD-to-App Builder
+
+`factory app` turns a PRD or plain-English app idea into a full-stack starter
+repo with a blueprint, frontend, backend, database schema, smoke test, and
+factory handoff commands.
+
+![PRD-to-App Factory](assets/prd-to-app-factory.svg)
+
+## One-Shot Command
+
+```bash
+factory app from-prd PRD.md --stack nextjs-fastapi-postgres --purpose saas --out my-app
+```
+
+Or start from a prompt:
+
+```bash
+factory app from-prompt "Build an expense approval app with manager review, audit logs, and policy-based approvals" --out expense-approval
+```
+
+## How It Works
+
+```mermaid
+flowchart TD
+    A["PRD or prompt"] --> B["Blueprint: stack, purpose, roles, workflows"]
+    B --> C["Full-stack scaffold"]
+    C --> D["SpecLine: optimize PRD"]
+    C --> E["Prestige: purpose design brief"]
+    C --> F["ForgeLine: bounded hardening loop"]
+    C --> G["HSF: deterministic decision logic candidates"]
+    D --> H["Factoryline PR evidence packet"]
+    E --> H
+    F --> H
+    G --> H
+```
+
+## What Gets Generated
+
+```text
+my-app/
+  PRD.md
+  README.md
+  app_blueprint.json
+  frontend/
+    app/page.tsx
+    app/globals.css
+    package.json
+  backend/
+    main.py
+    requirements.txt
+  db/
+    schema.sql
+  smoke/
+    <app>.json
+  tests/
+    test_health.py
+  docs/
+    WORKFLOW.md
+```
+
+## Evidence Bar
+
+The starter is designed to make the next gates obvious.
+
+```text
+PRD clarity      | ########## 100%
+Architecture     | #########  90%
+Runtime smoke    | #########  90%
+Design fit       | ########   80%
+PR evidence      | ########## 100%
+```
+
+## Why This Is Different
+
+Most app generators optimize for speed. `factory app` optimizes for speed plus
+reviewability:
+
+- PRD and prompt become a machine-readable `app_blueprint.json`.
+- The generated repo carries smoke-test and PR-evidence hooks.
+- Business-rule candidates are listed for deterministic HSF compilation.
+- UI work starts with a Prestige purpose brief instead of a generic theme.
+- The next commands are printed so a coding agent can harden the app through
+  the existing factory gates.
+
+## Supported Starter Stacks
+
+```bash
+factory app stacks
+```
+
+Current stacks:
+
+- `nextjs-fastapi-postgres`
+- `nextjs-api-sqlite`
+- `react-fastapi-postgres`
+
+## Recommended Follow-Up
+
+```bash
+cd my-app
+specline optimize-prd PRD.md
+prestige brief PRD.md --purpose saas
+factory optimize-pr --changed app_blueprint.json --feature my-app
+```
+
+Then use the normal factory flow to add product-specific implementation,
+compile deterministic decision logic, and produce a PR evidence packet.

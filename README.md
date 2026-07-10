@@ -1,8 +1,10 @@
 # code-factory
 
-> New: proof-carrying PRs. Factoryline can now turn receipts into a
-> hash-linked trace, verify that trace, plan the minimum replay after a change,
-> and print public-safe evidence. AI code that brings receipts.
+> New: PRD-to-app building. Factoryline can now turn a PRD or prompt into a
+> full-stack starter repo, then hand it to the same gated, receipted factory
+> flow that powers proof-carrying PRs.
+
+![PRD-to-App Factory](docs/assets/prd-to-app-factory.svg)
 
 **A code factory built like Lego.** Five small, independent, open-source pieces that
 snap together into one assembly line: describe a feature in plain language, and the
@@ -82,10 +84,30 @@ factory evidence my_feature    # public-safe proof for a PR or release note
 factory policy                 # write default policy-as-code thresholds
 factory optimize-pr --changed specs/my_feature.md --feature my_feature
 factory pr-pack my_feature     # reviewer-ready PR_EVIDENCE.md
+factory app from-prd PRD.md --out my-app --purpose saas
 ```
 
 For publication order, GitHub release steps, Claude Code/Codex setup, and
 launch links, see [PUBLICATION_GUIDE.md](PUBLICATION_GUIDE.md).
+
+## Instant PRD-to-App Builder
+
+`factory app` is the one-shot app-builder workflow: PRD or prompt in,
+full-stack starter out, with gates and evidence hooks already attached.
+
+```bash
+factory app from-prompt "Build an expense approval app with manager review, audit logs, and policy-based approvals" --out expense-approval
+factory app from-prd PRD.md --stack nextjs-fastapi-postgres --purpose healthcare --out prior-auth-portal
+```
+
+It generates `app_blueprint.json`, `PRD.md`, frontend/backend/db starter files,
+smoke tests, and a workflow guide. The point is not to bypass engineering
+judgment; the point is to make the first app-shaped repo appear instantly while
+preserving the factory contract: PRD optimization, architecture hardening,
+deterministic decision candidates, design brief, runtime smoke, and PR evidence.
+
+See [docs/APP_BUILDER.md](docs/APP_BUILDER.md) for the visual workflow,
+bar-chart proof model, generated file tree, and follow-up commands.
 
 ## PR optimization control plane
 
