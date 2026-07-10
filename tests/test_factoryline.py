@@ -434,9 +434,33 @@ def test_app_builder_scaffolds_full_stack_repo(tmp_path):
     assert "backend/main.py" in files
     assert "db/schema.sql" in files
     assert "smoke/clinical-prior-auth-portal-patient.json" in files
+    assert "clinical-prior-auth-portal-patient.ssat.yaml" in files
+    assert "coverage/requirements.json" in files
+    assert ".forge/clinical-prior-auth-portal-patient/state.json" in files
     blueprint = json.loads((tmp_path / "prior-auth" / "app_blueprint.json").read_text())
     assert blueprint["app"]["purpose"] == "healthcare"
     assert "hollow_tests" in blueprint["app"]["required_gates"]
+    smoke = json.loads((tmp_path / "prior-auth" / "smoke" / "clinical-prior-auth-portal-patient.json").read_text())
+    assert smoke["checks"][0]["must_fail_on_stub"] is True
+    assert smoke["checks"][0]["covers"] == ["RUNTIME_HEALTH"]
+    state = json.loads((tmp_path / "prior-auth" / ".forge" / "clinical-prior-auth-portal-patient" / "state.json").read_text())
+    assert state["state"] == "blocked"
+
+
+def test_app_builder_requirement_coverage_blocks_uncovered_product_reqs(tmp_path):
+    from factoryline.app_builder import app_from_prompt
+    from factoryline.coverage import requirement_coverage
+
+    app_from_prompt(
+        "Build a clinical prior auth portal with patient status and audit logs.",
+        out_dir=tmp_path / "prior-auth",
+        purpose="auto",
+    )
+    result = requirement_coverage(tmp_path / "prior-auth")
+    assert result["ok"] is False
+    assert "RUNTIME_HEALTH" in result["covered"]
+    assert "WORKFLOW_SUBMIT_REQUEST" in result["uncovered"]
+    assert result["attribution"]["dominant_failure_class"] == "hollow_coverage"
 
 
 def test_cli_app_from_prompt_outputs_json(tmp_path, capsys):
@@ -454,3 +478,16 @@ def test_cli_app_from_prompt_outputs_json(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["app"] == "developer-api-dashboard-github-receipts"
     assert (tmp_path / "api-dash" / "docs" / "WORKFLOW.md").exists()
+    assert (tmp_path / "api-dash" / "developer-api-dashboard-github-receipts.ssat.yaml").exists()
+
+
+def test_cli_coverage_outputs_json_and_fails_closed(tmp_path, capsys):
+    from factoryline.app_builder import app_from_prompt
+    from factoryline.cli import main
+
+    app_from_prompt("Build an expense app with approval rules.", out_dir=tmp_path / "expense")
+    code = main(["coverage", "--root", str(tmp_path / "expense"), "--json"])
+    assert code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["attribution"]["dominant_failure_class"] == "hollow_coverage"

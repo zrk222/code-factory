@@ -107,7 +107,7 @@ preserving the factory contract: PRD optimization, architecture hardening,
 deterministic decision candidates, design brief, runtime smoke, and PR evidence.
 
 See [docs/APP_BUILDER.md](docs/APP_BUILDER.md) for the visual workflow,
-bar-chart proof model, generated file tree, and follow-up commands.
+illustrative readiness model, generated file tree, and follow-up commands.
 
 ## PR optimization control plane
 

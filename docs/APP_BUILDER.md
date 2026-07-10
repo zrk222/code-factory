@@ -41,6 +41,7 @@ my-app/
   PRD.md
   README.md
   app_blueprint.json
+  <app>.ssat.yaml
   frontend/
     app/page.tsx
     app/globals.css
@@ -52,13 +53,15 @@ my-app/
     schema.sql
   smoke/
     <app>.json
+  coverage/
+    requirements.json
   tests/
     test_health.py
   docs/
     WORKFLOW.md
 ```
 
-## Evidence Bar
+## Illustrative Readiness Model
 
 The starter is designed to make the next gates obvious.
 
@@ -69,6 +72,10 @@ Runtime smoke    | #########  90%
 Design fit       | ########   80%
 PR evidence      | ########## 100%
 ```
+
+These bars are not measured gate results. They are a visual map of the
+readiness dimensions the starter is prepared to hand off to the factory. Replace
+them with receipt-backed evidence only after the gates run.
 
 ## Why This Is Different
 
@@ -100,8 +107,12 @@ Current stacks:
 cd my-app
 specline optimize-prd PRD.md
 prestige brief PRD.md --purpose saas
+forge verify-tests <app-name> <app-name>.ssat.yaml --root .
+factory coverage --root .
 factory optimize-pr --changed app_blueprint.json --feature my-app
 ```
 
 Then use the normal factory flow to add product-specific implementation,
 compile deterministic decision logic, and produce a PR evidence packet.
+`factory coverage` is expected to report `hollow_coverage` on a fresh starter
+until product-specific smoke checks are added.

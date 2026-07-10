@@ -21,6 +21,7 @@ class FailureClass(str, Enum):
     HOLLOW_TEST = "hollow_test"
     HOLLOW_MANIFEST = "hollow_manifest"
     HOLLOW_VALIDATOR = "hollow_validator"
+    HOLLOW_COVERAGE = "hollow_coverage"
     ACCURACY_REGRESSION = "accuracy_regression"
     NONDETERMINISM = "nondeterminism"
     SECURITY_FINDING = "security_finding"

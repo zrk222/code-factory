@@ -30,6 +30,7 @@ from .proof import (
 )
 from .optimizer import optimize_pr, pr_pack, write_policy
 from .app_builder import STACKS, app_from_prd, app_from_prompt
+from .coverage import requirement_coverage
 
 
 def _doctor() -> int:
@@ -125,6 +126,10 @@ def main(argv=None) -> int:
     s = sub.add_parser("attest", help="export in-toto/SLSA-shaped proof statements for a trace")
     s.add_argument("trace")
     s.add_argument("--out-dir", default="dist/attestations")
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("coverage", help="verify every requirement has a non-hollow test")
+    s.add_argument("--root", default=".")
     s.add_argument("--json", action="store_true")
 
     s = sub.add_parser("policy", help="write or show factory.policy.json")
@@ -274,6 +279,18 @@ def main(argv=None) -> int:
             for name, path in outputs.items():
                 print(f"  {name}: {path}")
         return 0
+    if a.cmd == "coverage":
+        result = requirement_coverage(Path(a.root))
+        if a.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print("factory requirement coverage")
+            print("=" * 44)
+            print(f"covered   : {len(result['covered'])}")
+            print(f"uncovered : {len(result['uncovered'])}")
+            for req_id in result["uncovered"]:
+                print(f"  - {req_id}")
+        return 0 if result["ok"] else 1
     if a.cmd == "policy":
         path = write_policy(Path(a.root), force=a.force)
         payload = json.loads(path.read_text(encoding="utf-8"))
