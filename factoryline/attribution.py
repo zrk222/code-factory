@@ -18,6 +18,8 @@ class FailureClass(str, Enum):
     RUNTIME_CRASH = "runtime_crash"
     RUNTIME_TIMEOUT = "runtime_timeout"
     WRONG_OUTPUT = "wrong_output"
+    HOLLOW_TEST = "hollow_test"
+    HOLLOW_MANIFEST = "hollow_manifest"
     ACCURACY_REGRESSION = "accuracy_regression"
     NONDETERMINISM = "nondeterminism"
     SECURITY_FINDING = "security_finding"

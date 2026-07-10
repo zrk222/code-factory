@@ -155,6 +155,23 @@ def test_factory_refine_plateau_and_rejection_rates(tmp_path):
     assert entries[0]["edit"]["edit_class"] == "structural"
 
 
+def test_hollow_test_attribution_round_trips_and_selects_structural_edit():
+    from factoryline.refinement import select_edit
+
+    payload = Attribution("forgeline:verify_tests", 1, 0, [
+        UnitResult(
+            "verify_tests:assert_true",
+            "forgeline:verify_tests",
+            False,
+            "passed against an empty stub",
+            FailureClass.HOLLOW_TEST,
+        )
+    ]).to_dict()
+    attr = Attribution.from_dict(payload)
+    assert attr.dominant_failure_class() is FailureClass.HOLLOW_TEST
+    assert select_edit("forgeline:verify_tests", FailureClass.HOLLOW_TEST).edit_class == "structural"
+
+
 def test_build_metadata_never_lives_in_registry(tmp_path):
     registry = tmp_path / "registry"
     registry.mkdir()

@@ -22,6 +22,8 @@ def select_edit(target_stage: str, failure_class: FailureClass) -> Edit:
         FailureClass.SIGNATURE_DRIFT,
         FailureClass.STUB_UNFILLED,
         FailureClass.INCONSISTENT_LOGIC,
+        FailureClass.HOLLOW_TEST,
+        FailureClass.HOLLOW_MANIFEST,
     }
     configuration = {
         FailureClass.RUNTIME_CRASH,
