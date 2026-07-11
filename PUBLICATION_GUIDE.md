@@ -68,6 +68,12 @@ The planned hardening is PyPI Trusted Publishing: after the publisher is
 configured, remove the `PYPI_TOKEN` secret and the action credentials so PyPI
 uses short-lived GitHub OIDC credentials instead of a stored token.
 
+The encrypted secret protects the token at rest, but does not make it
+short-lived or non-replayable after it reaches a release runner. Keep it
+project-scoped, treat it as an interim fallback, and do not describe this path
+as supply-chain provenance. Trusted Publishing is the path that removes the
+stored-token replay surface.
+
 For a brand-new PyPI project, create a pending publisher on pypi.org before
 publishing the first release:
 
