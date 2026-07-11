@@ -58,11 +58,15 @@ factory meter
 
 ## PyPI Trusted Publishing
 
-This repo is prepared for PyPI Trusted Publishing through GitHub Actions. The
-workflow is `.github/workflows/publish.yml`; after the PyPI publisher is
-configured, a published GitHub release builds the wheel/sdist, checks them with
-Twine, attaches them to the GitHub release, and publishes through OIDC. No
-stored PyPI API token or `.pypirc` file is required after that setup.
+This repo currently publishes through an encrypted repository-scoped
+`PYPI_TOKEN` GitHub Actions secret. The workflow is
+`.github/workflows/publish.yml`; a published GitHub release builds the
+wheel/sdist, checks them with Twine, attaches them to the GitHub release, and
+publishes only after those checks pass.
+
+The planned hardening is PyPI Trusted Publishing: after the publisher is
+configured, remove the `PYPI_TOKEN` secret and the action credentials so PyPI
+uses short-lived GitHub OIDC credentials instead of a stored token.
 
 For a brand-new PyPI project, create a pending publisher on pypi.org before
 publishing the first release:
