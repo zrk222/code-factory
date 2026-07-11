@@ -47,8 +47,7 @@ can contribute workflow examples.
 ## Install And Use
 
 ```bash
-pip install factoryline-code-factory code-factory-1-spec code-factory-2-forge \
-            code-factory-3-compile code-factory-4-design
+pip install factoryline-code-factory==0.5.1 code-factory-1-spec==0.5.0 code-factory-2-forge==0.8.0 code-factory-3-compile==0.5.1 code-factory-4-design==0.5.0
 
 factory doctor
 factory plan
@@ -59,17 +58,17 @@ factory meter
 
 ## PyPI Trusted Publishing
 
-This repo publishes with PyPI Trusted Publishing through GitHub Actions. The
-workflow is `.github/workflows/publish.yml`; it runs on a published GitHub
-release, builds the wheel/sdist, checks them with Twine, attaches them to the
-GitHub release, and publishes to PyPI through OIDC. No PyPI API token or
-`.pypirc` file is required.
+This repo is prepared for PyPI Trusted Publishing through GitHub Actions. The
+workflow is `.github/workflows/publish.yml`; after the PyPI publisher is
+configured, a published GitHub release builds the wheel/sdist, checks them with
+Twine, attaches them to the GitHub release, and publishes through OIDC. No
+stored PyPI API token or `.pypirc` file is required after that setup.
 
 For a brand-new PyPI project, create a pending publisher on pypi.org before
 publishing the first release:
 
 ```text
-PyPI project name : code-factory
+PyPI project name : factoryline-code-factory
 Owner             : zrk222
 Repository name   : code-factory
 Workflow name     : publish.yml

@@ -77,13 +77,17 @@ intent -> [1-spec] -> spec + strict contract -> handoff
 
 | Repo | pip install | CLI | What it does |
 |---|---|---|---|
-| **code-factory** (this) | `code-factory` | `factory` | the baseplate — snaps the bricks together, meters cost |
+| **code-factory** (this) | `factoryline-code-factory` | `factory` | the baseplate — snaps the bricks together, meters cost |
 | **code-factory-1-spec** | `code-factory-1-spec` | `specline` | kills ambiguity *before* the AI writes code (anti-drift input contract) |
 | **code-factory-2-forge** | `code-factory-2-forge` | `forge` | the assembly line: architect -> build -> gates -> **runtime smoke** -> ship |
 | **code-factory-3-compile** | `code-factory-3-compile` | `hsf` | compiles a decision *once* into boring code that runs forever at zero AI cost |
 | **code-factory-4-design** | `code-factory-4-design` | `prestige` | design-quality gate, for when what you ship has a face |
 
 Numbered so the assembly order reads at a glance. Install one, some, or all.
+
+The baseplate's PyPI distribution is named `factoryline-code-factory` because
+PyPI reserves the more generic `code-factory` name. The repository and the
+`factory` command deliberately keep the simpler Code Factory identity.
 
 ## Enterprise knowledge activation
 
@@ -98,8 +102,7 @@ brick maps to codification, compression, injection, and validation.
 ## Quick start
 
 ```bash
-pip install factoryline-code-factory code-factory-1-spec code-factory-2-forge \
-            code-factory-3-compile code-factory-4-design
+pip install factoryline-code-factory==0.5.1 code-factory-1-spec==0.5.0 code-factory-2-forge==0.8.0 code-factory-3-compile==0.5.1 code-factory-4-design==0.5.0
 
 factory doctor --strict # versions + required command compatibility
 factory plan            # print the assembly pipeline
