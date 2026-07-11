@@ -15,7 +15,7 @@ MINIMUM_VERSIONS = {
     "specline": "0.5.0",
     "forgeline": "0.8.0",
     "hsf": "0.5.0",
-    "prestige": "0.6.0",
+    "prestige": "0.6.1",
 }
 
 REQUIRED_COMMANDS = {

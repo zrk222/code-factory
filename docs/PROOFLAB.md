@@ -12,7 +12,7 @@ flowchart LR
     C --> S["SpecLine: delete or invert requirements"]
     C --> F["ForgeLine: regenerate empty stubs"]
     C --> H["HSF: corrupt each decision branch"]
-    C --> D["Prestige: hide, overflow, or hollow the UI"]
+    C --> D["Prestige: hide, overflow, hollow the UI, or mutate used tokens"]
     C --> I["Factoryline: tamper with trace integrity"]
     B --> P["Factory Passport"]
     S --> P
@@ -26,6 +26,12 @@ flowchart LR
 The diagram is also generated for every run as
 `.factory/passports/<feature>.passport.mmd`. It is evidence-owned: challenge
 counts and brick labels come from the same receipts as the JSON passport.
+
+For UI work, the `prestige:design_tokens` receipt also proves the committed
+`DESIGN.md` contract catches removal of every CSS token the page exercises.
+ProofLab uses the interoperable YAML-front-matter form of
+[`DESIGN.md`](https://github.com/google-labs-code/design.md); Prestige retains
+support for its earlier fenced-JSON contracts.
 
 ## Commands
 

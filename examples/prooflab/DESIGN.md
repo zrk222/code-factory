@@ -1,14 +1,19 @@
+---
+version: alpha
+name: ProofLab design contract
+colors:
+  surface: "#f8fafc"
+  accent: "#2563eb"
+  accent-hover: "#1d4ed8"
+spacing:
+  hero-y: 6rem
+  hero-x: 8vw
+  hero-gap: 1rem
+  mobile-hero-y: 4rem
+  mobile-hero-x: 6vw
+---
+
 # DESIGN.md
 
-Frozen ProofLab token contract. This is a committed artifact, never a live
-design-system query.
-
-```design-tokens
-{
-  "spacing": ["4px", "8px", "12px", "16px", "24px"],
-  "font_size": ["14px", "16px", "20px", "24px"],
-  "font_weight": ["400", "600", "700"],
-  "radius": ["0px", "4px", "8px"],
-  "color": ["#f8fafc", "#1d4ed8", "#2563eb"]
-}
-```
+Frozen ProofLab token contract in the interoperable DESIGN.md YAML-front-matter
+shape. This is a committed artifact, never a live design-system query.

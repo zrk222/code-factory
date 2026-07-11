@@ -47,7 +47,7 @@ can contribute workflow examples.
 ## Install And Use
 
 ```bash
-pip install factoryline-code-factory==0.6.0 code-factory-1-spec==0.5.0 code-factory-2-forge==0.8.0 code-factory-3-compile==0.5.1 code-factory-4-design==0.6.0
+pip install factoryline-code-factory==0.6.1 code-factory-1-spec==0.5.0 code-factory-2-forge==0.8.0 code-factory-3-compile==0.5.1 code-factory-4-design==0.6.1
 
 factory doctor
 factory plan

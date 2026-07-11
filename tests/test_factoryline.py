@@ -17,7 +17,7 @@ from factoryline.proof import (
     verify_trace,
 )
 from factoryline.passport import build_passport, verify_passport
-from factoryline.protocol import CHALLENGE_SCHEMA, RECEIPT_SCHEMA
+from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCHEMA
 
 
 def test_layout_created(tmp_path):
@@ -29,6 +29,10 @@ def test_layout_created(tmp_path):
 def test_detect_returns_all_four_modules():
     names = {m.name for m in detect()}
     assert names == {"specline", "forgeline", "hsf", "prestige"}
+
+
+def test_protocol_requires_design_md_compatible_prestige():
+    assert MINIMUM_VERSIONS["prestige"] == "0.6.1"
 
 
 def test_receipt_roundtrip(tmp_path):
