@@ -34,6 +34,8 @@ specline challenge checkout --out .factory/challenges/specline.json
 forge challenge checkout checkout.ssat.yaml --out .factory/challenges/forgeline.json
 hsf challenge specs/checkout.yaml --output .factory/challenges/hsf.json
 prestige challenge app.html --feature checkout --out .factory/challenges/prestige.json
+prestige tokens lint app.html --design DESIGN.md --strict
+prestige verify-tokens app.html --design DESIGN.md --out .factory/challenges/prestige-tokens.json
 factory challenge checkout --trace .factory/traces/checkout.trace.json --out .factory/challenges/factoryline.json
 
 factory passport checkout \
@@ -42,6 +44,7 @@ factory passport checkout \
   --challenge .factory/challenges/forgeline.json \
   --challenge .factory/challenges/hsf.json \
   --challenge .factory/challenges/prestige.json \
+  --challenge .factory/challenges/prestige-tokens.json \
   --challenge .factory/challenges/factoryline.json
 
 factory verify-passport .factory/passports/checkout.passport.json

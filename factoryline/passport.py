@@ -90,9 +90,9 @@ def build_passport(root: Path, feature: str, trace_path: Path, challenge_paths: 
         })
     if not challenges:
         raise ValueError("at least one counterfactual challenge receipt is required")
-    bricks = [item["brick"] for item in challenges]
-    if len(set(bricks)) != len(bricks):
-        raise ValueError("duplicate challenge brick receipts are not allowed")
+    challenge_keys = [(item["brick"], item["stage"]) for item in challenges]
+    if len(set(challenge_keys)) != len(challenge_keys):
+        raise ValueError("duplicate challenge brick/stage receipts are not allowed")
     trace = load_trace(trace_path)
     verified = all(item["passed"] for item in challenges)
     core = {

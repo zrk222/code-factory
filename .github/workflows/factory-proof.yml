@@ -37,11 +37,11 @@ jobs:
       - name: Install the five-brick factory
         run: >-
           python -m pip install
-          "factoryline-code-factory>=0.5.1"
+          "factoryline-code-factory>=0.6.0"
           "code-factory-1-spec>=0.5.0"
           "code-factory-2-forge>=0.8.0"
           "code-factory-3-compile>=0.5.0"
-          "code-factory-4-design>=0.5.0"
+          "code-factory-4-design>=0.6.0"
       - run: factory doctor --strict
       - name: Build trace and baseplate challenge
         run: |

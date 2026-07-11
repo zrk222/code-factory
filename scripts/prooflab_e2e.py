@@ -41,13 +41,21 @@ def main() -> int:
         run_module("hsf.cli", ["init", "prooflab"], root)
         run_module("hsf.cli", ["challenge", "specs/prooflab.yaml", "--output", str(challenges / "hsf.json")], root)
         run_module("prestige_design.cli", ["challenge", str(root / "prooflab.html"), "--purpose", "developer", "--workflow", "product", "--feature", "prooflab", "--out", str(challenges / "prestige.json")], root)
+        run_module("prestige_design.cli", ["tokens", "lint", str(root / "prooflab.html"), "--design", str(root / "DESIGN.md"), "--strict"], root)
+        run_module("prestige_design.cli", ["verify-tokens", str(root / "prooflab.html"), "--design", str(root / "DESIGN.md"), "--out", str(challenges / "prestige-tokens.json")], root)
 
         ensure_layout(root)
-        for brick in ("specline", "forgeline", "hsf", "prestige"):
-            challenge = challenges / f"{brick}.json"
+        for brick, filename, stage in (
+            ("specline", "specline.json", "challenge"),
+            ("forgeline", "forgeline.json", "challenge"),
+            ("hsf", "hsf.json", "challenge"),
+            ("prestige", "prestige.json", "challenge"),
+            ("prestige", "prestige-tokens.json", "design_tokens"),
+        ):
+            challenge = challenges / filename
             Receipt(
                 module=brick,
-                stage="challenge",
+                stage=stage,
                 feature="prooflab",
                 ok=json.loads(challenge.read_text())["passed"],
                 outputs={"paths": [str(challenge)]},
@@ -64,7 +72,7 @@ def main() -> int:
         print(json.dumps({
             "verified": True,
             "trace_nodes": passport["trace_nodes"],
-            "challenge_bricks": [item["brick"] for item in passport["challenges"]],
+            "challenge_stages": [f"{item['brick']}:{item['stage']}" for item in passport["challenges"]],
             "mermaid": passport["paths"]["mermaid"],
         }, indent=2))
     return 0

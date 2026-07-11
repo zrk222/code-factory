@@ -349,6 +349,21 @@ def test_factory_passport_emits_verified_mermaid_and_detects_tampering(tmp_path)
     assert verify_passport(Path(passport["paths"]["json"]))["valid"] is False
 
 
+def test_factory_passport_accepts_distinct_challenge_stages_from_one_brick(tmp_path):
+    trace = _write_proof_fixture(tmp_path)
+    receipts = []
+    for stage in ("design_counterfactual", "design_tokens"):
+        receipt = tmp_path / f"prestige-{stage}.json"
+        receipt.write_text(json.dumps({
+            "schema": CHALLENGE_SCHEMA, "brick": "prestige", "feature": "f",
+            "stage": stage, "passed": True, "mutants_total": 1, "mutants_killed": 1,
+        }))
+        receipts.append(receipt)
+    passport = build_passport(tmp_path, "f", tmp_path / trace["trace_path"], receipts)
+    assert passport["verified"] is True
+    assert len(passport["challenges"]) == 2
+
+
 def test_factoryline_challenge_kills_trace_integrity_mutants(tmp_path):
     from factoryline.challenge import challenge_trace
     trace = _write_proof_fixture(tmp_path)

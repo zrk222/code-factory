@@ -15,14 +15,14 @@ MINIMUM_VERSIONS = {
     "specline": "0.5.0",
     "forgeline": "0.8.0",
     "hsf": "0.5.0",
-    "prestige": "0.5.0",
+    "prestige": "0.6.0",
 }
 
 REQUIRED_COMMANDS = {
     "specline": {"strict", "verify-validators", "challenge"},
     "forgeline": {"gate", "fill", "verify-tests", "challenge"},
     "hsf": {"compile", "goldens", "challenge"},
-    "prestige": {"audit", "render-audit", "challenge"},
+    "prestige": {"audit", "render-audit", "challenge", "tokens", "verify-tokens"},
 }
 
 
