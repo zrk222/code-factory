@@ -47,7 +47,7 @@ can contribute workflow examples.
 ## Install And Use
 
 ```bash
-pip install code-factory code-factory-1-spec code-factory-2-forge \
+pip install factoryline-code-factory code-factory-1-spec code-factory-2-forge \
             code-factory-3-compile code-factory-4-design
 
 factory doctor
@@ -182,7 +182,7 @@ __pycache__/
 After publishing:
 
 1. Add the demo GIF near the top of the compile repo README.
-2. Confirm PyPI published successfully so `pip install code-factory` works.
+2. Confirm PyPI published successfully so `pip install factoryline-code-factory` works.
 3. Create GitHub releases for all five repos.
 4. Create a Zenodo record for the architecture/release artifact.
 5. Post the Show HN only after all install links and CI badges work.

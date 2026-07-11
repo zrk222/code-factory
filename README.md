@@ -1,8 +1,8 @@
 # code-factory
 
 [![CI](https://github.com/zrk222/code-factory/actions/workflows/ci.yml/badge.svg)](https://github.com/zrk222/code-factory/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/code-factory.svg)](https://pypi.org/project/code-factory/)
-[![Python](https://img.shields.io/pypi/pyversions/code-factory.svg)](https://pypi.org/project/code-factory/)
+[![PyPI](https://img.shields.io/pypi/v/factoryline-code-factory.svg)](https://pypi.org/project/factoryline-code-factory/)
+[![Python](https://img.shields.io/pypi/pyversions/factoryline-code-factory.svg)](https://pypi.org/project/factoryline-code-factory/)
 
 > Most CI proves that code passes. Code Factory first proves that its gates
 > reject deliberately sabotaged builds.
@@ -98,7 +98,7 @@ brick maps to codification, compression, injection, and validation.
 ## Quick start
 
 ```bash
-pip install code-factory code-factory-1-spec code-factory-2-forge \
+pip install factoryline-code-factory code-factory-1-spec code-factory-2-forge \
             code-factory-3-compile code-factory-4-design
 
 factory doctor --strict # versions + required command compatibility
