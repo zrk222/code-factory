@@ -23,9 +23,9 @@ STACKS = {
         "database": "Postgres",
         "test": "pytest + route smoke",
     },
-    "nextjs-api-sqlite": {
-        "frontend": "Next.js",
-        "backend": "Next.js API routes",
+    "react-fastapi-sqlite": {
+        "frontend": "React + Vite",
+        "backend": "FastAPI",
         "database": "SQLite",
         "test": "pytest + route smoke",
     },
@@ -230,6 +230,23 @@ def test_healthz():
 
 
 def _schema_sql(blueprint: AppBlueprint) -> str:
+    if STACKS[blueprint.stack]["database"] == "SQLite":
+        return f"""create table if not exists audit_events (
+  id integer primary key autoincrement,
+  app_name text not null default '{blueprint.name}',
+  actor text not null,
+  action text not null,
+  created_at text not null default current_timestamp
+);
+
+create table if not exists workflow_items (
+  id integer primary key autoincrement,
+  workflow text not null,
+  status text not null default 'draft',
+  payload text not null default '{{}}',
+  created_at text not null default current_timestamp
+);
+"""
     return f"""create table if not exists audit_events (
   id bigserial primary key,
   app_name text not null default '{blueprint.name}',
@@ -280,11 +297,11 @@ flowchart TD
 ## Illustrative Readiness Model
 
 ```text
-PRD clarity      | ########## 100%
-Architecture     | #########  90%
-Runtime smoke    | #########  90%
-Design fit       | ########   80%
-PR evidence      | ########## 100%
+PRD clarity      | NOT RUN
+Architecture     | NOT RUN
+Runtime smoke    | NOT RUN
+Design fit       | NOT RUN
+PR evidence      | NOT RUN
 ```
 
 These bars are not measured gate results. They are a visual map of the readiness
@@ -405,13 +422,30 @@ def scaffold_app(blueprint: AppBlueprint, *, out_dir: Path, prd_text: str) -> di
     _write(out_dir / f"{blueprint.name}.ssat.yaml", _ssat_yaml(blueprint))
     _write(out_dir / "coverage" / "requirements.json", _coverage_manifest(blueprint))
     _write(out_dir / ".forge" / blueprint.name / "state.json", _forge_state(blueprint))
-    _write(out_dir / "frontend" / "app" / "page.tsx", _frontend_page(blueprint))
+    if STACKS[blueprint.stack]["frontend"] == "Next.js":
+        _write(out_dir / "frontend" / "app" / "page.tsx", _frontend_page(blueprint))
+        frontend_package = {
+            "scripts": {"dev": "next dev", "build": "next build"},
+            "dependencies": {"next": "^15.0.0", "react": "^19.0.0", "react-dom": "^19.0.0"},
+            "devDependencies": {"typescript": "^5.0.0"},
+        }
+    else:
+        _write(out_dir / "frontend" / "src" / "App.tsx", _frontend_page(blueprint))
+        _write(out_dir / "frontend" / "src" / "main.tsx", """import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import '../app/globals.css';
+
+ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
+""")
+        _write(out_dir / "frontend" / "index.html", '<!doctype html><html><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>')
+        frontend_package = {
+            "scripts": {"dev": "vite", "build": "tsc && vite build"},
+            "dependencies": {"@vitejs/plugin-react": "^4.0.0", "vite": "^6.0.0", "react": "^19.0.0", "react-dom": "^19.0.0"},
+            "devDependencies": {"typescript": "^5.0.0"},
+        }
     _write(out_dir / "frontend" / "app" / "globals.css", _frontend_css())
-    _write(out_dir / "frontend" / "package.json", json.dumps({
-        "scripts": {"dev": "next dev", "build": "next build"},
-        "dependencies": {"next": "latest", "react": "latest", "react-dom": "latest"},
-        "devDependencies": {"typescript": "latest"},
-    }, indent=2))
+    _write(out_dir / "frontend" / "package.json", json.dumps(frontend_package, indent=2))
     _write(out_dir / "backend" / "__init__.py", "")
     _write(out_dir / "backend" / "main.py", _backend_main(blueprint))
     _write(out_dir / "backend" / "requirements.txt", "fastapi\nuvicorn\npytest\nhttpx\n")

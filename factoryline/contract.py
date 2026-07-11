@@ -55,6 +55,9 @@ from pathlib import Path
 import datetime as _dt
 import hashlib
 import json
+import uuid
+
+from .protocol import RECEIPT_SCHEMA, package_version
 
 # Canonical subdirectories of a factory root.
 LAYOUT = {
@@ -107,6 +110,9 @@ class Receipt:
     stage: str
     feature: str
     ok: bool
+    schema: str = RECEIPT_SCHEMA
+    producer_version: str | None = None
+    run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     inputs: dict = field(default_factory=dict)
     outputs: dict = field(default_factory=dict)
     meter: Meter = field(default_factory=Meter)
@@ -116,9 +122,12 @@ class Receipt:
     def write(self, root: Path) -> Path:
         d = Path(root) / LAYOUT["receipts"]
         d.mkdir(parents=True, exist_ok=True)
-        p = d / f"{self.module}-{self.feature}-{self.stage}-{int(_dt.datetime.now().timestamp())}.json"
+        if self.producer_version is None:
+            package = MODULES.get(self.module, {}).get("pip", "code-factory")
+            self.producer_version = package_version(package)
+        p = d / f"{self.module}-{self.feature}-{self.stage}-{self.run_id[:12]}.json"
         payload = asdict(self)
-        p.write_text(json.dumps(payload, indent=2, sort_keys=True))
+        p.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         return p
 
     @classmethod
@@ -139,6 +148,9 @@ class Receipt:
             stage=payload["stage"],
             feature=payload["feature"],
             ok=bool(payload["ok"]),
+            schema=payload.get("schema", "factory.receipt.v1"),
+            producer_version=payload.get("producer_version"),
+            run_id=payload.get("run_id", uuid.uuid4().hex),
             inputs=payload.get("inputs", {}),
             outputs=payload.get("outputs", {}),
             meter=meter,

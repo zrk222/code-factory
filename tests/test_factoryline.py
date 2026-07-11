@@ -16,6 +16,8 @@ from factoryline.proof import (
     risk_for_paths,
     verify_trace,
 )
+from factoryline.passport import build_passport, verify_passport
+from factoryline.protocol import CHALLENGE_SCHEMA, RECEIPT_SCHEMA
 
 
 def test_layout_created(tmp_path):
@@ -37,6 +39,23 @@ def test_receipt_roundtrip(tmp_path):
     data = json.loads(p.read_text())
     assert data["module"] == "specline" and data["ok"] is True
     assert data["meter"]["wall_ms"] == 12
+    assert data["schema"] == RECEIPT_SCHEMA
+    assert data["run_id"]
+
+
+def test_trace_refuses_empty_receipt_set(tmp_path):
+    ensure_layout(tmp_path)
+    import pytest
+    with pytest.raises(ValueError, match="no receipts"):
+        build_trace(tmp_path, "empty")
+
+
+def test_long_cli_output_keeps_structured_attribution():
+    attr = Attribution("strict_lint", 1, 0, [
+        UnitResult("R1", "strict_lint", False, "ambiguous", FailureClass.AMBIGUOUS_REQUIREMENT)
+    ]).to_dict()
+    output = json.dumps({"passed": False, "attribution": attr}) + ("x" * 5000)
+    assert _attribution_from_output(output)["dominant_failure_class"] == "ambiguous_requirement"
 
 
 def test_meter_refuses_percentage_with_no_runs(tmp_path):
@@ -305,6 +324,39 @@ def test_proof_trace_hash_chain_verifies_receipts_and_artifacts(tmp_path):
     assert result["nodes_verified"] == 2
 
 
+def test_factory_passport_emits_verified_mermaid_and_detects_tampering(tmp_path):
+    trace = _write_proof_fixture(tmp_path)
+    challenge = tmp_path / "specline.challenge.json"
+    challenge.write_text(json.dumps({
+        "schema": CHALLENGE_SCHEMA,
+        "brick": "specline",
+        "feature": "f",
+        "stage": "validator_mutation",
+        "passed": True,
+        "mutants_total": 3,
+        "mutants_killed": 3,
+    }))
+    passport = build_passport(
+        tmp_path,
+        "f",
+        tmp_path / trace["trace_path"],
+        [challenge],
+    )
+    assert passport["verified"] is True
+    assert Path(passport["paths"]["mermaid"]).read_text().startswith("flowchart LR")
+    assert verify_passport(Path(passport["paths"]["json"]))["valid"] is True
+    challenge.write_text(challenge.read_text() + "\n")
+    assert verify_passport(Path(passport["paths"]["json"]))["valid"] is False
+
+
+def test_factoryline_challenge_kills_trace_integrity_mutants(tmp_path):
+    from factoryline.challenge import challenge_trace
+    trace = _write_proof_fixture(tmp_path)
+    payload = challenge_trace(tmp_path / trace["trace_path"], root=tmp_path)
+    assert payload["passed"] is True
+    assert payload["mutants_total"] == payload["mutants_killed"] == 3
+
+
 def test_proof_trace_detects_receipt_tampering(tmp_path):
     trace = _write_proof_fixture(tmp_path)
     receipt_path = tmp_path / trace["nodes"][0]["receipt_path"]
@@ -386,7 +438,19 @@ def test_cli_doctor_is_windows_console_safe(capsys):
 
     assert main(["doctor"]) == 0
     out = capsys.readouterr().out
-    assert "installed" in out or "missing" in out
+    assert any(word in out for word in ("compatible", "incompatible", "missing"))
+
+
+def test_cli_no_args_returns_agent_home_with_definitive_empty_states(tmp_path, capsys, monkeypatch):
+    from factoryline.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    assert main([]) == 0
+    out = capsys.readouterr().out
+    assert "description: Five-brick spec-to-proof software factory" in out
+    assert "receipts: 0" in out
+    assert "passports: 0" in out
+    assert "factory doctor --strict --json" in out
 
 
 def test_policy_writes_hollow_gate_defaults(tmp_path):
@@ -461,6 +525,21 @@ def test_app_builder_requirement_coverage_blocks_uncovered_product_reqs(tmp_path
     assert "RUNTIME_HEALTH" in result["covered"]
     assert "WORKFLOW_SUBMIT_REQUEST" in result["uncovered"]
     assert result["attribution"]["dominant_failure_class"] == "hollow_coverage"
+
+
+def test_app_builder_stacks_generate_truthful_frontend_and_database(tmp_path):
+    from factoryline.app_builder import app_from_prompt
+
+    react_pg = tmp_path / "react-pg"
+    app_from_prompt("Build an expense app.", out_dir=react_pg, stack="react-fastapi-postgres")
+    assert (react_pg / "frontend" / "src" / "App.tsx").exists()
+    assert "bigserial" in (react_pg / "db" / "schema.sql").read_text()
+
+    react_sqlite = tmp_path / "react-sqlite"
+    app_from_prompt("Build an expense app.", out_dir=react_sqlite, stack="react-fastapi-sqlite")
+    assert (react_sqlite / "frontend" / "src" / "App.tsx").exists()
+    schema = (react_sqlite / "db" / "schema.sql").read_text()
+    assert "autoincrement" in schema and "jsonb" not in schema
 
 
 def test_cli_app_from_prompt_outputs_json(tmp_path, capsys):

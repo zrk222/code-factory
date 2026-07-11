@@ -81,34 +81,29 @@
     <g transform="translate(26 74)">
       <text class="label tiny" x="0" y="18">PRD clarity</text>
       <rect class="bar-bg" x="160" y="2" width="260" height="20" rx="10"/>
-      <rect class="bar" x="160" y="2" width="260" height="20" rx="10"/>
-      <text class="label tiny" x="432" y="18">100%</text>
+      <text class="label tiny" x="432" y="18">NOT RUN</text>
     </g>
     <g transform="translate(26 116)">
       <text class="label tiny" x="0" y="18">Architecture</text>
       <rect class="bar-bg" x="160" y="2" width="260" height="20" rx="10"/>
-      <rect class="bar" x="160" y="2" width="234" height="20" rx="10"/>
-      <text class="label tiny" x="432" y="18">90%</text>
+      <text class="label tiny" x="432" y="18">NOT RUN</text>
     </g>
     <g transform="translate(26 158)">
       <text class="label tiny" x="0" y="18">Runtime smoke</text>
       <rect class="bar-bg" x="160" y="2" width="260" height="20" rx="10"/>
-      <rect class="bar" x="160" y="2" width="234" height="20" rx="10"/>
-      <text class="label tiny" x="432" y="18">90%</text>
+      <text class="label tiny" x="432" y="18">NOT RUN</text>
     </g>
     <g transform="translate(26 200)">
       <text class="label tiny" x="0" y="18">Design fit</text>
       <rect class="bar-bg" x="160" y="2" width="260" height="20" rx="10"/>
-      <rect class="bar" x="160" y="2" width="208" height="20" rx="10"/>
-      <text class="label tiny" x="432" y="18">80%</text>
+      <text class="label tiny" x="432" y="18">NOT RUN</text>
     </g>
     <g transform="translate(26 242)">
       <text class="label tiny" x="0" y="18">PR evidence</text>
       <rect class="bar-bg" x="160" y="2" width="260" height="20" rx="10"/>
-      <rect class="bar" x="160" y="2" width="260" height="20" rx="10"/>
-      <text class="label tiny" x="432" y="18">100%</text>
+      <text class="label tiny" x="432" y="18">NOT RUN</text>
     </g>
   </g>
   <text class="label tiny" x="64" y="710">Command: factory app from-prd PRD.md --stack nextjs-fastapi-postgres --purpose saas</text>
-  <text class="label tiny" x="676" y="710">Bars are orientation only; replace with receipts after gates run.</text>
+  <text class="label tiny" x="676" y="710">Every dimension stays NOT RUN until a receipt proves it.</text>
 </svg>

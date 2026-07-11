@@ -1,0 +1,14 @@
+name: prooflab
+modules:
+  - name: proof
+    path: proof.py
+    imports: []
+    functions:
+      - name: verdict
+        args: ["failures: int"]
+        returns: "str"
+        doc: "Return VERIFIED only when no failures remain."
+dependencies: []
+invariants:
+  - name: no_eval
+    forbid_pattern: "\\beval\\("

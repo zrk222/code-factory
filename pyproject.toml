@@ -1,14 +1,19 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-factory"
-version = "0.4.1"
+version = "0.5.0"
 description = "The connective layer that snaps SpecLine, ForgeLine, HSF and Prestige together into one spec-to-artifact assembly line. Each module stays independent; factoryline lines them up."
 requires-python = ">=3.10"
 readme = "README.md"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
+
+[project.urls]
+Homepage = "https://github.com/zrk222/code-factory"
+Documentation = "https://github.com/zrk222/code-factory#readme"
+Issues = "https://github.com/zrk222/code-factory/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

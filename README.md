@@ -1,5 +1,34 @@
 # code-factory
 
+[![CI](https://github.com/zrk222/code-factory/actions/workflows/ci.yml/badge.svg)](https://github.com/zrk222/code-factory/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/code-factory.svg)](https://pypi.org/project/code-factory/)
+[![Python](https://img.shields.io/pypi/pyversions/code-factory.svg)](https://pypi.org/project/code-factory/)
+
+> Most CI proves that code passes. Code Factory first proves that its gates
+> reject deliberately sabotaged builds.
+
+Run `factory` with no arguments for a compact live view of installed bricks,
+local proof counts, and the next valid commands. This agent-first home view
+avoids a separate help/discovery turn while keeping `--help` available everywhere.
+
+```mermaid
+flowchart LR
+    A["Intent / PRD"] --> B["Real build + gates"]
+    A --> C["Proof-by-sabotage challenges"]
+    C --> S["Spec mutations"]
+    C --> F["Empty stubs"]
+    C --> H["Decision-rule mutations"]
+    C --> D["Hidden or broken UI"]
+    C --> I["Trace tampering"]
+    B --> P["Factory Passport"]
+    S --> P
+    F --> P
+    H --> P
+    D --> P
+    I --> P
+    P --> G["GitHub summary + badge + Mermaid + attestations"]
+```
+
 > New: PRD-to-app building. Factoryline can now turn a PRD or prompt into a
 > full-stack starter repo, then hand it to the same gated, receipted factory
 > flow that powers proof-carrying PRs.
@@ -72,7 +101,7 @@ brick maps to codification, compression, injection, and validation.
 pip install code-factory code-factory-1-spec code-factory-2-forge \
             code-factory-3-compile code-factory-4-design
 
-factory doctor          # which bricks are installed + how to add the rest
+factory doctor --strict # versions + required command compatibility
 factory plan            # print the assembly pipeline
 factory init .          # lay down the shared workspace
 factory assemble my_feature   # run the line (skips any missing brick)
@@ -86,7 +115,16 @@ factory policy                 # write default policy-as-code thresholds
 factory optimize-pr --changed specs/my_feature.md --feature my_feature
 factory pr-pack my_feature     # reviewer-ready PR_EVIDENCE.md
 factory app from-prd PRD.md --out my-app --purpose saas
+factory challenge my_feature --trace .factory/traces/my_feature.trace.json
+factory passport my_feature --trace .factory/traces/my_feature.trace.json --challenge .factory/challenges/factoryline.json
 ```
+
+`factory assemble` is resumable and stops at human-owned authoring and approval
+boundaries. Its JSON output names `paused_at` and the exact `next_command`; it
+does not silently approve architecture or claim unfinished scaffolds are built.
+
+See [ProofLab and the Factory Passport](docs/PROOFLAB.md) for all five challenge
+commands and the generated Mermaid artifact.
 
 For publication order, GitHub release steps, Claude Code/Codex setup, and
 launch links, see [PUBLICATION_GUIDE.md](PUBLICATION_GUIDE.md).
@@ -190,10 +228,10 @@ requirement mattered. In the default factory chain, this runs after
 
 ## Cross-platform
 
-Every brick's CI runs on **Ubuntu, Windows, and macOS x Python 3.10-3.12**. Green everywhere,
-proven publicly on every push — not "works on my machine."
+The baseplate runs on Python 3.10-3.12. The four numbered bricks run on Python
+3.11-3.12. Their CI matrices cover Ubuntu, Windows, and macOS.
 
 ## License
 
-Apache-2.0. Free and open source. Each brick carries its own LICENSE file.
+MIT OR Apache-2.0. Free and open source. Each brick carries both license texts.
 Commercial support and integration services available — see [SUPPORT.md](SUPPORT.md).

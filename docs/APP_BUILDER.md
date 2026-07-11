@@ -66,11 +66,11 @@ my-app/
 The starter is designed to make the next gates obvious.
 
 ```text
-PRD clarity      | ########## 100%
-Architecture     | #########  90%
-Runtime smoke    | #########  90%
-Design fit       | ########   80%
-PR evidence      | ########## 100%
+PRD clarity      | NOT RUN
+Architecture     | NOT RUN
+Runtime smoke    | NOT RUN
+Design fit       | NOT RUN
+PR evidence      | NOT RUN
 ```
 
 These bars are not measured gate results. They are a visual map of the
@@ -98,7 +98,7 @@ factory app stacks
 Current stacks:
 
 - `nextjs-fastapi-postgres`
-- `nextjs-api-sqlite`
+- `react-fastapi-sqlite`
 - `react-fastapi-postgres`
 
 ## Recommended Follow-Up

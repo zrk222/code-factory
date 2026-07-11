@@ -1,0 +1,28 @@
+name: Share your spec
+description: Contribute a workflow or app-shaped starting state to the verified gallery.
+title: "[spec] "
+labels: ["spec-gallery"]
+body:
+  - type: textarea
+    id: intent
+    attributes:
+      label: Workflow intent
+      description: What decision or workflow does this spec control?
+    validations:
+      required: true
+  - type: textarea
+    id: proof
+    attributes:
+      label: Proof commands
+      description: Include challenge, golden, smoke, or passport commands and scope limits.
+    validations:
+      required: true
+  - type: checkboxes
+    id: doctrine
+    attributes:
+      label: Evidence doctrine
+      options:
+        - label: Metrics come from generated evidence, not hand-copied prose.
+          required: true
+        - label: Public fixtures were not used as a tuning target.
+          required: true

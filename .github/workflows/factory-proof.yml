@@ -1,0 +1,82 @@
+name: reusable-factory-proof
+
+on:
+  workflow_call:
+    inputs:
+      feature:
+        required: true
+        type: string
+      challenge_glob:
+        required: false
+        type: string
+        default: .factory/challenges/*.json
+  workflow_dispatch:
+    inputs:
+      feature:
+        description: Feature id with existing receipts and challenge evidence
+        required: true
+        type: string
+      challenge_glob:
+        description: Challenge receipt glob
+        required: false
+        default: .factory/challenges/*.json
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  passport:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install the five-brick factory
+        run: >-
+          python -m pip install
+          "code-factory>=0.5.0"
+          "code-factory-1-spec>=0.5.0"
+          "code-factory-2-forge>=0.8.0"
+          "code-factory-3-compile>=0.5.0"
+          "code-factory-4-design>=0.5.0"
+      - run: factory doctor --strict
+      - name: Build trace and baseplate challenge
+        run: |
+          factory trace "${{ inputs.feature }}"
+          factory challenge "${{ inputs.feature }}" \
+            --trace ".factory/traces/${{ inputs.feature }}.trace.json" \
+            --out ".factory/challenges/factoryline.json"
+      - name: Build Factory Passport
+        shell: bash
+        run: |
+          shopt -s nullglob
+          challenges=( ${{ inputs.challenge_glob }} )
+          if (( ${#challenges[@]} == 0 )); then
+            echo "No challenge receipts matched ${{ inputs.challenge_glob }}" >&2
+            exit 1
+          fi
+          args=()
+          for receipt in "${challenges[@]}"; do args+=(--challenge "$receipt"); done
+          factory passport "${{ inputs.feature }}" \
+            --trace ".factory/traces/${{ inputs.feature }}.trace.json" \
+            "${args[@]}"
+          factory verify-passport ".factory/passports/${{ inputs.feature }}.passport.json"
+      - name: Publish Mermaid proof graph to job summary
+        run: |
+          echo '## Factory Passport' >> "$GITHUB_STEP_SUMMARY"
+          echo '```mermaid' >> "$GITHUB_STEP_SUMMARY"
+          cat ".factory/passports/${{ inputs.feature }}.passport.mmd" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: factory-passport-${{ inputs.feature }}
+          path: |
+            .factory/passports/
+            .factory/challenges/
+            .factory/traces/
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: .factory/passports/${{ inputs.feature }}.passport.json

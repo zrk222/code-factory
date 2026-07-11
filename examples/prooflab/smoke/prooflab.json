@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "name": "verified_without_failures",
+      "kind": "python",
+      "run": "from proof import verdict\nassert verdict(0) == 'VERIFIED'\n",
+      "must_fail_on_stub": true
+    }
+  ]
+}

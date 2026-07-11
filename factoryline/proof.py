@@ -122,6 +122,10 @@ def build_trace(root: Path, feature: str, *, out: Path | None = None) -> dict:
     root = Path(root)
     ensure_layout(root)
     rows = _load_latest_receipts(root, feature)
+    if not rows:
+        raise ValueError(
+            f"no receipts found for feature {feature!r}; a proof trace cannot certify an empty run"
+        )
     stages_for_rollup = []
     nodes = []
     previous_hash = "0" * 64
@@ -196,6 +200,10 @@ def verify_trace(trace_path: Path, *, root: Path | None = None) -> dict:
     trace = load_trace(trace_path)
     trace_root = Path(root or trace.get("root") or trace_path.parent)
     errors: list[str] = []
+    if trace.get("schema") != TRACE_SCHEMA:
+        errors.append(f"unsupported trace schema: {trace.get('schema')!r}")
+    if not trace.get("nodes"):
+        errors.append("trace contains no proof nodes")
     previous_hash = "0" * 64
     previous_order = -1
 

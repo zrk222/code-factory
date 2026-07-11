@@ -10,6 +10,7 @@
 from __future__ import annotations
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -31,28 +32,80 @@ from .proof import (
 from .optimizer import optimize_pr, pr_pack, write_policy
 from .app_builder import STACKS, app_from_prd, app_from_prompt
 from .coverage import requirement_coverage
+from .passport import build_passport, verify_passport
+from .protocol import compatibility
 
 
-def _doctor() -> int:
-    mods = detect()
-    print("factoryline doctor — Lego assembly status\n" + "=" * 44)
-    any_missing = False
-    for m in mods:
-        mark = "installed" if m.installed else "missing"
-        print(f"  [{mark:>9}]  {m.name:<10} ({m.cli}) - {m.role}")
-        if not m.installed:
-            any_missing = True
-    if any_missing:
-        print("\nTo add a missing piece (each is independent):")
-        for m in mods:
-            if not m.installed:
-                print(f"  pip install {MODULES[m.name]['pip']}")
+def _home(root: Path = Path("."), as_json: bool = False) -> int:
+    """Return compact, live state for agents without requiring command discovery."""
+    modules = detect()
+    factory_root = root / ".factory"
+    counts = {
+        "receipts": len(list((factory_root / "receipts").glob("*.json"))) if factory_root.exists() else 0,
+        "traces": len(list((factory_root / "traces").glob("*.json"))) if factory_root.exists() else 0,
+        "challenges": len(list((factory_root / "challenges").glob("*.json"))) if factory_root.exists() else 0,
+        "passports": len(list((factory_root / "passports").glob("*.json"))) if factory_root.exists() else 0,
+    }
+    installed = sum(module.installed for module in modules)
+    payload = {
+        "bin": str(Path(sys.argv[0]).resolve()),
+        "description": "Five-brick spec-to-proof software factory",
+        "root": str(root.resolve()),
+        "bricks": {"installed": installed, "total": len(modules)},
+        "proof": counts,
+        "next": [
+            "factory doctor --strict --json",
+            "factory plan",
+            "factory init ." if not factory_root.exists() else "factory evidence <feature>",
+        ],
+    }
+    if as_json:
+        print(json.dumps(payload, indent=2))
     else:
-        print("\nAll four pieces installed - full assembly line available.")
-        print("\nThe factory works with whatever is present; missing pieces are skipped.")
-        return 0
-    print("\nThe factory works with whatever is present; missing pieces are skipped.")
+        print(f"bin: {payload['bin']}")
+        print(f"description: {payload['description']}")
+        print(f"root: {payload['root']}")
+        print(f"bricks: {installed} of {len(modules)} installed")
+        print("proof:")
+        for name, count in counts.items():
+            print(f"  {name}: {count}")
+        print("next:")
+        for command in payload["next"]:
+            print(f"  - {command}")
     return 0
+
+
+def _doctor(strict: bool = False, as_json: bool = False) -> int:
+    mods = detect()
+    checks = []
+    for module in mods:
+        help_text = None
+        if module.installed:
+            proc = subprocess.run([module.cli, "--help"], capture_output=True, text=True, timeout=20)
+            help_text = proc.stdout + proc.stderr
+        checks.append(compatibility(module.name, MODULES[module.name], help_text))
+    if as_json:
+        print(json.dumps({
+            "ok": all(item.ok for item in checks),
+            "modules": [item.__dict__ | {"ok": item.ok} for item in checks],
+        }, indent=2))
+        return 0 if all(item.ok for item in checks) or not strict else 1
+
+    print("factoryline doctor - Lego assembly compatibility\n" + "=" * 48)
+    for module, check in zip(mods, checks):
+        mark = "compatible" if check.ok else "missing" if not check.installed else "incompatible"
+        version = check.version or "not installed"
+        print(f"  [{mark:>12}]  {module.name:<10} {version:<10} requires >= {check.minimum}")
+        if check.missing_commands:
+            print(f"                 missing commands: {', '.join(check.missing_commands)}")
+    failed = [item for item in checks if not item.ok]
+    if failed:
+        print("\nInstall or upgrade incompatible bricks:")
+        for item in failed:
+            print(f"  pip install --upgrade {item.package}>={item.minimum}")
+    else:
+        print("\nAll four bricks satisfy the versioned factory protocol.")
+    return 1 if strict and failed else 0
 
 
 def _plan() -> int:
@@ -72,7 +125,13 @@ def main(argv=None) -> int:
                                 description="Snap SpecLine, ForgeLine, HSF and Prestige into one assembly line.")
     sub = p.add_subparsers(dest="cmd")
 
-    sub.add_parser("doctor", help="show which modules are installed")
+    s = sub.add_parser("home", help="show compact live factory and proof state")
+    s.add_argument("--root", default=".")
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("doctor", help="show brick versions and command compatibility")
+    s.add_argument("--strict", action="store_true")
+    s.add_argument("--json", action="store_true")
     sub.add_parser("plan", help="print the assembly pipeline")
 
     s = sub.add_parser("init", help="create the shared factory layout")
@@ -128,6 +187,23 @@ def main(argv=None) -> int:
     s.add_argument("--out-dir", default="dist/attestations")
     s.add_argument("--json", action="store_true")
 
+    s = sub.add_parser("passport", help="build a Factory Passport and Mermaid proof graph")
+    s.add_argument("feature")
+    s.add_argument("--root", default=".")
+    s.add_argument("--trace", required=True)
+    s.add_argument("--challenge", action="append", default=[], required=True)
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("verify-passport", help="verify passport, trace, and challenge hashes")
+    s.add_argument("passport")
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("challenge", help="prove trace verification rejects integrity sabotage")
+    s.add_argument("feature")
+    s.add_argument("--trace", required=True)
+    s.add_argument("--root", default=".")
+    s.add_argument("--out", default=None)
+
     s = sub.add_parser("coverage", help="verify every requirement has a non-hollow test")
     s.add_argument("--root", default=".")
     s.add_argument("--json", action="store_true")
@@ -171,8 +247,12 @@ def main(argv=None) -> int:
 
     a = p.parse_args(argv)
 
+    if a.cmd is None:
+        return _home()
+    if a.cmd == "home":
+        return _home(Path(a.root), a.json)
     if a.cmd == "doctor":
-        return _doctor()
+        return _doctor(a.strict, a.json)
     if a.cmd == "plan":
         return _plan()
     if a.cmd == "init":
@@ -193,7 +273,11 @@ def main(argv=None) -> int:
         print(json.dumps(rollup_receipts(Path(a.root), a.feature), indent=2))
         return 0
     if a.cmd == "trace":
-        trace = build_trace(Path(a.root), a.feature, out=Path(a.out) if a.out else None)
+        try:
+            trace = build_trace(Path(a.root), a.feature, out=Path(a.out) if a.out else None)
+        except ValueError as exc:
+            print(f"trace failed: {exc}", file=sys.stderr)
+            return 1
         if a.json:
             print(json.dumps(trace, indent=2))
         else:
@@ -279,6 +363,33 @@ def main(argv=None) -> int:
             for name, path in outputs.items():
                 print(f"  {name}: {path}")
         return 0
+    if a.cmd == "passport":
+        try:
+            passport = build_passport(
+                Path(a.root), a.feature, Path(a.trace), [Path(path) for path in a.challenge]
+            )
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            print(f"passport failed: {exc}", file=sys.stderr)
+            return 1
+        if a.json:
+            print(json.dumps(passport, indent=2))
+        else:
+            print(f"Factory Passport: {'VERIFIED' if passport['verified'] else 'BLOCKED'}")
+            for name, path in passport["paths"].items():
+                print(f"  {name:<8}: {path}")
+        return 0 if passport["verified"] else 1
+    if a.cmd == "verify-passport":
+        result = verify_passport(Path(a.passport))
+        print(json.dumps(result, indent=2) if a.json else f"passport valid: {result['valid']}")
+        return 0 if result["valid"] else 1
+    if a.cmd == "challenge":
+        from .challenge import challenge_trace
+        payload = challenge_trace(Path(a.trace), root=Path(a.root))
+        out = Path(a.out) if a.out else Path(a.root) / ".factory" / "challenges" / f"{a.feature}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        print(json.dumps(payload | {"receipt_path": str(out)}, indent=2))
+        return 0 if payload["passed"] else 1
     if a.cmd == "coverage":
         result = requirement_coverage(Path(a.root))
         if a.json:

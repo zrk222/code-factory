@@ -31,6 +31,16 @@ jobs:
       - name: Check distributions
         run: python -m twine check dist/*
 
+      - name: Clean wheel smoke
+        run: |
+          python -m venv /tmp/factory-wheel
+          /tmp/factory-wheel/bin/python -m pip install dist/*.whl
+          /tmp/factory-wheel/bin/factory --help
+          if /tmp/factory-wheel/bin/factory trace empty --root /tmp/empty; then
+            echo "empty trace unexpectedly verified" >&2
+            exit 1
+          fi
+
       - name: Attach distributions to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

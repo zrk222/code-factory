@@ -22,3 +22,27 @@ jobs:
           python -m pip install -e . pytest
       - name: Test
         run: python -m pytest -q
+
+  five-brick-prooflab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Check out the four independent bricks
+        run: |
+          git clone --depth 1 https://github.com/zrk222/code-factory-1-spec ../code-factory-1-spec
+          git clone --depth 1 https://github.com/zrk222/code-factory-2-forge ../code-factory-2-forge
+          git clone --depth 1 https://github.com/zrk222/code-factory-3-compile ../code-factory-3-compile
+          git clone --depth 1 https://github.com/zrk222/code-factory-4-design ../code-factory-4-design
+      - name: Install source train
+        run: >-
+          python -m pip install -e .
+          -e ../code-factory-1-spec
+          -e ../code-factory-2-forge
+          -e ../code-factory-3-compile
+          -e ../code-factory-4-design
+      - run: factory doctor --strict
+      - name: Build and verify five-brick Factory Passport
+        run: python scripts/prooflab_e2e.py

@@ -1,0 +1,12 @@
+{
+  "schema": "factory.topology.v1",
+  "bricks": [
+    {"id": "specline", "package": "code-factory-1-spec", "minimum": "0.5.0", "challenge": "validator_mutation"},
+    {"id": "forgeline", "package": "code-factory-2-forge", "minimum": "0.8.0", "challenge": "verify_tests"},
+    {"id": "hsf", "package": "code-factory-3-compile", "minimum": "0.5.0", "challenge": "decision_counterfactual"},
+    {"id": "prestige", "package": "code-factory-4-design", "minimum": "0.5.0", "challenge": "design_counterfactual"}
+  ],
+  "baseplate": {"package": "code-factory", "minimum": "0.5.0", "challenge": "proof_integrity_counterfactual"},
+  "passport_requires": ["non_empty_trace", "valid_hash_chain", "one_or_more_challenges", "all_mutants_killed"],
+  "authority": "human_release_approval"
+}
