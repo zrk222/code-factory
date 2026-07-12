@@ -16,7 +16,7 @@ Architect verdict: PASS
 - [x] T4 | slice=factoryline | files=factoryline/cli.py,tests/test_enterprise_receipts.py | verify=`python -m pytest -q tests/test_enterprise_receipts.py` | Add enterprise receipt, policy, and revocation commands
 - [x] T5 | slice=docs | files=docs/ENTERPRISE_RECEIPTS.md | verify=`python -m pytest -q` | Document offline verification and scope boundaries
 - [x] T6 | slice=README.md | files=README.md | verify=`python -m pytest -q` | Add the enterprise foundation quickstart and scope note
-- [ ] T7 | slice=.github | files=.github/workflows/enterprise-receipts.yml,tests/test_enterprise_receipts.py | verify=`python -m pytest -q` | Prove offline signing, verification, mutation rejection, and no network dependency
+- [x] T7 | slice=.github | files=.github/workflows/enterprise-receipts.yml,tests/test_enterprise_receipts.py | verify=`python -m pytest -q` | Prove offline signing, verification, mutation rejection, and no network dependency
 
 ## Local evidence
 
@@ -24,3 +24,6 @@ Architect verdict: PASS
 - `python -m pytest -q`: 73 passed.
 - SSAT erosion check: 0 violations.
 - `python -m build` and `twine check` passed for the 0.10.0 wheel and sdist.
+- CI: [enterprise-receipts run 29190146673](https://github.com/zrk222/code-factory/actions/runs/29190146673) passed the dedicated optional-extra workflow.
+- CI: [main run 29190146684](https://github.com/zrk222/code-factory/actions/runs/29190146684) passed the nine-platform matrix and five-brick ProofLab after the enterprise extra was added to the matrix.
+- CI: [signed-receipts run 29190146682](https://github.com/zrk222/code-factory/actions/runs/29190146682) passed the existing OIDC signing and tamper challenge.
