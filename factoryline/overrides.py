@@ -6,6 +6,8 @@ from pathlib import Path
 import json
 import uuid
 
+from .contract import Receipt
+
 
 def record_override(root: Path, issue: str, *, reason: str, approved_by: str, expires: str | None = None) -> dict:
     if not reason.strip() or not approved_by.strip():
@@ -18,8 +20,39 @@ def record_override(root: Path, issue: str, *, reason: str, approved_by: str, ex
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{issue.replace(':', '-')}-{payload['id'][:12]}.json"
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    return payload | {"path": str(path)}
+    receipt = Receipt("factoryline", "override", issue.replace(":", "-"), True,
+                      outputs={"paths": [str(path)]},
+                      inputs={"issue": issue, "approved_by": approved_by}).write(root)
+    return payload | {"path": str(path), "receipt_path": str(receipt)}
 
 
 def ci_template(feature: str) -> str:
-    return f"""name: factory-proof\non: [pull_request]\npermissions:\n  contents: read\n  pull-requests: write\njobs:\n  proof:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-python@v6\n        with: {{ python-version: '3.12' }}\n      - run: pip install factoryline-code-factory code-factory-1-spec code-factory-2-forge code-factory-3-compile code-factory-4-design\n      - run: factory verify {feature} --root . --json > factory-verify.json || true\n      - run: gh pr comment ${{{{ github.event.pull_request.number }}}} --body-file factory-verify.json\n        env:\n          GH_TOKEN: ${{{{ github.token }}}}\n      - uses: actions/upload-artifact@v4\n        with: {{ name: factory-proof, path: factory-verify.json }}\n"""
+    return f"""name: factory-proof
+on: [pull_request]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install factoryline-code-factory code-factory-1-spec code-factory-2-forge code-factory-3-compile code-factory-4-design
+      - id: verify
+        continue-on-error: true
+        run: factory verify {feature} --root . --json > factory-verify.json
+      - if: always()
+        run: gh pr comment ${{{{ github.event.pull_request.number }}}} --body-file factory-verify.json
+        env:
+          GH_TOKEN: ${{{{ github.token }}}}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: factory-proof
+          path: factory-verify.json
+      - if: steps.verify.outcome == 'failure'
+        run: exit 1
+"""

@@ -32,7 +32,10 @@ def verify_feature(root: Path, feature: str) -> dict:
         next_action = f"factory assemble {feature} --root {Path(root)}"
     else:
         next_action = f"factory trace {feature} --root {Path(root)}"
-    shippable = bool(stages) and not earliest and all(item["status"] != "not_run" for item in modules if item["module"] != "hsf")
+    required = {"specline", "forgeline"}
+    if by_module["prestige"]:
+        required.add("prestige")
+    shippable = bool(stages) and not earliest and all(item["status"] == "passed" for item in modules if item["module"] in required)
     return {
         "schema": "factory.verify.v1", "feature": feature, "root": str(Path(root)),
         "shippable": shippable, "modules": modules, "rollup": rollup,
@@ -40,5 +43,6 @@ def verify_feature(root: Path, feature: str) -> dict:
         "scope_limits": [
             "Summarizes receipts already present under the factory root; it does not run missing gates.",
             "HSF is optional when the feature has no deterministic decision specification.",
+            "Prestige is required when the feature has design receipts; use project policy to require it for UI work.",
         ],
     }

@@ -20,6 +20,12 @@ from factoryline.passport import build_passport, verify_passport
 from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCHEMA
 
 
+def test_runtime_version_matches_the_release():
+    import factoryline
+
+    assert factoryline.__version__ == "0.8.1"
+
+
 def test_layout_created(tmp_path):
     ensure_layout(tmp_path)
     for sub in LAYOUT.values():
@@ -108,8 +114,19 @@ def test_override_is_append_only_owned_receipt(tmp_path):
 
     payload = record_override(tmp_path, "forgeline:verify-tests", reason="Vendor test harness unavailable", approved_by="platform-team", expires="2026-12-01")
     assert Path(payload["path"]).exists()
+    assert Path(payload["receipt_path"]).exists()
     assert payload["approved_by"] == "platform-team"
     assert payload["scope_limits"]
+
+
+def test_ci_template_comments_without_masking_failed_verification():
+    from factoryline.overrides import ci_template
+
+    workflow = ci_template("checkout")
+    assert "continue-on-error: true" in workflow
+    assert "if: always()" in workflow
+    assert "if: steps.verify.outcome == 'failure'" in workflow
+    assert "|| true" not in workflow
 
 
 def test_dry_run_assemble_plans_all_stages(tmp_path):
