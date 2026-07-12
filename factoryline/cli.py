@@ -165,6 +165,20 @@ def main(argv=None) -> int:
     s.add_argument("--expires", default=None)
     s.add_argument("--json", action="store_true")
 
+    s = sub.add_parser("receipt", help="sign or verify factory receipts with Sigstore identity")
+    receipt_sub = s.add_subparsers(required=True, dest="receipt_cmd")
+    receipt_sign = receipt_sub.add_parser("sign", help="keylessly sign a receipt with Sigstore")
+    receipt_sign.add_argument("path")
+    receipt_sign.add_argument("--overwrite", action="store_true")
+    receipt_sign.add_argument("--timeout", type=int, default=300)
+    receipt_verify = receipt_sub.add_parser("verify", help="verify receipt bytes and expected OIDC identity")
+    receipt_verify.add_argument("path")
+    receipt_verify.add_argument("--cert-identity", required=True)
+    receipt_verify.add_argument("--cert-oidc-issuer", required=True)
+    receipt_verify.add_argument("--timeout", type=int, default=300)
+    receipt_status = receipt_sub.add_parser("status", help="report signature presence or UNSIGNED without claiming verification")
+    receipt_status.add_argument("path")
+
     s = sub.add_parser("ci", help="write an opt-in GitHub PR-comment workflow")
     ci_sub = s.add_subparsers(required=True, dest="ci_cmd")
     ci_init = ci_sub.add_parser("init")
@@ -413,6 +427,34 @@ def main(argv=None) -> int:
         payload = record_override(Path(a.root), a.issue, reason=a.reason, approved_by=a.approved_by, expires=a.expires)
         print(json.dumps(payload, indent=2) if a.json else f"override receipt written: {payload['path']}")
         return 0
+    if a.cmd == "receipt":
+        from .signed_receipts import (
+            SignedReceiptError,
+            receipt_status,
+            sign_receipt,
+            verify_receipt,
+        )
+        try:
+            if a.receipt_cmd == "sign":
+                result = sign_receipt(Path(a.path), timeout=a.timeout, overwrite=a.overwrite)
+            elif a.receipt_cmd == "verify":
+                result = verify_receipt(
+                    Path(a.path),
+                    cert_identity=a.cert_identity,
+                    cert_oidc_issuer=a.cert_oidc_issuer,
+                    timeout=a.timeout,
+                )
+            else:
+                result = receipt_status(Path(a.path))
+        except SignedReceiptError as exc:
+            print(json.dumps({
+                "schema": "factory.sigstore.result.v1",
+                "verdict": "ERROR",
+                "error": {"code": exc.code, "message": exc.message},
+            }, indent=2))
+            return 1
+        print(json.dumps(result.to_dict(), indent=2))
+        return 0 if result.verdict != "UNSIGNED" else 1
     if a.cmd == "ci":
         from .overrides import ci_template
         path = Path(a.out)

@@ -1,0 +1,48 @@
+name: signed-receipts
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  sign-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Create a real factory receipt
+        run: |
+          python -m pip install -e ".[sigstore]"
+          python -c "from pathlib import Path; from factoryline.contract import Receipt; p=Receipt('factoryline','signed-receipts','ci',True).write(Path('.')); Path('ci-receipt.json').write_bytes(p.read_bytes())"
+      - name: Sign and verify with the GitHub OIDC identity
+        uses: sigstore/gh-action-sigstore-python@v3.2.0
+        with:
+          inputs: ci-receipt.json
+          verify: true
+          verify-cert-identity: https://github.com/zrk222/code-factory/.github/workflows/signed-receipts.yml@refs/heads/main
+          verify-oidc-issuer: https://token.actions.githubusercontent.com
+      - name: Prove changed receipt bytes are rejected
+        run: |
+          cp ci-receipt.json ci-receipt.original.json
+          python -c "from pathlib import Path; p=Path('ci-receipt.json'); p.write_bytes(p.read_bytes() + b' ')"
+          if sigstore verify identity ci-receipt.json --cert-identity "https://github.com/zrk222/code-factory/.github/workflows/signed-receipts.yml@refs/heads/main" --cert-oidc-issuer "https://token.actions.githubusercontent.com"; then
+            echo "tampered receipt unexpectedly verified" >&2
+            exit 1
+          fi
+          mv ci-receipt.original.json ci-receipt.json
+      - name: Preserve public verification material
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-factory-receipt
+          path: |
+            ci-receipt.json
+            ci-receipt.json.sigstore.json

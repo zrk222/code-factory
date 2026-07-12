@@ -102,7 +102,25 @@ brick maps to codification, compression, injection, and validation.
 ## Quick start
 
 ```bash
-pip install factoryline-code-factory==0.8.1 code-factory-1-spec==0.5.0 code-factory-2-forge==0.9.1 code-factory-3-compile==0.5.1 code-factory-4-design==0.7.1
+pip install factoryline-code-factory==0.9.0 code-factory-1-spec==0.5.0 code-factory-2-forge==0.9.1 code-factory-3-compile==0.5.1 code-factory-4-design==0.7.1
+```
+
+## Identity-signed receipts
+
+Authenticate any existing factory receipt with Sigstore's keyless OIDC flow:
+
+```bash
+pip install "factoryline-code-factory[sigstore]"
+factory receipt sign .factory/receipts/<receipt>.json
+factory receipt verify .factory/receipts/<receipt>.json \
+  --cert-identity "https://github.com/OWNER/REPO/.github/workflows/WORKFLOW.yml@refs/heads/main" \
+  --cert-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+Verification binds the exact receipt bytes to the expected signer identity and
+issuer. Unsigned receipts remain readable but report `UNSIGNED`, never
+`VERIFIED`. See [Signed Factory Receipts](docs/SIGNED_RECEIPTS.md) for the CI
+workflow, expected JSON, failure behavior, and honest scope boundary.
 
 ## Existing Repositories And PRs
 
