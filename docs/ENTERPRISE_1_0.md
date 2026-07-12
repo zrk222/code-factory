@@ -45,5 +45,19 @@ flowchart TB
 5. OSCAL and versioned NIST SSDF, OWASP ASVS, SOC 2, ISO 27001, and customer packs.
 6. Merkle selective disclosure, BBS credentials, and a bounded zkVM policy proof pilot.
 
-None of these phases is represented as shipped by this document. Public claims
-must come from released commands, receipts, CI runs, or generated artifacts.
+## Current implementation status
+
+The following local foundations are now shipped in FactoryLine 0.10:
+
+| Plane | Shipped foundation | Not claimed yet |
+| --- | --- | --- |
+| Enterprise trust | Receipt v2, DSSE/Ed25519, identity metadata, policy binding, revocation, offline verification | Sigstore-backed enterprise key lifecycle or centralized trust service |
+| Control | Tenant-scoped SQLite evidence, deny-by-default roles, approvals, audit chain, REST adapter, verified-claim normalizers | Hosted availability, SSO/SCIM, provider signature verification, SCM apps, external KMS |
+| Assurance | Evidence graph, risk DAG, process-boundary runner, SBOM/VEX-shaped artifacts, policy mutation, digest-only challenge manifest | Kernel/container isolation, complete SBOM discovery, remote private challenge service |
+| Operations | Measured spans, canary/rollback decisions, vulnerability receipts, metadata-only connector envelopes | OpenTelemetry export, SIEM/ticket delivery, ticket lifecycle automation |
+| Compliance | Versioned baseline packs and OSCAL-shaped assessment exports | Complete standard coverage, auditor validation, certification |
+| Privacy | Merkle selective disclosure and backend status guards | BBS credentials and zkVM proofs until reviewed backends are installed and integrated |
+
+Public claims must come from released commands, receipts, CI runs, or generated
+artifacts. A local foundation is not a hosted enterprise service, and a
+baseline control mapping is not a compliance certification.
