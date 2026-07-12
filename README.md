@@ -122,6 +122,24 @@ issuer. Unsigned receipts remain readable but report `UNSIGNED`, never
 `VERIFIED`. See [Signed Factory Receipts](docs/SIGNED_RECEIPTS.md) for the CI
 workflow, expected JSON, failure behavior, and honest scope boundary.
 
+## Local control-plane foundation
+
+The control-plane surface adds tenant-scoped evidence, explicit role
+authorization, independent human approvals, and a hash-linked audit stream:
+
+```powershell
+factory control init --db .factory/control.sqlite3
+factory control evidence-put receipts/build.json --db .factory/control.sqlite3 `
+  --tenant acme --subject ci-runner --roles operator
+factory control audit-verify --db .factory/control.sqlite3 `
+  --tenant acme --subject auditor --roles viewer
+```
+
+See [docs/CONTROL_PLANE.md](docs/CONTROL_PLANE.md) for the approval workflow
+and exact boundary. This is a deterministic local foundation for future hosted
+SCM, SSO/SCIM, and evidence-store adapters; it does not claim to be a hosted
+multi-tenant service.
+
 ## Enterprise Receipt v2 Foundation
 
 The optional enterprise extra adds an offline-verifiable DSSE envelope with an
@@ -142,9 +160,10 @@ factory enterprise verify receipt.dsse.json --trust-root .factory/keys/trust-roo
 Verification is local and fail-closed. It checks the DSSE signature, exact
 payload digest, trusted key id, identity, issuer, policy digest, and supplied
 revocation list without contacting a service. v1 receipts remain readable but
-return `LEGACY_UNVERIFIED` in the enterprise verifier. The control plane,
-OSCAL packs, BBS credentials, and zkVM proofs remain future roadmap work; see
-[Enterprise Receipt v2](docs/ENTERPRISE_RECEIPTS.md).
+return `LEGACY_UNVERIFIED` in the enterprise verifier. The local control-plane
+foundation is documented above; hosted SCM/SSO adapters, OSCAL packs, BBS
+credentials, and zkVM proofs remain future roadmap work; see [Enterprise
+Receipt v2](docs/ENTERPRISE_RECEIPTS.md).
 
 ## Existing Repositories And PRs
 

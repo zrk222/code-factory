@@ -94,7 +94,9 @@ signature and never prints private key material.
 
 ## Scope
 
-This release delivers the Receipt v2 foundation only. It does not yet ship the
-multi-tenant API, hosted evidence store, SSO/SCIM, SCM apps, isolated runners,
-SBOM/VEX, OpenTelemetry connectors, OSCAL packs, BBS credentials, or zkVM
-proofs. Those remain separate phases in [ENTERPRISE_1_0.md](ENTERPRISE_1_0.md).
+This release delivers the Receipt v2 foundation and a local control-plane
+boundary. It does not yet ship a hosted multi-tenant API, SSO/SCIM, SCM apps,
+isolated runners, SBOM/VEX, OpenTelemetry connectors, OSCAL packs, BBS
+credentials, or zkVM proofs. The local evidence and approval contract is in
+[CONTROL_PLANE.md](CONTROL_PLANE.md); the remaining phases are tracked in
+[ENTERPRISE_1_0.md](ENTERPRISE_1_0.md).

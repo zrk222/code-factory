@@ -213,6 +213,76 @@ def main(argv=None) -> int:
     revocations.add_argument("--issuer", required=True)
     revocations.add_argument("--out", required=True)
 
+    s = sub.add_parser("control", help="manage local tenant-scoped evidence and approvals")
+    control_sub = s.add_subparsers(required=True, dest="control_cmd")
+    control_init = control_sub.add_parser("init", help="create a local evidence database")
+    control_init.add_argument("--db", required=True)
+    control_serve = control_sub.add_parser("serve", help="serve the local REST adapter for integration testing")
+    control_serve.add_argument("--db", required=True)
+    control_serve.add_argument("--host", default="127.0.0.1")
+    control_serve.add_argument("--port", type=int, default=8765)
+
+    def add_control_identity(parser, *, default_role: str):
+        parser.add_argument("--db", required=True)
+        parser.add_argument("--tenant", required=True)
+        parser.add_argument("--subject", required=True)
+        parser.add_argument("--roles", default=default_role, help="comma-separated local roles")
+
+    evidence_put = control_sub.add_parser("evidence-put", help="store immutable tenant-scoped evidence")
+    evidence_put.add_argument("payload")
+    evidence_put.add_argument("--evidence-id")
+    add_control_identity(evidence_put, default_role="operator")
+    evidence_get = control_sub.add_parser("evidence-get", help="read one evidence record")
+    evidence_get.add_argument("evidence_id")
+    add_control_identity(evidence_get, default_role="viewer")
+    evidence_list = control_sub.add_parser("evidence-list", help="list evidence for one tenant")
+    add_control_identity(evidence_list, default_role="viewer")
+    approval_request = control_sub.add_parser("approval-request", help="request independent human approval")
+    approval_request.add_argument("evidence_id")
+    approval_request.add_argument("--reason", required=True)
+    add_control_identity(approval_request, default_role="operator")
+    approval_decide = control_sub.add_parser("approval-decide", help="approve or reject a pending request")
+    approval_decide.add_argument("approval_id")
+    approval_decide.add_argument("--decision", required=True, choices=["approved", "rejected"])
+    approval_decide.add_argument("--reason", required=True)
+    add_control_identity(approval_decide, default_role="approver")
+    audit_verify = control_sub.add_parser("audit-verify", help="verify the tenant audit hash chain")
+    add_control_identity(audit_verify, default_role="viewer")
+
+    s = sub.add_parser("assurance", help="produce deterministic assurance artifacts")
+    assurance_sub = s.add_subparsers(required=True, dest="assurance_cmd")
+    graph = assurance_sub.add_parser("graph", help="build a tenant-scoped evidence graph")
+    graph.add_argument("records")
+    graph.add_argument("--tenant", required=True)
+    graph.add_argument("--out", required=True)
+    sbom = assurance_sub.add_parser("sbom", help="build a sorted CycloneDX-shaped SBOM")
+    sbom.add_argument("components")
+    sbom.add_argument("--out", required=True)
+    vex = assurance_sub.add_parser("vex", help="build a validated VEX artifact")
+    vex.add_argument("entries")
+    vex.add_argument("--out", required=True)
+    mutation = assurance_sub.add_parser("policy-mutate", help="emit explicit policy mutations for a challenge run")
+    mutation.add_argument("policy")
+    mutation.add_argument("--out", required=True)
+
+    s = sub.add_parser("compliance", help="export versioned non-certifying compliance evidence")
+    compliance_sub = s.add_subparsers(required=True, dest="compliance_cmd")
+    compliance_sub.add_parser("packs", help="list available control packs")
+    compliance_export = compliance_sub.add_parser("export", help="write an OSCAL-shaped assessment")
+    compliance_export.add_argument("pack")
+    compliance_export.add_argument("evidence")
+    compliance_export.add_argument("--tenant", required=True)
+    compliance_export.add_argument("--out", required=True)
+    compliance_export.add_argument("--controls", help="reviewed customer control JSON array")
+
+    s = sub.add_parser("privacy", help="create selective-disclosure proofs and report optional backend status")
+    privacy_sub = s.add_subparsers(required=True, dest="privacy_cmd")
+    privacy_status = privacy_sub.add_parser("status", help="report BBS and zkVM backend availability")
+    privacy_merkle = privacy_sub.add_parser("merkle", help="write a one-leaf Merkle disclosure")
+    privacy_merkle.add_argument("leaves")
+    privacy_merkle.add_argument("--disclose", required=True)
+    privacy_merkle.add_argument("--out", required=True)
+
     s = sub.add_parser("ci", help="write an opt-in GitHub PR-comment workflow")
     ci_sub = s.add_subparsers(required=True, dest="ci_cmd")
     ci_init = ci_sub.add_parser("init")
@@ -551,6 +621,107 @@ def main(argv=None) -> int:
             print(json.dumps({"schema": "factory.enterprise.result.v1", "verdict": "ERROR", "error": error}, indent=2))
             return 1
         print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    if a.cmd == "control":
+        from .control_plane import ControlPlaneError, EvidenceStore, principal_from_args
+        try:
+            if a.control_cmd == "init":
+                EvidenceStore(Path(a.db))
+                result = {"schema": "factory.control-plane.v1", "verdict": "READY", "db": str(Path(a.db).resolve())}
+            elif a.control_cmd == "serve":
+                from wsgiref.simple_server import make_server
+                from .control_api import create_app
+                print(f"factory control API listening on http://{a.host}:{a.port}")
+                make_server(a.host, a.port, create_app(Path(a.db))).serve_forever()
+                return 0
+            else:
+                store = EvidenceStore(Path(a.db))
+                principal = principal_from_args(a.subject, a.tenant, a.roles.split(","))
+                if a.control_cmd == "evidence-put":
+                    payload = json.loads(Path(a.payload).read_text(encoding="utf-8"))
+                    result = store.put(principal, payload, evidence_id=a.evidence_id)
+                elif a.control_cmd == "evidence-get":
+                    result = store.get(principal, a.tenant, a.evidence_id)
+                elif a.control_cmd == "evidence-list":
+                    result = {"schema": "factory.evidence.list.v1", "tenant_id": a.tenant, "records": store.list(principal, a.tenant)}
+                elif a.control_cmd == "approval-request":
+                    result = store.request_approval(principal, a.tenant, a.evidence_id, a.reason)
+                elif a.control_cmd == "approval-decide":
+                    result = store.decide_approval(principal, a.tenant, a.approval_id, a.decision, a.reason)
+                else:
+                    result = store.verify_audit(principal, a.tenant)
+        except (ControlPlaneError, json.JSONDecodeError, OSError) as exc:
+            error = {"code": getattr(exc, "code", "E_INPUT"), "message": getattr(exc, "message", str(exc))}
+            print(json.dumps({"schema": "factory.control-plane.result.v1", "verdict": "ERROR", "error": error}, indent=2))
+            return 1
+        print(json.dumps(result, indent=2, sort_keys=True))
+        if a.control_cmd == "audit-verify":
+            return 0 if result["valid"] else 1
+        return 0
+    if a.cmd == "assurance":
+        from .assurance import build_cyclonedx_sbom, build_evidence_graph, build_vex, policy_mutations
+        try:
+            if a.assurance_cmd == "graph":
+                records = json.loads(Path(a.records).read_text(encoding="utf-8"))
+                result = build_evidence_graph(records, tenant_id=a.tenant)
+            elif a.assurance_cmd == "sbom":
+                components = json.loads(Path(a.components).read_text(encoding="utf-8"))
+                result = build_cyclonedx_sbom(components)
+            elif a.assurance_cmd == "vex":
+                entries = json.loads(Path(a.entries).read_text(encoding="utf-8"))
+                result = build_vex(entries)
+            else:
+                policy_payload = json.loads(Path(a.policy).read_text(encoding="utf-8"))
+                result = {"schema": "factory.assurance.policy-mutations.v1", "mutations": policy_mutations(policy_payload)}
+            Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+            Path(a.out).write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"schema": "factory.assurance.result.v1", "verdict": "ERROR", "error": {"code": "E_INPUT", "message": str(exc)}}, indent=2))
+            return 1
+        except Exception as exc:
+            error = {"code": getattr(exc, "code", "E_ASSURANCE"), "message": getattr(exc, "message", str(exc))}
+            print(json.dumps({"schema": "factory.assurance.result.v1", "verdict": "ERROR", "error": error}, indent=2))
+            return 1
+        print(json.dumps({"schema": "factory.assurance.result.v1", "verdict": "WRITTEN", "path": str(Path(a.out).resolve())}, indent=2))
+        return 0
+    if a.cmd == "compliance":
+        from .compliance import CONTROL_PACKS, build_oscal_assessment
+        try:
+            if a.compliance_cmd == "packs":
+                print(json.dumps({"schema": "factory.compliance.packs.v1", "packs": sorted(CONTROL_PACKS)}, indent=2))
+                return 0
+            evidence = json.loads(Path(a.evidence).read_text(encoding="utf-8"))
+            controls = json.loads(Path(a.controls).read_text(encoding="utf-8")) if a.controls else None
+            result = build_oscal_assessment(a.pack, tenant_id=a.tenant, evidence=evidence, custom_controls=controls)
+            Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+            Path(a.out).write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"schema": "factory.compliance.result.v1", "verdict": "ERROR", "error": {"code": "E_INPUT", "message": str(exc)}}, indent=2))
+            return 1
+        except Exception as exc:
+            error = {"code": getattr(exc, "code", "E_COMPLIANCE"), "message": getattr(exc, "message", str(exc))}
+            print(json.dumps({"schema": "factory.compliance.result.v1", "verdict": "ERROR", "error": error}, indent=2))
+            return 1
+        print(json.dumps({"schema": "factory.compliance.result.v1", "verdict": "WRITTEN", "path": str(Path(a.out).resolve())}, indent=2))
+        return 0
+    if a.cmd == "privacy":
+        from .privacy import bbs_status, merkle_disclosure, zkvm_pilot_status
+        try:
+            if a.privacy_cmd == "status":
+                print(json.dumps({"schema": "factory.privacy.status.v1", "bbs": bbs_status(), "zkvm": zkvm_pilot_status()}, indent=2))
+                return 0
+            leaves = json.loads(Path(a.leaves).read_text(encoding="utf-8"))
+            result = merkle_disclosure(leaves, a.disclose)
+            Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+            Path(a.out).write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"schema": "factory.privacy.result.v1", "verdict": "ERROR", "error": {"code": "E_INPUT", "message": str(exc)}}, indent=2))
+            return 1
+        except Exception as exc:
+            error = {"code": getattr(exc, "code", "E_PRIVACY"), "message": getattr(exc, "message", str(exc))}
+            print(json.dumps({"schema": "factory.privacy.result.v1", "verdict": "ERROR", "error": error}, indent=2))
+            return 1
+        print(json.dumps({"schema": "factory.privacy.result.v1", "verdict": "WRITTEN", "path": str(Path(a.out).resolve())}, indent=2))
         return 0
     if a.cmd == "ci":
         from .overrides import ci_template
