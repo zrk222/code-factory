@@ -47,7 +47,7 @@ flowchart TB
 
 ## Current implementation status
 
-The following local foundations are now shipped in FactoryLine 0.10.1:
+The following local foundations are now shipped in FactoryLine 0.10.2:
 
 | Plane | Shipped foundation | Not claimed yet |
 | --- | --- | --- |

@@ -188,7 +188,10 @@ def run_constrained(
         raise AssuranceError("E_RUNNER_CWD", "runner cwd must remain inside root") from exc
     if not work_path.is_dir():
         raise AssuranceError("E_RUNNER_CWD", "runner cwd does not exist")
-    env = {key: os.environ[key] for key in env_keys if key in os.environ}
+    # Keep only the runtime variables required to launch a process on the
+    # host. Application secrets and user variables remain opt-in.
+    runtime_keys = {"PATH", "PATHEXT", "SystemRoot", "WINDIR", "TEMP", "TMP"}
+    env = {key: os.environ[key] for key in runtime_keys.union(set(env_keys)) if key in os.environ}
     env["PYTHONIOENCODING"] = "utf-8"
     try:
         completed = subprocess.run(
@@ -321,4 +324,3 @@ def private_challenge_manifest(name: str, challenges: Iterable[dict[str, Any]], 
         "challenge_sha256": digest,
         "disclosure": "digest-and-count-only",
     }
-
