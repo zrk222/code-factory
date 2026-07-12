@@ -179,6 +179,40 @@ def main(argv=None) -> int:
     receipt_status = receipt_sub.add_parser("status", help="report signature presence or UNSIGNED without claiming verification")
     receipt_status.add_argument("path")
 
+    s = sub.add_parser("enterprise", help="create and verify offline Receipt v2 evidence")
+    enterprise_sub = s.add_subparsers(required=True, dest="enterprise_cmd")
+    keygen = enterprise_sub.add_parser("keygen", help="generate Ed25519 key material and a local trust root")
+    keygen.add_argument("--out-dir", required=True)
+    keygen.add_argument("--keyid", required=True)
+    keygen.add_argument("--identity", required=True)
+    keygen.add_argument("--issuer", required=True)
+    seal = enterprise_sub.add_parser("receipt-seal", help="sign a Receipt v2 payload into a DSSE envelope")
+    seal.add_argument("payload")
+    seal.add_argument("--private-key", required=True)
+    seal.add_argument("--keyid", required=True)
+    seal.add_argument("--identity", required=True)
+    seal.add_argument("--issuer", required=True)
+    seal.add_argument("--out", required=True)
+    verify = enterprise_sub.add_parser("verify", help="verify Receipt v2, policy, and revocation evidence offline")
+    verify.add_argument("envelope")
+    verify.add_argument("--trust-root", required=True)
+    verify.add_argument("--policy-bundle")
+    verify.add_argument("--revocations")
+    policy = enterprise_sub.add_parser("policy-sign", help="sign a policy JSON document into a policy bundle")
+    policy.add_argument("policy")
+    policy.add_argument("--private-key", required=True)
+    policy.add_argument("--keyid", required=True)
+    policy.add_argument("--identity", required=True)
+    policy.add_argument("--issuer", required=True)
+    policy.add_argument("--out", required=True)
+    revocations = enterprise_sub.add_parser("revocations-sign", help="sign a revocation entries JSON array")
+    revocations.add_argument("entries")
+    revocations.add_argument("--private-key", required=True)
+    revocations.add_argument("--keyid", required=True)
+    revocations.add_argument("--identity", required=True)
+    revocations.add_argument("--issuer", required=True)
+    revocations.add_argument("--out", required=True)
+
     s = sub.add_parser("ci", help="write an opt-in GitHub PR-comment workflow")
     ci_sub = s.add_subparsers(required=True, dest="ci_cmd")
     ci_init = ci_sub.add_parser("init")
@@ -455,6 +489,69 @@ def main(argv=None) -> int:
             return 1
         print(json.dumps(result.to_dict(), indent=2))
         return 0 if result.verdict != "UNSIGNED" else 1
+    if a.cmd == "enterprise":
+        from .enterprise_receipts import (
+            EnterpriseReceiptError,
+            generate_key_material,
+            seal_receipt_v2,
+            sign_policy_bundle,
+            sign_revocations,
+            verify_receipt_v2,
+        )
+        try:
+            if a.enterprise_cmd == "keygen":
+                result = generate_key_material(
+                    out_dir=Path(a.out_dir), keyid=a.keyid, identity=a.identity, issuer=a.issuer
+                )
+            elif a.enterprise_cmd == "receipt-seal":
+                payload = json.loads(Path(a.payload).read_text(encoding="utf-8"))
+                result = seal_receipt_v2(
+                    payload,
+                    private_key_path=Path(a.private_key),
+                    keyid=a.keyid,
+                    identity=a.identity,
+                    issuer=a.issuer,
+                    out=Path(a.out),
+                )
+                result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": result["payloadType"]}
+            elif a.enterprise_cmd == "verify":
+                result = verify_receipt_v2(
+                    Path(a.envelope),
+                    trust_root_path=Path(a.trust_root),
+                    policy_bundle_path=Path(a.policy_bundle) if a.policy_bundle else None,
+                    revocations_path=Path(a.revocations) if a.revocations else None,
+                )
+            elif a.enterprise_cmd == "policy-sign":
+                policy_payload = json.loads(Path(a.policy).read_text(encoding="utf-8"))
+                signed = sign_policy_bundle(
+                    policy_payload,
+                    private_key_path=Path(a.private_key),
+                    keyid=a.keyid,
+                    identity=a.identity,
+                    issuer=a.issuer,
+                    out=Path(a.out),
+                )
+                result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
+            else:
+                entries = json.loads(Path(a.entries).read_text(encoding="utf-8"))
+                signed = sign_revocations(
+                    entries,
+                    private_key_path=Path(a.private_key),
+                    keyid=a.keyid,
+                    identity=a.identity,
+                    issuer=a.issuer,
+                    out=Path(a.out),
+                )
+                result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
+        except (EnterpriseReceiptError, json.JSONDecodeError, OSError) as exc:
+            if isinstance(exc, EnterpriseReceiptError):
+                error = {"code": exc.code, "message": exc.message}
+            else:
+                error = {"code": "E_INPUT", "message": str(exc)}
+            print(json.dumps({"schema": "factory.enterprise.result.v1", "verdict": "ERROR", "error": error}, indent=2))
+            return 1
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
     if a.cmd == "ci":
         from .overrides import ci_template
         path = Path(a.out)

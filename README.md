@@ -102,7 +102,7 @@ brick maps to codification, compression, injection, and validation.
 ## Quick start
 
 ```bash
-pip install factoryline-code-factory==0.9.0 code-factory-1-spec==0.5.0 code-factory-2-forge==0.9.1 code-factory-3-compile==0.5.1 code-factory-4-design==0.7.1
+pip install factoryline-code-factory==0.10.0 code-factory-1-spec==0.5.0 code-factory-2-forge==0.9.1 code-factory-3-compile==0.5.1 code-factory-4-design==0.7.1
 ```
 
 ## Identity-signed receipts
@@ -121,6 +121,30 @@ Verification binds the exact receipt bytes to the expected signer identity and
 issuer. Unsigned receipts remain readable but report `UNSIGNED`, never
 `VERIFIED`. See [Signed Factory Receipts](docs/SIGNED_RECEIPTS.md) for the CI
 workflow, expected JSON, failure behavior, and honest scope boundary.
+
+## Enterprise Receipt v2 Foundation
+
+The optional enterprise extra adds an offline-verifiable DSSE envelope with an
+Ed25519 signer identity, signed policy bundles, and signed revocation lists:
+
+```bash
+pip install "factoryline-code-factory[enterprise]"
+factory enterprise keygen --out-dir .factory/keys --keyid ci-main \
+  --identity "https://github.com/OWNER/REPO/.github/workflows/proof.yml@refs/heads/main" \
+  --issuer "https://token.actions.githubusercontent.com"
+factory enterprise receipt-seal receipt-v2.json \
+  --private-key .factory/keys/ci-main.private.pem --keyid ci-main \
+  --identity "https://github.com/OWNER/REPO/.github/workflows/proof.yml@refs/heads/main" \
+  --issuer "https://token.actions.githubusercontent.com" --out receipt.dsse.json
+factory enterprise verify receipt.dsse.json --trust-root .factory/keys/trust-root.json
+```
+
+Verification is local and fail-closed. It checks the DSSE signature, exact
+payload digest, trusted key id, identity, issuer, policy digest, and supplied
+revocation list without contacting a service. v1 receipts remain readable but
+return `LEGACY_UNVERIFIED` in the enterprise verifier. The control plane,
+OSCAL packs, BBS credentials, and zkVM proofs remain future roadmap work; see
+[Enterprise Receipt v2](docs/ENTERPRISE_RECEIPTS.md).
 
 ## Existing Repositories And PRs
 

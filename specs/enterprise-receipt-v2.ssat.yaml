@@ -1,0 +1,37 @@
+name: enterprise-receipt-v2
+modules:
+  - name: enterprise_receipts
+    path: factoryline/enterprise_receipts.py
+    imports:
+      - json
+      - hashlib
+      - cryptography
+    functions:
+      - name: dsse_pae
+        args: ["payload_type: str", "payload: bytes"]
+        returns: "bytes"
+        doc: "Return stable DSSEv1 pre-authentication bytes."
+      - name: seal_receipt_v2
+        args: ["payload: dict", "private_key_path: Path", "keyid: str", "identity: str", "issuer: str", "out: Path"]
+        returns: "dict"
+        doc: "Write an Ed25519-signed Receipt v2 DSSE envelope."
+      - name: verify_receipt_v2
+        args: ["path: Path", "trust_root_path: Path", "policy_bundle_path: Path | None", "revocations_path: Path | None"]
+        returns: "dict"
+        doc: "Return VERIFIED only after offline signature, identity, policy, and revocation checks."
+      - name: sign_policy_bundle
+        args: ["policy: dict", "private_key_path: Path", "keyid: str", "identity: str", "issuer: str", "out: Path"]
+        returns: "dict"
+        doc: "Write a signed policy bundle bound to canonical policy bytes."
+      - name: sign_revocations
+        args: ["entries: list[dict]", "private_key_path: Path", "keyid: str", "identity: str", "issuer: str", "out: Path"]
+        returns: "dict"
+        doc: "Write a signed revocation list."
+dependencies: []
+invariants:
+  - name: no_dynamic_execution
+    forbid_pattern: "\\b(eval|exec)\\s*\\("
+  - name: no_network_clients
+    forbid_pattern: "\\b(requests|urllib3|httpx)\\b"
+  - name: no_private_key_output
+    forbid_pattern: "BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY"

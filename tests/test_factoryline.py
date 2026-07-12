@@ -23,7 +23,7 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.9.0"
+    assert factoryline.__version__ == "0.10.0"
 
 
 def test_layout_created(tmp_path):
@@ -58,6 +58,7 @@ def test_receipt_roundtrip(tmp_path):
     assert data["module"] == "specline" and data["ok"] is True
     assert data["meter"]["wall_ms"] == 12
     assert data["schema"] == RECEIPT_SCHEMA
+    assert data["tenant_id"] == "local"
     assert data["run_id"]
 
 

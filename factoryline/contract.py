@@ -110,6 +110,7 @@ class Receipt:
     stage: str
     feature: str
     ok: bool
+    tenant_id: str = "local"
     schema: str = RECEIPT_SCHEMA
     producer_version: str | None = None
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
@@ -148,6 +149,7 @@ class Receipt:
             stage=payload["stage"],
             feature=payload["feature"],
             ok=bool(payload["ok"]),
+            tenant_id=payload.get("tenant_id", "local"),
             schema=payload.get("schema", "factory.receipt.v1"),
             producer_version=payload.get("producer_version"),
             run_id=payload.get("run_id", uuid.uuid4().hex),
