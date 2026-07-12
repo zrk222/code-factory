@@ -31,8 +31,16 @@ def test_detect_returns_all_four_modules():
     assert names == {"specline", "forgeline", "hsf", "prestige"}
 
 
+def test_factory_verify_refuses_to_call_missing_receipts_shippable(tmp_path):
+    from factoryline.verification import verify_feature
+
+    result = verify_feature(tmp_path, "f")
+    assert result["shippable"] is False
+    assert result["next_action"] == f"factory assemble f --root {tmp_path}"
+
+
 def test_protocol_requires_design_md_compatible_prestige():
-    assert MINIMUM_VERSIONS["prestige"] == "0.6.1"
+    assert MINIMUM_VERSIONS["prestige"] == "0.7.0"
 
 
 def test_receipt_roundtrip(tmp_path):

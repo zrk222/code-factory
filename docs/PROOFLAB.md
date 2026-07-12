@@ -58,3 +58,22 @@ factory verify-passport .factory/passports/checkout.passport.json
 
 A passport proves only what its receipts observed. It does not grant merge,
 deployment, publication, or production authority.
+
+## One decision for reviewers
+
+`factory verify <feature> --root <root>` summarizes the receipts already
+present for the feature into `SPEC`, `FORGE`, `COMPILE`, `DESIGN`, and
+`FACTORY` status lines plus one executable next action. It refuses to call a
+feature shippable when required receipts are absent. It does not run missing
+gates or grant merge authority.
+
+For UI work, pair it with Prestige's adoption artifacts:
+
+```bash
+prestige init --root . --out DESIGN.md
+prestige pr app.html --design DESIGN.md --root . --out-dir .prestige/pr
+factory verify checkout --root .
+```
+
+See the [Prestige adoption guide](https://github.com/zrk222/code-factory-4-design/blob/main/docs/ADOPTION.md)
+for CI templates, the static proof viewer, and the benchmark evidence boundary.

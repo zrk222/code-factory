@@ -34,6 +34,7 @@ from .app_builder import STACKS, app_from_prd, app_from_prompt
 from .coverage import requirement_coverage
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
+from .verification import verify_feature
 
 
 def _home(root: Path = Path("."), as_json: bool = False) -> int:
@@ -141,6 +142,11 @@ def main(argv=None) -> int:
     s.add_argument("feature")
     s.add_argument("--root", default=".")
     s.add_argument("--dry-run", action="store_true")
+
+    s = sub.add_parser("verify", help="summarize all existing receipts into one shippability decision")
+    s.add_argument("feature")
+    s.add_argument("--root", default=".")
+    s.add_argument("--json", action="store_true")
 
     s = sub.add_parser("meter", help="real savings summary from your runs")
     s.add_argument("--root", default=".")
@@ -265,6 +271,18 @@ def main(argv=None) -> int:
         report = assemble(Path(a.root), a.feature, dry_run=a.dry_run)
         print(json.dumps(report, indent=2))
         return 0 if "halted_at" not in report else 1
+    if a.cmd == "verify":
+        result = verify_feature(Path(a.root), a.feature)
+        if a.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print("factory verification")
+            print("=" * 44)
+            for module in result["modules"]:
+                print(f"{module['label']:<8} {module['status'].upper()}")
+            print(f"FACTORY  {'SHIPPABLE' if result['shippable'] else 'NOT SHIPPABLE'}")
+            print(f"next action: {result['next_action']}")
+        return 0 if result["shippable"] else 1
     if a.cmd == "meter":
         summ = summarize(Path(a.root), baseline_tokens_per_run=a.baseline, runs_projected=a.runs)
         print(summary_table(summ))

@@ -102,7 +102,7 @@ brick maps to codification, compression, injection, and validation.
 ## Quick start
 
 ```bash
-pip install factoryline-code-factory==0.6.1 code-factory-1-spec==0.5.0 code-factory-2-forge==0.8.0 code-factory-3-compile==0.5.1 code-factory-4-design==0.6.1
+pip install factoryline-code-factory==0.7.0 code-factory-1-spec==0.5.0 code-factory-2-forge==0.8.0 code-factory-3-compile==0.5.1 code-factory-4-design==0.7.0
 
 factory doctor --strict # versions + required command compatibility
 factory plan            # print the assembly pipeline
