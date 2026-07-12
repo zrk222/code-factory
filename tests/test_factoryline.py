@@ -92,6 +92,26 @@ def test_meter_labels_modeled_vs_measured(tmp_path):
     assert "Nothing here is fabricated" in table
 
 
+def test_overhead_reports_measured_gate_times(tmp_path):
+    from factoryline.meter import MeterLog, StageTiming, overhead
+
+    log = MeterLog(tmp_path)
+    log.record(StageTiming("forgeline", "verify-tests", 20, 0, 0, 0, True))
+    log.record(StageTiming("forgeline", "verify-tests", 40, 0, 0, 0, False))
+    payload = overhead(tmp_path)
+    assert payload["gates"][0]["avg_wall_ms"] == 30.0
+    assert payload["gates"][0]["failed_runs"] == 1
+
+
+def test_override_is_append_only_owned_receipt(tmp_path):
+    from factoryline.overrides import record_override
+
+    payload = record_override(tmp_path, "forgeline:verify-tests", reason="Vendor test harness unavailable", approved_by="platform-team", expires="2026-12-01")
+    assert Path(payload["path"]).exists()
+    assert payload["approved_by"] == "platform-team"
+    assert payload["scope_limits"]
+
+
 def test_dry_run_assemble_plans_all_stages(tmp_path):
     ensure_layout(tmp_path)
     report = assemble(tmp_path, "feat", dry_run=True)

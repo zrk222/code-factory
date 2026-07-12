@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .contract import MODULES, STAGES, ensure_layout, LAYOUT
 from .assembly import detect, assemble, DEFAULT_CHAIN, rollup_receipts
-from .meter import summarize, summary_table
+from .meter import overhead, summarize, summary_table
 from .proof import (
     build_trace,
     execute_replay,
@@ -152,6 +152,24 @@ def main(argv=None) -> int:
     s.add_argument("--root", default=".")
     s.add_argument("--runs", type=int, default=1000, help="projected production runs")
     s.add_argument("--baseline", type=int, default=4000, help="baseline tokens per run (declare your real agent cost)")
+
+    s = sub.add_parser("overhead", help="show measured wall-clock overhead per gate")
+    s.add_argument("--root", default=".")
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("override", help="record an owned, expiring exception without hiding a failed gate")
+    s.add_argument("issue")
+    s.add_argument("--root", default=".")
+    s.add_argument("--reason", required=True)
+    s.add_argument("--approved-by", required=True)
+    s.add_argument("--expires", default=None)
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("ci", help="write an opt-in GitHub PR-comment workflow")
+    ci_sub = s.add_subparsers(required=True, dest="ci_cmd")
+    ci_init = ci_sub.add_parser("init")
+    ci_init.add_argument("--feature", required=True)
+    ci_init.add_argument("--out", default=".github/workflows/factory-proof.yml")
 
     s = sub.add_parser("rollup", help="aggregate per-node attribution from receipts")
     s.add_argument("feature")
@@ -380,6 +398,27 @@ def main(argv=None) -> int:
             print("proof attestations written")
             for name, path in outputs.items():
                 print(f"  {name}: {path}")
+        return 0
+    if a.cmd == "overhead":
+        payload = overhead(Path(a.root))
+        if a.json:
+            print(json.dumps(payload, indent=2))
+        else:
+            print("factory gate overhead (measured local wall time)")
+            for item in payload["gates"]:
+                print(f"{item['module']}:{item['stage']} avg={item['avg_wall_ms']}ms runs={item['runs']} failed={item['failed_runs']}")
+        return 0
+    if a.cmd == "override":
+        from .overrides import record_override
+        payload = record_override(Path(a.root), a.issue, reason=a.reason, approved_by=a.approved_by, expires=a.expires)
+        print(json.dumps(payload, indent=2) if a.json else f"override receipt written: {payload['path']}")
+        return 0
+    if a.cmd == "ci":
+        from .overrides import ci_template
+        path = Path(a.out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(ci_template(a.feature), encoding="utf-8")
+        print(f"GitHub PR-comment workflow written: {path}")
         return 0
     if a.cmd == "passport":
         try:

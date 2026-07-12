@@ -129,6 +129,22 @@ def summarize(root: Path, *, baseline_tokens_per_run: int = 4000,
     }
 
 
+def overhead(root: Path) -> dict:
+    """Measured per-gate wall-clock overhead; no benchmark baseline is invented."""
+    groups: dict[tuple[str, str], list[StageTiming]] = {}
+    for timing in MeterLog(root).stages():
+        groups.setdefault((timing.module, timing.stage), []).append(timing)
+    gates = []
+    for (module, stage), rows in sorted(groups.items()):
+        values = [row.wall_ms for row in rows]
+        gates.append({"module": module, "stage": stage, "runs": len(rows),
+                      "total_wall_ms": sum(values), "avg_wall_ms": round(sum(values) / len(values), 1),
+                      "max_wall_ms": max(values), "failed_runs": sum(not row.ok for row in rows)})
+    return {"schema": "factory.overhead.v1", "gates": gates,
+            "total_wall_ms": sum(item["total_wall_ms"] for item in gates),
+            "scope_limits": ["Wall-clock measurements are local run observations, not a machine-independent performance claim.", "No gate is skipped by this report; use project policy to decide which gates are required."]}
+
+
 def summary_table(summary: dict) -> str:
     """Render the summary as a plain-text table (portable, paste-anywhere)."""
     if summary.get("stages_measured", 0) == 0:

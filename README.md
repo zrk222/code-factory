@@ -102,7 +102,16 @@ brick maps to codification, compression, injection, and validation.
 ## Quick start
 
 ```bash
-pip install factoryline-code-factory==0.7.0 code-factory-1-spec==0.5.0 code-factory-2-forge==0.8.0 code-factory-3-compile==0.5.1 code-factory-4-design==0.7.0
+pip install factoryline-code-factory==0.8.0 code-factory-1-spec==0.5.0 code-factory-2-forge==0.9.0 code-factory-3-compile==0.5.1 code-factory-4-design==0.7.0
+
+## Existing Repositories And PRs
+
+Start from inherited code with `forge adopt <feature> --root .`. It writes a
+reviewable architecture baseline and, for TypeScript, an explicit mutant
+manifest for `forge verify-tests-ts`. FactoryLine exposes the operational
+controls professionals need: `factory overhead` reports measured per-gate wall
+time, `factory override` writes an owned exception receipt, and `factory ci
+init --feature <feature>` writes an opt-in GitHub PR-comment workflow.
 
 factory doctor --strict # versions + required command compatibility
 factory plan            # print the assembly pipeline
