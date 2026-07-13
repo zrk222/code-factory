@@ -9,6 +9,25 @@
 
 ![Code Factory proof-first overview](docs/assets/code-factory-design.png)
 
+## 60-second first run
+
+Use Code Factory to create an app-shaped starting state, then immediately see
+which requirements it refuses to certify without real tests:
+
+```bash
+pip install factoryline-code-factory==0.10.3
+factory app from-prompt "Build a simple approval tracker with an audit log" --out approval-tracker --purpose saas
+factory coverage --root approval-tracker --json
+```
+
+The last command intentionally exits nonzero on a fresh starter. It reports
+`"dominant_failure_class": "hollow_coverage"` for every product requirement
+that lacks a non-hollow test. The scaffold is useful starting state, not
+software the factory pretends is ready to ship.
+
+For an existing repository, start with `forge adopt <feature> --root .`; see
+[First Use On An Existing Repository](docs/FIRST_USE.md).
+
 ## Proof-first architecture
 
 Run `factory` with no arguments for a compact live view of installed bricks,
@@ -103,10 +122,10 @@ right procedure, tools, governance, and validators at the exact step of work."
 See [AKU_STANDARD.md](AKU_STANDARD.md) for the enterprise schema and how each
 brick maps to codification, compression, injection, and validation.
 
-## Quick start
+## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.10.3 code-factory-1-spec==0.5.0 code-factory-2-forge==0.9.1 code-factory-3-compile==0.5.1 code-factory-4-design==0.7.1
+pip install factoryline-code-factory==0.10.3 code-factory-1-spec==0.5.0 code-factory-2-forge==0.9.2 code-factory-3-compile==0.5.1 code-factory-4-design==0.7.1
 ```
 
 ## Identity-signed receipts
@@ -178,6 +197,7 @@ controls professionals need: `factory overhead` reports measured per-gate wall
 time, `factory override` writes an owned exception receipt, and `factory ci
 init --feature <feature>` writes an opt-in GitHub PR-comment workflow.
 
+```bash
 factory doctor --strict # versions + required command compatibility
 factory plan            # print the assembly pipeline
 factory init .          # lay down the shared workspace
