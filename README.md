@@ -102,7 +102,7 @@ brick maps to codification, compression, injection, and validation.
 ## Quick start
 
 ```bash
-pip install factoryline-code-factory==0.10.2 code-factory-1-spec==0.5.0 code-factory-2-forge==0.9.1 code-factory-3-compile==0.5.1 code-factory-4-design==0.7.1
+pip install factoryline-code-factory==0.10.3 code-factory-1-spec==0.5.0 code-factory-2-forge==0.9.1 code-factory-3-compile==0.5.1 code-factory-4-design==0.7.1
 ```
 
 ## Identity-signed receipts
@@ -185,6 +185,7 @@ factory verify-trace .factory/traces/my_feature.trace.json
 factory replay .factory/traces/my_feature.trace.json --changed smoke/my_feature.json
 factory evidence my_feature    # public-safe proof for a PR or release note
 factory policy                 # write default policy-as-code thresholds
+factory verify-policy --challenge policy.challenge.json # prove every policy rule is enforced
 factory optimize-pr --changed specs/my_feature.md --feature my_feature
 factory pr-pack my_feature     # reviewer-ready PR_EVIDENCE.md
 factory app from-prd PRD.md --out my-app --purpose saas
@@ -234,6 +235,11 @@ hash-linked trace: what changed, which receipts proved it, what the meter can
 honestly measure, and which claims remain scoped. `factory policy` keeps the
 team rules visible: hollow-test proof, hollow-validator proof, release
 readiness, design purpose, and approval boundaries.
+
+`factory verify-policy --challenge policy.challenge.json` completes the same
+mutation doctrine for policy rules: it deletes or inverts every rule and requires
+your evaluator to reject the changed policy. A rule that survives is reported as
+`HOLLOW_POLICY`; see [Verify Policy](docs/VERIFY_POLICY.md).
 
 ## Why Lego, not a monolith
 

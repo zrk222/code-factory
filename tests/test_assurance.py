@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import json
 
 import pytest
 
@@ -14,6 +15,7 @@ from factoryline.assurance import (
     private_challenge_manifest,
     run_constrained,
     verify_policy_mutations,
+    verify_policy_command,
 )
 
 
@@ -80,3 +82,52 @@ def test_policy_mutation_challenge_detects_hollow_policy_and_private_manifest_hi
     manifest = private_challenge_manifest("private", [{"input": "secret"}], tenant_id="acme")
     assert "secret" not in str(manifest)
     assert manifest["challenge_count"] == 1
+
+
+def test_policy_command_challenge_proves_default_shaped_policy_rules(tmp_path):
+    script = tmp_path / "evaluate_policy.py"
+    script.write_text(
+        "import json, sys\n"
+        "p = json.load(open(sys.argv[1], encoding='utf-8'))\n"
+        "ok = p.get('release', {}).get('require_ci') is True and p.get('quality', {}).get('require_hollow_tests') is True\n"
+        "raise SystemExit(0 if ok else 1)\n",
+        encoding="utf-8",
+    )
+    policy = {
+        "schema": "factory.policy.v1",
+        "release": {"require_ci": True},
+        "quality": {"require_hollow_tests": True},
+    }
+    verified = verify_policy_command(
+        policy,
+        [sys.executable, str(script), "{policy}"],
+        root=tmp_path,
+    )
+    assert verified["status"] == "VERIFIED"
+    hollow = verify_policy_command(
+        policy,
+        [sys.executable, "-c", "raise SystemExit(0)", "{policy}"],
+        root=tmp_path,
+    )
+    assert hollow["status"] == "HOLLOW_POLICY"
+
+
+def test_cli_verify_policy_writes_a_receipt(tmp_path, capsys):
+    from factoryline.cli import main
+
+    (tmp_path / "factory.policy.json").write_text(
+        json.dumps({"release": {"require_ci": True}}), encoding="utf-8"
+    )
+    script = tmp_path / "evaluate.py"
+    script.write_text(
+        "import json, sys\n"
+        "p = json.load(open(sys.argv[1], encoding='utf-8'))\n"
+        "raise SystemExit(0 if p.get('release', {}).get('require_ci') is True else 1)\n",
+        encoding="utf-8",
+    )
+    challenge = tmp_path / "policy.challenge.json"
+    challenge.write_text(json.dumps({"command": [sys.executable, str(script), "{policy}"], "timeout": 30}), encoding="utf-8")
+    assert main(["verify-policy", "--root", str(tmp_path), "--challenge", str(challenge)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "VERIFIED"
+    assert (tmp_path / ".factory" / "policy-challenges" / "verify-policy.json").exists()

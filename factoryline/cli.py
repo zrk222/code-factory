@@ -265,6 +265,12 @@ def main(argv=None) -> int:
     mutation.add_argument("policy")
     mutation.add_argument("--out", required=True)
 
+    s = sub.add_parser("verify-policy", help="prove a policy evaluator catches every delete/invert mutation")
+    s.add_argument("--root", default=".")
+    s.add_argument("--policy", default="factory.policy.json")
+    s.add_argument("--challenge", required=True, help="JSON manifest with argv command containing {policy}")
+    s.add_argument("--out", help="receipt output; defaults under .factory/policy-challenges")
+
     s = sub.add_parser("compliance", help="export versioned non-certifying compliance evidence")
     compliance_sub = s.add_subparsers(required=True, dest="compliance_cmd")
     compliance_sub.add_parser("packs", help="list available control packs")
@@ -684,6 +690,28 @@ def main(argv=None) -> int:
             return 1
         print(json.dumps({"schema": "factory.assurance.result.v1", "verdict": "WRITTEN", "path": str(Path(a.out).resolve())}, indent=2))
         return 0
+    if a.cmd == "verify-policy":
+        from .assurance import AssuranceError, verify_policy_command
+        root = Path(a.root)
+        try:
+            policy = json.loads((root / a.policy).read_text(encoding="utf-8"))
+            challenge = json.loads(Path(a.challenge).read_text(encoding="utf-8"))
+            result = verify_policy_command(
+                policy,
+                challenge.get("command"),
+                root=root,
+                cwd=str(challenge.get("cwd", ".")),
+                timeout=int(challenge.get("timeout", 60)),
+            )
+            out = Path(a.out) if a.out else root / ".factory" / "policy-challenges" / "verify-policy.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+        except (AssuranceError, OSError, json.JSONDecodeError, ValueError) as exc:
+            error = {"code": getattr(exc, "code", "E_INPUT"), "message": getattr(exc, "message", str(exc))}
+            print(json.dumps({"schema": "factory.policy.verify.v1", "verdict": "ERROR", "error": error}, indent=2))
+            return 1
+        print(json.dumps(result | {"receipt_path": str(out)}, indent=2, sort_keys=True))
+        return 0 if result["status"] == "VERIFIED" else 1
     if a.cmd == "compliance":
         from .compliance import CONTROL_PACKS, build_oscal_assessment
         try:

@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 from typing import Any, Callable, Iterable
 
 from .control_plane import ControlPlaneError, canonical_json, sha256
@@ -271,25 +272,54 @@ def build_vex(entries: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
 
 def policy_mutations(policy: dict[str, Any]) -> list[dict[str, Any]]:
-    """Generate delete/invert mutations for the explicit policy rule list."""
+    """Generate delete/invert mutations for explicit rules or boolean settings."""
     rules = policy.get("rules")
-    if not isinstance(rules, list) or not rules:
-        raise AssuranceError("E_HOLLOW_POLICY", "policy must contain a non-empty rules list")
     mutations: list[dict[str, Any]] = []
-    for index, rule in enumerate(rules):
-        if not isinstance(rule, dict) or not rule.get("id"):
-            raise AssuranceError("E_POLICY_RULE", "each policy rule needs an id")
-        deleted = json.loads(json.dumps(policy))
-        deleted["rules"].pop(index)
-        deleted["mutation"] = {"kind": "delete", "rule_id": rule["id"]}
-        mutations.append(deleted)
-        for field in ("required", "enabled", "allow"):
-            if isinstance(rule.get(field), bool):
-                inverted = json.loads(json.dumps(policy))
-                inverted["rules"][index][field] = not rule[field]
-                inverted["mutation"] = {"kind": "invert", "rule_id": rule["id"], "field": field}
-                mutations.append(inverted)
-                break
+    if isinstance(rules, list) and rules:
+        for index, rule in enumerate(rules):
+            if not isinstance(rule, dict) or not rule.get("id"):
+                raise AssuranceError("E_POLICY_RULE", "each policy rule needs an id")
+            deleted = json.loads(json.dumps(policy))
+            deleted["rules"].pop(index)
+            deleted["mutation"] = {"kind": "delete", "rule_id": rule["id"]}
+            mutations.append(deleted)
+            for field in ("required", "enabled", "allow"):
+                if isinstance(rule.get(field), bool):
+                    inverted = json.loads(json.dumps(policy))
+                    inverted["rules"][index][field] = not rule[field]
+                    inverted["mutation"] = {"kind": "invert", "rule_id": rule["id"], "field": field}
+                    mutations.append(inverted)
+                    break
+    else:
+        boolean_paths: list[tuple[str, ...]] = []
+
+        def visit(value: Any, path: tuple[str, ...]) -> None:
+            if isinstance(value, dict):
+                for key in sorted(value):
+                    if key not in {"schema", "mutation"}:
+                        visit(value[key], path + (key,))
+            elif isinstance(value, bool):
+                boolean_paths.append(path)
+
+        visit(policy, ())
+        for path in boolean_paths:
+            rule_id = ".".join(path)
+            deleted = json.loads(json.dumps(policy))
+            target = deleted
+            for key in path[:-1]:
+                target = target[key]
+            target.pop(path[-1])
+            deleted["mutation"] = {"kind": "delete", "rule_id": rule_id}
+            mutations.append(deleted)
+            inverted = json.loads(json.dumps(policy))
+            target = inverted
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = not target[path[-1]]
+            inverted["mutation"] = {"kind": "invert", "rule_id": rule_id}
+            mutations.append(inverted)
+    if not mutations:
+        raise AssuranceError("E_HOLLOW_POLICY", "policy has no mutable rules or boolean settings")
     return mutations
 
 
@@ -306,6 +336,66 @@ def verify_policy_mutations(policy: dict[str, Any], evaluator: Callable[[dict[st
         "schema": ASSURANCE_SCHEMA,
         "challenge": "policy-mutation",
         "status": "VERIFIED" if not hollow else "HOLLOW_POLICY",
+        "mutations": results,
+        "hollow": hollow,
+    }
+
+
+def verify_policy_command(
+    policy: dict[str, Any],
+    command: list[str],
+    *,
+    root: Path,
+    cwd: str = ".",
+    timeout: int = 60,
+) -> dict[str, Any]:
+    """Prove a policy evaluator fails when each policy rule is sabotaged.
+
+    ``command`` is argv, never a shell string, and must include ``{policy}``.
+    The original policy must pass before a mutation can count as caught.
+    """
+    if not isinstance(command, list) or not command or not all(isinstance(item, str) and item for item in command):
+        raise AssuranceError("E_POLICY_CHALLENGE_COMMAND", "challenge command must be a non-empty argv list")
+    if not any("{policy}" in item for item in command):
+        raise AssuranceError("E_POLICY_CHALLENGE_PLACEHOLDER", "challenge command must contain {policy}")
+    if timeout < 1 or timeout > 600:
+        raise AssuranceError("E_POLICY_CHALLENGE_TIMEOUT", "challenge timeout must be between 1 and 600 seconds")
+    root = Path(root).resolve()
+    work = (root / cwd).resolve()
+    try:
+        work.relative_to(root)
+    except ValueError as exc:
+        raise AssuranceError("E_POLICY_CHALLENGE_CWD", "challenge cwd must remain inside root") from exc
+    if not work.is_dir():
+        raise AssuranceError("E_POLICY_CHALLENGE_CWD", "challenge cwd does not exist")
+
+    def execute(candidate: dict[str, Any], path: Path) -> dict[str, Any]:
+        path.write_text(json.dumps(candidate, indent=2, sort_keys=True), encoding="utf-8")
+        argv = [item.replace("{policy}", str(path)) for item in command]
+        result = run_constrained(argv, root=root, cwd=str(work.relative_to(root)), timeout=timeout)
+        if result.get("error"):
+            raise AssuranceError("E_POLICY_CHALLENGE_EXECUTION", result["error"])
+        return result
+
+    with tempfile.TemporaryDirectory(prefix="factory-policy-") as temporary:
+        temporary_root = Path(temporary)
+        baseline = execute(policy, temporary_root / "baseline.json")
+        if not baseline["ok"]:
+            raise AssuranceError("E_POLICY_BASELINE", "challenge command did not pass the unmutated policy")
+        results = []
+        for index, mutation in enumerate(policy_mutations(policy)):
+            result = execute(mutation, temporary_root / f"mutation-{index}.json")
+            results.append({
+                "mutation": mutation["mutation"],
+                "caught": not result["ok"],
+                "returncode": result["returncode"],
+            })
+    hollow = [item for item in results if not item["caught"]]
+    return {
+        "schema": ASSURANCE_SCHEMA,
+        "challenge": "policy-mutation-command",
+        "status": "VERIFIED" if not hollow else "HOLLOW_POLICY",
+        "baseline_returncode": baseline["returncode"],
         "mutations": results,
         "hollow": hollow,
     }
