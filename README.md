@@ -125,7 +125,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.10.3 code-factory-1-spec==0.5.0 code-factory-2-forge==0.9.2 code-factory-3-compile==0.5.1 code-factory-4-design==0.7.1
+pip install factoryline-code-factory==0.10.3 code-factory-1-spec==0.5.0 code-factory-2-forge==0.9.2 code-factory-3-compile==0.5.2 code-factory-4-design==0.7.1
 ```
 
 ## Identity-signed receipts
