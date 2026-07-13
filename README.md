@@ -15,7 +15,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.10.6
+pip install factoryline-code-factory==0.11.0
 factory app from-prompt "Build a simple approval tracker with an audit log" --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
 ```
@@ -125,7 +125,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.10.6 code-factory-1-spec==0.5.1 code-factory-2-forge==0.10.2 code-factory-3-compile==0.5.2 code-factory-4-design==0.7.1
+pip install factoryline-code-factory==0.11.0 code-factory-1-spec==0.5.1 code-factory-2-forge==0.10.2 code-factory-3-compile==0.5.2 code-factory-4-design==0.7.1
 ```
 
 ## Identity-signed receipts
@@ -187,6 +187,28 @@ return `LEGACY_UNVERIFIED` in the enterprise verifier. The local control-plane
 foundation is documented above; hosted SCM/SSO adapters, OSCAL packs, BBS
 credentials, and zkVM proofs remain future roadmap work; see [Enterprise
 Receipt v2](docs/ENTERPRISE_RECEIPTS.md).
+
+## Loop Passport
+
+`factory loop` makes an autonomous-loop contract reviewable before it runs. The
+manifest declares its trigger, workspace scope, named skills/connectors,
+allowed actions, hard token/cost/time/iteration limits, required approvals,
+validators, and state machine. The generated Passport hash-binds that contract
+and includes a first-class Mermaid graph.
+
+```powershell
+factory loop init dependency-audit --owner platform-team --root .
+factory loop validate .factory/loops/dependency-audit.loop.json --json
+factory loop passport .factory/loops/dependency-audit.loop.json --root . --json
+factory loop budget .factory/loops/dependency-audit.loop.json usage.json --root . --json
+factory loop verify .factory/loop-passports/dependency-audit.loop-passport.json --json
+```
+
+The budget command writes `WITHIN_BUDGET`, `BUDGET_EXCEEDED`, or
+`MANIFEST_INVALID` receipts. It enforces declared ceilings over usage supplied
+by a runtime adapter; it does not claim to independently enforce provider
+billing, credential injection, host sandboxing, or network egress. Those are
+runtime responsibilities that the Passport makes explicit for review.
 
 ## Existing Repositories And PRs
 

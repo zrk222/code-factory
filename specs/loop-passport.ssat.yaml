@@ -1,0 +1,41 @@
+name: loop-passport
+modules:
+  - name: loop_passport
+    path: factoryline/loop_passport.py
+    imports:
+      - json
+      - hashlib
+      - pathlib
+    functions:
+      - name: default_manifest
+        args: ["loop_id: str", "owner: str"]
+        returns: "dict[str, Any]"
+        doc: "Build the conservative default manifest used by Loop Passport initialization."
+      - name: init_loop
+        args: ["root: Path", "loop_id: str", "owner: str"]
+        returns: "dict[str, Any]"
+        doc: "Write a conservative, secret-free Loop Passport manifest."
+      - name: validate_manifest
+        args: ["path: Path"]
+        returns: "dict[str, Any]"
+        doc: "Fail closed on malformed, over-privileged, or under-governed loop contracts."
+      - name: build_loop_passport
+        args: ["root: Path", "manifest_path: Path"]
+        returns: "dict[str, Any]"
+        doc: "Write a hash-bound Loop Passport and Mermaid graph from a validated manifest."
+      - name: verify_loop_passport
+        args: ["path: Path"]
+        returns: "dict[str, Any]"
+        doc: "Reject tampered or now-invalid Loop Passports."
+      - name: evaluate_budget
+        args: ["root: Path", "manifest_path: Path", "usage_path: Path"]
+        returns: "dict[str, Any]"
+        doc: "Write a fail-closed budget receipt from declared limits and supplied usage."
+dependencies: []
+invariants:
+  - name: no_dynamic_execution
+    forbid_pattern: "\\b(eval|exec)\\s*\\("
+  - name: no_network_clients
+    forbid_pattern: "\\b(requests|urllib3|httpx)\\b"
+  - name: no_secret_persistence
+    forbid_pattern: "BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY"

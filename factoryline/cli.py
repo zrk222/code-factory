@@ -46,6 +46,7 @@ def _home(root: Path = Path("."), as_json: bool = False) -> int:
         "traces": len(list((factory_root / "traces").glob("*.json"))) if factory_root.exists() else 0,
         "challenges": len(list((factory_root / "challenges").glob("*.json"))) if factory_root.exists() else 0,
         "passports": len(list((factory_root / "passports").glob("*.json"))) if factory_root.exists() else 0,
+        "loop_passports": len(list((factory_root / "loop-passports").glob("*.json"))) if factory_root.exists() else 0,
     }
     installed = sum(module.installed for module in modules)
     payload = {
@@ -288,6 +289,30 @@ def main(argv=None) -> int:
     privacy_merkle.add_argument("leaves")
     privacy_merkle.add_argument("--disclose", required=True)
     privacy_merkle.add_argument("--out", required=True)
+
+    s = sub.add_parser("loop", help="create and verify portable governed-loop contracts")
+    loop_sub = s.add_subparsers(required=True, dest="loop_cmd")
+    loop_init = loop_sub.add_parser("init", help="write a conservative Loop Passport manifest")
+    loop_init.add_argument("loop_id")
+    loop_init.add_argument("--owner", required=True)
+    loop_init.add_argument("--root", default=".")
+    loop_init.add_argument("--force", action="store_true")
+    loop_init.add_argument("--json", action="store_true")
+    loop_validate = loop_sub.add_parser("validate", help="validate a Loop Passport manifest fail closed")
+    loop_validate.add_argument("manifest")
+    loop_validate.add_argument("--json", action="store_true")
+    loop_passport = loop_sub.add_parser("passport", help="write a hash-bound Loop Passport and Mermaid graph")
+    loop_passport.add_argument("manifest")
+    loop_passport.add_argument("--root", default=".")
+    loop_passport.add_argument("--json", action="store_true")
+    loop_verify = loop_sub.add_parser("verify", help="verify a Loop Passport and its manifest binding")
+    loop_verify.add_argument("passport")
+    loop_verify.add_argument("--json", action="store_true")
+    loop_budget = loop_sub.add_parser("budget", help="write a fail-closed receipt for supplied loop usage")
+    loop_budget.add_argument("manifest")
+    loop_budget.add_argument("usage")
+    loop_budget.add_argument("--root", default=".")
+    loop_budget.add_argument("--json", action="store_true")
 
     s = sub.add_parser("ci", help="write an opt-in GitHub PR-comment workflow")
     ci_sub = s.add_subparsers(required=True, dest="ci_cmd")
@@ -758,6 +783,36 @@ def main(argv=None) -> int:
         path.write_text(ci_template(a.feature), encoding="utf-8")
         print(f"GitHub PR-comment workflow written: {path}")
         return 0
+    if a.cmd == "loop":
+        from .loop_passport import build_loop_passport, evaluate_budget, init_loop, validate_manifest, verify_loop_passport
+        try:
+            if a.loop_cmd == "init":
+                result = init_loop(Path(a.root), a.loop_id, a.owner, force=a.force)
+                code = 0
+            elif a.loop_cmd == "validate":
+                result = validate_manifest(Path(a.manifest))
+                code = 0 if result["valid"] else 1
+            elif a.loop_cmd == "passport":
+                result = build_loop_passport(Path(a.root), Path(a.manifest))
+                code = 0 if result["verdict"] == "VERIFIED" else 1
+            elif a.loop_cmd == "verify":
+                result = verify_loop_passport(Path(a.passport))
+                code = 0 if result["valid"] else 1
+            else:
+                result = evaluate_budget(Path(a.root), Path(a.manifest), Path(a.usage))
+                code = 0 if result["ok"] else 1
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            result = {"schema": "factory.loop.result.v1", "verdict": "ERROR", "error": {"code": "E_INPUT", "message": str(exc)}}
+            code = 1
+        if a.json:
+            print(json.dumps(result, indent=2))
+        elif code == 0:
+            print(f"Loop Passport: {result.get('verdict', 'WRITTEN')}")
+            for name, path in result.get("paths", {}).items():
+                print(f"  {name:<8}: {path}")
+        else:
+            print(json.dumps(result, indent=2), file=sys.stderr)
+        return code
     if a.cmd == "passport":
         try:
             passport = build_passport(

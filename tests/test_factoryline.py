@@ -23,7 +23,7 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.10.6"
+    assert factoryline.__version__ == "0.11.0"
 
 
 def test_layout_created(tmp_path):
@@ -515,6 +515,7 @@ def test_cli_no_args_returns_agent_home_with_definitive_empty_states(tmp_path, c
     assert "description: Five-brick spec-to-proof software factory" in out
     assert "receipts: 0" in out
     assert "passports: 0" in out
+    assert "loop_passports: 0" in out
     assert "factory doctor --strict --json" in out
 
 
