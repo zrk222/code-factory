@@ -23,7 +23,7 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.10.4"
+    assert factoryline.__version__ == "0.10.5"
 
 
 def test_layout_created(tmp_path):
