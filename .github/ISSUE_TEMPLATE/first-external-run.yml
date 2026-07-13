@@ -1,0 +1,41 @@
+name: First external run
+description: Tell us what happened when you tried Code Factory on a real repository.
+title: "[first-run] "
+labels: ["question"]
+body:
+  - type: dropdown
+    id: repo_shape
+    attributes:
+      label: Repository shape
+      options:
+        - Existing Python repository
+        - Existing TypeScript repository
+        - Polyglot repository
+        - New project
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: first_command
+    attributes:
+      label: First command and result
+      description: Include the command and the relevant output. Remove secrets and private paths.
+    validations:
+      required: true
+  - type: textarea
+    id: friction
+    attributes:
+      label: Where it helped or got in the way
+      description: The first confusing, useful, slow, or broken moment is the most valuable feedback.
+    validations:
+      required: true
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Follow-up
+      options:
+        - label: Maintainers may ask follow-up questions in this issue.
+          required: true
+        - label: Maintainers may quote this feedback publicly without identifying my repository.
+          required: false
+

@@ -1,20 +1,24 @@
 # Support & Services
 
-The code-factory bricks are free and open source (Apache-2.0), and always will be.
-If you want help putting them to work, that's where paid services come in.
+The Code Factory bricks are free and open source under MIT OR Apache-2.0.
 
-## Free / community
-- **Issues & discussions** on each repo — best-effort, community-supported.
-- **Docs & examples** in every repo's README.
+## Community
 
-## Commercial services
-For teams that want the factory integrated and running in production:
+- Use the docs and examples in each repository.
+- Open a focused issue for a bug, documentation gap, or workflow question.
+- For the most valuable kind of feedback, use the [first external run
+  template](https://github.com/zrk222/code-factory/issues/new?template=first-external-run.yml).
+- To contribute a reusable workflow, use the [spec-gallery
+  template](https://github.com/zrk222/code-factory/issues/new?template=share-your-spec.yml).
 
-- **Integration** — wiring the factory into your existing IDE / agent / CI stack.
-- **Custom bricks & gates** — domain-specific gates (compliance, security, house style).
-- **Metering & savings audit** — standing up honest, receipted cost measurement for your workflows.
-- **Training** — getting your team fluent in spec-driven, gated, compile-once development.
+Do not post secrets, customer data, or private repository URLs.
 
-Contact: **[your email]** · **[your site]**
+## Commercial Services
+
+Code Factory can be integrated into existing IDE, agent, and CI workflows.
+Potential engagements include adoption workshops, custom proof gates, and
+receipted metering setup. Early-adopter requests currently start as a public
+first-run or spec-gallery issue so the problem and scope are visible before any
+commercial discussion.
 
 *Services fund the open-source work. The code stays free.*

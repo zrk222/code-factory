@@ -197,6 +197,10 @@ factory passport my_feature --trace .factory/traces/my_feature.trace.json --chal
 boundaries. Its JSON output names `paused_at` and the exact `next_command`; it
 does not silently approve architecture or claim unfinished scaffolds are built.
 
+For a concise existing-repository path and a first-run feedback route, see
+[First Use On An Existing Repository](docs/FIRST_USE.md). The best contribution
+right now is a real repo run, including where the workflow helped or failed.
+
 See [ProofLab and the Factory Passport](docs/PROOFLAB.md) for all five challenge
 commands and the generated Mermaid artifact.
 
