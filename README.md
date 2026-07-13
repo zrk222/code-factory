@@ -7,6 +7,10 @@
 > Most CI proves that code passes. Code Factory first proves that its gates
 > reject deliberately sabotaged builds.
 
+![Code Factory proof-first overview](docs/assets/code-factory-design.png)
+
+## Proof-first architecture
+
 Run `factory` with no arguments for a compact live view of installed bricks,
 local proof counts, and the next valid commands. This agent-first home view
 avoids a separate help/discovery turn while keeping `--help` available everywhere.
@@ -44,7 +48,7 @@ zero-cost code, and ships it — with a receipt at every step.
 Each piece is a separate repo you can install and use on its own. This repo is the
 **baseplate** (`factory`) that lines them up. It depends on none of them.
 
-## Workflow at a glance
+## Five-brick workflow
 
 ```mermaid
 flowchart LR
