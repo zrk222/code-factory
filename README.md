@@ -15,7 +15,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.10.3
+pip install factoryline-code-factory==0.10.4
 factory app from-prompt "Build a simple approval tracker with an audit log" --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
 ```
@@ -125,7 +125,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.10.3 code-factory-1-spec==0.5.0 code-factory-2-forge==0.9.2 code-factory-3-compile==0.5.2 code-factory-4-design==0.7.1
+pip install factoryline-code-factory==0.10.4 code-factory-1-spec==0.5.0 code-factory-2-forge==0.10.0 code-factory-3-compile==0.5.2 code-factory-4-design==0.7.1
 ```
 
 ## Identity-signed receipts

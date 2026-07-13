@@ -13,7 +13,7 @@ PASSPORT_SCHEMA = "factory.passport.v1"
 
 MINIMUM_VERSIONS = {
     "specline": "0.5.0",
-    "forgeline": "0.9.0",
+    "forgeline": "0.10.0",
     "hsf": "0.5.0",
     "prestige": "0.7.0",
 }
