@@ -1,0 +1,5 @@
+{
+  "command": ["python", "-c", "raise SystemExit(0)", "{policy}"],
+  "cwd": ".",
+  "timeout": 30
+}

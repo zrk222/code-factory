@@ -245,6 +245,8 @@ mutation doctrine for policy rules: it deletes or inverts every rule and require
 your evaluator to reject the changed policy. A rule that survives is reported as
 `HOLLOW_POLICY`; see [Verify Policy](docs/VERIFY_POLICY.md).
 
+![Verify Policy detects a hollow evaluator](docs/assets/verify-policy.gif)
+
 ## Why Lego, not a monolith
 
 - **Each brick stands alone.** Install only what you need; a missing brick is skipped, not fatal.
@@ -263,6 +265,13 @@ your evaluator to reject the changed policy. A rule that survives is reported as
 - It prints the **baseline assumption** inline, so no number hides what it's compared against.
 
 Wall-clock time is always measured. Projections are always labeled. Nothing is fabricated.
+
+## Launch Measurement
+
+Use [`scripts/capture_launch_metrics.ps1`](scripts/capture_launch_metrics.ps1)
+to save raw PyPI and GitHub traffic observations as JSON receipts. It records
+downloads, views, and clones without calling any of them unique users or
+attributed conversions; see [Launch Measurement](docs/LAUNCH_MEASUREMENT.md).
 
 ## Proof-carrying PRs
 

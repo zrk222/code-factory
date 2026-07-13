@@ -1,0 +1,5 @@
+{
+  "command": ["python", "check_policy.py", "{policy}"],
+  "cwd": ".",
+  "timeout": 30
+}

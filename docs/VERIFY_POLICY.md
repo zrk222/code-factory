@@ -30,3 +30,8 @@ directory, or timeout is an error, not a passing result.
 The command writes a local receipt at
 `.factory/policy-challenges/verify-policy.json` by default. It does not publish,
 merge, deploy, or grant approval authority.
+
+Copy-paste Python and TypeScript evaluators are in
+[`examples/verify-policy`](../examples/verify-policy/README.md). The Python
+example also contains a deliberately hollow evaluator for seeing the failure
+mode yourself.

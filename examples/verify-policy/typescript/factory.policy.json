@@ -1,0 +1,9 @@
+{
+  "schema": "factory.policy.v1",
+  "release": {
+    "require_ci": true
+  },
+  "quality": {
+    "require_hollow_tests": true
+  }
+}

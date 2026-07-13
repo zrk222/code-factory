@@ -1,0 +1,5 @@
+{
+  "command": ["node", "check_policy.mjs", "{policy}"],
+  "cwd": ".",
+  "timeout": 30
+}
