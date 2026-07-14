@@ -23,7 +23,7 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.11.1"
+    assert factoryline.__version__ == "0.11.2"
 
 
 def test_layout_created(tmp_path):
@@ -504,6 +504,22 @@ def test_cli_doctor_is_windows_console_safe(capsys):
     assert main(["doctor"]) == 0
     out = capsys.readouterr().out
     assert any(word in out for word in ("compatible", "incompatible", "missing"))
+
+
+def test_cli_command_prefers_the_running_launcher_directory(tmp_path, monkeypatch):
+    import factoryline.cli as cli
+
+    launcher_dir = tmp_path / "launcher"
+    interpreter_dir = tmp_path / "interpreter"
+    launcher_dir.mkdir()
+    interpreter_dir.mkdir()
+    expected = launcher_dir / "forge.exe"
+    expected.write_text("", encoding="utf-8")
+    (interpreter_dir / "forge.exe").write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli.sys, "argv", [str(launcher_dir / "factory.exe")])
+    monkeypatch.setattr(cli.sys, "executable", str(interpreter_dir / "python.exe"))
+
+    assert cli._cli_command("forge") == str(expected)
 
 
 def test_cli_version_has_machine_readable_provenance(capsys):

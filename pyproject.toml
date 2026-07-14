@@ -4,11 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.11.1"
+version = "0.11.2"
 description = "The connective layer that snaps SpecLine, ForgeLine, HSF and Prestige together into one spec-to-artifact assembly line. Each module stays independent; factoryline lines them up."
 requires-python = ">=3.10"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
 
 [project.urls]
 Homepage = "https://github.com/zrk222/code-factory"

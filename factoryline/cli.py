@@ -39,12 +39,13 @@ from .verification import verify_feature
 
 
 def _cli_command(name: str) -> str:
-    """Prefer the sibling script in this interpreter environment over ambient PATH."""
-    scripts = Path(sys.executable).resolve().parent
-    for suffix in (".exe", ".cmd", ""):
-        candidate = scripts / f"{name}{suffix}"
-        if candidate.exists():
-            return str(candidate)
+    """Prefer this launcher's script directory over an ambient PATH lookup."""
+    script_dirs = [Path(sys.argv[0]).resolve().parent, Path(sys.executable).resolve().parent]
+    for scripts in dict.fromkeys(script_dirs):
+        for suffix in (".exe", ".cmd", ""):
+            candidate = scripts / f"{name}{suffix}"
+            if candidate.exists():
+                return str(candidate)
     return name
 
 
