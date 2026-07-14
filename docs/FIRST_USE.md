@@ -5,14 +5,25 @@ small feature or risky workflow, not a whole migration.
 
 ```powershell
 cd path\to\your-repository
-pip install factoryline-code-factory==0.13.1 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.4
+pip install factoryline-code-factory==0.13.2 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.5
 factory doctor --strict --json
 factory init .
 forge adopt <feature> --root .
 ```
 
 `forge adopt` records a reviewable baseline rather than pretending the factory
-generated the repository. Then choose the proof that matches your change:
+generated the repository. Review that SSAT, then move its existing targets into
+the state machine without replacing their source:
+
+```powershell
+forge expand <feature> --root .
+forge gate architected <feature> --root .
+forge architect <feature> <feature>.adoption.ssat.yaml --adopt-existing --root .
+```
+
+The adoption path records the SSAT digest and unchanged target hashes, creates
+only missing SSAT targets, and fails closed if the working code drifts from the
+reviewed contract. Then choose the proof that matches your change:
 
 ```powershell
 forge verify-tests <feature> --root .

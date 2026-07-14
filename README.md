@@ -15,7 +15,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.13.1
+pip install factoryline-code-factory==0.13.2
 factory app from-prompt "Build a simple approval tracker with an audit log" --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
 ```
@@ -25,7 +25,10 @@ The last command intentionally exits nonzero on a fresh starter. It reports
 that lacks a non-hollow test. The scaffold is useful starting state, not
 software the factory pretends is ready to ship.
 
-For an existing repository, start with `forge adopt <feature> --root .`; see
+For an existing repository, start with `forge adopt <feature> --root .`; after
+you review its SSAT and pass the human architecture gate, use
+`forge architect <feature> <ssat> --adopt-existing` to validate and receipt the
+working implementation without regenerating it. See
 [First Use On An Existing Repository](docs/FIRST_USE.md).
 
 ## Editor integrations
@@ -167,7 +170,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.13.1 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.4 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
+pip install factoryline-code-factory==0.13.2 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.5 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
 factory doctor --strict --json
 ```
 
