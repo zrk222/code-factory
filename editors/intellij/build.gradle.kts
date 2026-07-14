@@ -28,19 +28,24 @@ intellijPlatform {
     pluginConfiguration {
         ideaVersion {
             sinceBuild = "252"
+            // This adapter uses only platform APIs. Do not fabricate an upper
+            // limit from the build IDE; binary verification covers current IDEs.
+            untilBuild = provider { null }
         }
     }
     pluginVerification {
         ides {
             val requestedProduct = providers.gradleProperty("factorylineVerificationProduct").orNull
-            if (requestedProduct == null) {
+            val localVerificationIde = providers.gradleProperty("factorylineLocalVerificationIde").orNull
+            if (localVerificationIde != null) {
+                local(file(localVerificationIde))
+            } else if (requestedProduct == null) {
                 current()
             } else {
                 latest {
                     types.set(listOf(IntelliJPlatformType.valueOf(requestedProduct)))
                     channels.set(listOf(ProductRelease.Channel.RELEASE))
                     sinceBuild.set("252")
-                    untilBuild.set("252.*")
                 }
             }
         }

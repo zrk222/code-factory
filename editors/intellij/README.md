@@ -49,7 +49,9 @@ IntelliJ instance for manual inspection.
 This is a JetBrains Platform plugin, with only the shared
 `com.intellij.modules.platform` dependency. CI verifies its ZIP against
 IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and
-DataGrip builds in the 2025.2 line. It is distributed from GitHub releases;
-it is not yet published to the JetBrains Marketplace. Marketplace publication
-requires a separately configured JetBrains publisher token and review of the
-generated plugin ZIP.
+DataGrip builds from the 2025.2 baseline forward. The CI matrix verifies
+current stable builds, including an explicit DataGrip archive because archived
+2025.2 installers are not available through the verifier resolver. It is
+distributed from GitHub releases; it is not yet published to the JetBrains
+Marketplace. Marketplace publication requires a separately configured
+JetBrains publisher token and review of the generated plugin ZIP.

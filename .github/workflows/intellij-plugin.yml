@@ -57,4 +57,28 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
-      - run: ./gradlew buildPlugin verifyPlugin -PfactorylineVerificationProduct=${{ matrix.product }}
+      - name: Resolve current DataGrip archive
+        if: matrix.product == 'DataGrip'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > "$RUNNER_TEMP/datagrip-url.txt"
+          import json
+          from urllib.request import urlopen
+
+          with urlopen("https://data.services.jetbrains.com/products/releases?code=DG&latest=true&type=release") as response:
+              release = json.load(response)["DG"][0]
+          print(release["downloads"]["linux"]["link"])
+          PY
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/datagrip.tar.gz" "$(cat "$RUNNER_TEMP/datagrip-url.txt")"
+          mkdir -p "$RUNNER_TEMP/datagrip"
+          tar -xzf "$RUNNER_TEMP/datagrip.tar.gz" -C "$RUNNER_TEMP/datagrip" --strip-components=1
+          test -f "$RUNNER_TEMP/datagrip/product-info.json"
+      - name: Verify plugin against selected IDE
+        shell: bash
+        run: |
+          if [ "${{ matrix.product }}" = "DataGrip" ]; then
+            ./gradlew buildPlugin verifyPlugin -PfactorylineVerificationProduct=DataGrip -PfactorylineLocalVerificationIde="$RUNNER_TEMP/datagrip"
+          else
+            ./gradlew buildPlugin verifyPlugin -PfactorylineVerificationProduct=${{ matrix.product }}
+          fi

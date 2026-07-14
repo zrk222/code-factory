@@ -45,6 +45,9 @@ the decision maker and writes the receipts the plugin displays.
 
 The adapter depends only on the shared IntelliJ Platform module. CI verifies
 the packaged ZIP against IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion,
-GoLand, RustRover, and DataGrip in the 2025.2 release line. It is distributed
-as a GitHub release asset; JetBrains Marketplace publication is intentionally
-separate until a Marketplace publisher identity and token are configured.
+GoLand, RustRover, and DataGrip from the 2025.2 baseline forward. It verifies
+current stable builds, including an explicit DataGrip archive because archived
+2025.2 installers are not available through the verifier resolver. It is
+distributed as a GitHub release asset; JetBrains Marketplace publication is
+intentionally separate until a Marketplace publisher identity and token are
+configured.

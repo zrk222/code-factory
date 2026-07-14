@@ -42,6 +42,24 @@ ask for votes, stars, or reviews.
 > The feedback I want most: which failure mode would make you distrust a memory
 > system in production, even when its aggregate benchmark score looks good?
 
+## Code Factory: Product Hunt Release Update - JetBrains
+
+> Update: Code Factory now includes a JetBrains Platform adapter for IntelliJ
+> IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip.
+>
+> It is a local control surface for the same FactoryLine CLI: assemble a
+> feature, verify a feature, inspect changed-proof risk, check receipt status,
+> and open the latest local receipt without leaving the IDE. Before it runs a
+> command, it shows the exact local workspace and asks for confirmation.
+>
+> The adapter does not upload source or receipts, sign artifacts, or invent a
+> green result. It shows receipts as unassessed until the normal FactoryLine
+> verification path has checked them. The release ZIP and compatibility evidence
+> are linked from the GitHub release once its cross-product CI gate is green.
+>
+> This is the enterprise-team convenience layer, not a second control plane:
+> the CLI, CI, and human review remain the authority.
+
 ## LinkedIn: Code Factory
 
 > AI coding is fast. Verification is the bottleneck.
@@ -160,6 +178,8 @@ Show HN: A proof-first factory for AI-assisted software work
 3. Reply promptly with specific, non-defensive answers for the first four hours.
 4. Post the Show HN only when the install commands and live demo links are
    working.
-5. Record Product Hunt dashboard views, comments, GitHub traffic, PyPI downloads,
+5. Add the JetBrains release update only after the GitHub release contains the
+   adapter ZIP and the cross-product compatibility matrix is green.
+6. Record Product Hunt dashboard views, comments, GitHub traffic, PyPI downloads,
    and inbound issues as separate measures. Do not convert them into a single
    “traction” number.
