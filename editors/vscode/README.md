@@ -18,7 +18,7 @@ pass arbitrary shell fragments to your terminal.
 Install the Code Factory CLI first:
 
 ```powershell
-pip install factoryline-code-factory==0.12.0
+pip install factoryline-code-factory==0.13.0
 ```
 
 Build a local VSIX from this directory, then install it in VS Code:
@@ -33,5 +33,5 @@ Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
 
 ## Scope
 
-This is the VS Code adapter. IntelliJ support is intentionally not claimed yet;
-it needs its own JetBrains plugin and verification matrix.
+This is the VS Code adapter. The separate JetBrains Platform adapter and its
+compatibility boundary are documented in [docs/INTELLIJ.md](../../docs/INTELLIJ.md).

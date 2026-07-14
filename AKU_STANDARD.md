@@ -49,6 +49,17 @@ flowchart LR
     F --> H["Receipts, badges, validators"]
     G --> H
     H --> I["Baseplate<br/>activation and metering"]
+    I --> J["VS Code + JetBrains\nlocal control surfaces"]
+    classDef knowledge fill:#e0f2fe,stroke:#0284c7,color:#10233f
+    classDef planning fill:#fef3c7,stroke:#d97706,color:#10233f
+    classDef build fill:#dcfce7,stroke:#16a34a,color:#10233f
+    classDef proof fill:#ccfbf1,stroke:#0f766e,color:#10233f
+    classDef editor fill:#ede9fe,stroke:#7c3aed,color:#10233f
+    class A knowledge
+    class B,C planning
+    class D,E,F,G build
+    class H,I proof
+    class J editor
 ```
 
 ## Governance Gradient

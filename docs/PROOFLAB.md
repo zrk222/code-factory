@@ -21,6 +21,17 @@ flowchart LR
     D --> P
     I --> P
     P --> G["GitHub summary + badge + Mermaid + attestations"]
+    P --> E["VS Code + JetBrains\nlocal receipt views"]
+    classDef intent fill:#e0f2fe,stroke:#0284c7,color:#10233f
+    classDef real fill:#fef3c7,stroke:#d97706,color:#10233f
+    classDef challenge fill:#fce7f3,stroke:#db2777,color:#10233f
+    classDef proof fill:#dcfce7,stroke:#16a34a,color:#10233f
+    classDef editor fill:#ede9fe,stroke:#7c3aed,color:#10233f
+    class A intent
+    class B real
+    class C,S,F,H,D,I challenge
+    class P,G proof
+    class E editor
 ```
 
 The diagram is also generated for every run as

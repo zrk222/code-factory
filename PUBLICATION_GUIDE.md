@@ -13,6 +13,15 @@ flowchart LR
     C --> E["4 design<br/>Prestige"]
     D --> F["Receipts, badges, releases"]
     E --> F
+    F --> V["VS Code VSIX\nand JetBrains ZIP"]
+    classDef base fill:#e0f2fe,stroke:#0284c7,color:#10233f
+    classDef brick fill:#fef3c7,stroke:#d97706,color:#10233f
+    classDef proof fill:#dcfce7,stroke:#16a34a,color:#10233f
+    classDef adapter fill:#ede9fe,stroke:#7c3aed,color:#10233f
+    class A base
+    class B,C,D,E brick
+    class F proof
+    class V adapter
 ```
 
 1. `code-factory`: the baseplate and public map of the ecosystem.
@@ -47,7 +56,7 @@ can contribute workflow examples.
 ## Install And Use
 
 ```bash
-pip install factoryline-code-factory==0.12.0 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.4 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
+pip install factoryline-code-factory==0.13.0 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.4 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
 
 factory doctor
 factory plan

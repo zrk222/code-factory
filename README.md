@@ -7,7 +7,7 @@
 > Most CI proves that code passes. Code Factory first proves that its gates
 > reject deliberately sabotaged builds.
 
-![Code Factory proof-first overview](docs/assets/code-factory-design.png)
+![Code Factory local editor control surfaces](docs/assets/factory-editor-control-room.svg)
 
 ## 60-second first run
 
@@ -15,7 +15,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.12.0
+pip install factoryline-code-factory==0.13.0
 factory app from-prompt "Build a simple approval tracker with an audit log" --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
 ```
@@ -28,13 +28,16 @@ software the factory pretends is ready to ship.
 For an existing repository, start with `forge adopt <feature> --root .`; see
 [First Use On An Existing Repository](docs/FIRST_USE.md).
 
-## VS Code integration
+## Editor integrations
 
-The new local VS Code adapter runs an explicit FactoryLine assembly or receipt
-verification command in the open trusted workspace, then renders local JSON
-receipts beside the editor. It does not upload code or claim IntelliJ support.
-See [FactoryLine for VS Code](docs/VSCODE.md) for the commands, VSIX install,
-and scope boundary.
+Both editor adapters run only an explicit local FactoryLine command and display
+local receipt data. Neither uploads the workspace, signs a receipt, or makes a
+release decision.
+
+- **VS Code:** install the release VSIX. See [FactoryLine for VS Code](docs/VSCODE.md).
+- **IntelliJ Platform:** install the release ZIP in IntelliJ IDEA, PyCharm,
+  WebStorm, Rider, CLion, GoLand, RustRover, or DataGrip. See [FactoryLine for
+  JetBrains IDEs](docs/INTELLIJ.md) and the [control-room boundary](docs/JETBRAINS_CONTROL_ROOM.md).
 
 ## Proof-first architecture
 
@@ -44,6 +47,7 @@ avoids a separate help/discovery turn while keeping `--help` available everywher
 
 ```mermaid
 flowchart LR
+    E["VS Code + JetBrains\nexplicit local controls"] -. "run local CLI commands" .-> B
     A["Intent / PRD"] --> B["Real build + gates"]
     A --> C["Proof-by-sabotage challenges"]
     C --> S["Spec mutations"]
@@ -58,6 +62,17 @@ flowchart LR
     D --> P
     I --> P
     P --> G["GitHub summary + badge + Mermaid + attestations"]
+    P -. "local receipt view" .-> E
+    classDef input fill:#e0f2fe,stroke:#0284c7,color:#10233f
+    classDef build fill:#fef3c7,stroke:#d97706,color:#10233f
+    classDef challenge fill:#fce7f3,stroke:#db2777,color:#10233f
+    classDef proof fill:#dcfce7,stroke:#16a34a,color:#10233f
+    classDef editor fill:#ede9fe,stroke:#7c3aed,color:#10233f
+    class A input
+    class B build
+    class C,S,F,H,D,I challenge
+    class P,G proof
+    class E editor
 ```
 
 > New: PRD-to-app building. Factoryline can now turn a PRD or prompt into a
@@ -70,7 +85,7 @@ flowchart LR
 snap together into one assembly line: describe a feature in plain language, and the
 line checks it for ambiguity, builds it, runs a gauntlet of gates, actually *runs*
 the finished code to watch it behave, compiles any decision logic into permanent
-zero-cost code, and ships it — with a receipt at every step.
+zero-cost code, and ships it with a receipt at every step.
 
 Each piece is a separate repo you can install and use on its own. This repo is the
 **baseplate** (`factory`) that lines them up. It depends on none of them.
@@ -79,6 +94,8 @@ Each piece is a separate repo you can install and use on its own. This repo is t
 
 ```mermaid
 flowchart LR
+    V["VS Code"] -. "explicit local command" .-> G
+    J["JetBrains IDEs"] -. "explicit local command" .-> G
     A["Plain-language intent"] --> B["1 SpecLine: clarify and lock the spec"]
     B --> C["2 ForgeLine: build through gated phases"]
     C --> D{"What changed?"}
@@ -88,6 +105,20 @@ flowchart LR
     F --> G
     C --> G
     G --> H["Ship with evidence"]
+    G -. "local receipt view" .-> V
+    G -. "local receipt view" .-> J
+    classDef intent fill:#e0f2fe,stroke:#0284c7,color:#10233f
+    classDef gate fill:#fef3c7,stroke:#d97706,color:#10233f
+    classDef artifact fill:#dcfce7,stroke:#16a34a,color:#10233f
+    classDef design fill:#dbeafe,stroke:#2563eb,color:#10233f
+    classDef evidence fill:#ccfbf1,stroke:#0f766e,color:#10233f
+    classDef editor fill:#ede9fe,stroke:#7c3aed,color:#10233f
+    class A intent
+    class B,C gate
+    class E artifact
+    class F design
+    class G,H evidence
+    class V,J editor
 ```
 
 Use the numbered repos like Lego bricks: start with the baseplate, add the spec
@@ -108,7 +139,7 @@ intent -> [1-spec] -> spec + strict contract -> handoff
 
 | Repo | pip install | CLI | What it does |
 |---|---|---|---|
-| **code-factory** (this) | `factoryline-code-factory` | `factory` | the baseplate — snaps the bricks together, meters cost |
+| **code-factory** (this) | `factoryline-code-factory` | `factory` | the baseplate - snaps the bricks together, meters cost |
 | **code-factory-1-spec** | `code-factory-1-spec` | `specline` | kills ambiguity *before* the AI writes code (anti-drift input contract) |
 | **code-factory-2-forge** | `code-factory-2-forge` | `forge` | the assembly line: architect -> build -> gates -> **runtime smoke** -> ship |
 | **code-factory-3-compile** | `code-factory-3-compile` | `hsf` | compiles a decision *once* into boring code that runs forever at zero AI cost |
@@ -133,7 +164,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.12.0 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.4 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
+pip install factoryline-code-factory==0.13.0 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.4 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
 factory doctor --strict --json
 ```
 

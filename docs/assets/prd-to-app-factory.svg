@@ -32,7 +32,7 @@
   </defs>
   <rect width="1280" height="760" rx="0" fill="url(#bg)"/>
   <text class="label title" x="64" y="82">PRD-to-App Factory</text>
-  <text class="label small" x="64" y="118">One prompt becomes a full-stack starter, then gates turn it into reviewable software.</text>
+  <text class="label small" x="64" y="118">One prompt becomes a full-stack starter, then gates and local receipts turn it into reviewable software.</text>
   <g transform="translate(64 170)">
     <rect class="card" width="190" height="118" rx="16"/>
     <text class="label card-title" x="24" y="38">1. PRD</text>
@@ -73,7 +73,9 @@
       <rect width="144" height="32" rx="16" fill="#fce7f3"/><text class="label pill" x="19" y="22">Prestige</text>
       <rect x="164" width="200" height="32" rx="16" fill="#e0e7ff"/><text class="label pill" x="186" y="22">Factoryline</text>
     </g>
-    <text class="label tiny" x="26" y="236">Result: a repo that is fast to try and easy to review.</text>
+    <rect x="26" y="198" width="446" height="32" rx="16" fill="#ede9fe"/>
+    <text class="label pill" x="47" y="220">VS Code + JetBrains: explicit local CLI and receipt views</text>
+    <text class="label tiny" x="26" y="252">Result: a repo that is fast to try and easy to review.</text>
   </g>
   <g transform="translate(676 365)">
     <rect class="card" width="490" height="268" rx="18"/>

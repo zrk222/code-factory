@@ -32,6 +32,17 @@ flowchart TD
     E --> H
     F --> H
     G --> H
+    H --> I["VS Code + JetBrains\nlocal receipt controls"]
+    classDef intent fill:#e0f2fe,stroke:#0284c7,color:#10233f
+    classDef scaffold fill:#fef3c7,stroke:#d97706,color:#10233f
+    classDef gate fill:#dcfce7,stroke:#16a34a,color:#10233f
+    classDef proof fill:#ccfbf1,stroke:#0f766e,color:#10233f
+    classDef editor fill:#ede9fe,stroke:#7c3aed,color:#10233f
+    class A,B intent
+    class C scaffold
+    class D,E,F,G gate
+    class H proof
+    class I editor
 ```
 
 ## What Gets Generated

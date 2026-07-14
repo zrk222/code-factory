@@ -8,7 +8,7 @@ user and customer needs.
 
 ```mermaid
 flowchart TB
-    SCM["SCM and IDE events"] --> CP["Tenant control plane"]
+    SCM["SCM and IDE control surfaces"] --> CP["Tenant control plane"]
     CP --> ID["Human and workload identities"]
     CP --> POL["Signed policy bundles"]
     POL --> DAG["Risk-adaptive assurance DAG"]
@@ -21,6 +21,14 @@ flowchart TB
     GRAPH --> PROM["Policy-controlled promotion"]
     PROM --> OPS["Canary, runtime, rollback, and vulnerability receipts"]
     OPS --> GRAPH
+    classDef ingress fill:#e0f2fe,stroke:#0284c7,color:#10233f
+    classDef control fill:#fef3c7,stroke:#d97706,color:#10233f
+    classDef evidence fill:#dcfce7,stroke:#16a34a,color:#10233f
+    classDef future fill:#ede9fe,stroke:#7c3aed,color:#10233f
+    class SCM ingress
+    class CP,ID,POL,DAG,RUN control
+    class REC,GRAPH,PROM,OPS evidence
+    class SUP,OSC,PRIV future
 ```
 
 ## Trust rules

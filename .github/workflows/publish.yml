@@ -25,6 +25,13 @@ jobs:
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
 
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
       - name: Install build tools
         run: python -m pip install --upgrade build twine pytest
 
@@ -44,6 +51,12 @@ jobs:
           npm test
           npx vsce package --no-dependencies --out factoryline-vscode-${{ github.event.release.tag_name }}.vsix
 
+      - name: Test and package JetBrains plugin
+        working-directory: editors/intellij
+        run: |
+          chmod +x gradlew
+          ./gradlew check buildPlugin verifyPlugin
+
       - name: Clean wheel smoke
         run: |
           python -m venv /tmp/factory-wheel
@@ -57,7 +70,7 @@ jobs:
       - name: Attach distributions to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/* editors/vscode/*.vsix --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/* editors/vscode/*.vsix editors/intellij/build/distributions/*.zip --clobber
 
       - name: Publish package distributions to PyPI
         # Temporary encrypted-token fallback. Replace with pure OIDC after

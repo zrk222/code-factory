@@ -1,0 +1,46 @@
+<idea-plugin>
+    <id>app.factoryline</id>
+    <name>FactoryLine</name>
+    <vendor url="https://github.com/zrk222/code-factory">FactoryLine</vendor>
+    <description><![CDATA[
+        <p>Run bounded FactoryLine gates and inspect local receipts without leaving your JetBrains IDE.</p>
+        <p>The plugin starts explicit local commands only. It does not upload project files or receipts.</p>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationService serviceImplementation="app.factoryline.intellij.FactoryLineSettings"/>
+        <applicationConfigurable instance="app.factoryline.intellij.FactoryLineSettingsConfigurable"
+                               displayName="FactoryLine" parentId="tools"/>
+        <toolWindow id="FactoryLine"
+                    anchor="right"
+                    factoryClass="app.factoryline.intellij.FactoryLineToolWindowFactory"/>
+    </extensions>
+
+    <actions>
+        <group id="app.factoryline.intellij.actions" text="FactoryLine" description="Run local FactoryLine commands">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="app.factoryline.intellij.assemble"
+                    class="app.factoryline.intellij.RunAssemblyAction"
+                    text="Run Spec-to-Ship Assembly"
+                    description="Run FactoryLine assembly for a feature"/>
+            <action id="app.factoryline.intellij.verify"
+                    class="app.factoryline.intellij.VerifyReceiptsAction"
+                    text="Verify Feature Receipts"
+                    description="Verify FactoryLine receipts for a feature"/>
+            <action id="app.factoryline.intellij.openReceipt"
+                    class="app.factoryline.intellij.OpenLatestReceiptAction"
+                    text="Open Latest Receipt"
+                    description="Show the newest local FactoryLine receipt"/>
+            <action id="app.factoryline.intellij.analyzeChangedProof"
+                    class="app.factoryline.intellij.AnalyzeChangedProofAction"
+                    text="Analyze Changed Proof"
+                    description="Show FactoryLine receipt invalidation caused by current changes"/>
+            <action id="app.factoryline.intellij.checkReceiptSignature"
+                    class="app.factoryline.intellij.CheckLatestReceiptSignatureAction"
+                    text="Check Latest Receipt Signature State"
+                    description="Show signature presence without claiming identity verification"/>
+        </group>
+    </actions>
+</idea-plugin>
