@@ -19,6 +19,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
       - name: Install build tools
         run: python -m pip install --upgrade build twine pytest
 
@@ -30,6 +36,13 @@ jobs:
 
       - name: Check distributions
         run: python -m twine check dist/*
+
+      - name: Test and package VS Code extension
+        working-directory: editors/vscode
+        run: |
+          npm ci
+          npm test
+          npx vsce package --no-dependencies --out factoryline-vscode-${{ github.event.release.tag_name }}.vsix
 
       - name: Clean wheel smoke
         run: |
@@ -44,7 +57,7 @@ jobs:
       - name: Attach distributions to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/* editors/vscode/*.vsix --clobber
 
       - name: Publish package distributions to PyPI
         # Temporary encrypted-token fallback. Replace with pure OIDC after

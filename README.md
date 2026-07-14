@@ -15,7 +15,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.11.3
+pip install factoryline-code-factory==0.12.0
 factory app from-prompt "Build a simple approval tracker with an audit log" --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
 ```
@@ -27,6 +27,14 @@ software the factory pretends is ready to ship.
 
 For an existing repository, start with `forge adopt <feature> --root .`; see
 [First Use On An Existing Repository](docs/FIRST_USE.md).
+
+## VS Code integration
+
+The new local VS Code adapter runs an explicit FactoryLine assembly or receipt
+verification command in the open trusted workspace, then renders local JSON
+receipts beside the editor. It does not upload code or claim IntelliJ support.
+See [FactoryLine for VS Code](docs/VSCODE.md) for the commands, VSIX install,
+and scope boundary.
 
 ## Proof-first architecture
 
@@ -125,7 +133,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.11.3 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.4 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
+pip install factoryline-code-factory==0.12.0 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.4 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
 factory doctor --strict --json
 ```
 

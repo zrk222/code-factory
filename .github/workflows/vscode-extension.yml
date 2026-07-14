@@ -1,0 +1,33 @@
+name: VS Code extension
+
+on:
+  push:
+    paths:
+      - "editors/vscode/**"
+      - ".github/workflows/vscode-extension.yml"
+  pull_request:
+    paths:
+      - "editors/vscode/**"
+      - ".github/workflows/vscode-extension.yml"
+  workflow_dispatch:
+
+jobs:
+  test-package:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npx vsce package --no-dependencies --out factoryline-vscode.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: factoryline-vscode-vsix
+          path: editors/vscode/factoryline-vscode.vsix

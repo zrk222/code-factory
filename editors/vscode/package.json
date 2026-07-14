@@ -1,0 +1,68 @@
+{
+  "name": "factoryline-vscode",
+  "displayName": "FactoryLine",
+  "description": "Run bounded Code Factory gates and inspect local receipts without leaving VS Code.",
+  "version": "0.1.0",
+  "publisher": "zrk222",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zrk222/code-factory.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Developer Tools",
+    "Testing"
+  ],
+  "keywords": [
+    "code-factory",
+    "receipts",
+    "verification",
+    "testing"
+  ],
+  "activationEvents": [
+    "onCommand:factoryline.assemble",
+    "onCommand:factoryline.verify",
+    "onCommand:factoryline.openLatestReceipt"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "factoryline.assemble",
+        "title": "FactoryLine: Run Spec-to-Ship Assembly"
+      },
+      {
+        "command": "factoryline.verify",
+        "title": "FactoryLine: Verify Feature Receipts"
+      },
+      {
+        "command": "factoryline.openLatestReceipt",
+        "title": "FactoryLine: Open Latest Receipt"
+      }
+    ],
+    "configuration": {
+      "title": "FactoryLine",
+      "properties": {
+        "factoryline.command": {
+          "type": "string",
+          "default": "factory",
+          "description": "FactoryLine CLI command or absolute executable path."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "test": "npm run compile && node ./dist/test/receipt.test.js",
+    "package": "npm run test && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.30",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.8.3"
+  }
+}
