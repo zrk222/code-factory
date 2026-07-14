@@ -25,10 +25,10 @@ the expected signer identity.
 1. Install FactoryLine:
 
    ```powershell
-   pip install factoryline-code-factory==0.13.0
+   pip install factoryline-code-factory==0.13.1
    ```
 
-2. Download `factoryline-intellij-0.1.0.zip` from the FactoryLine GitHub
+2. Download `factoryline-intellij-0.1.1.zip` from the FactoryLine GitHub
    release that introduced this adapter.
 3. In your JetBrains IDE: **Settings > Plugins > gear menu > Install Plugin from Disk...**.
 4. Select the ZIP, restart, then open **Tools > FactoryLine**.
@@ -47,7 +47,11 @@ The adapter depends only on the shared IntelliJ Platform module. CI verifies
 the packaged ZIP against IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion,
 GoLand, RustRover, and DataGrip from the 2025.2 baseline forward. It verifies
 current stable builds, including an explicit DataGrip archive because archived
-2025.2 installers are not available through the verifier resolver. It is
-distributed as a GitHub release asset; JetBrains Marketplace publication is
-intentionally separate until a Marketplace publisher identity and token are
-configured.
+2025.2 installers are not available through the verifier resolver.
+
+The packaged ZIP now has a deterministic Marketplace preflight: public project
+and vendor metadata, light/dark 40px logos, release notes, and the packaged
+artifact structure must all be present. GitHub releases remain the current
+installation channel. JetBrains Marketplace initial upload is a one-time human
+Vendor-profile action; subsequent verified updates are published by the scoped
+GitHub workflow. See [JetBrains Marketplace Release](JETBRAINS_MARKETPLACE.md).

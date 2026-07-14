@@ -55,7 +55,7 @@ jobs:
         working-directory: editors/intellij
         run: |
           chmod +x gradlew
-          ./gradlew check buildPlugin verifyPlugin
+          ./gradlew check buildPlugin verifyPlugin marketplacePreflight
 
       - name: Clean wheel smoke
         run: |

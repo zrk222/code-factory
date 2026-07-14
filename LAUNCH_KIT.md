@@ -54,8 +54,10 @@ ask for votes, stars, or reviews.
 >
 > The adapter does not upload source or receipts, sign artifacts, or invent a
 > green result. It shows receipts as unassessed until the normal FactoryLine
-> verification path has checked them. The release ZIP and compatibility evidence
-> are linked from the GitHub release once its cross-product CI gate is green.
+> verification path has checked them. The release ZIP carries a Marketplace
+> preflight over its descriptor, logos, contact metadata, release notes, and
+> packaged structure. It is installed from GitHub releases until the first
+> Vendor-profile upload completes JetBrains review.
 >
 > This is the enterprise-team convenience layer, not a second control plane:
 > the CLI, CI, and human review remain the authority.
@@ -135,7 +137,7 @@ Show HN: A proof-first factory for AI-assisted software work
 > The components work independently, but the base package connects them:
 >
 > ```bash
-> pip install factoryline-code-factory==0.13.0 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.4 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
+> pip install factoryline-code-factory==0.13.1 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.4 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
 > factory doctor --strict --json
 > ```
 >

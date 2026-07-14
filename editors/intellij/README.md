@@ -26,9 +26,9 @@ untrusted/missing receipt into a green state.
 
 ## Install
 
-1. Install `factoryline-code-factory==0.13.0` into the Python environment that
+1. Install `factoryline-code-factory==0.13.1` into the Python environment that
    IntelliJ inherits.
-2. Download `factoryline-intellij-0.1.0.zip` from the matching GitHub release.
+2. Download `factoryline-intellij-0.1.1.zip` from the matching GitHub release.
 3. In your JetBrains IDE, open **Settings > Plugins > gear menu > Install Plugin from Disk...** and select the ZIP.
 4. Restart the IDE, then use the **Tools > FactoryLine** menu or the **FactoryLine** tool window.
 
@@ -51,7 +51,11 @@ This is a JetBrains Platform plugin, with only the shared
 IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and
 DataGrip builds from the 2025.2 baseline forward. The CI matrix verifies
 current stable builds, including an explicit DataGrip archive because archived
-2025.2 installers are not available through the verifier resolver. It is
-distributed from GitHub releases; it is not yet published to the JetBrains
-Marketplace. Marketplace publication requires a separately configured
-JetBrains publisher token and review of the generated plugin ZIP.
+2025.2 installers are not available through the verifier resolver.
+
+`marketplacePreflight` inspects the actual ZIP and fails when its descriptor,
+light/dark plugin logos, vendor contact, project URL, or release notes are
+missing. GitHub releases remain the current installation channel. The initial
+Marketplace upload requires a human Vendor profile and review; after that
+bootstrap, the scoped GitHub workflow publishes verified updates using a
+Marketplace publisher token. See [the Marketplace runbook](../../docs/JETBRAINS_MARKETPLACE.md).

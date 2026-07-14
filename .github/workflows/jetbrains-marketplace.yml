@@ -1,0 +1,54 @@
+name: Publish JetBrains Marketplace plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_ref:
+        description: "Immutable release tag to publish after the one-time Marketplace upload"
+        required: true
+        default: "v0.13.1"
+      channel:
+        description: "JetBrains Marketplace release channel"
+        required: true
+        default: "default"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jetbrains-marketplace
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: validate and publish Marketplace update
+    runs-on: ubuntu-latest
+    environment: jetbrains-marketplace
+    defaults:
+      run:
+        working-directory: editors/intellij
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_ref }}
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Require the scoped Marketplace publisher token
+        env:
+          PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+        run: |
+          test -n "$PUBLISH_TOKEN" || {
+            echo "JETBRAINS_MARKETPLACE_TOKEN is required in the jetbrains-marketplace environment." >&2
+            exit 1
+          }
+      - name: Test, verify, and check Marketplace package metadata
+        run: |
+          chmod +x gradlew
+          ./gradlew check buildPlugin verifyPlugin marketplacePreflight
+      - name: Publish verified plugin update
+        env:
+          PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+        run: ./gradlew publishPlugin -PfactorylineMarketplaceChannel="${{ inputs.channel }}"
