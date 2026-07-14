@@ -15,7 +15,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.11.0
+pip install factoryline-code-factory==0.11.1
 factory app from-prompt "Build a simple approval tracker with an audit log" --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
 ```
@@ -125,8 +125,18 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.11.0 code-factory-1-spec==0.5.1 code-factory-2-forge==0.10.2 code-factory-3-compile==0.5.2 code-factory-4-design==0.7.1
+pip install factoryline-code-factory==0.11.1 code-factory-1-spec==0.5.2 code-factory-2-forge==0.10.3 code-factory-3-compile==0.5.3 code-factory-4-design==0.7.2
+factory doctor --strict --json
 ```
+
+`factory doctor` reports two separate facts: `installation_ok` verifies the
+CLIs, versions, and required commands; `workflow_ok` runs bounded,
+non-mutating canaries. The ForgeLine canary exercises an ESM `.mjs` feature and
+requires measured symbols, so an installed but Python-centric QA path cannot
+appear healthy. Use `factory --version --json` (or each brick's equivalent) to
+record the package version, source identity when available, build hash, install
+origin, runtime, and receipt schema. `identity_complete: false` is an explicit
+provenance limitation; it must not be presented as signer-identity proof.
 
 ## Identity-signed receipts
 

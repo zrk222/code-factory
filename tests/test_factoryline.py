@@ -23,7 +23,7 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.11.0"
+    assert factoryline.__version__ == "0.11.1"
 
 
 def test_layout_created(tmp_path):
@@ -46,7 +46,7 @@ def test_factory_verify_refuses_to_call_missing_receipts_shippable(tmp_path):
 
 
 def test_protocol_requires_design_md_compatible_prestige():
-    assert MINIMUM_VERSIONS["prestige"] == "0.7.0"
+    assert MINIMUM_VERSIONS["prestige"] == "0.7.2"
 
 
 def test_receipt_roundtrip(tmp_path):
@@ -504,6 +504,27 @@ def test_cli_doctor_is_windows_console_safe(capsys):
     assert main(["doctor"]) == 0
     out = capsys.readouterr().out
     assert any(word in out for word in ("compatible", "incompatible", "missing"))
+
+
+def test_cli_version_has_machine_readable_provenance(capsys):
+    from factoryline.cli import main
+
+    assert main(["version", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert {"package", "version", "build_hash", "install_origin", "runtime", "receipt_schema", "identity_complete"} <= payload.keys()
+    assert payload["package"] == "factoryline-code-factory"
+    assert payload["build_hash"]
+
+
+def test_doctor_separates_installation_from_workflow_status(capsys, monkeypatch):
+    import factoryline.cli as cli
+
+    monkeypatch.setattr(cli, "_workflow_canary", lambda module: {"ok": module.name != "forgeline", "reason": "mjs feature canary failed"})
+    assert cli.main(["doctor", "--strict", "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert "installation_ok" in payload and "workflow_ok" in payload
+    forge = next(item for item in payload["modules"] if item["module"] == "forgeline")
+    assert forge["workflow"]["ok"] is False
 
 
 def test_cli_no_args_returns_agent_home_with_definitive_empty_states(tmp_path, capsys, monkeypatch):

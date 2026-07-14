@@ -12,6 +12,7 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from .contract import MODULES, STAGES, ensure_layout, LAYOUT
@@ -35,6 +36,66 @@ from .coverage import requirement_coverage
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
 from .verification import verify_feature
+
+
+def _cli_command(name: str) -> str:
+    """Prefer the sibling script in this interpreter environment over ambient PATH."""
+    scripts = Path(sys.executable).resolve().parent
+    for suffix in (".exe", ".cmd", ""):
+        candidate = scripts / f"{name}{suffix}"
+        if candidate.exists():
+            return str(candidate)
+    return name
+
+
+def _emit_version(as_json: bool) -> int:
+    from .provenance import provenance
+    payload = provenance()
+    print(json.dumps(payload, indent=2, sort_keys=True) if as_json else f"factory {payload['version']}")
+    return 0
+
+
+def _workflow_canary(module) -> dict:
+    """Run a bounded, non-mutating behavior check rather than trusting --help."""
+    if not module.installed:
+        return {"ok": False, "reason": "cli not installed"}
+    try:
+        version = subprocess.run([_cli_command(module.cli), "--version", "--json"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {"ok": False, "reason": type(error).__name__}
+    if version.returncode != 0:
+        return {"ok": False, "reason": "version command failed"}
+    try:
+        payload = json.loads(version.stdout)
+    except json.JSONDecodeError:
+        return {"ok": False, "reason": "version command was not JSON"}
+    required = {"package", "version", "build_hash", "install_origin", "runtime", "receipt_schema"}
+    missing = sorted(name for name in required if not payload.get(name))
+    if missing:
+        return {"ok": False, "reason": f"incomplete provenance: {', '.join(missing)}", "provenance": payload}
+    if module.name != "forgeline":
+        return {"ok": True, "provenance": payload}
+    with tempfile.TemporaryDirectory(prefix="factory-doctor-") as directory:
+        root = Path(directory)
+        (root / "services").mkdir()
+        target = root / "services" / "canary.mjs"
+        target.write_text("export function recall(id) { return id; }\n", encoding="utf-8")
+        (root / "services" / "canary.test.mjs").write_text("import { recall } from './canary.mjs'; recall('ok');\n", encoding="utf-8")
+        ssat = root / "canary.ssat.yaml"
+        ssat.write_text(
+            "name: canary\nmodules:\n  - name: canary\n    path: services/canary.mjs\n    functions:\n      - name: recall\n        args: [id]\n        returns: string\ndependencies: []\ninvariants: []\n",
+            encoding="utf-8",
+        )
+        result = subprocess.run([_cli_command(module.cli), "qa", "canary", "--ssat", str(ssat), "--root", str(root), "--strict"], capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        return {"ok": False, "reason": "mjs feature canary failed", "output": (result.stdout + result.stderr)[-1000:], "provenance": payload}
+    try:
+        qa = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"ok": False, "reason": "mjs feature canary was not JSON", "provenance": payload}
+    if qa.get("metrics", {}).get("coverage_assessment") != "measured":
+        return {"ok": False, "reason": "mjs symbols were not measured", "provenance": payload}
+    return {"ok": True, "provenance": payload, "canary": "mjs-feature-qa"}
 
 
 def _home(root: Path = Path("."), as_json: bool = False) -> int:
@@ -83,24 +144,31 @@ def _doctor(strict: bool = False, as_json: bool = False) -> int:
     for module in mods:
         help_text = None
         if module.installed:
-            proc = subprocess.run([module.cli, "--help"], capture_output=True, text=True, timeout=20)
+            proc = subprocess.run([_cli_command(module.cli), "--help"], capture_output=True, text=True, timeout=20)
             help_text = proc.stdout + proc.stderr
-        checks.append(compatibility(module.name, MODULES[module.name], help_text))
+        check = compatibility(module.name, MODULES[module.name], help_text)
+        checks.append((check, _workflow_canary(module)))
     if as_json:
+        installation_ok = all(item[0].ok for item in checks)
+        workflow_ok = all(item[1]["ok"] for item in checks)
         print(json.dumps({
-            "ok": all(item.ok for item in checks),
-            "modules": [item.__dict__ | {"ok": item.ok} for item in checks],
+            "ok": installation_ok and workflow_ok,
+            "installation_ok": installation_ok,
+            "workflow_ok": workflow_ok,
+            "modules": [check.__dict__ | {"installation_ok": check.ok, "workflow": workflow} for check, workflow in checks],
         }, indent=2))
-        return 0 if all(item.ok for item in checks) or not strict else 1
+        return 0 if installation_ok and workflow_ok or not strict else 1
 
     print("factoryline doctor - Lego assembly compatibility\n" + "=" * 48)
-    for module, check in zip(mods, checks):
-        mark = "compatible" if check.ok else "missing" if not check.installed else "incompatible"
+    for module, (check, workflow) in zip(mods, checks):
+        mark = "compatible" if check.ok and workflow["ok"] else "missing" if not check.installed else "workflow-failed" if check.ok else "incompatible"
         version = check.version or "not installed"
         print(f"  [{mark:>12}]  {module.name:<10} {version:<10} requires >= {check.minimum}")
         if check.missing_commands:
             print(f"                 missing commands: {', '.join(check.missing_commands)}")
-    failed = [item for item in checks if not item.ok]
+        if not workflow["ok"]:
+            print(f"                 workflow: {workflow['reason']}")
+    failed = [check for check, workflow in checks if not check.ok or not workflow["ok"]]
     if failed:
         print("\nInstall or upgrade incompatible bricks:")
         for item in failed:
@@ -123,6 +191,9 @@ def _plan() -> int:
 
 
 def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "--version":
+        return _emit_version("--json" in argv)
     p = argparse.ArgumentParser(prog="factory",
                                 description="Snap SpecLine, ForgeLine, HSF and Prestige into one assembly line.")
     sub = p.add_subparsers(dest="cmd")
@@ -418,10 +489,14 @@ def main(argv=None) -> int:
     a_prompt.add_argument("--purpose", default="auto", help="auto, developer, healthcare, fintech, marketplace, saas")
     a_prompt.add_argument("--json", action="store_true")
 
+    version = sub.add_parser("version", help="show package provenance")
+    version.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
 
     if a.cmd is None:
         return _home()
+    if a.cmd == "version":
+        return _emit_version(a.json)
     if a.cmd == "home":
         return _home(Path(a.root), a.json)
     if a.cmd == "doctor":
