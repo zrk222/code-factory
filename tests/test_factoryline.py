@@ -23,7 +23,7 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.11.2"
+    assert factoryline.__version__ == "0.11.3"
 
 
 def test_layout_created(tmp_path):
@@ -46,7 +46,7 @@ def test_factory_verify_refuses_to_call_missing_receipts_shippable(tmp_path):
 
 
 def test_protocol_requires_design_md_compatible_prestige():
-    assert MINIMUM_VERSIONS["prestige"] == "0.7.2"
+    assert MINIMUM_VERSIONS["prestige"] == "0.7.3"
 
 
 def test_receipt_roundtrip(tmp_path):

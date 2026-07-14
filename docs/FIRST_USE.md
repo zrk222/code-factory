@@ -5,7 +5,7 @@ small feature or risky workflow, not a whole migration.
 
 ```powershell
 cd path\to\your-repository
-pip install factoryline-code-factory==0.10.3 code-factory-1-spec code-factory-2-forge
+pip install factoryline-code-factory==0.11.3 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.4
 factory doctor --strict --json
 factory init .
 forge adopt <feature> --root .
@@ -37,4 +37,3 @@ The most useful contribution is a real first-run report: what command you ran,
 where it helped, and where it made you stop. Open the [first external run
 template](https://github.com/zrk222/code-factory/issues/new?template=first-external-run.yml).
 Remove secrets, customer data, and private paths before posting.
-
