@@ -19,11 +19,17 @@ jobs:
         working-directory: editors/intellij
     steps:
       - uses: actions/checkout@v5
+      - name: Free runner disk for IDE verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo docker image prune --all --force
+          df -h
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
-      - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
       - run: ./gradlew check buildPlugin verifyPlugin
       - uses: actions/upload-artifact@v4
@@ -51,11 +57,17 @@ jobs:
         working-directory: editors/intellij
     steps:
       - uses: actions/checkout@v5
+      - name: Free runner disk for IDE verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo docker image prune --all --force
+          df -h
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
-      - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
       - name: Resolve current DataGrip archive
         if: matrix.product == 'DataGrip'
