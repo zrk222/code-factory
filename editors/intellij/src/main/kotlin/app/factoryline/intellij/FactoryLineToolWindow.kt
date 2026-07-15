@@ -38,6 +38,7 @@ class FactoryLinePanel(private val project: Project) : JPanel(BorderLayout(0, 8)
             add(JButton("Run assembly").apply { addActionListener { FactoryLineController.requestFeature(project, FactoryLineOperation.ASSEMBLE) } })
             add(JButton("Verify receipts").apply { addActionListener { FactoryLineController.requestFeature(project, FactoryLineOperation.VERIFY) } })
             add(JButton("Analyze changed proof").apply { addActionListener { FactoryLineController.analyzeChangedProof(project) } })
+            add(JButton("Open local meter").apply { addActionListener { FactoryLineController.openMeter(project) } })
             add(JButton("Open latest receipt").apply { addActionListener { FactoryLineController.openLatestReceipt(project) } })
             add(JButton("Check signature state").apply { addActionListener { FactoryLineController.checkLatestReceiptSignature(project) } })
         }
@@ -66,6 +67,12 @@ class FactoryLinePanel(private val project: Project) : JPanel(BorderLayout(0, 8)
         output.text = receipt.display + "\n" + receipt.rawJson
         output.caretPosition = 0
     }
+
+    fun show(meter: MeterSummary) {
+        status.text = "Opened local FactoryLine meter."
+        output.text = meter.display + "\n" + meter.rawJson
+        output.caretPosition = 0
+    }
 }
 
 object FactoryLinePanels {
@@ -82,6 +89,13 @@ object FactoryLinePanels {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
         toolWindow?.show {
             ApplicationManager.getApplication().invokeLater { project.getUserData(key)?.show(receipt) }
+        }
+    }
+
+    fun show(project: Project, meter: MeterSummary) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater { project.getUserData(key)?.show(meter) }
         }
     }
 }

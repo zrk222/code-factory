@@ -69,6 +69,31 @@ data class ReceiptSummary(val source: Path, val fields: Map<String, String>, val
     }
 }
 
+data class MeterSummary(val fields: Map<String, String>, val rawJson: String) {
+    val display: String
+        get() = buildString {
+            appendLine("Local FactoryLine Meter")
+            appendLine("Token totals are measured only when modules report usage.")
+            fields.forEach { (key, value) -> appendLine("$key: $value") }
+        }
+
+    companion object {
+        private val scalar = Regex("\\\"([^\\\"]+)\\\"\\s*:\\s*(\\\"([^\\\"]*)\\\"|true|false|null|-?\\d+(?:\\.\\d+)?)")
+        private val preferredKeys = listOf(
+            "stages_measured", "build_wall_ms", "build_model_calls", "build_tokens",
+            "tokens_reported_by_modules", "runs_observed", "stages_successful", "stages_failed",
+            "stage_success_rate", "last_measurement_at"
+        )
+
+        fun fromJson(rawJson: String): MeterSummary {
+            val values = scalar.findAll(rawJson).associate { match ->
+                match.groupValues[1] to match.groupValues[2].removeSurrounding("\\\"")
+            }
+            return MeterSummary(preferredKeys.mapNotNull { key -> values[key]?.let { key to it } }.toMap(), rawJson)
+        }
+    }
+}
+
 object ReceiptLocator {
     private val roots = listOf(".factory", "receipts")
     private val excluded = setOf(".git", "node_modules", ".pnpm", "build", "dist", ".gradle", "out")
@@ -178,6 +203,9 @@ object FactoryLineRunner {
 
     fun receiptStatus(project: Project, receipt: Path): CommandResult =
         execute(project, "Check Receipt Signature State", listOf("receipt", "status", receipt.toString()))
+
+    fun meter(project: Project): CommandResult =
+        execute(project, "Open Local Meter", listOf("meter") + rootArguments(project) + "--json")
 
     private fun rootArguments(project: Project): List<String> {
         val root = project.basePath?.let(Path::of) ?: return emptyList()

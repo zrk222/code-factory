@@ -20,6 +20,7 @@ the summary so no one can accuse the number of hiding its assumptions.
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
+import datetime as _dt
 import json
 import time
 
@@ -35,6 +36,10 @@ class StageTiming:
     tokens_in: int
     tokens_out: int
     ok: bool
+    usage_reported: bool = False
+    recorded_at: str = ""
+    feature: str = ""
+    run_id: str = ""
 
 
 class MeterLog:
@@ -46,7 +51,9 @@ class MeterLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def record(self, t: StageTiming) -> None:
-        with self.path.open("a") as f:
+        if not t.recorded_at:
+            t.recorded_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(t.__dict__) + "\n")
 
     def stages(self) -> list[StageTiming]:
@@ -55,7 +62,8 @@ class MeterLog:
         out = []
         for line in self.path.read_text().splitlines():
             if line.strip():
-                out.append(StageTiming(**json.loads(line)))
+                payload = json.loads(line)
+                out.append(StageTiming(**payload))
         return out
 
 
@@ -103,7 +111,7 @@ def summarize(root: Path, *, baseline_tokens_per_run: int = 4000,
 
     # Second honesty guard: if modules reported no token usage, say so explicitly
     # rather than implying the savings are proven. wall_ms is always real.
-    tokens_reported = factory_one_time_tokens > 0
+    tokens_reported = any(stage.usage_reported for stage in stages)
     return {
         "stages_measured": len(stages),
         "build_wall_ms": total.wall_ms,
@@ -121,7 +129,7 @@ def summarize(root: Path, *, baseline_tokens_per_run: int = 4000,
         "tokens_saved": tokens_saved,
         "pct_tokens_saved": round(pct_saved, 1),
         "note": ("All wall_ms are measured. " + (
-            "Token counts are reported by each module." if tokens_reported else
+            "Token counts are reported by one or more modules." if tokens_reported else
             "NOTE: no module reported token usage on these runs, so the token-savings "
             "figure reflects the MODEL (compile-once → 0/run), not measured token "
             "deltas. Wire per-module token reporting for measured token savings.") +
@@ -145,12 +153,59 @@ def overhead(root: Path) -> dict:
             "scope_limits": ["Wall-clock measurements are local run observations, not a machine-independent performance claim.", "No gate is skipped by this report; use project policy to decide which gates are required."]}
 
 
+def live_snapshot(root: Path, *, baseline_tokens_per_run: int = 4000,
+                  runs_projected: int = 1000) -> dict:
+    """Return one current, local-only meter observation for dashboards or watches."""
+    log = MeterLog(root)
+    stages = log.stages()
+    successful = sum(stage.ok for stage in stages)
+    failed = len(stages) - successful
+    run_ids = {stage.run_id for stage in stages if stage.run_id}
+    known_features = sorted({stage.feature for stage in stages if stage.feature})
+    latest = stages[-1] if stages else None
+    return {
+        "schema": "factory.meter.live.v1",
+        "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "meter_log": str(log.path),
+        "last_measurement_at": stages[-1].recorded_at if stages else None,
+        "summary": summarize(
+            root,
+            baseline_tokens_per_run=baseline_tokens_per_run,
+            runs_projected=runs_projected,
+        ),
+        "overhead": overhead(root),
+        "activity": {
+            "runs_observed": len(run_ids) if run_ids else None,
+            "features_observed": known_features,
+            "stages_successful": successful,
+            "stages_failed": failed,
+            "stage_success_rate": round(successful / len(stages), 4) if stages else None,
+            "latest_stage": ({
+                "module": latest.module,
+                "stage": latest.stage,
+                "feature": latest.feature or None,
+                "run_id": latest.run_id or None,
+                "ok": latest.ok,
+                "wall_ms": latest.wall_ms,
+                "usage_reported": latest.usage_reported,
+                "recorded_at": latest.recorded_at or None,
+            } if latest else None),
+        },
+        "scope_limits": [
+            "This is a local append-only log snapshot, not a machine-independent benchmark.",
+            "Token totals are measured only when a module reports its standard meter block.",
+        ],
+    }
+
+
 def summary_table(summary: dict) -> str:
     """Render the summary as a plain-text table (portable, paste-anywhere)."""
     if summary.get("stages_measured", 0) == 0:
         return ("FACTORY COST & SAVINGS\n" + "-" * 52 + "\n"
                 + summary.get("status", "no data") + "\n" + summary.get("note", ""))
     a = summary["assumptions"]
+    factory_model = a["factory_model"].replace("→", "->")
+    note = summary["note"].replace("→", "->")
     tok_line = (f"one-time build tokens  : {summary['build_tokens']:,}"
                 if summary.get("tokens_reported_by_modules")
                 else "one-time build tokens  : (not reported by modules on these runs)")
@@ -167,10 +222,36 @@ def summary_table(summary: dict) -> str:
         f"baseline / run         : {a['baseline_tokens_per_run']:,} tokens  ({a['baseline_model']})",
         f"runs projected         : {a['runs_projected']:,}",
         f"baseline total         : {summary['baseline_total_tokens']:,} tokens",
-        f"factory total          : {summary['factory_total_tokens']:,} tokens  ({a['factory_model']})",
+        f"factory total          : {summary['factory_total_tokens']:,} tokens  ({factory_model})",
         f"tokens saved (model)   : {summary['tokens_saved']:,}",
         f"percent saved (model)  : {summary['pct_tokens_saved']}%",
         "",
-        summary["note"],
+        note,
     ]
+    return "\n".join(lines)
+
+
+def live_summary_table(snapshot: dict) -> str:
+    """Human-readable companion to the JSON snapshot for terminal users."""
+    activity = snapshot["activity"]
+    latest = activity["latest_stage"]
+    lines = [summary_table(snapshot["summary"]), "", "LIVE ACTIVITY (local meter log)", "-" * 52]
+    if activity["runs_observed"] is None:
+        lines.append("runs observed          : unavailable for legacy entries")
+    else:
+        lines.append(f"runs observed          : {activity['runs_observed']}")
+    lines.extend([
+        f"stages successful       : {activity['stages_successful']}",
+        f"stages failed           : {activity['stages_failed']}",
+        "stage success rate      : " + (
+            f"{activity['stage_success_rate'] * 100:.1f}%"
+            if activity["stage_success_rate"] is not None else "no stages yet"
+        ),
+        "features observed       : " + (", ".join(activity["features_observed"]) or "none yet"),
+        "latest stage            : " + (
+            f"{latest['module']}:{latest['stage']} ({'ok' if latest['ok'] else 'failed'})"
+            if latest else "none yet"
+        ),
+        f"last measurement        : {snapshot['last_measurement_at'] or 'none yet'}",
+    ])
     return "\n".join(lines)

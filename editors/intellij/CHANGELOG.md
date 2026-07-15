@@ -1,5 +1,9 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.1.2
+
+- Add a local meter overview that preserves the measured-versus-unreported token boundary.
+
 ## 0.1.1
 
 - Add Marketplace-ready descriptor metadata, light/dark logos, and release notes.

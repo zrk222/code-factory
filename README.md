@@ -15,7 +15,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.13.4
+pip install factoryline-code-factory==0.13.5
 factory app from-prompt "Build a simple approval tracker with an audit log" --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
 ```
@@ -170,7 +170,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.13.4 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.6 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
+pip install factoryline-code-factory==0.13.5 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.6 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
 factory doctor --json
 ```
 
@@ -281,6 +281,8 @@ factory plan            # print the assembly pipeline
 factory init .          # lay down the shared workspace
 factory assemble my_feature   # run the line (skips any missing brick)
 factory meter           # receipted cost + savings, computed on YOUR runs
+factory meter --json    # current local overview for an IDE or dashboard
+factory meter --watch   # refresh as measured stages finish
 factory rollup my_feature      # aggregate receipt attribution for debugging
 factory trace my_feature       # hash-link receipts into a proof bundle
 factory verify-trace .factory/traces/my_feature.trace.json
@@ -367,6 +369,18 @@ your evaluator to reject the changed policy. A rule that survives is reported as
 - It prints the **baseline assumption** inline, so no number hides what it's compared against.
 
 Wall-clock time is always measured. Projections are always labeled. Nothing is fabricated.
+
+Use `factory meter --json` for the same local overview in an IDE, or `factory
+meter --watch` for a terminal that refreshes as new stages finish. To capture a
+real local command without pretending it used a model:
+
+```bash
+factory meter --feature release --module codex --stage pytest \
+  --capture -- python -m pytest -q
+```
+
+The capture records wall time, exit status, feature, and a run ID. It leaves
+tokens **not reported** until a module supplies a standard meter block.
 
 ## Launch Measurement
 

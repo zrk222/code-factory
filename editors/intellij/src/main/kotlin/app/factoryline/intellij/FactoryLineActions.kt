@@ -113,6 +113,26 @@ object FactoryLineController {
             }
         })
     }
+
+    fun openMeter(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Open Local Meter")) return
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "FactoryLine: Open Local Meter", true) {
+            private lateinit var result: CommandResult
+
+            override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
+                indicator.isIndeterminate = true
+                result = FactoryLineRunner.meter(project)
+            }
+
+            override fun onSuccess() {
+                if (result.exitCode == 0 && !result.timedOut) {
+                    FactoryLinePanels.show(project, MeterSummary.fromJson(result.output))
+                } else {
+                    FactoryLinePanels.show(project, result)
+                }
+            }
+        })
+    }
 }
 
 abstract class FactoryLineAction : AnAction() {
@@ -150,5 +170,11 @@ class AnalyzeChangedProofAction : FactoryLineAction() {
 class CheckLatestReceiptSignatureAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.checkLatestReceiptSignature(it) }
+    }
+}
+
+class OpenMeterAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.openMeter(it) }
     }
 }

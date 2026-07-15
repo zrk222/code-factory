@@ -13,11 +13,13 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
+import uuid
 from pathlib import Path
 
 from .contract import MODULES, STAGES, ensure_layout, LAYOUT
 from .assembly import detect, assemble, DEFAULT_CHAIN, rollup_receipts
-from .meter import overhead, summarize, summary_table
+from .meter import live_snapshot, live_summary_table, overhead, summarize, summary_table
 from .proof import (
     build_trace,
     execute_replay,
@@ -207,6 +209,16 @@ def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "--version":
         return _emit_version("--json" in argv)
+    # A captured command may legitimately contain flags that belong to the
+    # child process.  Pull it out before argparse interprets those flags as
+    # FactoryLine options.  ``--`` remains optional for a natural CLI shape.
+    capture_command = None
+    if argv[:1] == ["meter"] and "--capture" in argv:
+        capture_index = argv.index("--capture")
+        capture_command = argv[capture_index + 1:]
+        if capture_command[:1] == ["--"]:
+            capture_command = capture_command[1:]
+        argv = argv[:capture_index]
     p = argparse.ArgumentParser(prog="factory",
                                 description="Snap SpecLine, ForgeLine, HSF and Prestige into one assembly line.")
     sub = p.add_subparsers(dest="cmd")
@@ -237,6 +249,14 @@ def main(argv=None) -> int:
     s.add_argument("--root", default=".")
     s.add_argument("--runs", type=int, default=1000, help="projected production runs")
     s.add_argument("--baseline", type=int, default=4000, help="baseline tokens per run (declare your real agent cost)")
+    s.add_argument("--json", action="store_true", help="emit a machine-readable current snapshot")
+    s.add_argument("--watch", action="store_true", help="refresh the local meter as new stages finish")
+    s.add_argument("--interval", type=float, default=1.0, help="watch refresh interval in seconds")
+    s.add_argument("--max-updates", type=int, default=None, help="stop after N snapshots (useful for automation)")
+    s.add_argument("--feature", default="local-observation", help="feature label for a captured local command")
+    s.add_argument("--module", default="local", help="module label for a captured local command")
+    s.add_argument("--stage", default="command", help="stage label for a captured local command")
+    s.add_argument("--capture", action="store_true", help="run a command and append its measured local wall time")
 
     s = sub.add_parser("overhead", help="show measured wall-clock overhead per gate")
     s.add_argument("--root", default=".")
@@ -539,9 +559,54 @@ def main(argv=None) -> int:
             print(f"next action: {result['next_action']}")
         return 0 if result["shippable"] else 1
     if a.cmd == "meter":
-        summ = summarize(Path(a.root), baseline_tokens_per_run=a.baseline, runs_projected=a.runs)
-        print(summary_table(summ))
-        return 0
+        if a.interval <= 0:
+            print("meter failed: --interval must be positive", file=sys.stderr)
+            return 2
+        if a.max_updates is not None and a.max_updates <= 0:
+            print("meter failed: --max-updates must be positive", file=sys.stderr)
+            return 2
+        capture_exit = 0
+        if capture_command is not None:
+            command = list(capture_command)
+            if not command:
+                print("meter failed: --capture requires a command after --", file=sys.stderr)
+                return 2
+            started = time.monotonic()
+            try:
+                proc = subprocess.run(command, cwd=str(Path(a.root)))
+                capture_exit = proc.returncode
+            except FileNotFoundError:
+                print(f"meter capture failed: executable not found: {command[0]}", file=sys.stderr)
+                capture_exit = 127
+            elapsed_ms = round((time.monotonic() - started) * 1000)
+            from .meter import MeterLog, StageTiming
+            MeterLog(Path(a.root)).record(StageTiming(
+                module=a.module,
+                stage=a.stage,
+                wall_ms=elapsed_ms,
+                model_calls=0,
+                tokens_in=0,
+                tokens_out=0,
+                ok=capture_exit == 0,
+                feature=a.feature,
+                run_id=uuid.uuid4().hex,
+            ))
+        updates = 0
+        while True:
+            snapshot = live_snapshot(
+                Path(a.root),
+                baseline_tokens_per_run=a.baseline,
+                runs_projected=a.runs,
+            )
+            if a.json:
+                print(json.dumps(snapshot, sort_keys=True))
+            else:
+                print(live_summary_table(snapshot))
+            updates += 1
+            if not a.watch or (a.max_updates is not None and updates >= a.max_updates):
+                break
+            time.sleep(a.interval)
+        return capture_exit
     if a.cmd == "rollup":
         print(json.dumps(rollup_receipts(Path(a.root), a.feature), indent=2))
         return 0

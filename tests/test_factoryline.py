@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from factoryline.contract import ensure_layout, LAYOUT, Receipt, Meter, MODULES, STAGES
 from factoryline.assembly import detect, assemble, DEFAULT_CHAIN
-from factoryline.meter import summarize, summary_table, MeterLog, StageTiming
+from factoryline.meter import live_snapshot, live_summary_table, summarize, summary_table, MeterLog, StageTiming
 from factoryline.attribution import Attribution, FailureClass, UnitResult
 from factoryline.assembly import rollup_attributions, rollup_receipts, _attribution_from_output
 from factoryline.boundary import assert_no_attribution_in_artifact, assert_build_metadata_locations
@@ -23,7 +23,7 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.13.4"
+    assert factoryline.__version__ == "0.13.5"
 
 
 def test_layout_created(tmp_path):
@@ -98,6 +98,47 @@ def test_meter_labels_modeled_vs_measured(tmp_path):
     table = summary_table(summ)
     assert "(model)" in table                            # savings labeled as modeled
     assert "Nothing here is fabricated" in table
+    assert "→" not in table
+
+
+def test_meter_marks_explicit_zero_token_usage_as_measured(tmp_path):
+    ensure_layout(tmp_path)
+    MeterLog(tmp_path).record(StageTiming("hsf", "compile", 20, 0, 0, 0, True, usage_reported=True))
+    summary = summarize(tmp_path)
+    assert summary["tokens_reported_by_modules"] is True
+    assert summary["build_tokens"] == 0
+
+
+def test_live_meter_snapshot_exposes_local_freshness(tmp_path):
+    ensure_layout(tmp_path)
+    MeterLog(tmp_path).record(StageTiming(
+        "hsf", "compile", 20, 0, 0, 0, True,
+        feature="live-meter", run_id="run-1",
+    ))
+    snapshot = live_snapshot(tmp_path)
+    assert snapshot["schema"] == "factory.meter.live.v1"
+    assert snapshot["summary"]["stages_measured"] == 1
+    assert snapshot["last_measurement_at"]
+    assert snapshot["activity"]["runs_observed"] == 1
+    assert snapshot["activity"]["stage_success_rate"] == 1.0
+    assert "runs observed" in live_summary_table(snapshot)
+
+
+def test_meter_capture_records_a_real_local_command(tmp_path, capsys):
+    from factoryline.cli import main
+    import sys
+
+    assert main([
+        "meter", "--root", str(tmp_path), "--json",
+        "--feature", "codex-observation", "--module", "codex", "--stage", "python-version",
+        "--capture", "--", sys.executable, "--version",
+    ]) == 0
+    snapshot = json.loads(capsys.readouterr().out)
+    latest = snapshot["activity"]["latest_stage"]
+    assert latest["module"] == "codex"
+    assert latest["feature"] == "codex-observation"
+    assert latest["wall_ms"] >= 0
+    assert latest["usage_reported"] is False
 
 
 def test_overhead_reports_measured_gate_times(tmp_path):

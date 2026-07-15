@@ -5,7 +5,7 @@ small feature or risky workflow, not a whole migration.
 
 ```powershell
 cd path\to\your-repository
-pip install factoryline-code-factory==0.13.4 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.6
+pip install factoryline-code-factory==0.13.5 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.6
 factory doctor --json
 factory init .
 forge adopt <feature> --root .

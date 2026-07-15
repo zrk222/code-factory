@@ -4,6 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { receiptHtml } from "./receipt";
+import { meterHtml } from "./meter";
 import { factoryExecutable, isFeatureName } from "./runner";
 
 const output = vscode.window.createOutputChannel("FactoryLine");
@@ -25,22 +26,34 @@ function requireTrustedWorkspace(): string | undefined {
   return root;
 }
 
-async function runFactory(root: string, args: string[]): Promise<void> {
+async function runFactory(root: string, args: string[]): Promise<string> {
   const configuredCommand = vscode.workspace.getConfiguration("factoryline").get<string>("command", "factory");
   const command = factoryExecutable(configuredCommand);
   output.clear();
   output.appendLine(`$ ${command} ${args.join(" ")}`);
   output.show(true);
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
+    let combined = "";
     const child = childProcess.spawn(command, args, {
       cwd: root,
       shell: false,
     });
-    child.stdout.on("data", (chunk: Buffer) => output.append(chunk.toString()));
-    child.stderr.on("data", (chunk: Buffer) => output.append(chunk.toString()));
+    child.stdout.on("data", (chunk: Buffer) => { const text = chunk.toString(); combined += text; output.append(text); });
+    child.stderr.on("data", (chunk: Buffer) => { const text = chunk.toString(); combined += text; output.append(text); });
     child.on("error", reject);
-    child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`FactoryLine exited with ${code ?? "an unknown error"}.`)));
+    child.on("close", (code) => code === 0 ? resolve(combined) : reject(new Error(`FactoryLine exited with ${code ?? "an unknown error"}.`)));
   });
+}
+
+function parseMeterSnapshot(outputText: string): unknown {
+  for (const line of outputText.trim().split(/\r?\n/).reverse()) {
+    try {
+      return JSON.parse(line);
+    } catch {
+      // Launcher diagnostics can precede the JSON snapshot; the final JSON line is authoritative.
+    }
+  }
+  throw new Error("FactoryLine did not return a JSON meter snapshot.");
 }
 
 async function collectReceipts(root: string, depth = 4): Promise<string[]> {
@@ -120,11 +133,34 @@ async function runFeature(command: "assemble" | "verify"): Promise<void> {
   }
 }
 
+async function openMeter(): Promise<void> {
+  const root = requireTrustedWorkspace();
+  if (!root) {
+    return;
+  }
+  const confirmed = await vscode.window.showWarningMessage(
+    "FactoryLine will read the local meter through the configured executable in this workspace.",
+    { modal: true },
+    "Read local meter",
+  );
+  if (confirmed !== "Read local meter") {
+    return;
+  }
+  try {
+    const raw = await runFactory(root, ["meter", "--root", root, "--json"]);
+    const panel = vscode.window.createWebviewPanel("factorylineMeter", "FactoryLine Meter", vscode.ViewColumn.Beside, { enableScripts: false });
+    panel.webview.html = meterHtml(parseMeterSnapshot(raw));
+  } catch (error) {
+    void vscode.window.showErrorMessage(`${error instanceof Error ? error.message : String(error)} See the FactoryLine output channel.`);
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     output,
     vscode.commands.registerCommand("factoryline.assemble", () => runFeature("assemble")),
     vscode.commands.registerCommand("factoryline.verify", () => runFeature("verify")),
+    vscode.commands.registerCommand("factoryline.openMeter", openMeter),
     vscode.commands.registerCommand("factoryline.openLatestReceipt", openLatestReceipt),
   );
 }

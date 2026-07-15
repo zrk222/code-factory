@@ -30,6 +30,17 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun meterSummarySeparatesMeasuredAndUnavailableValues() {
+        val summary = MeterSummary.fromJson(
+            """{ "stages_measured": 2, "build_wall_ms": 15, "tokens_reported_by_modules": false, "stages_successful": 2 }"""
+        )
+
+        assertEquals("2", summary.fields["stages_measured"])
+        assertEquals("false", summary.fields["tokens_reported_by_modules"])
+        assertTrue(summary.display.contains("Token totals are measured"))
+    }
+
+    @Test
     fun receiptLocatorIgnoresDependencyTreesAndReturnsNewestReceipt() {
         val root = Files.createTempDirectory("factoryline-receipts")
         val receipts = Files.createDirectories(root.resolve("receipts"))

@@ -51,3 +51,13 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
         "recursive-include docs *.md *.gif *.png *.svg",
     ):
         assert entry in manifest
+
+    for generated_tree in (
+        "editors/vscode/node_modules",
+        "editors/vscode/dist",
+        "editors/intellij/.gradle",
+        "editors/intellij/.intellijPlatform",
+        "editors/intellij/.kotlin",
+        "editors/intellij/build",
+    ):
+        assert f"prune {generated_tree}" in manifest

@@ -9,10 +9,11 @@ from __future__ import annotations
 import shutil
 import subprocess
 import json
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from .contract import MODULES, STAGES, ensure_layout, Receipt
+from .contract import MODULES, STAGES, Meter, ensure_layout, Receipt
 from .meter import MeterLog, StageTiming, stopwatch
 from .attribution import Attribution, FailureClass
 
@@ -66,6 +67,41 @@ def _attribution_from_output(output: str) -> dict | None:
     return None
 
 
+def _meter_from_output(output: str) -> tuple[Meter, bool]:
+    """Read a module's standard meter block when its structured output supplies one.
+
+    The wall-clock value remains FactoryLine's own local observation.  Model and
+    token values are accepted only from a top-level ``meter`` block or a nested
+    receipt envelope; otherwise they remain explicitly unreported.
+    """
+    decoder = json.JSONDecoder()
+    for offset, char in enumerate(output):
+        if char != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(output[offset:])
+        except ValueError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        raw = payload.get("meter")
+        if raw is None and isinstance(payload.get("receipt"), dict):
+            raw = payload["receipt"].get("meter")
+        if not isinstance(raw, dict):
+            continue
+        try:
+            values = {
+                key: int(raw.get(key, 0))
+                for key in ("model_calls", "tokens_in", "tokens_out")
+            }
+        except (TypeError, ValueError):
+            continue
+        if any(value < 0 for value in values.values()):
+            continue
+        return Meter(0, **values), True
+    return Meter(), False
+
+
 # The default pipeline: (module, cli-args-template). {f} = feature.
 # Only stages whose module is installed run; UI stage runs only if smoke/<f>.ui exists.
 DEFAULT_CHAIN = [
@@ -106,7 +142,8 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False) -> dic
     chain = chain or DEFAULT_CHAIN
     installed = {m.name: m for m in detect()}
     meterlog = MeterLog(root)
-    report = {"feature": feature, "root": str(root), "stages": [], "dry_run": dry_run}
+    run_id = uuid.uuid4().hex
+    report = {"feature": feature, "root": str(root), "run_id": run_id, "stages": [], "dry_run": dry_run}
 
     spec_path = root / "specs" / f"{feature}.md"
     if not dry_run and not spec_path.exists() and installed["specline"].installed:
@@ -177,8 +214,22 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False) -> dic
         with stopwatch() as sw:
             ok, out = _run_cli(cli, args, root)
         attribution_block = _attribution_from_output(out)
-        meterlog.record(StageTiming(module, stage_name, sw.wall_ms, 0, 0, 0, ok))
+        module_meter, usage_reported = _meter_from_output(out)
+        stage_meter = Meter(
+            wall_ms=sw.wall_ms,
+            model_calls=module_meter.model_calls,
+            tokens_in=module_meter.tokens_in,
+            tokens_out=module_meter.tokens_out,
+        )
+        meterlog.record(StageTiming(
+            module, stage_name, sw.wall_ms, module_meter.model_calls,
+            module_meter.tokens_in, module_meter.tokens_out, ok,
+            usage_reported=usage_reported,
+            feature=feature,
+            run_id=run_id,
+        ))
         Receipt(module=module, stage=stage_name, feature=feature, ok=ok,
+                meter=stage_meter,
                 outputs={"log_tail": out[-2000:]},
                 attribution=attribution_block).write(root)
         report["stages"].append({"module": module, "stage": stage_name,

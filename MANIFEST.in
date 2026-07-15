@@ -6,3 +6,10 @@ include PUBLICATION_GUIDE.md
 include factory.topology.json
 recursive-include docs *.md *.gif *.png *.svg
 recursive-include editors *.md *.svg
+prune editors/vscode/node_modules
+prune editors/vscode/dist
+prune editors/intellij/.gradle
+prune editors/intellij/.intellijPlatform
+prune editors/intellij/.kotlin
+prune editors/intellij/build
+global-exclude __pycache__ *.py[cod]
