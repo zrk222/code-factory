@@ -73,30 +73,38 @@ def _workflow_canary(module) -> dict:
     required = {"package", "version", "build_hash", "install_origin", "runtime", "receipt_schema"}
     missing = sorted(name for name in required if not payload.get(name))
     if missing:
-        return {"ok": False, "reason": f"incomplete provenance: {', '.join(missing)}", "provenance": payload}
+        return {"ok": False, "provenance_ok": False, "reason": f"incomplete provenance: {', '.join(missing)}", "provenance": payload}
+    provenance_ok = bool(payload.get("identity_complete") and payload.get("source_commit"))
     if module.name != "forgeline":
-        return {"ok": True, "provenance": payload}
+        return {"ok": True, "provenance_ok": provenance_ok, "provenance": payload}
     with tempfile.TemporaryDirectory(prefix="factory-doctor-") as directory:
         root = Path(directory)
         (root / "services").mkdir()
-        target = root / "services" / "canary.mjs"
-        target.write_text("export function recall(id) { return id; }\n", encoding="utf-8")
-        (root / "services" / "canary.test.mjs").write_text("import { recall } from './canary.mjs'; recall('ok');\n", encoding="utf-8")
-        ssat = root / "canary.ssat.yaml"
-        ssat.write_text(
-            "name: canary\nmodules:\n  - name: canary\n    path: services/canary.mjs\n    functions:\n      - name: recall\n        args: [id]\n        returns: string\ndependencies: []\ninvariants: []\n",
-            encoding="utf-8",
-        )
-        result = subprocess.run([_cli_command(module.cli), "qa", "canary", "--ssat", str(ssat), "--root", str(root), "--strict"], capture_output=True, text=True, timeout=30)
-    if result.returncode != 0:
-        return {"ok": False, "reason": "mjs feature canary failed", "output": (result.stdout + result.stderr)[-1000:], "provenance": payload}
-    try:
-        qa = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {"ok": False, "reason": "mjs feature canary was not JSON", "provenance": payload}
-    if qa.get("metrics", {}).get("coverage_assessment") != "measured":
-        return {"ok": False, "reason": "mjs symbols were not measured", "provenance": payload}
-    return {"ok": True, "provenance": payload, "canary": "mjs-feature-qa"}
+        for suffix, source, args in (
+            ("mjs", "/** Recall a verified value. */\nexport function recall(id) { return id; }\n", "[id]"),
+            ("ts", "/** Recall a verified value. */\nexport function recall(id: string): string { return id; }\n", '["id: string"]'),
+        ):
+            target = root / "services" / f"canary.{suffix}"
+            target.write_text(source, encoding="utf-8")
+            (root / "services" / f"canary.test.{suffix}").write_text(
+                f"import {{ recall }} from './canary.{suffix}';\nrecall('ok');\n",
+                encoding="utf-8",
+            )
+            ssat = root / f"canary-{suffix}.ssat.yaml"
+            ssat.write_text(
+                f"name: canary-{suffix}\nmodules:\n  - name: canary\n    path: services/canary.{suffix}\n    functions:\n      - name: recall\n        args: {args}\n        returns: string\ndependencies: []\ninvariants: []\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run([_cli_command(module.cli), "qa", f"canary-{suffix}", "--ssat", str(ssat), "--root", str(root), "--strict"], capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                return {"ok": False, "provenance_ok": provenance_ok, "reason": f"{suffix} feature canary failed", "output": (result.stdout + result.stderr)[-1000:], "provenance": payload}
+            try:
+                qa = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                return {"ok": False, "provenance_ok": provenance_ok, "reason": f"{suffix} feature canary was not JSON", "provenance": payload}
+            if qa.get("metrics", {}).get("coverage_assessment") != "measured":
+                return {"ok": False, "provenance_ok": provenance_ok, "reason": f"{suffix} symbols were not measured", "provenance": payload}
+    return {"ok": True, "provenance_ok": provenance_ok, "provenance": payload, "canary": "mjs-and-ts-feature-qa"}
 
 
 def _home(root: Path = Path("."), as_json: bool = False) -> int:
@@ -118,7 +126,7 @@ def _home(root: Path = Path("."), as_json: bool = False) -> int:
         "bricks": {"installed": installed, "total": len(modules)},
         "proof": counts,
         "next": [
-            "factory doctor --strict --json",
+            "factory doctor --json",
             "factory plan",
             "factory init ." if not factory_root.exists() else "factory evidence <feature>",
         ],
@@ -152,30 +160,34 @@ def _doctor(strict: bool = False, as_json: bool = False) -> int:
     if as_json:
         installation_ok = all(item[0].ok for item in checks)
         workflow_ok = all(item[1]["ok"] for item in checks)
+        provenance_ok = all(item[1].get("provenance_ok", False) for item in checks)
         print(json.dumps({
-            "ok": installation_ok and workflow_ok,
+            "ok": installation_ok and workflow_ok and provenance_ok,
             "installation_ok": installation_ok,
             "workflow_ok": workflow_ok,
+            "provenance_ok": provenance_ok,
             "modules": [check.__dict__ | {"installation_ok": check.ok, "workflow": workflow} for check, workflow in checks],
         }, indent=2))
-        return 0 if installation_ok and workflow_ok or not strict else 1
+        return 0 if (installation_ok and workflow_ok and provenance_ok) or not strict else 1
 
     print("factoryline doctor - Lego assembly compatibility\n" + "=" * 48)
     for module, (check, workflow) in zip(mods, checks):
-        mark = "compatible" if check.ok and workflow["ok"] else "missing" if not check.installed else "workflow-failed" if check.ok else "incompatible"
+        mark = "compatible" if check.ok and workflow["ok"] and workflow.get("provenance_ok") else "provenance-incomplete" if check.ok and workflow["ok"] else "missing" if not check.installed else "workflow-failed" if check.ok else "incompatible"
         version = check.version or "not installed"
         print(f"  [{mark:>12}]  {module.name:<10} {version:<10} requires >= {check.minimum}")
         if check.missing_commands:
             print(f"                 missing commands: {', '.join(check.missing_commands)}")
         if not workflow["ok"]:
             print(f"                 workflow: {workflow['reason']}")
-    failed = [check for check, workflow in checks if not check.ok or not workflow["ok"]]
+        elif not workflow.get("provenance_ok"):
+            print("                 provenance: source identity is incomplete")
+    failed = [check for check, workflow in checks if not check.ok or not workflow["ok"] or not workflow.get("provenance_ok")]
     if failed:
         print("\nInstall or upgrade incompatible bricks:")
         for item in failed:
             print(f"  pip install --upgrade {item.package}>={item.minimum}")
     else:
-        print("\nAll four bricks satisfy the versioned factory protocol.")
+        print("\nAll four companion bricks plus FactoryLine satisfy the five-brick factory protocol.")
     return 1 if strict and failed else 0
 
 

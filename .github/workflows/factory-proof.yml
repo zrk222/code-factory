@@ -34,15 +34,21 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
       - name: Install the five-brick factory
         run: >-
           python -m pip install
-          "factoryline-code-factory>=0.13.2"
+          "factoryline-code-factory>=0.13.3"
           "code-factory-1-spec>=0.5.3"
-          "code-factory-2-forge>=0.10.5"
+          "code-factory-2-forge>=0.10.6"
           "code-factory-3-compile>=0.5.4"
           "code-factory-4-design>=0.7.0"
-      - run: factory doctor --strict
+      - name: Verify installed workflow capability
+        run: |
+          factory doctor --json > factory-doctor.json
+          python -c "import json; payload = json.load(open('factory-doctor.json')); assert payload['installation_ok'] and payload['workflow_ok'], payload"
       - name: Build trace and baseplate challenge
         run: |
           factory trace "${{ inputs.feature }}"

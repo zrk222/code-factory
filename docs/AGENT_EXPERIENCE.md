@@ -33,7 +33,7 @@ proof:
   challenges: 0
   passports: 0
 next:
-  - factory doctor --strict --json
+  - factory doctor --json
   - factory plan
   - factory init .
 ```

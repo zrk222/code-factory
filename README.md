@@ -15,7 +15,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.13.2
+pip install factoryline-code-factory==0.13.3
 factory app from-prompt "Build a simple approval tracker with an audit log" --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
 ```
@@ -170,18 +170,19 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.13.2 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.5 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
-factory doctor --strict --json
+pip install factoryline-code-factory==0.13.3 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.6 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
+factory doctor --json
 ```
 
 `factory doctor` reports two separate facts: `installation_ok` verifies the
 CLIs, versions, and required commands; `workflow_ok` runs bounded,
-non-mutating canaries. The ForgeLine canary exercises an ESM `.mjs` feature and
-requires measured symbols, so an installed but Python-centric QA path cannot
-appear healthy. Use `factory --version --json` (or each brick's equivalent) to
-record the package version, source identity when available, build hash, install
-origin, runtime, and receipt schema. `identity_complete: false` is an explicit
-provenance limitation; it must not be presented as signer-identity proof.
+non-mutating canaries; and `provenance_ok` requires a source commit plus a
+build hash. The ForgeLine canaries exercise both ESM `.mjs` and TypeScript `.ts`
+features and require measured symbols, so a Python-centric or zero-symbol QA
+path cannot appear healthy. A normal package install can run correctly while
+still reporting `provenance_ok: false`; strict doctor exits nonzero in that
+state rather than presenting incomplete source identity as proof. Use signed
+receipts or a clean source checkout when signer or source identity is required.
 
 ## Identity-signed receipts
 
@@ -275,7 +276,7 @@ time, `factory override` writes an owned exception receipt, and `factory ci
 init --feature <feature>` writes an opt-in GitHub PR-comment workflow.
 
 ```bash
-factory doctor --strict # versions + required command compatibility
+factory doctor --json   # versions, workflow canaries, and provenance status
 factory plan            # print the assembly pipeline
 factory init .          # lay down the shared workspace
 factory assemble my_feature   # run the line (skips any missing brick)

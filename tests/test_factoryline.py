@@ -23,7 +23,7 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.13.2"
+    assert factoryline.__version__ == "0.13.3"
 
 
 def test_layout_created(tmp_path):
@@ -47,7 +47,7 @@ def test_factory_verify_refuses_to_call_missing_receipts_shippable(tmp_path):
 
 def test_protocol_requires_design_md_compatible_prestige():
     assert MINIMUM_VERSIONS["prestige"] == "0.7.3"
-    assert MINIMUM_VERSIONS["forgeline"] == "0.10.5"
+    assert MINIMUM_VERSIONS["forgeline"] == "0.10.6"
 
 
 def test_receipt_roundtrip(tmp_path):
@@ -536,12 +536,23 @@ def test_cli_version_has_machine_readable_provenance(capsys):
 def test_doctor_separates_installation_from_workflow_status(capsys, monkeypatch):
     import factoryline.cli as cli
 
-    monkeypatch.setattr(cli, "_workflow_canary", lambda module: {"ok": module.name != "forgeline", "reason": "mjs feature canary failed"})
+    monkeypatch.setattr(cli, "_workflow_canary", lambda module: {"ok": module.name != "forgeline", "provenance_ok": True, "reason": "mjs feature canary failed"})
     assert cli.main(["doctor", "--strict", "--json"]) == 1
     payload = json.loads(capsys.readouterr().out)
-    assert "installation_ok" in payload and "workflow_ok" in payload
+    assert "installation_ok" in payload and "workflow_ok" in payload and "provenance_ok" in payload
     forge = next(item for item in payload["modules"] if item["module"] == "forgeline")
     assert forge["workflow"]["ok"] is False
+
+
+def test_doctor_strict_rejects_incomplete_provenance_without_masking_workflow(capsys, monkeypatch):
+    import factoryline.cli as cli
+
+    monkeypatch.setattr(cli, "_workflow_canary", lambda module: {"ok": True, "provenance_ok": False, "provenance": {"source_commit": None}})
+    assert cli.main(["doctor", "--strict", "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["workflow_ok"] is True
+    assert payload["provenance_ok"] is False
+    assert payload["ok"] is False
 
 
 def test_cli_no_args_returns_agent_home_with_definitive_empty_states(tmp_path, capsys, monkeypatch):
@@ -554,7 +565,7 @@ def test_cli_no_args_returns_agent_home_with_definitive_empty_states(tmp_path, c
     assert "receipts: 0" in out
     assert "passports: 0" in out
     assert "loop_passports: 0" in out
-    assert "factory doctor --strict --json" in out
+    assert "factory doctor --json" in out
 
 
 def test_policy_writes_hollow_gate_defaults(tmp_path):

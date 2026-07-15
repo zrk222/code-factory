@@ -25,7 +25,7 @@ the expected signer identity.
 1. Install FactoryLine:
 
    ```powershell
-   pip install factoryline-code-factory==0.13.2
+   pip install factoryline-code-factory==0.13.3
    ```
 
 2. Download `factoryline-intellij-0.1.1.zip` from the FactoryLine GitHub

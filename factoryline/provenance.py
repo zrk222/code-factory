@@ -20,9 +20,18 @@ def _source_commit(module_dir: Path) -> str | None:
         return None
     try:
         result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source_root, capture_output=True, text=True, timeout=3)
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=source_root,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
     except OSError:
         return None
-    return result.stdout.strip() if result.returncode == 0 else None
+    if result.returncode != 0 or dirty.returncode != 0 or dirty.stdout.strip():
+        return None
+    return result.stdout.strip()
 
 
 def _build_hash(module_dir: Path) -> str:
