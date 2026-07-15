@@ -1,0 +1,27 @@
+{
+  "title": "Code Factory: Proof-by-Sabotage Software Factory",
+  "description": "Code Factory is a local-first, open-source workflow for turning specifications, behavior checks, design-token contracts, policy verification, and release receipts into auditable software delivery. This source release includes its public documentation assets and Mermaid diagrams.\n\nEvidence boundary: the project supplies deterministic tests, mutation challenges, workflow canaries, and signed or hash-linked receipts. It does not claim that a passing receipt replaces human review or proves an arbitrary production environment.\n\nDual licensed under MIT or Apache-2.0.",
+  "creators": [
+    {
+      "name": "Katz, Richard"
+    }
+  ],
+  "access_right": "open",
+  "license": "MIT",
+  "upload_type": "software",
+  "keywords": [
+    "software-factory",
+    "ai-agents",
+    "workflow-verification",
+    "mutation-testing",
+    "release-receipts",
+    "developer-tools"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/zrk222/code-factory",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}

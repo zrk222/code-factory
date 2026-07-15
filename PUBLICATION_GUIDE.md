@@ -56,7 +56,7 @@ can contribute workflow examples.
 ## Install And Use
 
 ```bash
-pip install factoryline-code-factory==0.13.2 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.5 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
+pip install factoryline-code-factory==0.13.4 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.6 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
 
 factory doctor
 factory plan
@@ -153,7 +153,7 @@ and generated badges instead of manually typing savings claims.
 - Hacker News Show HN: <https://news.ycombinator.com/show>
 - Lobste.rs: <https://lobste.rs/>
 - PyPI publishing: <https://pypi.org/>
-- Zenodo new upload: <https://zenodo.org/deposit>
+- Zenodo new upload: <https://zenodo.org/uploads/new>
 - Reddit r/Python: <https://www.reddit.com/r/Python/>
 - Reddit r/LLMDevs: <https://www.reddit.com/r/LLMDevs/>
 - Reddit r/AI_Agents: <https://www.reddit.com/r/AI_Agents/>

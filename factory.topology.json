@@ -2,7 +2,7 @@
   "schema": "factory.topology.v1",
   "bricks": [
     {"id": "specline", "package": "code-factory-1-spec", "minimum": "0.5.3", "challenge": "validator_mutation"},
-    {"id": "forgeline", "package": "code-factory-2-forge", "minimum": "0.10.5", "challenge": "verify_tests"},
+    {"id": "forgeline", "package": "code-factory-2-forge", "minimum": "0.10.6", "challenge": "verify_tests"},
     {"id": "hsf", "package": "code-factory-3-compile", "minimum": "0.5.4", "challenge": "decision_counterfactual"},
     {"id": "prestige", "package": "code-factory-4-design", "minimum": "0.7.3", "challenge": "design_counterfactual"}
   ],
