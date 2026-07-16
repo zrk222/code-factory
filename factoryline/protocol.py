@@ -12,10 +12,10 @@ CHALLENGE_SCHEMA = "factory.challenge.v1"
 PASSPORT_SCHEMA = "factory.passport.v1"
 
 MINIMUM_VERSIONS = {
-    "specline": "0.5.3",
-    "forgeline": "0.10.6",
-    "hsf": "0.5.4",
-    "prestige": "0.7.3",
+    "specline": "0.5.4",
+    "forgeline": "0.10.7",
+    "hsf": "0.5.5",
+    "prestige": "0.7.4",
 }
 
 REQUIRED_COMMANDS = {
