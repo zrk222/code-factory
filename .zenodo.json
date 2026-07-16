@@ -1,6 +1,6 @@
 {
   "title": "Code Factory: Proof-by-Sabotage Software Factory",
-  "description": "Code Factory is a local-first, open-source workflow for turning specifications, behavior checks, design-token contracts, policy verification, and release receipts into auditable software delivery. This source release includes its public documentation assets and Mermaid diagrams.\n\nEvidence boundary: the project supplies deterministic tests, mutation challenges, workflow canaries, and signed or hash-linked receipts. It does not claim that a passing receipt replaces human review or proves an arbitrary production environment.\n\nDual licensed under MIT or Apache-2.0.",
+  "description": "Code Factory is a local-first, open-source workflow for turning specifications, behavior checks, design-token contracts, policy verification, and release receipts into auditable software delivery. Version 0.14 adds a deterministic target compiler for worker, web, Expo mobile, and supervised agent-UI starters, plus a loopback-only Factory Studio opened through confirmed VS Code and JetBrains actions. Generated targets begin blocked and carry governance manifests, SSAT contracts, smoke hooks, Mermaid maps, and source-bound receipts. This source release includes its public documentation assets and Mermaid diagrams.\n\nEvidence boundary: the compiler and Studio make no model calls and do not grant deployment, publication, signing, connector, credential, or external-message authority. Generated web, mobile, and agent-UI products may add models later and still require product-specific tests and human release review. A passing receipt does not prove an arbitrary production environment.\n\nDual licensed under MIT or Apache-2.0.",
   "creators": [
     {
       "name": "Katz, Richard"
@@ -15,7 +15,10 @@
     "workflow-verification",
     "mutation-testing",
     "release-receipts",
-    "developer-tools"
+    "developer-tools",
+    "target-compiler",
+    "vscode-extension",
+    "jetbrains-plugin"
   ],
   "related_identifiers": [
     {

@@ -1,5 +1,6 @@
 package app.factoryline.intellij
 
+import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -133,6 +134,30 @@ object FactoryLineController {
             }
         })
     }
+
+    fun openStudio(project: Project) {
+        val root = project.basePath ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val confirmed = Messages.showYesNoDialog(
+            project,
+            "Start Factory Studio on loopback for:\n$root\n\nStudio may create new child directories. It cannot deploy, publish, sign, inject credentials, grant connectors, or send external messages.",
+            "FactoryLine: Open Local Factory Studio",
+            "Start local Studio",
+            "Cancel",
+            Messages.getWarningIcon()
+        ) == Messages.YES
+        if (!confirmed) return
+        FactoryLineRunner.startStudio(
+            project,
+            onStarted = { url ->
+                BrowserUtil.browse(url)
+                Messages.showInfoMessage(project, "Factory Studio is running at $url\n\nmarker: EDITOR_TRUST_CONFIRMED", "FactoryLine")
+            },
+            onFailure = { message -> Messages.showErrorDialog(project, message, "FactoryLine") }
+        )
+    }
 }
 
 abstract class FactoryLineAction : AnAction() {
@@ -176,5 +201,11 @@ class CheckLatestReceiptSignatureAction : FactoryLineAction() {
 class OpenMeterAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.openMeter(it) }
+    }
+}
+
+class OpenStudioAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.openStudio(it) }
     }
 }

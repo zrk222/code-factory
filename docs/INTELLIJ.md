@@ -1,7 +1,7 @@
 # FactoryLine for JetBrains IDEs
 
 FactoryLine for JetBrains IDEs brings the local proof loop into the IDE without
-turning it into a hidden agent. It offers six explicit actions:
+turning it into a hidden agent. It offers seven explicit actions:
 
 1. Run Spec-to-Ship Assembly.
 2. Verify Feature Receipts.
@@ -9,6 +9,7 @@ turning it into a hidden agent. It offers six explicit actions:
 4. Analyze Changed Proof.
 5. Check Latest Receipt Signature State.
 6. Open Local Meter.
+7. Open Local Factory Studio.
 
 Feature-scoped commands require a feature name. Every command-executing action
 requires an explicit local-workspace confirmation and is executed directly rather
@@ -25,15 +26,20 @@ the expected signer identity.
 same workspace confirmation. The tool window distinguishes measured wall time
 from token values that a module has not reported.
 
+**Open Local Factory Studio** starts `factory studio --root <project> --port 0
+--no-browser` after an explicit confirmation. The plugin accepts only a literal
+`127.0.0.1` URL, opens it with the JetBrains browser API, and terminates the
+child process when the project closes.
+
 ## Install
 
 1. Install FactoryLine:
 
    ```powershell
-   pip install factoryline-code-factory==0.13.5
+   pip install factoryline-code-factory==0.14.0
    ```
 
-2. Download `factoryline-intellij-0.1.2.zip` from the FactoryLine GitHub
+2. Download `factoryline-intellij-0.2.0.zip` from the FactoryLine GitHub
    release that introduced this adapter.
 3. In your JetBrains IDE: **Settings > Plugins > gear menu > Install Plugin from Disk...**.
 4. Select the ZIP, restart, then open **Tools > FactoryLine**.

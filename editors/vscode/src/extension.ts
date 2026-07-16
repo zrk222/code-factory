@@ -5,10 +5,12 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { receiptHtml } from "./receipt";
 import { meterHtml } from "./meter";
-import { factoryExecutable, isFeatureName } from "./runner";
+import { factoryExecutable, factoryStudioUrl, isFeatureName } from "./runner";
 
 const output = vscode.window.createOutputChannel("FactoryLine");
 const receiptDirectories = [".factory", "receipts"];
+let studioProcess: childProcess.ChildProcessWithoutNullStreams | undefined;
+let studioUrl: string | undefined;
 
 function workspaceRoot(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -155,6 +157,75 @@ async function openMeter(): Promise<void> {
   }
 }
 
+async function openFactoryStudio(): Promise<void> {
+  const root = requireTrustedWorkspace();
+  if (!root) {
+    return;
+  }
+  const confirmed = await vscode.window.showWarningMessage(
+    "Start Factory Studio on loopback for this workspace? It may create new child directories, but cannot deploy, publish, sign, inject credentials, grant connectors, or send external messages.",
+    { modal: true },
+    "Start local Studio",
+  );
+  if (confirmed !== "Start local Studio") {
+    return;
+  }
+  output.appendLine("marker: EDITOR_TRUST_CONFIRMED");
+  if (studioProcess && studioProcess.exitCode === null) {
+    if (studioUrl) {
+      await vscode.env.openExternal(vscode.Uri.parse(studioUrl));
+    } else {
+      void vscode.window.showInformationMessage("Factory Studio is still starting. See the FactoryLine output channel.");
+    }
+    return;
+  }
+
+  const configuredCommand = vscode.workspace.getConfiguration("factoryline").get<string>("command", "factory");
+  const command = factoryExecutable(configuredCommand);
+  const args = ["studio", "--root", root, "--port", "0", "--no-browser"];
+  output.clear();
+  output.appendLine("marker: EDITOR_TRUST_CONFIRMED");
+  output.appendLine(`$ ${command} studio --root <workspace> --port 0 --no-browser`);
+  output.show(true);
+  studioUrl = undefined;
+  let combined = "";
+  studioProcess = childProcess.spawn(command, args, { cwd: root, shell: false });
+  const timeout = setTimeout(() => {
+    if (!studioUrl && studioProcess?.exitCode === null) {
+      studioProcess.kill();
+      void vscode.window.showErrorMessage("Factory Studio did not report a loopback URL within 15 seconds.");
+    }
+  }, 15_000);
+  studioProcess.stdout.on("data", async (chunk: Buffer) => {
+    const text = chunk.toString();
+    combined += text;
+    output.append(text);
+    const parsed = factoryStudioUrl(combined);
+    if (!studioUrl && parsed) {
+      studioUrl = parsed;
+      clearTimeout(timeout);
+      const opened = await vscode.env.openExternal(vscode.Uri.parse(parsed));
+      if (!opened) {
+        void vscode.window.showWarningMessage(`Factory Studio is running at ${parsed}`);
+      }
+    }
+  });
+  studioProcess.stderr.on("data", (chunk: Buffer) => output.append(chunk.toString()));
+  studioProcess.on("error", (error) => {
+    clearTimeout(timeout);
+    studioProcess = undefined;
+    void vscode.window.showErrorMessage(`Factory Studio failed to start: ${error.message}`);
+  });
+  studioProcess.on("close", (code) => {
+    clearTimeout(timeout);
+    studioProcess = undefined;
+    studioUrl = undefined;
+    if (code && code !== 0) {
+      void vscode.window.showErrorMessage(`Factory Studio exited with ${code}. See the FactoryLine output channel.`);
+    }
+  });
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     output,
@@ -162,9 +233,14 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("factoryline.verify", () => runFeature("verify")),
     vscode.commands.registerCommand("factoryline.openMeter", openMeter),
     vscode.commands.registerCommand("factoryline.openLatestReceipt", openLatestReceipt),
+    vscode.commands.registerCommand("factoryline.openStudio", openFactoryStudio),
+    { dispose: () => { if (studioProcess?.exitCode === null) { studioProcess.kill(); } } },
   );
 }
 
 export function deactivate(): void {
+  if (studioProcess?.exitCode === null) {
+    studioProcess.kill();
+  }
   output.dispose();
 }

@@ -2,6 +2,9 @@ package app.factoryline.intellij
 
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.CapturingProcessHandler
+import com.intellij.execution.process.OSProcessHandler
+import com.intellij.execution.process.ProcessEvent
+import com.intellij.execution.process.ProcessListener
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.service
@@ -10,7 +13,10 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.Key
 import com.intellij.ui.components.JBTextField
+import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.FormBuilder
 import java.io.IOException
 import java.nio.charset.StandardCharsets
@@ -20,6 +26,8 @@ import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
 import javax.swing.JComponent
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 object FactoryLineIds {
     const val TOOL_WINDOW = "FactoryLine"
@@ -31,6 +39,12 @@ object FeatureName {
     private val pattern = Regex("[A-Za-z0-9][A-Za-z0-9_-]*")
 
     fun isValid(value: String): Boolean = pattern.matches(value)
+}
+
+object StudioUrl {
+    private val pattern = Regex("Factory Studio:\\s+(http://127\\.0\\.0\\.1:\\d+/)")
+
+    fun find(output: String): String? = pattern.find(output)?.groupValues?.get(1)
 }
 
 enum class FactoryLineOperation(val arguments: List<String>, val title: String) {
@@ -206,6 +220,56 @@ object FactoryLineRunner {
 
     fun meter(project: Project): CommandResult =
         execute(project, "Open Local Meter", listOf("meter") + rootArguments(project) + "--json")
+
+    fun startStudio(project: Project, onStarted: (String) -> Unit, onFailure: (String) -> Unit) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            onFailure("The project has no local workspace path.")
+            return
+        }
+        val executable = FactoryLineSettings.instance().executable()
+        val arguments = listOf("studio", "--root", root.toString(), "--port", "0", "--no-browser")
+        val commandLine = GeneralCommandLine(executable)
+            .withParameters(arguments)
+            .withWorkDirectory(root.toFile())
+        try {
+            val handler = OSProcessHandler(commandLine)
+            val output = StringBuilder()
+            val completed = AtomicBoolean(false)
+            val timeout = AppExecutorUtil.getAppScheduledExecutorService().schedule({
+                if (completed.compareAndSet(false, true)) {
+                    handler.destroyProcess()
+                    ApplicationManager.getApplication().invokeLater {
+                        onFailure("Factory Studio did not report a loopback URL within 15 seconds.")
+                    }
+                }
+            }, 15, TimeUnit.SECONDS)
+            handler.addProcessListener(object : ProcessListener {
+                override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
+                    if (output.length < FactoryLineIds.OUTPUT_LIMIT) {
+                        output.append(event.text.take(FactoryLineIds.OUTPUT_LIMIT - output.length))
+                    }
+                    val url = StudioUrl.find(output.toString())
+                    if (url != null && completed.compareAndSet(false, true)) {
+                        timeout.cancel(false)
+                        ApplicationManager.getApplication().invokeLater { onStarted(url) }
+                    }
+                }
+
+                override fun processTerminated(event: ProcessEvent) {
+                    if (completed.compareAndSet(false, true)) {
+                        timeout.cancel(false)
+                        ApplicationManager.getApplication().invokeLater {
+                            onFailure("Factory Studio exited before reporting a loopback URL (code ${event.exitCode}).")
+                        }
+                    }
+                }
+            })
+            Disposer.register(project) { if (!handler.isProcessTerminated) handler.destroyProcess() }
+            handler.startNotify()
+        } catch (error: Exception) {
+            onFailure("Failed to start Factory Studio: ${error.message}")
+        }
+    }
 
     private fun rootArguments(project: Project): List<String> {
         val root = project.basePath?.let(Path::of) ?: return emptyList()

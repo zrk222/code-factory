@@ -18,6 +18,16 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun studioUrlAcceptsOnlyLiteralLoopbackOutput() {
+        assertEquals(
+            "http://127.0.0.1:43117/",
+            StudioUrl.find("marker: STUDIO_STARTED\nFactory Studio: http://127.0.0.1:43117/\n")
+        )
+        assertEquals(null, StudioUrl.find("Factory Studio: http://0.0.0.0:43117/"))
+        assertEquals(null, StudioUrl.find("Factory Studio: https://example.com/"))
+    }
+
+    @Test
     fun receiptSummarySelectsKnownFieldsWithoutRenderingHtml() {
         val summary = ReceiptSummary.fromJson(
             Files.createTempFile("factoryline", ".json"),

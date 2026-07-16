@@ -1,0 +1,72 @@
+name: target-compiler
+modules:
+  - name: target_compiler
+    path: factoryline/target_compiler.py
+    imports:
+      - hashlib
+      - json
+      - pathlib
+    functions:
+      - name: create_target_from_prompt
+        args: ["prompt: str", "target: str", "out_dir: Path", "name: str | None = None", "purpose: str = 'auto'", "trigger: str = 'manual'"]
+        returns: "dict"
+        doc: "Compile a non-empty prompt into a governed starter target without overwriting existing work."
+      - name: create_target_from_prd
+        args: ["prd_path: Path", "target: str", "out_dir: Path", "name: str | None = None", "purpose: str = 'auto'", "trigger: str = 'manual'"]
+        returns: "dict"
+        doc: "Compile a UTF-8 PRD into a governed starter target without overwriting existing work."
+  - name: studio
+    path: factoryline/studio.py
+    imports:
+      - http.server
+      - json
+      - pathlib
+    functions:
+      - name: studio_status
+        args: ["root: Path", "port: int"]
+        returns: "dict"
+        doc: "Describe the loopback-only Studio boundary without starting a server."
+      - name: serve_studio
+        args: ["root: Path", "port: int", "open_browser: bool = True", "on_started: Callable[[str], None] | None = None"]
+        returns: "None"
+        doc: "Serve the bounded local target builder on loopback."
+dependencies:
+  - from: studio
+    to: target_compiler
+invariants:
+  - name: no_dynamic_execution
+    forbid_pattern: "\\b(eval|exec)\\s*\\("
+    scopes:
+      - module: target_compiler
+        symbol: _compile
+        max_lines: 90
+      - module: studio
+        symbol: create_from_studio
+        max_lines: 70
+  - name: no_remote_bind
+    forbid_pattern: "0\\.0\\.0\\.0"
+    scopes:
+      - module: studio
+        symbol: create_server
+        max_lines: 30
+      - module: studio
+        symbol: serve_studio
+        max_lines: 40
+  - name: no_deploy_or_publish
+    forbid_pattern: "subprocess\\.(?:run|Popen).*\\b(?:deploy|publish)\\b"
+    scopes:
+      - module: target_compiler
+        symbol: _compile
+        max_lines: 90
+      - module: studio
+        symbol: create_from_studio
+        max_lines: 70
+  - name: no_secret_persistence
+    forbid_pattern: "BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY"
+    scopes:
+      - module: target_compiler
+        symbol: _write_proof_contract
+        max_lines: 80
+      - module: studio
+        symbol: create_from_studio
+        max_lines: 70

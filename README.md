@@ -4,10 +4,10 @@
 [![PyPI](https://img.shields.io/pypi/v/factoryline-code-factory.svg)](https://pypi.org/project/factoryline-code-factory/)
 [![Python](https://img.shields.io/pypi/pyversions/factoryline-code-factory.svg)](https://pypi.org/project/factoryline-code-factory/)
 
-> Most CI proves that code passes. Code Factory first proves that its gates
-> reject deliberately sabotaged builds.
+> One intent, four software targets, and proof that the gates reject
+> deliberately sabotaged builds.
 
-![Code Factory local editor control surfaces](docs/assets/factory-editor-control-room.svg)
+![Code Factory target compiler](docs/assets/target-compiler.svg)
 
 ## 60-second first run
 
@@ -15,8 +15,8 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.13.6
-factory app from-prompt "Build a simple approval tracker with an audit log" --out approval-tracker --purpose saas
+pip install factoryline-code-factory==0.14.0
+factory create "Build a simple approval tracker with an audit log" --target web --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
 ```
 
@@ -24,6 +24,12 @@ The last command intentionally exits nonzero on a fresh starter. It reports
 `"dominant_failure_class": "hollow_coverage"` for every product requirement
 that lacks a non-hollow test. The scaffold is useful starting state, not
 software the factory pretends is ready to ship.
+
+Use the same `factory create` command with `--target worker`, `web`, `mobile`,
+or `agent-ui`. Every output starts blocked and includes a governance manifest,
+SSAT, smoke hook, Mermaid map, and source-bound compile receipt. Open the local
+builder with `factory studio`, or from the VS Code and JetBrains integrations.
+See [Target Compiler and Factory Studio](docs/TARGET_COMPILER.md).
 
 For an existing repository, start with `forge adopt <feature> --root .`; after
 you review its SSAT and pass the human architecture gate, use
@@ -45,7 +51,7 @@ release decision.
   IDEs](docs/INTELLIJ.md), the [Marketplace release runbook](docs/JETBRAINS_MARKETPLACE.md),
   and the [control-room boundary](docs/JETBRAINS_CONTROL_ROOM.md).
 
-## Proof-first architecture
+## Public workflow
 
 Run `factory` with no arguments for a compact live view of installed bricks,
 local proof counts, and the next valid commands. This agent-first home view
@@ -53,33 +59,22 @@ avoids a separate help/discovery turn while keeping `--help` available everywher
 
 ```mermaid
 flowchart LR
-    E["VS Code + JetBrains\nexplicit local controls"] -. "run local CLI commands" .-> B
-    A["Intent / PRD"] --> B["Real build + gates"]
-    A --> C["Proof-by-sabotage challenges"]
-    C --> S["Spec mutations"]
-    C --> F["Empty stubs"]
-    C --> H["Decision-rule mutations"]
-    C --> D["Hidden or broken UI"]
-    C --> I["Trace tampering"]
-    B --> P["Factory Passport"]
-    S --> P
-    F --> P
-    H --> P
-    D --> P
-    I --> P
-    P --> G["GitHub summary + badge + Mermaid + attestations"]
-    P -. "local receipt view" .-> E
+    A["Intent or PRD"] --> B["Build and gate"]
+    B --> C["Compile and verify"]
+    C --> D["Signed receipts and human-owned ship"]
     classDef input fill:#e0f2fe,stroke:#0284c7,color:#10233f
     classDef build fill:#fef3c7,stroke:#d97706,color:#10233f
-    classDef challenge fill:#fce7f3,stroke:#db2777,color:#10233f
     classDef proof fill:#dcfce7,stroke:#16a34a,color:#10233f
-    classDef editor fill:#ede9fe,stroke:#7c3aed,color:#10233f
     class A input
     class B build
-    class C,S,F,H,D,I challenge
-    class P,G proof
-    class E editor
+    class C,D proof
 ```
+
+The detailed engineering map, mutation challenges, Passports, and replay paths
+remain in the technical docs. Publicly, the product contract is simpler: the
+model may help design at build time; HSF compiles eligible decision logic into
+deterministic code; the generated starter does not inherit runtime model,
+network, connector, credential, publish, or deploy authority.
 
 > New: PRD-to-app building. Factoryline can now turn a PRD or prompt into a
 > full-stack starter repo, then hand it to the same gated, receipted factory
@@ -170,7 +165,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.13.6 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.14.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 factory doctor --json
 ```
 

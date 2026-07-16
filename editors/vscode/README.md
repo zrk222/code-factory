@@ -19,7 +19,7 @@ pass arbitrary shell fragments to your terminal.
 Install the Code Factory CLI first:
 
 ```powershell
-pip install factoryline-code-factory==0.13.5
+pip install factoryline-code-factory==0.14.0
 ```
 
 Build a local VSIX from this directory, then install it in VS Code:
@@ -27,7 +27,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.1.1.vsix
+code --install-extension factoryline-vscode-0.2.0.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

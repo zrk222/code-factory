@@ -8,6 +8,7 @@
             <li>Run explicit assembly and receipt-verification commands.</li>
             <li>Inspect changed-proof risk and the latest local receipt.</li>
             <li>Open a read-only local time and token meter.</li>
+            <li>Open the loopback-only Factory Studio target compiler.</li>
             <li>Require workspace confirmation before any command executes.</li>
         </ul>
         <p>The plugin never uploads project files or receipts, signs artifacts, or decides whether a release is ready.</p>
@@ -15,10 +16,10 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
-            <li>Initial public JetBrains Platform release.</li>
-            <li>Local assembly, receipt verification, proof-risk, and receipt-view actions.</li>
+            <li>Add loopback-only Factory Studio with explicit workspace confirmation.</li>
+            <li>Recognize only literal 127.0.0.1 Studio URLs and open them through the JetBrains browser API.</li>
             <li>Local meter overview with measured-time and module-reported token boundaries.</li>
-            <li>Marketplace-ready package metadata and light/dark plugin logos.</li>
+            <li>Retain local assembly, receipt verification, proof-risk, and receipt-view actions.</li>
         </ul>
     ]]></change-notes>
 
@@ -52,6 +53,10 @@
                     class="app.factoryline.intellij.OpenMeterAction"
                     text="Open Local Meter"
                     description="Show the local FactoryLine time and token meter"/>
+            <action id="app.factoryline.intellij.openStudio"
+                    class="app.factoryline.intellij.OpenStudioAction"
+                    text="Open Local Factory Studio"
+                    description="Start the loopback-only governed target builder"/>
             <action id="app.factoryline.intellij.analyzeChangedProof"
                     class="app.factoryline.intellij.AnalyzeChangedProofAction"
                     text="Analyze Changed Proof"

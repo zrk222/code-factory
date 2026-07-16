@@ -21,6 +21,11 @@ ask for votes, stars, or reviews.
 > judgment. The goal is a better starting point for review: artifacts that say
 > what ran, what was proven, and what remains unproven.
 >
+> Version 0.14 adds a deterministic target compiler for four blocked starter
+> shapes: worker, web, Expo mobile, and supervised agent UI. Factory Studio
+> exposes the same compiler on loopback, and the editor adapters open it only
+> after workspace confirmation.
+>
 > I would love feedback on one question: what would you need to prove before
 > allowing an AI-generated change into a production repository?
 
@@ -137,7 +142,7 @@ Show HN: A proof-first factory for AI-assisted software work
 > The components work independently, but the base package connects them:
 >
 > ```bash
-> pip install factoryline-code-factory==0.13.5 code-factory-1-spec==0.5.3 code-factory-2-forge==0.10.6 code-factory-3-compile==0.5.4 code-factory-4-design==0.7.3
+> pip install factoryline-code-factory==0.14.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 > factory doctor --strict --json
 > ```
 >

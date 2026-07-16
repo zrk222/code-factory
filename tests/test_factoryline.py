@@ -23,7 +23,7 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.13.6"
+    assert factoryline.__version__ == "0.14.0"
 
 
 def test_layout_created(tmp_path):
@@ -651,6 +651,9 @@ def test_app_builder_scaffolds_full_stack_repo(tmp_path):
     files = set(result["files"])
     assert "app_blueprint.json" in files
     assert "frontend/app/page.tsx" in files
+    assert "frontend/app/layout.tsx" in files
+    assert "frontend/next.config.ts" in files
+    assert "frontend/tsconfig.json" in files
     assert "backend/main.py" in files
     assert "db/schema.sql" in files
     assert "smoke/clinical-prior-auth-portal-patient.json" in files
@@ -665,6 +668,10 @@ def test_app_builder_scaffolds_full_stack_repo(tmp_path):
     assert smoke["checks"][0]["covers"] == ["RUNTIME_HEALTH"]
     state = json.loads((tmp_path / "prior-auth" / ".forge" / "clinical-prior-auth-portal-patient" / "state.json").read_text())
     assert state["state"] == "blocked"
+    package = json.loads((tmp_path / "prior-auth" / "frontend" / "package.json").read_text())
+    assert package["dependencies"]["next"] == "16.2.10"
+    assert package["scripts"]["typecheck"] == "tsc --noEmit"
+    assert package["overrides"]["postcss"] == "8.5.19"
 
 
 def test_app_builder_requirement_coverage_blocks_uncovered_product_reqs(tmp_path):
@@ -689,6 +696,9 @@ def test_app_builder_stacks_generate_truthful_frontend_and_database(tmp_path):
     react_pg = tmp_path / "react-pg"
     app_from_prompt("Build an expense app.", out_dir=react_pg, stack="react-fastapi-postgres")
     assert (react_pg / "frontend" / "src" / "App.tsx").exists()
+    assert (react_pg / "frontend" / "src" / "globals.css").exists()
+    assert (react_pg / "frontend" / "vite.config.ts").exists()
+    assert not (react_pg / "frontend" / "app").exists()
     assert "bigserial" in (react_pg / "db" / "schema.sql").read_text()
 
     react_sqlite = tmp_path / "react-sqlite"
@@ -714,6 +724,65 @@ def test_cli_app_from_prompt_outputs_json(tmp_path, capsys):
     assert payload["app"] == "developer-api-dashboard-github-receipts"
     assert (tmp_path / "api-dash" / "docs" / "WORKFLOW.md").exists()
     assert (tmp_path / "api-dash" / "developer-api-dashboard-github-receipts.ssat.yaml").exists()
+
+
+def test_cli_target_create_and_studio_check_are_machine_readable(tmp_path, capsys):
+    from factoryline.cli import main
+
+    output = tmp_path / "receipt-worker"
+    code = main([
+        "create",
+        "Build a deterministic receipt worker.",
+        "--target",
+        "worker",
+        "--out",
+        str(output),
+        "--name",
+        "receipt-worker",
+        "--json",
+    ])
+    assert code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["target_kind"] == "worker"
+    assert result["status"] == "compiled_blocked"
+
+    code = main(["studio", "--root", str(tmp_path), "--check", "--json"])
+    assert code == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["marker"] == "STUDIO_STATUS_EXACT"
+    assert status["listener"]["host"] == "127.0.0.1"
+
+    code = main(["targets", "--json"])
+    assert code == 0
+    inventory = json.loads(capsys.readouterr().out)
+    assert inventory["schema"] == "factory.targets.v1"
+    assert sorted(inventory["targets"]) == ["agent-ui", "mobile", "web", "worker"]
+
+
+def test_cli_target_create_rejects_zero_or_two_sources(tmp_path, capsys):
+    from factoryline.cli import main
+
+    code = main(["create", "--target", "worker", "--out", str(tmp_path / "missing")])
+    assert code == 2
+    missing = json.loads(capsys.readouterr().err)
+    assert missing["code"] == "SOURCE_EXACTLY_ONE"
+    assert missing["marker"] == "COMPILE_FAILED"
+
+    prd = tmp_path / "PRD.md"
+    prd.write_text("# Worker\n", encoding="utf-8")
+    code = main([
+        "create",
+        "Build a worker.",
+        "--prd",
+        str(prd),
+        "--target",
+        "worker",
+        "--out",
+        str(tmp_path / "two"),
+    ])
+    assert code == 2
+    two = json.loads(capsys.readouterr().err)
+    assert two["code"] == "SOURCE_EXACTLY_ONE"
 
 
 def test_cli_coverage_outputs_json_and_fails_closed(tmp_path, capsys):

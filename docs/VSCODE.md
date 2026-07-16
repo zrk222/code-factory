@@ -10,10 +10,10 @@ release. The JetBrains adapter is documented separately in
 
 ## Install
 
-1. Install FactoryLine: `pip install factoryline-code-factory==0.13.5`.
+1. Install FactoryLine: `pip install factoryline-code-factory==0.14.0`.
 2. Download a `factoryline-vscode-*.vsix` release asset, or build it from
    `editors/vscode` with `npm ci` then `npm run package`.
-3. Run `code --install-extension factoryline-vscode-0.1.1.vsix`.
+3. Run `code --install-extension factoryline-vscode-0.2.0.vsix`.
 4. Open a trusted project folder and run a command from the Command Palette.
 
 ## Commands
@@ -24,8 +24,14 @@ release. The JetBrains adapter is documented separately in
 | `FactoryLine: Verify Feature Receipts` | `factory verify <feature> --root <workspace>` |
 | `FactoryLine: Open Local Meter` | Reads `factory meter --root <workspace> --json` after workspace confirmation |
 | `FactoryLine: Open Latest Receipt` | Renders JSON found below `.factory/` or `receipts/` |
+| `FactoryLine: Open Local Factory Studio` | Confirms workspace trust, starts `factory studio --root <workspace> --port 0 --no-browser`, and opens only its literal loopback URL |
 
 Command output stays in the **FactoryLine** output channel. A successful command
 opens the newest available receipt as a read-only local webview. Configure
 `factoryline.command` only when the `factory` executable is not on VS Code's
 PATH.
+
+Factory Studio is a local development surface. The extension terminates its
+Studio child process when the extension or workspace is disposed. It does not
+grant deploy, publish, signing, credential, connector, or external-message
+authority.

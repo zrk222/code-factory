@@ -1,0 +1,36 @@
+{
+  "checks": [
+    {
+      "name": "compile_all_targets",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.target_compiler import TARGETS, create_target_from_prompt\nwith TemporaryDirectory() as d:\n    root=Path(d)\n    for target in TARGETS:\n        out=root/target\n        result=create_target_from_prompt('Build a governed receipt workspace.',target=target,out_dir=out,name='proof-'+target,purpose='developer')\n        assert result['status']=='compiled_blocked'\n        assert (out/'target_manifest.json').is_file()\n        assert (out/'.factory'/'target-compile-receipt.json').is_file()\n",
+      "covers": [
+        "TARGET_KIND_SET",
+        "TARGET_MANIFEST_WRITTEN",
+        "COMPILE_RECEIPT_BOUND"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "refuse_existing_output",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.target_compiler import TargetCompileError, create_target_from_prompt\nwith TemporaryDirectory() as d:\n    out=Path(d)/'existing'\n    out.mkdir()\n    source=out/'service.ts'\n    source.write_text('export const intact = true;\\n')\n    try:\n        create_target_from_prompt('Build a worker.',target='worker',out_dir=out)\n        raise AssertionError('existing output was not refused')\n    except TargetCompileError as exc:\n        assert exc.code=='OUTPUT_EXISTS'\n    assert source.read_text()=='export const intact = true;\\n'\n",
+      "covers": [
+        "OUTPUT_EXISTS",
+        "COMPILE_FAILED"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "studio_boundary",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.studio import StudioRequestError, create_from_studio, studio_status\nwith TemporaryDirectory() as d:\n    root=Path(d)\n    status=studio_status(root,0)\n    assert status['listener']['host']=='127.0.0.1'\n    assert status['marker']=='STUDIO_STATUS_EXACT'\n    try:\n        create_from_studio(root,{'action':'publish'})\n        raise AssertionError('publish was not forbidden')\n    except StudioRequestError as exc:\n        assert exc.code=='ACTION_FORBIDDEN'\n",
+      "covers": [
+        "STUDIO_CONTAINED",
+        "ACTION_FORBIDDEN",
+        "STUDIO_STATUS_EXACT"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

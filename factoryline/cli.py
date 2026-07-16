@@ -34,6 +34,14 @@ from .proof import (
 )
 from .optimizer import optimize_pr, pr_pack, write_policy
 from .app_builder import STACKS, app_from_prd, app_from_prompt
+from .target_compiler import (
+    SUPPORTED_TRIGGERS,
+    TARGETS,
+    TargetCompileError,
+    create_target_from_prd,
+    create_target_from_prompt,
+)
+from .studio import StudioRequestError, serve_studio, studio_status
 from .coverage import requirement_coverage
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
@@ -522,6 +530,26 @@ def main(argv=None) -> int:
     a_prompt.add_argument("--purpose", default="auto", help="auto, developer, healthcare, fintech, marketplace, saas")
     a_prompt.add_argument("--json", action="store_true")
 
+    targets = sub.add_parser("targets", help="list target kinds supported by the deterministic compiler")
+    targets.add_argument("--json", action="store_true", help="emit the target inventory as JSON")
+
+    target = sub.add_parser("create", help="compile one prompt or PRD into one governed starter target")
+    target.add_argument("prompt", nargs="?", help="plain-language intent; mutually exclusive with --prd")
+    target.add_argument("--prd", help="UTF-8 PRD path; mutually exclusive with prompt")
+    target.add_argument("--target", required=True, choices=sorted(TARGETS))
+    target.add_argument("--out", required=True, help="empty output directory")
+    target.add_argument("--name", help="target slug override")
+    target.add_argument("--purpose", default="auto", help="auto, developer, healthcare, fintech, marketplace, saas")
+    target.add_argument("--trigger", default="manual", choices=SUPPORTED_TRIGGERS)
+    target.add_argument("--json", action="store_true")
+
+    studio = sub.add_parser("studio", help="run the loopback-only local target builder")
+    studio.add_argument("--root", default=".", help="directory beneath which Studio may create targets")
+    studio.add_argument("--port", default=0, type=int, help="loopback port; 0 selects an available port")
+    studio.add_argument("--no-browser", action="store_true", help="do not open the local URL automatically")
+    studio.add_argument("--check", action="store_true", help="report the exact Studio boundary without starting a server")
+    studio.add_argument("--json", action="store_true")
+
     version = sub.add_parser("version", help="show package provenance")
     version.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
@@ -534,6 +562,80 @@ def main(argv=None) -> int:
         return _home(Path(a.root), a.json)
     if a.cmd == "doctor":
         return _doctor(a.strict, a.json)
+    if a.cmd == "targets":
+        print(json.dumps({"schema": "factory.targets.v1", "targets": TARGETS}, indent=2, sort_keys=True))
+        return 0
+    if a.cmd == "create":
+        if bool(a.prompt) == bool(a.prd):
+            payload = {
+                "schema": "factory.target_compile_error.v1",
+                "status": "failed",
+                "code": "SOURCE_EXACTLY_ONE",
+                "marker": "COMPILE_FAILED",
+                "message": "provide exactly one source: prompt or --prd",
+            }
+            print(json.dumps(payload, indent=2), file=sys.stderr)
+            return 2
+        try:
+            if a.prd:
+                result = create_target_from_prd(
+                    Path(a.prd),
+                    target=a.target,
+                    out_dir=Path(a.out),
+                    name=a.name,
+                    purpose=a.purpose,
+                    trigger=a.trigger,
+                )
+            else:
+                result = create_target_from_prompt(
+                    a.prompt,
+                    target=a.target,
+                    out_dir=Path(a.out),
+                    name=a.name,
+                    purpose=a.purpose,
+                    trigger=a.trigger,
+                )
+        except (TargetCompileError, UnicodeDecodeError) as exc:
+            code = exc.code if isinstance(exc, TargetCompileError) else "PRD_ENCODING_INVALID"
+            message = exc.message if isinstance(exc, TargetCompileError) else "PRD must be valid UTF-8"
+            payload = {
+                "schema": "factory.target_compile_error.v1",
+                "status": "failed",
+                "code": code,
+                "marker": "COMPILE_FAILED",
+                "message": message,
+            }
+            print(json.dumps(payload, indent=2), file=sys.stderr)
+            return 1
+        if a.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"target compiled: {result['out_dir']}")
+            print(f"kind           : {result['target_kind']}")
+            print(f"state          : {result['status']}")
+            print(f"receipt        : {result['receipt']}")
+        return 0
+    if a.cmd == "studio":
+        if a.check:
+            payload = studio_status(Path(a.root), a.port)
+            if a.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print("Factory Studio check")
+                print(f"marker  : {payload['marker']}")
+                print(f"listener: {payload['listener']['host']}:{payload['listener']['port']}")
+                print(f"root    : {payload['root']}")
+            return 0
+        try:
+            print("marker: STUDIO_STARTED", flush=True)
+            serve_studio(Path(a.root), port=a.port, open_browser=not a.no_browser)
+        except StudioRequestError as exc:
+            print(f"studio failed: {exc.code}: {exc.message}", file=sys.stderr)
+            return 2
+        except OSError as exc:
+            print(f"studio failed: LISTENER_ERROR: {exc}", file=sys.stderr)
+            return 1
+        return 0
     if a.cmd == "plan":
         return _plan()
     if a.cmd == "init":

@@ -1,5 +1,11 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.2.0
+
+- Add loopback-only Factory Studio with explicit project confirmation.
+- Parse only literal `127.0.0.1` startup URLs and open them through `BrowserUtil`.
+- Stop the Studio process when its JetBrains project is disposed.
+
 ## 0.1.2
 
 - Add a local meter overview that preserves the measured-versus-unreported token boundary.

@@ -11,3 +11,4 @@ venv/
 receipts/
 *.zip
 .DS_Store
+editors/intellij/.kotlin/

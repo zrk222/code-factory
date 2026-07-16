@@ -193,14 +193,16 @@ def _frontend_page(blueprint: AppBlueprint) -> str:
 
 
 def _frontend_css() -> str:
-    return """:root { color-scheme: light; --ink: #172033; --accent: #2563eb; --paper: #f8fafc; }
+    return """:root { color-scheme: light; --ink: #172033; --accent: #166534; --signal: #b45309; --paper: #f6f8fa; --line: #d7dee7; }
+* { box-sizing: border-box; }
 body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: var(--ink); background: white; }
-.hero { min-height: 70vh; padding: 6rem 8vw; background: linear-gradient(135deg, #eef2ff, #f8fafc 54%, #ecfeff); }
-.eyebrow { text-transform: uppercase; font-size: .78rem; letter-spacing: .08em; color: #2563eb; font-weight: 700; }
-h1 { font-size: clamp(2.4rem, 6vw, 5rem); line-height: 1; margin: 0 0 1rem; max-width: 840px; }
+.hero { min-height: 70vh; padding: 6rem 8vw; background: white; border-bottom: 1px solid var(--line); }
+.eyebrow { text-transform: uppercase; font-size: .78rem; letter-spacing: 0; color: var(--signal); font-weight: 800; }
+h1 { font-size: 4.5rem; line-height: 1.04; margin: 0 0 1rem; max-width: 840px; }
 p { font-size: 1.12rem; line-height: 1.7; max-width: 720px; }
-.primary { display: inline-block; margin-top: 1.4rem; padding: .95rem 1.15rem; color: white; background: var(--accent); text-decoration: none; font-weight: 700; }
-.panel { padding: 4rem 8vw; background: var(--paper); }
+.primary { display: inline-block; margin-top: 1.4rem; padding: .95rem 1.15rem; border-radius: 6px; color: white; background: var(--accent); text-decoration: none; font-weight: 700; }
+.panel { padding: 4rem 8vw; background: var(--paper); border-bottom: 4px solid var(--signal); }
+@media (max-width: 720px) { .hero { min-height: 64vh; padding: 4rem 7vw; } h1 { font-size: 2.8rem; } }
 """
 
 
@@ -424,27 +426,90 @@ def scaffold_app(blueprint: AppBlueprint, *, out_dir: Path, prd_text: str) -> di
     _write(out_dir / ".forge" / blueprint.name / "state.json", _forge_state(blueprint))
     if STACKS[blueprint.stack]["frontend"] == "Next.js":
         _write(out_dir / "frontend" / "app" / "page.tsx", _frontend_page(blueprint))
+        _write(out_dir / "frontend" / "app" / "layout.tsx", '''import "./globals.css";
+import type { ReactNode } from "react";
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return <html lang="en"><body>{children}</body></html>;
+}
+''')
+        _write(out_dir / "frontend" / "tsconfig.json", json.dumps({
+            "compilerOptions": {
+                "target": "ES2022",
+                "lib": ["dom", "dom.iterable", "esnext"],
+                "allowJs": False,
+                "skipLibCheck": True,
+                "strict": True,
+                "noEmit": True,
+                "esModuleInterop": True,
+                "module": "esnext",
+                "moduleResolution": "bundler",
+                "resolveJsonModule": True,
+                "isolatedModules": True,
+                "jsx": "react-jsx",
+                "incremental": True,
+                "plugins": [{"name": "next"}],
+            },
+            "include": ["next-env.d.ts", ".next/types/**/*.ts", ".next/dev/types/**/*.ts", "**/*.ts", "**/*.tsx"],
+            "exclude": ["node_modules"],
+        }, indent=2))
+        _write(out_dir / "frontend" / "next-env.d.ts", '/// <reference types="next" />\n/// <reference types="next/image-types/global" />')
+        _write(out_dir / "frontend" / "next.config.ts", '''import type { NextConfig } from "next";
+
+const config: NextConfig = {
+  turbopack: { root: process.cwd() },
+};
+
+export default config;
+''')
         frontend_package = {
-            "scripts": {"dev": "next dev", "build": "next build"},
-            "dependencies": {"next": "^15.0.0", "react": "^19.0.0", "react-dom": "^19.0.0"},
-            "devDependencies": {"typescript": "^5.0.0"},
+            "scripts": {"dev": "next dev", "build": "next build", "typecheck": "tsc --noEmit"},
+            "dependencies": {"next": "16.2.10", "react": "19.2.7", "react-dom": "19.2.7"},
+            "devDependencies": {"@types/node": "^24.0.0", "@types/react": "^19.2.0", "@types/react-dom": "^19.2.0", "typescript": "^5.9.0"},
+            "overrides": {"postcss": "8.5.19"},
         }
     else:
         _write(out_dir / "frontend" / "src" / "App.tsx", _frontend_page(blueprint))
         _write(out_dir / "frontend" / "src" / "main.tsx", """import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import '../app/globals.css';
+import './globals.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
 """)
         _write(out_dir / "frontend" / "index.html", '<!doctype html><html><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>')
+        _write(out_dir / "frontend" / "vite.config.ts", '''import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({ plugins: [react()] });
+''')
+        _write(out_dir / "frontend" / "tsconfig.json", json.dumps({
+            "compilerOptions": {
+                "target": "ES2022",
+                "useDefineForClassFields": True,
+                "lib": ["ES2022", "DOM", "DOM.Iterable"],
+                "allowJs": False,
+                "skipLibCheck": True,
+                "esModuleInterop": True,
+                "allowSyntheticDefaultImports": True,
+                "strict": True,
+                "forceConsistentCasingInFileNames": True,
+                "module": "ESNext",
+                "moduleResolution": "Bundler",
+                "resolveJsonModule": True,
+                "isolatedModules": True,
+                "noEmit": True,
+                "jsx": "react-jsx",
+            },
+            "include": ["src", "vite.config.ts"],
+        }, indent=2))
         frontend_package = {
-            "scripts": {"dev": "vite", "build": "tsc && vite build"},
-            "dependencies": {"@vitejs/plugin-react": "^4.0.0", "vite": "^6.0.0", "react": "^19.0.0", "react-dom": "^19.0.0"},
-            "devDependencies": {"typescript": "^5.0.0"},
+            "scripts": {"dev": "vite", "build": "tsc && vite build", "typecheck": "tsc --noEmit"},
+            "dependencies": {"react": "19.2.7", "react-dom": "19.2.7"},
+            "devDependencies": {"@types/react": "^19.2.0", "@types/react-dom": "^19.2.0", "@vitejs/plugin-react": "^6.0.0", "typescript": "^5.9.0", "vite": "^8.0.0"},
         }
-    _write(out_dir / "frontend" / "app" / "globals.css", _frontend_css())
+    css_path = "app/globals.css" if STACKS[blueprint.stack]["frontend"] == "Next.js" else "src/globals.css"
+    _write(out_dir / "frontend" / css_path, _frontend_css())
     _write(out_dir / "frontend" / "package.json", json.dumps(frontend_package, indent=2))
     _write(out_dir / "backend" / "__init__.py", "")
     _write(out_dir / "backend" / "main.py", _backend_main(blueprint))
