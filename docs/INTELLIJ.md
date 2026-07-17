@@ -52,7 +52,7 @@ candidate files.
 1. Install FactoryLine:
 
    ```powershell
-   pip install factoryline-code-factory==0.17.0
+   pip install factoryline-code-factory==0.17.1
    ```
 
 2. Download `factoryline-intellij-0.3.0.zip` from the FactoryLine GitHub

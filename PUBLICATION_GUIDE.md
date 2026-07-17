@@ -115,9 +115,9 @@ factory --help
 
 Current release media:
 
-- `docs/assets/code-factory-quickstart-v016.mp4`: 60-second narrated quick start
+- `docs/assets/code-factory-quickstart-v0171.mp4`: 60-second narrated quick start
   built from the exact Factory Studio capture.
-- `docs/assets/code-factory-quickstart-cover-v016.png`: video cover.
+- `docs/assets/code-factory-quickstart-cover-v0171.png`: video cover.
 - `docs/assets/factory-studio-control-room-1080.png`: exact 1920x1080 Studio
   source frame used by the Remotion composition.
 - `media/code-factory-quickstart/`: reproducible Remotion source and narration
@@ -131,7 +131,7 @@ so the same video entry renders correctly on GitHub and PyPI.
 
 ```powershell
 ffprobe -v error -show_entries format=duration -show_streams `
-  docs/assets/code-factory-quickstart-v016.mp4
+  docs/assets/code-factory-quickstart-v0171.mp4
 ```
 
 ## Claude Code And Codex

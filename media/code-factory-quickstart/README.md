@@ -11,4 +11,4 @@ npm install
 npm run render
 ```
 
-The output is `output/marketing/code-factory-quickstart-v016.mp4`.
+The output is `output/marketing/code-factory-quickstart-v0171.mp4`.

@@ -31,8 +31,8 @@ ask for votes, stars, or reviews.
 > I would love feedback on one question: what would you need to prove before
 > allowing an AI-generated change into a production repository?
 
-Attach `docs/assets/code-factory-quickstart-v016.mp4` as the first video and
-`docs/assets/code-factory-quickstart-cover-v016.png` as its cover. The video is
+Attach `docs/assets/code-factory-quickstart-v0171.mp4` as the first video and
+`docs/assets/code-factory-quickstart-cover-v0171.png` as its cover. The video is
 a 60-second walkthrough of the exact shipped Factory Studio UI, including the
 Product Graph, value-slice queue, approval decision, proof timeline, and Meter
 v2. Do not replace it with a concept animation or a stale dashboard image.

@@ -1,7 +1,7 @@
 # Capability Packs
 
 Capability Packs make Code Factory targets extensible without turning pack
-installation into execution authority. Version 0.17.0 includes 29 signed packs:
+installation into execution authority. Version 0.17.1 includes 29 signed packs:
 seven runnable starter targets plus surface, language, capability, data, and
 operations contracts that can be validated and composed before implementation.
 

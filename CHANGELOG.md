@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- Aligned all public install instructions, IDE download links, and narrated
+  quick-start asset names with the verified `0.17.1` release.
+
 ## 0.17.1 - 2026-07-17
 
 ### Security

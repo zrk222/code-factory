@@ -93,8 +93,8 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
         "prd-to-app-factory.svg",
         "product-missions.svg",
         "signal-loop.svg",
-        "code-factory-quickstart-cover-v016.png",
-        "code-factory-quickstart-v016.mp4",
+        "code-factory-quickstart-cover-v0171.png",
+        "code-factory-quickstart-v0171.mp4",
     ):
         assert (assets / name).is_file(), name
 
