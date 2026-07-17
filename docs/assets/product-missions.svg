@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Code Factory Product Missions</title>
+  <desc id="desc">A PRD moves through Product Graph, value slices, supervised mission passport, PR evidence, and classified outcomes.</desc>
+  <rect width="1600" height="900" fill="#f7f9fc"/>
+  <rect x="70" y="70" width="1460" height="90" rx="8" fill="#111827"/>
+  <text x="115" y="128" font-family="Arial, sans-serif" font-size="42" font-weight="700" fill="#ffffff">PRODUCT MISSIONS</text>
+  <text x="1490" y="126" text-anchor="end" font-family="Arial, sans-serif" font-size="22" fill="#93c5fd">PRD to reviewer-ready value</text>
+  <g font-family="Arial, sans-serif">
+    <g transform="translate(80 245)"><rect width="250" height="260" rx="8" fill="#e0f2fe" stroke="#0284c7" stroke-width="3"/><text x="28" y="55" font-size="20" font-weight="700" fill="#0369a1">01  PRODUCT GRAPH</text><text x="28" y="105" font-size="31" font-weight="700" fill="#172033">Make intent</text><text x="28" y="143" font-size="31" font-weight="700" fill="#172033">inspectable</text><text x="28" y="195" font-size="18" fill="#42526a">Requirements, UX states,</text><text x="28" y="224" font-size="18" fill="#42526a">outcomes, gaps, hashes</text></g>
+    <path d="M350 375h55" stroke="#64748b" stroke-width="6"/><path d="M405 375l-17-12v24z" fill="#64748b"/>
+    <g transform="translate(425 245)"><rect width="250" height="260" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="3"/><text x="28" y="55" font-size="20" font-weight="700" fill="#b45309">02  VALUE SLICES</text><text x="28" y="105" font-size="31" font-weight="700" fill="#172033">Ship vertical</text><text x="28" y="143" font-size="31" font-weight="700" fill="#172033">user value</text><text x="28" y="195" font-size="18" fill="#42526a">Exact coverage, explicit</text><text x="28" y="224" font-size="18" fill="#42526a">dependencies, risk gates</text></g>
+    <path d="M695 375h55" stroke="#64748b" stroke-width="6"/><path d="M750 375l-17-12v24z" fill="#64748b"/>
+    <g transform="translate(770 245)"><rect width="250" height="260" rx="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="3"/><text x="28" y="55" font-size="20" font-weight="700" fill="#6d28d9">03  MISSION</text><text x="28" y="105" font-size="31" font-weight="700" fill="#172033">Bound the</text><text x="28" y="143" font-size="31" font-weight="700" fill="#172033">execution</text><text x="28" y="195" font-size="18" fill="#42526a">Passport, budgets, owner,</text><text x="28" y="224" font-size="18" fill="#42526a">approval, source binding</text></g>
+    <path d="M1040 375h55" stroke="#64748b" stroke-width="6"/><path d="M1095 375l-17-12v24z" fill="#64748b"/>
+    <g transform="translate(1115 245)"><rect width="250" height="260" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="3"/><text x="28" y="55" font-size="20" font-weight="700" fill="#15803d">04  PR EVIDENCE</text><text x="28" y="105" font-size="31" font-weight="700" fill="#172033">Review proof,</text><text x="28" y="143" font-size="31" font-weight="700" fill="#172033">not promises</text><text x="28" y="195" font-size="18" fill="#42526a">Coverage, hashes, rollback,</text><text x="28" y="224" font-size="18" fill="#42526a">unknowns, outcome events</text></g>
+    <rect x="270" y="610" width="1060" height="150" rx="8" fill="#ffffff" stroke="#0f766e" stroke-width="3"/>
+    <text x="320" y="665" font-size="22" font-weight="700" fill="#0f766e">LIVE VALUE METER</text>
+    <text x="320" y="710" font-size="25" fill="#172033">Flow time  |  review  |  rework  |  cache  |  invalidation  |  outcomes</text>
+    <text x="320" y="742" font-size="17" fill="#64748b">Unknown telemetry stays unknown. Measured, observed, modeled, and unknown evidence never collapse together.</text>
+  </g>
+</svg>

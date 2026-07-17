@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- Add a confirmed Product Missions command that opens the loopback Studio in PRD mode.
+- Surface Meter v2 flow observations while preserving unreported values as unknown.
+
 ## 0.2.0
 
 - Add the loopback-only Factory Studio command with explicit workspace trust.

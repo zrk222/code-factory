@@ -2,6 +2,7 @@ import * as assert from "node:assert/strict";
 import { escapeHtml, receiptHtml, summarizeReceipt } from "../receipt";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "../runner";
 import { meterHtml } from "../meter";
+import { requirementIds } from "../requirement";
 
 const receipt = {
   schema: "factory.trace.v1",
@@ -23,7 +24,10 @@ assert.equal(factoryExecutable("factory", "win32"), "factory.exe");
 assert.equal(factoryExecutable("C:\\tools\\factory.exe", "win32"), "C:\\tools\\factory.exe");
 assert.equal(factoryExecutable("factory", "linux"), "factory");
 assert.match(meterHtml({ summary: { stages_measured: 2, build_wall_ms: 10, tokens_reported_by_modules: false }, activity: { stages_successful: 2, latest_stage: { module: "hsf", stage: "compile", ok: true } } }), /not reported by modules/);
+assert.match(meterHtml({ summary: { flow: { agent_ms: { value: 12, known: 1, unknown: 0 }, first_pass_gate_rate: { value: 1, known: 1, unknown: 0 }, token_quality: { exact: 1, estimated: 0, unknown: 0 } } }, activity: {} }), /Agent time/);
+assert.match(meterHtml({ summary: { flow: { agent_ms: { value: 12, known: 1, unknown: 0 }, first_pass_gate_rate: { value: 1, known: 1, unknown: 0 }, token_quality: { exact: 1, estimated: 0, unknown: 0 } } }, activity: {} }), /100.0%/);
 assert.equal(isFeatureName("editor-layer_1"), true);
 assert.equal(isFeatureName("editor layer; rm"), false);
 assert.equal(factoryStudioUrl("marker: STUDIO_STARTED\nFactory Studio: http://127.0.0.1:43117/\n"), "http://127.0.0.1:43117/");
 assert.equal(factoryStudioUrl("Factory Studio: http://0.0.0.0:43117/"), undefined);
+assert.deepEqual(requirementIds("FR-101 maps to NFR-A11Y and FR-101."), ["FR-101", "NFR-A11Y"]);

@@ -11,12 +11,20 @@
 
 ## 60-second first run
 
+[![Watch the exact-UI Code Factory quick start](docs/assets/code-factory-quickstart-cover-v016.png)](docs/assets/code-factory-quickstart-v016.mp4)
+
+The one-minute walkthrough is rendered from an actual 1920x1080 Factory
+Studio capture. Its focus frames point to the shipped Product Graph, value
+slice, approval, proof, and Meter v2 panels; it does not substitute a mock
+dashboard for the product UI.
+
 Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.14.0
-factory create "Build a simple approval tracker with an audit log" --target web --out approval-tracker --purpose saas
+pip install factoryline-code-factory==0.16.0
+factory targets --json
+factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
 ```
 
@@ -26,10 +34,103 @@ that lacks a non-hollow test. The scaffold is useful starting state, not
 software the factory pretends is ready to ship.
 
 Use the same `factory create` command with `--target worker`, `web`, `mobile`,
-or `agent-ui`. Every output starts blocked and includes a governance manifest,
+or `agent-ui`. Select a deployment route from `factory targets --json`; the
+local or preview route is the safe default. Every output starts blocked and includes a governance manifest,
 SSAT, smoke hook, Mermaid map, and source-bound compile receipt. Open the local
 builder with `factory studio`, or from the VS Code and JetBrains integrations.
 See [Target Compiler and Factory Studio](docs/TARGET_COMPILER.md).
+
+## Signed Capability Packs
+
+The worker, web, Expo mobile, and supervised agent UI targets now come from
+first-party Capability Packs. Every pack binds its complete file map to an
+offline DSSE Ed25519 signature and must reject five structural mutations before
+it can be installed or used as target metadata.
+
+```powershell
+factory pack list
+factory pack validate factoryline/builtin_packs/target-worker
+factory pack install factoryline/builtin_packs/target-worker --root .
+```
+
+Pack installation grants no execution, network, connector, deployment,
+publication, signing, or external-message authority. See
+[Capability Packs](docs/CAPABILITY_PACKS.md).
+
+For target-by-target local, preview, and release routes, prerequisites, checks,
+and approval boundaries, see the [Deployment Guide](docs/DEPLOYMENT_GUIDE.md).
+
+## Product Missions: PRD to reviewer-ready value
+
+Version 0.16 adds a deterministic product-engineering layer above the existing
+spec-to-proof pipeline. It compiles a PRD into stable requirement atoms and a
+gap-audited Product Graph, assigns every requirement exactly once to a bounded
+value slice, and creates a supervised, hard-budgeted mission with a hash-bound
+Loop Passport. The output is an evidence-linked PR draft and a classified
+outcome chain, not an agent with hidden production authority.
+
+![Code Factory Product Missions](docs/assets/product-missions.svg)
+
+```powershell
+factory product compile .\PRD.md --root . --json
+factory product slices .\.factory\products\<project>\product_graph.json --root . --json
+factory mission create .\.factory\products\<project>\value_slices.json <slice-id> `
+  --root . --owner engineering-lead --executor codex --json
+```
+
+The live Meter v2 adds queue, review, rework, cache, invalidation, and outcome
+telemetry while preserving unknown values as unknown. Open the same workflow in
+Factory Studio or through the explicit Product Missions command in VS Code and
+all supported JetBrains IDEs. See [Product Missions](docs/PRODUCT_MISSIONS.md).
+
+## Migration Missions: no finish without proof
+
+Large migrations can bind an executable readiness receipt before a Mission is
+created. Eight lanes are checked independently: unit, integration, E2E,
+lint/type, architecture, coverage/fuzz, reproducible environment, and
+telemetry/security. `lane_registration_pct` is never presented as behavioral
+proof; only hash-bound executed evidence contributes to
+`executable_proof_pct`.
+
+```powershell
+factory migration assess .\migration-readiness.json --root . --json
+factory context build --root . --json
+factory mission create <value-slices.json> <slice-id> --root . `
+  --owner migration-owner --executor codex `
+  --readiness .\.factory\migration\readiness.json --json
+```
+
+Every mission binds falsifiable hypotheses to exact completion criteria. A
+user-facing slice also receives a computer-control criterion with an exact URL,
+fewer-than-four-interaction ceiling, passing assertions, and hashed visual evidence.
+Independent validators cannot see creator transcripts or failed-attempt
+history. See [Migration Missions](docs/MIGRATION_MISSIONS.md).
+
+## Signal Loop: owner-governed demand to independent proof
+
+Signal Loop accepts explicitly supplied GitHub, Slack, Sentry, social,
+telemetry, internal, or manual evidence as untrusted local data. A compact
+owner-controlled Opinion Dock records product taste, architecture guardrails,
+temporary hands-off rules, and abstract cost/quality profiles. Explainable
+triage cannot promote work until a Product Owner records a bound decision.
+
+![Code Factory Signal Loop](docs/assets/signal-loop.svg)
+
+```powershell
+factory opinion init --root . --owner product-owner --json
+factory signal capture --root . --source github --authorization owner_supplied `
+  --title "Export audit evidence" --body "Operators need a local export." --json
+factory signal triage <signal.json> <opinion_dock.json> --root . --json
+```
+
+Complete approved facts compile into the Product Graph; incomplete facts stop
+at a needs-input PRD draft. Mission owners receive an approval-ready Studio
+panel or may choose **Auto-resolve safe gaps**, which is limited to deterministic
+local corrections and cannot invent product intent. Independent completion
+requires distinct creator/verifier identities, exact criteria, and local bound
+evidence. Every rejection reports the causal stage, reason, and next action in
+`factory.failure_summary.v1`. See the [Signal Loop](docs/SIGNAL_LOOP.md) and
+[operations scenario matrix](docs/OPERATION_SCENARIOS.md).
 
 For an existing repository, start with `forge adopt <feature> --root .`; after
 you review its SSAT and pass the human architecture gate, use
@@ -93,11 +194,20 @@ Each piece is a separate repo you can install and use on its own. This repo is t
 
 ## Five-brick workflow
 
+For the complete component, authority, mission, verification, IDE, and
+telemetry topology, see [Code Factory Architecture](docs/ARCHITECTURE.md).
+
 ```mermaid
 flowchart LR
     V["VS Code"] -. "explicit local command" .-> G
     J["JetBrains IDEs"] -. "explicit local command" .-> G
-    A["Plain-language intent"] --> B["1 SpecLine: clarify and lock the spec"]
+    Q["Owner-supplied signal"] --> O["Opinion Dock triage"]
+    O --> P
+    P["PRD Product Graph"] --> S["Dependency-ordered value slices"]
+    S --> M["Supervised mission passport"]
+    M --> B
+    A["Plain-language intent"] --> K["Signed Capability Pack"]
+    K --> B["1 SpecLine: clarify and lock the spec"]
     B --> C["2 ForgeLine: build through gated phases"]
     C --> D{"What changed?"}
     D -->|"Business decision logic"| E["3 HSF: compile deterministic artifact"]
@@ -120,6 +230,7 @@ flowchart LR
     class F design
     class G,H evidence
     class V,J editor
+    class Q,O,P,S,M,K intent
 ```
 
 Use the numbered repos like Lego bricks: start with the baseplate, add the spec
@@ -165,7 +276,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.14.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.16.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 factory doctor --json
 ```
 

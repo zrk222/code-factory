@@ -1,5 +1,10 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.3.0
+
+- Add Product Missions to all supported JetBrains IDEs through the loopback Studio.
+- Surface Meter v2 flow observations while preserving unreported values as unknown.
+
 ## 0.2.0
 
 - Add loopback-only Factory Studio with explicit project confirmation.

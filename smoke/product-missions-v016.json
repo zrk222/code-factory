@@ -1,0 +1,39 @@
+{
+  "checks": [
+    {
+      "name": "product_graph_to_evidence_linked_mission",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.product_missions import compile_product_prd, plan_value_slices, verify_product_graph, create_mission, verify_mission, draft_pr, record_outcome, outcome_summary\nprd_text = '''# Signal Desk\n\n## Actors\n- Operator: triages signals.\n\n## Jobs\n- Review the highest-value signal.\n\n## Pains\n- Manual triage is slow.\n\n## Outcomes\n- Reduce triage time.\n\n## Journeys\n- Operator signs in, reviews the queue, and opens a signal.\n\n## Business rules\n- Only approved operators can open private signals.\n\n## Data ownership\n- The workspace owns signal records.\n\n## Trust boundaries\n- External connectors are untrusted inputs.\n\n## External effects\n- Publishing a response requires approval.\n\n## Approval requirements\n- A human approves external messages.\n\n## Success events\n- signal_reviewed measures completed reviews.\n\n## Requirements\n- REQ-LOGIN: The operator must log in.\n- REQ-DASH: The dashboard must show prioritized signals and depends on REQ-LOGIN.\n\n## Experience states\n- Loading, empty, error, success, permission, offline, recovery, and accessibility states are declared.\n\n## Acceptance\nScenario: Review a signal\n  Given an authenticated operator\n  When the dashboard opens\n  Then the top signal is visible\n'''\nwith TemporaryDirectory() as d:\n root=Path(d); prd=root/'PRD.md'; prd.write_text(prd_text, encoding='utf-8')\n graph=compile_product_prd(prd, root); assert graph['status']=='ready' and verify_product_graph(Path(graph['path']))['valid']\n slices=plan_value_slices(Path(graph['path']), root, max_requirements=1); assert slices['coverage']['complete']\n mission=create_mission(Path(slices['path']), slices['slices'][0]['id'], root, 'smoke-owner', 'codex'); assert mission['approval_state']=='required_before_execution'\n assert mission['workspace_contract']['count']==1 and verify_mission(Path(mission['path']))['valid']\n evidence=root/'results.json'; evidence.write_text('{\\\"ok\\\":true}', encoding='utf-8')\n draft=draft_pr(Path(mission['path']), root, [evidence]); assert draft['authority']['merge'] is False and draft['review_evidence']\n record_outcome(Path(mission['path']), root, 'signal_reviewed', 1.0, 1.0, 'measured', 'smoke')\n summary=outcome_summary(root, mission['id']); assert summary['chain_valid'] and summary['evidence_classes']['measured']==1\n",
+      "covers": [
+        "PRODUCT_GRAPH_BOUND",
+        "PRODUCT_TRUST_MODEL_BOUND",
+        "PRODUCT_OUTCOME_EVENTS_BOUND",
+        "VALUE_SLICES_COVERAGE_COMPLETE",
+        "VALUE_SLICE_SCORE_DETERMINISTIC",
+        "VERTICAL_SLICE_CONTRACT_BOUND",
+        "MISSION_PASSPORT_BOUND",
+        "MISSION_SINGLE_WORKTREE_BOUND",
+        "MISSION_CONTEXT_MINIMIZED",
+        "MISSION_ROLE_PERMISSIONS_SEPARATE",
+        "EXTERNAL_EFFECTS_APPROVAL_REQUIRED",
+        "PR_EVIDENCE_LINKED",
+        "PR_REVIEW_PACKAGE_COMPLETE",
+        "PR_UNPROVEN_CLAIMS_EXPLICIT",
+        "PR_DRAFT_NO_MERGE_AUTHORITY",
+        "OUTCOME_EVIDENCE_CLASSIFIED",
+        "OUTCOME_CHAIN_BOUND"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "mission_budget_and_input_drift_fail_closed",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.product_missions import ProductMissionError, compile_product_prd, plan_value_slices, create_mission, verify_mission\nprd_text='# Safe\\n\\n## Requirements\\n- REQ-ONE: The operator must view a page.\\n\\n## Acceptance\\nScenario: View\\n  Given an operator\\n  When the page opens\\n  Then content is visible\\n'\nwith TemporaryDirectory() as d:\n root=Path(d); prd=root/'PRD.md'; prd.write_text(prd_text, encoding='utf-8')\n graph=compile_product_prd(prd, root); slices=plan_value_slices(Path(graph['path']), root)\n try:\n  create_mission(Path(slices['path']), slices['slices'][0]['id'], root, 'owner', max_tokens=100001)\n  raise AssertionError('budget ceiling was not enforced')\n except ProductMissionError as exc: assert exc.code=='MISSION_BUDGET_INVALID'\n mission=create_mission(Path(slices['path']), slices['slices'][0]['id'], root, 'owner')\n Path(graph['path']).write_text(Path(graph['path']).read_text(encoding='utf-8')+'\\n', encoding='utf-8')\n assert verify_mission(Path(mission['path']))['marker']=='MISSION_INPUT_DRIFT'\n",
+      "covers": [
+        "MISSION_BUDGET_HARD",
+        "MISSION_INPUT_DRIFT"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

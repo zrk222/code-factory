@@ -12,6 +12,10 @@ newest local JSON receipt in a tool window.
 - `FactoryLine: Analyze Changed Proof` runs `factory risk-diff --root <project> --json`.
 - `FactoryLine: Open Latest Receipt` shows the newest JSON receipt below `.factory/` or `receipts/`.
 - `FactoryLine: Check Latest Receipt Signature State` runs `factory receipt status` on that receipt. It reports signature presence or `UNSIGNED`; it does not claim signer identity.
+- `FactoryLine: Open Local Factory Studio` opens the confirmed loopback target compiler.
+- `FactoryLine: Open Product Missions` opens Studio in deterministic PRD-to-mission mode.
+- `REQ-*`, `FR-*`, and `NFR-*` references receive a read-only gutter link to
+  matching local proof under `.factory`, `receipts`, `coverage`, `tests`, or `specs`.
 
 ## Safety Boundary
 
@@ -27,14 +31,18 @@ untrusted/missing receipt into a green state.
 
 ## Install
 
-1. Install `factoryline-code-factory==0.14.0` into the Python environment that
+1. Install `factoryline-code-factory==0.16.0` into the Python environment that
    IntelliJ inherits.
-2. Download `factoryline-intellij-0.2.0.zip` from the matching GitHub release.
+2. Download `factoryline-intellij-0.3.0.zip` from the matching GitHub release.
 3. In your JetBrains IDE, open **Settings > Plugins > gear menu > Install Plugin from Disk...** and select the ZIP.
 4. Restart the IDE, then use the **Tools > FactoryLine** menu or the **FactoryLine** tool window.
 
 Set an absolute executable path under **Settings > Tools > FactoryLine** only
 when `factory` is not already discoverable on IntelliJ's PATH.
+Product Missions create only supervised, approval-required local packets and do
+not grant execute, merge, deploy, publish, connector, credential, or messaging authority.
+The gutter navigator reads bounded local evidence only and never executes a
+mission or changes an approval.
 
 ## Local Development
 

@@ -1,6 +1,6 @@
 {
   "title": "Code Factory: Proof-by-Sabotage Software Factory",
-  "description": "Code Factory is a local-first, open-source workflow for turning specifications, behavior checks, design-token contracts, policy verification, and release receipts into auditable software delivery. Version 0.14 adds a deterministic target compiler for worker, web, Expo mobile, and supervised agent-UI starters, plus a loopback-only Factory Studio opened through confirmed VS Code and JetBrains actions. Generated targets begin blocked and carry governance manifests, SSAT contracts, smoke hooks, Mermaid maps, and source-bound receipts. This source release includes its public documentation assets and Mermaid diagrams.\n\nEvidence boundary: the compiler and Studio make no model calls and do not grant deployment, publication, signing, connector, credential, or external-message authority. Generated web, mobile, and agent-UI products may add models later and still require product-specific tests and human release review. A passing receipt does not prove an arbitrary production environment.\n\nDual licensed under MIT or Apache-2.0.",
+  "description": "Code Factory is a local-first, open-source workflow for turning specifications, behavior checks, design-token contracts, policy verification, and release receipts into auditable software delivery. Version 0.16 adds Product Missions, the Signal Loop, and signed Capability Packs: a deterministic PRD-to-Product-Graph compiler, exact dependency-ordered value slices, owner-controlled Opinion Dock triage, supervised Loop Passport handoffs, approval-ready mission decisions, independent creator-verifier completion, evidence-linked PR drafts, hash-linked outcomes, actionable failure summaries, Meter v2 flow telemetry, and pack-derived worker, web, Expo mobile, and supervised agent UI targets. Capability Packs bind complete file maps to offline DSSE Ed25519 signatures and must reject structural mutations before installation. Factory Studio, VS Code, and JetBrains IDEs expose the same bounded workflow. This source release includes public documentation assets, Mermaid diagrams, exact Studio captures, and a reproducible 60-second narrated Remotion quick start built from the shipped UI.\n\nEvidence boundary: environmental content is accepted only as explicitly supplied untrusted local data. This release does not scrape, poll, schedule, authenticate connectors, invoke models, execute agents, or grant merge, deployment, publication, signing, credential, connector, or external-message authority. Capability Pack validation and installation grant no runtime or release authority. Safe auto-resolution cannot invent product facts or approve external effects. Outcome records preserve measured, observed, modeled, and unknown evidence classes. A passing receipt does not prove an arbitrary production environment.\n\nDual licensed under MIT or Apache-2.0.",
   "creators": [
     {
       "name": "Katz, Richard"
@@ -17,6 +17,13 @@
     "release-receipts",
     "developer-tools",
     "target-compiler",
+    "capability-packs",
+    "dsse-ed25519",
+    "product-missions",
+    "signal-loop",
+    "opinion-dock",
+    "independent-verification",
+    "product-graph",
     "vscode-extension",
     "jetbrains-plugin"
   ],

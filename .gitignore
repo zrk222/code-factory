@@ -3,12 +3,17 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+dist-v*/
+.playwright-cli/
+.specline/
+output/
 .pytest_cache/
 .venv/
 venv/
 .factory/
 .forge/
 receipts/
+*.adoption.ssat.yaml
 *.zip
 .DS_Store
 editors/intellij/.kotlin/

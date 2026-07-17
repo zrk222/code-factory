@@ -1,0 +1,1 @@
+{"schema":"factory.pack.validators.v1","validators":["manifest-shape","expo-doctor","offline-state","authority-boundary"]}

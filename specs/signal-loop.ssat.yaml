@@ -1,0 +1,66 @@
+name: signal-loop
+modules:
+  - name: signal_loop
+    path: factoryline/signal_loop.py
+    functions:
+      - name: init_opinion_dock
+        args: ["root: Path", "owner: str", "force: bool = False"]
+        returns: dict
+      - name: verify_opinion_dock
+        args: ["path: Path"]
+        returns: dict
+      - name: correct_opinion_dock
+        args: ["path: Path", "owner: str", "rule: dict[str, Any]", "rationale: str"]
+        returns: dict
+      - name: capture_signal
+        args: ["root: Path", "source: str", "title: str", "body: str", "authorization: str", "severity: int = 3"]
+        returns: dict
+      - name: triage_signal
+        args: ["signal_path: Path", "dock_path: Path", "root: Path", "force: bool = False"]
+        returns: dict
+      - name: decide_triage
+        args: ["triage_path: Path", "root: Path", "owner: str", "decision: str", "rationale: str", "override_block: bool = False", "force: bool = False"]
+        returns: dict
+      - name: promote_signal
+        args: ["decision_path: Path", "root: Path", "project: str | None = None", "force: bool = False"]
+        returns: dict
+  - name: product_missions
+    path: factoryline/product_missions.py
+    functions:
+      - name: decide_mission
+        args: ["mission_path: Path", "root: Path", "owner: str", "decision: str", "rationale: str", "force: bool = False"]
+        returns: dict
+      - name: close_mission
+        args: ["mission_path: Path", "validation_path: Path", "root: Path", "force: bool = False"]
+        returns: dict
+      - name: verify_mission_completion
+        args: ["completion_path: Path"]
+        returns: dict
+dependencies:
+  - from: signal_loop
+    to: product_missions
+invariants:
+  - name: signal_capture_has_no_network_execution
+    forbid_pattern: "\\b(?:requests|httpx|urllib|socket)\\b|subprocess\\.(?:run|Popen)|\\b(?:eval|exec)\\s*\\("
+    scopes:
+      - module: signal_loop
+        symbol: capture_signal
+        max_lines: 100
+  - name: triage_has_no_external_effect
+    forbid_pattern: "\\b(?:merge|deploy|publish|send_message)\\s*\\("
+    scopes:
+      - module: signal_loop
+        symbol: triage_signal
+        max_lines: 90
+  - name: promotion_cannot_create_execution
+    forbid_pattern: "subprocess\\.(?:run|Popen)|\\b(?:merge|deploy|publish)\\s*\\("
+    scopes:
+      - module: signal_loop
+        symbol: promote_signal
+        max_lines: 80
+  - name: completion_has_no_release_authority
+    forbid_pattern: "\\b(?:merge|deploy|publish)\\s*\\("
+    scopes:
+      - module: product_missions
+        symbol: close_mission
+        max_lines: 80

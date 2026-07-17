@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from pathlib import Path
 
 
@@ -20,7 +21,22 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-07-16"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-07-17"
+
+
+def test_pypi_storefront_has_identity_and_canonical_links():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+
+    identity = [{"name": "Richard Katz"}, {"email": "rkatz22@gmail.com"}]
+    assert project["authors"] == identity
+    assert project["maintainers"] == identity
+    assert project["urls"] == {
+        "Homepage": "https://github.com/zrk222/code-factory",
+        "Documentation": "https://github.com/zrk222/code-factory#readme",
+        "Source": "https://github.com/zrk222/code-factory",
+        "Issues": "https://github.com/zrk222/code-factory/issues",
+        "Changelog": "https://github.com/zrk222/code-factory/releases",
+    }
 
 
 def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
@@ -38,10 +54,19 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
         "code-factory-proof-first.png",
         "factory-editor-control-room.svg",
         "prd-to-app-factory.svg",
+        "product-missions.svg",
+        "signal-loop.svg",
+        "code-factory-quickstart-cover-v016.png",
+        "code-factory-quickstart-v016.mp4",
     ):
         assert (assets / name).is_file(), name
 
-    for path in (ROOT / "README.md", ROOT / "PUBLICATION_GUIDE.md", ROOT / "docs" / "JETBRAINS_CONTROL_ROOM.md"):
+    for path in (
+        ROOT / "README.md",
+        ROOT / "PUBLICATION_GUIDE.md",
+        ROOT / "docs" / "ARCHITECTURE.md",
+        ROOT / "docs" / "JETBRAINS_CONTROL_ROOM.md",
+    ):
         assert "```mermaid" in path.read_text(encoding="utf-8"), path.name
 
     manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
@@ -49,6 +74,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
         "include .zenodo.json",
         "include CITATION.cff",
         "recursive-include docs *.md *.gif *.png *.svg",
+        "*.mp4",
     ):
         assert entry in manifest
 

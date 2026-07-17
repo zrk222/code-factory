@@ -20,6 +20,7 @@ Compile from a prompt:
 ```powershell
 factory create "Build a receipt review workspace" `
   --target agent-ui `
+  --deployment-profile local-operator `
   --out receipt-review `
   --purpose developer `
   --json
@@ -35,11 +36,23 @@ Exactly one source is required. The output must be absent or empty. There is no
 `--force` path: Code Factory will not replace an implemented project with a
 generated starter.
 
+List every route before selecting one:
+
+```powershell
+factory targets --json
+```
+
+Omitting `--deployment-profile` selects the first local or device-preview
+route. Selecting an external route records the build, verification, release,
+prerequisite, and approval instructions in `target_manifest.json` and
+`docs/TARGET_WORKFLOW.md`; it never authorizes the external effect.
+
 ## Generated contract
 
 Every target contains:
 
 - `target_manifest.json` using `factory.target.v1`.
+- One exact deployment profile with `external_effects_authorized: false`.
 - An SSAT architecture contract and non-hollow smoke hook.
 - `.forge/<feature>/state.json` with promotion blocked.
 - `.factory/target-architecture.mmd`.
@@ -58,7 +71,9 @@ factory studio --root .
 factory studio --root . --check --json
 ```
 
-Studio binds only to `127.0.0.1`, selects an available port by default, accepts
+Studio presents target and deployment-route selectors, then shows each route's
+build, verification, release, and approval boundary before compilation. It
+binds only to `127.0.0.1`, selects an available port by default, accepts
 at most 64 KiB per create request, writes only a direct child of the selected
 root, and does not serve arbitrary workspace files. It is a local development
 surface built with Python's basic HTTP server, not a production web server.

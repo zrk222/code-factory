@@ -8,6 +8,7 @@ the baseplate first, then the numbered bricks in order.
 ```mermaid
 flowchart LR
     A["code-factory<br/>baseplate"] --> B["1 spec<br/>SpecLine"]
+    A --> P["Signed target<br/>Capability Packs"]
     B --> C["2 forge<br/>ForgeLine"]
     C --> D["3 compile<br/>HSF"]
     C --> E["4 design<br/>Prestige"]
@@ -19,7 +20,7 @@ flowchart LR
     classDef proof fill:#dcfce7,stroke:#16a34a,color:#10233f
     classDef adapter fill:#ede9fe,stroke:#7c3aed,color:#10233f
     class A base
-    class B,C,D,E brick
+    class B,C,D,E,P brick
     class F proof
     class V adapter
 ```
@@ -56,10 +57,12 @@ can contribute workflow examples.
 ## Install And Use
 
 ```bash
-pip install factoryline-code-factory==0.14.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.16.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 
 factory doctor
+factory pack list
 factory create "Build a governed approval tracker" --target web --out approval-tracker
+factory opinion init --root . --owner product-owner
 factory plan
 factory init .
 factory assemble my_feature
@@ -107,6 +110,23 @@ python -m build
 python -m twine check dist/*
 pip install dist/factoryline_code_factory-*.whl
 factory --help
+```
+
+Release media for v0.16:
+
+- `docs/assets/code-factory-quickstart-v016.mp4`: 60-second narrated quick start
+  built from the exact Factory Studio capture.
+- `docs/assets/code-factory-quickstart-cover-v016.png`: video cover.
+- `docs/assets/factory-studio-control-room-1080.png`: exact 1920x1080 Studio
+  source frame used by the Remotion composition.
+- `media/code-factory-quickstart/`: reproducible Remotion source and narration
+  input. Re-render with `npm install` followed by `npm run render`.
+
+Verify the MP4 before attaching it to a release:
+
+```powershell
+ffprobe -v error -show_entries format=duration -show_streams `
+  docs/assets/code-factory-quickstart-v016.mp4
 ```
 
 ## Claude Code And Codex

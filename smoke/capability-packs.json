@@ -1,0 +1,25 @@
+{
+  "checks": [
+    {
+      "name": "all_builtin_packs_are_signed_and_mutation_tested",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.capability_packs import builtin_packs,validate_pack,target_inventory\nfrom factoryline.target_compiler import create_target_from_prompt\nitems=builtin_packs(); assert len(items)==4 and set(target_inventory())=={'worker','web','mobile','agent-ui'}\nfor item in items:\n result=validate_pack(Path(item['path'])); assert result['valid'] and result['signature']['verified']; assert result['mutations']['rejected']==5\nwith TemporaryDirectory() as d:\n result=create_target_from_prompt('Build a worker',target='worker',out_dir=Path(d)/'worker'); assert result['deployment']['external_effects_authorized'] is False\n",
+      "covers": ["PACK_STRUCTURE_VALIDATED", "PACK_SIGNATURE_VERIFIED", "PACK_VALIDATOR_MUTATIONS_REJECTED", "PACK_DEPLOYMENT_GUIDANCE_COMPLETE", "PACK_UX_STATES_COMPLETE", "PACK_MIGRATION_POLICY_BOUND", "PACK_INVENTORY_DERIVED", "PACK_SIGNATURE_BYPASS_DENIED", "TARGET_PACK_BOUND", "TARGET_DEPLOYMENT_PROFILE_BOUND"],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "tamper_and_hollow_canary_fail_closed",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nimport json,shutil\nfrom factoryline.capability_packs import BUILTIN_ROOT,validate_pack\nwith TemporaryDirectory() as d:\n root=Path(d)/'pack'; shutil.copytree(BUILTIN_ROOT/'target-worker',root); manifest=json.loads((root/'pack.yaml').read_text()); manifest['summary']='tampered'; (root/'pack.yaml').write_text(json.dumps(manifest)); result=validate_pack(root); assert not result['valid'] and result['failure']['causal_code']=='PACK_VALIDATION_FAILED'\n",
+      "covers": ["PACK_VALIDATION_FAILED", "HOLLOW_PACK_VALIDATOR"],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "verified_install_refuses_implicit_replacement",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.capability_packs import BUILTIN_ROOT,CapabilityPackError,install_pack\nwith TemporaryDirectory() as d:\n root=Path(d); result=install_pack(BUILTIN_ROOT/'target-mobile',root); assert result['marker']=='PACK_INSTALLED_VERIFIED'\n try:\n  install_pack(BUILTIN_ROOT/'target-mobile',root); raise AssertionError('replacement allowed')\n except CapabilityPackError as exc: assert exc.code=='PACK_EXISTS'\n",
+      "covers": ["PACK_INSTALLED_VERIFIED", "PACK_EXISTS", "PACK_ROLLBACK_RESTORED", "PACK_PATH_INVALID", "PACK_PATH_CONTAINED"],
+      "must_fail_on_stub": true
+    }
+  ]
+}

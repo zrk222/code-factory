@@ -1,0 +1,1 @@
+{"schema":"factory.pack.canaries.v1","canaries":["worker-starts","receipt-emitted"]}

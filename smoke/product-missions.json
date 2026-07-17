@@ -1,0 +1,47 @@
+{
+  "checks": [
+    {
+      "name": "compile_product_to_supervised_mission",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.product_missions import compile_product_prd, plan_value_slices, create_mission, verify_mission\nprd_text='# Signal Desk\\n\\n## Actors\\n- Operator: triages signals.\\n\\n## Outcomes\\n- Reduce triage time.\\n\\n## Requirements\\n- REQ-LOGIN: The operator must log in.\\n- REQ-DASH: The dashboard must show prioritized signals and depends on REQ-LOGIN.\\n\\n## Experience states\\n- Loading, empty, error, success, permission, offline, and recovery states are declared.\\n\\n## Acceptance\\nScenario: Review a signal\\n  Given an authenticated operator\\n  When the dashboard opens\\n  Then the top signal is visible\\n'\nwith TemporaryDirectory() as d:\n root=Path(d); prd=root/'PRD.md'; prd.write_text(prd_text,encoding='utf-8')\n graph=compile_product_prd(prd,root); assert graph['status']=='ready'\n slices=plan_value_slices(Path(graph['path']),root,max_requirements=1); assert slices['coverage']['complete']\n mission=create_mission(Path(slices['path']),slices['slices'][0]['id'],root,'smoke-owner','codex')\n assert mission['approval_state']=='required_before_execution' and mission['authority']['merge'] is False\n assert verify_mission(Path(mission['path']))['valid']\n",
+      "covers": [
+        "PRODUCT_GRAPH_BOUND",
+        "PRODUCT_TRUST_MODEL_BOUND",
+        "PRODUCT_OUTCOME_EVENTS_BOUND",
+        "VALUE_SLICES_COVERAGE_COMPLETE",
+        "VALUE_SLICE_SCORE_DETERMINISTIC",
+        "VERTICAL_SLICE_CONTRACT_BOUND",
+        "MISSION_PASSPORT_BOUND",
+        "MISSION_SINGLE_WORKTREE_BOUND",
+        "MISSION_CONTEXT_MINIMIZED",
+        "MISSION_ROLE_PERMISSIONS_SEPARATE",
+        "EXTERNAL_EFFECTS_APPROVAL_REQUIRED"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "reject_drift_and_excess_budget",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.product_missions import ProductMissionError, compile_product_prd, plan_value_slices, create_mission, verify_mission\nprd_text='# Safe\\n\\n## Requirements\\n- REQ-ONE: The operator must view a page.\\n\\n## Acceptance\\nScenario: View\\n  Given an operator\\n  When the page opens\\n  Then content is visible\\n'\nwith TemporaryDirectory() as d:\n root=Path(d); prd=root/'PRD.md'; prd.write_text(prd_text,encoding='utf-8')\n graph=compile_product_prd(prd,root); slices=plan_value_slices(Path(graph['path']),root)\n try:\n  create_mission(Path(slices['path']),slices['slices'][0]['id'],root,'owner',max_tokens=100001)\n  raise AssertionError('budget ceiling was not enforced')\n except ProductMissionError as exc: assert exc.code=='MISSION_BUDGET_INVALID'\n mission=create_mission(Path(slices['path']),slices['slices'][0]['id'],root,'owner')\n Path(graph['path']).write_text(Path(graph['path']).read_text()+'\\n')\n assert verify_mission(Path(mission['path']))['marker']=='MISSION_INPUT_DRIFT'\n",
+      "covers": [
+        "MISSION_BUDGET_HARD",
+        "MISSION_INPUT_DRIFT"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "draft_and_outcome_evidence_remain_bounded",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.product_missions import compile_product_prd, plan_value_slices, create_mission, draft_pr, record_outcome, outcome_summary\nprd_text='# Evidence\\n\\n## Requirements\\n- REQ-ONE: The operator must view a page.\\n\\n## Acceptance\\nScenario: View\\n  Given an operator\\n  When the page opens\\n  Then content is visible\\n'\nwith TemporaryDirectory() as d:\n root=Path(d); prd=root/'PRD.md'; prd.write_text(prd_text,encoding='utf-8')\n graph=compile_product_prd(prd,root); slices=plan_value_slices(Path(graph['path']),root); mission=create_mission(Path(slices['path']),slices['slices'][0]['id'],root,'owner')\n evidence=root/'results.json'; evidence.write_text('{\"ok\":true}')\n draft=draft_pr(Path(mission['path']),root,[evidence]); assert draft['authority']['merge'] is False\n record_outcome(Path(mission['path']),root,'completion',0.8,0.7,'measured','analytics/run-1')\n summary=outcome_summary(root,mission['id']); assert summary['chain_valid'] and summary['evidence_classes']['measured']==1\n",
+      "covers": [
+        "PR_EVIDENCE_LINKED",
+        "PR_REVIEW_PACKAGE_COMPLETE",
+        "PR_UNPROVEN_CLAIMS_EXPLICIT",
+        "PR_DRAFT_NO_MERGE_AUTHORITY",
+        "OUTCOME_EVIDENCE_CLASSIFIED",
+        "OUTCOME_CHAIN_BOUND"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

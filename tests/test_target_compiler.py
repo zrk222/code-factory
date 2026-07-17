@@ -7,6 +7,7 @@ import json
 import pytest
 
 from factoryline.target_compiler import (
+    GENERATOR_ADAPTERS,
     TARGETS,
     TargetCompileError,
     create_target_from_prd,
@@ -29,10 +30,15 @@ def test_each_target_has_governance_proof_and_hashes(tmp_path: Path, target: str
     assert result["target_kind"] == target
     assert "SOURCE_EXACTLY_ONE" in result["markers"]
     assert "COMPILE_RECEIPT_BOUND" in result["markers"]
+    assert "TARGET_DEPLOYMENT_PROFILE_BOUND" in result["markers"]
+    assert "TARGET_PACK_GENERATOR_DISPATCHED" in result["markers"]
+    assert TARGETS[target]["generator_adapter"] in GENERATOR_ADAPTERS
     manifest = json.loads((output / "target_manifest.json").read_text(encoding="utf-8"))
     assert manifest["schema"] == "factory.target.v1"
     assert manifest["promotion"]["state"] == "blocked"
     assert manifest["privacy"]["network_egress"] == "not_granted"
+    assert manifest["deployment"]["selected_profile_id"] == TARGETS[target]["deployment_profiles"][0]["id"]
+    assert manifest["deployment"]["external_effects_authorized"] is False
     assert {"deploy", "publish", "sign", "external_message"}.issubset(
         manifest["approvals"]["required_for"]
     )
@@ -47,6 +53,41 @@ def test_each_target_has_governance_proof_and_hashes(tmp_path: Path, target: str
     assert (output / "smoke" / f"review-{target}.json").is_file()
     assert (output / ".factory" / "target-architecture.mmd").is_file()
     assert 'pythonpath = ["."]' in (output / "pyproject.toml").read_text(encoding="utf-8")
+    workflow = (output / "docs" / "TARGET_WORKFLOW.md").read_text(encoding="utf-8")
+    assert manifest["deployment"]["profile"]["verify"] in workflow
+    assert manifest["deployment"]["profile"]["approval"] in workflow
+
+
+def test_selected_external_deployment_profile_is_bound_but_not_authorized(tmp_path: Path):
+    output = tmp_path / "web-external"
+    result = create_target_from_prompt(
+        "Build a review dashboard.", target="web", out_dir=output,
+        name="review-dashboard", deployment_profile="split-hosting",
+    )
+
+    assert result["deployment"]["selected_profile_id"] == "split-hosting"
+    assert result["deployment"]["external_effects_authorized"] is False
+    assert "two external deploys" in result["deployment"]["profile"]["approval"]
+
+
+def test_unknown_deployment_profile_fails_before_writing(tmp_path: Path):
+    output = tmp_path / "invalid-route"
+    with pytest.raises(TargetCompileError, match="DEPLOYMENT_PROFILE_UNSUPPORTED"):
+        create_target_from_prompt(
+            "Build a worker.", target="worker", out_dir=output,
+            deployment_profile="mystery-cloud",
+        )
+    assert not output.exists()
+
+
+def test_missing_pack_generator_fails_closed_before_promotion(tmp_path: Path, monkeypatch):
+    monkeypatch.setitem(TARGETS["worker"], "generator_adapter", "missing-adapter")
+    output = tmp_path / "missing-generator"
+
+    with pytest.raises(TargetCompileError, match="PACK_GENERATOR_UNSUPPORTED"):
+        create_target_from_prompt("Build a worker.", target="worker", out_dir=output)
+
+    assert not output.exists()
 
 
 def test_target_specific_runtime_shapes(tmp_path: Path):

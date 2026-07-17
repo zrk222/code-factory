@@ -1,0 +1,42 @@
+name: capability-packs
+modules:
+  - name: capability_packs
+    path: factoryline/capability_packs.py
+    functions:
+      - name: validate_pack
+        args: ["pack_root: Path"]
+        returns: dict
+      - name: install_pack
+        args: ["pack_root: Path", "workspace: Path"]
+        returns: dict
+      - name: target_inventory
+        args: []
+        returns: "dict[str, dict[str, Any]]"
+  - name: target_compiler
+    path: factoryline/target_compiler.py
+    functions:
+      - name: create_target_from_prompt
+        args: ["prompt: str", "target: str", "out_dir: Path", "name: str | None = None", "purpose: str = auto", "trigger: str = manual"]
+        returns: dict
+dependencies:
+  - from: target_compiler
+    to: capability_packs
+invariants:
+  - name: validation_has_no_external_effect
+    forbid_pattern: "subprocess\\.(?:run|Popen)|\\b(?:deploy|publish|send_message)\\s*\\("
+    scopes:
+      - module: capability_packs
+        symbol: validate_pack
+        max_lines: 80
+  - name: installation_has_no_release_authority
+    forbid_pattern: "\\b(?:deploy|publish|sign_payload|send_message)\\s*\\("
+    scopes:
+      - module: capability_packs
+        symbol: install_pack
+        max_lines: 70
+  - name: target_compile_has_no_external_effect
+    forbid_pattern: "subprocess\\.(?:run|Popen)|\\b(?:deploy|publish|send_message)\\s*\\("
+    scopes:
+      - module: target_compiler
+        symbol: create_target_from_prompt
+        max_lines: 20

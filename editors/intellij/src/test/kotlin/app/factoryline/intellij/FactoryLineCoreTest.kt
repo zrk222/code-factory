@@ -68,4 +68,17 @@ class FactoryLineCoreTest {
         assertNotNull(found)
         assertEquals(newest.fileName.toString(), found.fileName.toString())
     }
+
+    @Test
+    fun requirementEvidenceIsBoundedAndNavigable() {
+        val root = Files.createTempDirectory("factoryline-requirements")
+        val evidence = Files.createDirectories(root.resolve(".factory")).resolve("proof.json")
+        Files.writeString(evidence, """{"requirement":"FR-101","status":"passed"}""")
+
+        assertEquals(listOf("FR-101", "NFR-A11Y"), RequirementEvidenceLocator.ids("FR-101 and NFR-A11Y and FR-101"))
+        val found = RequirementEvidenceLocator.first(root, "FR-101")
+        assertNotNull(found)
+        assertEquals(evidence, found.path)
+        assertEquals(0, found.line)
+    }
 }

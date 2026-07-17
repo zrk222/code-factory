@@ -4,23 +4,45 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.14.0"
+version = "0.16.0"
 description = "The connective layer that snaps SpecLine, ForgeLine, HSF and Prestige together into one spec-to-artifact assembly line. Each module stays independent; factoryline lines them up."
+authors = [
+  { name = "Richard Katz" },
+  { email = "rkatz22@gmail.com" },
+]
+maintainers = [
+  { name = "Richard Katz" },
+  { email = "rkatz22@gmail.com" },
+]
 requires-python = ">=3.10"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
+keywords = [
+  "software-factory",
+  "ai-agents",
+  "mutation-testing",
+  "release-evidence",
+  "developer-tools",
+]
 classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Build Tools",
+  "Topic :: Software Development :: Quality Assurance",
 ]
+dependencies = ["cryptography>=42,<50"]
 
 [project.urls]
 Homepage = "https://github.com/zrk222/code-factory"
 Documentation = "https://github.com/zrk222/code-factory#readme"
+Source = "https://github.com/zrk222/code-factory"
 Issues = "https://github.com/zrk222/code-factory/issues"
+Changelog = "https://github.com/zrk222/code-factory/releases"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
@@ -31,4 +53,7 @@ enterprise = ["cryptography>=42,<50"]
 factory = "factoryline.cli:main"
 
 [tool.setuptools]
-packages = ["factoryline"]
+packages = ["factoryline", "factoryline.builtin_packs"]
+
+[tool.setuptools.package-data]
+factoryline = ["builtin_packs/**/*"]

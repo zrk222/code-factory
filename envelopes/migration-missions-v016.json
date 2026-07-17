@@ -1,0 +1,16 @@
+{
+  "schema": "specline.intent-envelope.v1",
+  "feature": "migration-missions-v016",
+  "source": "specs/product-missions.md",
+  "sealed_hash": "863c01fdb9639a8bb891ff6f8342b44877fb7a2e696760bf9a090adce61bec64",
+  "hash_binding": "sha256(source_bytes)",
+  "coherence_score": 100,
+  "assumptions": [
+    "Dependency availability can change and must fail closed without bypassing prerequisite slices."
+  ],
+  "governance": {
+    "autonomy": "supervised",
+    "execution_approval_required": true,
+    "promotion_approval_required": true
+  }
+}

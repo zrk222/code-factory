@@ -9,6 +9,7 @@
             <li>Inspect changed-proof risk and the latest local receipt.</li>
             <li>Open a read-only local time and token meter.</li>
             <li>Open the loopback-only Factory Studio target compiler.</li>
+            <li>Compile PRDs into supervised, passport-bound Product Missions.</li>
             <li>Require workspace confirmation before any command executes.</li>
         </ul>
         <p>The plugin never uploads project files or receipts, signs artifacts, or decides whether a release is ready.</p>
@@ -17,6 +18,7 @@
     <change-notes><![CDATA[
         <ul>
             <li>Add loopback-only Factory Studio with explicit workspace confirmation.</li>
+            <li>Add Product Missions for deterministic PRD-to-value-slice planning.</li>
             <li>Recognize only literal 127.0.0.1 Studio URLs and open them through the JetBrains browser API.</li>
             <li>Local meter overview with measured-time and module-reported token boundaries.</li>
             <li>Retain local assembly, receipt verification, proof-risk, and receipt-view actions.</li>
@@ -32,6 +34,8 @@
         <toolWindow id="FactoryLine"
                     anchor="right"
                     factoryClass="app.factoryline.intellij.FactoryLineToolWindowFactory"/>
+        <codeInsight.lineMarkerProvider language="ANY"
+                                        implementationClass="app.factoryline.intellij.FactoryLineRequirementLineMarkerProvider"/>
     </extensions>
 
     <actions>
@@ -57,6 +61,10 @@
                     class="app.factoryline.intellij.OpenStudioAction"
                     text="Open Local Factory Studio"
                     description="Start the loopback-only governed target builder"/>
+            <action id="app.factoryline.intellij.openProductMissions"
+                    class="app.factoryline.intellij.OpenProductMissionsAction"
+                    text="Open Product Missions"
+                    description="Compile a PRD into supervised, passport-bound value missions"/>
             <action id="app.factoryline.intellij.analyzeChangedProof"
                     class="app.factoryline.intellij.AnalyzeChangedProofAction"
                     text="Analyze Changed Proof"

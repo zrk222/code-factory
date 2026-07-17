@@ -1,7 +1,7 @@
 # FactoryLine for JetBrains IDEs
 
 FactoryLine for JetBrains IDEs brings the local proof loop into the IDE without
-turning it into a hidden agent. It offers seven explicit actions:
+turning it into a hidden agent. It offers eight explicit actions:
 
 1. Run Spec-to-Ship Assembly.
 2. Verify Feature Receipts.
@@ -10,6 +10,12 @@ turning it into a hidden agent. It offers seven explicit actions:
 5. Check Latest Receipt Signature State.
 6. Open Local Meter.
 7. Open Local Factory Studio.
+8. Open Product Missions.
+
+`REQ-*`, `FR-*`, and `NFR-*` text also receives a read-only FactoryLine gutter
+marker. Selecting it opens the first deterministic local proof match under
+`.factory`, `receipts`, `coverage`, `tests`, or `specs`; it runs no command and
+changes no approval.
 
 Feature-scoped commands require a feature name. Every command-executing action
 requires an explicit local-workspace confirmation and is executed directly rather
@@ -28,18 +34,28 @@ from token values that a module has not reported.
 
 **Open Local Factory Studio** starts `factory studio --root <project> --port 0
 --no-browser` after an explicit confirmation. The plugin accepts only a literal
-`127.0.0.1` URL, opens it with the JetBrains browser API, and terminates the
-child process when the project closes.
+`127.0.0.1` URL, opens the live dashboard plus target and deployment-route
+selectors with the JetBrains browser API, and terminates the child process when
+the project closes.
+
+**Open Product Missions** uses the same confirmation, process lifecycle, and
+literal-loopback checks, then opens Studio at `?mode=product`. Compiled missions
+remain supervised and require separate execution and promotion approvals.
+
+The same shared-platform gutter implementation is packaged for IntelliJ IDEA,
+PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip. Searches skip
+dependency/build trees, ignore files larger than 2 MB, and stop after 2,000
+candidate files.
 
 ## Install
 
 1. Install FactoryLine:
 
    ```powershell
-   pip install factoryline-code-factory==0.14.0
+   pip install factoryline-code-factory==0.16.0
    ```
 
-2. Download `factoryline-intellij-0.2.0.zip` from the FactoryLine GitHub
+2. Download `factoryline-intellij-0.3.0.zip` from the FactoryLine GitHub
    release that introduced this adapter.
 3. In your JetBrains IDE: **Settings > Plugins > gear menu > Install Plugin from Disk...**.
 4. Select the ZIP, restart, then open **Tools > FactoryLine**.

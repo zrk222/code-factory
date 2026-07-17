@@ -1,0 +1,1 @@
+{"schema":"factory.pack.ux-states.v1","states":["loading","empty","error","success","permission","offline","recovery","accessibility"]}

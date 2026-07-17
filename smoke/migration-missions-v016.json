@@ -1,0 +1,37 @@
+{
+  "checks": [
+    {
+      "name": "migration_readiness_is_executable_and_hash_bound",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nimport builtins, json, typing\nbuiltins.Path=Path; builtins.Any=typing.Any\npackage=Path('factoryline/__init__.py'); created=not package.exists(); package.parent.mkdir(exist_ok=True); package.touch(exist_ok=True)\ntry:\n from factoryline.migration import assess_migration_readiness, verify_migration_readiness\n categories=('unit','integration','e2e','lint_type','architecture','coverage_fuzz','environment','telemetry_security')\n with TemporaryDirectory() as d:\n  root=Path(d); proof=root/'proof.json'; proof.write_text('{\\\"passed\\\":true}', encoding='utf-8')\n  manifest=root/'readiness.json'; manifest.write_text(json.dumps({'schema':'factory.migration.readiness-input.v1','project':'smoke','checks':[{'id':f'check-{category}','category':category,'command':['tool','verify',category],'passed':True,'evidence':[str(proof)],**({'reproducibility_runs':{'passed':2,'total':2}} if category=='environment' else {})} for category in categories]}), encoding='utf-8')\n  receipt=assess_migration_readiness(manifest, root); assert receipt['ready'] and receipt['lane_registration_pct']==100 and receipt['executable_proof_pct']==100\n  assert verify_migration_readiness(Path(receipt['path']))['ready']\n  proof.write_text('{\\\"passed\\\":false}', encoding='utf-8'); assert not verify_migration_readiness(Path(receipt['path']))['valid']\nfinally:\n package.unlink(missing_ok=True) if created else None\n",
+      "covers": [
+        "MIGRATION_REGISTRATION_SEPARATE",
+        "MIGRATION_EXECUTABLE_PROOF_SEPARATE",
+        "MIGRATION_AGENT_READY_BOUND"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "repository_context_is_git_fact_bound",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nimport builtins, subprocess, typing\nbuiltins.Path=Path; builtins.Any=typing.Any\npackage=Path('factoryline/__init__.py'); created=not package.exists(); package.parent.mkdir(exist_ok=True); package.touch(exist_ok=True)\ntry:\n from factoryline.migration import build_repository_context, verify_repository_context\n with TemporaryDirectory() as d:\n  root=Path(d); subprocess.run(['git','init',str(root)],check=True,capture_output=True); subprocess.run(['git','-C',str(root),'config','user.email','smoke@example.com'],check=True); subprocess.run(['git','-C',str(root),'config','user.name','Smoke'],check=True)\n  (root/'app.py').write_text('print(\\\"ok\\\")\\n',encoding='utf-8'); subprocess.run(['git','-C',str(root),'add','.'],check=True); subprocess.run(['git','-C',str(root),'commit','-m','record context'],check=True,capture_output=True)\n  receipt=build_repository_context(root); assert receipt['tracked_files']==1 and receipt['video_overview']['status']=='planned'; assert verify_repository_context(Path(receipt['path']))['valid']\n  lore=root/'.factory/context/LORE.md'; lore.write_text('tampered\\n',encoding='utf-8'); assert not verify_repository_context(Path(receipt['path']))['valid']\nfinally:\n package.unlink(missing_ok=True) if created else None\n",
+      "covers": [
+        "AUTOWIKI_TRACKED_FACTS_ONLY",
+        "LORE_ADR_GIT_BOUND",
+        "REPOSITORY_CONTEXT_BOUND"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "browser_control_no_finish_is_enforced",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nimport builtins, typing\nbuiltins.Path=Path; builtins.Any=typing.Any\npackage=Path('factoryline/__init__.py'); created=not package.exists(); package.parent.mkdir(exist_ok=True); package.touch(exist_ok=True)\ntry:\n from factoryline.product_missions import compile_product_prd, plan_value_slices, create_mission\n prd_text='# Browser proof\\n\\n## Requirements\\n- REQ-DASH: The operator must view the dashboard.\\n\\n## Acceptance\\nScenario: View dashboard\\n  Given an operator\\n  When the page opens\\n  Then the dashboard is visible\\n'\n with TemporaryDirectory() as d:\n  root=Path(d); prd=root/'PRD.md'; prd.write_text(prd_text,encoding='utf-8'); graph=compile_product_prd(prd,root); slices=plan_value_slices(Path(graph['path']),root); mission=create_mission(Path(slices['path']),slices['slices'][0]['id'],root,'owner')\n  browser=next(item for item in mission['completion_contract']['criteria'] if item['verification_kind']=='browser_control'); assert browser['evidence_contract']['max_clicks']==3; assert 'BROWSER_CONTROL_CRITERION_BOUND' in mission['markers']\nfinally:\n package.unlink(missing_ok=True) if created else None\n",
+      "covers": [
+        "BROWSER_CONTROL_CRITERION_BOUND",
+        "MISSION_NO_FINISH_ENFORCED",
+        "MISSION_FRESH_CONTEXT_ATTEMPTS"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

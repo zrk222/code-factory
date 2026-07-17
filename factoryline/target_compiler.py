@@ -11,37 +11,13 @@ import shutil
 import tempfile
 
 from .app_builder import app_from_prd, app_from_prompt, _extract_name, _purpose_from_text
+from .capability_packs import target_inventory
 
 
 TARGET_SCHEMA = "factory.target.v1"
 COMPILE_RECEIPT_SCHEMA = "factory.target_compile_receipt.v1"
 SUPPORTED_TRIGGERS = ("manual", "cron", "hook", "goal", "heartbeat")
-TARGETS: dict[str, dict[str, Any]] = {
-    "worker": {
-        "label": "Headless worker",
-        "runtime_mode": "deterministic",
-        "entrypoint": "python -m worker.main",
-        "summary": "A bounded Python worker for schedules, hooks, and local automation.",
-    },
-    "web": {
-        "label": "Web app",
-        "runtime_mode": "governed_application",
-        "entrypoint": "frontend + backend",
-        "summary": "A reviewable web starter with API, database, smoke, and proof hooks.",
-    },
-    "mobile": {
-        "label": "Expo mobile app",
-        "runtime_mode": "governed_application",
-        "entrypoint": "npm --prefix mobile start",
-        "summary": "An Expo SDK 57 TypeScript starter using Continuous Native Generation.",
-    },
-    "agent-ui": {
-        "label": "Agent operator UI",
-        "runtime_mode": "supervised_agent",
-        "entrypoint": "frontend + backend",
-        "summary": "A human-operated task surface with approval and receipt boundaries.",
-    },
-}
+TARGETS: dict[str, dict[str, Any]] = target_inventory()
 
 
 class TargetCompileError(ValueError):
@@ -51,6 +27,8 @@ class TargetCompileError(ValueError):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
+        from .failure_guidance import explain_failure
+        self.guidance = explain_failure(code, message)
 
 
 def _write(path: Path, content: str) -> None:
@@ -66,13 +44,27 @@ def _file_sha(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
 
 
-def _validate_request(text: str, target: str, trigger: str) -> None:
+def _deployment_profile(target: str, selected: str | None) -> dict[str, Any]:
+    profiles = TARGETS[target]["deployment_profiles"]
+    profile_id = selected or profiles[0]["id"]
+    for profile in profiles:
+        if profile["id"] == profile_id:
+            return dict(profile)
+    choices = ", ".join(profile["id"] for profile in profiles)
+    raise TargetCompileError(
+        "DEPLOYMENT_PROFILE_UNSUPPORTED",
+        f"deployment profile for {target} must be one of {choices}",
+    )
+
+
+def _validate_request(text: str, target: str, trigger: str, deployment_profile: str | None) -> None:
     if not text.strip():
         raise TargetCompileError("SOURCE_REQUIRED", "prompt or PRD content must be non-empty")
     if target not in TARGETS:
         raise TargetCompileError("TARGET_UNSUPPORTED", f"target must be one of {', '.join(TARGETS)}")
     if trigger not in SUPPORTED_TRIGGERS:
         raise TargetCompileError("TRIGGER_UNSUPPORTED", f"trigger must be one of {', '.join(SUPPORTED_TRIGGERS)}")
+    _deployment_profile(target, deployment_profile)
 
 
 def _prepare_destination(out_dir: Path) -> Path:
@@ -85,12 +77,14 @@ def _prepare_destination(out_dir: Path) -> Path:
 
 
 def _manifest(name: str, target: str, purpose: str, trigger: str, source_kind: str,
-              source_sha256: str) -> dict[str, Any]:
+              source_sha256: str, deployment_profile: str | None) -> dict[str, Any]:
     runtime = TARGETS[target]["runtime_mode"]
+    profile = _deployment_profile(target, deployment_profile)
     return {
         "schema": TARGET_SCHEMA,
         "name": name,
         "target_kind": target,
+        "capability_pack": {"id": TARGETS[target]["pack_id"], "version": TARGETS[target]["pack_version"]},
         "runtime": {
             "mode": runtime,
             "model_calls": "disabled_by_default",
@@ -102,6 +96,12 @@ def _manifest(name: str, target: str, purpose: str, trigger: str, source_kind: s
             "purpose": purpose,
         },
         "trigger": {"kind": trigger, "configuration": "review_required" if trigger != "manual" else "local"},
+        "deployment": {
+            "selected_profile_id": profile["id"],
+            "profile": profile,
+            "state": "guidance_only",
+            "external_effects_authorized": False,
+        },
         "connectors": [],
         "allowed_actions": ["read_project", "write_target_output", "run_local_checks"],
         "budgets": {
@@ -154,7 +154,9 @@ def _forge_state(name: str) -> dict[str, Any]:
     }
 
 
-def _common_docs(name: str, target: str) -> str:
+def _common_docs(name: str, target: str, manifest: dict[str, Any]) -> str:
+    profile = manifest["deployment"]["profile"]
+    prerequisites = "\n".join(f"- {item}" for item in profile["prerequisites"])
     return f"""# Target workflow
 
 ```mermaid
@@ -173,6 +175,24 @@ factory coverage --root .
 forge verify-tests {name} {name}.ssat.yaml --root .
 factory optimize-pr --changed target_manifest.json --feature {name}
 ```
+
+## Selected deployment route
+
+**{profile['label']}** (`{profile['id']}`)
+
+Prerequisites:
+
+{prerequisites}
+
+| Phase | Command or action |
+| --- | --- |
+| Build | `{profile['build']}` |
+| Verify | `{profile['verify']}` |
+| Release | `{profile['release']}` |
+
+Approval boundary: **{profile['approval']}**. This route is guidance only;
+`external_effects_authorized` remains `false` until a separate human approval
+grants the exact credentials, spend, and external actions required by the route.
 """
 
 
@@ -570,7 +590,7 @@ testpaths = ["tests"]
     _write_json(root / "target_manifest.json", manifest)
     _write(root / ".factory" / "target-architecture.mmd", _architecture_mermaid(target))
     _write_json(root / ".forge" / name / "state.json", _forge_state(name))
-    _write(root / "docs" / "TARGET_WORKFLOW.md", _common_docs(name, target))
+    _write(root / "docs" / "TARGET_WORKFLOW.md", _common_docs(name, target, manifest))
     markers = ["TARGET_MANIFEST_WRITTEN", "MERMAID_PROOF_WRITTEN"]
     files = sorted(
         path for path in root.rglob("*")
@@ -599,22 +619,64 @@ testpaths = ["tests"]
     return receipt, markers
 
 
+def _generate_worker(root: Path, name: str, purpose: str, text: str,
+                     source_kind: str, source_ref: Path | None, target: str) -> list[str]:
+    del source_kind, source_ref, target
+    return _scaffold_worker(root, name, purpose, text)
+
+
+def _generate_mobile(root: Path, name: str, purpose: str, text: str,
+                     source_kind: str, source_ref: Path | None, target: str) -> list[str]:
+    del source_kind, source_ref, target
+    return _scaffold_mobile(root, name, purpose, text)
+
+
+def _generate_application(root: Path, name: str, purpose: str, text: str,
+                          source_kind: str, source_ref: Path | None, target: str) -> list[str]:
+    return _scaffold_app_target(root, name, purpose, text, source_kind, source_ref, target)
+
+
+GENERATOR_ADAPTERS = {
+    "worker": _generate_worker,
+    "mobile": _generate_mobile,
+    "web": _generate_application,
+    "agent-ui": _generate_application,
+}
+
+
+def _generate_from_pack(root: Path, name: str, purpose: str, text: str,
+                        source_kind: str, source_ref: Path | None, target: str) -> list[str]:
+    adapter_id = str(TARGETS[target]["generator_adapter"])
+    adapter = GENERATOR_ADAPTERS.get(adapter_id)
+    if adapter is None:
+        raise TargetCompileError(
+            "PACK_GENERATOR_UNSUPPORTED",
+            f"capability pack {TARGETS[target]['pack_id']} declares unavailable generator adapter {adapter_id}",
+        )
+    return adapter(root, name, purpose, text, source_kind, source_ref, target)
+
+
 def _compile(text: str, *, source_kind: str, source_ref: Path | None, target: str, out_dir: Path,
-             name: str | None, purpose: str, trigger: str, source_sha256: str) -> dict[str, Any]:
-    _validate_request(text, target, trigger)
+             name: str | None, purpose: str, trigger: str, source_sha256: str,
+             deployment_profile: str | None) -> dict[str, Any]:
+    _validate_request(text, target, trigger, deployment_profile)
     destination = _prepare_destination(out_dir)
     resolved_name = _extract_name(text, name)
     resolved_purpose = _purpose_from_text(text, purpose)
     staging = Path(tempfile.mkdtemp(prefix=f".{resolved_name}.factory-", dir=str(destination.parent)))
-    markers = ["TARGET_KIND_SET", "SOURCE_EXACTLY_ONE"]
+    markers = [
+        "TARGET_KIND_SET", "SOURCE_EXACTLY_ONE", "TARGET_PACK_BOUND",
+        "TARGET_DEPLOYMENT_PROFILE_BOUND",
+    ]
     try:
-        if target == "worker":
-            markers.extend(_scaffold_worker(staging, resolved_name, resolved_purpose, text))
-        elif target == "mobile":
-            markers.extend(_scaffold_mobile(staging, resolved_name, resolved_purpose, text))
-        else:
-            markers.extend(_scaffold_app_target(staging, resolved_name, resolved_purpose, text, source_kind, source_ref, target))
-        manifest = _manifest(resolved_name, target, resolved_purpose, trigger, source_kind, source_sha256)
+        markers.extend(_generate_from_pack(
+            staging, resolved_name, resolved_purpose, text, source_kind, source_ref, target,
+        ))
+        markers.append("TARGET_PACK_GENERATOR_DISPATCHED")
+        manifest = _manifest(
+            resolved_name, target, resolved_purpose, trigger, source_kind,
+            source_sha256, deployment_profile,
+        )
         receipt, proof_markers = _write_proof_contract(staging, resolved_name, target, manifest, source_sha256)
         markers.extend(proof_markers)
         if destination.exists():
@@ -634,6 +696,7 @@ def _compile(text: str, *, source_kind: str, source_ref: Path | None, target: st
         "receipt": str(destination / ".factory" / "target-compile-receipt.json"),
         "receipt_sha256": _file_sha(destination / ".factory" / "target-compile-receipt.json"),
         "markers": markers,
+        "deployment": manifest["deployment"],
         "next_commands": [
             f"forge verify-tests {resolved_name} {destination / (resolved_name + '.ssat.yaml')} --root {destination}",
             f"factory coverage --root {destination}",
@@ -644,15 +707,18 @@ def _compile(text: str, *, source_kind: str, source_ref: Path | None, target: st
 
 
 def create_target_from_prompt(prompt: str, target: str, out_dir: Path, name: str | None = None,
-                              purpose: str = "auto", trigger: str = "manual") -> dict[str, Any]:
+                              purpose: str = "auto", trigger: str = "manual", *,
+                              deployment_profile: str | None = None) -> dict[str, Any]:
     """Compile one prompt into a governed target without replacing existing work."""
     source_sha256 = sha256(prompt.encode("utf-8")).hexdigest()
     return _compile(prompt, source_kind="prompt", source_ref=None, target=target, out_dir=Path(out_dir),
-                    name=name, purpose=purpose, trigger=trigger, source_sha256=source_sha256)
+                    name=name, purpose=purpose, trigger=trigger, source_sha256=source_sha256,
+                    deployment_profile=deployment_profile)
 
 
 def create_target_from_prd(prd_path: Path, target: str, out_dir: Path, name: str | None = None,
-                           purpose: str = "auto", trigger: str = "manual") -> dict[str, Any]:
+                           purpose: str = "auto", trigger: str = "manual", *,
+                           deployment_profile: str | None = None) -> dict[str, Any]:
     """Compile one exact UTF-8 PRD into a governed target."""
     path = Path(prd_path)
     if not path.is_file():
@@ -661,4 +727,5 @@ def create_target_from_prd(prd_path: Path, target: str, out_dir: Path, name: str
     text = source_bytes.decode("utf-8")
     return _compile(text, source_kind="prd", source_ref=path, target=target, out_dir=Path(out_dir),
                     name=name, purpose=purpose, trigger=trigger,
-                    source_sha256=sha256(source_bytes).hexdigest())
+                    source_sha256=sha256(source_bytes).hexdigest(),
+                    deployment_profile=deployment_profile)

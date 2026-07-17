@@ -41,11 +41,51 @@ from .target_compiler import (
     create_target_from_prd,
     create_target_from_prompt,
 )
+from .capability_packs import CapabilityPackError, builtin_packs, install_pack, validate_pack
+from .failure_guidance import explain_failure
+from .migration import (
+    MigrationError,
+    assess_migration_readiness,
+    build_repository_context,
+    verify_migration_readiness,
+    verify_repository_context,
+)
 from .studio import StudioRequestError, serve_studio, studio_status
 from .coverage import requirement_coverage
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
 from .verification import verify_feature
+from .product_missions import (
+    EXECUTORS,
+    EVIDENCE_CLASSES,
+    MISSION_DECISIONS,
+    ProductMissionError,
+    close_mission,
+    compile_product_prd,
+    create_mission,
+    decide_mission,
+    draft_pr,
+    outcome_summary,
+    plan_value_slices,
+    record_outcome,
+    verify_mission,
+    verify_mission_completion,
+    verify_product_graph,
+)
+from .signal_loop import (
+    AUTHORIZATIONS,
+    DECISIONS,
+    SOURCES,
+    SignalLoopError,
+    capture_signal,
+    capture_outcome_feedback,
+    correct_opinion_dock,
+    decide_triage,
+    init_opinion_dock,
+    promote_signal,
+    triage_signal,
+    verify_opinion_dock,
+)
 
 
 def _cli_command(name: str) -> str:
@@ -533,6 +573,16 @@ def main(argv=None) -> int:
     targets = sub.add_parser("targets", help="list target kinds supported by the deterministic compiler")
     targets.add_argument("--json", action="store_true", help="emit the target inventory as JSON")
 
+    pack = sub.add_parser("pack", help="list, verify, and install signed mutation-tested capability packs")
+    pack_sub = pack.add_subparsers(dest="pack_cmd", required=True)
+    pack_sub.add_parser("list", help="list first-party packs and their trust status")
+    pack_validate = pack_sub.add_parser("validate", help="verify structure, signature, and validator mutations")
+    pack_validate.add_argument("path")
+    pack_install = pack_sub.add_parser("install", help="atomically install one verified pack into a workspace")
+    pack_install.add_argument("path")
+    pack_install.add_argument("--root", default=".")
+    pack_install.add_argument("--force", action="store_true")
+
     target = sub.add_parser("create", help="compile one prompt or PRD into one governed starter target")
     target.add_argument("prompt", nargs="?", help="plain-language intent; mutually exclusive with --prd")
     target.add_argument("--prd", help="UTF-8 PRD path; mutually exclusive with prompt")
@@ -541,6 +591,10 @@ def main(argv=None) -> int:
     target.add_argument("--name", help="target slug override")
     target.add_argument("--purpose", default="auto", help="auto, developer, healthcare, fintech, marketplace, saas")
     target.add_argument("--trigger", default="manual", choices=SUPPORTED_TRIGGERS)
+    target.add_argument(
+        "--deployment-profile",
+        help="deployment route id shown by `factory targets --json`; defaults to the local or preview route",
+    )
     target.add_argument("--json", action="store_true")
 
     studio = sub.add_parser("studio", help="run the loopback-only local target builder")
@@ -549,6 +603,173 @@ def main(argv=None) -> int:
     studio.add_argument("--no-browser", action="store_true", help="do not open the local URL automatically")
     studio.add_argument("--check", action="store_true", help="report the exact Studio boundary without starting a server")
     studio.add_argument("--json", action="store_true")
+
+    product = sub.add_parser("product", help="compile a PRD into a deterministic Product Graph and value slices")
+    product_sub = product.add_subparsers(dest="product_cmd", required=True)
+    product_compile = product_sub.add_parser("compile", help="compile and gap-check a UTF-8 PRD")
+    product_compile.add_argument("prd")
+    product_compile.add_argument("--root", default=".")
+    product_compile.add_argument("--project")
+    product_compile.add_argument("--force", action="store_true")
+    product_compile.add_argument("--json", action="store_true")
+    product_verify = product_sub.add_parser("verify", help="verify Product Graph and captured PRD hashes")
+    product_verify.add_argument("graph")
+    product_verify.add_argument("--json", action="store_true")
+    product_slices = product_sub.add_parser("slices", help="compile complete requirement coverage into bounded value slices")
+    product_slices.add_argument("graph")
+    product_slices.add_argument("--root", default=".")
+    product_slices.add_argument("--max-requirements", type=int, default=3)
+    product_slices.add_argument("--force", action="store_true")
+    product_slices.add_argument("--json", action="store_true")
+
+    mission = sub.add_parser("mission", help="create or verify a supervised, passport-bound value mission")
+    mission_sub = mission.add_subparsers(dest="mission_cmd", required=True)
+    mission_create = mission_sub.add_parser("create", help="bind one value slice to a bounded mission")
+    mission_create.add_argument("slices")
+    mission_create.add_argument("slice_id")
+    mission_create.add_argument("--root", default=".")
+    mission_create.add_argument("--owner", required=True)
+    mission_create.add_argument("--executor", default="manual", choices=sorted(EXECUTORS))
+    mission_create.add_argument("--max-iterations", type=int)
+    mission_create.add_argument("--max-wall-seconds", type=int)
+    mission_create.add_argument("--max-tokens", type=int)
+    mission_create.add_argument("--max-cost-usd", type=float)
+    mission_create.add_argument("--readiness", help="verified migration readiness receipt to bind")
+    mission_create.add_argument("--force", action="store_true")
+    mission_create.add_argument("--json", action="store_true")
+    mission_verify = mission_sub.add_parser("verify", help="verify mission, source, budget, and Loop Passport bindings")
+    mission_verify.add_argument("mission")
+    mission_verify.add_argument("--json", action="store_true")
+    mission_close = mission_sub.add_parser("close", help="close only after independent exact-criteria verification")
+    mission_close.add_argument("mission")
+    mission_close.add_argument("validation")
+    mission_close.add_argument("--root", default=".")
+    mission_close.add_argument("--force", action="store_true")
+    mission_close.add_argument("--json", action="store_true")
+    mission_completion = mission_sub.add_parser("verify-completion", help="verify mission, validator, and evidence hashes")
+    mission_completion.add_argument("completion")
+    mission_completion.add_argument("--json", action="store_true")
+    mission_decide = mission_sub.add_parser("decide", help="approve, defer, or reject bounded mission execution")
+    mission_decide.add_argument("mission")
+    mission_decide.add_argument("--root", default=".")
+    mission_decide.add_argument("--owner", required=True)
+    mission_decide.add_argument("--decision", required=True, choices=sorted(MISSION_DECISIONS))
+    mission_decide.add_argument("--rationale", required=True)
+    mission_decide.add_argument("--force", action="store_true")
+    mission_decide.add_argument("--json", action="store_true")
+
+    migration = sub.add_parser("migration", help="prove agent readiness before a large migration mission")
+    migration_sub = migration.add_subparsers(dest="migration_cmd", required=True)
+    migration_assess = migration_sub.add_parser("assess", help="separate registered checks from executable readiness proof")
+    migration_assess.add_argument("manifest")
+    migration_assess.add_argument("--root", default=".")
+    migration_assess.add_argument("--force", action="store_true")
+    migration_assess.add_argument("--json", action="store_true")
+    migration_verify = migration_sub.add_parser("verify", help="verify readiness and bound evidence hashes")
+    migration_verify.add_argument("receipt")
+    migration_verify.add_argument("--json", action="store_true")
+
+    context = sub.add_parser("context", help="build compact tracked-fact AutoWiki and Lore artifacts")
+    context_sub = context.add_subparsers(dest="context_cmd", required=True)
+    context_build = context_sub.add_parser("build", help="generate AutoWiki and Lore from Git-tracked facts")
+    context_build.add_argument("--root", default=".")
+    context_build.add_argument("--force", action="store_true")
+    context_build.add_argument("--json", action="store_true")
+    context_verify = context_sub.add_parser("verify", help="verify AutoWiki and Lore hashes")
+    context_verify.add_argument("receipt")
+    context_verify.add_argument("--json", action="store_true")
+
+    opinion = sub.add_parser("opinion", help="maintain the owner-controlled architecture Opinion Dock")
+    opinion_sub = opinion.add_subparsers(dest="opinion_cmd", required=True)
+    opinion_init = opinion_sub.add_parser("init", help="create a compact default Opinion Dock")
+    opinion_init.add_argument("--root", default=".")
+    opinion_init.add_argument("--owner", required=True)
+    opinion_init.add_argument("--force", action="store_true")
+    opinion_init.add_argument("--json", action="store_true")
+    opinion_verify = opinion_sub.add_parser("verify", help="verify the dock hash and 2,000-line budget")
+    opinion_verify.add_argument("dock")
+    opinion_verify.add_argument("--json", action="store_true")
+    opinion_correct = opinion_sub.add_parser("correct", help="append one owner-authored, hash-linked rule correction")
+    opinion_correct.add_argument("dock")
+    opinion_correct.add_argument("--owner", required=True)
+    opinion_correct.add_argument("--rule-file", required=True)
+    opinion_correct.add_argument("--rationale", required=True)
+    opinion_correct.add_argument("--json", action="store_true")
+
+    signal = sub.add_parser("signal", help="capture and govern untrusted environmental signals locally")
+    signal_sub = signal.add_subparsers(dest="signal_cmd", required=True)
+    signal_capture = signal_sub.add_parser("capture", help="normalize one owner-supplied signal without polling or execution")
+    signal_capture.add_argument("--root", default=".")
+    signal_capture.add_argument("--source", required=True, choices=sorted(SOURCES))
+    signal_capture.add_argument("--title", required=True)
+    signal_capture_body = signal_capture.add_mutually_exclusive_group(required=True)
+    signal_capture_body.add_argument("--body")
+    signal_capture_body.add_argument("--body-file")
+    signal_capture.add_argument("--authorization", required=True, choices=sorted(AUTHORIZATIONS))
+    signal_capture.add_argument("--severity", type=int, default=3)
+    signal_capture.add_argument("--external-id")
+    signal_capture.add_argument("--url")
+    signal_capture.add_argument("--observed-at")
+    signal_capture.add_argument("--hypothesis", action="append", default=[])
+    signal_capture.add_argument("--requirement", action="append", default=[])
+    signal_capture.add_argument("--outcome", action="append", default=[])
+    signal_capture.add_argument("--acceptance", action="append", default=[])
+    signal_capture.add_argument("--json", action="store_true")
+    signal_triage = signal_sub.add_parser("triage", help="score a signal against explicit Opinion Dock rules")
+    signal_triage.add_argument("signal")
+    signal_triage.add_argument("dock")
+    signal_triage.add_argument("--root", default=".")
+    signal_triage.add_argument("--force", action="store_true")
+    signal_triage.add_argument("--json", action="store_true")
+    signal_decide = signal_sub.add_parser("decide", help="record the Product Owner decision for one triage receipt")
+    signal_decide.add_argument("triage")
+    signal_decide.add_argument("--root", default=".")
+    signal_decide.add_argument("--owner", required=True)
+    signal_decide.add_argument("--decision", required=True, choices=sorted(DECISIONS))
+    signal_decide.add_argument("--rationale", required=True)
+    signal_decide.add_argument("--override-block", action="store_true")
+    signal_decide.add_argument("--force", action="store_true")
+    signal_decide.add_argument("--json", action="store_true")
+    signal_promote = signal_sub.add_parser("promote", help="promote an approved signal to a Product Graph or needs-input draft")
+    signal_promote.add_argument("decision")
+    signal_promote.add_argument("--root", default=".")
+    signal_promote.add_argument("--project")
+    signal_promote.add_argument("--force", action="store_true")
+    signal_promote.add_argument("--json", action="store_true")
+    signal_feedback = signal_sub.add_parser("feedback", help="turn measured outcome evidence into a new local telemetry signal")
+    signal_feedback.add_argument("--root", default=".")
+    signal_feedback.add_argument("--mission-id", required=True)
+    signal_feedback.add_argument("--metric", required=True)
+    signal_feedback.add_argument("--observed", type=float, required=True)
+    signal_feedback.add_argument("--target", type=float, required=True)
+    signal_feedback.add_argument("--evidence", required=True)
+    signal_feedback.add_argument("--json", action="store_true")
+
+    pr = sub.add_parser("pr", help="prepare local reviewer artifacts without merge authority")
+    pr_sub = pr.add_subparsers(dest="pr_cmd", required=True)
+    pr_draft = pr_sub.add_parser("draft", help="write an evidence-linked PR draft packet")
+    pr_draft.add_argument("mission")
+    pr_draft.add_argument("--root", default=".")
+    pr_draft.add_argument("--evidence", action="append", default=[])
+    pr_draft.add_argument("--force", action="store_true")
+    pr_draft.add_argument("--json", action="store_true")
+
+    outcome = sub.add_parser("outcome", help="record and summarize hash-linked product outcome evidence")
+    outcome_sub = outcome.add_subparsers(dest="outcome_cmd", required=True)
+    outcome_record = outcome_sub.add_parser("record", help="append one classified outcome observation")
+    outcome_record.add_argument("mission")
+    outcome_record.add_argument("--root", default=".")
+    outcome_record.add_argument("--metric", required=True)
+    outcome_record.add_argument("--value", type=float)
+    outcome_record.add_argument("--target", type=float)
+    outcome_record.add_argument("--evidence-class", required=True, choices=sorted(EVIDENCE_CLASSES))
+    outcome_record.add_argument("--source")
+    outcome_record.add_argument("--notes", default="")
+    outcome_record.add_argument("--json", action="store_true")
+    outcome_summary_parser = outcome_sub.add_parser("summary", help="verify and summarize local outcome chains")
+    outcome_summary_parser.add_argument("--root", default=".")
+    outcome_summary_parser.add_argument("--mission-id")
+    outcome_summary_parser.add_argument("--json", action="store_true")
 
     version = sub.add_parser("version", help="show package provenance")
     version.add_argument("--json", action="store_true")
@@ -562,9 +783,139 @@ def main(argv=None) -> int:
         return _home(Path(a.root), a.json)
     if a.cmd == "doctor":
         return _doctor(a.strict, a.json)
-    if a.cmd == "targets":
-        print(json.dumps({"schema": "factory.targets.v1", "targets": TARGETS}, indent=2, sort_keys=True))
+    if a.cmd in {"product", "mission", "pr", "outcome", "opinion", "signal", "migration", "context"}:
+        try:
+            if a.cmd == "migration" and a.migration_cmd == "assess":
+                result = assess_migration_readiness(Path(a.manifest), Path(a.root), force=a.force)
+            elif a.cmd == "migration":
+                result = verify_migration_readiness(Path(a.receipt))
+            elif a.cmd == "context" and a.context_cmd == "build":
+                result = build_repository_context(Path(a.root), force=a.force)
+            elif a.cmd == "context":
+                result = verify_repository_context(Path(a.receipt))
+            elif a.cmd == "product" and a.product_cmd == "compile":
+                result = compile_product_prd(Path(a.prd), Path(a.root), a.project, a.force)
+            elif a.cmd == "product" and a.product_cmd == "verify":
+                result = verify_product_graph(Path(a.graph))
+            elif a.cmd == "product":
+                result = plan_value_slices(Path(a.graph), Path(a.root), a.max_requirements, a.force)
+            elif a.cmd == "mission" and a.mission_cmd == "create":
+                result = create_mission(
+                    Path(a.slices), a.slice_id, Path(a.root), a.owner, a.executor, a.force,
+                    a.max_iterations, a.max_wall_seconds, a.max_tokens, a.max_cost_usd,
+                    Path(a.readiness) if a.readiness else None,
+                )
+            elif a.cmd == "mission" and a.mission_cmd == "verify":
+                result = verify_mission(Path(a.mission))
+            elif a.cmd == "mission" and a.mission_cmd == "close":
+                result = close_mission(Path(a.mission), Path(a.validation), Path(a.root), force=a.force)
+            elif a.cmd == "mission" and a.mission_cmd == "verify-completion":
+                result = verify_mission_completion(Path(a.completion))
+            elif a.cmd == "mission":
+                result = decide_mission(
+                    Path(a.mission), Path(a.root), owner=a.owner, decision=a.decision,
+                    rationale=a.rationale, force=a.force,
+                )
+            elif a.cmd == "opinion" and a.opinion_cmd == "init":
+                result = init_opinion_dock(Path(a.root), a.owner, force=a.force)
+            elif a.cmd == "opinion" and a.opinion_cmd == "verify":
+                result = verify_opinion_dock(Path(a.dock))
+            elif a.cmd == "opinion":
+                rule = json.loads(Path(a.rule_file).read_text(encoding="utf-8"))
+                result = correct_opinion_dock(Path(a.dock), a.owner, rule, a.rationale)
+            elif a.cmd == "signal" and a.signal_cmd == "capture":
+                body = a.body if a.body is not None else Path(a.body_file).read_text(encoding="utf-8")
+                result = capture_signal(
+                    Path(a.root), source=a.source, title=a.title, body=body,
+                    authorization=a.authorization, severity=a.severity,
+                    external_id=a.external_id, url=a.url, observed_at=a.observed_at,
+                    hypotheses=a.hypothesis, requirements=a.requirement,
+                    outcomes=a.outcome, acceptance=a.acceptance,
+                )
+            elif a.cmd == "signal" and a.signal_cmd == "triage":
+                result = triage_signal(Path(a.signal), Path(a.dock), Path(a.root), force=a.force)
+            elif a.cmd == "signal" and a.signal_cmd == "decide":
+                result = decide_triage(
+                    Path(a.triage), Path(a.root), owner=a.owner, decision=a.decision,
+                    rationale=a.rationale, override_block=a.override_block, force=a.force,
+                )
+            elif a.cmd == "signal" and a.signal_cmd == "feedback":
+                result = capture_outcome_feedback(
+                    Path(a.root), mission_id=a.mission_id, metric=a.metric,
+                    observed=a.observed, target=a.target, evidence_path=Path(a.evidence),
+                )
+            elif a.cmd == "signal":
+                result = promote_signal(Path(a.decision), Path(a.root), project=a.project, force=a.force)
+            elif a.cmd == "pr":
+                result = draft_pr(Path(a.mission), Path(a.root), [Path(item) for item in a.evidence], a.force)
+            elif a.outcome_cmd == "record":
+                result = record_outcome(
+                    Path(a.mission), Path(a.root), a.metric, a.value, a.target,
+                    a.evidence_class, a.source, a.notes,
+                )
+            else:
+                result = outcome_summary(Path(a.root), a.mission_id)
+        except (ProductMissionError, SignalLoopError, MigrationError) as exc:
+            print(json.dumps({
+                "schema": "factory.workflow_error.v1", "status": "failed",
+                "code": exc.code, "message": exc.message,
+                "failure": exc.guidance,
+            }, indent=2), file=sys.stderr)
+            return 1
+        except (OSError, json.JSONDecodeError) as exc:
+            print(json.dumps({
+                "schema": "factory.workflow_error.v1", "status": "failed",
+                "code": "E_INPUT", "message": str(exc),
+                "failure": explain_failure("E_INPUT", str(exc)),
+            }, indent=2), file=sys.stderr)
+            return 1
+        print(json.dumps(result, indent=2, sort_keys=True))
+        if (
+            (a.cmd == "product" and a.product_cmd == "verify")
+            or (a.cmd == "mission" and a.mission_cmd in {"verify", "verify-completion"})
+            or (a.cmd == "opinion" and a.opinion_cmd == "verify")
+        ):
+            return 0 if result["valid"] else 1
         return 0
+    if a.cmd == "targets":
+        payload = {"schema": "factory.targets.v1", "targets": TARGETS}
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            for target_kind, metadata in TARGETS.items():
+                print(f"{target_kind}: {metadata['label']}")
+                print(f"  {metadata['summary']}")
+                for profile in metadata["deployment_profiles"]:
+                    print(f"  - {profile['id']}: {profile['label']} [approval: {profile['approval']}]")
+        return 0
+    if a.cmd == "pack":
+        try:
+            if a.pack_cmd == "list":
+                packs = []
+                for item in builtin_packs():
+                    validation = validate_pack(Path(item["path"]))
+                    packs.append({
+                        "id": item["id"], "version": item["version"], "kind": item["kind"],
+                        "target_kind": item.get("target_kind"), "label": item["label"],
+                        "path": item["path"], "valid": validation["valid"],
+                        "signature": validation["signature"], "mutations": validation["mutations"],
+                    })
+                result = {
+                    "schema": "factory.capability_pack.inventory.v1", "packs": packs,
+                    "markers": ["PACK_INVENTORY_DERIVED", "PACK_SIGNATURE_BYPASS_DENIED"],
+                }
+            elif a.pack_cmd == "validate":
+                result = validate_pack(Path(a.path), verify_signature=True, mutate=True)
+            else:
+                result = install_pack(Path(a.path), Path(a.root), force=a.force)
+        except CapabilityPackError as exc:
+            print(json.dumps({
+                "schema": "factory.capability_pack.error.v1", "status": "failed",
+                "code": exc.code, "message": exc.message, "markers": exc.markers, "failure": exc.guidance,
+            }, indent=2), file=sys.stderr)
+            return 1
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result.get("valid", True) else 1
     if a.cmd == "create":
         if bool(a.prompt) == bool(a.prd):
             payload = {
@@ -573,6 +924,7 @@ def main(argv=None) -> int:
                 "code": "SOURCE_EXACTLY_ONE",
                 "marker": "COMPILE_FAILED",
                 "message": "provide exactly one source: prompt or --prd",
+                "failure": explain_failure("SOURCE_EXACTLY_ONE", "provide exactly one source: prompt or --prd"),
             }
             print(json.dumps(payload, indent=2), file=sys.stderr)
             return 2
@@ -585,6 +937,7 @@ def main(argv=None) -> int:
                     name=a.name,
                     purpose=a.purpose,
                     trigger=a.trigger,
+                    deployment_profile=a.deployment_profile,
                 )
             else:
                 result = create_target_from_prompt(
@@ -594,6 +947,7 @@ def main(argv=None) -> int:
                     name=a.name,
                     purpose=a.purpose,
                     trigger=a.trigger,
+                    deployment_profile=a.deployment_profile,
                 )
         except (TargetCompileError, UnicodeDecodeError) as exc:
             code = exc.code if isinstance(exc, TargetCompileError) else "PRD_ENCODING_INVALID"
@@ -604,6 +958,7 @@ def main(argv=None) -> int:
                 "code": code,
                 "marker": "COMPILE_FAILED",
                 "message": message,
+                "failure": exc.guidance if isinstance(exc, TargetCompileError) else explain_failure(code, message),
             }
             print(json.dumps(payload, indent=2), file=sys.stderr)
             return 1
@@ -613,6 +968,8 @@ def main(argv=None) -> int:
             print(f"target compiled: {result['out_dir']}")
             print(f"kind           : {result['target_kind']}")
             print(f"state          : {result['status']}")
+            print(f"deploy route   : {result['deployment']['profile']['label']} ({result['deployment']['selected_profile_id']})")
+            print(f"deploy approval: {result['deployment']['profile']['approval']}")
             print(f"receipt        : {result['receipt']}")
         return 0
     if a.cmd == "studio":

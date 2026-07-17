@@ -96,7 +96,11 @@ data class MeterSummary(val fields: Map<String, String>, val rawJson: String) {
         private val preferredKeys = listOf(
             "stages_measured", "build_wall_ms", "build_model_calls", "build_tokens",
             "tokens_reported_by_modules", "runs_observed", "stages_successful", "stages_failed",
-            "stage_success_rate", "last_measurement_at"
+            "stage_success_rate", "last_measurement_at", "flow_efficiency", "usage_quality", "mission_id",
+            "agent_ms", "deterministic_tool_ms", "human_wait_ms", "review_minutes", "rework_ratio",
+            "replay_hits", "model_calls_avoided", "first_pass_gate_rate", "retry_count",
+            "requirements_per_1000_tokens", "requirements_per_engineering_hour", "cost_usd",
+            "token_quality", "cost_quality", "escaped_defects_per_release", "rollback_rate"
         )
 
         fun fromJson(rawJson: String): MeterSummary {
