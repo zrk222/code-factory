@@ -1,7 +1,7 @@
 # Public Visual Assets
 
-`code-factory-quickstart-v016.mp4` is the 60-second narrated quick start.
-`code-factory-quickstart-cover-v016.png` is its public cover. The video uses
+`code-factory-quickstart-v0171.mp4` is the 60-second narrated quick start.
+`code-factory-quickstart-cover-v0171.png` is its public cover. The video uses
 `factory-studio-control-room-1080.png`, an exact 1920x1080 capture of the
 shipped local Studio, as its only UI source; its highlights follow the real
 panel geometry rather than reconstructed dashboard cards.

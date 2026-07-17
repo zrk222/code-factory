@@ -1,10 +1,10 @@
 {
   "name": "code-factory-quickstart-video",
   "private": true,
-  "version": "0.16.0",
+  "version": "0.17.1",
   "scripts": {
-    "render": "remotion render src/index.ts CodeFactoryQuickStart ../../output/marketing/code-factory-quickstart-v016.mp4 --codec h264 --crf 18",
-    "still": "remotion still src/index.ts CodeFactoryQuickStart ../../output/marketing/code-factory-quickstart-cover-v016.png --frame 120"
+    "render": "remotion render src/index.ts CodeFactoryQuickStart ../../output/marketing/code-factory-quickstart-v0171.mp4 --codec h264 --crf 18",
+    "still": "remotion still src/index.ts CodeFactoryQuickStart ../../output/marketing/code-factory-quickstart-cover-v0171.png --frame 120"
   },
   "dependencies": {
     "@remotion/cli": "4.0.448",
