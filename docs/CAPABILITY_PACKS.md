@@ -35,8 +35,10 @@ factory pack validate factoryline/builtin_packs/target-worker
 factory pack install factoryline/builtin_packs/target-worker --root .
 ```
 
-Validation checks the exact current file hashes against an offline DSSE
-Ed25519 signature, then proves the structural validator rejects four mutations.
+Validation checks canonical UTF-8/LF file hashes against an offline DSSE
+Ed25519 signature, then proves the structural validator rejects five mutations.
+Text-file verification is stable across Git's CRLF/LF checkout normalization;
+binary files remain byte-exact.
 Every pack must include nonempty validators, goldens, and canaries; all standard
 UX states; and a migration policy that denies breaking changes, requires human
 review, and requires rollback.

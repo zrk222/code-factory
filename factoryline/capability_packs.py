@@ -62,7 +62,14 @@ def _files(pack_root: Path) -> dict[str, str]:
     for path in sorted(Path(pack_root).rglob("*")):
         if path.is_file() and path.name != "pack.signature.json":
             relative = path.relative_to(pack_root).as_posix()
-            result[relative] = sha256(path.read_bytes()).hexdigest()
+            data = path.read_bytes()
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError:
+                canonical = data
+            else:
+                canonical = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+            result[relative] = sha256(canonical).hexdigest()
     return result
 
 

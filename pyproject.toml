@@ -45,7 +45,10 @@ Issues = "https://github.com/zrk222/code-factory/issues"
 Changelog = "https://github.com/zrk222/code-factory/releases"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = [
+  "pytest>=8.0",
+  "tomli>=2.0; python_version < '3.11'",
+]
 sigstore = ["sigstore>=4.4,<5"]
 enterprise = ["cryptography>=42,<50"]
 

@@ -127,6 +127,7 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         connection.request("GET", "/api/dashboard")
         response = connection.getresponse()
         assert response.status == 403
+        assert int(response.getheader("Content-Length")) > 0
         response.read()
 
         connection.request("GET", "/api/dashboard", headers={"X-Factory-Studio-Token": token})
@@ -138,6 +139,7 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         connection.request("GET", "/favicon.ico")
         response = connection.getresponse()
         assert response.status == 204
+        assert response.getheader("Content-Length") == "0"
         assert response.read() == b""
 
         body = json.dumps({"action": "create", "target": "worker", "prompt": "Build a worker.", "name": "http-worker"})

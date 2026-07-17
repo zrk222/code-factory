@@ -484,9 +484,10 @@ class _StudioHandler(BaseHTTPRequestHandler):
     studio_token = ""
     status_payload: dict[str, Any] = {}
 
-    def _headers(self, status: int, content_type: str) -> None:
+    def _headers(self, status: int, content_type: str, content_length: int = 0) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(content_length))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -495,8 +496,9 @@ class _StudioHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _json(self, status: int, value: dict[str, Any]) -> None:
-        self._headers(status, "application/json; charset=utf-8")
-        self.wfile.write(json.dumps(value, sort_keys=True).encode("utf-8"))
+        body = json.dumps(value, sort_keys=True).encode("utf-8")
+        self._headers(status, "application/json; charset=utf-8", len(body))
+        self.wfile.write(body)
 
     def _error(self, status: int, code: str, message: str) -> None:
         self._json(status, {
@@ -512,8 +514,9 @@ class _StudioHandler(BaseHTTPRequestHandler):
             self._headers(204, "image/x-icon")
             return
         if self.path.split("?", 1)[0] == "/":
-            self._headers(200, "text/html; charset=utf-8")
-            self.wfile.write(_studio_html(self.studio_token).encode("utf-8"))
+            body = _studio_html(self.studio_token).encode("utf-8")
+            self._headers(200, "text/html; charset=utf-8", len(body))
+            self.wfile.write(body)
             return
         if self.path == "/api/status":
             payload = dict(self.status_payload)

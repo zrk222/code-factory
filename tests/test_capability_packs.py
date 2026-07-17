@@ -65,6 +65,26 @@ def test_tampered_pack_fails_closed(tmp_path: Path):
     assert result["failure"]["causal_code"] == "PACK_VALIDATION_FAILED"
 
 
+def test_pack_signatures_are_portable_across_text_line_endings(tmp_path: Path):
+    source = BUILTIN_ROOT / "target-worker"
+    copied = tmp_path / "target-worker"
+    shutil.copytree(source, copied)
+    for path in copied.rglob("*"):
+        if not path.is_file() or path.name == "pack.signature.json":
+            continue
+        data = path.read_bytes()
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        path.write_bytes(text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n").encode("utf-8"))
+
+    result = validate_pack(copied)
+
+    assert result["valid"] is True
+    assert result["signature"]["verified"] is True
+
+
 def test_hollow_canary_manifest_is_rejected_before_install(tmp_path: Path):
     source = BUILTIN_ROOT / "target-web"
     broken = tmp_path / "target-web"
