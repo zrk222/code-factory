@@ -3,6 +3,14 @@ on:
   push:
     branches: [ main ]
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     strategy:
@@ -22,6 +30,32 @@ jobs:
           python -m pip install -e ".[dev,enterprise]"
       - name: Test
         run: python -m pytest -q
+
+  package-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Build and inspect distributions
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+      - name: Prove the wheel installs without the source tree
+        run: |
+          python -m venv /tmp/factory-wheel
+          /tmp/factory-wheel/bin/python -m pip install dist/*.whl
+          cd /tmp
+          /tmp/factory-wheel/bin/factory --help
+          /tmp/factory-wheel/bin/python -c "import factoryline; print(factoryline.__version__)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/
+          if-no-files-found: error
 
   five-brick-prooflab:
     runs-on: ubuntu-latest

@@ -42,6 +42,40 @@ def test_pypi_storefront_has_identity_and_canonical_links():
     }
 
 
+def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
+    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+
+    assert "permissions:\n  contents: read" in workflow
+    assert "  validate:" in workflow
+    assert "  publish:" in workflow
+    assert "needs: validate" in workflow
+    assert "environment: pypi" in workflow
+    assert "id-token: write" in workflow
+    assert "actions/upload-artifact@v4" in workflow
+    assert "actions/download-artifact@v4" in workflow
+    assert "packages-dir: release-bundle/python/" in workflow
+    assert "pypa/gh-action-pypi-publish@release/v1" in workflow
+    assert "attestations: true" in workflow
+    for forbidden in (
+        "PYPI_TOKEN",
+        "API_TOKEN",
+        "user: __token__",
+        "password:",
+    ):
+        assert forbidden not in workflow
+
+
+def test_ci_builds_checks_and_smokes_the_installable_package():
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "permissions:\n  contents: read" in workflow
+    assert "package-contract:" in workflow
+    assert "python -m build" in workflow
+    assert "python -m twine check dist/*" in workflow
+    assert "python -m pip install dist/*.whl" in workflow
+    assert "actions/upload-artifact@v4" in workflow
+
+
 def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     metadata = json.loads((ROOT / ".zenodo.json").read_text(encoding="utf-8"))
 
