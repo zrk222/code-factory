@@ -11,7 +11,10 @@
 
 ## 60-second first run
 
-[![Watch the exact-UI Code Factory quick start](docs/assets/code-factory-quickstart-cover-v016.png)](docs/assets/code-factory-quickstart-v016.mp4)
+[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v016.png)](https://github.com/zrk222/code-factory/releases/download/v0.17.0/code-factory-quickstart-v016.mp4)
+
+[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.17.0/code-factory-quickstart-v016.mp4).
+The absolute cover and release-asset URLs render from both GitHub and PyPI.
 
 The one-minute walkthrough is rendered from an actual 1920x1080 Factory
 Studio capture. Its focus frames point to the shipped Product Graph, value

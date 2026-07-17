@@ -124,6 +124,10 @@ Current release media:
 
 Verify the MP4 before attaching it to a release:
 
+The publish workflow attaches both the MP4 and cover to every GitHub release.
+The README uses an absolute raw cover URL and the versioned release-asset URL
+so the same video entry renders correctly on GitHub and PyPI.
+
 ```powershell
 ffprobe -v error -show_entries format=duration -show_streams `
   docs/assets/code-factory-quickstart-v016.mp4
