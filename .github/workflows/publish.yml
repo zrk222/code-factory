@@ -77,6 +77,8 @@ jobs:
           editors/intellij/build/distributions/*.zip
           docs/assets/code-factory-quickstart-v016.mp4
           docs/assets/code-factory-quickstart-cover-v016.png
+          docs/assets/*.svg
+          docs/assets/verify-policy.gif
           --clobber
 
       - name: Publish package distributions to PyPI

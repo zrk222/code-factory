@@ -7,7 +7,7 @@
 > One intent, seven software targets, and proof that the gates reject
 > deliberately sabotaged builds.
 
-![Code Factory target compiler](docs/assets/target-compiler.svg)
+![Code Factory target compiler](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/target-compiler.svg)
 
 ## 60-second first run
 
@@ -76,7 +76,7 @@ value slice, and creates a supervised, hard-budgeted mission with a hash-bound
 Loop Passport. The output is an evidence-linked PR draft and a classified
 outcome chain, not an agent with hidden production authority.
 
-![Code Factory Product Missions](docs/assets/product-missions.svg)
+![Code Factory Product Missions](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/product-missions.svg)
 
 ```powershell
 factory product compile .\PRD.md --root . --json
@@ -121,7 +121,7 @@ owner-controlled Opinion Dock records product taste, architecture guardrails,
 temporary hands-off rules, and abstract cost/quality profiles. Explainable
 triage cannot promote work until a Product Owner records a bound decision.
 
-![Code Factory Signal Loop](docs/assets/signal-loop.svg)
+![Code Factory Signal Loop](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/signal-loop.svg)
 
 ```powershell
 factory opinion init --root . --owner product-owner --json
@@ -188,7 +188,7 @@ network, connector, credential, publish, or deploy authority.
 > full-stack starter repo, then hand it to the same gated, receipted factory
 > flow that powers proof-carrying PRs.
 
-![PRD-to-App Factory](docs/assets/prd-to-app-factory.svg)
+![PRD-to-App Factory](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/prd-to-app-factory.svg)
 
 **A code factory built like Lego.** Five small, independent, open-source pieces that
 snap together into one assembly line: describe a feature in plain language, and the
@@ -462,7 +462,7 @@ mutation doctrine for policy rules: it deletes or inverts every rule and require
 your evaluator to reject the changed policy. A rule that survives is reported as
 `HOLLOW_POLICY`; see [Verify Policy](docs/VERIFY_POLICY.md).
 
-![Verify Policy detects a hollow evaluator](docs/assets/verify-policy.gif)
+![Verify Policy detects a hollow evaluator](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/verify-policy.gif)
 
 ## Why Lego, not a monolith
 
