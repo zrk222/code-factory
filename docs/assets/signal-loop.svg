@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720" role="img" aria-labelledby="title desc">
+  <title id="title">Code Factory Signal Loop</title>
+  <desc id="desc">A local signal moves through provenance, Opinion Dock triage, owner approval, a budgeted mission, independent verification, and a human-owned release.</desc>
+  <rect width="1600" height="720" fill="#f8fafc"/>
+  <text x="80" y="92" fill="#111827" font-family="Arial, sans-serif" font-size="46" font-weight="700">From signal to proof, without hidden authority</text>
+  <text x="80" y="138" fill="#475569" font-family="Arial, sans-serif" font-size="24">Local receipts, explicit product taste, independent verification, human-owned release</text>
+  <g font-family="Arial, sans-serif">
+    <g transform="translate(80 220)">
+      <rect width="230" height="190" rx="8" fill="#e0f2fe" stroke="#0284c7" stroke-width="3"/>
+      <text x="28" y="55" fill="#0c4a6e" font-size="25" font-weight="700">1. SIGNAL</text>
+      <text x="28" y="96" fill="#334155" font-size="19">Untrusted data</text>
+      <text x="28" y="126" fill="#334155" font-size="19">Provenance + hash</text>
+      <text x="28" y="156" fill="#334155" font-size="19">No network action</text>
+    </g>
+    <path d="M310 315 H365" stroke="#64748b" stroke-width="4"/><path d="M365 315 l-14 -9 v18 z" fill="#64748b"/>
+    <g transform="translate(370 220)">
+      <rect width="230" height="190" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="3"/>
+      <text x="28" y="55" fill="#92400e" font-size="25" font-weight="700">2. TRIAGE</text>
+      <text x="28" y="96" fill="#334155" font-size="19">Opinion Dock</text>
+      <text x="28" y="126" fill="#334155" font-size="19">Rule contributions</text>
+      <text x="28" y="156" fill="#334155" font-size="19">Owner decision</text>
+    </g>
+    <path d="M600 315 H655" stroke="#64748b" stroke-width="4"/><path d="M655 315 l-14 -9 v18 z" fill="#64748b"/>
+    <g transform="translate(660 220)">
+      <rect width="230" height="190" rx="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="3"/>
+      <text x="28" y="55" fill="#5b21b6" font-size="25" font-weight="700">3. MISSION</text>
+      <text x="28" y="96" fill="#334155" font-size="19">Exact value slice</text>
+      <text x="28" y="126" fill="#334155" font-size="19">Hard cost budget</text>
+      <text x="28" y="156" fill="#334155" font-size="19">Approval required</text>
+    </g>
+    <path d="M890 315 H945" stroke="#64748b" stroke-width="4"/><path d="M945 315 l-14 -9 v18 z" fill="#64748b"/>
+    <g transform="translate(950 220)">
+      <rect width="230" height="190" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="3"/>
+      <text x="28" y="55" fill="#166534" font-size="25" font-weight="700">4. VERIFY</text>
+      <text x="28" y="96" fill="#334155" font-size="19">Fresh identity</text>
+      <text x="28" y="126" fill="#334155" font-size="19">Context wall</text>
+      <text x="28" y="156" fill="#334155" font-size="19">No-finish contract</text>
+    </g>
+    <path d="M1180 315 H1235" stroke="#64748b" stroke-width="4"/><path d="M1235 315 l-14 -9 v18 z" fill="#64748b"/>
+    <g transform="translate(1240 220)">
+      <rect width="280" height="190" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="3"/>
+      <text x="28" y="55" fill="#9a3412" font-size="25" font-weight="700">5. HUMAN SHIP</text>
+      <text x="28" y="96" fill="#334155" font-size="19">Evidence-linked PR</text>
+      <text x="28" y="126" fill="#334155" font-size="19">Review + approval</text>
+      <text x="28" y="156" fill="#334155" font-size="19">Measured outcome</text>
+    </g>
+    <path d="M1380 410 V535 H195 V420" fill="none" stroke="#0f766e" stroke-width="4" stroke-dasharray="10 10"/>
+    <path d="M195 420 l-9 14 h18 z" fill="#0f766e"/>
+    <text x="566" y="585" fill="#0f766e" font-size="23" font-weight="700">Outcomes become new signals only through explicit, provenance-bound capture</text>
+    <rect x="80" y="630" width="1440" height="4" fill="#111827"/>
+    <text x="80" y="676" fill="#475569" font-size="20">No implicit connector, model purchase, external message, merge, publish, or deploy authority.</text>
+  </g>
+</svg>

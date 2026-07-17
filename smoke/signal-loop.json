@@ -1,0 +1,43 @@
+{
+  "checks": [
+    {
+      "name": "owner_governed_signal_promotes_only_to_product_graph",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.signal_loop import init_opinion_dock,capture_signal,triage_signal,decide_triage,promote_signal\nwith TemporaryDirectory() as d:\n root=Path(d); dock=init_opinion_dock(root,'owner')\n signal=capture_signal(root,source='github',title='Show top signal',body='Users need one prioritized view.',authorization='owner_supplied',requirements=['REQ-TOP: The dashboard must show the top signal.'],outcomes=['Reduce triage time.'],acceptance=['Scenario: Show signal\\n  Given an owner\\n  When the dashboard opens\\n  Then the top signal is visible'])\n triage=triage_signal(Path(signal['path']),Path(dock['path']),root); assert triage['owner_decision']=='required'\n decision=decide_triage(Path(triage['path']),root,owner='owner',decision='approved',rationale='Supplied facts are complete.')\n promoted=promote_signal(Path(decision['path']),root); assert promoted['marker']=='SIGNAL_TO_PRODUCT_GRAPH_BOUND'\n assert promoted['graph']['bindings']['signal_sha256']==signal['signal_sha256'] and decision['authority']['deploy'] is False\n",
+      "covers": [
+        "SIGNAL_NORMALIZED_LOCAL_ONLY",
+        "SIGNAL_PROVENANCE_BOUND",
+        "TRIAGE_EXPLAINABLE",
+        "OWNER_DECISION_REQUIRED",
+        "OWNER_DECISION_BOUND",
+        "SIGNAL_TO_PRODUCT_GRAPH_BOUND"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "hands_off_rule_requires_named_owner_override",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.signal_loop import SignalLoopError,init_opinion_dock,correct_opinion_dock,capture_signal,triage_signal,decide_triage\nwith TemporaryDirectory() as d:\n root=Path(d); dock=init_opinion_dock(root,'owner')\n dock=correct_opinion_dock(Path(dock['path']),'owner',{'id':'freeze','kind':'temporal_rule','statement':'Freeze rendering.','match_any':['rendering'],'weight':100,'action':'block'},'Active migration.')\n signal=capture_signal(root,source='sentry',title='Rendering incident',body='Change rendering now.',authorization='owner_supplied',severity=5)\n triage=triage_signal(Path(signal['path']),Path(dock['path']),root); assert triage['recommended_decision']=='blocked'\n try:\n  decide_triage(Path(triage['path']),root,owner='owner',decision='approved',rationale='No override.')\n  raise AssertionError('blocked signal was approved without override')\n except SignalLoopError as exc: assert exc.code=='HANDS_OFF_RULE_ENFORCED'\n",
+      "covers": [
+        "OPINION_DOCK_BOUND",
+        "OPINION_CORRECTION_APPEND_ONLY",
+        "HANDS_OFF_RULE_ENFORCED"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "independent_verifier_closes_only_with_exact_bound_evidence",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nimport json\nfrom factoryline.product_missions import ProductMissionError,compile_product_text,plan_value_slices,create_mission,decide_mission,close_mission,verify_mission_completion\nprd='# Proof\\n\\n## Requirements\\n- REQ-ONE: The operator must see proof.\\n\\n## Acceptance\\nScenario: See proof\\n  Given an operator\\n  When proof opens\\n  Then proof is visible\\n'\nwith TemporaryDirectory() as d:\n root=Path(d); graph=compile_product_text(prd,root,'PRD.md','proof'); slices=plan_value_slices(Path(graph['path']),root); mission=create_mission(Path(slices['path']),slices['slices'][0]['id'],root,'owner')\n decision=decide_mission(Path(mission['path']),root,owner='owner',decision='approved_execution',rationale='Bounded execution approved.'); assert decision['authority']['deploy'] is False\n evidence=root/'tests.json'; evidence.write_text('{\"passed\":true}')\n manifest=root/'validation.json'; criteria=[{'id':item['id'],'passed':True,'evidence':[str(evidence)]} for item in mission['completion_contract']['criteria']]\n manifest.write_text(json.dumps({'schema':'factory.mission.validation-input.v1','creator_id':'builder','verifier_id':'builder','verifier_context':['mission.json','candidate_diff','evidence_manifest'],'criteria':criteria}))\n try:\n  close_mission(Path(mission['path']),manifest,root)\n  raise AssertionError('self-verification was accepted')\n except ProductMissionError as exc: assert exc.code=='VERIFIER_IDENTITY_DISTINCT'\n value=json.loads(manifest.read_text()); value['verifier_id']='checker'; manifest.write_text(json.dumps(value))\n completion=close_mission(Path(mission['path']),manifest,root); assert verify_mission_completion(Path(completion['path']))['valid']\n evidence.write_text('{\"passed\":false}'); assert not verify_mission_completion(Path(completion['path']))['valid']\n",
+      "covers": [
+        "CREATOR_VERIFIER_CONTEXT_WALL",
+        "MISSION_EXECUTION_APPROVAL_BOUND",
+        "VERIFIER_IDENTITY_DISTINCT",
+        "NO_FINISH_CONTRACT",
+        "VALIDATION_EVIDENCE_BOUND",
+        "MISSION_COMPLETION_VERIFIED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

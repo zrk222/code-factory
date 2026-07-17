@@ -5,7 +5,7 @@ small feature or risky workflow, not a whole migration.
 
 ```powershell
 cd path\to\your-repository
-pip install factoryline-code-factory==0.14.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7
+pip install factoryline-code-factory==0.16.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7
 factory doctor --json
 factory init .
 forge adopt <feature> --root .
@@ -41,6 +41,19 @@ factory verify-policy --root . --challenge policy.challenge.json
 The command only certifies an evaluator after its baseline passes and every
 deleted or inverted policy rule fails. See [Verify Policy](VERIFY_POLICY.md) for
 the manifest format.
+
+To create a new bounded target beside existing work, review the use cases and
+deployment routes first:
+
+```powershell
+factory targets
+factory create "Build a supervised operations console" --target agent-ui `
+  --deployment-profile local-operator --out .\operations-console
+```
+
+The selected route is written into the starter but grants no deployment
+authority. See the [Deployment Guide](DEPLOYMENT_GUIDE.md) before choosing an
+external route.
 
 ## Tell Us What Happened
 

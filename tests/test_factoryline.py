@@ -23,7 +23,7 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.14.0"
+    assert factoryline.__version__ == "0.16.0"
 
 
 def test_layout_created(tmp_path):
@@ -116,7 +116,7 @@ def test_live_meter_snapshot_exposes_local_freshness(tmp_path):
         feature="live-meter", run_id="run-1",
     ))
     snapshot = live_snapshot(tmp_path)
-    assert snapshot["schema"] == "factory.meter.live.v1"
+    assert snapshot["schema"] == "factory.meter.live.v2"
     assert snapshot["summary"]["stages_measured"] == 1
     assert snapshot["last_measurement_at"]
     assert snapshot["activity"]["runs_observed"] == 1
@@ -739,12 +739,16 @@ def test_cli_target_create_and_studio_check_are_machine_readable(tmp_path, capsy
         str(output),
         "--name",
         "receipt-worker",
+        "--deployment-profile",
+        "container-host",
         "--json",
     ])
     assert code == 0
     result = json.loads(capsys.readouterr().out)
     assert result["target_kind"] == "worker"
     assert result["status"] == "compiled_blocked"
+    assert result["deployment"]["selected_profile_id"] == "container-host"
+    assert result["deployment"]["external_effects_authorized"] is False
 
     code = main(["studio", "--root", str(tmp_path), "--check", "--json"])
     assert code == 0
@@ -757,6 +761,14 @@ def test_cli_target_create_and_studio_check_are_machine_readable(tmp_path, capsy
     inventory = json.loads(capsys.readouterr().out)
     assert inventory["schema"] == "factory.targets.v1"
     assert sorted(inventory["targets"]) == ["agent-ui", "mobile", "web", "worker"]
+    assert inventory["targets"]["mobile"]["deployment_profiles"][0]["id"] == "expo-preview"
+
+    code = main(["targets"])
+    assert code == 0
+    human_inventory = capsys.readouterr().out
+    assert "worker: Headless worker" in human_inventory
+    assert "container-host" in human_inventory
+    assert "eas-store" in human_inventory
 
 
 def test_cli_target_create_rejects_zero_or_two_sources(tmp_path, capsys):

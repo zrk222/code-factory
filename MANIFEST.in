@@ -4,8 +4,9 @@ include AKU_STANDARD.md
 include LAUNCH_KIT.md
 include PUBLICATION_GUIDE.md
 include factory.topology.json
-recursive-include docs *.md *.gif *.png *.svg
+recursive-include docs *.md *.gif *.png *.svg *.mp4
 recursive-include editors *.md *.svg
+recursive-include factoryline/builtin_packs *
 prune editors/vscode/node_modules
 prune editors/vscode/dist
 prune editors/intellij/.gradle

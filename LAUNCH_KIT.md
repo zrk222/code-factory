@@ -21,13 +21,21 @@ ask for votes, stars, or reviews.
 > judgment. The goal is a better starting point for review: artifacts that say
 > what ran, what was proven, and what remains unproven.
 >
-> Version 0.14 adds a deterministic target compiler for four blocked starter
-> shapes: worker, web, Expo mobile, and supervised agent UI. Factory Studio
-> exposes the same compiler on loopback, and the editor adapters open it only
-> after workspace confirmation.
+> Version 0.16 adds Product Missions, the owner-governed Signal Loop, and signed
+> Capability Packs for worker, web, Expo mobile, and supervised agent UI
+> targets. Each pack verifies an offline signature and rejects structural
+> mutations before use. Factory Studio exposes approval-ready mission decisions
+> and actionable failure summaries; editor adapters open the same local surface
+> only after workspace confirmation.
 >
 > I would love feedback on one question: what would you need to prove before
 > allowing an AI-generated change into a production repository?
+
+Attach `docs/assets/code-factory-quickstart-v016.mp4` as the first video and
+`docs/assets/code-factory-quickstart-cover-v016.png` as its cover. The video is
+a 60-second walkthrough of the exact shipped Factory Studio UI, including the
+Product Graph, value-slice queue, approval decision, proof timeline, and Meter
+v2. Do not replace it with a concept animation or a stale dashboard image.
 
 ## WizeMe.APP: Product Hunt Maker Comment
 
@@ -142,7 +150,7 @@ Show HN: A proof-first factory for AI-assisted software work
 > The components work independently, but the base package connects them:
 >
 > ```bash
-> pip install factoryline-code-factory==0.14.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+> pip install factoryline-code-factory==0.16.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 > factory doctor --strict --json
 > ```
 >

@@ -1,0 +1,66 @@
+name: product-missions
+modules:
+  - name: product_missions
+    path: factoryline/product_missions.py
+    functions:
+      - name: compile_product_prd
+        args: ["prd_path: Path", "root: Path", "project: str | None = None", "force: bool = False"]
+        returns: dict
+      - name: plan_value_slices
+        args: ["graph_path: Path", "root: Path", "max_requirements: int = 3", "force: bool = False"]
+        returns: dict
+      - name: verify_product_graph
+        args: ["graph_path: Path"]
+        returns: dict
+      - name: create_mission
+        args: ["slices_path: Path", "slice_id: str", "root: Path", "owner: str", "executor: str = 'manual'", "force: bool = False", "max_iterations: int | None = None", "max_wall_seconds: int | None = None", "max_tokens: int | None = None", "max_cost_usd: float | None = None", "readiness_path: Path | None = None"]
+        returns: dict
+      - name: verify_mission
+        args: ["mission_path: Path"]
+        returns: dict
+      - name: draft_pr
+        args: ["mission_path: Path", "root: Path", "evidence_paths: list[Path] | None = None", "force: bool = False"]
+        returns: dict
+      - name: record_outcome
+        args: ["mission_path: Path", "root: Path", "metric: str", "value: float | None", "target: float | None", "evidence_class: str", "source: str | None = None", "notes: str = ''"]
+        returns: dict
+      - name: outcome_summary
+        args: ["root: Path", "mission_id: str | None = None"]
+        returns: dict
+  - name: migration
+    path: factoryline/migration.py
+    functions:
+      - name: assess_migration_readiness
+        args: ["manifest_path: Path", "root: Path"]
+        returns: dict
+      - name: verify_migration_readiness
+        args: ["receipt_path: Path"]
+        returns: dict
+      - name: build_repository_context
+        args: ["root: Path"]
+        returns: dict
+      - name: verify_repository_context
+        args: ["receipt_path: Path"]
+        returns: dict
+dependencies:
+  - from: product_missions
+    to: migration
+invariants:
+  - name: no_agent_execution
+    forbid_pattern: "subprocess\\.(?:run|Popen)|\\b(?:eval|exec)\\s*\\("
+    scopes:
+      - module: product_missions
+        symbol: create_mission
+        max_lines: 230
+  - name: no_remote_side_effect
+    forbid_pattern: "\\b(?:merge|deploy|publish)\\s*\\("
+    scopes:
+      - module: product_missions
+        symbol: draft_pr
+        max_lines: 100
+  - name: no_secret_persistence
+    forbid_pattern: "BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|(?:sk-|pypi-|ghp_)"
+    scopes:
+      - module: product_missions
+        symbol: create_mission
+        max_lines: 230

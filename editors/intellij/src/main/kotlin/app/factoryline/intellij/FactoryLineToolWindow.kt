@@ -39,6 +39,7 @@ class FactoryLinePanel(private val project: Project) : JPanel(BorderLayout(0, 8)
             add(JButton("Verify receipts").apply { addActionListener { FactoryLineController.requestFeature(project, FactoryLineOperation.VERIFY) } })
             add(JButton("Analyze changed proof").apply { addActionListener { FactoryLineController.analyzeChangedProof(project) } })
             add(JButton("Open local meter").apply { addActionListener { FactoryLineController.openMeter(project) } })
+            add(JButton("Product missions").apply { addActionListener { FactoryLineController.openStudio(project, productMode = true) } })
             add(JButton("Open latest receipt").apply { addActionListener { FactoryLineController.openLatestReceipt(project) } })
             add(JButton("Check signature state").apply { addActionListener { FactoryLineController.checkLatestReceiptSignature(project) } })
         }

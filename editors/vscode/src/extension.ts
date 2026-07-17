@@ -6,11 +6,29 @@ import * as vscode from "vscode";
 import { receiptHtml } from "./receipt";
 import { meterHtml } from "./meter";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "./runner";
+import { findRequirementEvidence, requirementIds } from "./requirement";
 
 const output = vscode.window.createOutputChannel("FactoryLine");
 const receiptDirectories = [".factory", "receipts"];
 let studioProcess: childProcess.ChildProcessWithoutNullStreams | undefined;
 let studioUrl: string | undefined;
+
+class RequirementCodeLensProvider implements vscode.CodeLensProvider {
+  provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
+    const lenses: vscode.CodeLens[] = [];
+    for (let line = 0; line < document.lineCount; line += 1) {
+      const text = document.lineAt(line).text;
+      for (const requirementId of requirementIds(text)) {
+        lenses.push(new vscode.CodeLens(new vscode.Range(line, 0, line, text.length), {
+          command: "factoryline.openRequirementEvidence",
+          title: `FactoryLine: open proof for ${requirementId}`,
+          arguments: [requirementId],
+        }));
+      }
+    }
+    return lenses;
+  }
+}
 
 function workspaceRoot(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -113,6 +131,33 @@ async function openLatestReceipt(): Promise<void> {
   }
 }
 
+async function openRequirementEvidence(requirementId: string): Promise<void> {
+  const root = workspaceRoot();
+  if (!root) {
+    void vscode.window.showWarningMessage("Open a folder before inspecting requirement evidence.");
+    return;
+  }
+  const matches = await findRequirementEvidence(root, requirementId);
+  if (!matches.length) {
+    void vscode.window.showInformationMessage(`No local proof artifact references ${requirementId}.`);
+    return;
+  }
+  const selected = await vscode.window.showQuickPick(matches.map((match) => ({
+    label: path.relative(root, match.file),
+    description: `line ${match.line + 1}`,
+    detail: match.preview,
+    match,
+  })), { title: `FactoryLine proof for ${requirementId}` });
+  if (!selected) {
+    return;
+  }
+  const document = await vscode.workspace.openTextDocument(vscode.Uri.file(selected.match.file));
+  const editor = await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+  const position = new vscode.Position(selected.match.line, 0);
+  editor.selection = new vscode.Selection(position, position);
+  editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+}
+
 async function runFeature(command: "assemble" | "verify"): Promise<void> {
   const root = requireTrustedWorkspace();
   if (!root) {
@@ -157,13 +202,13 @@ async function openMeter(): Promise<void> {
   }
 }
 
-async function openFactoryStudio(): Promise<void> {
+async function openFactoryStudio(productMode = false): Promise<void> {
   const root = requireTrustedWorkspace();
   if (!root) {
     return;
   }
   const confirmed = await vscode.window.showWarningMessage(
-    "Start Factory Studio on loopback for this workspace? It may create new child directories, but cannot deploy, publish, sign, inject credentials, grant connectors, or send external messages.",
+    `${productMode ? "Open Product Missions" : "Start Factory Studio"} on loopback for this workspace? Local artifacts may be created, but this grants no execute, merge, deploy, publish, credential, connector, or external-message authority.`,
     { modal: true },
     "Start local Studio",
   );
@@ -171,9 +216,12 @@ async function openFactoryStudio(): Promise<void> {
     return;
   }
   output.appendLine("marker: EDITOR_TRUST_CONFIRMED");
+  if (productMode) {
+    output.appendLine("marker: EDITOR_PRODUCT_MISSION_CONFIRMED");
+  }
   if (studioProcess && studioProcess.exitCode === null) {
     if (studioUrl) {
-      await vscode.env.openExternal(vscode.Uri.parse(studioUrl));
+      await vscode.env.openExternal(vscode.Uri.parse(productMode ? `${studioUrl}?mode=product` : studioUrl));
     } else {
       void vscode.window.showInformationMessage("Factory Studio is still starting. See the FactoryLine output channel.");
     }
@@ -185,6 +233,9 @@ async function openFactoryStudio(): Promise<void> {
   const args = ["studio", "--root", root, "--port", "0", "--no-browser"];
   output.clear();
   output.appendLine("marker: EDITOR_TRUST_CONFIRMED");
+  if (productMode) {
+    output.appendLine("marker: EDITOR_PRODUCT_MISSION_CONFIRMED");
+  }
   output.appendLine(`$ ${command} studio --root <workspace> --port 0 --no-browser`);
   output.show(true);
   studioUrl = undefined;
@@ -204,7 +255,7 @@ async function openFactoryStudio(): Promise<void> {
     if (!studioUrl && parsed) {
       studioUrl = parsed;
       clearTimeout(timeout);
-      const opened = await vscode.env.openExternal(vscode.Uri.parse(parsed));
+      const opened = await vscode.env.openExternal(vscode.Uri.parse(productMode ? `${parsed}?mode=product` : parsed));
       if (!opened) {
         void vscode.window.showWarningMessage(`Factory Studio is running at ${parsed}`);
       }
@@ -229,11 +280,14 @@ async function openFactoryStudio(): Promise<void> {
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     output,
+    vscode.languages.registerCodeLensProvider({ scheme: "file" }, new RequirementCodeLensProvider()),
     vscode.commands.registerCommand("factoryline.assemble", () => runFeature("assemble")),
     vscode.commands.registerCommand("factoryline.verify", () => runFeature("verify")),
     vscode.commands.registerCommand("factoryline.openMeter", openMeter),
     vscode.commands.registerCommand("factoryline.openLatestReceipt", openLatestReceipt),
-    vscode.commands.registerCommand("factoryline.openStudio", openFactoryStudio),
+    vscode.commands.registerCommand("factoryline.openStudio", () => openFactoryStudio(false)),
+    vscode.commands.registerCommand("factoryline.openProductMissions", () => openFactoryStudio(true)),
+    vscode.commands.registerCommand("factoryline.openRequirementEvidence", openRequirementEvidence),
     { dispose: () => { if (studioProcess?.exitCode === null) { studioProcess.kill(); } } },
   );
 }

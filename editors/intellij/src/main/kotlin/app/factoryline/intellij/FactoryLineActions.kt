@@ -135,15 +135,15 @@ object FactoryLineController {
         })
     }
 
-    fun openStudio(project: Project) {
+    fun openStudio(project: Project, productMode: Boolean = false) {
         val root = project.basePath ?: run {
             Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
             return
         }
         val confirmed = Messages.showYesNoDialog(
             project,
-            "Start Factory Studio on loopback for:\n$root\n\nStudio may create new child directories. It cannot deploy, publish, sign, inject credentials, grant connectors, or send external messages.",
-            "FactoryLine: Open Local Factory Studio",
+            "Open ${if (productMode) "Product Missions" else "Factory Studio"} on loopback for:\n$root\n\nLocal artifacts may be created. This grants no execute, merge, deploy, publish, credential, connector, or external-message authority.",
+            "FactoryLine: ${if (productMode) "Open Product Missions" else "Open Local Factory Studio"}",
             "Start local Studio",
             "Cancel",
             Messages.getWarningIcon()
@@ -152,8 +152,10 @@ object FactoryLineController {
         FactoryLineRunner.startStudio(
             project,
             onStarted = { url ->
-                BrowserUtil.browse(url)
-                Messages.showInfoMessage(project, "Factory Studio is running at $url\n\nmarker: EDITOR_TRUST_CONFIRMED", "FactoryLine")
+                val targetUrl = if (productMode) "$url?mode=product" else url
+                BrowserUtil.browse(targetUrl)
+                val marker = if (productMode) "EDITOR_PRODUCT_MISSION_CONFIRMED" else "EDITOR_TRUST_CONFIRMED"
+                Messages.showInfoMessage(project, "Factory Studio is running at $targetUrl\n\nmarker: $marker", "FactoryLine")
             },
             onFailure = { message -> Messages.showErrorDialog(project, message, "FactoryLine") }
         )
@@ -207,5 +209,11 @@ class OpenMeterAction : FactoryLineAction() {
 class OpenStudioAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.openStudio(it) }
+    }
+}
+
+class OpenProductMissionsAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.openStudio(it, productMode = true) }
     }
 }

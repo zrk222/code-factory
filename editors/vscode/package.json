@@ -2,7 +2,7 @@
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
   "description": "Run bounded Code Factory gates and inspect local receipts without leaving VS Code.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -27,7 +27,9 @@
     "onCommand:factoryline.verify",
     "onCommand:factoryline.openMeter",
     "onCommand:factoryline.openLatestReceipt",
-    "onCommand:factoryline.openStudio"
+    "onCommand:factoryline.openStudio",
+    "onCommand:factoryline.openProductMissions",
+    "onCommand:factoryline.openRequirementEvidence"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -51,6 +53,14 @@
       {
         "command": "factoryline.openStudio",
         "title": "FactoryLine: Open Local Factory Studio"
+      },
+      {
+        "command": "factoryline.openProductMissions",
+        "title": "FactoryLine: Open Product Missions"
+      },
+      {
+        "command": "factoryline.openRequirementEvidence",
+        "title": "FactoryLine: Open Requirement Evidence"
       }
     ],
     "configuration": {
