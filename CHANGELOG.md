@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.17.1 - 2026-07-17
+
 ### Security
 
 - Replaced the stored PyPI API-token publish path with GitHub OIDC Trusted
