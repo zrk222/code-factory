@@ -71,24 +71,18 @@ factory meter
 
 ## PyPI Trusted Publishing
 
-This repo currently publishes through an encrypted repository-scoped
-`PYPI_TOKEN` GitHub Actions secret. The workflow is
-`.github/workflows/publish.yml`; a published GitHub release builds the
-wheel/sdist, checks them with Twine, attaches them to the GitHub release, and
-publishes only after those checks pass.
+This repo publishes with PyPI Trusted Publishing. The protected `pypi` GitHub
+environment requires a reviewer, and `.github/workflows/publish.yml` grants
+only the `id-token: write` permission needed to exchange the release job's
+short-lived GitHub OIDC identity for a scoped PyPI upload token. No PyPI API
+token, username, or password is read by the workflow.
 
-The planned hardening is PyPI Trusted Publishing: after the publisher is
-configured, remove the `PYPI_TOKEN` secret and the action credentials so PyPI
-uses short-lived GitHub OIDC credentials instead of a stored token.
+The publish action also emits PyPI attestations for the wheel and source
+distribution. Those attestations bind the uploaded files to the GitHub Actions
+identity; they do not replace the package tests, Twine checks, clean-wheel
+smoke, or protected-environment approval that run before publication.
 
-The encrypted secret protects the token at rest, but does not make it
-short-lived or non-replayable after it reaches a release runner. Keep it
-project-scoped, treat it as an interim fallback, and do not describe this path
-as supply-chain provenance. Trusted Publishing is the path that removes the
-stored-token replay surface.
-
-For a brand-new PyPI project, create a pending publisher on pypi.org before
-publishing the first release:
+The existing PyPI project must keep this trusted publisher registration:
 
 ```text
 PyPI project name : factoryline-code-factory
@@ -98,9 +92,10 @@ Workflow name     : publish.yml
 Environment name  : pypi
 ```
 
-Then publish a GitHub release from a version tag such as `v0.3.0`. The first
-successful publish creates the PyPI project and converts the pending publisher
-into the normal publisher for future releases.
+The repository regression test rejects a publish workflow that removes the
+OIDC permission/environment boundary or restores `user`, `password`,
+`PYPI_TOKEN`, or `API_TOKEN` credentials. If any identity field above changes,
+update PyPI first, then update the workflow in the same reviewed change.
 
 Useful checks before release:
 

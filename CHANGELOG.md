@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+- Replaced the stored PyPI API-token publish path with GitHub OIDC Trusted
+  Publishing and enabled distribution attestations.
+- Added a release-workflow regression test that rejects stored PyPI
+  credentials or removal of the protected environment and OIDC permission.
+
 ## 0.17.0 - 2026-07-17
 
 ### Added

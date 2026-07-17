@@ -82,9 +82,6 @@ jobs:
           --clobber
 
       - name: Publish package distributions to PyPI
-        # Temporary encrypted-token fallback. Replace with pure OIDC after
-        # PyPI Trusted Publishing is configured for this repository.
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          user: __token__
-          password: ${{ secrets.PYPI_TOKEN }}
+          attestations: true

@@ -42,6 +42,22 @@ def test_pypi_storefront_has_identity_and_canonical_links():
     }
 
 
+def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
+    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+
+    assert "environment: pypi" in workflow
+    assert "id-token: write" in workflow
+    assert "pypa/gh-action-pypi-publish@release/v1" in workflow
+    assert "attestations: true" in workflow
+    for forbidden in (
+        "PYPI_TOKEN",
+        "API_TOKEN",
+        "user: __token__",
+        "password:",
+    ):
+        assert forbidden not in workflow
+
+
 def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     metadata = json.loads((ROOT / ".zenodo.json").read_text(encoding="utf-8"))
 
