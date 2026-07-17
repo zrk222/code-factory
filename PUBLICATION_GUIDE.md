@@ -57,7 +57,7 @@ can contribute workflow examples.
 ## Install And Use
 
 ```bash
-pip install factoryline-code-factory==0.16.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.17.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 
 factory doctor
 factory pack list
@@ -112,7 +112,7 @@ pip install dist/factoryline_code_factory-*.whl
 factory --help
 ```
 
-Release media for v0.16:
+Current release media:
 
 - `docs/assets/code-factory-quickstart-v016.mp4`: 60-second narrated quick start
   built from the exact Factory Studio capture.

@@ -1,1 +1,1 @@
-{"schema":"factory.pack.canaries.v1","canaries":["worker-starts","receipt-emitted"]}
+{"canaries":["adapter-loads","validator-rejects-stub","receipt-emitted"],"schema":"factory.pack.canaries.v1"}

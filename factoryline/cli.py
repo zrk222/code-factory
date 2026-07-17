@@ -41,7 +41,7 @@ from .target_compiler import (
     create_target_from_prd,
     create_target_from_prompt,
 )
-from .capability_packs import CapabilityPackError, builtin_packs, install_pack, validate_pack
+from .capability_packs import CapabilityPackError, builtin_packs, compose_packs, install_pack, validate_pack
 from .failure_guidance import explain_failure
 from .migration import (
     MigrationError,
@@ -205,8 +205,16 @@ def _doctor(strict: bool = False, as_json: bool = False) -> int:
         if module.installed:
             proc = subprocess.run([_cli_command(module.cli), "--help"], capture_output=True, text=True, timeout=20)
             help_text = proc.stdout + proc.stderr
-        check = compatibility(module.name, MODULES[module.name], help_text)
-        checks.append((check, _workflow_canary(module)))
+        workflow = _workflow_canary(module)
+        provenance = workflow.get("provenance") if isinstance(workflow.get("provenance"), dict) else {}
+        reported_version = provenance.get("version") if isinstance(provenance.get("version"), str) else None
+        check = compatibility(
+            module.name,
+            MODULES[module.name],
+            help_text,
+            reported_version=reported_version,
+        )
+        checks.append((check, workflow))
     if as_json:
         installation_ok = all(item[0].ok for item in checks)
         workflow_ok = all(item[1]["ok"] for item in checks)
@@ -582,6 +590,11 @@ def main(argv=None) -> int:
     pack_install.add_argument("path")
     pack_install.add_argument("--root", default=".")
     pack_install.add_argument("--force", action="store_true")
+    pack_compose = pack_sub.add_parser("compose", help="write a compatible, hash-bound pack composition plan")
+    pack_compose.add_argument("paths", nargs="+")
+    pack_compose.add_argument("--root", default=".")
+    pack_compose.add_argument("--name", default="default")
+    pack_compose.add_argument("--force", action="store_true")
 
     target = sub.add_parser("create", help="compile one prompt or PRD into one governed starter target")
     target.add_argument("prompt", nargs="?", help="plain-language intent; mutually exclusive with --prd")
@@ -906,8 +919,12 @@ def main(argv=None) -> int:
                 }
             elif a.pack_cmd == "validate":
                 result = validate_pack(Path(a.path), verify_signature=True, mutate=True)
-            else:
+            elif a.pack_cmd == "install":
                 result = install_pack(Path(a.path), Path(a.root), force=a.force)
+            else:
+                result = compose_packs(
+                    [Path(path) for path in a.paths], Path(a.root), name=a.name, force=a.force,
+                )
         except CapabilityPackError as exc:
             print(json.dumps({
                 "schema": "factory.capability_pack.error.v1", "status": "failed",

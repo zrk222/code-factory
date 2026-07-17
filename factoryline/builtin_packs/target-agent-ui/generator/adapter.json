@@ -1,1 +1,1 @@
-{"schema":"factory.pack.generator.v1","adapter":"agent-ui","deterministic":true,"external_effects":false}
+{"adapter":"agent-ui","deterministic":true,"external_effects":false,"outputs":["source-or-integration-plan","acceptance-tests","proof-receipt"],"schema":"factory.pack.generator.v1"}

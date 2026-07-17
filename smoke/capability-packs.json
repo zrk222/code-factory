@@ -3,8 +3,15 @@
     {
       "name": "all_builtin_packs_are_signed_and_mutation_tested",
       "kind": "python",
-      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.capability_packs import builtin_packs,validate_pack,target_inventory\nfrom factoryline.target_compiler import create_target_from_prompt\nitems=builtin_packs(); assert len(items)==4 and set(target_inventory())=={'worker','web','mobile','agent-ui'}\nfor item in items:\n result=validate_pack(Path(item['path'])); assert result['valid'] and result['signature']['verified']; assert result['mutations']['rejected']==5\nwith TemporaryDirectory() as d:\n result=create_target_from_prompt('Build a worker',target='worker',out_dir=Path(d)/'worker'); assert result['deployment']['external_effects_authorized'] is False\n",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.capability_packs import builtin_packs,validate_pack,target_inventory\nfrom factoryline.target_compiler import create_target_from_prompt\nitems=builtin_packs(); assert len(items)==29; assert {item['kind'] for item in items}=={'target','surface','language','capability','data','ops'}; assert set(target_inventory())=={'cli','api','mcp','worker','web','mobile','agent-ui'}\nfor item in items:\n result=validate_pack(Path(item['path'])); assert result['valid'] and result['signature']['verified']; assert result['mutations']['attempted']==10 and result['mutations']['rejected']==10\nwith TemporaryDirectory() as d:\n result=create_target_from_prompt('Build an API',target='api',out_dir=Path(d)/'api'); assert result['deployment']['external_effects_authorized'] is False\n",
       "covers": ["PACK_STRUCTURE_VALIDATED", "PACK_SIGNATURE_VERIFIED", "PACK_VALIDATOR_MUTATIONS_REJECTED", "PACK_DEPLOYMENT_GUIDANCE_COMPLETE", "PACK_UX_STATES_COMPLETE", "PACK_MIGRATION_POLICY_BOUND", "PACK_INVENTORY_DERIVED", "PACK_SIGNATURE_BYPASS_DENIED", "TARGET_PACK_BOUND", "TARGET_DEPLOYMENT_PROFILE_BOUND"],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "compatible_packs_compose_without_effect_authority",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.capability_packs import BUILTIN_ROOT,compose_packs\nwith TemporaryDirectory() as d:\n result=compose_packs([BUILTIN_ROOT/'target-web',BUILTIN_ROOT/'surface-react',BUILTIN_ROOT/'language-typescript',BUILTIN_ROOT/'capability-accessibility'],Path(d),name='web-react'); assert result['marker']=='PACK_COMPOSITION_VERIFIED'; assert result['pack_count']==4; assert not any(result['authority'].values()); assert Path(result['path']).is_file()\n",
+      "covers": ["PACK_COMPOSITION_VERIFIED", "PACK_COMPOSITION_INCOMPATIBLE", "PACK_COMPOSITION_EXISTS", "PACK_EXTERNAL_EFFECTS_DENIED"],
       "must_fail_on_stub": true
     },
     {

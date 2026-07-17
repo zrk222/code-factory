@@ -91,6 +91,22 @@ def test_missing_pack_generator_fails_closed_before_promotion(tmp_path: Path, mo
 
 
 def test_target_specific_runtime_shapes(tmp_path: Path):
+    cli = tmp_path / "cli"
+    create_target_from_prompt("Build a receipt CLI.", target="cli", out_dir=cli, name="receipt-cli")
+    assert "def render" in (cli / "cli_app" / "main.py").read_text(encoding="utf-8")
+
+    api = tmp_path / "api"
+    create_target_from_prompt("Build a receipt API.", target="api", out_dir=api, name="receipt-api")
+    api_source = (api / "backend" / "main.py").read_text(encoding="utf-8")
+    assert '@app.post("/v1/echo")' in api_source
+    assert "class EchoRequest" in api_source
+
+    mcp = tmp_path / "mcp"
+    create_target_from_prompt("Build a receipt MCP server.", target="mcp", out_dir=mcp, name="receipt-mcp")
+    mcp_source = (mcp / "mcp_server" / "main.py").read_text(encoding="utf-8")
+    assert 'method == "tools/list"' in mcp_source
+    assert 'method == "tools/call"' in mcp_source
+
     worker = tmp_path / "worker"
     create_target_from_prompt("Build a deterministic receipt worker.", target="worker", out_dir=worker, name="receipt-worker")
     assert "def run_task" in (worker / "worker" / "main.py").read_text(encoding="utf-8")

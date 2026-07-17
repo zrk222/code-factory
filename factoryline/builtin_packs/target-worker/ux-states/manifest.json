@@ -1,1 +1,1 @@
-{"schema":"factory.pack.ux-states.v1","states":["loading","empty","error","success","permission","offline","recovery","accessibility"]}
+{"schema":"factory.pack.ux-states.v1","states":["accessibility","empty","error","loading","offline","permission","recovery","success"]}

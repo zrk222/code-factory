@@ -1,6 +1,6 @@
 # Code Factory Architecture
 
-These diagrams show the complete version 0.16 design. Colors have one meaning
+These diagrams show the complete version 0.17 design. Colors have one meaning
 throughout: blue is supplied input, amber is deterministic policy or planning,
 pink is human authority, purple is bounded execution, green is verified
 evidence, teal is observed outcome data, and red is a fail-closed correction.
@@ -27,7 +27,8 @@ flowchart TB
     subgraph MISSION["Bounded mission"]
         MP["Mission + Loop Passport<br/>scope, worktree, roles, budgets"]
         HA{"Human approval or<br/>safe local auto-resolve"}
-        CP["Signed Capability Packs<br/>worker, web, mobile, agent UI"]
+        CP["29 signed Capability Packs<br/>7 targets + surfaces, languages, capabilities, data, ops"]
+        PC["Pack composition<br/>compatibility + 10 mutations each"]
         CR["Creator<br/>fresh minimal context"]
         WT["Isolated branch + worktree"]
     end
@@ -65,7 +66,7 @@ flowchart TB
     RC --> MP
     MR --> MP
     MP --> HA --> CR --> WT
-    CP --> WT
+    CP --> PC --> WT
     WT --> SL --> FL --> CH
     CH -->|"decision logic"| HSF
     CH -->|"user-facing UI"| PX
@@ -92,7 +93,7 @@ flowchart TB
     class SIG,PRD,RC,MR,SR input
     class OD,PG,VS,SL,FL,CH,NF policy
     class PO,HA,RO human
-    class MP,CP,CR,WT,HSF,PX,IV,CC work
+    class MP,CP,PC,CR,WT,HSF,PX,IV,CC work
     class EM,PR,SHIP proof
     class OUT,METER,UI outcome
     class FAIL fail
