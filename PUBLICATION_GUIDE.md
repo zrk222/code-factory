@@ -71,9 +71,10 @@ factory meter
 
 ## PyPI Trusted Publishing
 
-This repo publishes with PyPI Trusted Publishing. The protected `pypi` GitHub
-environment requires a reviewer, and `.github/workflows/publish.yml` grants
-only the `id-token: write` permission needed to exchange the release job's
+This repo publishes with PyPI Trusted Publishing. Release validation runs with
+read-only repository access and produces one immutable artifact bundle. Only
+the downstream deployment job enters the protected `pypi` GitHub environment,
+receives `id-token: write` and release-write access, and exchanges its
 short-lived GitHub OIDC identity for a scoped PyPI upload token. No PyPI API
 token, username, or password is read by the workflow.
 
@@ -81,6 +82,11 @@ The publish action also emits PyPI attestations for the wheel and source
 distribution. Those attestations bind the uploaded files to the GitHub Actions
 identity; they do not replace the package tests, Twine checks, clean-wheel
 smoke, or protected-environment approval that run before publication.
+
+Pull requests also run the package contract: build the wheel and source
+distribution, run `twine check`, install the wheel into an isolated environment
+outside the source tree, invoke the CLI, and preserve the distributions as a CI
+artifact.
 
 The existing PyPI project must keep this trusted publisher registration:
 
