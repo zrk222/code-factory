@@ -36,8 +36,8 @@ def test_dashboard_preserves_unknowns_and_exposes_control_state(tmp_path: Path):
     assert dashboard["meter"]["summary"]["stages_measured"] == 0
     assert dashboard["meter"]["activity"]["stage_success_rate"] is None
     assert dashboard["approvals"]["awaiting_owner"] == 0
-    assert len(dashboard["packs"]) == 4
-    assert all(pack["signature_verified"] and pack["mutations_rejected"] == 5 for pack in dashboard["packs"])
+    assert len(dashboard["packs"]) == 29
+    assert all(pack["signature_verified"] and pack["mutations_rejected"] == 10 for pack in dashboard["packs"])
     assert all(pack["deployment_profiles"] for pack in dashboard["packs"])
     assert dashboard["authority"]["can_deploy"] is False
 

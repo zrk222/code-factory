@@ -17,13 +17,13 @@ from factoryline.proof import (
     verify_trace,
 )
 from factoryline.passport import build_passport, verify_passport
-from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCHEMA
+from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCHEMA, compatibility
 
 
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.16.0"
+    assert factoryline.__version__ == "0.17.0"
 
 
 def test_layout_created(tmp_path):
@@ -35,6 +35,22 @@ def test_layout_created(tmp_path):
 def test_detect_returns_all_four_modules():
     names = {m.name for m in detect()}
     assert names == {"specline", "forgeline", "hsf", "prestige"}
+
+
+def test_compatibility_uses_cli_reported_version_when_distribution_is_external(monkeypatch):
+    import factoryline.protocol as protocol
+
+    monkeypatch.setattr(protocol, "package_version", lambda _package: None)
+    monkeypatch.setattr(protocol.shutil, "which", lambda _cli: "C:/tools/specline.exe")
+    check = compatibility(
+        "specline",
+        MODULES["specline"],
+        "strict verify-validators challenge",
+        reported_version=MINIMUM_VERSIONS["specline"],
+    )
+
+    assert check.ok is True
+    assert check.version == MINIMUM_VERSIONS["specline"]
 
 
 def test_factory_verify_refuses_to_call_missing_receipts_shippable(tmp_path):
@@ -760,7 +776,7 @@ def test_cli_target_create_and_studio_check_are_machine_readable(tmp_path, capsy
     assert code == 0
     inventory = json.loads(capsys.readouterr().out)
     assert inventory["schema"] == "factory.targets.v1"
-    assert sorted(inventory["targets"]) == ["agent-ui", "mobile", "web", "worker"]
+    assert sorted(inventory["targets"]) == ["agent-ui", "api", "cli", "mcp", "mobile", "web", "worker"]
     assert inventory["targets"]["mobile"]["deployment_profiles"][0]["id"] == "expo-preview"
 
     code = main(["targets"])

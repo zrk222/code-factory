@@ -9,7 +9,7 @@ approval boundaries; it does not claim to predict every future product domain.
 | Setup | New local workspace | Create bounded `.factory` directories | Factory steward | Status receipt; initialize Opinion Dock |
 | Setup | Existing repository | Adopt sources without overwriting | Factory steward | Adoption receipt; review SSAT |
 | Setup | Unsupported or missing companion tool | Fail the behavioral canary | Factory steward | Failure summary; install or repair exact package |
-| Starter | Choose worker, web, mobile, or agent UI | Show pack-owned use case and deployment routes | Builder | `factory targets`; select target and route |
+| Starter | Choose CLI, API, MCP, worker, web, mobile, or agent UI | Show pack-owned use case and deployment routes | Builder | `factory targets`; select target and route |
 | Starter | No deployment route supplied | Select the target's local or device-preview route | Deterministic compiler | Bound local profile; compile blocked starter |
 | Starter | Unsupported deployment route | Reject before writing output | Builder | Choose an id shown by `factory targets` |
 | Starter | External deployment route selected | Bind prerequisites, build, verify, release, and approval with external effects false | Builder and release owner | Target workflow; prove locally, then request exact approval |

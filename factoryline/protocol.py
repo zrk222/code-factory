@@ -55,9 +55,15 @@ def package_version(package: str) -> str | None:
         return None
 
 
-def compatibility(module: str, meta: dict, help_text: str | None = None) -> Compatibility:
+def compatibility(
+    module: str,
+    meta: dict,
+    help_text: str | None = None,
+    *,
+    reported_version: str | None = None,
+) -> Compatibility:
     installed = shutil.which(meta["cli"]) is not None
-    version = package_version(meta["pip"])
+    version = package_version(meta["pip"]) or reported_version
     minimum = MINIMUM_VERSIONS[module]
     required = REQUIRED_COMMANDS[module]
     missing = tuple(sorted(command for command in required if help_text is not None and command not in help_text))

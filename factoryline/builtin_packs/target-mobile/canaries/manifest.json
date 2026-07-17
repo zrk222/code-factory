@@ -1,1 +1,1 @@
-{"schema":"factory.pack.canaries.v1","canaries":["expo-config-valid","mobile-smoke"]}
+{"canaries":["adapter-loads","validator-rejects-stub","receipt-emitted"],"schema":"factory.pack.canaries.v1"}

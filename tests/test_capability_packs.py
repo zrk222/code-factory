@@ -11,6 +11,7 @@ from factoryline.capability_packs import (
     BUILTIN_ROOT,
     CapabilityPackError,
     builtin_packs,
+    compose_packs,
     install_pack,
     target_inventory,
     validate_pack,
@@ -18,18 +19,21 @@ from factoryline.capability_packs import (
 from factoryline.cli import main
 
 
-EXPECTED_TARGETS = {"agent-ui", "mobile", "web", "worker"}
+EXPECTED_TARGETS = {"agent-ui", "api", "cli", "mcp", "mobile", "web", "worker"}
+EXPECTED_KINDS = {"target", "surface", "language", "capability", "data", "ops"}
 
 
 def test_builtin_target_packs_are_signed_and_mutation_tested():
     packs = builtin_packs()
-    assert {item["target_kind"] for item in packs} == EXPECTED_TARGETS
+    assert len(packs) == 29
+    assert {item["kind"] for item in packs} == EXPECTED_KINDS
+    assert {item["target_kind"] for item in packs if item["kind"] == "target"} == EXPECTED_TARGETS
     for item in packs:
         result = validate_pack(Path(item["path"]))
         assert result["valid"] is True
         assert result["signature"]["verified"] is True
-        assert result["mutations"]["attempted"] == 5
-        assert result["mutations"]["rejected"] == 5
+        assert result["mutations"]["attempted"] == 10
+        assert result["mutations"]["rejected"] == 10
 
 
 def test_target_inventory_is_derived_from_packs():
@@ -151,5 +155,69 @@ def test_force_install_restores_previous_pack_when_swap_fails(monkeypatch: pytes
 def test_cli_lists_verified_packs(capsys: pytest.CaptureFixture[str]):
     assert main(["pack", "list"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert len(payload["packs"]) == 4
+    assert len(payload["packs"]) == 29
     assert all(item["valid"] and item["signature"]["verified"] for item in payload["packs"])
+
+
+def test_pack_composition_is_hash_bound_and_has_no_execution_authority(tmp_path: Path):
+    result = compose_packs([
+        BUILTIN_ROOT / "target-web",
+        BUILTIN_ROOT / "surface-nextjs",
+        BUILTIN_ROOT / "language-typescript",
+        BUILTIN_ROOT / "capability-auth",
+    ], tmp_path, name="review-portal")
+
+    assert result["marker"] == "PACK_COMPOSITION_VERIFIED"
+    assert result["pack_count"] == 4
+    assert result["target_kind"] == "web"
+    assert result["authority"] == {"generate": False, "execute": False, "deploy": False, "publish": False}
+    assert len(result["composition_sha256"]) == 64
+    assert Path(result["path"]).is_file()
+    assert {item["id"] for item in result["packs"]} == {
+        "target-web", "surface-nextjs", "language-typescript", "capability-auth",
+    }
+
+
+def test_pack_composition_rejects_incompatible_target(tmp_path: Path):
+    with pytest.raises(CapabilityPackError, match="PACK_COMPOSITION_INCOMPATIBLE"):
+        compose_packs([
+            BUILTIN_ROOT / "target-worker",
+            BUILTIN_ROOT / "surface-expo",
+        ], tmp_path)
+
+
+def test_pack_composition_preserves_existing_file_when_atomic_swap_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    composition_root = tmp_path / ".factory" / "pack-compositions"
+    composition_root.mkdir(parents=True)
+    destination = composition_root / "api-stack.json"
+    destination.write_text('{"previous": true}\n', encoding="utf-8")
+
+    def fail_swap(_source, _destination):
+        raise OSError("simulated composition swap failure")
+
+    monkeypatch.setattr(capability_packs.os, "replace", fail_swap)
+    with pytest.raises(CapabilityPackError) as caught:
+        compose_packs([
+            BUILTIN_ROOT / "target-api",
+            BUILTIN_ROOT / "language-python",
+        ], tmp_path, name="api-stack", force=True)
+
+    assert caught.value.code == "PACK_COMPOSITION_WRITE_FAILED"
+    assert "PACK_COMPOSITION_ROLLBACK_PRESERVED" in caught.value.markers
+    assert destination.read_text(encoding="utf-8") == '{"previous": true}\n'
+    assert not list(composition_root.glob(".api-stack.json.*.tmp"))
+
+
+def test_pack_compose_cli_writes_review_plan(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    assert main([
+        "pack", "compose",
+        str(BUILTIN_ROOT / "target-api"),
+        str(BUILTIN_ROOT / "language-python"),
+        str(BUILTIN_ROOT / "capability-auth"),
+        "--root", str(tmp_path), "--name", "api-stack",
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["target_kind"] == "api"
+    assert "PACK_COMPOSITION_NO_EXECUTION_AUTHORITY" in payload["markers"]

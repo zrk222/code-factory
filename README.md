@@ -4,14 +4,17 @@
 [![PyPI](https://img.shields.io/pypi/v/factoryline-code-factory.svg)](https://pypi.org/project/factoryline-code-factory/)
 [![Python](https://img.shields.io/pypi/pyversions/factoryline-code-factory.svg)](https://pypi.org/project/factoryline-code-factory/)
 
-> One intent, four software targets, and proof that the gates reject
+> One intent, seven software targets, and proof that the gates reject
 > deliberately sabotaged builds.
 
-![Code Factory target compiler](docs/assets/target-compiler.svg)
+![Code Factory target compiler](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/target-compiler.svg)
 
 ## 60-second first run
 
-[![Watch the exact-UI Code Factory quick start](docs/assets/code-factory-quickstart-cover-v016.png)](docs/assets/code-factory-quickstart-v016.mp4)
+[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v016.png)](https://github.com/zrk222/code-factory/releases/download/v0.17.0/code-factory-quickstart-v016.mp4)
+
+[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.17.0/code-factory-quickstart-v016.mp4).
+The absolute cover and release-asset URLs render from both GitHub and PyPI.
 
 The one-minute walkthrough is rendered from an actual 1920x1080 Factory
 Studio capture. Its focus frames point to the shipped Product Graph, value
@@ -22,7 +25,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.16.0
+pip install factoryline-code-factory==0.17.0
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -33,8 +36,8 @@ The last command intentionally exits nonzero on a fresh starter. It reports
 that lacks a non-hollow test. The scaffold is useful starting state, not
 software the factory pretends is ready to ship.
 
-Use the same `factory create` command with `--target worker`, `web`, `mobile`,
-or `agent-ui`. Select a deployment route from `factory targets --json`; the
+Use the same `factory create` command with `--target cli`, `api`, `mcp`,
+`worker`, `web`, `mobile`, or `agent-ui`. Select a deployment route from `factory targets --json`; the
 local or preview route is the safe default. Every output starts blocked and includes a governance manifest,
 SSAT, smoke hook, Mermaid map, and source-bound compile receipt. Open the local
 builder with `factory studio`, or from the VS Code and JetBrains integrations.
@@ -42,15 +45,19 @@ See [Target Compiler and Factory Studio](docs/TARGET_COMPILER.md).
 
 ## Signed Capability Packs
 
-The worker, web, Expo mobile, and supervised agent UI targets now come from
-first-party Capability Packs. Every pack binds its complete file map to an
-offline DSSE Ed25519 signature and must reject five structural mutations before
-it can be installed or used as target metadata.
+The seven starter targets and 22 composable surface, language, capability,
+data, and operations contracts now come from 29 first-party Capability Packs.
+Every pack binds its complete file map to an offline DSSE Ed25519 signature and
+must reject ten structural mutations before it can be installed or composed.
 
 ```powershell
 factory pack list
 factory pack validate factoryline/builtin_packs/target-worker
 factory pack install factoryline/builtin_packs/target-worker --root .
+factory pack compose factoryline/builtin_packs/target-web `
+  factoryline/builtin_packs/surface-nextjs `
+  factoryline/builtin_packs/language-typescript `
+  factoryline/builtin_packs/capability-auth --root . --name review-portal
 ```
 
 Pack installation grants no execution, network, connector, deployment,
@@ -62,14 +69,14 @@ and approval boundaries, see the [Deployment Guide](docs/DEPLOYMENT_GUIDE.md).
 
 ## Product Missions: PRD to reviewer-ready value
 
-Version 0.16 adds a deterministic product-engineering layer above the existing
+Version 0.17 completes the deterministic product-engineering layer above the existing
 spec-to-proof pipeline. It compiles a PRD into stable requirement atoms and a
 gap-audited Product Graph, assigns every requirement exactly once to a bounded
 value slice, and creates a supervised, hard-budgeted mission with a hash-bound
 Loop Passport. The output is an evidence-linked PR draft and a classified
 outcome chain, not an agent with hidden production authority.
 
-![Code Factory Product Missions](docs/assets/product-missions.svg)
+![Code Factory Product Missions](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/product-missions.svg)
 
 ```powershell
 factory product compile .\PRD.md --root . --json
@@ -114,7 +121,7 @@ owner-controlled Opinion Dock records product taste, architecture guardrails,
 temporary hands-off rules, and abstract cost/quality profiles. Explainable
 triage cannot promote work until a Product Owner records a bound decision.
 
-![Code Factory Signal Loop](docs/assets/signal-loop.svg)
+![Code Factory Signal Loop](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/signal-loop.svg)
 
 ```powershell
 factory opinion init --root . --owner product-owner --json
@@ -181,7 +188,7 @@ network, connector, credential, publish, or deploy authority.
 > full-stack starter repo, then hand it to the same gated, receipted factory
 > flow that powers proof-carrying PRs.
 
-![PRD-to-App Factory](docs/assets/prd-to-app-factory.svg)
+![PRD-to-App Factory](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/prd-to-app-factory.svg)
 
 **A code factory built like Lego.** Five small, independent, open-source pieces that
 snap together into one assembly line: describe a feature in plain language, and the
@@ -276,7 +283,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.16.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.17.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 factory doctor --json
 ```
 
@@ -455,7 +462,7 @@ mutation doctrine for policy rules: it deletes or inverts every rule and require
 your evaluator to reject the changed policy. A rule that survives is reported as
 `HOLLOW_POLICY`; see [Verify Policy](docs/VERIFY_POLICY.md).
 
-![Verify Policy detects a hollow evaluator](docs/assets/verify-policy.gif)
+![Verify Policy detects a hollow evaluator](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/verify-policy.gif)
 
 ## Why Lego, not a monolith
 

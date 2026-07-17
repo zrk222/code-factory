@@ -37,7 +37,7 @@ or a public listing. Those remain visible approval steps in Marketplace.
 2. Select or create the FactoryLine Vendor profile and accept the Developer
    Agreement when prompted.
 3. Upload the release ZIP:
-   <https://github.com/zrk222/code-factory/releases/download/v0.16.0/factoryline-intellij-0.3.0.zip>.
+   <https://github.com/zrk222/code-factory/releases/download/v0.17.0/factoryline-intellij-0.3.0.zip>.
 4. Set the license to the repository's `MIT OR Apache-2.0` terms and link
    the public source: <https://github.com/zrk222/code-factory>.
 5. Choose only Marketplace tags that accurately describe local developer

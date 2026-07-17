@@ -57,7 +57,7 @@ can contribute workflow examples.
 ## Install And Use
 
 ```bash
-pip install factoryline-code-factory==0.16.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.17.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 
 factory doctor
 factory pack list
@@ -112,7 +112,7 @@ pip install dist/factoryline_code_factory-*.whl
 factory --help
 ```
 
-Release media for v0.16:
+Current release media:
 
 - `docs/assets/code-factory-quickstart-v016.mp4`: 60-second narrated quick start
   built from the exact Factory Studio capture.
@@ -123,6 +123,10 @@ Release media for v0.16:
   input. Re-render with `npm install` followed by `npm run render`.
 
 Verify the MP4 before attaching it to a release:
+
+The publish workflow attaches both the MP4 and cover to every GitHub release.
+The README uses an absolute raw cover URL and the versioned release-asset URL
+so the same video entry renders correctly on GitHub and PyPI.
 
 ```powershell
 ffprobe -v error -show_entries format=duration -show_streams `

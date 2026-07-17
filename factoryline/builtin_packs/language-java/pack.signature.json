@@ -1,0 +1,15 @@
+{
+  "payload": "eyJmaWxlcyI6eyJjYW5hcmllcy9tYW5pZmVzdC5qc29uIjoiYTVhZDgwZDJlNDk0YjRhZjM0YjE5ZjZmMWFiYzQ2MDc2MmI0YWI4MmFiMWFiNzhiODhlZDk2MTUxNTMzZWY1MiIsImdlbmVyYXRvci9hZGFwdGVyLmpzb24iOiJmNjQ2OWU5OTM5MjM4MjI1ZGVjOWU1NjU1OGIzODFmNGJiNTRkNjc3OTQwOTE2ZmU2ZmI1NTZmYTQ0MjQ2ZGM2IiwiZ29sZGVucy9tYW5pZmVzdC5qc29uIjoiZGZhOGNiOWNiMGZlNmEyY2MyZDhlZDU4ZjkwYTQ5MzBkN2NmNGRiODNhYzhlMjdkZjU2Y2U5YjJlNDY2ZWQ1NCIsIm1pZ3JhdGlvbi1wb2xpY3kuanNvbiI6IjAyNjMxYzRhODkxMjY4NGJiZTRjYTRhMDEwYjVjOGQ4ZTA3YmI3YWJjMzdjNGM0MjZiMjQ1MDJkMWI2MjNlZTQiLCJwYWNrLnRydXN0Lmpzb24iOiI0MWU1ZWE5YzQ5MDczN2UwOTZmYWNmMTAzNjg2NDVmNzI4ZDE0NDUxZGNlYWE2MGU5NjJjZTI0MGUzMDM5YTY5IiwicGFjay55YW1sIjoiOTY4OTg2NGEwNDZlYTEzYjFmMGJiYmIzZjAxMzI5ZDU5NjlmYmI4YjY1NmFiYjU0NTYzZmM5MDMwMjg2MmI5ZiIsInV4LXN0YXRlcy9tYW5pZmVzdC5qc29uIjoiZmRhYjM0MjY3MjBkOTY5MzJkYmQ3YjI4NzJmNWJiNTlkMGViYjNhZGRkNzg4MTBiODM0MmUxZWZlNDFjMWQwZSIsInZhbGlkYXRvcnMvbWFuaWZlc3QuanNvbiI6ImVmMjc1MDgxNzVmOWFjZGZjNTliZjAxYTFiMGYxNzFkODY2OTcwNTkxZmY2MGVjZWE2NWJiMTMzZmNlYWY3NmUifSwicGFja19pZCI6Imxhbmd1YWdlLWphdmEiLCJzY2hlbWEiOiJmYWN0b3J5LmNhcGFiaWxpdHlfcGFjay5wYXlsb2FkLnYxIiwidmVyc2lvbiI6IjEuMC4wIn0",
+  "payloadType": "application/vnd.factory.capability-pack.v1+json",
+  "payload_sha256": "8dd6cb726671f7a65b516dd58f27f6155db04fcbdc73424a5fd70ff10ed3aa2f",
+  "schema": "factory.dsse.envelope.v1",
+  "signatures": [
+    {
+      "algorithm": "ed25519",
+      "identity": "https://github.com/zrk222/code-factory",
+      "issuer": "code-factory-release",
+      "keyid": "code-factory-capability-packs-2026-07d",
+      "sig": "av1dLHMRiKG-CVLJ3cOq7TOGN4OjuNMmeuHgO6a9gnemAo11Q2OHIwN5Ed5_A0S1OcdROxN0M2cddDnBIr7uDw"
+    }
+  ]
+}
