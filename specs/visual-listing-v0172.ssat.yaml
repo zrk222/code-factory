@@ -1,0 +1,16 @@
+name: visual-listing-v0172
+modules:
+  - name: visual_listing_tests
+    path: tests/test_visual_listing.py
+    functions:
+      - name: test_visual_gallery_assets_are_exact_and_unique
+        args: []
+        returns: unknown
+dependencies: []
+invariants:
+  - name: publication_tests_do_not_grant_release_authority
+    forbid_pattern: "\\b(?:publish|deploy|merge|send_message)\\s*\\("
+    scopes:
+      - module: visual_listing_tests
+        symbol: test_visual_gallery_assets_are_exact_and_unique
+        max_lines: 120

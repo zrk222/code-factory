@@ -11,6 +11,9 @@
 
 ## 60-second first run
 
+**Exact shipped UI:** the walkthrough below is rendered from the actual Factory
+Studio surface; it is not concept art.
+
 [![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.17.1/code-factory-quickstart-v0171.mp4)
 
 [Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.17.1/code-factory-quickstart-v0171.mp4).
@@ -21,11 +24,24 @@ Studio capture. Its focus frames point to the shipped Product Graph, value
 slice, approval, proof, and Meter v2 panels; it does not substitute a mock
 dashboard for the product UI.
 
+## Concept illustrations: how the proof line works
+
+The following concept illustrations explain the workflow; they are not UI
+screenshots or measured outcome evidence.
+
+<p align="center">
+  <img alt="Developer sends an application blueprint through a small factory into code, data, interface, and server components." src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/01-idea-to-blueprint.png" width="31%">
+  <img alt="Robotic magnifiers inspect green checks and a deliberately broken check on a conveyor." src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/06-proof-by-sabotage.png" width="31%">
+  <img alt="Signed receipts move through a glowing chain and split into accepted and rejected paths." src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/08-signed-proof-chain.png" width="31%">
+</p>
+
+[Open the complete nine-stage visual walkthrough](https://github.com/zrk222/code-factory/blob/main/docs/HOW_IT_WORKS_VISUAL.md).
+
 Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.17.1
+pip install factoryline-code-factory==0.17.2
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -283,7 +299,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.17.1 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.17.2 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 factory doctor --json
 ```
 

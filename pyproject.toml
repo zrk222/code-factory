@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.17.1"
+version = "0.17.2"
 description = "The connective layer that snaps SpecLine, ForgeLine, HSF and Prestige together into one spec-to-artifact assembly line. Each module stays independent; factoryline lines them up."
 authors = [
   { name = "Richard Katz" },

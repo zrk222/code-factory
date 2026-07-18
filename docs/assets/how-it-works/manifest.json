@@ -1,0 +1,107 @@
+{
+  "schema": "code-factory.visual-story.v1",
+  "label": "Concept illustrations",
+  "evidence_boundary": "Not UI screenshots or measured outcome evidence.",
+  "provenance": "Owner-supplied artwork approved for public use on 2026-07-18.",
+  "illustrations": [
+    {
+      "order": 1,
+      "filename": "01-idea-to-blueprint.png",
+      "stage": "idea intake",
+      "title": "From idea to blueprint",
+      "alt": "Developer at a laptop sends a blue application blueprint through a small factory into code, data, interface, and server components.",
+      "caption": "Turn intent into an explicit, reviewable product blueprint before implementation begins.",
+      "sha256": "228c05bcf35fb69c90b715cdb9d4fd3542d5fe568bc1587be45578c7b6b30b47",
+      "width": 1122,
+      "height": 1402
+    },
+    {
+      "order": 2,
+      "filename": "02-prd-to-product-shape.png",
+      "stage": "product shaping",
+      "title": "Shape the product",
+      "alt": "Developer turns an application blueprint into folders, a database, a web interface, and servers on a conveyor.",
+      "caption": "Bind requirements to a concrete product shape, target, and dependency order.",
+      "sha256": "e8be587fc97991aefc615e5b3a29d9cba949afe0c9df777e38e4b6f8ff76044e",
+      "width": 1122,
+      "height": 1402
+    },
+    {
+      "order": 3,
+      "filename": "03-ai-compiler-stack.png",
+      "stage": "deterministic compilation",
+      "title": "Compile recurring decisions",
+      "alt": "Illustrated stack links an AI brain to Python gears and a locked execution box.",
+      "caption": "Move repeated decision logic into deterministic, inspectable code with explicit boundaries.",
+      "sha256": "53a0ab1bc918d3d184a979803f48ecb42331d87abd40db16387e68f296721e02",
+      "width": 1122,
+      "height": 1402
+    },
+    {
+      "order": 4,
+      "filename": "04-security-contracts.png",
+      "stage": "security contracts",
+      "title": "Apply security contracts",
+      "alt": "Robotic arms inspect and stamp shields onto contract documents.",
+      "caption": "Make trust, identity, and release-policy expectations explicit and reviewable.",
+      "sha256": "7f803c3b00435863eedf0652816216dc57d801d6d4e8ee49476f1fab6b3d468d",
+      "width": 1122,
+      "height": 1402
+    },
+    {
+      "order": 5,
+      "filename": "05-governed-access.png",
+      "stage": "governed access",
+      "title": "Keep authority bounded",
+      "alt": "Robotic arm places keyhole plates onto identity cards moving along a conveyor.",
+      "caption": "Separate workflow evidence from credentials, deployment, publication, and approval authority.",
+      "sha256": "f4fd67f9142b31fae071df7a6192904da8119c63e7172cd0d444c185453632a7",
+      "width": 1122,
+      "height": 1402
+    },
+    {
+      "order": 6,
+      "filename": "06-proof-by-sabotage.png",
+      "stage": "proof by sabotage",
+      "title": "Challenge the gate",
+      "alt": "Robotic magnifiers inspect green checks and a deliberately broken check on a conveyor.",
+      "caption": "Deliberately break the control and require the validator to catch the failure.",
+      "sha256": "e6e3aa9e0b281ac101dd346a9a5a3998553be86cbceeeda6af9f7cbc88bf9de5",
+      "width": 1122,
+      "height": 1402
+    },
+    {
+      "order": 7,
+      "filename": "07-failure-feedback.png",
+      "stage": "failure feedback",
+      "title": "Route failures back",
+      "alt": "Robotic drills break a mobile interface while failed test samples collect beside it.",
+      "caption": "Attribute failures to the earliest responsible stage and preserve concrete evidence.",
+      "sha256": "72a37eab760f7110f10d0e21823600b0790e88b588ce14473f4e50408e732a2a",
+      "width": 1122,
+      "height": 1402
+    },
+    {
+      "order": 8,
+      "filename": "08-signed-proof-chain.png",
+      "stage": "signed proof chain",
+      "title": "Link signed proof",
+      "alt": "Signed receipts move through a glowing chain and split into accepted and rejected paths.",
+      "caption": "Hash-link reviewed artifacts and receipts while failed evidence remains visibly rejected.",
+      "sha256": "23d468c84d9e11eaa8962522d1ce193c57b0c81a52ab825950cbea1b8f7c2cb7",
+      "width": 1122,
+      "height": 1402
+    },
+    {
+      "order": 9,
+      "filename": "09-verified-release.png",
+      "stage": "verified release",
+      "title": "Release after proof",
+      "alt": "Team celebrates as a verified rocket, green check, and secured folder leave the factory.",
+      "caption": "Ship only after the required gates pass and the human-controlled release boundary is satisfied.",
+      "sha256": "18d146ddd3a162f4a5e464f280dbb5db10d45279772a3b90e765c8d028c2c499",
+      "width": 1122,
+      "height": 1402
+    }
+  ]
+}

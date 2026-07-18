@@ -57,7 +57,7 @@ can contribute workflow examples.
 ## Install And Use
 
 ```bash
-pip install factoryline-code-factory==0.17.1 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.17.2 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 
 factory doctor
 factory pack list
@@ -122,12 +122,24 @@ Current release media:
   source frame used by the Remotion composition.
 - `media/code-factory-quickstart/`: reproducible Remotion source and narration
   input. Re-render with `npm install` followed by `npm run render`.
+- `docs/assets/how-it-works/`: nine owner-supplied concept illustrations with
+  an ordered SHA-256 manifest. They explain the workflow; they are not UI
+  screenshots or measured outcome evidence.
+- `docs/HOW_IT_WORKS_VISUAL.md`: the accessible nine-stage visual walkthrough
+  used by GitHub, the PyPI long description, Product Hunt preparation, and the
+  Zenodo source archive.
 
 Verify the MP4 before attaching it to a release:
 
-The publish workflow attaches both the MP4 and cover to every GitHub release.
+The publish workflow attaches the MP4, cover, and nine concept illustrations to
+every GitHub release.
 The README uses an absolute raw cover URL and the versioned release-asset URL
 so the same video entry renders correctly on GitHub and PyPI.
+
+For Product Hunt, use `docs/PRODUCT_HUNT_GALLERY.md`. Product Hunt currently
+requires at least two gallery images, recommends 1270 x 760, and accepts a full
+YouTube URL for video entries. The supplied concepts are 1122 x 1402 portrait
+PNGs, so preview them without destructive cropping before publishing.
 
 ```powershell
 ffprobe -v error -show_entries format=duration -show_streams `

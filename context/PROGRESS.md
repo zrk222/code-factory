@@ -31,3 +31,29 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-07-17 03:31] GATE plan product-missions approver=human tasks=12 sha=c3cd3a2a3b4bf5ff
 - [2026-07-17 03:33] GATE spec product-missions approver=human strict=True sha=baf005c987158151
 - [2026-07-17 03:33] GATE plan product-missions approver=human tasks=12 sha=baf005c987158151
+- [2026-07-18 08:27] GATE spec visual-listing-v0172 approver=human strict=True sha=2003c1253fe1cbd2
+- [2026-07-18 08:33] GATE plan visual-listing-v0172 approver=human tasks=16 sha=2003c1253fe1cbd2
+- [2026-07-18 08:36] GATE plan visual-listing-v0172 approver=human tasks=16 sha=2003c1253fe1cbd2
+- [2026-07-18 09:00] GATE spec visual-listing-v0172 approver=human strict=True sha=d42f181c1c9e7d1f
+- [2026-07-18 09:00] GATE plan visual-listing-v0172 approver=human tasks=17 sha=d42f181c1c9e7d1f
+- [2026-07-18 09:08] DONE visual-listing-v0172 T1 verify_pass=true  # context resets now
+- [2026-07-18 09:08] DONE visual-listing-v0172 T2 verify_pass=true  # context resets now
+- [2026-07-18 09:08] DONE visual-listing-v0172 T3 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T4 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T5 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T6 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T7 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T8 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T9 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T10 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T11 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T12 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T13 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T14 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T15 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T16 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T17 verify_pass=true  # context resets now
+- [2026-07-18 09:09] DONE visual-listing-v0172 T18 verify_pass=true  # context resets now
+- [2026-07-18 09:10] GATE plan visual-listing-v0172 approver=human tasks=18 sha=d42f181c1c9e7d1f
+- [2026-07-18 09:16] DONE visual-listing-v0172 T19 verify_pass=true  # context resets now
+- [2026-07-18 09:16] GATE plan visual-listing-v0172 approver=human tasks=19 sha=d42f181c1c9e7d1f
