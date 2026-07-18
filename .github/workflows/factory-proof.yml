@@ -34,7 +34,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: "22"
       - name: Install the five-brick factory
@@ -76,7 +76,7 @@ jobs:
           echo '```mermaid' >> "$GITHUB_STEP_SUMMARY"
           cat ".factory/passports/${{ inputs.feature }}.passport.mmd" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: factory-passport-${{ inputs.feature }}
           path: |
