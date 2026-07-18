@@ -32,7 +32,7 @@ jobs:
           java-version: "21"
       - run: chmod +x gradlew
       - run: ./gradlew check buildPlugin verifyPlugin marketplacePreflight
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: factoryline-intellij-plugin
           path: editors/intellij/build/distributions/*.zip
