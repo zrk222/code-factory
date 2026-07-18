@@ -98,6 +98,7 @@ class Meter:
     tokens_out: int = 0
 
     def merge(self, other: "Meter") -> "Meter":
+        """Return a new meter whose counters are the sums of both observations."""
         return Meter(self.wall_ms + other.wall_ms,
                      self.model_calls + other.model_calls,
                      self.tokens_in + other.tokens_in,
@@ -121,6 +122,7 @@ class Receipt:
     ts: str = field(default_factory=lambda: _dt.datetime.now(_dt.timezone.utc).isoformat())
 
     def write(self, root: Path) -> Path:
+        """Write this receipt into the standard layout and return its final path."""
         d = Path(root) / LAYOUT["receipts"]
         d.mkdir(parents=True, exist_ok=True)
         if self.producer_version is None:
@@ -133,6 +135,7 @@ class Receipt:
 
     @classmethod
     def from_dict(cls, payload: dict) -> "Receipt":
+        """Validate and construct a receipt from its serialized dictionary form."""
         required = {"module", "stage", "feature", "ok"}
         missing = required - payload.keys()
         if missing:
@@ -162,10 +165,12 @@ class Receipt:
 
 
 def ensure_layout(root: Path) -> None:
+    """Create every standard Code Factory evidence directory below the given root."""
     root = Path(root)
     for sub in LAYOUT.values():
         (root / sub).mkdir(parents=True, exist_ok=True)
 
 
 def sha_of(path: Path) -> str:
+    """Return a short SHA-256 digest for an existing file, or empty text if absent."""
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16] if Path(path).exists() else ""

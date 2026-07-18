@@ -41,6 +41,7 @@ class TelemetryRecorder:
     spans: list[dict[str, Any]] = field(default_factory=list)
 
     def span(self, name: str, *, attributes: dict[str, Any] | None = None, status: str = "OK", duration_ms: int = 0) -> dict[str, Any]:
+        """Record a bounded telemetry span after validating its status and duration."""
         span = {
             "schema": TELEMETRY_SCHEMA,
             "trace_id": self.trace_id,
@@ -86,6 +87,7 @@ def evaluate_canary(
     policy: CanaryPolicy = CanaryPolicy(),
     previous_digest: str | None = None,
 ) -> dict[str, Any]:
+    """Evaluate canary metrics against explicit thresholds and emit a promotion verdict."""
     requests = int(metrics.get("requests", 0))
     error_rate = float(metrics.get("error_rate", 1.0))
     latency = int(metrics.get("latency_p95_ms", 2**31 - 1))
@@ -113,6 +115,7 @@ def evaluate_canary(
 
 
 def rollback_receipt(deployment: dict[str, Any], *, actor: str, reason: str) -> dict[str, Any]:
+    """Build an auditable rollback receipt bound to the original deployment digest."""
     if deployment.get("decision") != "ROLLBACK":
         raise OperationsError("E_ROLLBACK_NOT_REQUIRED", "rollback receipt requires a failed deployment decision")
     previous = _required(deployment.get("previous_digest"), "previous_digest")
@@ -139,6 +142,7 @@ def vulnerability_response(
     actions: Iterable[str],
     status: str = "OPEN",
 ) -> dict[str, Any]:
+    """Create a severity-aware vulnerability response with deterministic next actions."""
     severity = _required(severity, "severity").upper()
     if severity not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
         raise OperationsError("E_VULNERABILITY_SEVERITY", "severity must be LOW, MEDIUM, HIGH, or CRITICAL")
@@ -156,6 +160,7 @@ def vulnerability_response(
 
 
 def connector_event(*, target: str, event_type: str, tenant_id: str, subject_digest: str, attributes: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Normalize a tenant connector event while rejecting missing authority fields."""
     target = _required(target, "target").lower()
     if target not in {"siem", "ticketing"}:
         raise OperationsError("E_CONNECTOR_TARGET", "target must be siem or ticketing")

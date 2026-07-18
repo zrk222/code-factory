@@ -44,6 +44,7 @@ def _build_hash(module_dir: Path) -> str:
 
 
 def provenance() -> dict:
+    """Return package, source-commit, and build-hash provenance for this installation."""
     module_dir = Path(__file__).resolve().parent
     direct_url = None
     origin = "unknown"

@@ -27,6 +27,7 @@ REQUIRED_COMMANDS = {
 
 
 def version_tuple(value: str) -> tuple[int, ...]:
+    """Parse the numeric release components from a version for compatibility checks."""
     numbers = re.findall(r"\d+", value)
     return tuple(int(part) for part in numbers[:3]) or (0,)
 
@@ -45,10 +46,12 @@ class Compatibility:
 
     @property
     def ok(self) -> bool:
+        """Return whether the installed producer satisfies the required protocol range."""
         return self.installed and self.version_ok and self.commands_ok is not False
 
 
 def package_version(package: str) -> str | None:
+    """Return an installed package version, or None when the package is unavailable."""
     try:
         return metadata.version(package)
     except metadata.PackageNotFoundError:
@@ -62,6 +65,7 @@ def compatibility(
     *,
     reported_version: str | None = None,
 ) -> Compatibility:
+    """Evaluate producer compatibility against explicit minimum and maximum versions."""
     installed = shutil.which(meta["cli"]) is not None
     version = package_version(meta["pip"]) or reported_version
     minimum = MINIMUM_VERSIONS[module]

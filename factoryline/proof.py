@@ -191,6 +191,7 @@ def build_trace(root: Path, feature: str, *, out: Path | None = None) -> dict:
 
 
 def load_trace(path: Path) -> dict:
+    """Load a proof trace JSON object from disk without inferring missing evidence."""
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
@@ -461,6 +462,7 @@ def export_attestations(trace: dict, *, out_dir: Path) -> dict:
 
 
 def git_changed_paths(root: Path, base: str) -> list[str]:
+    """Return normalized paths changed from a Git base revision."""
     proc = subprocess.run(
         ["git", "diff", "--name-only", f"{base}...HEAD"],
         cwd=str(root),
@@ -508,6 +510,7 @@ def public_evidence(root: Path, feature: str, *, trace_path: Path | None = None)
 
 
 def public_evidence_text(evidence: dict) -> str:
+    """Render public evidence as human-readable Markdown without inventing claims."""
     status = "verified" if evidence["verified"] else "not verified"
     lines = [
         "PROOF-CARRYING PR EVIDENCE",

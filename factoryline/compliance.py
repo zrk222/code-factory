@@ -85,6 +85,7 @@ def build_oscal_assessment(
     evidence: Iterable[dict[str, Any]],
     custom_controls: Iterable[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Build an OSCAL assessment from evidence, failing closed on invalid controls."""
     pack = _control_pack(pack_name, custom_controls)
     tenant_id = tenant_id.strip()
     if not tenant_id:

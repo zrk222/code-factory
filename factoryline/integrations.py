@@ -26,6 +26,7 @@ def _required(value: Any, name: str) -> str:
 
 
 def roles_from_groups(groups: Iterable[str], role_map: dict[str, str]) -> tuple[str, ...]:
+    """Map verified directory groups to a sorted, deduplicated role tuple."""
     roles = {role_map[group] for group in groups if group in role_map and role_map[group].strip()}
     if not roles:
         raise ControlPlaneError("E_NO_ROLE", "verified identity has no mapped factory role")
@@ -38,6 +39,7 @@ def principal_from_verified_oidc(
     expected_issuer: str,
     role_map: dict[str, str],
 ) -> Principal:
+    """Build a tenant principal from already verified OIDC claims, failing closed."""
     if claims.get("signature_verified") is not True:
         raise ControlPlaneError("E_UNVERIFIED_IDENTITY", "OIDC claims must be verified before authorization")
     issuer = _required(claims.get("iss"), "iss")
@@ -64,6 +66,7 @@ class SCMEvent:
     payload_sha256: str
 
     def to_dict(self) -> dict[str, str]:
+        """Return the normalized SCM event as a stable serializable dictionary."""
         return self.__dict__.copy()
 
 
@@ -74,6 +77,7 @@ def normalize_scm_event(
     tenant_id: str,
     actor_roles: Iterable[str],
 ) -> tuple[SCMEvent, Principal]:
+    """Normalize a supported SCM webhook and its actor or reject unsafe claims."""
     provider = provider.strip().lower()
     if provider not in SUPPORTED_SCM_PROVIDERS:
         raise ControlPlaneError("E_SCM_PROVIDER", f"unsupported SCM provider: {provider}")
@@ -117,5 +121,6 @@ def normalize_scm_event(
 
 
 def event_json(event: SCMEvent) -> bytes:
+    """Serialize an SCM event into deterministic canonical JSON bytes."""
     return canonical_json(event.to_dict())
 

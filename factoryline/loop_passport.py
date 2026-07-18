@@ -207,6 +207,7 @@ def _validate_states(states: object, errors: list[str]) -> None:
 
 
 def default_manifest(loop_id: str, owner: str) -> dict[str, Any]:
+    """Return a bounded, human-controlled starter manifest for a reusable agent loop."""
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", loop_id):
         raise ValueError("loop id must use lowercase letters, digits, and hyphens, starting with a letter")
     if not owner.strip():
@@ -228,6 +229,7 @@ def default_manifest(loop_id: str, owner: str) -> dict[str, Any]:
 
 
 def init_loop(root: Path, loop_id: str, owner: str, *, force: bool = False) -> dict[str, Any]:
+    """Initialize a loop manifest, refusing to replace governance by default."""
     manifest = default_manifest(loop_id, owner)
     path = Path(root) / ".factory" / "loops" / f"{loop_id}.loop.json"
     if path.exists() and not force:
@@ -238,6 +240,7 @@ def init_loop(root: Path, loop_id: str, owner: str, *, force: bool = False) -> d
 
 
 def load_manifest(path: Path) -> dict[str, Any]:
+    """Load a loop manifest object or raise a precise validation error."""
     payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     if not isinstance(payload, dict):
         raise ValueError("loop manifest must be a JSON object")
@@ -245,6 +248,7 @@ def load_manifest(path: Path) -> dict[str, Any]:
 
 
 def validate_manifest(path: Path) -> dict[str, Any]:
+    """Validate loop topology, budgets, capabilities, approvals, and secret hygiene."""
     path = Path(path)
     manifest = load_manifest(path)
     errors: list[str] = []
@@ -296,6 +300,7 @@ def _loop_mermaid(passport: dict[str, Any]) -> str:
 
 
 def build_loop_passport(root: Path, manifest_path: Path) -> dict[str, Any]:
+    """Build a hash-bound loop passport only after its manifest validates cleanly."""
     root = Path(root)
     validation = validate_manifest(manifest_path)
     manifest = load_manifest(manifest_path)
@@ -332,6 +337,7 @@ def build_loop_passport(root: Path, manifest_path: Path) -> dict[str, Any]:
 
 
 def verify_loop_passport(path: Path) -> dict[str, Any]:
+    """Verify a loop passport schema and manifest hash without trusting its claims."""
     path = Path(path)
     payload = json.loads(path.read_text(encoding="utf-8"))
     errors: list[str] = []
@@ -355,6 +361,7 @@ def verify_loop_passport(path: Path) -> dict[str, Any]:
 
 
 def evaluate_budget(root: Path, manifest_path: Path, usage_path: Path) -> dict[str, Any]:
+    """Compare measured loop usage with declared limits and report every overrun."""
     validation = validate_manifest(manifest_path)
     manifest = load_manifest(manifest_path)
     usage = json.loads(Path(usage_path).read_text(encoding="utf-8-sig"))

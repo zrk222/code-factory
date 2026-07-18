@@ -155,4 +155,6 @@ def test_sigstore_workflow_uses_oidc_and_verifies_exact_workflow_identity():
     assert "signed-receipts.yml@refs/heads/main" in workflow
     assert "https://token.actions.githubusercontent.com" in workflow
     assert "tampered receipt unexpectedly verified" in workflow
+    assert "factory verify-receipts" in workflow
+    assert ".factory/challenges/verify-receipts.json" in workflow
     assert "PYPI_TOKEN" not in workflow

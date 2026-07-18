@@ -154,6 +154,7 @@ def init_opinion_dock(root: Path, owner: str, *, force: bool = False) -> dict[st
 
 
 def verify_opinion_dock(path: Path) -> dict[str, Any]:
+    """Verify an opinion dock's schema and sealed digest before routing signals."""
     dock = _load(path, OPINION_DOCK_SCHEMA, "dock_sha256")
     lines = len(Path(path).read_text(encoding="utf-8").splitlines())
     errors: list[str] = []
@@ -399,6 +400,7 @@ def triage_signal(signal_path: Path, dock_path: Path, root: Path, *, force: bool
 
 def decide_triage(triage_path: Path, root: Path, *, owner: str, decision: str,
                   rationale: str, override_block: bool = False, force: bool = False) -> dict[str, Any]:
+    """Record a human-owned triage outcome, rejecting invalid or replayed decisions."""
     triage = _load(triage_path, TRIAGE_SCHEMA, "triage_sha256")
     dock = _load(Path(triage["opinion_dock"]["path"]), OPINION_DOCK_SCHEMA, "dock_sha256")
     if owner.strip() != dock["owner"]:

@@ -10,6 +10,7 @@ from .contract import Receipt
 
 
 def record_override(root: Path, issue: str, *, reason: str, approved_by: str, expires: str | None = None) -> dict:
+    """Record a named, accountable override with its approver and optional expiry."""
     if not reason.strip() or not approved_by.strip():
         raise ValueError("reason and approved_by are required for an auditable override")
     created = datetime.now(timezone.utc).isoformat()
@@ -27,6 +28,7 @@ def record_override(root: Path, issue: str, *, reason: str, approved_by: str, ex
 
 
 def ci_template(feature: str) -> str:
+    """Return a CI workflow template that verifies the named feature's evidence."""
     return f"""name: factory-proof
 on: [pull_request]
 permissions:

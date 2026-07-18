@@ -40,6 +40,7 @@ DEFAULT_POLICY = {
 
 
 def write_policy(root: Path, *, force: bool = False) -> Path:
+    """Write the default optimizer policy, refusing replacement unless forced."""
     root = Path(root)
     path = root / "factory.policy.json"
     if path.exists() and not force:

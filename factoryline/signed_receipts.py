@@ -33,6 +33,7 @@ class SigstoreResult:
     schema: str = RESULT_SCHEMA
 
     def to_dict(self) -> dict:
+        """Return the Sigstore operation result as a stable serializable dictionary."""
         return {
             "schema": self.schema,
             "receipt_path": self.receipt_path,
@@ -45,10 +46,12 @@ class SigstoreResult:
 
 
 def bundle_path_for(receipt_path: Path) -> Path:
+    """Return the conventional Sigstore bundle path for a receipt file."""
     return Path(f"{Path(receipt_path)}.sigstore.json")
 
 
 def validate_receipt(receipt_path: Path) -> dict:
+    """Validate receipt structure or raise SignedReceiptError with a stable code."""
     path = Path(receipt_path)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -65,6 +68,7 @@ def validate_receipt(receipt_path: Path) -> dict:
 
 
 def resolve_sigstore_command(command: Sequence[str] | None = None) -> list[str]:
+    """Resolve a safe Sigstore argv prefix or raise SignedReceiptError if unavailable."""
     if command:
         return list(command)
     executable = shutil.which("sigstore")
@@ -92,6 +96,7 @@ def _run(command: list[str], *, timeout: int) -> subprocess.CompletedProcess[str
 
 
 def receipt_status(receipt_path: Path) -> SigstoreResult:
+    """Report whether a receipt and its detached Sigstore bundle are present."""
     validate_receipt(receipt_path)
     receipt_path = Path(receipt_path).resolve()
     bundle_path = bundle_path_for(receipt_path)
@@ -106,6 +111,7 @@ def sign_receipt(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     overwrite: bool = False,
 ) -> SigstoreResult:
+    """Sign one validated receipt or raise SignedReceiptError on any tool failure."""
     validate_receipt(receipt_path)
     receipt_path = Path(receipt_path).resolve()
     bundle_path = bundle_path_for(receipt_path)
@@ -130,6 +136,7 @@ def verify_receipt(
     command: Sequence[str] | None = None,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> SigstoreResult:
+    """Verify a receipt bundle and exact identity or raise SignedReceiptError."""
     validate_receipt(receipt_path)
     if not cert_identity.strip() or not cert_oidc_issuer.strip():
         raise SignedReceiptError(

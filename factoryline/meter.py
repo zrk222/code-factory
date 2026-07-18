@@ -73,6 +73,7 @@ class MeterLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def record(self, t: StageTiming) -> None:
+        """Append one measured stage timing to the newline-delimited meter ledger."""
         qualities = {"exact", "estimated", "unknown"}
         if t.usage_quality not in qualities or t.cost_quality not in qualities:
             raise ValueError("meter quality must be exact, estimated, or unknown")
@@ -95,6 +96,7 @@ class MeterLog:
             f.write(json.dumps(t.__dict__) + "\n")
 
     def stages(self) -> list[StageTiming]:
+        """Load all valid recorded stages while ignoring blank ledger lines."""
         if not self.path.exists():
             return []
         out = []

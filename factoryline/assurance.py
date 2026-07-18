@@ -138,6 +138,7 @@ class RiskDAG:
         return ordered
 
     def plan(self, changed_paths: Iterable[str], *, minimum_risk: int = 1) -> dict[str, Any]:
+        """Select changed gates plus transitive dependencies in stable order."""
         changed = tuple(sorted({str(path).replace("\\", "/") for path in changed_paths if str(path).strip()}))
         selected: set[str] = {
             node.name for node in self.nodes.values()
@@ -222,6 +223,7 @@ def run_constrained(
 
 
 def build_cyclonedx_sbom(components: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Build a deterministic CycloneDX inventory from validated component rows."""
     normalized = []
     for component in components:
         if not isinstance(component, dict):
@@ -251,6 +253,7 @@ VEX_STATUSES = frozenset({"not_affected", "affected", "fixed", "under_investigat
 
 
 def build_vex(entries: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Build deterministic VEX entries or raise AssuranceError for invalid status."""
     normalized = []
     for entry in entries:
         if not isinstance(entry, dict):
@@ -324,6 +327,7 @@ def policy_mutations(policy: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def verify_policy_mutations(policy: dict[str, Any], evaluator: Callable[[dict[str, Any]], bool]) -> dict[str, Any]:
+    """Require a policy evaluator to reject every delete and invert mutation."""
     baseline = bool(evaluator(policy))
     if not baseline:
         raise AssuranceError("E_POLICY_BASELINE", "policy evaluator did not pass the unmutated policy")
@@ -402,6 +406,7 @@ def verify_policy_command(
 
 
 def private_challenge_manifest(name: str, challenges: Iterable[dict[str, Any]], *, tenant_id: str) -> dict[str, Any]:
+    """Describe private challenges by digest without disclosing their payloads."""
     payload = [challenge for challenge in challenges]
     if not payload:
         raise AssuranceError("E_CHALLENGE_EMPTY", "private challenge set cannot be empty")

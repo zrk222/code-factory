@@ -62,13 +62,16 @@ class Attribution:
 
     @property
     def rate(self) -> float:
+        """Return the passing-unit ratio, using zero for empty attribution."""
         return self.n_passed / self.n_checked if self.n_checked else 0.0
 
     @property
     def failures(self) -> list[UnitResult]:
+        """Return failed units while preserving their original order."""
         return [unit for unit in self.units if not unit.passed]
 
     def dominant_failure_class(self) -> FailureClass | None:
+        """Return the most frequent failure class with deterministic ties."""
         counts = {failure_class: 0 for failure_class in FailureClass}
         for unit in self.failures:
             counts[unit.failure_class] += 1
@@ -78,6 +81,7 @@ class Attribution:
         return next(kind for kind in FailureClass if counts[kind] == maximum)
 
     def to_dict(self) -> dict:
+        """Serialize units with derived rate and dominant failure class."""
         payload = asdict(self)
         payload["rate"] = self.rate
         dominant = self.dominant_failure_class()
@@ -86,6 +90,7 @@ class Attribution:
 
     @classmethod
     def from_dict(cls, payload: dict) -> "Attribution":
+        """Reconstruct validated attribution data from a dictionary payload."""
         units = [
             UnitResult(
                 unit=item["unit"],
@@ -109,5 +114,6 @@ class Attribution:
 
 
 def attribution(stage: str, units: Iterable[UnitResult]) -> Attribution:
+    """Materialize unit results and compute checked and passing counts."""
     materialized = list(units)
     return Attribution(stage, len(materialized), sum(unit.passed for unit in materialized), materialized)

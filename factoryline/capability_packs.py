@@ -74,6 +74,7 @@ def _files(pack_root: Path) -> dict[str, str]:
 
 
 def pack_payload(pack_root: Path) -> dict[str, Any]:
+    """Build the canonical, content-addressed payload for a capability pack."""
     manifest = _load_json(Path(pack_root) / "pack.yaml")
     return {
         "schema": PACK_PAYLOAD_SCHEMA,
@@ -234,6 +235,7 @@ def _verified_signature(root: Path) -> dict[str, Any]:
 
 
 def validate_pack(pack_root: Path, *, verify_signature: bool = True, mutate: bool = True) -> dict[str, Any]:
+    """Validate a pack's manifest, files, signature, and optional mutation checks."""
     root = Path(pack_root).resolve()
     manifest = _load_json(root / "pack.yaml")
     errors = _manifest_errors(manifest, root)
@@ -272,6 +274,7 @@ def validate_pack(pack_root: Path, *, verify_signature: bool = True, mutate: boo
 
 
 def builtin_packs() -> list[dict[str, Any]]:
+    """Return validated metadata for every capability pack shipped with Code Factory."""
     result = []
     if not BUILTIN_ROOT.is_dir():
         raise CapabilityPackError("PACK_BUILTINS_MISSING", f"built-in pack directory is missing: {BUILTIN_ROOT}")
@@ -289,6 +292,7 @@ def builtin_packs() -> list[dict[str, Any]]:
 
 
 def target_inventory() -> dict[str, dict[str, Any]]:
+    """Index built-in target packs by deployment target for deterministic discovery."""
     inventory = {}
     for pack in builtin_packs():
         if pack.get("kind") == "target":
@@ -343,6 +347,7 @@ def _atomic_swap(staging: Path, destination: Path, backup: Path) -> None:
 
 
 def install_pack(pack_root: Path, workspace: Path, *, force: bool = False) -> dict[str, Any]:
+    """Atomically install a verified capability pack, refusing replacement by default."""
     validation = validate_pack(pack_root, verify_signature=True, mutate=True)
     if not validation["valid"]:
         raise CapabilityPackError("PACK_VALIDATION_FAILED", "; ".join(validation["errors"]))

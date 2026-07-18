@@ -21,8 +21,10 @@ jobs:
           python-version: "3.12"
       - name: Create a real factory receipt
         run: |
-          python -m pip install -e ".[sigstore]"
+          python -m pip install -e ".[sigstore,enterprise]"
           python -c "from pathlib import Path; from factoryline.contract import Receipt; p=Receipt('factoryline','signed-receipts','ci',True).write(Path('.')); Path('ci-receipt.json').write_bytes(p.read_bytes())"
+      - name: Challenge the offline receipt verification chain
+        run: factory verify-receipts --root . --out .factory/challenges/verify-receipts.json --json
       - name: Sign and verify with the GitHub OIDC identity
         uses: sigstore/gh-action-sigstore-python@v3.2.0
         with:
@@ -46,3 +48,4 @@ jobs:
           path: |
             ci-receipt.json
             ci-receipt.json.sigstore.json
+            .factory/challenges/verify-receipts.json
