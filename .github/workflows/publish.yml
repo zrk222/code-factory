@@ -109,6 +109,7 @@ jobs:
           release-bundle/editors/*
           docs/assets/code-factory-quickstart-v0171.mp4
           docs/assets/code-factory-quickstart-cover-v0171.png
+          docs/assets/how-it-works/*.png
           docs/assets/*.svg
           docs/assets/verify-policy.gif
           --clobber

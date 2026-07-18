@@ -2,10 +2,27 @@
 
 ## Unreleased
 
+## 0.17.2 - 2026-07-18
+
+### Added
+
+- Added nine owner-supplied concept illustrations, an ordered SHA-256 asset
+  manifest, and an accessible walkthrough for GitHub, PyPI, Product Hunt
+  preparation, GitHub release assets, and the Zenodo source archive.
+- Added deterministic publication tests for image identity, dimensions, order,
+  alt text, absolute PyPI image URLs, and visual evidence boundaries.
+
 ### Fixed
 
 - Aligned all public install instructions, IDE download links, and narrated
   quick-start asset names with the verified `0.17.1` release.
+- Corrected Product Hunt instructions: gallery video entries require a full
+  YouTube URL; a local MP4 is not a valid video entry.
+
+### Evidence boundary
+
+- The new artwork is labeled as concept illustration, not shipped UI or
+  measured outcome evidence. The metric-bearing draft infographic is excluded.
 
 ## 0.17.1 - 2026-07-17
 

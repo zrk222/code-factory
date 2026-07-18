@@ -31,11 +31,18 @@ ask for votes, stars, or reviews.
 > I would love feedback on one question: what would you need to prove before
 > allowing an AI-generated change into a production repository?
 
-Attach `docs/assets/code-factory-quickstart-v0171.mp4` as the first video and
-`docs/assets/code-factory-quickstart-cover-v0171.png` as its cover. The video is
-a 60-second walkthrough of the exact shipped Factory Studio UI, including the
-Product Graph, value-slice queue, approval decision, proof timeline, and Meter
-v2. Do not replace it with a concept animation or a stale dashboard image.
+**Exact shipped UI:** the 60-second walkthrough at
+`docs/assets/code-factory-quickstart-v0171.mp4` shows the shipped Factory Studio
+UI, including the Product Graph, value-slice queue, approval decision, proof
+timeline, and Meter v2. Product Hunt accepts a full YouTube URL for video
+entries, not a local MP4; upload this exact file to YouTube before adding it as
+a video. Do not replace it with concept art or a stale dashboard image.
+
+**Concept illustrations:** upload all nine files from
+`docs/assets/how-it-works/` in the exact order recorded in
+`docs/PRODUCT_HUNT_GALLERY.md`. They explain the workflow and are not UI
+screenshots or measured outcome evidence. Preview the portrait originals in the
+Product Hunt editor before publishing.
 
 ## WizeMe.APP: Product Hunt Maker Comment
 
@@ -150,7 +157,7 @@ Show HN: A proof-first factory for AI-assisted software work
 > The components work independently, but the base package connects them:
 >
 > ```bash
-> pip install factoryline-code-factory==0.17.1 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+> pip install factoryline-code-factory==0.17.2 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 > factory doctor --strict --json
 > ```
 >

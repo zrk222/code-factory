@@ -24,7 +24,7 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-07-17"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-07-18"
 
 
 def test_pypi_storefront_has_identity_and_canonical_links():
@@ -84,6 +84,9 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
+    assert metadata["version"] == "0.17.2"
+    assert metadata["publication_date"] == "2026-07-18"
+    assert "conceptual visual walkthrough" in metadata["description"]
 
     assets = ROOT / "docs" / "assets"
     for name in (
@@ -97,6 +100,14 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
         "code-factory-quickstart-v0171.mp4",
     ):
         assert (assets / name).is_file(), name
+
+    visual_assets = assets / "how-it-works"
+    assert len(list(visual_assets.glob("*.png"))) == 9
+    assert (visual_assets / "manifest.json").is_file()
+    assert (ROOT / "docs" / "HOW_IT_WORKS_VISUAL.md").is_file()
+
+    source_manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+    assert "recursive-include docs *.md *.gif *.png *.svg *.mp4 *.json" in source_manifest
 
     for path in (
         ROOT / "README.md",
