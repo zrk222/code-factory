@@ -29,6 +29,7 @@ def _parent(left: str, right: str) -> str:
 
 
 def merkle_root(leaves: Iterable[str]) -> str:
+    """Compute a deterministic Merkle root for ordered disclosure values."""
     values = sorted({_leaf(value) for value in leaves})
     if not values:
         raise PrivacyError("E_EMPTY_MERKLE", "Merkle commitment needs at least one leaf")
@@ -43,6 +44,7 @@ def merkle_root(leaves: Iterable[str]) -> str:
 
 
 def merkle_disclosure(leaves: Iterable[str], disclosed: str) -> dict[str, Any]:
+    """Build a Merkle inclusion disclosure for one value or fail if it is absent."""
     values = sorted({_leaf(value) for value in leaves})
     disclosed = _leaf(disclosed)
     if disclosed not in values:
@@ -74,6 +76,7 @@ def merkle_disclosure(leaves: Iterable[str], disclosed: str) -> dict[str, Any]:
 
 
 def verify_merkle_disclosure(disclosure: dict[str, Any]) -> bool:
+    """Verify a Merkle disclosure without accepting malformed proof directions."""
     current = _leaf(disclosure.get("leaf"))
     for step in disclosure.get("proof", []):
         sibling = _leaf(step.get("digest"))
@@ -82,6 +85,7 @@ def verify_merkle_disclosure(disclosure: dict[str, Any]) -> bool:
 
 
 def bbs_status() -> dict[str, Any]:
+    """Report the bounded status of optional BBS selective-disclosure support."""
     try:
         __import__("bbs")
     except ImportError:
@@ -95,6 +99,7 @@ def bbs_status() -> dict[str, Any]:
 
 
 def issue_bbs_credential(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Refuse unavailable BBS issuance with an explicit, stable privacy error."""
     status = bbs_status()
     if not status["available"]:
         raise PrivacyError(status["error"]["code"], status["error"]["message"])
@@ -102,6 +107,7 @@ def issue_bbs_credential(*args: Any, **kwargs: Any) -> dict[str, Any]:
 
 
 def zkvm_pilot_status() -> dict[str, Any]:
+    """Report the non-production status and constraints of the zkVM pilot."""
     try:
         __import__("factory_zkvm_backend")
     except ImportError:

@@ -61,6 +61,7 @@ ROLE_ACTIONS: dict[str, frozenset[str]] = {
 
 
 def canonical_json(value: Any) -> bytes:
+    """Serialize a control-plane value into signature-stable canonical JSON bytes."""
     try:
         return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     except (TypeError, ValueError) as exc:
@@ -68,6 +69,7 @@ def canonical_json(value: Any) -> bytes:
 
 
 def sha256(value: bytes) -> str:
+    """Return the full lowercase SHA-256 digest for the supplied bytes."""
     return hashlib.sha256(value).hexdigest()
 
 
@@ -204,6 +206,7 @@ class EvidenceStore:
         db.execute("UPDATE audit_events SET event_hash = ? WHERE sequence = ?", (event_hash, sequence))
 
     def put(self, principal: Principal, payload: dict[str, Any], *, evidence_id: str | None = None) -> dict[str, Any]:
+        """Store tenant evidence and append its authorization event to the audit chain."""
         if not isinstance(payload, dict):
             raise ControlPlaneError("E_INVALID_EVIDENCE", "evidence payload must be a JSON object")
         tenant_id = str(payload.get("tenant_id", ""))
@@ -239,6 +242,7 @@ class EvidenceStore:
             return self._row_payload(row)
 
     def get(self, principal: Principal, tenant_id: str, evidence_id: str) -> dict[str, Any]:
+        """Return one authorized tenant evidence record or raise a specific control error."""
         authorize(principal, "evidence.read", tenant_id)
         with self._connect() as db:
             row = db.execute(
@@ -250,6 +254,7 @@ class EvidenceStore:
             return self._row_payload(row)
 
     def list(self, principal: Principal, tenant_id: str) -> list[dict[str, Any]]:
+        """List evidence visible to the principal within exactly one tenant boundary."""
         authorize(principal, "evidence.list", tenant_id)
         with self._connect() as db:
             rows = db.execute(
@@ -259,6 +264,7 @@ class EvidenceStore:
             return [self._row_payload(row) for row in rows]
 
     def request_approval(self, principal: Principal, tenant_id: str, evidence_id: str, reason: str) -> dict[str, Any]:
+        """Create a pending approval request bound to existing evidence and its tenant."""
         authorize(principal, "approval.request", tenant_id)
         if not reason.strip():
             raise ControlPlaneError("E_REASON_REQUIRED", "approval reason is required")
@@ -284,6 +290,7 @@ class EvidenceStore:
             return dict(db.execute("SELECT * FROM approvals WHERE approval_id = ?", (approval_id,)).fetchone())
 
     def get_approval(self, principal: Principal, tenant_id: str, approval_id: str, *, allow_requester: bool = False) -> dict[str, Any]:
+        """Return an approval after enforcing reviewer or explicitly allowed requester access."""
         authorize(principal, "evidence.read", tenant_id)
         with self._connect() as db:
             row = db.execute(
@@ -302,6 +309,7 @@ class EvidenceStore:
         decision: str,
         reason: str,
     ) -> dict[str, Any]:
+        """Record one terminal approval decision and reject unauthorized or replayed decisions."""
         authorize(principal, "approval.decide", tenant_id)
         decision = decision.strip().lower()
         if decision not in {"approved", "rejected"}:
@@ -330,6 +338,7 @@ class EvidenceStore:
             return dict(db.execute("SELECT * FROM approvals WHERE approval_id = ?", (approval_id,)).fetchone())
 
     def verify_audit(self, principal: Principal, tenant_id: str) -> dict[str, Any]:
+        """Verify the tenant audit hash chain and report every detected integrity failure."""
         authorize(principal, "audit.verify", tenant_id)
         with self._connect() as db:
             rows = db.execute(
@@ -372,4 +381,5 @@ class EvidenceStore:
 
 
 def principal_from_args(subject: str, tenant_id: str, roles: Iterable[str]) -> Principal:
+    """Construct a normalized principal from trusted command-line identity arguments."""
     return Principal(subject=subject, tenant_id=tenant_id, roles=tuple(sorted({role.strip() for role in roles if role.strip()})))

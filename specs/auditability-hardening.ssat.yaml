@@ -1,0 +1,23 @@
+name: auditability-hardening
+modules:
+  - name: receipt_challenge
+    path: factoryline/receipt_challenge.py
+    imports:
+      - pathlib.Path
+      - typing.Any
+    functions:
+      - name: verify_receipt_mutations
+        args:
+          - "root: Path"
+          - "out: Path | None = None"
+        returns: dict[str, Any]
+dependencies:
+  - from: receipt_challenge
+    to: enterprise_receipts
+invariants:
+  - name: mutation_gate_is_offline
+    forbid_pattern: "\\b(?:requests|urllib|httpx|socket|subprocess)\\b"
+    scopes:
+      - module: receipt_challenge
+        symbol: verify_receipt_mutations
+        max_lines: 240

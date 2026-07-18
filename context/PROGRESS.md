@@ -57,3 +57,8 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-07-18 09:10] GATE plan visual-listing-v0172 approver=human tasks=18 sha=d42f181c1c9e7d1f
 - [2026-07-18 09:16] DONE visual-listing-v0172 T19 verify_pass=true  # context resets now
 - [2026-07-18 09:16] GATE plan visual-listing-v0172 approver=human tasks=19 sha=d42f181c1c9e7d1f
+- [2026-07-18 09:55] GATE spec auditability-hardening approver=human strict=True sha=6c59ce786bafab6e
+- [2026-07-18 10:00] GATE spec auditability-hardening approver=human strict=True sha=72170503c294312d
+- [2026-07-18 10:00] GATE plan auditability-hardening approver=human tasks=22 sha=72170503c294312d
+- [2026-07-18 11:01] GATE spec auditability-hardening approver=human strict=True sha=3abc5e8bcc835fac
+- [2026-07-18 11:02] GATE plan auditability-hardening approver=human tasks=22 sha=3abc5e8bcc835fac

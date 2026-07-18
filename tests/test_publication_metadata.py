@@ -56,6 +56,7 @@ def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
     assert "packages-dir: release-bundle/python/" in workflow
     assert "pypa/gh-action-pypi-publish@release/v1" in workflow
     assert "attestations: true" in workflow
+    assert "gradle/actions/setup-gradle@v6.2.0" in workflow
     for forbidden in (
         "PYPI_TOKEN",
         "API_TOKEN",
@@ -63,6 +64,18 @@ def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
         "password:",
     ):
         assert forbidden not in workflow
+
+
+def test_marketplace_workflow_uses_current_gradle_action_and_scoped_secret():
+    workflow = (ROOT / ".github" / "workflows" / "jetbrains-marketplace.yml").read_text(encoding="utf-8")
+
+    assert 'default: "v0.17.3"' in workflow
+    assert "environment: jetbrains-marketplace" in workflow
+    assert "gradle/actions/setup-gradle@v6.2.0" in workflow
+    assert "gradle/actions/setup-gradle@v4" not in workflow
+    assert "secrets.JETBRAINS_MARKETPLACE_TOKEN" in workflow
+    assert "Test, verify, and check Marketplace package metadata" in workflow
+    assert "Publish verified plugin update" in workflow
 
 
 def test_ci_builds_checks_and_smokes_the_installable_package():
@@ -84,7 +97,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.17.2"
+    assert metadata["version"] == "0.17.3"
     assert metadata["publication_date"] == "2026-07-18"
     assert "conceptual visual walkthrough" in metadata["description"]
 

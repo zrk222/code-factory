@@ -10,6 +10,7 @@ from .proof import load_trace, verify_trace
 
 
 def challenge_trace(trace_path: Path, root: Path | None = None) -> dict:
+    """Mutate a proof trace and report whether each invalid variant is rejected."""
     trace_path = Path(trace_path)
     trace = load_trace(trace_path)
     baseline = verify_trace(trace_path, root=root)

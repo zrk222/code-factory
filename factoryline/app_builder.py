@@ -79,6 +79,7 @@ class AppBlueprint:
     generated_at: str
 
     def to_dict(self) -> dict:
+        """Serialize the blueprint as the stable public application schema."""
         return {
             "schema": APP_SCHEMA,
             "app": {
@@ -138,6 +139,7 @@ def build_blueprint(
     stack: str = "nextjs-fastapi-postgres",
     purpose: str = "auto",
 ) -> AppBlueprint:
+    """Build a deterministic application blueprint or reject an unknown stack."""
     if stack not in STACKS:
         raise ValueError(f"unknown stack: {stack}")
     resolved_purpose = _purpose_from_text(text, purpose)
@@ -415,6 +417,7 @@ def _forge_state(blueprint: AppBlueprint) -> str:
 
 
 def scaffold_app(blueprint: AppBlueprint, *, out_dir: Path, prd_text: str) -> dict:
+    """Write an app-shaped starter into the requested output directory."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     _write(out_dir / "app_blueprint.json", json.dumps(blueprint.to_dict(), indent=2))
@@ -543,6 +546,7 @@ export default defineConfig({ plugins: [react()] });
 
 def app_from_prd(prd_path: Path, *, out_dir: Path | None = None, name: str | None = None,
                  stack: str = "nextjs-fastapi-postgres", purpose: str = "auto") -> dict:
+    """Build and scaffold an application from a readable PRD file."""
     prd_path = Path(prd_path)
     text = prd_path.read_text(encoding="utf-8")
     blueprint = build_blueprint(text, source=str(prd_path), name=name, stack=stack, purpose=purpose)
@@ -552,6 +556,7 @@ def app_from_prd(prd_path: Path, *, out_dir: Path | None = None, name: str | Non
 
 def app_from_prompt(prompt: str, *, out_dir: Path | None = None, name: str | None = None,
                     stack: str = "nextjs-fastapi-postgres", purpose: str = "auto") -> dict:
+    """Build and scaffold an application from a product prompt."""
     prd_text = f"# {_extract_name(prompt, name).replace('-', ' ').title()}\n\n{prompt}\n"
     blueprint = build_blueprint(prd_text, source="prompt", name=name, stack=stack, purpose=purpose)
     target = Path(out_dir) if out_dir else Path.cwd() / blueprint.name

@@ -163,6 +163,61 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         thread.join(timeout=5)
 
 
+def test_http_mission_decision_rejects_wrong_token_escape_and_replay(tmp_path: Path):
+    from test_product_missions import PRD
+
+    mission = create_product_mission_from_studio(tmp_path, {
+        "action": "product-mission", "prompt": PRD, "name": "decision-api",
+        "executor": "codex", "owner": "product-owner",
+    })
+    decision = {
+        "action": "mission-decision",
+        "mission": mission["mission"]["path"],
+        "owner": "product-owner",
+        "decision": "approved_execution",
+        "rationale": "The bounded mission and budget are ready.",
+    }
+    server, token = create_server(tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def post(payload: dict, session_token: str) -> tuple[int, dict]:
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        body = json.dumps(payload)
+        connection.request("POST", "/api/mission-decision", body=body, headers={
+            "Content-Type": "application/json",
+            "X-Factory-Studio-Token": session_token,
+        })
+        response = connection.getresponse()
+        parsed = json.loads(response.read())
+        connection.close()
+        return response.status, parsed
+
+    try:
+        status, rejected = post(decision, "wrong-token")
+        assert status == 403
+        assert rejected["code"] == "TOKEN_REQUIRED"
+
+        escaped = {**decision, "mission": str(tmp_path.parent / "foreign-mission.json")}
+        status, rejected = post(escaped, token)
+        assert status == 403
+        assert rejected["code"] == "PATH_REJECTED"
+
+        status, accepted = post(decision, token)
+        assert status == 201
+        receipt_path = Path(accepted["path"])
+        original = receipt_path.read_bytes()
+
+        status, rejected = post(decision, token)
+        assert status == 400
+        assert rejected["code"] == "ARTIFACT_EXISTS"
+        assert receipt_path.read_bytes() == original
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_handler_binding_and_serve_lifecycle(tmp_path: Path, monkeypatch, capsys):
     handler = make_handler(tmp_path, "session-token")
     assert handler.studio_root == tmp_path

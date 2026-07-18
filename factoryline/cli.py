@@ -262,6 +262,7 @@ def _plan() -> int:
 
 
 def main(argv=None) -> int:
+    """Parse FactoryLine commands, dispatch one handler, and return its process code."""
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "--version":
         return _emit_version("--json" in argv)
@@ -339,6 +340,11 @@ def main(argv=None) -> int:
     receipt_verify.add_argument("--timeout", type=int, default=300)
     receipt_status = receipt_sub.add_parser("status", help="report signature presence or UNSIGNED without claiming verification")
     receipt_status.add_argument("path")
+
+    s = sub.add_parser("verify-receipts", help="challenge the offline Receipt v2 verification chain")
+    s.add_argument("--root", default=".")
+    s.add_argument("--out")
+    s.add_argument("--json", action="store_true")
 
     s = sub.add_parser("enterprise", help="create and verify offline Receipt v2 evidence")
     enterprise_sub = s.add_subparsers(required=True, dest="enterprise_cmd")
@@ -1219,6 +1225,21 @@ def main(argv=None) -> int:
             return 1
         print(json.dumps(result.to_dict(), indent=2))
         return 0 if result.verdict != "UNSIGNED" else 1
+    if a.cmd == "verify-receipts":
+        from .enterprise_receipts import EnterpriseReceiptError
+        from .receipt_challenge import MUTATION_GATE_SCHEMA, verify_receipt_mutations
+        try:
+            result = verify_receipt_mutations(Path(a.root), Path(a.out) if a.out else None)
+        except (EnterpriseReceiptError, OSError) as exc:
+            code = exc.code if isinstance(exc, EnterpriseReceiptError) else "E_INPUT"
+            message = exc.message if isinstance(exc, EnterpriseReceiptError) else str(exc)
+            print(json.dumps({"schema": MUTATION_GATE_SCHEMA, "passed": False, "error": {"code": code, "message": message}}, indent=2))
+            return 1
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(f"{result['marker']}: {result['rejected']}/{result['attempted']} receipt mutations rejected; receipt={result['path']}")
+        return 0 if result["passed"] else 1
     if a.cmd == "enterprise":
         from .enterprise_receipts import (
             EnterpriseReceiptError,

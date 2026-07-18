@@ -52,7 +52,7 @@ def _require_crypto() -> None:
 def _canonical(value: Any) -> bytes:
     try:
         return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
         raise EnterpriseReceiptError("E_INVALID_PAYLOAD", str(exc)) from exc
 
 
@@ -120,6 +120,7 @@ def _timestamp(value: str) -> datetime:
 
 
 def validate_receipt_v2(payload: dict) -> dict:
+    """Validate a Receipt v2 payload or raise EnterpriseReceiptError with a stable code."""
     required = {"schema", "module", "stage", "feature", "ok", "tenant_id", "run_id", "ts"}
     if payload.get("schema") != RECEIPT_V2_SCHEMA:
         raise EnterpriseReceiptError("E_INVALID_RECEIPT", "schema must be factory.receipt.v2")
@@ -190,6 +191,7 @@ def _signature_metadata(*, keyid: str, identity: str, issuer: str, signature: by
 
 
 def sign_payload(payload: dict, *, payload_type: str, private_key_path: Path, keyid: str, identity: str, issuer: str) -> dict:
+    """Create a DSSE envelope or raise EnterpriseReceiptError for invalid signing inputs."""
     _require_crypto()
     if not isinstance(payload, dict):
         raise EnterpriseReceiptError("E_INVALID_PAYLOAD", "payload must be an object")
@@ -206,6 +208,7 @@ def sign_payload(payload: dict, *, payload_type: str, private_key_path: Path, ke
 
 
 def seal_receipt_v2(payload: dict, private_key_path: Path, keyid: str, identity: str, issuer: str, out: Path) -> dict:
+    """Validate, sign, and write Receipt v2 or raise EnterpriseReceiptError fail closed."""
     validate_receipt_v2(payload)
     envelope = sign_payload(payload, payload_type=RECEIPT_PAYLOAD_TYPE, private_key_path=private_key_path, keyid=keyid, identity=identity, issuer=issuer)
     _write_json(Path(out), envelope)
@@ -270,6 +273,7 @@ def _revoked(revocations: dict, *, keyid: str, identity: str, receipt_ts: dateti
 
 
 def verify_receipt_v2(path: Path, trust_root_path: Path, policy_bundle_path: Path | None = None, revocations_path: Path | None = None) -> dict:
+    """Verify DSSE, identity, policy, and revocation or raise EnterpriseReceiptError."""
     envelope = _read_json(Path(path))
     if envelope.get("schema") != DSSE_SCHEMA:
         if str(envelope.get("schema", "")).startswith("factory.receipt.v1"):
@@ -308,6 +312,7 @@ def verify_receipt_v2(path: Path, trust_root_path: Path, policy_bundle_path: Pat
 
 
 def sign_policy_bundle(policy: dict, private_key_path: Path, keyid: str, identity: str, issuer: str, out: Path) -> dict:
+    """Sign and persist a policy bundle or raise EnterpriseReceiptError on invalid input."""
     if not isinstance(policy, dict):
         raise EnterpriseReceiptError("E_INVALID_POLICY", "policy must be an object")
     policy_bytes = _canonical(policy)
@@ -318,6 +323,7 @@ def sign_policy_bundle(policy: dict, private_key_path: Path, keyid: str, identit
 
 
 def sign_revocations(entries: list[dict], private_key_path: Path, keyid: str, identity: str, issuer: str, out: Path) -> dict:
+    """Sign a revocation list or raise EnterpriseReceiptError on malformed entries."""
     if not isinstance(entries, list) or any(not isinstance(item, dict) for item in entries):
         raise EnterpriseReceiptError("E_INVALID_REVOCATIONS", "entries must be a list of objects")
     payload = {"schema": REVOCATIONS_SCHEMA, "generated_at": _now(), "entries": entries}
@@ -327,6 +333,7 @@ def sign_revocations(entries: list[dict], private_key_path: Path, keyid: str, id
 
 
 def generate_key_material(*, out_dir: Path, keyid: str, identity: str, issuer: str) -> dict:
+    """Generate local Ed25519 material or raise EnterpriseReceiptError fail closed."""
     _require_crypto()
     if not all(isinstance(value, str) and value.strip() for value in (keyid, identity, issuer)):
         raise EnterpriseReceiptError("E_IDENTITY_REQUIRED", "key id, identity, and issuer are required")

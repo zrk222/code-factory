@@ -118,7 +118,7 @@ def _assess_check(root: Path, check: object) -> tuple[str, bool, list[dict[str, 
 
 
 def assess_migration_readiness(manifest_path: Path, root: Path, *, force: bool = False) -> dict[str, Any]:
-    """Separate registered checks from executable, hash-bound proof."""
+    """Separate registration from proof or raise MigrationError for unsafe inputs."""
     root = Path(root).resolve()
     manifest = _load(manifest_path, READINESS_INPUT_SCHEMA)
     checks = manifest.get("checks")
@@ -161,16 +161,40 @@ def assess_migration_readiness(manifest_path: Path, root: Path, *, force: bool =
     return {**receipt, "path": str(out)}
 
 
+def _verify_bound_records(values: object, label: str) -> list[str]:
+    """Return structured validation errors for hash-bound receipt file records."""
+    if not isinstance(values, list):
+        return [f"{label} records must be a list"]
+    errors: list[str] = []
+    for index, item in enumerate(values):
+        if not isinstance(item, dict):
+            errors.append(f"{label} record {index} must be an object")
+            continue
+        raw_path = item.get("path")
+        digest = item.get("sha256")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            errors.append(f"{label} record {index} path is invalid")
+            continue
+        if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            errors.append(f"{label} record {index} sha256 is invalid")
+            continue
+        try:
+            path = Path(raw_path).resolve()
+            if not path.is_file() or _sha_path(path) != digest:
+                errors.append(f"{label} drift: {path}")
+        except (OSError, ValueError) as exc:
+            errors.append(f"{label} record {index} is invalid: {exc}")
+    return errors
+
+
 def verify_migration_readiness(receipt_path: Path) -> dict[str, Any]:
+    """Return structured invalid results for drift or malformed readiness evidence."""
     receipt = _load(receipt_path, READINESS_SCHEMA)
     core = {key: value for key, value in receipt.items() if key not in {"receipt_sha256", "generated_at", "path"}}
     errors: list[str] = []
     if _sha_bytes(_canonical(core)) != receipt.get("receipt_sha256"):
         errors.append("readiness receipt hash mismatch")
-    for item in receipt.get("evidence", []):
-        path = Path(item["path"])
-        if not path.is_file() or _sha_path(path) != item["sha256"]:
-            errors.append(f"readiness evidence drift: {path}")
+    errors.extend(_verify_bound_records(receipt.get("evidence"), "readiness evidence"))
     valid = not errors
     return {
         "schema": "factory.migration.readiness-verification.v1",
@@ -280,7 +304,7 @@ def _write_context_text(autowiki: Path, lore: Path, facts: dict[str, Any], force
 
 
 def build_repository_context(root: Path, *, force: bool = False) -> dict[str, Any]:
-    """Build compact AutoWiki and Lore files from tracked facts only."""
+    """Build tracked-fact context or raise MigrationError before unsafe replacement."""
     root = Path(root).resolve()
     facts = _repository_facts(root)
     context_dir = root / ".factory" / "context"
@@ -312,15 +336,13 @@ def build_repository_context(root: Path, *, force: bool = False) -> dict[str, An
 
 
 def verify_repository_context(receipt_path: Path) -> dict[str, Any]:
+    """Return structured invalid results for drift or malformed context artifacts."""
     receipt = _load(receipt_path, CONTEXT_SCHEMA)
     core = {key: value for key, value in receipt.items() if key not in {"receipt_sha256", "generated_at", "path"}}
     errors = []
     if _sha_bytes(_canonical(core)) != receipt.get("receipt_sha256"):
         errors.append("context receipt hash mismatch")
-    for item in receipt.get("artifacts", []):
-        path = Path(item["path"])
-        if not path.is_file() or _sha_path(path) != item["sha256"]:
-            errors.append(f"context artifact drift: {path}")
+    errors.extend(_verify_bound_records(receipt.get("artifacts"), "context artifact"))
     return {
         "schema": "factory.repository-context.verification.v1",
         "valid": not errors,

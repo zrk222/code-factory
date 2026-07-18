@@ -5,6 +5,7 @@ BUILD_TIME_ONLY = {"attribution", "refine", "rejection_ledger", "edit_selection"
 
 
 def assert_no_attribution_in_artifact(artifact_path: Path) -> None:
+    """Reject generated artifacts that leak build-time learning symbols."""
     source = Path(artifact_path).read_text(encoding="utf-8")
     leaked = sorted(symbol for symbol in BUILD_TIME_ONLY if symbol in source)
     if leaked:
@@ -12,6 +13,7 @@ def assert_no_attribution_in_artifact(artifact_path: Path) -> None:
 
 
 def assert_build_metadata_locations(root: Path) -> None:
+    """Reject build-only metadata files found beneath the runtime registry."""
     registry = Path(root) / "registry"
     if not registry.exists():
         return

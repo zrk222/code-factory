@@ -23,6 +23,7 @@ def _safe_label(value: object) -> str:
 
 
 def mermaid_for(passport: dict) -> str:
+    """Render a compact Mermaid proof-chain graph from a passport payload."""
     lines = [
         "flowchart LR",
         '    A["Intent / PRD"] --> B["Real build + gates"]',
@@ -63,6 +64,7 @@ def _badge(passport: dict) -> str:
 
 
 def build_passport(root: Path, feature: str, trace_path: Path, challenge_paths: list[Path]) -> dict:
+    """Build a hash-bound feature passport from trace and challenge evidence."""
     root = Path(root)
     trace_path = Path(trace_path)
     verification = verify_trace(trace_path, root=root)
@@ -119,6 +121,7 @@ def build_passport(root: Path, feature: str, trace_path: Path, challenge_paths: 
 
 
 def verify_passport(path: Path) -> dict:
+    """Verify a passport's schema, bound artifacts, and internal content digest."""
     path = Path(path)
     payload = json.loads(path.read_text(encoding="utf-8"))
     errors = []
