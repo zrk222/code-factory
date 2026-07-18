@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.17.3 - 2026-07-18
+
+### Added
+
+- Added `factory verify-receipts`, an offline Receipt v2 mutation gate that
+  proves digest, signature, identity, and back-dated revocation failures with
+  exact error codes and a canonical challenge receipt.
+- Added property-based canonical JSON tests for stable round trips, dictionary
+  ordering, Unicode, non-finite floats, lone surrogates, and unsupported values.
+- Added an enforceable documentation contract and meaningful docstrings for
+  every distributed public Python function and callable member.
+
+### Security
+
+- Added adversarial Studio mission-decision HTTP tests for wrong tokens,
+  repository escapes, and replayed decisions without receipt replacement.
+- Hardened migration receipt verification so malformed evidence rows and
+  digests return structured invalid verdicts instead of unclassified errors.
+- Added the receipt-chain mutation gate to the identity-pinned Sigstore CI path.
+
+### CI
+
+- Added Hypothesis to the standard development and release test dependency set.
+- Updated Gradle Actions to `v6.2.0`, removing the deprecated Node 20 action
+  runtime and the post-build Gradle cache-cleanup invocation.
+- Updated the Marketplace workflow's immutable release default to `v0.17.3`;
+  publication still requires the separately scoped JetBrains publisher token.
+
 ## 0.17.2 - 2026-07-18
 
 ### Added

@@ -6,7 +6,7 @@ on:
       release_ref:
         description: "Immutable release tag to publish after the one-time Marketplace upload"
         required: true
-        default: "v0.13.1"
+        default: "v0.17.3"
       channel:
         description: "JetBrains Marketplace release channel"
         required: true
@@ -35,7 +35,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6.2.0
       - name: Require the scoped Marketplace publisher token
         env:
           PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
