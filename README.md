@@ -41,7 +41,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.17.3
+pip install factoryline-code-factory==0.18.0
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -58,6 +58,22 @@ local or preview route is the safe default. Every output starts blocked and incl
 SSAT, smoke hook, Mermaid map, and source-bound compile receipt. Open the local
 builder with `factory studio`, or from the VS Code and JetBrains integrations.
 See [Target Compiler and Factory Studio](docs/TARGET_COMPILER.md).
+
+## Hosted enterprise PR assurance
+
+The optional hosted adapter verifies GitHub webhooks and OIDC approvals at a
+real network boundary, isolates tenant records with PostgreSQL row-level
+security, and publishes GitHub Checks through a transactional outbox and
+short-lived GitHub App credentials.
+
+```bash
+pip install "factoryline-code-factory[hosted]"
+gunicorn --bind 0.0.0.0:8080 \
+  'factoryline.hosted_api:create_hosted_app_from_env()'
+```
+
+Tenant selection comes from an immutable GitHub installation mapping—not
+request headers. See the [hosted deployment and security contract](docs/HOSTED_PR_ASSURANCE.md).
 
 ## Signed Capability Packs
 
@@ -299,7 +315,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.17.3 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.18.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 factory doctor --json
 ```
 

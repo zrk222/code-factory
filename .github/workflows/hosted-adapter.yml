@@ -1,0 +1,39 @@
+name: hosted adapter
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: factory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d factory"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      FACTORY_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/factory
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install hosted adapter
+        run: python -m pip install -e ".[dev,hosted]"
+      - name: Run hostile and PostgreSQL integration tests
+        run: python -m pytest -q tests/test_hosted_adapter.py tests/test_hosted_postgres.py

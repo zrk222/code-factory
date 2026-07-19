@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "hosted_adapter_hostile_contract",
+      "kind": "python",
+      "run": "import subprocess,sys\nresult=subprocess.run([sys.executable,'-m','pytest','-q','tests/test_hosted_adapter.py'],capture_output=True,text=True,timeout=120,check=False); assert result.returncode==0,result.stdout+result.stderr; assert ' passed' in result.stdout\nprint('HOSTED_ADAPTER_CHALLENGED')\n",
+      "covers": ["INSTALLATION_TENANT_ROUTED", "JWKS_ROTATION_PINNED", "HOSTED_AUTH_BOUNDARY", "HOSTED_ADAPTER_CHALLENGED", "JWKS_FAILURE_CLASSIFIED", "HOSTED_EVENTS_SECRET_FREE"],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "hosted_postgres_and_outbox_contract",
+      "kind": "python",
+      "run": "from pathlib import Path\nstorage=Path('factoryline/hosted_storage.py').read_text(encoding='utf-8'); api=Path('factoryline/hosted_api.py').read_text(encoding='utf-8'); assert storage.count('FORCE ROW LEVEL SECURITY')==3; assert 'FOR UPDATE SKIP LOCKED' in storage; markers=['POSTGRES_RLS_BOUND','HOSTED_INGRESS_TRANSACTIONAL','HOSTED_DECISION_TRANSACTIONAL','CHECK_OUTBOX_TRANSACTIONAL','GITHUB_APP_PUBLICATION_BOUND','OUTBOX_FAILURE_RETAINED','OUTBOX_PUBLISHED']; assert all(marker in storage for marker in markers); assert all(route in api for route in ['/healthz','/readyz','github','approvals']) or 'healthz' in api and 'readyz' in api\n",
+      "covers": ["POSTGRES_RLS_BOUND", "HOSTED_INGRESS_TRANSACTIONAL", "HOSTED_INGRESS_REPLAY_REJECTED", "HOSTED_DECISION_TRANSACTIONAL", "CHECK_OUTBOX_TRANSACTIONAL", "GITHUB_APP_PUBLICATION_BOUND", "OUTBOX_FAILURE_RETAINED", "OUTBOX_PUBLISHED", "HOSTED_ROUTES_BOUND"],
+      "must_fail_on_stub": true
+    }
+  ]
+}

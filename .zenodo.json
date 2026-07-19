@@ -1,8 +1,8 @@
 {
   "title": "Code Factory: Proof-by-Sabotage Software Factory",
-  "description": "Code Factory is a local-first, open-source workflow for turning specifications, behavior checks, design-token contracts, policy verification, and release receipts into auditable software delivery. Version 0.17 completes Product Missions and the signed Capability Pack system: a deterministic PRD-to-Product-Graph compiler, exact dependency-ordered value slices, supervised Loop Passport missions, independent no-finish verification, evidence-linked PR drafts, classified outcomes, Meter v2 telemetry, and 29 signed packs. Seven executable starter targets cover CLI, API, MCP, worker, web, Expo mobile, and supervised agent UI software. Composable surface, language, capability, data, and operations packs add explicit compatibility contracts without pretending product-specific integrations already exist. Every pack binds its file map to an offline DSSE Ed25519 signature and must reject ten meaningful structural mutations before installation or composition. Factory Studio, VS Code, and JetBrains IDEs expose the same bounded workflow. This source release includes public documentation assets, color Mermaid diagrams, exact Studio captures, the narrated Remotion quick start built from the shipped UI, and a nine-stage conceptual visual walkthrough. The concept illustrations are not UI screenshots or measured outcome evidence.\n\nEvidence boundary: environmental content is accepted only as explicitly supplied untrusted local data. This release does not scrape, poll, schedule, authenticate connectors, invoke models, execute agents, or grant merge, deployment, publication, signing, credential, connector, or external-message authority. Capability Pack validation, installation, and composition grant no runtime or release authority. Safe auto-resolution cannot invent product facts or approve external effects. Outcome records preserve measured, observed, modeled, and unknown evidence classes. A passing receipt does not prove an arbitrary production environment.\n\nDual licensed under MIT or Apache-2.0.",
-  "version": "0.17.3",
-  "publication_date": "2026-07-18",
+  "description": "Code Factory is a proof-first, open-source software factory for turning specifications, behavior checks, design contracts, policy verification, and release receipts into auditable delivery. Version 0.18 adds authenticated pull-request assurance and an optional hosted adapter: GitHub HMAC webhook verification, immutable installation-to-tenant routing, offline RS256 OIDC verification, PostgreSQL forced row-level security, transactional approval and GitHub Check outbox records, freshness-bounded HTTPS JWKS rotation, short-lived GitHub App publication credentials, health/readiness routes, and secret-free operation events. The local core remains usable without hosted dependencies. Product Missions, signed Capability Packs, seven starter targets, Factory Studio, VS Code, and JetBrains integrations remain included. Public documentation assets include exact Studio captures, the narrated quick start, Mermaid diagrams, and a nine-stage conceptual visual walkthrough; the illustrations are not UI screenshots or measured outcome evidence.\n\nEvidence boundary: the hosted reference is deployable but does not claim managed HA, automatic disaster recovery, SCIM, SOC 2, or an SLA. External GitHub publication occurs only through explicitly configured App credentials and a retained transactional outbox. A passing receipt proves the declared checks and supplied environment, not arbitrary production security.\n\nDual licensed under MIT or Apache-2.0.",
+  "version": "0.18.0",
+  "publication_date": "2026-07-19",
   "creators": [
     {
       "name": "Katz, Richard"
@@ -30,6 +30,10 @@
     "product-graph",
     "vscode-extension",
     "jetbrains-plugin",
+    "postgresql-rls",
+    "github-app",
+    "oidc",
+    "transactional-outbox",
     "visual-walkthrough"
   ],
   "related_identifiers": [

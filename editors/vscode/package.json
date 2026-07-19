@@ -2,7 +2,7 @@
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
   "description": "Run bounded Code Factory gates and inspect local receipts without leaving VS Code.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {

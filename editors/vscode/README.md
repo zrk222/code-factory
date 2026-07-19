@@ -24,7 +24,7 @@ pass arbitrary shell fragments to your terminal.
 Install the Code Factory CLI first:
 
 ```powershell
-pip install factoryline-code-factory==0.17.1
+pip install factoryline-code-factory==0.18.0
 ```
 
 Build a local VSIX from this directory, then install it in VS Code:
@@ -32,7 +32,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.3.0.vsix
+code --install-extension factoryline-vscode-0.4.0.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
@@ -40,6 +40,10 @@ Product Missions create only supervised, approval-required local packets and do
 not grant execute, merge, deploy, publish, connector, credential, or messaging authority.
 Requirement CodeLens navigation reads bounded local text artifacts only; it does
 not run FactoryLine or change approval state.
+
+Code Factory 0.18 also includes an optional hosted GitHub PR-assurance adapter.
+It is deployed separately from this local editor extension; see
+[Hosted PR assurance](../../docs/HOSTED_PR_ASSURANCE.md).
 
 ## Scope
 

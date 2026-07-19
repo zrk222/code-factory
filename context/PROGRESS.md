@@ -62,3 +62,28 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-07-18 10:00] GATE plan auditability-hardening approver=human tasks=22 sha=72170503c294312d
 - [2026-07-18 11:01] GATE spec auditability-hardening approver=human strict=True sha=3abc5e8bcc835fac
 - [2026-07-18 11:02] GATE plan auditability-hardening approver=human tasks=22 sha=3abc5e8bcc835fac
+- [2026-07-19 08:37] GATE spec enterprise-pr-assurance-v1 approver=human strict=True sha=35116d67d319ebc1
+- [2026-07-19 08:37] GATE plan enterprise-pr-assurance-v1 approver=human tasks=6 sha=35116d67d319ebc1
+- [2026-07-19 08:50] GATE spec enterprise-pr-assurance-v1 approver=human strict=True sha=733e88e38df9fb51
+- [2026-07-19 08:50] GATE plan enterprise-pr-assurance-v1 approver=human tasks=6 sha=733e88e38df9fb51
+- [2026-07-19 09:37] GATE plan enterprise-pr-assurance-v1 approver=human tasks=6 sha=185c94dca9202b48
+- [2026-07-19 10:04] GATE spec hosted-pr-assurance-v1 approver=human strict=True sha=477b8fd6d5d24131
+- [2026-07-19 10:04] GATE plan hosted-pr-assurance-v1 approver=human tasks=12 sha=477b8fd6d5d24131
+- [2026-07-19 11:15] GATE spec hosted-pr-assurance-v1 approver=human strict=True sha=bb750cf7c16c1c94
+- [2026-07-19 11:15] GATE plan hosted-pr-assurance-v1 approver=human tasks=12 sha=bb750cf7c16c1c94
+- [2026-07-19 11:55] GATE spec hosted-pr-assurance-v1 approver=human strict=True sha=69a88f456d190663
+- [2026-07-19 11:55] GATE plan hosted-pr-assurance-v1 approver=human tasks=12 sha=69a88f456d190663
+- [2026-07-19 14:10] GATE spec hosted-pr-assurance-v1 approver=human strict=True sha=442e546f02184432
+- [2026-07-19 14:10] GATE plan hosted-pr-assurance-v1 approver=human tasks=12 sha=442e546f02184432
+- [2026-07-19 14:10] DONE hosted-pr-assurance-v1 T1 verify_pass=true  # context resets now
+- [2026-07-19 14:10] DONE hosted-pr-assurance-v1 T2 verify_pass=true  # context resets now
+- [2026-07-19 14:10] DONE hosted-pr-assurance-v1 T3 verify_pass=true  # context resets now
+- [2026-07-19 14:10] DONE hosted-pr-assurance-v1 T4 verify_pass=true  # context resets now
+- [2026-07-19 14:10] DONE hosted-pr-assurance-v1 T5 verify_pass=true  # context resets now
+- [2026-07-19 14:10] DONE hosted-pr-assurance-v1 T6 verify_pass=true  # context resets now
+- [2026-07-19 14:10] DONE hosted-pr-assurance-v1 T7 verify_pass=true  # context resets now
+- [2026-07-19 14:11] DONE hosted-pr-assurance-v1 T8 verify_pass=true  # context resets now
+- [2026-07-19 14:11] DONE hosted-pr-assurance-v1 T9 verify_pass=true  # context resets now
+- [2026-07-19 14:11] DONE hosted-pr-assurance-v1 T10 verify_pass=true  # context resets now
+- [2026-07-19 14:11] DONE hosted-pr-assurance-v1 T11 verify_pass=true  # context resets now
+- [2026-07-19 14:11] DONE hosted-pr-assurance-v1 T12 verify_pass=true  # context resets now

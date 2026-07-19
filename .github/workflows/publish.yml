@@ -38,7 +38,7 @@ jobs:
       - name: Install release test and build tools
         run: |
           python -m pip install --upgrade build twine
-          python -m pip install -e ".[dev,enterprise]"
+          python -m pip install -e ".[dev,enterprise,hosted]"
 
       - name: Test
         run: python -m pytest -q

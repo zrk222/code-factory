@@ -10,10 +10,10 @@ release. The JetBrains adapter is documented separately in
 
 ## Install
 
-1. Install FactoryLine: `pip install factoryline-code-factory==0.17.3`.
+1. Install FactoryLine: `pip install factoryline-code-factory==0.18.0`.
 2. Download a `factoryline-vscode-*.vsix` release asset, or build it from
    `editors/vscode` with `npm ci` then `npm run package`.
-3. Run `code --install-extension factoryline-vscode-0.3.0.vsix`.
+3. Run `code --install-extension factoryline-vscode-0.4.0.vsix`.
 4. Open a trusted project folder and run a command from the Command Palette.
 
 ## Commands
