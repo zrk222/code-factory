@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+## 0.18.0 - 2026-07-19
+
+### Added
+
+- Added authenticated GitHub pull-request assurance with raw-body HMAC
+  verification, immutable installation-to-tenant routing, durable delivery
+  replay protection, and deterministic GitHub Check request contracts.
+- Added offline RS256 OIDC verification against pinned JWKS, issuer, audience,
+  expiry, not-before, tenant, groups, JTI replay, duplicate JSON member, and
+  minimum RSA key-strength checks.
+- Added the optional hosted adapter with PostgreSQL forced row-level security,
+  transactional approval and Check outbox writes, freshness-bounded HTTPS JWKS
+  rotation, short-lived GitHub App publication credentials, health/readiness
+  routes, secret-free operation events, and a reference container.
+- Added a PostgreSQL 17 integration workflow plus hostile hosted-adapter smoke
+  and reverse-stub challenge receipts.
+
+### Security
+
+- Tenant identity is derived from immutable GitHub App installation mappings;
+  caller-supplied tenant headers have no authority.
+- Human decisions remain committed independently of GitHub availability, while
+  failed publication remains classified in a bounded transactional outbox.
+- Hosted network destinations require HTTPS, use five-second timeouts, and do
+  not follow redirects.
+
+### Evidence
+
+- Enterprise PR assurance and the hosted adapter both reached ForgeLine grade A
+  with strict SpecLine contracts, validator mutation gates, architecture gates,
+  hostile tests, and non-hollow smoke checks.
+
 ## 0.17.3 - 2026-07-18
 
 ### Added

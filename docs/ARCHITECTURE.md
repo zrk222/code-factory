@@ -1,6 +1,6 @@
 # Code Factory Architecture
 
-These diagrams show the complete version 0.17 design. Colors have one meaning
+These diagrams show the complete version 0.18 design. Colors have one meaning
 throughout: blue is supplied input, amber is deterministic policy or planning,
 pink is human authority, purple is bounded execution, green is verified
 evidence, teal is observed outcome data, and red is a fail-closed correction.

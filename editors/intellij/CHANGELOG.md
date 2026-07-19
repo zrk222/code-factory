@@ -1,5 +1,11 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.4.0
+
+- Align the Marketplace package and release bundle with Code Factory 0.18.0.
+- Document the hosted enterprise PR-assurance adapter without expanding the
+  plugin's bounded local authority.
+
 ## 0.3.0
 
 - Add Product Missions to all supported JetBrains IDEs through the loopback Studio.

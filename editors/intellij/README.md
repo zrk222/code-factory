@@ -31,9 +31,9 @@ untrusted/missing receipt into a green state.
 
 ## Install
 
-1. Install `factoryline-code-factory==0.17.1` into the Python environment that
+1. Install `factoryline-code-factory==0.18.0` into the Python environment that
    IntelliJ inherits.
-2. Download `factoryline-intellij-0.3.0.zip` from the matching GitHub release.
+2. Download `factoryline-intellij-0.4.0.zip` from the matching GitHub release.
 3. In your JetBrains IDE, open **Settings > Plugins > gear menu > Install Plugin from Disk...** and select the ZIP.
 4. Restart the IDE, then use the **Tools > FactoryLine** menu or the **FactoryLine** tool window.
 
@@ -61,6 +61,10 @@ IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and
 DataGrip builds from the 2025.2 baseline forward. The CI matrix verifies
 current stable builds, including an explicit DataGrip archive because archived
 2025.2 installers are not available through the verifier resolver.
+
+Code Factory 0.18 also includes an optional hosted GitHub PR-assurance adapter.
+It is deployed separately from this local IDE plugin; see
+[Hosted PR assurance](../../docs/HOSTED_PR_ASSURANCE.md).
 
 `marketplacePreflight` inspects the actual ZIP and fails when its descriptor,
 light/dark plugin logos, vendor contact, project URL, or release notes are

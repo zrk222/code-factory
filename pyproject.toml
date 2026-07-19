@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.17.3"
-description = "The connective layer that snaps SpecLine, ForgeLine, HSF and Prestige together into one spec-to-artifact assembly line. Each module stays independent; factoryline lines them up."
+version = "0.18.0"
+description = "A proof-first software factory with authenticated PR assurance, signed receipts, supervised missions, and an optional hosted PostgreSQL/GitHub adapter."
 authors = [
   { name = "Richard Katz" },
   { email = "rkatz22@gmail.com" },
@@ -52,6 +52,11 @@ dev = [
 ]
 sigstore = ["sigstore>=4.4,<5"]
 enterprise = ["cryptography>=42,<50"]
+hosted = [
+  "gunicorn>=23,<24; platform_system != 'Windows'",
+  "httpx>=0.28,<1",
+  "psycopg[binary]>=3.2,<4",
+]
 
 [project.scripts]
 factory = "factoryline.cli:main"

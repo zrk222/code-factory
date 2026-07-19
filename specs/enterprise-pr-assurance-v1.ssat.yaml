@@ -1,0 +1,52 @@
+name: enterprise-pr-assurance-v1
+modules:
+  - name: pr_assurance
+    path: factoryline/pr_assurance.py
+    imports:
+      - cryptography
+      - factoryline.control_plane
+    functions:
+      - name: verify_github_webhook
+        args: ["body: bytes", "headers: Mapping[str, str]", "secret: bytes"]
+        returns: "PullRequestEvent"
+        doc: "Verify and normalize one GitHub pull-request webhook or fail closed."
+      - name: verify_oidc_token
+        args: ["token: str", "jwks: dict[str, Any]", "expected_issuer: str", "expected_audience: str"]
+        returns: "dict[str, Any]"
+        doc: "Cryptographically verify pinned OIDC claims against trusted offline keys."
+      - name: ingest_pull_request
+        args: ["store: PRAssuranceStore", "body: bytes", "headers: Mapping[str, str]", "secret: bytes", "tenant_id: str"]
+        returns: "dict[str, Any]"
+        doc: "Persist authenticated PR evidence and create independent approval."
+      - name: decide_pull_request
+        args: ["store: PRAssuranceStore", "approval_id: str", "token: str", "jwks: dict[str, Any]", "expected_issuer: str", "expected_audience: str"]
+        returns: "dict[str, Any]"
+        doc: "Verify an approver and emit a deterministic terminal Check request."
+dependencies:
+  - from: pr_assurance
+    to: control_plane
+invariants:
+  - name: no_network_or_process_authority
+    forbid_pattern: "\\b(?:requests|urllib|httpx|socket|subprocess|os\\.system)\\b"
+    scopes:
+      - module: pr_assurance
+        symbol: ingest_pull_request
+        max_lines: 120
+      - module: pr_assurance
+        symbol: decide_pull_request
+        max_lines: 120
+  - name: no_dynamic_execution
+    forbid_pattern: "\\b(?:eval|exec)\\s*\\("
+    scopes:
+      - module: pr_assurance
+        symbol: verify_github_webhook
+        max_lines: 120
+      - module: pr_assurance
+        symbol: verify_oidc_token
+        max_lines: 180
+  - name: no_weak_jwt_algorithms
+    forbid_pattern: "(?:HS256|alg[^\\n]*none)"
+    scopes:
+      - module: pr_assurance
+        symbol: verify_oidc_token
+        max_lines: 180

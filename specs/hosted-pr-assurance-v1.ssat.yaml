@@ -1,0 +1,56 @@
+name: hosted-pr-assurance-v1
+modules:
+  - name: hosted_storage
+    path: factoryline/hosted_storage.py
+    imports: [factoryline.pr_assurance, psycopg]
+    functions:
+      - name: initialize_schema
+        args: ["store: PostgresAssuranceStore"]
+        returns: None
+        doc: "Create and verify the PostgreSQL RLS and outbox schema."
+  - name: hosted_identity
+    path: factoryline/hosted_identity.py
+    imports: [httpx]
+    functions:
+      - name: get_jwks
+        args: ["cache: JwksCache"]
+        returns: "dict[str, Any]"
+        doc: "Return fresh pinned JWKS or fail closed on stale identity data."
+  - name: hosted_github
+    path: factoryline/hosted_github.py
+    imports: [cryptography, httpx]
+    functions:
+      - name: publish_check
+        args: ["publisher: GitHubAppPublisher", "installation_id: int", "repository: str", "request: dict[str, Any]"]
+        returns: int
+        doc: "Publish one bound GitHub Check and return its remote identifier."
+  - name: hosted_api
+    path: factoryline/hosted_api.py
+    imports: [factoryline.hosted_storage, factoryline.hosted_identity, factoryline.hosted_github]
+    functions:
+      - name: create_hosted_app
+        args: ["service: HostedPRAssuranceService"]
+        returns: HostedPRAssuranceAPI
+        doc: "Create the authenticated WSGI surface without caller tenant headers."
+dependencies:
+  - from: hosted_api
+    to: hosted_storage
+  - from: hosted_api
+    to: hosted_identity
+  - from: hosted_api
+    to: hosted_github
+  - from: hosted_github
+    to: hosted_identity
+invariants:
+  - name: hosted_api_has_no_direct_sql
+    forbid_pattern: "\\b(?:SELECT|INSERT|UPDATE|DELETE)\\b"
+    scopes:
+      - module: hosted_api
+        symbol: create_hosted_app
+        max_lines: 220
+  - name: github_publisher_has_no_database_access
+    forbid_pattern: "\\b(?:psycopg|sqlite3)\\b"
+    scopes:
+      - module: hosted_github
+        symbol: publish_check
+        max_lines: 220

@@ -6,7 +6,7 @@ on:
       release_ref:
         description: "Immutable release tag to publish after the one-time Marketplace upload"
         required: true
-        default: "v0.17.3"
+        default: "v0.18.0"
       channel:
         description: "JetBrains Marketplace release channel"
         required: true

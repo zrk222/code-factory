@@ -52,10 +52,10 @@ candidate files.
 1. Install FactoryLine:
 
    ```powershell
-   pip install factoryline-code-factory==0.17.3
+   pip install factoryline-code-factory==0.18.0
    ```
 
-2. Download `factoryline-intellij-0.3.0.zip` from the FactoryLine GitHub
+2. Download `factoryline-intellij-0.4.0.zip` from the FactoryLine GitHub
    release that introduced this adapter.
 3. In your JetBrains IDE: **Settings > Plugins > gear menu > Install Plugin from Disk...**.
 4. Select the ZIP, restart, then open **Tools > FactoryLine**.

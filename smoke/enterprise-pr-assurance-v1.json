@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "authenticated_pr_assurance_mutations_are_rejected",
+      "kind": "python",
+      "run": "import subprocess,sys\nresult=subprocess.run([sys.executable,'-m','pytest','-q','tests/test_pr_assurance.py'],capture_output=True,text=True,timeout=120,check=False); assert result.returncode==0,result.stdout+result.stderr; assert ' passed' in result.stdout\nprint('PR_ASSURANCE_MUTATIONS_REJECTED')\n",
+      "covers": ["WEBHOOK_SIGNATURE_VERIFIED", "PR_EVENT_BOUND", "DELIVERY_RECORDED", "PR_APPROVAL_SINGLETON", "OIDC_IDENTITY_VERIFIED", "APPROVAL_APPROVED", "APPROVAL_REJECTED", "GITHUB_CHECK_BOUND", "PR_ASSURANCE_MUTATIONS_REJECTED"],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "authority_boundary_is_offline",
+      "kind": "python",
+      "run": "from pathlib import Path\ntext=Path('factoryline/pr_assurance.py').read_text(encoding='utf-8'); forbidden=['requests','httpx','urllib','socket','subprocess','os.system']; assert not any(value in text for value in forbidden); assert 'github_check_request' in text; assert '.post(' not in text and '.request(' not in text\n",
+      "covers": ["AUTHORITY_BOUNDARY_OFFLINE", "PR_ASSURANCE_MUTATIONS_REJECTED"],
+      "must_fail_on_stub": true
+    }
+  ]
+}

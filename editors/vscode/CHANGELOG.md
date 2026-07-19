@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- Align the extension listing and release bundle with Code Factory 0.18.0.
+- Link operators to the hosted enterprise PR-assurance adapter while keeping
+  editor commands explicitly local and bounded.
+
 ## 0.3.0
 
 - Add a confirmed Product Missions command that opens the loopback Studio in PRD mode.

@@ -17,16 +17,18 @@ ask for votes, stars, or reviews.
 > inverts release rules and requires the evaluator to fail; otherwise it reports
 > `HOLLOW_POLICY`.
 >
-> This is local tooling, not a hosted platform and not a substitute for human
-> judgment. The goal is a better starting point for review: artifacts that say
-> what ran, what was proven, and what remains unproven.
+> The core remains local tooling, not a substitute for human judgment. Version
+> 0.18 adds an optional self-hosted GitHub adapter so teams can apply the same
+> bounded assurance model to pull requests without turning the editor or local
+> CLI into an ambient deployment authority.
 >
-> Version 0.17 completes Product Missions, the owner-governed Signal Loop, and signed
-> Capability Packs for worker, web, Expo mobile, and supervised agent UI
-> targets. Each pack verifies an offline signature and rejects structural
-> mutations before use. Factory Studio exposes approval-ready mission decisions
-> and actionable failure summaries; editor adapters open the same local surface
-> only after workspace confirmation.
+> Version 0.18 verifies GitHub webhook signatures, pins immutable
+> installation-to-tenant routes, validates RS256 OIDC approvals offline, forces
+> PostgreSQL row-level security, and publishes GitHub Checks from a retained
+> transactional outbox using short-lived GitHub App credentials. It is a
+> deployable reference adapter—not a claim of managed HA, SCIM, SOC 2, or an
+> SLA. The local core, Product Missions, signed Capability Packs, Factory
+> Studio, and editor adapters remain independently usable.
 >
 > I would love feedback on one question: what would you need to prove before
 > allowing an AI-generated change into a production repository?
@@ -81,6 +83,25 @@ Product Hunt editor before publishing.
 >
 > This is the enterprise-team convenience layer, not a second control plane:
 > the CLI, CI, and human review remain the authority.
+
+## Code Factory: Product Hunt Release Update - Hosted PR Assurance
+
+> Update: Code Factory 0.18 adds an optional self-hosted GitHub PR-assurance
+> adapter while keeping the proof-first local core intact.
+>
+> The adapter verifies GitHub HMAC webhooks, maps each GitHub App installation
+> to one immutable tenant, validates RS256 OIDC approvals against
+> freshness-bounded HTTPS JWKS, and stores approvals plus outbound GitHub Check
+> work in one PostgreSQL transaction. Forced row-level security is part of the
+> schema, and publication uses short-lived GitHub App credentials.
+>
+> This is deliberately a deployable reference, not a managed-service claim. It
+> does not promise HA, automatic disaster recovery, SSO/SCIM, SOC 2, or an SLA.
+> What it provides is a concrete full-stack boundary that teams can inspect,
+> run, and challenge.
+>
+> Repository and deployment contract:
+> https://github.com/zrk222/code-factory
 
 ## LinkedIn: Code Factory
 
@@ -157,7 +178,7 @@ Show HN: A proof-first factory for AI-assisted software work
 > The components work independently, but the base package connects them:
 >
 > ```bash
-> pip install factoryline-code-factory==0.17.3 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+> pip install factoryline-code-factory==0.18.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 > factory doctor --strict --json
 > ```
 >
