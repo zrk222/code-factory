@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Code Factory turns AI-assisted changes into reviewable proof with specs, tests, policy, design contracts, and signed receipts.">
+  <title>Code Factory — Proof-first software delivery</title>
+  <style>
+    :root {
+      --ink: #171610;
+      --muted: #635f54;
+      --paper: #fffaf0;
+      --cream: #f3e5c9;
+      --amber: #f4a928;
+      --amber-dark: #a85708;
+      --green: #247047;
+      --line: rgba(43, 37, 25, .15);
+      --shadow: 0 24px 70px rgba(76, 50, 13, .15);
+      --radius: 28px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: radial-gradient(circle at 80% 6%, #ffe8b6 0, transparent 30%), var(--paper);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 17px;
+      line-height: 1.65;
+    }
+    a { color: inherit; }
+    .shell { width: min(1160px, calc(100% - 40px)); margin: 0 auto; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 24px 0; }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 850; letter-spacing: -.02em; text-decoration: none; }
+    .mark { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: var(--ink); color: var(--amber); }
+    nav { display: flex; gap: 22px; align-items: center; }
+    nav a { color: var(--muted); font-size: .92rem; font-weight: 700; text-decoration: none; }
+    .hero { display: grid; grid-template-columns: 1.02fr .98fr; gap: clamp(40px, 6vw, 82px); align-items: center; padding: 76px 0 100px; }
+    .eyebrow { color: var(--amber-dark); font-size: .77rem; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { max-width: 790px; margin: 16px 0 24px; font-size: clamp(3.2rem, 7vw, 6.8rem); line-height: .91; letter-spacing: -.075em; }
+    .lede { max-width: 620px; margin: 0 0 32px; color: var(--muted); font-size: clamp(1.05rem, 2vw, 1.3rem); }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    .button { min-height: 50px; padding: 13px 20px; border: 1px solid var(--line); border-radius: 14px; font-weight: 850; text-decoration: none; transition: transform .2s ease, box-shadow .2s ease; }
+    .button:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(65, 40, 8, .13); }
+    .primary { background: var(--ink); color: white; border-color: var(--ink); }
+    .trust { margin-top: 18px; color: var(--green); font-size: .9rem; font-weight: 750; }
+    .visual { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--cream); box-shadow: var(--shadow); }
+    .visual img { display: block; width: 100%; aspect-ratio: 4 / 5; object-fit: cover; }
+    section { padding: 92px 0; }
+    .section-head { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; align-items: end; margin-bottom: 42px; }
+    h2 { margin: 0; font-size: clamp(2.2rem, 5vw, 4.4rem); line-height: 1; letter-spacing: -.055em; }
+    .section-head p { margin: 0; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    .card { padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,.66); }
+    .card span { color: var(--amber-dark); font-size: .76rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+    .card h3 { margin: 12px 0 8px; font-size: 1.28rem; }
+    .card p { margin: 0; color: var(--muted); font-size: .95rem; }
+    .proof { display: grid; grid-template-columns: 1fr 1fr; gap: 38px; align-items: center; padding: clamp(30px, 6vw, 64px); border-radius: var(--radius); background: var(--ink); color: white; }
+    .proof p { color: #d9d3c7; }
+    pre { overflow-x: auto; margin: 0; padding: 24px; border: 1px solid rgba(255,255,255,.14); border-radius: 18px; background: #0d0d0b; color: #ffd47c; font: 600 .88rem/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .gallery img { display: block; width: 100%; border-radius: 18px; border: 1px solid var(--line); background: var(--cream); }
+    .boundary { margin-top: 18px; color: var(--muted); font-size: .85rem; text-align: center; }
+    .final { text-align: center; padding-bottom: 120px; }
+    .final h2 { max-width: 760px; margin: 0 auto 28px; }
+    footer { display: flex; justify-content: space-between; gap: 20px; padding: 28px 0 42px; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; }
+    @media (max-width: 800px) {
+      nav a:not(.button) { display: none; }
+      .hero, .section-head, .proof { grid-template-columns: 1fr; }
+      .hero { padding-top: 48px; }
+      .grid, .gallery { grid-template-columns: 1fr; }
+      h1 { font-size: clamp(3.2rem, 17vw, 5.4rem); }
+      section { padding: 68px 0; }
+      footer { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand" aria-label="Code Factory"><span class="mark">CF</span> Code Factory</div>
+      <nav aria-label="Primary navigation">
+        <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Get Code Factory</a>
+        <a href="#proof">How it works</a>
+        <a href="https://github.com/zrk222/code-factory">Source</a>
+      </nav>
+    </header>
+  </div>
+
+  <main id="top">
+    <div class="shell hero">
+      <div>
+        <div class="eyebrow">Open source · Local first · Evidence backed</div>
+        <h1>Prove 5 gates before your AI change ships.</h1>
+        <p class="lede">Code Factory turns specifications, tests, policies, design contracts, and signed receipts into a reviewable delivery line—then deliberately sabotages the gates to prove they reject bad builds.</p>
+        <div class="actions">
+          <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Install Code Factory</a>
+          <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.18.0">Inspect the release</a>
+        </div>
+        <div class="trust">✓ MIT or Apache-2.0 &nbsp; ✓ Source available &nbsp; ✓ Archived release</div>
+      </div>
+      <div class="visual">
+        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/01-idea-to-blueprint.png" alt="Developer sends an application blueprint through a small software factory into code, data, interface, and server components.">
+      </div>
+    </div>
+
+    <section id="proof">
+      <div class="shell">
+        <div class="section-head">
+          <h2>Proof, not promises.</h2>
+          <p>Each stage produces an artifact a reviewer can inspect. A fresh starter remains blocked until product-specific tests replace hollow coverage.</p>
+        </div>
+        <div class="grid">
+          <article class="card"><span>01 · Define</span><h3>Lock the intent</h3><p>Turn requirements into a bounded spec and an explicit architecture contract.</p></article>
+          <article class="card"><span>02 · Challenge</span><h3>Sabotage the gates</h3><p>Delete, invert, and corrupt critical controls. A surviving mutation blocks the claim.</p></article>
+          <article class="card"><span>03 · Ship</span><h3>Carry the evidence</h3><p>Hash-link receipts and release artifacts so reviewers can reproduce the decision.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">60-second first run</div>
+          <h2>Start locally. See the gap immediately.</h2>
+          <p>The coverage command intentionally exits nonzero when a generated application has requirements without meaningful tests. The scaffold is starting state, not a readiness claim.</p>
+          <a class="button" href="https://github.com/zrk222/code-factory/releases/download/v0.18.0/code-factory-quickstart-v0171.mp4">Watch the shipped UI walkthrough</a>
+        </div>
+        <pre><code>pip install factoryline-code-factory==0.18.0
+factory create "Build an approval tracker" \
+  --target web --out approval-tracker
+factory coverage --root approval-tracker --json</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell">
+        <div class="section-head">
+          <h2>The factory line, illustrated.</h2>
+          <p>A conceptual walkthrough of verification, signed proof, and the split between accepted and rejected artifacts.</p>
+        </div>
+        <div class="gallery">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/04-security-contracts.png" alt="AI compiler stack with Python and security contracts.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/06-proof-by-sabotage.png" alt="Robotic magnifiers inspect passing checks and a deliberately broken check.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/08-signed-proof-chain.png" alt="Signed receipts travel through a proof chain and split into accepted and rejected paths.">
+        </div>
+        <p class="boundary">Concept illustrations—not UI screenshots or measured outcome evidence. <a href="https://github.com/zrk222/code-factory/blob/main/docs/HOW_IT_WORKS_VISUAL.md">Open all nine stages →</a></p>
+      </div>
+    </section>
+
+    <section class="final">
+      <div class="shell">
+        <h2>Make the next change carry its own proof.</h2>
+        <div class="actions" style="justify-content:center">
+          <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Install from PyPI</a>
+          <a class="button" href="https://doi.org/10.5281/zenodo.21442598">Open the archived release</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="shell">
+    <footer><span>Code Factory v0.18.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://doi.org/10.5281/zenodo.21442598">Zenodo</a></span></footer>
+  </div>
+</body>
+</html>

@@ -5,6 +5,7 @@ build/
 dist/
 dist-v*/
 .playwright-cli/
+.prestige/
 .specline/
 output/
 .pytest_cache/
