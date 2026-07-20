@@ -24,14 +24,16 @@ gunicorn --workers 2 --threads 4 --bind 0.0.0.0:8080 \
 | `FACTORY_OIDC_ISSUER` | Exact issuer pinned during JWT verification |
 | `FACTORY_OIDC_AUDIENCE` | Exact API audience |
 | `FACTORY_JWKS_URL` | Credential-free HTTPS JWKS endpoint |
-| `FACTORY_ROLE_MAP_JSON` | Directory group to Code Factory role map |
-| `FACTORY_WEBHOOK_SECRETS_JSON` | Installation id to webhook secret map |
-| `FACTORY_INSTALLATION_TENANTS_JSON` | Installation id to immutable tenant map |
+| `FACTORY_ROLE_MAP_JSON` | Bootstrap directory group to Code Factory role map |
+| `FACTORY_WEBHOOK_SECRETS_JSON` | Optional legacy installation-to-webhook-secret map |
+| `FACTORY_INSTALLATION_TENANTS_JSON` | Optional legacy installation-to-tenant map |
 | `FACTORY_GITHUB_APP_ID` | GitHub App numeric id |
 | `FACTORY_GITHUB_PRIVATE_KEY` | PEM key injected by the secret manager |
 
-The two installation maps must contain identical keys. Startup applies the
-idempotent schema and confirms every mapping without permitting reassignment.
+When supplied, the two legacy installation maps must contain identical keys.
+Startup applies the idempotent assurance and control schemas and confirms every
+legacy mapping without permitting reassignment. New tenants should use the
+[hosted control-plane lifecycle](HOSTED_CONTROL_PLANE.md).
 Production operators should normally run migrations with a dedicated schema
 role, then run the service with a restricted application role.
 
@@ -41,6 +43,9 @@ role, then run the service with a restricted application role.
 - `GET /readyz`: PostgreSQL plus usable JWKS readiness.
 - `POST /v1/github/webhooks`: GitHub HMAC webhook ingress.
 - `POST /v1/approvals/{approval_id}/decision`: OIDC Bearer approval.
+- `POST/PUT/GET /v1/admin/...`: supervised tenant onboarding and overview.
+- `POST /v1/github/installations/callback`: one-time installation binding.
+- `GET /console`: read-only operator console.
 
 Approval writes and GitHub Check outbox insertion share one PostgreSQL
 transaction. A worker publishes pending rows using short-lived GitHub App

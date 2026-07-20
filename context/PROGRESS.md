@@ -87,3 +87,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-07-19 14:11] DONE hosted-pr-assurance-v1 T10 verify_pass=true  # context resets now
 - [2026-07-19 14:11] DONE hosted-pr-assurance-v1 T11 verify_pass=true  # context resets now
 - [2026-07-19 14:11] DONE hosted-pr-assurance-v1 T12 verify_pass=true  # context resets now
+- [2026-07-20 00:05] GATE spec hosted-control-plane-v1 approver=human strict=True sha=515e0260ffd95739
+- [2026-07-20 00:05] GATE plan hosted-control-plane-v1 approver=human tasks=15 sha=515e0260ffd95739
+- [2026-07-20 00:07] GATE spec hosted-control-plane-v1 approver=human strict=True sha=2360f183e2a75255
+- [2026-07-20 00:07] GATE plan hosted-control-plane-v1 approver=human tasks=15 sha=2360f183e2a75255

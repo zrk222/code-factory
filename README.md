@@ -15,9 +15,9 @@
 **Exact shipped UI:** the walkthrough below is rendered from the actual Factory
 Studio surface; it is not concept art.
 
-[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.18.0/code-factory-quickstart-v0171.mp4)
+[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.19.0/code-factory-quickstart-v0171.mp4)
 
-[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.18.0/code-factory-quickstart-v0171.mp4).
+[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.19.0/code-factory-quickstart-v0171.mp4).
 The absolute cover and release-asset URLs render from both GitHub and PyPI.
 
 The one-minute walkthrough is rendered from an actual 1920x1080 Factory
@@ -42,7 +42,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.18.0
+pip install factoryline-code-factory==0.19.0
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -75,6 +75,20 @@ gunicorn --bind 0.0.0.0:8080 \
 
 Tenant selection comes from an immutable GitHub installation mapping—not
 request headers. See the [hosted deployment and security contract](docs/HOSTED_PR_ASSURANCE.md).
+
+### Supervised tenant control plane
+
+Version 0.19 closes the onboarding gap around that adapter: a verified
+bootstrap administrator creates a tenant, pins tenant OIDC/JWKS configuration,
+maps directory groups, stores secret-manager references, and issues a
+600-second one-time GitHub installation state. PostgreSQL stores no resolved
+secret values, and every successful administrative mutation joins a
+tenant-scoped hash chain.
+
+The responsive `/console` surface is read-only. It shows installation, identity,
+role, approval, outbox, and audit status without mutation, approval, connector,
+credential, deployment, or release authority. See the
+[hosted control-plane contract](docs/HOSTED_CONTROL_PLANE.md).
 
 ## Signed Capability Packs
 
@@ -316,7 +330,7 @@ brick maps to codification, compression, injection, and validation.
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.18.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.19.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 factory doctor --json
 ```
 
@@ -361,9 +375,9 @@ factory control audit-verify --db .factory/control.sqlite3 `
 ```
 
 See [docs/CONTROL_PLANE.md](docs/CONTROL_PLANE.md) for the approval workflow
-and exact boundary. This is a deterministic local foundation for future hosted
-SCM, SSO/SCIM, and evidence-store adapters; it does not claim to be a hosted
-multi-tenant service.
+and exact boundary. This remains the deterministic local foundation. The
+optional hosted adapter adds supervised GitHub App and per-tenant OIDC flows,
+but does not claim SCIM, managed availability, or a hosted evidence service.
 
 ## Enterprise Receipt v2 Foundation
 
@@ -386,9 +400,10 @@ Verification is local and fail-closed. It checks the DSSE signature, exact
 payload digest, trusted key id, identity, issuer, policy digest, and supplied
 revocation list without contacting a service. v1 receipts remain readable but
 return `LEGACY_UNVERIFIED` in the enterprise verifier. The local control-plane
-foundation is documented above; hosted SCM/SSO adapters, OSCAL packs, BBS
-credentials, and zkVM proofs remain future roadmap work; see [Enterprise
-Receipt v2](docs/ENTERPRISE_RECEIPTS.md).
+foundation is documented above; the optional hosted GitHub/OIDC adapter is
+documented in [Hosted Control Plane](docs/HOSTED_CONTROL_PLANE.md). SCIM,
+managed HA, OSCAL packs, BBS credentials, and zkVM proofs remain future
+roadmap work; see [Enterprise Receipt v2](docs/ENTERPRISE_RECEIPTS.md).
 
 ## Loop Passport
 

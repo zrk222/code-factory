@@ -1,0 +1,32 @@
+name: hosted-control-plane-v1
+modules:
+  - name: hosted_control
+    path: factoryline/hosted_control.py
+    imports: [factoryline.control_plane, factoryline.hosted_identity, factoryline.integrations, factoryline.pr_assurance]
+    functions:
+      - name: initialize_control_schema
+        args: ["store: PostgresControlStore"]
+        returns: None
+        doc: "Create and verify the tenant lifecycle, forced-RLS, and audit schema."
+      - name: issue_installation_state
+        args: ["store: PostgresControlStore", "principal: Principal", "tenant_id: str"]
+        returns: "dict[str, Any]"
+        doc: "Issue one 600-second state while storing only its SHA-256 digest."
+  - name: hosted_api
+    path: factoryline/hosted_api.py
+    imports: [factoryline.hosted_control, factoryline.hosted_storage, factoryline.hosted_identity, factoryline.hosted_github]
+    functions:
+      - name: create_hosted_app
+        args: ["service: HostedPRAssuranceService"]
+        returns: HostedPRAssuranceAPI
+        doc: "Create authenticated assurance and supervised control-plane routes."
+dependencies:
+  - from: hosted_api
+    to: hosted_control
+invariants:
+  - name: hosted_control_never_stores_secret_values
+    forbid_pattern: "secret_value|private_key|bearer_token"
+    scopes:
+      - module: hosted_control
+        symbol: initialize_control_schema
+        max_lines: 900

@@ -21,3 +21,4 @@
 {"phase": "fill", "failure_code": "QA_COMPLEXITY", "fix": "QA_COMPLEXITY factoryline/hosted_github.py:publish complexity 11 > 10; policy=hard", "feature": "hosted-pr-assurance-v1", "count": 1, "last_seen": "2026-07-19T11:20:15.891665+00:00"}
 {"phase": "fill", "failure_code": "QA_COMPLEXITY", "fix": "QA_COMPLEXITY factoryline/hosted_identity.py:get complexity 13 > 10; policy=hard", "feature": "hosted-pr-assurance-v1", "count": 1, "last_seen": "2026-07-19T11:20:15.908667+00:00"}
 {"phase": "fill", "failure_code": "QA_COMPLEXITY", "fix": "QA_COMPLEXITY factoryline/hosted_storage.py:decide complexity 11 > 10; policy=hard", "feature": "hosted-pr-assurance-v1", "count": 1, "last_seen": "2026-07-19T11:20:15.926080+00:00"}
+{"phase": "fill", "failure_code": "QA_COMPLEXITY", "fix": "QA_COMPLEXITY factoryline/hosted_control.py:bind_installation complexity 15 > 10; policy=hard", "feature": "hosted-control-plane-v1", "count": 1, "last_seen": "2026-07-20T00:28:06.626819+00:00"}

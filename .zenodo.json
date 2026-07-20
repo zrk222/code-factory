@@ -1,7 +1,7 @@
 {
   "title": "Code Factory: Proof-by-Sabotage Software Factory",
-  "description": "Code Factory is a proof-first, open-source software factory for turning specifications, behavior checks, design contracts, policy verification, and release receipts into auditable delivery. Version 0.18 adds authenticated pull-request assurance and an optional hosted adapter: GitHub HMAC webhook verification, immutable installation-to-tenant routing, offline RS256 OIDC verification, PostgreSQL forced row-level security, transactional approval and GitHub Check outbox records, freshness-bounded HTTPS JWKS rotation, short-lived GitHub App publication credentials, health/readiness routes, and secret-free operation events. The local core remains usable without hosted dependencies. Product Missions, signed Capability Packs, seven starter targets, Factory Studio, VS Code, and JetBrains integrations remain included. Public documentation assets include exact Studio captures, the narrated quick start, Mermaid diagrams, and a nine-stage conceptual visual walkthrough; the illustrations are not UI screenshots or measured outcome evidence.\n\nEvidence boundary: the hosted reference is deployable but does not claim managed HA, automatic disaster recovery, SCIM, SOC 2, or an SLA. External GitHub publication occurs only through explicitly configured App credentials and a retained transactional outbox. A passing receipt proves the declared checks and supplied environment, not arbitrary production security.\n\nDual licensed under MIT or Apache-2.0.",
-  "version": "0.18.0",
+  "description": "Code Factory is a proof-first, open-source software factory for turning specifications, behavior checks, design contracts, policy verification, and release receipts into auditable delivery. Version 0.19 adds a supervised hosted tenant control plane: bootstrap platform authority, per-tenant OIDC and JWKS configuration, atomic directory-group role mapping, runtime-only env secret references, 600-second one-time GitHub installation state, immutable installation binding, PostgreSQL forced row-level security, serialized hash-linked administrative audit events, a redacted operational overview, and a responsive read-only operator console. Authenticated pull-request assurance, transactional GitHub Check publication, Product Missions, signed Capability Packs, seven starter targets, Factory Studio, VS Code, and JetBrains integrations remain included. Public documentation assets include exact Studio captures, the narrated quick start, Mermaid diagrams, and a nine-stage conceptual visual walkthrough; the illustrations are not UI screenshots or measured outcome evidence.\n\nEvidence boundary: the hosted reference is deployable and supervised but does not claim managed HA, automatic disaster recovery, SCIM, SAML enrollment, managed KMS, SOC 2, or an SLA. External GitHub publication occurs only through explicitly configured App credentials and a retained transactional outbox. A passing receipt proves the declared checks and supplied environment, not arbitrary production security.\n\nDual licensed under MIT or Apache-2.0.",
+  "version": "0.19.0",
   "publication_date": "2026-07-19",
   "creators": [
     {
@@ -34,6 +34,8 @@
     "github-app",
     "oidc",
     "transactional-outbox",
+    "tenant-control-plane",
+    "operator-console",
     "visual-walkthrough"
   ],
   "related_identifiers": [

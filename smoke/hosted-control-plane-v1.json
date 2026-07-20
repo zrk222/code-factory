@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "hosted_control_hostile_contract",
+      "kind": "python",
+      "run": "import subprocess,sys\nresult=subprocess.run([sys.executable,'-m','pytest','-q','tests/test_hosted_control.py','tests/test_hosted_console.py'],capture_output=True,text=True,timeout=120,check=False); assert result.returncode==0,result.stdout+result.stderr; assert ' passed' in result.stdout\n",
+      "covers": ["TENANT_CREATED", "TENANT_BOUNDARY_ENFORCED", "OIDC_CONFIG_VERIFIED", "ROLE_MAPPING_BOUND", "SECRET_REFERENCE_BOUND", "INSTALLATION_STATE_ISSUED", "INSTALLATION_BOUND", "INSTALLATION_RACE_REJECTED", "ADMIN_ACTION_AUDITED", "CONTROL_OVERVIEW_REDACTED", "CONTROL_CONSOLE_READ_ONLY", "TENANT_IDENTITY_VERIFIED", "DYNAMIC_WEBHOOK_SECRET_BOUND", "CONTROL_EVENTS_SECRET_FREE"],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "hosted_control_rls_contract",
+      "kind": "python",
+      "run": "from pathlib import Path\nsource=Path('factoryline/hosted_control.py').read_text(encoding='utf-8'); assert source.count('FORCE ROW LEVEL SECURITY')==4; assert source.count(\"current_setting('factory.tenant_id', true)\")==8; assert 'pg_advisory_xact_lock' in source; assert 'state_sha256 TEXT PRIMARY KEY' in source; assert 'secret_value' not in source\n",
+      "covers": ["CONTROL_RLS_BOUND", "ADMIN_ACTION_AUDITED", "INSTALLATION_RACE_REJECTED"],
+      "must_fail_on_stub": true
+    }
+  ]
+}

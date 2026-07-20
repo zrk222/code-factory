@@ -45,7 +45,7 @@ flowchart TB
 ## Eventual delivery order
 
 1. Receipt v2, DSSE, identity, policy, revocation, and offline verification.
-2. Tenant control plane, evidence store, SSO/SCIM adapters, authorization, and SCM apps.
+2. Tenant control plane, evidence store, identity/directory adapters, authorization, and SCM apps.
 3. Assurance graph, adaptive gates, isolated runners, SBOM/VEX, policy mutation,
    and private challenge sets.
 4. OpenTelemetry, deployment and rollback evidence, vulnerability response, SIEM,
@@ -55,17 +55,17 @@ flowchart TB
 
 ## Current implementation status
 
-The following local foundations are shipped in FactoryLine 0.11.1 and later:
+The following foundations are shipped in FactoryLine 0.19.0:
 
 | Plane | Shipped foundation | Not claimed yet |
 | --- | --- | --- |
 | Enterprise trust | Receipt v2, DSSE/Ed25519, identity metadata, policy binding, revocation, offline verification | Sigstore-backed enterprise key lifecycle or centralized trust service |
-| Control | Tenant-scoped SQLite evidence, deny-by-default roles, approvals, audit chain, REST adapter, verified-claim normalizers | Hosted availability, SSO/SCIM, provider signature verification, SCM apps, external KMS |
+| Control | Tenant-scoped SQLite evidence; supervised PostgreSQL tenant lifecycle; forced RLS; per-tenant OIDC/JWKS verification; atomic directory-group roles; GitHub App installation binding; runtime-only secret references; hash-linked audit; read-only operator console | SCIM/SAML enrollment, managed HA/DR, external KMS, hosted evidence retention service, additional SCM providers |
 | Assurance | Evidence graph, risk DAG, process-boundary runner, SBOM/VEX-shaped artifacts, policy mutation, digest-only challenge manifest | Kernel/container isolation, complete SBOM discovery, remote private challenge service |
 | Operations | Measured spans, canary/rollback decisions, vulnerability receipts, metadata-only connector envelopes | OpenTelemetry export, SIEM/ticket delivery, ticket lifecycle automation |
 | Compliance | Versioned baseline packs and OSCAL-shaped assessment exports | Complete standard coverage, auditor validation, certification |
 | Privacy | Merkle selective disclosure and backend status guards | BBS credentials and zkVM proofs until reviewed backends are installed and integrated |
 
 Public claims must come from released commands, receipts, CI runs, or generated
-artifacts. A local foundation is not a hosted enterprise service, and a
-baseline control mapping is not a compliance certification.
+artifacts. A deployable supervised reference is not a managed hosted enterprise
+service, and a baseline control mapping is not a compliance certification.

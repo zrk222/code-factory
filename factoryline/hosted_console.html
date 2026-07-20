@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Code Factory — Hosted Control</title>
+  <style>
+    :root {
+      --bg: #0a0b0a;
+      --panel: #121411;
+      --raised: #191c17;
+      --ink: #f6f1e6;
+      --muted: #aaa89f;
+      --line: #2a2e27;
+      --amber: #f4b24c;
+      --green: #70d49b;
+      --red: #ff8b7b;
+      --radius: 20px;
+      --shadow: 0 28px 80px rgba(0,0,0,.36);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 70% -10%, rgba(244,178,76,.15), transparent 38%), var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+    button, input { font: inherit; }
+    a { color: var(--amber); }
+    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 26px 0; }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 850; letter-spacing: -.02em; }
+    .mark { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: var(--amber); color: #17130b; }
+    .mode { padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: .76rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    main { padding: 58px 0 110px; }
+    .hero { display: grid; grid-template-columns: 1.1fr .9fr; gap: 46px; align-items: end; margin-bottom: 44px; }
+    .eyebrow { color: var(--amber); font-size: .76rem; font-weight: 900; letter-spacing: .15em; text-transform: uppercase; }
+    h1 { max-width: 760px; margin: 14px 0 18px; font-size: clamp(3rem, 7vw, 6rem); line-height: .92; letter-spacing: -.07em; }
+    .lede { max-width: 700px; margin: 0; color: var(--muted); font-size: 1.08rem; }
+    .auth { padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(18,20,17,.88); box-shadow: var(--shadow); }
+    .auth h2 { margin: 0 0 6px; font-size: 1.05rem; }
+    .auth p { margin: 0 0 18px; color: var(--muted); font-size: .85rem; }
+    label { display: block; margin: 12px 0 6px; color: #d4d0c5; font-size: .78rem; font-weight: 800; }
+    input { width: 100%; min-height: 48px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; outline: none; background: #0d0f0c; color: var(--ink); }
+    input:focus { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(244,178,76,.12); }
+    button { width: 100%; min-height: 50px; margin-top: 16px; border: 0; border-radius: 12px; background: var(--amber); color: #18130a; font-weight: 900; cursor: pointer; transition: transform .2s ease, filter .2s ease; }
+    button:hover { transform: translateY(-1px); filter: brightness(1.06); }
+    button:disabled { cursor: wait; filter: grayscale(.65); }
+    .proof-line { margin-top: 16px; color: var(--green); font: 700 .78rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .links { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 14px; }
+    .links a { font-size: .78rem; font-weight: 800; text-underline-offset: 3px; }
+    .state { display: none; padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+    .state.active { display: block; }
+    .state h2 { margin: 0 0 6px; }
+    .state p { margin: 0; color: var(--muted); }
+    .error { border-color: rgba(255,139,123,.45); }
+    .error h2 { color: var(--red); }
+    .overview { display: none; }
+    .overview.active { display: block; }
+    .overview-head { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin: 42px 0 20px; }
+    .overview h2 { margin: 0; font-size: clamp(2rem, 4vw, 3.4rem); letter-spacing: -.045em; }
+    .status { display: inline-flex; align-items: center; gap: 8px; color: var(--green); font-size: .85rem; font-weight: 850; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 16px currentColor; }
+    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    .card { min-height: 160px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+    .card .label { color: var(--muted); font-size: .76rem; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }
+    .metric { margin: 18px 0 4px; font-size: 2.5rem; line-height: 1; font-weight: 850; letter-spacing: -.06em; }
+    .detail { color: var(--muted); font-size: .82rem; }
+    .wide { grid-column: span 2; }
+    .list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 17px; }
+    .pill { padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--raised); color: #d7d3c8; font-size: .8rem; }
+    .audit { margin-top: 14px; padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+    .audit-head { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-bottom: 14px; }
+    .audit h3 { margin: 0; }
+    table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+    th, td { padding: 12px 8px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+    code { color: var(--amber); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .footnote { margin-top: 18px; color: var(--muted); font-size: .78rem; text-align: center; }
+    @media (max-width: 860px) {
+      .hero { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: repeat(2, 1fr); }
+      main { padding-top: 36px; }
+    }
+    @media (max-width: 560px) {
+      .shell { width: min(100% - 24px, 1180px); }
+      .grid { grid-template-columns: 1fr; }
+      .wide { grid-column: span 1; }
+      .overview-head, .audit-head { align-items: flex-start; flex-direction: column; }
+      .table-wrap { overflow-x: auto; }
+      h1 { font-size: clamp(3rem, 16vw, 4.7rem); }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand"><span class="mark">CF</span> Hosted Control</div>
+      <div class="mode">Read only</div>
+    </header>
+    <main>
+      <section class="hero">
+        <div>
+          <div class="eyebrow">Tenant evidence · Verified identity</div>
+          <h1>Verify your tenant in one view.</h1>
+          <p class="lede">Inspect installation bindings, role coverage, signed evidence, publication health, and the hash-linked administrative audit chain without granting this console mutation or release authority.</p>
+        </div>
+        <div class="auth">
+          <h2>Load tenant overview</h2>
+          <p>The access token is used for this request only and is cleared from the input immediately.</p>
+          <label for="tenant">Tenant ID</label>
+          <input id="tenant" autocomplete="off" spellcheck="false" placeholder="acme-platform">
+          <label for="token">OIDC access token</label>
+          <input id="token" type="password" autocomplete="off" placeholder="Paste a short-lived token">
+          <button id="load" type="button">View tenant evidence</button>
+          <div class="proof-line">RLS isolated · OIDC verified · source available</div>
+          <div class="links">
+            <a href="https://github.com/zrk222/code-factory/blob/main/docs/HOSTED_CONTROL_PLANE.md">View deployment docs</a>
+            <a href="https://github.com/zrk222/code-factory">Inspect GitHub source</a>
+            <a href="https://pypi.org/project/factoryline-code-factory/">Install the CLI</a>
+          </div>
+        </div>
+      </section>
+
+      <section id="empty" class="state active" aria-live="polite">
+        <h2>No tenant loaded</h2>
+        <p>Enter an authorized tenant and short-lived OIDC token to load its redacted operational read model.</p>
+      </section>
+      <section id="loading" class="state" aria-live="polite">
+        <h2>Verifying tenant boundary…</h2>
+        <p>Checking identity, row isolation, and audit-chain state.</p>
+      </section>
+      <section id="error" class="state error" aria-live="assertive">
+        <h2>Overview refused</h2>
+        <p id="error-message">The request did not satisfy the hosted control contract.</p>
+      </section>
+
+      <section id="overview" class="overview" aria-live="polite">
+        <div class="overview-head">
+          <div><div class="eyebrow">Verified tenant boundary</div><h2 id="tenant-name">Tenant</h2></div>
+          <div class="status"><span class="dot"></span><span id="tenant-status">Active</span></div>
+        </div>
+        <div class="grid">
+          <article class="card"><div class="label">Identity</div><div id="identity" class="metric">—</div><div class="detail">OIDC verification configuration</div></article>
+          <article class="card"><div class="label">Installations</div><div id="installations" class="metric">0</div><div class="detail">Immutable GitHub bindings</div></article>
+          <article class="card"><div class="label">Pending approvals</div><div id="approvals" class="metric">0</div><div class="detail">Awaiting independent decision</div></article>
+          <article class="card"><div class="label">Pending publication</div><div id="outbox" class="metric">0</div><div class="detail">Transactional Check outbox</div></article>
+          <article class="card wide"><div class="label">Role coverage</div><div id="roles" class="list"></div></article>
+          <article class="card wide"><div class="label">Configured secret purposes</div><div id="purposes" class="list"></div></article>
+        </div>
+        <div class="audit">
+          <div class="audit-head"><h3>Administrative audit chain</h3><div id="audit-status" class="status"><span class="dot"></span>Valid</div></div>
+          <div class="table-wrap"><table><thead><tr><th>Sequence</th><th>Action</th><th>Actor</th><th>Resource</th><th>Event hash</th></tr></thead><tbody id="audit-events"></tbody></table></div>
+        </div>
+        <p class="footnote">CONTROL_CONSOLE_READ_ONLY · This surface can inspect evidence but cannot modify tenants, approve changes, publish releases, or operate connectors.</p>
+      </section>
+    </main>
+  </div>
+  <script>
+    (() => {
+      const ids = ["empty", "loading", "error", "overview"];
+      const show = (id) => ids.forEach((name) => document.getElementById(name).classList.toggle("active", name === id));
+      const pills = (target, values) => {
+        const node = document.getElementById(target);
+        node.textContent = "";
+        const entries = Object.entries(values || {});
+        (entries.length ? entries : [["None", "configured"]]).forEach(([name, value]) => {
+          const item = document.createElement("span");
+          item.className = "pill";
+          item.textContent = `${name} · ${value}`;
+          node.appendChild(item);
+        });
+      };
+      document.getElementById("load").addEventListener("click", async () => {
+        const tenant = document.getElementById("tenant").value.trim();
+        let token = document.getElementById("token").value.trim();
+        document.getElementById("token").value = "";
+        if (!tenant || !token) {
+          document.getElementById("error-message").textContent = "Tenant ID and a short-lived OIDC token are required.";
+          show("error");
+          token = "";
+          return;
+        }
+        show("loading");
+        const button = document.getElementById("load");
+        button.disabled = true;
+        try {
+          const response = await fetch(`/v1/admin/tenants/${encodeURIComponent(tenant)}/overview`, {
+            headers: { Authorization: `Bearer ${token}`, Accept: "application/json" }
+          });
+          token = "";
+          const value = await response.json();
+          if (!response.ok) throw new Error(value?.error?.message || "The hosted service refused this overview.");
+          document.getElementById("tenant-name").textContent = value.tenant.display_name;
+          document.getElementById("tenant-status").textContent = value.tenant.status;
+          document.getElementById("identity").textContent = value.identity_configured ? "Ready" : "Missing";
+          document.getElementById("installations").textContent = value.installation_ids.length;
+          document.getElementById("approvals").textContent = value.approval_counts.pending || 0;
+          document.getElementById("outbox").textContent = value.outbox_counts.pending || 0;
+          pills("roles", value.role_counts);
+          pills("purposes", Object.fromEntries(value.secret_purposes.map((name) => [name, "bound"])));
+          const audit = document.getElementById("audit-events");
+          audit.textContent = "";
+          value.audit.events.forEach((event) => {
+            const row = document.createElement("tr");
+            [event.sequence, event.action, event.actor, event.resource_id].forEach((text) => {
+              const cell = document.createElement("td");
+              cell.textContent = String(text);
+              row.appendChild(cell);
+            });
+            const hash = document.createElement("td");
+            const code = document.createElement("code");
+            code.textContent = `${event.event_hash.slice(0, 12)}…`;
+            hash.appendChild(code);
+            row.appendChild(hash);
+            audit.appendChild(row);
+          });
+          const auditStatus = document.getElementById("audit-status");
+          auditStatus.lastChild.textContent = value.audit.valid ? "Valid" : "Invalid";
+          auditStatus.style.color = value.audit.valid ? "var(--green)" : "var(--red)";
+          show("overview");
+        } catch (problem) {
+          token = "";
+          document.getElementById("error-message").textContent = problem.message;
+          show("error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
