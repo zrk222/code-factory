@@ -1,0 +1,83 @@
+name: receipt-graph-runtime
+modules:
+  - name: mission_graph
+    path: factoryline/mission_graph.py
+    functions:
+      - name: init_mission_graph
+        args: ["mission_path: Path", "root: Path"]
+        returns: dict
+      - name: apply_mission_event
+        args: ["mission_path: Path", "root: Path", "event: str", "actor: str", "role: str", "idempotency_key: str", "receipt_path: Path | None = None", "payload: dict[str, Any] | None = None"]
+        returns: dict
+      - name: mission_graph_status
+        args: ["mission_path: Path", "root: Path"]
+        returns: dict
+      - name: mission_graph_history
+        args: ["mission_path: Path", "root: Path"]
+        returns: dict
+      - name: verify_mission_graph
+        args: ["mission_path: Path", "root: Path"]
+        returns: dict
+      - name: export_mission_graph
+        args: ["mission_path: Path", "root: Path"]
+        returns: dict
+      - name: langgraph_doctor
+        args: []
+        returns: dict
+      - name: recommend_mission_route
+        args: ["mission_path: Path", "root: Path", "risk: str", "quality_floor: str = 'balanced'", "cache_continuity: bool = True"]
+        returns: dict
+      - name: build_langgraph_adapter
+        args: ["mission_path: Path", "root: Path", "checkpointer: Any | None = None"]
+        returns: Any
+  - name: provider_router
+    path: factoryline/provider_router.py
+    functions:
+      - name: create_provider_policy
+        args: ["root: Path", "owner: str", "providers: list[dict[str, Any]]", "allowed_ides: list[str]", "max_cost_usd: float", "quality_floor: str = 'balanced'", "routing_bias: int = 50", "force: bool = False"]
+        returns: dict
+      - name: verify_provider_policy
+        args: ["policy_path: Path"]
+        returns: dict
+      - name: provider_doctor
+        args: ["policy_path: Path"]
+        returns: dict
+      - name: route_provider
+        args: ["policy_path: Path", "mission_path: Path", "root: Path", "ide: str", "risk: str", "preferred_provider: str | None = None", "preferred_model: str | None = None", "cache_provider: str | None = None", "cache_model: str | None = None"]
+        returns: dict
+dependencies:
+  - from: mission_graph
+    to: product_missions
+  - from: provider_router
+    to: mission_graph
+invariants:
+  - name: no_external_effect_execution
+    forbid_pattern: "subprocess\\.(?:run|Popen)|\\b(?:merge|deploy|publish)\\s*\\("
+    scopes:
+      - module: mission_graph
+        symbol: apply_mission_event
+        max_lines: 400
+  - name: no_secret_persistence
+    forbid_pattern: "BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|(?:sk-|pypi-|ghp_|hf_)"
+    scopes:
+      - module: mission_graph
+        symbol: apply_mission_event
+        max_lines: 400
+  - name: langgraph_not_authoritative
+    forbid_pattern: "checkpoint.*(?:valid|verified|authority)"
+    scopes:
+      - module: mission_graph
+        symbol: build_langgraph_adapter
+        max_lines: 120
+  - name: provider_router_never_calls_network
+    forbid_pattern: "requests\\.|httpx\\.|urllib\\.|socket\\.|subprocess\\."
+    scopes:
+      - module: provider_router
+        symbol: route_provider
+        max_lines: 180
+  - name: provider_router_never_persists_secret_values
+    forbid_pattern: "(?:api_key|secret|token)\\s*[:=]"
+    scopes:
+      - module: provider_router
+        symbol: create_provider_policy
+        max_lines: 180

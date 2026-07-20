@@ -50,6 +50,8 @@ approval boundaries; it does not claim to predict every future product domain.
 | PR | Completion verified | Draft evidence-linked review packet | Reviewer | Review outcome, risk, screenshots, gates, rollback |
 | PR | Unproven claim remains | Label explicitly; do not promote to fact | Reviewer | Add evidence or remove claim |
 | Release | Merge, publish, deploy, signing, connector, or message requested | Require separate human authority | Release owner | Platform-specific approval and receipt |
+| Provider route | User selects provider/model and IDE | Enforce verified BYOK policy, quality floor, mission budget, credential presence, and cache rail | Mission owner/operator | `factory.provider-route.v1`; no provider call authority |
+| Human interrupt | Owner pauses active creator or validator work | Preserve the chain, bind a revised-plan receipt, clear worker identity on resume | Mission owner | `factory.mission.human-interrupt.v1` plus plan revision receipt |
 | Release | Worker container route | Require reviewed image, registry, smoke input, host adapter, and rollback | Release owner | `container-host` route receipt |
 | Release | Web split-hosting route | Verify frontend, API, health, browser, and cross-origin behavior independently | Release owner | `split-hosting` route receipt |
 | Release | Mobile store route | Verify Expo, signed device, EAS, spend, and store credentials | Release owner | `eas-store` route receipt |

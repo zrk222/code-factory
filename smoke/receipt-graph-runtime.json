@@ -1,0 +1,47 @@
+{
+  "checks": [
+    {
+      "name": "mission_graph_transitions_are_receipt_and_budget_guarded",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q','tests/test_mission_graph.py']) == 0\n",
+      "covers": [
+        "MISSION_GRAPH_INITIALIZED",
+        "MISSION_GRAPH_HASH_CHAIN_BOUND",
+        "MISSION_GRAPH_TRANSITION_GUARDED",
+        "MISSION_GRAPH_OWNER_DECISION_BOUND",
+        "MISSION_GRAPH_CANDIDATE_BOUND",
+        "MISSION_GRAPH_VALIDATION_FAILED_BOUND",
+        "MISSION_GRAPH_COMPLETION_BOUND",
+        "MISSION_GRAPH_IDEMPOTENT",
+        "MISSION_GRAPH_IDEMPOTENCY_CONFLICT",
+        "MISSION_GRAPH_DRIFT",
+        "MISSION_GRAPH_BUDGET_ENFORCED",
+        "MISSION_GRAPH_USAGE_RECEIPT_BOUND",
+        "MISSION_GRAPH_HUMAN_INTERRUPT",
+        "MISSION_GRAPH_PLAN_REVISION_BOUND",
+        "MISSION_GRAPH_CONTEXT_REFRESH_BOUND",
+        "MISSION_GRAPH_RELEASE_AUTHORITY_SEPARATE",
+        "MISSION_GRAPH_MERMAID_EXPORTED",
+        "MISSION_GRAPH_ROUTING_EXPLAINED",
+        "LANGGRAPH_ADAPTER_BOUND"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "provider_policy_is_secret_free_and_ide_bounded",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q','tests/test_provider_router.py']) == 0\n",
+      "covers": [
+        "PROVIDER_POLICY_SECRET_FREE",
+        "PROVIDER_POLICY_VERIFIED",
+        "PROVIDER_IDE_SELECTED",
+        "PROVIDER_ROUTE_EXPLAINED",
+        "PROVIDER_ROUTE_RAILS_ENFORCED",
+        "PROVIDER_CREDENTIAL_REFERENCE_ONLY",
+        "PROVIDER_CACHE_AWARE",
+        "PROVIDER_NO_CALL_AUTHORITY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

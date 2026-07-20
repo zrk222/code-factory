@@ -54,6 +54,19 @@ _GUIDANCE: dict[str, tuple[str, str, bool]] = {
     "BROWSER_FLOW_INVALID": ("computer-control verification", "Rerun the declared browser flow with a fresh verifier until URL, click bound, assertions, and artifact hashes all pass.", True),
     "REPOSITORY_CONTEXT_GIT_REQUIRED": ("AutoWiki and Lore source", "Run inside a Git worktree so context can be generated from tracked files, ADRs, and commit history.", True),
     "FEEDBACK_INPUT_INVALID": ("outcome feedback contract", "Provide a mission id, metric, observed value, target, and local measured evidence.", True),
+    "LEARNING_TASK_INVALID": ("learning task contract", "Provide a stable task id, recorded owner, and concrete objective.", True),
+    "MILESTONE_CONTRACT_INVALID": ("milestone contract", "Declare ordered milestones with unique ids and one or more id-bearing criteria.", True),
+    "MILESTONE_UNKNOWN": ("milestone selection", "Choose a milestone declared by the bound learning task.", True),
+    "MILESTONE_ORDER_BLOCKED": ("milestone gate", "Promote valid evidence for each preceding milestone before continuing.", False),
+    "INSTRUCTION_CANDIDATE_INVALID": ("instruction candidate", "Provide a worker identity and a bounded unique instruction list.", True),
+    "OUTCOME_OUTSIDE_ROOT": ("learning provenance", "Move worker outcome evidence beneath the task workspace before proposing instructions.", True),
+    "VALIDATOR_IDENTITY_DISTINCT": ("independent learning validation", "Assign a validator distinct from the worker that proposed the instruction candidate.", False),
+    "MILESTONE_VALIDATION_INCOMPLETE": ("milestone validation", "Validate every criterion exactly once with passing, hash-bound evidence.", True),
+    "PROMOTER_IDENTITY_DISTINCT": ("instruction promotion authority", "Use three distinct identities for worker, validator, and recorded human owner.", False),
+    "WORKER_ID_INVALID": ("fresh worker packet", "Provide a non-empty identity for the new isolated worker.", True),
+    "SEARCH_VARIANT_INVALID": ("learning search policy", "Choose ASHA, Hyperband, or BOHB explicitly.", True),
+    "SEARCH_SPACE_INVALID": ("six-dimension search contract", "Declare one or more non-empty candidate lists under the published d1-d6 dimensions.", True),
+    "SEARCH_BUDGET_INVALID": ("learning search budget", "Use positive bounded resources, concurrency, samples, grace period, and reduction factor.", True),
 }
 
 

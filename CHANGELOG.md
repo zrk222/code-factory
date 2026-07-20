@@ -1,6 +1,32 @@
 # Changelog
 
-## Unreleased
+## 0.20.0 - 2026-07-20
+
+### Added
+
+- Added a transactional, hash-linked Product Mission graph with guarded roles,
+  independent validation, human pause/revise/resume, hard budget exhaustion,
+  release separation, Mermaid export, and optional LangGraph checkpoints.
+- Added secret-free multi-provider BYOK policies and deterministic routing across
+  CLI, Studio, VS Code, and JetBrains using environment-variable references,
+  quality/cost rails, IDE allowlists, and cache-continuity hints.
+- Added JetBrains Mission Operations for graph status, history, verification,
+  export, guarded events, and provider routing with workspace containment and
+  output redaction.
+- Added `factory learning init|packet|propose|validate|promote` for task-specific
+  AKU refinement with fresh worker contexts, exact milestone gates, independent
+  validation, hash-bound evidence, and recorded human promotion.
+- Added optional Harbor and Terminal-Bench result binding as local validation
+  evidence without granting the external harness execution or promotion authority.
+- Added bounded ASHA, Hyperband, and BOHB experiment contracts over the six
+  harness control dimensions with correctness-first lexicographic ranking.
+
+### Security
+
+- Worker scratchpads and prior outputs are excluded from new worker packets;
+  worker, validator, and promoter identities must be distinct.
+- Unvalidated instruction candidates are inactive and cannot edit the
+  owner-controlled Architecture Opinion Dock.
 
 ## 0.19.0 - 2026-07-19
 

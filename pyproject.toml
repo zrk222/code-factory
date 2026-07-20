@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.19.0"
-description = "A proof-first software factory with authenticated PR assurance, signed receipts, supervised tenant control, and an optional hosted PostgreSQL/GitHub adapter."
+version = "0.20.0"
+description = "A proof-first software factory with durable missions, secret-free multi-provider BYOK routing, signed receipts, and supervised enterprise control."
 authors = [
   { name = "Richard Katz" },
   { email = "rkatz22@gmail.com" },
@@ -56,6 +56,10 @@ hosted = [
   "gunicorn>=23,<24; platform_system != 'Windows'",
   "httpx>=0.28,<1",
   "psycopg[binary]>=3.2,<4",
+]
+langgraph = [
+  "langgraph>=1.1,<2",
+  "langgraph-checkpoint-sqlite>=3,<4",
 ]
 
 [project.scripts]

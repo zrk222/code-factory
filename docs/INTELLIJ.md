@@ -1,7 +1,7 @@
 # FactoryLine for JetBrains IDEs
 
 FactoryLine for JetBrains IDEs brings the local proof loop into the IDE without
-turning it into a hidden agent. It offers eight explicit actions:
+turning it into a hidden agent. It offers nine explicit action groups:
 
 1. Run Spec-to-Ship Assembly.
 2. Verify Feature Receipts.
@@ -11,6 +11,7 @@ turning it into a hidden agent. It offers eight explicit actions:
 6. Open Local Meter.
 7. Open Local Factory Studio.
 8. Open Product Missions.
+9. Mission Graph & Provider Operations.
 
 `REQ-*`, `FR-*`, and `NFR-*` text also receives a read-only FactoryLine gutter
 marker. Selecting it opens the first deterministic local proof match under
@@ -42,6 +43,12 @@ the project closes.
 literal-loopback checks, then opens Studio at `?mode=product`. Compiled missions
 remain supervised and require separate execution and promotion approvals.
 
+**Mission Graph & Provider Operations** exposes initialization, status,
+history, verification, Mermaid export, guarded event recording, and provider
+routing. Every path must resolve inside the current workspace. BYOK input is an
+environment-variable name from a verified policy; the plugin has no raw-key
+field and redacts common credential shapes from captured output.
+
 The same shared-platform gutter implementation is packaged for IntelliJ IDEA,
 PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip. Searches skip
 dependency/build trees, ignore files larger than 2 MB, and stop after 2,000
@@ -52,10 +59,10 @@ candidate files.
 1. Install FactoryLine:
 
    ```powershell
-   pip install factoryline-code-factory==0.19.0
+   pip install factoryline-code-factory==0.20.0
    ```
 
-2. Download `factoryline-intellij-0.4.0.zip` from the FactoryLine GitHub
+2. Download `factoryline-intellij-0.5.0.zip` from the FactoryLine GitHub
    release that introduced this adapter.
 3. In your JetBrains IDE: **Settings > Plugins > gear menu > Install Plugin from Disk...**.
 4. Select the ZIP, restart, then open **Tools > FactoryLine**.

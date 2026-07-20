@@ -55,12 +55,12 @@ flowchart TB
 
 ## Current implementation status
 
-The following foundations are shipped in FactoryLine 0.19.0:
+The following foundations are shipped in FactoryLine 0.20.0:
 
 | Plane | Shipped foundation | Not claimed yet |
 | --- | --- | --- |
 | Enterprise trust | Receipt v2, DSSE/Ed25519, identity metadata, policy binding, revocation, offline verification | Sigstore-backed enterprise key lifecycle or centralized trust service |
-| Control | Tenant-scoped SQLite evidence; supervised PostgreSQL tenant lifecycle; forced RLS; per-tenant OIDC/JWKS verification; atomic directory-group roles; GitHub App installation binding; runtime-only secret references; hash-linked audit; read-only operator console | SCIM/SAML enrollment, managed HA/DR, external KMS, hosted evidence retention service, additional SCM providers |
+| Control | Tenant-scoped SQLite evidence; supervised PostgreSQL tenant lifecycle; forced RLS; per-tenant OIDC/JWKS verification; atomic directory-group roles; GitHub App installation binding; runtime-only secret references; hash-linked audit; read-only operator console; durable mission graphs; secret-free IDE-aware BYOK routing | SCIM/SAML enrollment, managed HA/DR, external KMS, hosted evidence retention service, additional SCM providers, provider execution adapters |
 | Assurance | Evidence graph, risk DAG, process-boundary runner, SBOM/VEX-shaped artifacts, policy mutation, digest-only challenge manifest | Kernel/container isolation, complete SBOM discovery, remote private challenge service |
 | Operations | Measured spans, canary/rollback decisions, vulnerability receipts, metadata-only connector envelopes | OpenTelemetry export, SIEM/ticket delivery, ticket lifecycle automation |
 | Compliance | Versioned baseline packs and OSCAL-shaped assessment exports | Complete standard coverage, auditor validation, certification |

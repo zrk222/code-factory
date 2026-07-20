@@ -44,6 +44,12 @@ flowchart LR
   `factory receipt status`.
 - Plugin Verifier CI across IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion,
   GoLand, RustRover, and DataGrip.
+- One Mission Operations entry point for graph initialization, status, history,
+  verification, Mermaid export, guarded event recording, and provider routing.
+- Workspace-contained mission, policy, receipt, and payload paths; command
+  output redaction for common token and secret shapes.
+- JetBrains is passed as an explicit routing selector. Policies may reference
+  credential environment-variable names, but the plugin has no raw-key input.
 
 ## Deliberately Not Claimed Yet
 

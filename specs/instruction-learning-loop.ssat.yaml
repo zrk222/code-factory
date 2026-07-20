@@ -1,0 +1,43 @@
+name: instruction-learning-loop
+modules:
+  - name: learning_loop
+    path: factoryline/learning_loop.py
+    functions:
+      - name: init_learning_task
+        args: ["root: Path", "task_id: str", "owner: str", "objective: str", "milestones: list[dict[str, Any]]", "force: bool = False"]
+        returns: dict
+      - name: build_fresh_worker_packet
+        args: ["task_path: Path", "milestone_id: str", "worker: str", "force: bool = False"]
+        returns: dict
+      - name: propose_instruction_candidate
+        args: ["task_path: Path", "root: Path", "milestone_id: str", "worker: str", "outcome_path: Path", "instructions: list[dict[str, str]]", "force: bool = False"]
+        returns: dict
+      - name: validate_instruction_candidate
+        args: ["candidate_path: Path", "root: Path", "validator: str", "results: list[dict[str, Any]]", "force: bool = False"]
+        returns: dict
+      - name: promote_instruction_candidate
+        args: ["validation_path: Path", "owner: str", "force: bool = False"]
+        returns: dict
+      - name: plan_learning_experiment
+        args: ["task_path: Path", "search_space: dict[str, list[Any]]", "variant: str = 'asha'", "max_resource: int = 50", "grace_period: int = 5", "reduction_factor: int = 3", "max_concurrent: int = 4", "samples: int = 20", "force: bool = False"]
+        returns: dict
+dependencies: []
+invariants:
+  - name: fresh_packet_has_no_execution
+    forbid_pattern: "subprocess\\.(?:run|Popen)|\\b(?:requests|httpx|urllib|socket)\\b"
+    scopes:
+      - module: learning_loop
+        symbol: build_fresh_worker_packet
+        max_lines: 45
+  - name: candidate_has_no_promotion_authority
+    forbid_pattern: "\\b(?:deploy|publish|merge|send_message)\\s*\\("
+    scopes:
+      - module: learning_loop
+        symbol: propose_instruction_candidate
+        max_lines: 55
+  - name: validator_has_no_model_or_harness_execution
+    forbid_pattern: "subprocess\\.(?:run|Popen)|\\b(?:harbor|docker)\\b"
+    scopes:
+      - module: learning_loop
+        symbol: validate_instruction_candidate
+        max_lines: 60
