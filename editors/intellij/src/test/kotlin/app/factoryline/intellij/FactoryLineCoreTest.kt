@@ -81,4 +81,29 @@ class FactoryLineCoreTest {
         assertEquals(evidence, found.path)
         assertEquals(0, found.line)
     }
+
+    @Test
+    fun workspacePathsCannotEscapeTheProject() {
+        val root = Files.createTempDirectory("factoryline-workspace")
+        assertEquals(root.resolve("missions/one.json").normalize(), WorkspacePath.resolve(root, "missions/one.json"))
+        assertEquals(null, WorkspacePath.resolve(root, "../outside.json"))
+    }
+
+    @Test
+    fun commandOutputRedactsCommonCredentialShapes() {
+        val redacted = OutputRedactor.redact("api_key=sk-secret123 Bearer abcdefghijk hf_secret123")
+        assertFalse(redacted.contains("secret123"))
+        assertFalse(redacted.contains("abcdefghijk"))
+        assertTrue(redacted.contains("[REDACTED]"))
+    }
+
+    @Test
+    fun jetbrainsRouterNeverAcceptsCredentialValues() {
+        val root = Files.createTempDirectory("factoryline-router")
+        val command = FactoryLineCommands.providerRoute(
+            root.resolve("policy.json"), root.resolve("mission.json"), root, "high", "openai", "gpt-5"
+        )
+        assertTrue(command.containsAll(listOf("--ide", "jetbrains", "--risk", "high")))
+        assertFalse(command.any { it.contains("api-key", ignoreCase = true) || it.contains("secret", ignoreCase = true) })
+    }
 }

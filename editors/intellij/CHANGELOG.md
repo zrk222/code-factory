@@ -1,5 +1,12 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.5.0
+
+- Add Mission Operations for durable graph initialization, status, history,
+  verification, Mermaid export, guarded events, and JetBrains-selected BYOK routing.
+- Contain all mission, policy, receipt, and payload paths to the workspace and
+  redact common credential shapes from displayed command output.
+
 ## 0.4.0
 
 - Align the Marketplace package and release bundle with Code Factory 0.18.0.

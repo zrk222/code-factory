@@ -15,9 +15,9 @@
 **Exact shipped UI:** the walkthrough below is rendered from the actual Factory
 Studio surface; it is not concept art.
 
-[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.19.0/code-factory-quickstart-v0171.mp4)
+[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.20.0/code-factory-quickstart-v0171.mp4)
 
-[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.19.0/code-factory-quickstart-v0171.mp4).
+[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.20.0/code-factory-quickstart-v0171.mp4).
 The absolute cover and release-asset URLs render from both GitHub and PyPI.
 
 The one-minute walkthrough is rendered from an actual 1920x1080 Factory
@@ -42,7 +42,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.19.0
+pip install factoryline-code-factory==0.20.0
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -113,6 +113,8 @@ publication, signing, or external-message authority. See
 
 For target-by-target local, preview, and release routes, prerequisites, checks,
 and approval boundaries, see the [Deployment Guide](docs/DEPLOYMENT_GUIDE.md).
+The per-channel artifact and moderation boundaries are listed in
+[Release Channels](docs/RELEASE_CHANNELS.md).
 
 ## Product Missions: PRD to reviewer-ready value
 
@@ -136,6 +138,18 @@ The live Meter v2 adds queue, review, rework, cache, invalidation, and outcome
 telemetry while preserving unknown values as unknown. Open the same workflow in
 Factory Studio or through the explicit Product Missions command in VS Code and
 all supported JetBrains IDEs. See [Product Missions](docs/PRODUCT_MISSIONS.md).
+
+Version 0.20 adds durable mission execution through a hash-linked SQLite event
+ledger with guarded transitions, human pause/revise/resume, independent
+validation, budget exhaustion, release separation, and an optional LangGraph
+checkpoint adapter. A secret-free multi-provider policy selects BYOK provider
+and model references across CLI, Studio, VS Code, and JetBrains while never
+reading, storing, or calling with credential values. Operators can select the
+IDE surface, provider/model preference, quality floor, budget ceiling, and
+cache-continuity rail while the runtime remains responsible for actual key
+injection and spend authorization. See
+[Mission Graph Operations](docs/LANGGRAPH_OPS.md) and
+[Multi-Provider BYOK Routing](docs/PROVIDER_ROUTING.md).
 
 ## Migration Missions: no finish without proof
 
@@ -327,10 +341,18 @@ right procedure, tools, governance, and validators at the exact step of work."
 See [AKU_STANDARD.md](AKU_STANDARD.md) for the enterprise schema and how each
 brick maps to codification, compression, injection, and validation.
 
+The governed learning lane now turns task outcomes into task-specific AKUs
+without transferring worker scratchpads. `factory learning init|packet|propose|validate|promote`
+requires ordered milestone evidence, a validator distinct from the worker, and
+the recorded human owner before any instruction becomes active. Harbor and
+Terminal-Bench results can be bound as external evidence, but cannot self-approve
+an instruction or edit the Architecture Opinion Dock. See
+[Governed Instruction Learning](docs/INSTRUCTION_LEARNING.md).
+
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.19.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.20.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 factory doctor --json
 ```
 

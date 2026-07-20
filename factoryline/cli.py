@@ -72,6 +72,24 @@ from .product_missions import (
     verify_mission_completion,
     verify_product_graph,
 )
+from .mission_graph import (
+    MissionGraphError,
+    apply_mission_event,
+    export_mission_graph,
+    init_mission_graph,
+    langgraph_doctor,
+    mission_graph_history,
+    mission_graph_status,
+    verify_mission_graph,
+)
+from .provider_router import (
+    SUPPORTED_IDES,
+    ProviderRouterError,
+    create_provider_policy,
+    provider_doctor,
+    route_provider,
+    verify_provider_policy,
+)
 from .signal_loop import (
     AUTHORIZATIONS,
     DECISIONS,
@@ -85,6 +103,15 @@ from .signal_loop import (
     promote_signal,
     triage_signal,
     verify_opinion_dock,
+)
+from .learning_loop import (
+    LearningLoopError,
+    build_fresh_worker_packet,
+    init_learning_task,
+    plan_learning_experiment,
+    promote_instruction_candidate,
+    propose_instruction_candidate,
+    validate_instruction_candidate,
 )
 
 
@@ -677,6 +704,57 @@ def main(argv=None) -> int:
     mission_decide.add_argument("--force", action="store_true")
     mission_decide.add_argument("--json", action="store_true")
 
+    langgraph = sub.add_parser("langgraph", help="operate receipt-governed durable mission graphs")
+    langgraph_sub = langgraph.add_subparsers(dest="langgraph_cmd", required=True)
+    langgraph_doctor_parser = langgraph_sub.add_parser("doctor", help="check optional LangGraph and SQLite checkpoint support")
+    langgraph_doctor_parser.add_argument("--json", action="store_true")
+    for command, help_text in (
+        ("init", "initialize or reopen a durable mission graph"),
+        ("status", "show state, milestones, budget, and allowed events"),
+        ("history", "show the verified ordered transition chain"),
+        ("verify", "verify mission, event-chain, and receipt bindings"),
+        ("export", "write a Mermaid mission graph with current state"),
+    ):
+        parser = langgraph_sub.add_parser(command, help=help_text)
+        parser.add_argument("mission")
+        parser.add_argument("--root", default=".")
+        parser.add_argument("--json", action="store_true")
+    langgraph_event = langgraph_sub.add_parser("event", help="append one guarded, idempotent mission event")
+    langgraph_event.add_argument("mission")
+    langgraph_event.add_argument("--root", default=".")
+    langgraph_event.add_argument("--event", required=True)
+    langgraph_event.add_argument("--actor", required=True)
+    langgraph_event.add_argument("--role", required=True, choices=["owner", "worker", "validator", "operator"])
+    langgraph_event.add_argument("--idempotency-key", required=True)
+    langgraph_event.add_argument("--receipt", required=True)
+    langgraph_event.add_argument("--payload", help="path to a secret-free JSON object")
+    langgraph_event.add_argument("--json", action="store_true")
+
+    provider = sub.add_parser("provider", help="configure secret-free BYOK references and deterministic routing rails")
+    provider_sub = provider.add_subparsers(dest="provider_cmd", required=True)
+    provider_init = provider_sub.add_parser("init", help="write a provider policy from a secret-free JSON config")
+    provider_init.add_argument("config")
+    provider_init.add_argument("--root", default=".")
+    provider_init.add_argument("--force", action="store_true")
+    provider_init.add_argument("--json", action="store_true")
+    provider_verify = provider_sub.add_parser("verify", help="verify provider policy schema, rails, and hash")
+    provider_verify.add_argument("policy")
+    provider_verify.add_argument("--json", action="store_true")
+    provider_doctor_parser = provider_sub.add_parser("doctor", help="show credential-reference presence without key values")
+    provider_doctor_parser.add_argument("policy")
+    provider_doctor_parser.add_argument("--json", action="store_true")
+    provider_route = provider_sub.add_parser("route", help="select a provider/model under mission and IDE rails")
+    provider_route.add_argument("policy")
+    provider_route.add_argument("mission")
+    provider_route.add_argument("--root", default=".")
+    provider_route.add_argument("--ide", required=True, choices=sorted(SUPPORTED_IDES))
+    provider_route.add_argument("--risk", required=True, choices=["low", "medium", "high"])
+    provider_route.add_argument("--preferred-provider")
+    provider_route.add_argument("--preferred-model")
+    provider_route.add_argument("--cache-provider")
+    provider_route.add_argument("--cache-model")
+    provider_route.add_argument("--json", action="store_true")
+
     migration = sub.add_parser("migration", help="prove agent readiness before a large migration mission")
     migration_sub = migration.add_subparsers(dest="migration_cmd", required=True)
     migration_assess = migration_sub.add_parser("assess", help="separate registered checks from executable readiness proof")
@@ -764,6 +842,55 @@ def main(argv=None) -> int:
     signal_feedback.add_argument("--evidence", required=True)
     signal_feedback.add_argument("--json", action="store_true")
 
+    learning = sub.add_parser("learning", help="refine task-specific worker instructions through independent proof")
+    learning_sub = learning.add_subparsers(dest="learning_cmd", required=True)
+    learning_init = learning_sub.add_parser("init", help="bind a task objective and ordered milestone gates")
+    learning_init.add_argument("task_id")
+    learning_init.add_argument("--root", default=".")
+    learning_init.add_argument("--owner", required=True)
+    learning_init.add_argument("--objective", required=True)
+    learning_init.add_argument("--milestones", required=True, help="JSON file containing milestone objects")
+    learning_init.add_argument("--force", action="store_true")
+    learning_init.add_argument("--json", action="store_true")
+    learning_packet = learning_sub.add_parser("packet", help="create a fresh worker context from promoted instructions only")
+    learning_packet.add_argument("task")
+    learning_packet.add_argument("--milestone", required=True)
+    learning_packet.add_argument("--worker", required=True)
+    learning_packet.add_argument("--force", action="store_true")
+    learning_packet.add_argument("--json", action="store_true")
+    learning_propose = learning_sub.add_parser("propose", help="bind an outcome to an untrusted instruction candidate")
+    learning_propose.add_argument("task")
+    learning_propose.add_argument("--root", default=".")
+    learning_propose.add_argument("--milestone", required=True)
+    learning_propose.add_argument("--worker", required=True)
+    learning_propose.add_argument("--outcome", required=True)
+    learning_propose.add_argument("--instructions", required=True, help="JSON file containing a dimensioned instruction-edit array")
+    learning_propose.add_argument("--force", action="store_true")
+    learning_propose.add_argument("--json", action="store_true")
+    learning_validate = learning_sub.add_parser("validate", help="independently validate every milestone criterion")
+    learning_validate.add_argument("candidate")
+    learning_validate.add_argument("--root", default=".")
+    learning_validate.add_argument("--validator", required=True)
+    learning_validate.add_argument("--results", required=True, help="JSON file containing criterion results and evidence")
+    learning_validate.add_argument("--force", action="store_true")
+    learning_validate.add_argument("--json", action="store_true")
+    learning_promote = learning_sub.add_parser("promote", help="activate a validated instruction candidate under owner authority")
+    learning_promote.add_argument("validation")
+    learning_promote.add_argument("--owner", required=True)
+    learning_promote.add_argument("--force", action="store_true")
+    learning_promote.add_argument("--json", action="store_true")
+    learning_experiment = learning_sub.add_parser("experiment", help="write a bounded correctness-first ASHA, Hyperband, or BOHB plan")
+    learning_experiment.add_argument("task")
+    learning_experiment.add_argument("--space", required=True, help="JSON d1-d6 search-space mapping")
+    learning_experiment.add_argument("--variant", choices=["asha", "hyperband", "bohb"], default="asha")
+    learning_experiment.add_argument("--max-resource", type=int, default=50)
+    learning_experiment.add_argument("--grace-period", type=int, default=5)
+    learning_experiment.add_argument("--reduction-factor", type=int, default=3)
+    learning_experiment.add_argument("--max-concurrent", type=int, default=4)
+    learning_experiment.add_argument("--samples", type=int, default=20)
+    learning_experiment.add_argument("--force", action="store_true")
+    learning_experiment.add_argument("--json", action="store_true")
+
     pr = sub.add_parser("pr", help="prepare local reviewer artifacts without merge authority")
     pr_sub = pr.add_subparsers(dest="pr_cmd", required=True)
     pr_draft = pr_sub.add_parser("draft", help="write an evidence-linked PR draft packet")
@@ -802,9 +929,47 @@ def main(argv=None) -> int:
         return _home(Path(a.root), a.json)
     if a.cmd == "doctor":
         return _doctor(a.strict, a.json)
-    if a.cmd in {"product", "mission", "pr", "outcome", "opinion", "signal", "migration", "context"}:
+    if a.cmd in {"product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider"}:
         try:
-            if a.cmd == "migration" and a.migration_cmd == "assess":
+            if a.cmd == "langgraph" and a.langgraph_cmd == "doctor":
+                result = langgraph_doctor()
+            elif a.cmd == "langgraph" and a.langgraph_cmd == "init":
+                result = init_mission_graph(Path(a.mission), Path(a.root))
+            elif a.cmd == "langgraph" and a.langgraph_cmd == "status":
+                result = mission_graph_status(Path(a.mission), Path(a.root))
+            elif a.cmd == "langgraph" and a.langgraph_cmd == "history":
+                result = mission_graph_history(Path(a.mission), Path(a.root))
+            elif a.cmd == "langgraph" and a.langgraph_cmd == "verify":
+                result = verify_mission_graph(Path(a.mission), Path(a.root))
+            elif a.cmd == "langgraph" and a.langgraph_cmd == "export":
+                result = export_mission_graph(Path(a.mission), Path(a.root))
+            elif a.cmd == "langgraph":
+                payload = json.loads(Path(a.payload).read_text(encoding="utf-8")) if a.payload else {}
+                if not isinstance(payload, dict):
+                    raise MissionGraphError("MISSION_GRAPH_EVENT_INVALID", "payload file must contain one JSON object")
+                result = apply_mission_event(
+                    Path(a.mission), Path(a.root), a.event, a.actor, a.role,
+                    a.idempotency_key, Path(a.receipt), payload,
+                )
+            elif a.cmd == "provider" and a.provider_cmd == "init":
+                config = json.loads(Path(a.config).read_text(encoding="utf-8"))
+                if not isinstance(config, dict):
+                    raise ProviderRouterError("PROVIDER_POLICY_INVALID", "config must contain one JSON object")
+                result = create_provider_policy(
+                    Path(a.root), config.get("owner", ""), config.get("providers", []),
+                    config.get("allowed_ides", []), config.get("max_cost_usd"),
+                    config.get("quality_floor", "balanced"), config.get("routing_bias", 50), a.force,
+                )
+            elif a.cmd == "provider" and a.provider_cmd == "verify":
+                result = verify_provider_policy(Path(a.policy))
+            elif a.cmd == "provider" and a.provider_cmd == "doctor":
+                result = provider_doctor(Path(a.policy))
+            elif a.cmd == "provider":
+                result = route_provider(
+                    Path(a.policy), Path(a.mission), Path(a.root), a.ide, a.risk,
+                    a.preferred_provider, a.preferred_model, a.cache_provider, a.cache_model,
+                )
+            elif a.cmd == "migration" and a.migration_cmd == "assess":
                 result = assess_migration_readiness(Path(a.manifest), Path(a.root), force=a.force)
             elif a.cmd == "migration":
                 result = verify_migration_readiness(Path(a.receipt))
@@ -865,6 +1030,31 @@ def main(argv=None) -> int:
                 )
             elif a.cmd == "signal":
                 result = promote_signal(Path(a.decision), Path(a.root), project=a.project, force=a.force)
+            elif a.cmd == "learning" and a.learning_cmd == "init":
+                milestones = json.loads(Path(a.milestones).read_text(encoding="utf-8"))
+                result = init_learning_task(Path(a.root), a.task_id, a.owner, a.objective, milestones, force=a.force)
+            elif a.cmd == "learning" and a.learning_cmd == "packet":
+                result = build_fresh_worker_packet(Path(a.task), a.milestone, a.worker, force=a.force)
+            elif a.cmd == "learning" and a.learning_cmd == "propose":
+                instructions = json.loads(Path(a.instructions).read_text(encoding="utf-8"))
+                result = propose_instruction_candidate(
+                    Path(a.task), Path(a.root), a.milestone, a.worker,
+                    Path(a.outcome), instructions, force=a.force,
+                )
+            elif a.cmd == "learning" and a.learning_cmd == "validate":
+                results = json.loads(Path(a.results).read_text(encoding="utf-8"))
+                result = validate_instruction_candidate(
+                    Path(a.candidate), Path(a.root), a.validator, results, force=a.force,
+                )
+            elif a.cmd == "learning" and a.learning_cmd == "experiment":
+                space = json.loads(Path(a.space).read_text(encoding="utf-8"))
+                result = plan_learning_experiment(
+                    Path(a.task), space, variant=a.variant, max_resource=a.max_resource,
+                    grace_period=a.grace_period, reduction_factor=a.reduction_factor,
+                    max_concurrent=a.max_concurrent, samples=a.samples, force=a.force,
+                )
+            elif a.cmd == "learning":
+                result = promote_instruction_candidate(Path(a.validation), a.owner, force=a.force)
             elif a.cmd == "pr":
                 result = draft_pr(Path(a.mission), Path(a.root), [Path(item) for item in a.evidence], a.force)
             elif a.outcome_cmd == "record":
@@ -874,7 +1064,7 @@ def main(argv=None) -> int:
                 )
             else:
                 result = outcome_summary(Path(a.root), a.mission_id)
-        except (ProductMissionError, SignalLoopError, MigrationError) as exc:
+        except (ProductMissionError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProviderRouterError) as exc:
             print(json.dumps({
                 "schema": "factory.workflow_error.v1", "status": "failed",
                 "code": exc.code, "message": exc.message,
@@ -893,6 +1083,8 @@ def main(argv=None) -> int:
             (a.cmd == "product" and a.product_cmd == "verify")
             or (a.cmd == "mission" and a.mission_cmd in {"verify", "verify-completion"})
             or (a.cmd == "opinion" and a.opinion_cmd == "verify")
+            or (a.cmd == "langgraph" and a.langgraph_cmd == "verify")
+            or (a.cmd == "provider" and a.provider_cmd == "verify")
         ):
             return 0 if result["valid"] else 1
         return 0

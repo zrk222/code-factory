@@ -97,8 +97,8 @@ def test_zenodo_and_release_metadata_include_the_visual_walkthrough() -> None:
     metadata = json.loads((ROOT / ".zenodo.json").read_text(encoding="utf-8"))
     workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
 
-    assert metadata["version"] == "0.19.0"
-    assert metadata["publication_date"] == "2026-07-19"
+    assert metadata["version"] == "0.20.0"
+    assert metadata["publication_date"] == "2026-07-20"
     assert "conceptual visual walkthrough" in metadata["description"]
     assert "not UI screenshots or measured outcome evidence" in metadata["description"]
     assert "docs/assets/how-it-works/*.png" in workflow

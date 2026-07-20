@@ -28,6 +28,95 @@ object FactoryLineExecutionConfirmation {
 }
 
 object FactoryLineController {
+    private val graphEvents = arrayOf(
+        "approve", "defer", "reject", "candidate_ready", "validation_failed", "validation_passed",
+        "retry", "pause", "plan_revised", "resume", "context_refreshed", "usage_recorded",
+        "release_requested", "release_decided", "outcome_recorded"
+    )
+
+    private fun workspacePath(project: Project, label: String): Path? {
+        val root = project.basePath?.let(Path::of) ?: return null
+        val value = Messages.showInputDialog(project, "$label (inside this workspace):", "FactoryLine Mission Operations", null)
+            ?: return null
+        return WorkspacePath.resolve(root, value).also {
+            if (it == null) Messages.showErrorDialog(project, "$label must resolve inside the current workspace.", "FactoryLine")
+        }
+    }
+
+    private fun runBackground(project: Project, title: String, operation: () -> CommandResult) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "FactoryLine: $title", true) {
+            private lateinit var result: CommandResult
+            override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
+                indicator.isIndeterminate = true
+                result = operation()
+            }
+            override fun onSuccess() = FactoryLinePanels.show(project, result)
+        })
+    }
+
+    fun missionOperations(project: Project) {
+        val options = MissionGraphOperation.entries.map { it.label }.toTypedArray()
+        val selected = Messages.showChooseDialog(
+            project, "Choose a receipt-governed mission operation.", "FactoryLine Mission Operations",
+            Messages.getQuestionIcon(), options, options.first()
+        )
+        if (selected < 0) return
+        val operation = MissionGraphOperation.entries[selected]
+        when (operation) {
+            MissionGraphOperation.EVENT -> recordMissionEvent(project)
+            MissionGraphOperation.ROUTE -> routeMissionProvider(project)
+            else -> {
+                val mission = workspacePath(project, "Mission JSON path") ?: return
+                if (!FactoryLineExecutionConfirmation.confirm(project, operation.label)) return
+                runBackground(project, operation.label) { FactoryLineRunner.runMissionGraph(project, operation, mission) }
+            }
+        }
+    }
+
+    private fun recordMissionEvent(project: Project) {
+        val mission = workspacePath(project, "Mission JSON path") ?: return
+        val eventIndex = Messages.showChooseDialog(
+            project, "Event to record:", "FactoryLine Guarded Event", Messages.getQuestionIcon(), graphEvents, graphEvents.first()
+        )
+        if (eventIndex < 0) return
+        val actor = Messages.showInputDialog(project, "Actor identity:", "FactoryLine Guarded Event", null)?.trim().orEmpty()
+        if (actor.isBlank()) return
+        val roles = arrayOf("owner", "worker", "validator", "operator")
+        val roleIndex = Messages.showChooseDialog(project, "Actor role:", "FactoryLine Guarded Event", Messages.getQuestionIcon(), roles, roles.first())
+        if (roleIndex < 0) return
+        val key = Messages.showInputDialog(project, "Unique idempotency key:", "FactoryLine Guarded Event", null)?.trim().orEmpty()
+        if (key.isBlank()) return
+        val receipt = workspacePath(project, "Receipt JSON path") ?: return
+        val payloadValue = Messages.showInputDialog(
+            project, "Optional payload JSON path (leave blank for none):", "FactoryLine Guarded Event", null
+        ) ?: return
+        val root = project.basePath?.let(Path::of) ?: return
+        val payload = payloadValue.takeIf { it.isNotBlank() }?.let {
+            WorkspacePath.resolve(root, it) ?: run {
+                Messages.showErrorDialog(project, "Payload must resolve inside the current workspace.", "FactoryLine")
+                return
+            }
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Record ${graphEvents[eventIndex]} event")) return
+        runBackground(project, "Record guarded event") {
+            FactoryLineRunner.runMissionEvent(project, mission, graphEvents[eventIndex], actor, roles[roleIndex], key, receipt, payload)
+        }
+    }
+
+    private fun routeMissionProvider(project: Project) {
+        val policy = workspacePath(project, "Provider policy JSON path") ?: return
+        val mission = workspacePath(project, "Mission JSON path") ?: return
+        val risks = arrayOf("low", "medium", "high")
+        val riskIndex = Messages.showChooseDialog(project, "Mission risk:", "FactoryLine BYOK Router", Messages.getQuestionIcon(), risks, "medium")
+        if (riskIndex < 0) return
+        val provider = Messages.showInputDialog(project, "Preferred provider ID (optional):", "FactoryLine BYOK Router", null) ?: return
+        val model = Messages.showInputDialog(project, "Preferred model ID (optional):", "FactoryLine BYOK Router", null) ?: return
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Route BYOK provider")) return
+        runBackground(project, "Route BYOK provider") {
+            FactoryLineRunner.routeProvider(project, policy, mission, risks[riskIndex], provider.trim(), model.trim())
+        }
+    }
+
     fun requestFeature(project: Project, operation: FactoryLineOperation) {
         val feature = Messages.showInputDialog(
             project,
@@ -215,5 +304,11 @@ class OpenStudioAction : FactoryLineAction() {
 class OpenProductMissionsAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.openStudio(it, productMode = true) }
+    }
+}
+
+class MissionOperationsAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.missionOperations(it) }
     }
 }

@@ -59,3 +59,13 @@ Use the local or preview route for first proof. Select an external route only
 after all listed prerequisites exist and Studio shows no unresolved mission or
 verification failures. Code Factory does not infer credentials or silently
 convert a local approval into release authority.
+
+## Provider and IDE routing
+
+`factory provider` adds a selection layer before a governed runtime invokes a
+model. Policies allow exactly `cli`, `studio`, `vscode`, and `jetbrains`, bind
+provider/model allowlists, quality tiers, price metadata, budget ceilings, and
+cache-continuity hints, and reference BYOK credentials only by environment
+variable name. `factory provider route` returns a deterministic recommendation;
+it performs no provider call and grants no spend or credential authority. See
+[Multi-Provider BYOK Routing](PROVIDER_ROUTING.md).

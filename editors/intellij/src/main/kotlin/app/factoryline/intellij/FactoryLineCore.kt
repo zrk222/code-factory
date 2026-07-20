@@ -47,6 +47,82 @@ object StudioUrl {
     fun find(output: String): String? = pattern.find(output)?.groupValues?.get(1)
 }
 
+object WorkspacePath {
+    fun resolve(root: Path, value: String): Path? {
+        if (value.isBlank()) return null
+        val candidate = runCatching {
+            val raw = Path.of(value.trim())
+            (if (raw.isAbsolute) raw else root.resolve(raw)).normalize().toAbsolutePath()
+        }.getOrNull() ?: return null
+        val normalizedRoot = root.normalize().toAbsolutePath()
+        return candidate.takeIf { it.startsWith(normalizedRoot) }
+    }
+}
+
+object OutputRedactor {
+    private val namedValue = Regex("(?i)(api[_-]?key|token|secret|password)([\\\"']?\\s*[:=]\\s*[\\\"']?)([^\\s\\\"',}]+)")
+    private val bearer = Regex("(?i)(bearer\\s+)[A-Za-z0-9._~+/-]{8,}")
+    private val tokenPrefixes = Regex("(?i)\\b(?:sk-|hf_|pypi-|ghp_|perm-)[A-Za-z0-9._=-]{6,}")
+
+    fun redact(value: String): String = value
+        .replace(namedValue) { "${it.groupValues[1]}${it.groupValues[2]}[REDACTED]" }
+        .replace(bearer) { "${it.groupValues[1]}[REDACTED]" }
+        .replace(tokenPrefixes, "[REDACTED]")
+}
+
+enum class MissionGraphOperation(val label: String, val command: String) {
+    STATUS("Show status and budget", "status"),
+    INIT("Initialize durable graph", "init"),
+    HISTORY("Show transition history", "history"),
+    VERIFY("Verify graph and receipts", "verify"),
+    EXPORT("Export Mermaid topology", "export"),
+    EVENT("Record guarded event", "event"),
+    ROUTE("Route BYOK provider", "route")
+}
+
+object FactoryLineCommands {
+    fun missionGraph(operation: MissionGraphOperation, mission: Path, root: Path): List<String> {
+        require(operation !in setOf(MissionGraphOperation.EVENT, MissionGraphOperation.ROUTE))
+        return listOf("langgraph", operation.command, mission.toString(), "--root", root.toString(), "--json")
+    }
+
+    fun missionEvent(
+        mission: Path,
+        root: Path,
+        event: String,
+        actor: String,
+        role: String,
+        idempotencyKey: String,
+        receipt: Path,
+        payload: Path? = null
+    ): List<String> = buildList {
+        addAll(listOf(
+            "langgraph", "event", mission.toString(), "--root", root.toString(),
+            "--event", event, "--actor", actor, "--role", role,
+            "--idempotency-key", idempotencyKey, "--receipt", receipt.toString(),
+        ))
+        payload?.let { addAll(listOf("--payload", it.toString())) }
+        add("--json")
+    }
+
+    fun providerRoute(
+        policy: Path,
+        mission: Path,
+        root: Path,
+        risk: String,
+        preferredProvider: String? = null,
+        preferredModel: String? = null
+    ): List<String> = buildList {
+        addAll(listOf(
+            "provider", "route", policy.toString(), mission.toString(), "--root", root.toString(),
+            "--ide", "jetbrains", "--risk", risk,
+        ))
+        preferredProvider?.takeIf { it.isNotBlank() }?.let { addAll(listOf("--preferred-provider", it)) }
+        preferredModel?.takeIf { it.isNotBlank() }?.let { addAll(listOf("--preferred-model", it)) }
+        add("--json")
+    }
+}
+
 enum class FactoryLineOperation(val arguments: List<String>, val title: String) {
     ASSEMBLE(listOf("assemble"), "Spec-to-Ship Assembly"),
     VERIFY(listOf("verify"), "Verify Feature Receipts")
@@ -225,6 +301,48 @@ object FactoryLineRunner {
     fun meter(project: Project): CommandResult =
         execute(project, "Open Local Meter", listOf("meter") + rootArguments(project) + "--json")
 
+    fun runMissionGraph(project: Project, operation: MissionGraphOperation, mission: Path): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult(operation.label, emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        return execute(project, operation.label, FactoryLineCommands.missionGraph(operation, mission, root))
+    }
+
+    fun runMissionEvent(
+        project: Project,
+        mission: Path,
+        event: String,
+        actor: String,
+        role: String,
+        idempotencyKey: String,
+        receipt: Path,
+        payload: Path?
+    ): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Record guarded event", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        return execute(
+            project,
+            "Record guarded event",
+            FactoryLineCommands.missionEvent(mission, root, event, actor, role, idempotencyKey, receipt, payload),
+        )
+    }
+
+    fun routeProvider(
+        project: Project,
+        policy: Path,
+        mission: Path,
+        risk: String,
+        preferredProvider: String?,
+        preferredModel: String?
+    ): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Route BYOK provider", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        return execute(
+            project,
+            "Route BYOK provider",
+            FactoryLineCommands.providerRoute(policy, mission, root, risk, preferredProvider, preferredModel),
+        )
+    }
+
     fun startStudio(project: Project, onStarted: (String) -> Unit, onFailure: (String) -> Unit) {
         val root = project.basePath?.let(Path::of) ?: run {
             onFailure("The project has no local workspace path.")
@@ -292,7 +410,7 @@ object FactoryLineRunner {
             .withWorkDirectory(root.toFile())
         return try {
             val output = CapturingProcessHandler(commandLine).runProcess(FactoryLineIds.TIMEOUT_MS)
-            val combined = (output.stdout + output.stderr).take(FactoryLineIds.OUTPUT_LIMIT)
+            val combined = OutputRedactor.redact((output.stdout + output.stderr).take(FactoryLineIds.OUTPUT_LIMIT))
             CommandResult(title, listOf(executable) + arguments, output.exitCode, output.isTimeout, combined)
         } catch (error: Exception) {
             CommandResult(title, listOf(executable) + arguments, null, false, "Failed to start FactoryLine: ${error.message}")

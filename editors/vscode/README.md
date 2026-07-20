@@ -24,7 +24,7 @@ pass arbitrary shell fragments to your terminal.
 Install the Code Factory CLI first:
 
 ```powershell
-pip install factoryline-code-factory==0.19.0
+pip install factoryline-code-factory==0.20.0
 ```
 
 Build a local VSIX from this directory, then install it in VS Code:
@@ -32,7 +32,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.4.0.vsix
+code --install-extension factoryline-vscode-0.5.0.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
@@ -41,7 +41,10 @@ not grant execute, merge, deploy, publish, connector, credential, or messaging a
 Requirement CodeLens navigation reads bounded local text artifacts only; it does
 not run FactoryLine or change approval state.
 
-Code Factory 0.18 also includes an optional hosted GitHub PR-assurance adapter.
+Code Factory 0.20 also includes an optional hosted GitHub PR-assurance adapter,
+durable mission graphs, and secret-free BYOK policies. VS Code workspaces use
+those controls through the local `factory` CLI or loopback Studio; the
+extension never stores provider keys.
 It is deployed separately from this local editor extension; see
 [Hosted PR assurance](../../docs/HOSTED_PR_ASSURANCE.md).
 

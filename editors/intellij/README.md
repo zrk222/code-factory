@@ -14,6 +14,9 @@ newest local JSON receipt in a tool window.
 - `FactoryLine: Check Latest Receipt Signature State` runs `factory receipt status` on that receipt. It reports signature presence or `UNSIGNED`; it does not claim signer identity.
 - `FactoryLine: Open Local Factory Studio` opens the confirmed loopback target compiler.
 - `FactoryLine: Open Product Missions` opens Studio in deterministic PRD-to-mission mode.
+- `FactoryLine: Mission Graph & Provider Operations` initializes and inspects
+  durable graphs, verifies receipt chains, exports Mermaid, records guarded
+  events, and routes a JetBrains-selected secret-free BYOK policy.
 - `REQ-*`, `FR-*`, and `NFR-*` references receive a read-only gutter link to
   matching local proof under `.factory`, `receipts`, `coverage`, `tests`, or `specs`.
 
@@ -31,9 +34,9 @@ untrusted/missing receipt into a green state.
 
 ## Install
 
-1. Install `factoryline-code-factory==0.19.0` into the Python environment that
+1. Install `factoryline-code-factory==0.20.0` into the Python environment that
    IntelliJ inherits.
-2. Download `factoryline-intellij-0.4.0.zip` from the matching GitHub release.
+2. Download `factoryline-intellij-0.5.0.zip` from the matching GitHub release.
 3. In your JetBrains IDE, open **Settings > Plugins > gear menu > Install Plugin from Disk...** and select the ZIP.
 4. Restart the IDE, then use the **Tools > FactoryLine** menu or the **FactoryLine** tool window.
 
@@ -62,7 +65,8 @@ DataGrip builds from the 2025.2 baseline forward. The CI matrix verifies
 current stable builds, including an explicit DataGrip archive because archived
 2025.2 installers are not available through the verifier resolver.
 
-Code Factory 0.18 also includes an optional hosted GitHub PR-assurance adapter.
+Code Factory 0.20 also includes an optional hosted GitHub PR-assurance adapter,
+a durable mission graph, and a secret-free multi-provider route selector.
 It is deployed separately from this local IDE plugin; see
 [Hosted PR assurance](../../docs/HOSTED_PR_ASSURANCE.md).
 

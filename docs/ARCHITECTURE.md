@@ -52,7 +52,7 @@ flowchart TB
 
     subgraph RELEASE["Human-owned release and learning"]
         RO{"Merge, publish, deploy,<br/>sign, message authority"}
-        SHIP["GitHub, PyPI, Zenodo<br/>VS Code + JetBrains packages"]
+        SHIP["GitHub, PyPI, Zenodo, Hugging Face<br/>VS Code + JetBrains packages"]
         OUT["Classified outcomes<br/>measured, observed, modeled, unknown"]
         METER["Meter v2<br/>time, tokens, cost, retries, quality"]
         UI["Factory Studio + IDE control rooms<br/>live status and approval-ready actions"]

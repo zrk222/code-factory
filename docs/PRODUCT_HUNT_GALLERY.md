@@ -6,6 +6,18 @@ These images are explanatory artwork, not screenshots of the shipped Factory
 Studio UI and not measured outcome evidence. Keep the exact UI demonstration
 separate from this gallery.
 
+Release v0.20.0 adds two concrete operational use cases to the listing copy:
+
+- Durable, receipt-backed missions that pause for human plan review, resume
+  with fresh worker context, and refuse completion without independent proof.
+- Secret-free multi-provider BYOK routing across CLI, Studio, VS Code, and
+  JetBrains with explicit quality, budget, allowlist, and cache rails.
+
+Suggested tagline: **Route any model. Govern every mission. Prove every ship.**
+
+Suggested CTA: **Bring your own models, choose your IDE, and run the proof-first
+factory from the public repository.**
+
 Product Hunt currently requires at least 2 images for a visible gallery and
 recommends 1270 x 760 gallery images. Source images are 1122 x 1402 portrait PNGs;
 preview the uncropped originals in the Product Hunt editor before
@@ -14,6 +26,10 @@ publishing. Do not crop or regenerate owner-supplied artwork without review.
 Product Hunt video entries accept a full YouTube URL. A local MP4 or shortened
 URL is not a valid video entry. Publish the exact shipped UI walkthrough to
 YouTube first if a video should appear in the gallery.
+
+The repository MP4 remains appropriate for GitHub, PyPI, and Hugging Face. Do
+not claim it has been added to Product Hunt until a public, non-private full
+YouTube URL is available and the Product Hunt editor confirms the gallery item.
 
 ## Upload order
 

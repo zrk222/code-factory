@@ -50,7 +50,7 @@
     .section-head { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; align-items: end; margin-bottom: 42px; }
     h2 { margin: 0; font-size: clamp(2.2rem, 5vw, 4.4rem); line-height: 1; letter-spacing: -.055em; }
     .section-head p { margin: 0; color: var(--muted); }
-    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
     .card { padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,.66); }
     .card span { color: var(--amber-dark); font-size: .76rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
     .card h3 { margin: 12px 0 8px; font-size: 1.28rem; }
@@ -91,11 +91,11 @@
     <div class="shell hero">
       <div>
         <div class="eyebrow">Open source · Local first · Evidence backed</div>
-        <h1>Prove 5 gates before your AI change ships.</h1>
+        <h1>Route any model. Govern every mission. Prove every ship.</h1>
         <p class="lede">Code Factory turns specifications, tests, policies, design contracts, and signed receipts into a reviewable delivery line—then deliberately sabotages the gates to prove they reject bad builds.</p>
         <div class="actions">
           <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Install Code Factory</a>
-          <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.19.0">Inspect the release</a>
+          <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.20.0">Inspect the release</a>
         </div>
         <div class="trust">✓ MIT or Apache-2.0 &nbsp; ✓ Source available &nbsp; ✓ Archived release</div>
       </div>
@@ -113,7 +113,8 @@
         <div class="grid">
           <article class="card"><span>01 · Define</span><h3>Lock the intent</h3><p>Turn requirements into a bounded spec and an explicit architecture contract.</p></article>
           <article class="card"><span>02 · Challenge</span><h3>Sabotage the gates</h3><p>Delete, invert, and corrupt critical controls. A surviving mutation blocks the claim.</p></article>
-          <article class="card"><span>03 · Ship</span><h3>Carry the evidence</h3><p>Hash-link receipts and release artifacts so reviewers can reproduce the decision.</p></article>
+          <article class="card"><span>03 · Route</span><h3>Choose models under rails</h3><p>Select provider and model references by IDE, quality floor, budget, and cache continuity without storing keys.</p></article>
+          <article class="card"><span>04 · Ship</span><h3>Carry the evidence</h3><p>Hash-link receipts and release artifacts so reviewers can reproduce the decision.</p></article>
         </div>
       </div>
     </section>
@@ -124,9 +125,9 @@
           <div class="eyebrow">60-second first run</div>
           <h2>Start locally. See the gap immediately.</h2>
           <p>The coverage command intentionally exits nonzero when a generated application has requirements without meaningful tests. The scaffold is starting state, not a readiness claim.</p>
-          <a class="button" href="https://github.com/zrk222/code-factory/releases/download/v0.19.0/code-factory-quickstart-v0171.mp4">Watch the shipped UI walkthrough</a>
+          <a class="button" href="https://github.com/zrk222/code-factory/releases/download/v0.20.0/code-factory-quickstart-v0171.mp4">Watch the shipped UI walkthrough</a>
         </div>
-        <pre><code>pip install factoryline-code-factory==0.19.0
+        <pre><code>pip install factoryline-code-factory==0.20.0
 factory create "Build an approval tracker" \
   --target web --out approval-tracker
 factory coverage --root approval-tracker --json</code></pre>
@@ -160,7 +161,7 @@ factory coverage --root approval-tracker --json</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.19.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://doi.org/10.5281/zenodo.21447265">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.20.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://doi.org/10.5281/zenodo.21447265">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

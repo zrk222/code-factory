@@ -5,6 +5,13 @@ The compiler is deterministic and local: it makes no model calls, runs no agent,
 and grants no merge, publish, deploy, connector, credential, or external-message
 authority.
 
+The optional durable runtime stores accepted mission transitions in a
+transactional, hash-linked SQLite ledger. Human pause/revise/resume,
+independent validation, hard budget exhaustion, and release decisions remain
+explicit events with local receipts. LangGraph can checkpoint the adapter, but
+the Code Factory event/receipt chain remains authoritative. See
+[Receipt-Backed Mission Graph Operations](LANGGRAPH_OPS.md).
+
 ![Product Missions value compiler](assets/product-missions.svg)
 
 ## Why this layer exists

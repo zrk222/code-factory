@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- Align the extension and release bundle with Code Factory 0.20.0.
+- Document the durable mission graph and secret-free BYOK policy available to
+  VS Code workspaces through the local FactoryLine CLI and loopback Studio.
+
 ## 0.4.0
 
 - Align the extension listing and release bundle with Code Factory 0.18.0.
