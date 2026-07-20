@@ -215,7 +215,9 @@ def test_native_owner_can_pause_bind_a_plan_and_resume_fresh(tmp_path: Path):
 
 def test_langgraph_adapter_checkpoints_native_transition(tmp_path: Path):
     mission = _pipeline(tmp_path)
-    assert langgraph_doctor()["ready"] is True
+    doctor = langgraph_doctor()
+    if not doctor["ready"]:
+        pytest.skip("requires both langgraph and langgraph-checkpoint-sqlite")
     graph = build_langgraph_adapter(Path(mission["path"]), tmp_path)
     config = {"configurable": {"thread_id": mission["id"]}}
     result = graph.invoke({
