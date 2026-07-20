@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## 0.19.0 - 2026-07-19
+
+### Added
+
+- Added a supervised hosted tenant lifecycle with bootstrap platform authority,
+  per-tenant OIDC/JWKS configuration, atomic group-to-role replacement,
+  secret-manager references, and one-time GitHub installation state.
+- Added immutable installation binding, forced PostgreSQL RLS for tenant
+  control tables, serialized hash-linked administrative audit events, and a
+  redacted tenant operational overview.
+- Added a responsive read-only operator console with in-memory-only Bearer use,
+  no mutation controls, `no-store` responses, and a restrictive content
+  security policy.
+
+### Security
+
+- Tenant claims are used only as identity-configuration lookup hints; authority
+  is granted only after RS256 signature, issuer, audience, expiry, tenant, and
+  group verification.
+- Bootstrap fallback is restricted to a verified `platform_admin` principal
+  whose tenant claim is exactly `*`.
+- Webhook secrets resolve from allowlisted `env://` references at request time;
+  resolved values, references, installation state, and tokens are excluded
+  from overview responses and structured operation events.
+
+### Evidence boundary
+
+- The hosted control plane is supervised and deployable, but it does not claim
+  SCIM, SAML enrollment, managed KMS, HA, disaster recovery, SOC 2, or an SLA.
+
 ## 0.18.0 - 2026-07-19
 
 ### Added
