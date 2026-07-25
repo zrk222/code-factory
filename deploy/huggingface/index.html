@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Code Factory turns AI-assisted changes into reviewable proof with specs, tests, policy, design contracts, and signed receipts.">
-  <title>Code Factory — Proof-first software delivery</title>
+  <meta name="description" content="Prove your next AI-assisted change with a local CLI, adversarial checks, and signed release evidence across eight supported IDEs.">
+  <title>Code Factory — Prove your next change</title>
   <style>
     :root {
       --ink: #171610;
@@ -17,6 +17,7 @@
       --line: rgba(43, 37, 25, .15);
       --shadow: 0 24px 70px rgba(76, 50, 13, .15);
       --radius: 28px;
+      --focus: #075fd8;
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
@@ -29,42 +30,48 @@
       line-height: 1.65;
     }
     a { color: inherit; }
+    a:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; }
+    .skip-link { position: fixed; left: 16px; top: -80px; z-index: 20; padding: .9rem 1.2rem; border-radius: 12px; background: var(--ink); color: white; }
+    .skip-link:focus { top: 16px; }
     .shell { width: min(1160px, calc(100% - 40px)); margin: 0 auto; }
     header { display: flex; align-items: center; justify-content: space-between; padding: 24px 0; }
     .brand { display: flex; align-items: center; gap: 12px; font-weight: 850; letter-spacing: -.02em; text-decoration: none; }
     .mark { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: var(--ink); color: var(--amber); }
     nav { display: flex; gap: 22px; align-items: center; }
-    nav a { color: var(--muted); font-size: .92rem; font-weight: 700; text-decoration: none; }
+    nav a { color: var(--muted); font-size: 1rem; font-weight: 700; text-decoration: none; }
     .hero { display: grid; grid-template-columns: 1.02fr .98fr; gap: clamp(40px, 6vw, 82px); align-items: center; padding: 76px 0 100px; }
-    .eyebrow { color: var(--amber-dark); font-size: .77rem; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
-    h1 { max-width: 790px; margin: 16px 0 24px; font-size: clamp(3.2rem, 7vw, 6.8rem); line-height: .91; letter-spacing: -.075em; }
-    .lede { max-width: 620px; margin: 0 0 32px; color: var(--muted); font-size: clamp(1.05rem, 2vw, 1.3rem); }
+    .eyebrow { color: var(--amber-dark); font-size: .9rem; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { max-width: 12ch; margin: 16px 0 24px; font-size: clamp(3.2rem, 7vw, 6.8rem); line-height: .91; letter-spacing: -.075em; }
+    .lede { max-width: 58ch; margin: 0 0 32px; color: var(--muted); font-size: clamp(1.05rem, 2vw, 1.3rem); }
     .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-    .button { min-height: 50px; padding: 13px 20px; border: 1px solid var(--line); border-radius: 14px; font-weight: 850; text-decoration: none; transition: transform .2s ease, box-shadow .2s ease; }
+    .actions-center { justify-content: center; }
+    .button { min-height: 50px; padding: .9rem 1.25rem; border: 1px solid var(--line); border-radius: 14px; font-weight: 850; text-decoration: none; transition: transform .2s ease, box-shadow .2s ease, background-color .2s ease; }
     .button:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(65, 40, 8, .13); }
     .primary { background: var(--ink); color: white; border-color: var(--ink); }
-    .trust { margin-top: 18px; color: var(--green); font-size: .9rem; font-weight: 750; }
+    .trust { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 18px; color: var(--green); font-size: .95rem; font-weight: 750; }
+    .trust span { display: inline-flex; align-items: center; gap: 6px; }
     .visual { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--cream); box-shadow: var(--shadow); }
-    .visual img { display: block; width: 100%; aspect-ratio: 4 / 5; object-fit: cover; }
-    section { padding: 92px 0; }
+    .visual img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top left; }
+    .visual figcaption { padding: 14px 18px; border-top: 1px solid var(--line); color: var(--muted); background: white; font-size: .95rem; }
+    section { padding: 7vw 0; }
     .section-head { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; align-items: end; margin-bottom: 42px; }
     h2 { margin: 0; font-size: clamp(2.2rem, 5vw, 4.4rem); line-height: 1; letter-spacing: -.055em; }
     .section-head p { margin: 0; color: var(--muted); }
     .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
     .card { padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,.66); }
-    .card span { color: var(--amber-dark); font-size: .76rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+    .card span { color: var(--amber-dark); font-size: .9rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
     .card h3 { margin: 12px 0 8px; font-size: 1.28rem; }
-    .card p { margin: 0; color: var(--muted); font-size: .95rem; }
+    .card p { margin: 0; color: var(--muted); font-size: 1rem; }
     .proof { display: grid; grid-template-columns: 1fr 1fr; gap: 38px; align-items: center; padding: clamp(30px, 6vw, 64px); border-radius: var(--radius); background: var(--ink); color: white; }
     .proof p { color: #d9d3c7; }
-    pre { overflow-x: auto; margin: 0; padding: 24px; border: 1px solid rgba(255,255,255,.14); border-radius: 18px; background: #0d0d0b; color: #ffd47c; font: 600 .88rem/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    pre { overflow-x: auto; margin: 0; padding: 24px; border: 1px solid rgba(255,255,255,.14); border-radius: 18px; background: #0d0d0b; color: #ffd47c; font: 600 .95rem/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
     .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
     .gallery img { display: block; width: 100%; border-radius: 18px; border: 1px solid var(--line); background: var(--cream); }
-    .boundary { margin-top: 18px; color: var(--muted); font-size: .85rem; text-align: center; }
+    .boundary { margin-top: 18px; color: var(--muted); font-size: .95rem; text-align: center; }
     .final { text-align: center; padding-bottom: 120px; }
-    .final h2 { max-width: 760px; margin: 0 auto 28px; }
-    footer { display: flex; justify-content: space-between; gap: 20px; padding: 28px 0 42px; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; }
-    @media (max-width: 800px) {
+    .final h2 { max-width: 16ch; margin: 0 auto 28px; }
+    footer { display: flex; justify-content: space-between; gap: 20px; padding: 28px 0 42px; border-top: 1px solid var(--line); color: var(--muted); font-size: .95rem; }
+    @media (max-width: 50rem) {
       nav a:not(.button) { display: none; }
       .hero, .section-head, .proof { grid-template-columns: 1fr; }
       .hero { padding-top: 48px; }
@@ -73,35 +80,47 @@
       section { padding: 68px 0; }
       footer { flex-direction: column; }
     }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .button { transition: none; }
+      .button:hover { transform: none; }
+    }
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to product proof</a>
   <div class="shell">
     <header>
-      <div class="brand" aria-label="Code Factory"><span class="mark">CF</span> Code Factory</div>
+      <a class="brand" href="#main" aria-label="Code Factory home"><span class="mark">CF</span> Code Factory</a>
       <nav aria-label="Primary navigation">
-        <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Get Code Factory</a>
         <a href="#proof">How it works</a>
-        <a href="https://github.com/zrk222/code-factory">Source</a>
+        <a href="https://github.com/zrk222/code-factory">GitHub source</a>
+        <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Start free with pip</a>
       </nav>
     </header>
   </div>
 
-  <main id="top">
+  <main id="main">
     <div class="shell hero">
       <div>
         <div class="eyebrow">Open source · Local first · Evidence backed</div>
-        <h1>Route any model. Govern every mission. Prove every ship.</h1>
-        <p class="lede">Code Factory turns specifications, tests, policies, design contracts, and signed receipts into a reviewable delivery line—then deliberately sabotages the gates to prove they reject bad builds.</p>
+        <h1>Prove your next change across CLI and 8 IDEs.</h1>
+        <p class="lede">Install one local developer CLI. Turn specifications, tests, policies, and signed receipts into a reviewable workflow—then deliberately sabotage the gates to prove they reject bad builds.</p>
         <div class="actions">
-          <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Install Code Factory</a>
-          <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.22.0">Inspect the release</a>
+          <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Start free with pip</a>
+          <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.22.0">Review verified release</a>
         </div>
-        <div class="trust">✓ MIT or Apache-2.0 &nbsp; ✓ Source available &nbsp; ✓ Archived release</div>
+        <div class="trust" id="release-proof" aria-label="Verified release facts">
+          <span>✓ Verified release checks</span>
+          <span>✓ 276 Python tests passed</span>
+          <span>✓ 8-IDE compatibility matrix</span>
+          <span>✓ No source upload</span>
+        </div>
       </div>
-      <div class="visual">
-        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/01-idea-to-blueprint.png" alt="Developer sends an application blueprint through a small software factory into code, data, interface, and server components.">
-      </div>
+      <figure class="visual">
+        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/factory-studio-control-room-1080.png" alt="Exact Factory Studio product screenshot showing the local dashboard, approval inbox, proof timeline, and authority boundary.">
+        <figcaption>Exact product screenshot · local dashboard · terminal quickstart · public demo</figcaption>
+      </figure>
     </div>
 
     <section id="proof">
@@ -126,7 +145,7 @@
           <h2>Measure the saving. Keep the caveat.</h2>
           <p>Record exact baseline-versus-Factory time, token, and cost observations. Negative results stay visible, and productivity is withheld until equivalent outcomes are explicitly asserted and hash-bound.</p>
         </div>
-        <pre><code>factory savings record checkout \
+        <pre><code>factory savings record release-cycle \
   --baseline-elapsed-ms 600000 \
   --factory-elapsed-ms 300000 \
   --baseline-tokens 12000 \
@@ -168,9 +187,9 @@ factory coverage --root approval-tracker --json</code></pre>
     <section class="final">
       <div class="shell">
         <h2>Make the next change carry its own proof.</h2>
-        <div class="actions" style="justify-content:center">
-          <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Install from PyPI</a>
-          <a class="button" href="https://doi.org/10.5281/zenodo.21381405">Open the archived releases</a>
+        <div class="actions actions-center">
+          <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Start free with pip</a>
+          <a class="button" href="https://doi.org/10.5281/zenodo.21381405">Review the permanent archive</a>
         </div>
       </div>
     </section>
