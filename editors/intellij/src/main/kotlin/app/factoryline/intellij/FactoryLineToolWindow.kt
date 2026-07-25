@@ -36,6 +36,7 @@ class FactoryLinePanel(private val project: Project) : JPanel(BorderLayout(0, 8)
     init {
         val controls = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
             add(JButton("Run assembly").apply { addActionListener { FactoryLineController.requestFeature(project, FactoryLineOperation.ASSEMBLE) } })
+            add(JButton("Continue assembly").apply { addActionListener { FactoryLineController.requestFeature(project, FactoryLineOperation.CONTINUE) } })
             add(JButton("Verify receipts").apply { addActionListener { FactoryLineController.requestFeature(project, FactoryLineOperation.VERIFY) } })
             add(JButton("Analyze changed proof").apply { addActionListener { FactoryLineController.analyzeChangedProof(project) } })
             add(JButton("Open local meter").apply { addActionListener { FactoryLineController.openMeter(project) } })

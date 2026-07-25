@@ -180,6 +180,30 @@ async function runFeature(command: "assemble" | "verify"): Promise<void> {
   }
 }
 
+async function continueAssembly(): Promise<void> {
+  const root = requireTrustedWorkspace();
+  if (!root) {
+    return;
+  }
+  const feature = await vscode.window.showInputBox({
+    prompt: "Feature name (leave blank only when exactly one feature is discoverable)",
+    validateInput: (value) => !value || isFeatureName(value) ? undefined : "Use letters, digits, hyphens, and underscores only.",
+  });
+  if (feature === undefined) {
+    return;
+  }
+  try {
+    const args = ["continue", ...(feature ? [feature] : []), "--root", root];
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "FactoryLine: continue assembly" },
+      () => runFactory(root, args),
+    );
+    void vscode.window.showInformationMessage("FactoryLine reached the next assembly boundary. See the output channel for the exact next action.");
+  } catch (error) {
+    void vscode.window.showErrorMessage(`${error instanceof Error ? error.message : String(error)} See the FactoryLine output channel.`);
+  }
+}
+
 async function openMeter(): Promise<void> {
   const root = requireTrustedWorkspace();
   if (!root) {
@@ -282,6 +306,7 @@ export function activate(context: vscode.ExtensionContext): void {
     output,
     vscode.languages.registerCodeLensProvider({ scheme: "file" }, new RequirementCodeLensProvider()),
     vscode.commands.registerCommand("factoryline.assemble", () => runFeature("assemble")),
+    vscode.commands.registerCommand("factoryline.continue", continueAssembly),
     vscode.commands.registerCommand("factoryline.verify", () => runFeature("verify")),
     vscode.commands.registerCommand("factoryline.openMeter", openMeter),
     vscode.commands.registerCommand("factoryline.openLatestReceipt", openLatestReceipt),

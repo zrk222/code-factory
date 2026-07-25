@@ -265,6 +265,12 @@ class RunAssemblyAction : FactoryLineAction() {
     }
 }
 
+class ContinueAssemblyAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.requestFeature(it, FactoryLineOperation.CONTINUE) }
+    }
+}
+
 class VerifyReceiptsAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.requestFeature(it, FactoryLineOperation.VERIFY) }

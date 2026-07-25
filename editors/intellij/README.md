@@ -7,6 +7,8 @@ newest local JSON receipt in a tool window.
 ## What It Does
 
 - `FactoryLine: Run Spec-to-Ship Assembly` runs `factory assemble <feature> --root <project>`.
+- `FactoryLine: Continue Assembly to Next Boundary` resumes safe local stages
+  with `factory continue <feature> --root <project>`.
 - `FactoryLine: Verify Feature Receipts` runs `factory verify <feature> --root <project>`.
 - `FactoryLine: Open Local Meter` runs `factory meter --root <project> --json` after workspace confirmation.
 - `FactoryLine: Analyze Changed Proof` runs `factory risk-diff --root <project> --json`.
@@ -34,9 +36,9 @@ untrusted/missing receipt into a green state.
 
 ## Install
 
-1. Install `factoryline-code-factory==0.20.0` into the Python environment that
+1. Install `factoryline-code-factory==0.21.0` into the Python environment that
    IntelliJ inherits.
-2. Download `factoryline-intellij-0.5.0.zip` from the matching GitHub release.
+2. Download `factoryline-intellij-0.6.0.zip` from the matching GitHub release.
 3. In your JetBrains IDE, open **Settings > Plugins > gear menu > Install Plugin from Disk...** and select the ZIP.
 4. Restart the IDE, then use the **Tools > FactoryLine** menu or the **FactoryLine** tool window.
 

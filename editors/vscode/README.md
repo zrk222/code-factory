@@ -6,6 +6,8 @@ leaving VS Code. The extension never uploads your workspace, code, or receipts.
 ## Commands
 
 - **FactoryLine: Run Spec-to-Ship Assembly** runs `factory assemble <feature> --root <workspace>`.
+- **FactoryLine: Continue Assembly to Next Boundary** runs the state-aware
+  `factory continue [feature] --root <workspace>` workflow.
 - **FactoryLine: Verify Feature Receipts** runs `factory verify <feature> --root <workspace>`.
 - **FactoryLine: Open Local Meter** reads `factory meter --root <workspace> --json` after workspace confirmation.
 - **FactoryLine: Open Latest Receipt** finds JSON under `.factory/` and `receipts/`, then renders a local receipt panel.
@@ -24,7 +26,7 @@ pass arbitrary shell fragments to your terminal.
 Install the Code Factory CLI first:
 
 ```powershell
-pip install factoryline-code-factory==0.20.0
+pip install factoryline-code-factory==0.21.0
 ```
 
 Build a local VSIX from this directory, then install it in VS Code:
@@ -32,7 +34,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.5.0.vsix
+code --install-extension factoryline-vscode-0.6.0.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

@@ -21,6 +21,8 @@ from .product_missions import (
 from .failure_guidance import explain_failure
 from .meter import MeterLog, live_snapshot
 from .capability_packs import builtin_packs, validate_pack
+from .continuation import ContinuationError, continue_assembly, discover_features
+from .run_metrics import public_metrics
 
 
 STUDIO_SCHEMA = "factory.studio.v1"
@@ -55,6 +57,7 @@ def studio_status(root: Path, port: int) -> dict[str, Any]:
             "can_compile_product_missions": True,
             "can_record_mission_execution_decision": True,
             "can_auto_resolve_safe_local_gaps": True,
+            "can_continue_assembly_to_human_boundary": True,
             "can_deploy": False,
             "can_publish": False,
             "can_sign": False,
@@ -220,12 +223,30 @@ def studio_dashboard(root: Path) -> dict[str, Any]:
         },
         "packs": packs,
         "authority": studio_status(Path(root), 0)["authority"],
+        "assembly": {
+            "features": discover_features(Path(root)),
+            "metrics": public_metrics(Path(root)),
+        },
         "markers": [
             "STUDIO_LIVE_TELEMETRY", "STUDIO_APPROVAL_QUEUE", "STUDIO_PACK_TRUST_VISIBLE",
             "STUDIO_PRODUCT_GRAPH_VISIBLE", "STUDIO_SLICE_QUEUE_VISIBLE",
             "STUDIO_PROOF_TIMELINE_VISIBLE", "STUDIO_RECEIPT_COMPARISON_VISIBLE",
         ],
     }
+
+
+def continue_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Continue one local assembly through the same engine used by the CLI."""
+    if str(payload.get("action", "")) != "continue":
+        raise StudioRequestError("ACTION_UNSUPPORTED", "assembly endpoint requires continue")
+    feature = payload.get("feature")
+    if feature is not None and not isinstance(feature, str):
+        raise StudioRequestError("FEATURE_INVALID", "feature must be a string")
+    try:
+        result = continue_assembly(Path(root), feature.strip() or None if isinstance(feature, str) else None)
+    except ContinuationError as exc:
+        raise StudioRequestError(exc.code, exc.message, 409) from exc
+    return {**result, "studio_marker": "STUDIO_ASSEMBLY_CONTAINED"}
 
 
 def _contained_output(root: Path, name: str) -> Path:
@@ -411,7 +432,7 @@ def _studio_html(token: str) -> str:
 <title>Factory Studio</title><link rel="icon" href="/favicon.ico">
 <style>
 :root {{ color-scheme: light; --ink:#172033; --muted:#5f6b7a; --line:#d8e0e8; --blue:#1d4ed8; --green:#166534; --orange:#c2410c; --paper:#f4f7fa; }}
-* {{ box-sizing:border-box; }} body {{ margin:0; font-family:Inter,ui-sans-serif,system-ui,sans-serif; color:var(--ink); background:var(--paper); }}
+* {{ box-sizing:border-box; }} body {{ margin:0; font-family:Inter,ui-sans-serif,system-ui,sans-serif; line-height:1.65; color:var(--ink); background:var(--paper); }}
 .topbar {{ height:64px; display:flex; align-items:center; justify-content:space-between; padding:0 5vw; color:white; background:#111827; }}
 .topbar span {{ color:#93c5fd; font-size:13px; }} main {{ width:min(1180px,90vw); margin:0 auto; padding:38px 0 64px; }}
 .intro {{ display:grid; grid-template-columns:1fr auto; gap:24px; align-items:end; padding-bottom:28px; border-bottom:1px solid var(--line); }}
@@ -427,14 +448,15 @@ form {{ margin-top:30px; display:grid; gap:24px; }} fieldset {{ border:0; paddin
 .inputs {{ display:grid; grid-template-columns:2fr repeat(3,minmax(0,1fr)); gap:16px; }} .field {{ display:grid; gap:8px; }}
 input[type=text],select,textarea {{ width:100%; border:1px solid #94a3b8; border-radius:6px; padding:12px; background:white; color:var(--ink); font:inherit; }}
 textarea {{ min-height:180px; resize:vertical; }} button {{ justify-self:start; border:0; border-radius:6px; padding:13px 18px; color:white; background:var(--green); font-weight:800; cursor:pointer; }}
-button:disabled {{ opacity:.55; cursor:wait; }} #result {{ min-height:48px; padding:16px; border:1px solid var(--line); border-radius:8px; background:white; white-space:pre-wrap; font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }}
+button {{ transition:transform .15s ease,box-shadow .15s ease,background-color .15s ease; }} button:hover:not(:disabled) {{ transform:translateY(-1px); box-shadow:0 5px 14px rgba(15,23,42,.14); }}
+button:disabled {{ opacity:.55; cursor:wait; }} #result {{ min-height:48px; padding:16px; border:1px solid var(--line); border-radius:8px; background:white; white-space:pre-wrap; font:13px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace; }}
 .error {{ color:#991b1b; border-color:#fecaca!important; background:#fff1f2!important; }}
 .decision-bar {{ display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }} .decision-bar button {{ padding:9px 12px; }}
 .decision-bar .defer {{ color:#78350f; background:#fef3c7; }} .decision-bar .reject {{ color:#991b1b; background:#fee2e2; }}
 .result-title {{ margin:0 0 8px; font:700 16px/1.4 Inter,ui-sans-serif,system-ui,sans-serif; }}
 .result-row {{ margin:6px 0; color:var(--muted); font:13px/1.5 Inter,ui-sans-serif,system-ui,sans-serif; }}
 .resolution-list {{ display:grid; gap:8px; margin-top:12px; }} .resolution-item {{ padding:10px; border-left:3px solid var(--orange); background:#fff7ed; font:13px/1.45 Inter,ui-sans-serif,system-ui,sans-serif; }}
-.dashboard {{ margin-top:24px; }} .stats {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }}
+.dashboard {{ margin-top:24px; padding:28px 0; }} .stats {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }}
 .stat {{ min-height:104px; padding:16px; border:1px solid var(--line); border-radius:8px; background:white; }} .stat small {{ display:block; color:var(--muted); }} .stat strong {{ display:block; margin-top:10px; font-size:25px; }}
 .dash-grid {{ display:grid; grid-template-columns:1.2fr 1fr; gap:16px; margin-top:16px; }} .panel {{ padding:18px; border:1px solid var(--line); border-radius:8px; background:white; }} .panel h2 {{ margin:0 0 12px; font-size:18px; }}
 .data-list {{ display:grid; gap:8px; }} .data-row {{ display:flex; justify-content:space-between; gap:16px; padding:9px 0; border-bottom:1px solid #edf1f5; color:var(--muted); font-size:13px; }} .data-row strong {{ color:var(--ink); text-align:right; }}
@@ -447,19 +469,21 @@ button:disabled {{ opacity:.55; cursor:wait; }} #result {{ min-height:48px; padd
 </style></head><body>
 <header class="topbar"><strong>Factory Studio</strong><span id="surface-label">Local target compiler</span></header>
 <main><section class="intro"><div><p class="eyebrow" id="workflow-label">INTENT TO PROOF-CARRYING STARTER</p><h1 id="workflow-title">Choose what you are building.</h1></div><div class="boundary">Loopback only. No publish, deploy, signing, credentials, connectors, or external messages.</div></section>
-<div class="modes" role="tablist"><button class="mode active" id="dashboard-mode" type="button">Dashboard</button><button class="mode" id="starter-mode" type="button">Starter</button><button class="mode" id="mission-mode" type="button">Product mission</button></div>
+<div class="modes" role="tablist"><button class="mode active" id="dashboard-mode" type="button">Dashboard</button><button class="mode" id="assembly-mode" type="button">Assembly</button><button class="mode" id="starter-mode" type="button">Starter</button><button class="mode" id="mission-mode" type="button">Product mission</button></div>
 <section id="dashboard" class="dashboard"><div class="stats"><div class="stat"><small>Stages measured</small><strong id="stat-stages">not available</strong></div><div class="stat"><small>First-pass gates</small><strong id="stat-first-pass">not available</strong></div><div class="stat"><small>Runs observed</small><strong id="stat-runs">not available</strong></div><div class="stat"><small>Flow efficiency</small><strong id="stat-flow">not available</strong></div></div><div class="dash-grid"><div class="panel"><h2><span class="live-dot"></span>Live factory activity</h2><div id="activity-list" class="data-list"></div></div><div class="panel"><h2>Human approval inbox</h2><div id="approval-list" class="data-list"></div></div><div class="panel wide-panel"><h2>Product Graph and journey map</h2><div id="product-list" class="data-list"></div></div><div class="panel"><h2>Dependency-aware slice queue</h2><div id="slice-list" class="data-list"></div></div><div class="panel"><h2>Mission board</h2><div id="mission-list" class="data-list"></div></div><div class="panel wide-panel"><h2>Proof timeline: requirement to receipt</h2><div id="proof-list" class="data-list"></div></div><div class="panel"><h2>Current vs previous run</h2><div id="comparison-list" class="data-list"></div></div><div class="panel"><h2>Capability Pack trust</h2><div id="pack-list" class="data-list"></div></div><div class="panel"><h2>Deployment routes</h2><div id="deployment-list" class="data-list"></div></div><div class="panel"><h2>Authority boundary</h2><div id="authority-list" class="data-list"></div></div></div></section>
+<section id="assembly" class="dashboard hidden"><div class="panel"><h2>Continue an assembly</h2><p class="empty-data">Runs safe local stages, then stops with one explicit human action. Leave feature blank only when exactly one is discoverable.</p><label class="field">Feature<input id="assembly-feature" type="text" maxlength="80" placeholder="feature-name (optional)"></label><button id="assembly-continue" type="button">Continue to next boundary</button><div id="assembly-result" role="status">No continuation started.</div></div></section>
 <form id="builder" class="hidden"><fieldset id="target-fieldset"><legend>Target</legend><div class="targets">{target_buttons}</div></fieldset>
 <div class="inputs"><label class="field">Project name<input id="name" type="text" maxlength="48" placeholder="derived from intent"></label><label class="field starter-only">Purpose<select id="purpose"><option>auto</option><option>developer</option><option>healthcare</option><option>fintech</option><option>marketplace</option><option>saas</option></select></label><label class="field starter-only">Trigger<select id="trigger"><option>manual</option><option>cron</option><option>hook</option><option>goal</option><option>heartbeat</option></select></label><label class="field starter-only">Deployment route<select id="deployment-profile"></select></label><label class="field mission-only hidden">Executor<select id="executor"><option>manual</option><option>codex</option><option>copilot</option><option>claude</option><option>custom</option></select></label><label class="field mission-only hidden">Mission owner<input id="owner" type="text" maxlength="120" value="local-studio-user"></label><label class="field mission-only hidden">Resolution mode<select id="resolution-mode"><option value="human_approval">Human approval</option><option value="auto_resolve_safe">Auto-resolve safe gaps</option></select></label></div>
 <div id="deployment-detail" class="boundary starter-only"></div>
 <label class="field">Intent<textarea id="prompt" maxlength="60000" required placeholder="Describe the worker, app, mobile experience, or operator workflow."></textarea></label>
 <button id="compile" type="submit">Compile starter</button><div id="result" role="status">Ready. Generated targets begin blocked until their proof gates pass.</div></form></main>
 <script>
-const token={json.dumps(token)}; const targetInventory={target_inventory_json}; const form=document.getElementById('builder'); const dashboard=document.getElementById('dashboard'); const result=document.getElementById('result'); const button=document.getElementById('compile'); let mode='dashboard'; let currentMission=null;
+const token={json.dumps(token)}; const targetInventory={target_inventory_json}; const form=document.getElementById('builder'); const dashboard=document.getElementById('dashboard'); const assembly=document.getElementById('assembly'); const result=document.getElementById('result'); const button=document.getElementById('compile'); let mode='dashboard'; let currentMission=null;
 function updateDeploymentProfiles(){{const target=new FormData(form).get('target')||'web';const profiles=targetInventory[target].deployment_profiles;const select=document.getElementById('deployment-profile');const previous=select.value;select.textContent='';profiles.forEach((profile,index)=>{{const option=document.createElement('option');option.value=profile.id;option.textContent=`${{profile.label}} (${{profile.approval}})`;option.selected=profile.id===previous||(!previous&&index===0);select.appendChild(option);}});updateDeploymentDetail();}}
 function updateDeploymentDetail(){{const target=new FormData(form).get('target')||'web';const selected=document.getElementById('deployment-profile').value;const profile=targetInventory[target].deployment_profiles.find(item=>item.id===selected);document.getElementById('deployment-detail').textContent=profile?`Build: ${{profile.build}} | Verify: ${{profile.verify}} | Release: ${{profile.release}} | Approval: ${{profile.approval}}`:'';}}
-function setMode(next){{const mission=next==='mission';const dash=next==='dashboard';mode=next;document.getElementById('dashboard-mode').classList.toggle('active',dash);document.getElementById('starter-mode').classList.toggle('active',next==='starter');document.getElementById('mission-mode').classList.toggle('active',mission);dashboard.classList.toggle('hidden',!dash);form.classList.toggle('hidden',dash);document.getElementById('target-fieldset').classList.toggle('hidden',mission);document.querySelectorAll('.starter-only').forEach(el=>el.classList.toggle('hidden',mission));document.querySelectorAll('.mission-only').forEach(el=>el.classList.toggle('hidden',!mission));document.getElementById('surface-label').textContent=dash?'Live local control plane':mission?'Local product compiler':'Local target compiler';document.getElementById('workflow-label').textContent=dash?'MEASURED LOCAL FACTORY TELEMETRY':mission?'PRD TO SUPERVISED VALUE MISSION':'INTENT TO PROOF-CARRYING STARTER';document.getElementById('workflow-title').textContent=dash?'Factory control dashboard.':mission?'Compile the next reviewable value slice.':'Choose what you are building.';button.textContent=mission?'Compile product mission':'Compile starter';document.getElementById('prompt').placeholder=mission?'Paste a PRD with requirements, outcomes, UX states, and Gherkin acceptance scenarios.':'Describe the worker, app, mobile experience, or operator workflow.';result.textContent=mission?'Ready. Execution and promotion remain human-approved.':'Ready. Generated targets begin blocked until their proof gates pass.';if(dash)refreshDashboard();}}
-document.getElementById('dashboard-mode').onclick=()=>setMode('dashboard');document.getElementById('starter-mode').onclick=()=>setMode('starter');document.getElementById('mission-mode').onclick=()=>setMode('mission');if(new URLSearchParams(location.search).get('mode')==='product')setMode('mission');
+function setMode(next){{const mission=next==='mission';const dash=next==='dashboard';const assemblyMode=next==='assembly';mode=next;document.getElementById('dashboard-mode').classList.toggle('active',dash);document.getElementById('assembly-mode').classList.toggle('active',assemblyMode);document.getElementById('starter-mode').classList.toggle('active',next==='starter');document.getElementById('mission-mode').classList.toggle('active',mission);dashboard.classList.toggle('hidden',!dash);assembly.classList.toggle('hidden',!assemblyMode);form.classList.toggle('hidden',dash||assemblyMode);document.getElementById('target-fieldset').classList.toggle('hidden',mission);document.querySelectorAll('.starter-only').forEach(el=>el.classList.toggle('hidden',mission));document.querySelectorAll('.mission-only').forEach(el=>el.classList.toggle('hidden',!mission));document.getElementById('surface-label').textContent=dash?'Live local control plane':assemblyMode?'State-aware local assembly':mission?'Local product compiler':'Local target compiler';document.getElementById('workflow-label').textContent=dash?'MEASURED LOCAL FACTORY TELEMETRY':assemblyMode?'SAFE STAGES TO EXPLICIT HUMAN BOUNDARY':mission?'PRD TO SUPERVISED VALUE MISSION':'INTENT TO PROOF-CARRYING STARTER';document.getElementById('workflow-title').textContent=dash?'Factory control dashboard.':assemblyMode?'Resume without reconstructing state.':mission?'Compile the next reviewable value slice.':'Choose what you are building.';button.textContent=mission?'Compile product mission':'Compile starter';if(dash)refreshDashboard();}}
+document.getElementById('dashboard-mode').onclick=()=>setMode('dashboard');document.getElementById('assembly-mode').onclick=()=>setMode('assembly');document.getElementById('starter-mode').onclick=()=>setMode('starter');document.getElementById('mission-mode').onclick=()=>setMode('mission');const requestedMode=new URLSearchParams(location.search).get('mode');if(requestedMode==='product')setMode('mission');if(requestedMode==='assembly')setMode('assembly');
+document.getElementById('assembly-continue').onclick=async()=>{{const host=document.getElementById('assembly-result');host.textContent='Continuing safe local stages...';const response=await fetch('/api/continue',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify({{action:'continue',feature:document.getElementById('assembly-feature').value}})}});const payload=await response.json();host.textContent=response.ok?`Status: ${{payload.status}}\nFeature: ${{payload.feature}}\nNext: ${{payload.next_action?.label||'Assembly complete'}}\nReceipt: ${{payload.receipt||'dry run'}}`:`${{payload.code}}: ${{payload.message}}`;}}
 document.querySelectorAll('input[name="target"]').forEach(input=>input.addEventListener('change',updateDeploymentProfiles));document.getElementById('deployment-profile').addEventListener('change',updateDeploymentDetail);updateDeploymentProfiles();
 function textValue(value,suffix=''){{return value===null||value===undefined?'not available':`${{value}}${{suffix}}`;}}
 function rows(id,items){{const host=document.getElementById(id);host.textContent='';items.forEach(([label,value])=>{{const row=document.createElement('div');row.className='data-row';const a=document.createElement('span');a.textContent=label;const b=document.createElement('strong');b.textContent=value;row.append(a,b);host.appendChild(row);}});}}
@@ -540,7 +564,7 @@ class _StudioHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """Accept one token-bound target creation request within the size limit."""
-        if self.path not in {"/api/create", "/api/product", "/api/mission-decision"}:
+        if self.path not in {"/api/create", "/api/product", "/api/mission-decision", "/api/continue"}:
             self._error(404, "NOT_FOUND", "route not found")
             return
         if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
@@ -560,6 +584,8 @@ class _StudioHandler(BaseHTTPRequestHandler):
                 result = create_product_mission_from_studio(self.studio_root, payload)
             elif self.path == "/api/mission-decision":
                 result = decide_product_mission_from_studio(self.studio_root, payload)
+            elif self.path == "/api/continue":
+                result = continue_from_studio(self.studio_root, payload)
             else:
                 result = create_from_studio(self.studio_root, payload)
         except StudioRequestError as exc:

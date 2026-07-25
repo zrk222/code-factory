@@ -6,7 +6,7 @@ These images are explanatory artwork, not screenshots of the shipped Factory
 Studio UI and not measured outcome evidence. Keep the exact UI demonstration
 separate from this gallery.
 
-Release v0.20.0 adds two concrete operational use cases to the listing copy:
+Release v0.21.0 adds two concrete operational use cases to the listing copy:
 
 - Durable, receipt-backed missions that pause for human plan review, resume
   with fresh worker context, and refuse completion without independent proof.

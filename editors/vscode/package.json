@@ -2,7 +2,7 @@
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
   "description": "Run bounded Code Factory gates and inspect local receipts without leaving VS Code.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -24,6 +24,7 @@
   ],
   "activationEvents": [
     "onCommand:factoryline.assemble",
+    "onCommand:factoryline.continue",
     "onCommand:factoryline.verify",
     "onCommand:factoryline.openMeter",
     "onCommand:factoryline.openLatestReceipt",
@@ -37,6 +38,10 @@
       {
         "command": "factoryline.assemble",
         "title": "FactoryLine: Run Spec-to-Ship Assembly"
+      },
+      {
+        "command": "factoryline.continue",
+        "title": "FactoryLine: Continue Assembly to Next Boundary"
       },
       {
         "command": "factoryline.verify",

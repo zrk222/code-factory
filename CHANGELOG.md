@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.21.0 - 2026-07-24
+
+### Added
+
+- Added `factory continue [feature]` to resume the assembly line through safe
+  local stages and stop at one explicit human boundary.
+- Added Assembly mode to Factory Studio and continuation commands to the VS Code
+  and JetBrains integrations.
+- Added atomic per-run Assembly receipts and `factory metrics` privacy-safe
+  aggregates. Missing token and cost observations remain explicitly unknown,
+  and savings require a measured counterfactual baseline.
+
+### Changed
+
+- SSAT contracts are resolved consistently from `specs/`, the repository root,
+  or the explicit adoption filename.
+- Human-facing continuation output is compact; full stage detail is available
+  with `--json`.
+
 ## 0.20.0 - 2026-07-20
 
 ### Added
