@@ -6,17 +6,20 @@ These images are explanatory artwork, not screenshots of the shipped Factory
 Studio UI and not measured outcome evidence. Keep the exact UI demonstration
 separate from this gallery.
 
-Release v0.21.0 adds two concrete operational use cases to the listing copy:
+Release v0.22.0 adds three concrete operational use cases to the listing copy:
 
+- Exact paired time, token, and cost savings with aggregate-safe exports,
+  negative results preserved, and productivity withheld until equivalent
+  outcomes are explicitly asserted and hash-bound.
 - Durable, receipt-backed missions that pause for human plan review, resume
   with fresh worker context, and refuse completion without independent proof.
 - Secret-free multi-provider BYOK routing across CLI, Studio, VS Code, and
   JetBrains with explicit quality, budget, allowlist, and cache rails.
 
-Suggested tagline: **Route any model. Govern every mission. Prove every ship.**
+Suggested tagline: **Measure every saving. Prove every ship.**
 
-Suggested CTA: **Bring your own models, choose your IDE, and run the proof-first
-factory from the public repository.**
+Suggested CTA: **Compare your baseline, export the exact savings, and run the
+proof-first factory from the public repository.**
 
 Product Hunt currently requires at least 2 images for a visible gallery and
 recommends 1270 x 760 gallery images. Source images are 1122 x 1402 portrait PNGs;

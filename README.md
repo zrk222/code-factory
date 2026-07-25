@@ -15,9 +15,9 @@
 **Exact shipped UI:** the walkthrough below is rendered from the actual Factory
 Studio surface; it is not concept art.
 
-[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.21.0/code-factory-quickstart-v0171.mp4)
+[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.22.0/code-factory-quickstart-v0171.mp4)
 
-[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.21.0/code-factory-quickstart-v0171.mp4).
+[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.22.0/code-factory-quickstart-v0171.mp4).
 The absolute cover and release-asset URLs render from both GitHub and PyPI.
 
 The one-minute walkthrough is rendered from an actual 1920x1080 Factory
@@ -42,7 +42,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.21.0
+pip install factoryline-code-factory==0.22.0
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -62,7 +62,7 @@ See [Target Compiler and Factory Studio](docs/TARGET_COMPILER.md).
 
 ## Resume the assembly line
 
-Code Factory 0.21 can inspect the feature state and continue through safe local
+Code Factory 0.22 can inspect the feature state and continue through safe local
 stages until completion, failure, or one explicit human boundary:
 
 ```bash
@@ -77,6 +77,25 @@ unknown unless exact observations and a counterfactual baseline exist. The same
 continuation engine powers Factory Studio's Assembly tab and both editor
 integrations. See [Assembly continuation](docs/ASSEMBLY_CONTINUE.md) and the
 [privacy-safe Codex usage sample](docs/CODEX_USAGE_SAMPLE.md).
+
+## Measure exact time, token, and cost savings
+
+The paired savings tracker records your baseline and Factory observations
+without inventing missing values or hiding regressions:
+
+```bash
+factory savings record checkout-2026-07-25 --root . \
+  --baseline-elapsed-ms 600000 --factory-elapsed-ms 300000 \
+  --baseline-tokens 12000 --factory-tokens 8000
+factory savings report --root . --out savings-public.json
+```
+
+Time, token, and cost deltas are signed: slower or more expensive Factory runs
+remain negative. Productivity gain is withheld unless you explicitly assert an
+equivalent outcome and bind that assertion to an existing evidence file with
+`--equivalent-outcome --evidence <path>`. Private pair identifiers and evidence
+paths stay out of the aggregate-safe public report. See
+[Paired savings tracker](docs/SAVINGS_TRACKER.md).
 
 ## Hosted enterprise PR assurance
 
@@ -157,7 +176,7 @@ telemetry while preserving unknown values as unknown. Open the same workflow in
 Factory Studio or through the explicit Product Missions command in VS Code and
 all supported JetBrains IDEs. See [Product Missions](docs/PRODUCT_MISSIONS.md).
 
-Version 0.20 adds durable mission execution through a hash-linked SQLite event
+Version 0.20 added durable mission execution through a hash-linked SQLite event
 ledger with guarded transitions, human pause/revise/resume, independent
 validation, budget exhaustion, release separation, and an optional LangGraph
 checkpoint adapter. A secret-free multi-provider policy selects BYOK provider
@@ -370,7 +389,7 @@ an instruction or edit the Architecture Opinion Dock. See
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.21.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.22.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
 factory doctor --json
 ```
 

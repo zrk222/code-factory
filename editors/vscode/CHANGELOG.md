@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0
+
+- Add a confirmed read-only paired savings report with exact time, token, and
+  cost totals.
+- Preserve negative values and explain when productivity gain is withheld.
+- Align the extension and release bundle with Code Factory 0.22.0.
+
 ## 0.6.0
 
 - Align the extension and release bundle with Code Factory 0.21.0.

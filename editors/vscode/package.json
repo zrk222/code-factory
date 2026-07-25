@@ -2,7 +2,7 @@
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
   "description": "Run bounded Code Factory gates and inspect local receipts without leaving VS Code.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -27,6 +27,7 @@
     "onCommand:factoryline.continue",
     "onCommand:factoryline.verify",
     "onCommand:factoryline.openMeter",
+    "onCommand:factoryline.openSavings",
     "onCommand:factoryline.openLatestReceipt",
     "onCommand:factoryline.openStudio",
     "onCommand:factoryline.openProductMissions",
@@ -50,6 +51,10 @@
       {
         "command": "factoryline.openMeter",
         "title": "FactoryLine: Open Local Meter"
+      },
+      {
+        "command": "factoryline.openSavings",
+        "title": "FactoryLine: Open Paired Savings Report"
       },
       {
         "command": "factoryline.openLatestReceipt",

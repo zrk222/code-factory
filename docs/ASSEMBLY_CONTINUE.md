@@ -1,6 +1,6 @@
 # Assembly continuation
 
-Code Factory 0.21 adds one state-aware entry point:
+Code Factory 0.22 includes one state-aware entry point:
 
 ```console
 factory continue [feature] --root .

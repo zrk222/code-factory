@@ -224,6 +224,11 @@ object FactoryLineController {
         })
     }
 
+    fun openSavings(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Open Paired Savings Report")) return
+        runBackground(project, "Open Paired Savings Report") { FactoryLineRunner.savings(project) }
+    }
+
     fun openStudio(project: Project, productMode: Boolean = false) {
         val root = project.basePath ?: run {
             Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
@@ -298,6 +303,12 @@ class CheckLatestReceiptSignatureAction : FactoryLineAction() {
 class OpenMeterAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.openMeter(it) }
+    }
+}
+
+class OpenSavingsAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.openSavings(it) }
     }
 }
 

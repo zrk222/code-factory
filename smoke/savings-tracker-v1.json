@@ -1,0 +1,25 @@
+{
+  "checks": [
+    {
+      "name": "exact_signed_pair_and_private_receipt",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.savings import record_savings_pair\nwith TemporaryDirectory() as d:\n root=Path(d); evidence=root/'proof.json'; evidence.write_text('{}'); result=record_savings_pair(root,'exact',{'elapsed_ms':600,'tokens':120,'cost_usd':6},{'elapsed_ms':300,'tokens':80,'cost_usd':4},equivalent_outcome=True,evidence=evidence); assert result['savings']['time_saved_ms']==300; assert result['savings']['tokens_saved']==40; assert result['savings']['cost_saved_usd']==2; assert result['savings']['productivity_gain_rate']==1; assert Path(result['receipt']).is_file()\n",
+      "covers": ["SAVINGS_RECORD_COMMAND", "PAIR_ID_VALIDATED", "SIGNED_DELTA_COMPUTED", "TIME_SAVINGS_RATE_EXACT", "EQUIVALENCE_EVIDENCE_HASHED", "PRODUCTIVITY_GAIN_EXACT", "SAVINGS_PAIR_RECEIPTED"],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "unknowns_regressions_and_overwrite_fail_closed",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.savings import SavingsError,record_savings_pair\nwith TemporaryDirectory() as d:\n root=Path(d); result=record_savings_pair(root,'regression',{'elapsed_ms':100},{'elapsed_ms':200}); assert result['savings']['time_saved_ms']==-100; assert result['savings']['tokens_saved'] is None; assert result['savings']['productivity_gain_rate'] is None\n try:\n  record_savings_pair(root,'regression',{'elapsed_ms':100},{'elapsed_ms':200}); raise AssertionError('overwrite allowed')\n except SavingsError as exc: assert exc.code=='PAIR_OVERWRITE_REFUSED'\n",
+      "covers": ["UNKNOWN_PAIR_FIELD_PRESERVED", "PRODUCTIVITY_GAIN_WITHHELD", "PAIR_OVERWRITE_REFUSED", "SAVINGS_NEGATIVE_VISIBLE"],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "aggregate_report_excludes_pair_details",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nimport json\nfrom factoryline.savings import export_public_savings_report,record_savings_pair\nwith TemporaryDirectory() as d:\n root=Path(d); record_savings_pair(root,'private-id',{'elapsed_ms':100,'tokens':10},{'elapsed_ms':80,'tokens':8}); out=root/'public.json'; export_public_savings_report(root,out); text=out.read_text(); value=json.loads(text); assert value['schema']=='factory.savings-report.public.v1'; assert value['time']['saved_total']==20; assert 'private-id' not in text; assert 'pair_id' not in text; assert 'evidence_sha256' not in text\n",
+      "covers": ["SAVINGS_REPORT_AGGREGATE_SAFE", "SAVINGS_BACKWARD_COMPATIBLE", "SAVINGS_STUDIO_CONTAINED", "SAVINGS_EDITOR_VISIBLE", "RELEASE_022_SYNCHRONIZED"],
+      "must_fail_on_stub": true
+    }
+  ]
+}

@@ -8,6 +8,7 @@
             <li>Run explicit assembly and receipt-verification commands.</li>
             <li>Inspect changed-proof risk and the latest local receipt.</li>
             <li>Open a read-only local time and token meter.</li>
+            <li>Inspect exact paired time, token, cost, and proven productivity savings.</li>
             <li>Open the loopback-only Factory Studio target compiler.</li>
             <li>Compile PRDs into supervised, passport-bound Product Missions.</li>
             <li>Operate durable mission graphs and route secret-free BYOK policies for JetBrains.</li>
@@ -18,12 +19,9 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
-            <li>Add loopback-only Factory Studio with explicit workspace confirmation.</li>
-            <li>Add Product Missions for deterministic PRD-to-value-slice planning.</li>
-            <li>Recognize only literal 127.0.0.1 Studio URLs and open them through the JetBrains browser API.</li>
-            <li>Local meter overview with measured-time and module-reported token boundaries.</li>
-            <li>Retain local assembly, receipt verification, proof-risk, and receipt-view actions.</li>
-            <li>Add guarded mission status, history, verification, Mermaid export, event recording, and BYOK routing.</li>
+            <li>Add exact paired savings reports with negative values and unknowns preserved.</li>
+            <li>Require hash-bound equivalent-outcome evidence before showing productivity gain.</li>
+            <li>Retain local assembly, mission, meter, receipt verification, and proof-risk actions.</li>
         </ul>
     ]]></change-notes>
 
@@ -63,6 +61,10 @@
                     class="app.factoryline.intellij.OpenMeterAction"
                     text="Open Local Meter"
                     description="Show the local FactoryLine time and token meter"/>
+            <action id="app.factoryline.intellij.openSavings"
+                    class="app.factoryline.intellij.OpenSavingsAction"
+                    text="Open Paired Savings Report"
+                    description="Show exact baseline-versus-Factory savings without inferred values"/>
             <action id="app.factoryline.intellij.openStudio"
                     class="app.factoryline.intellij.OpenStudioAction"
                     text="Open Local Factory Studio"

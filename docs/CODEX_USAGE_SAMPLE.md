@@ -22,7 +22,7 @@ cannot be attributed to Code Factory, so actual token savings, time savings, and
 productivity gain remain unknown. The machine-readable sample preserves those
 values as `null`.
 
-Code Factory 0.21 supplies the missing measurement layer: atomic continuation
+Code Factory 0.22 supplies the missing measurement layer: atomic continuation
 receipts and aggregate-safe exports. A future causal claim still requires a
 declared paired or controlled baseline. See
 [the machine-readable sample](CODEX_USAGE_SAMPLE.json) and

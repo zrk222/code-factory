@@ -51,6 +51,15 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun pairedSavingsCommandIsExplicitAndWorkspaceBound() {
+        val root = Files.createTempDirectory("factoryline-savings")
+        assertEquals(
+            listOf("savings", "report", "--root", root.toString(), "--json"),
+            FactoryLineCommands.savings(root)
+        )
+    }
+
+    @Test
     fun receiptLocatorIgnoresDependencyTreesAndReturnsNewestReceipt() {
         val root = Files.createTempDirectory("factoryline-receipts")
         val receipts = Files.createDirectories(root.resolve("receipts"))

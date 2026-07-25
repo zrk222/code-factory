@@ -69,3 +69,24 @@ export function meterHtml(value: unknown): string {
   const note = escapeHtml(scalar(summary.note));
   return `<!doctype html><html><body><h2>FactoryLine Meter</h2><table>${body}</table><p>${note}</p><p><small>Local receipt data only. Unknown telemetry remains unavailable rather than becoming zero.</small></p></body></html>`;
 }
+
+export function savingsHtml(value: unknown): string {
+  const report = asRecord(value);
+  const time = asRecord(report.time);
+  const tokens = asRecord(report.tokens);
+  const cost = asRecord(report.cost_usd);
+  const productivity = asRecord(report.productivity);
+  const rows: Array<[string, string]> = [
+    ["Exact pairs", scalar(report.pairs)],
+    ["Time saved", time.saved_total === null || time.saved_total === undefined ? "unknown" : `${time.saved_total} ms`],
+    ["Time savings rate", percent(time.weighted_savings_rate)],
+    ["Tokens saved", scalar(tokens.saved_total)],
+    ["Token savings rate", percent(tokens.weighted_savings_rate)],
+    ["Cost saved", cost.saved_total === null || cost.saved_total === undefined ? "unknown" : `${cost.saved_total} USD`],
+    ["Cost savings rate", percent(cost.weighted_savings_rate)],
+    ["Productivity gain", productivity.gain_rate === null || productivity.gain_rate === undefined ? "withheld until equivalent-outcome proof" : percent(productivity.gain_rate)],
+    ["Productivity evidence coverage", percent(productivity.coverage_rate)],
+  ];
+  const body = rows.map(([label, entry]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(entry)}</td></tr>`).join("");
+  return `<!doctype html><html><body><h2>FactoryLine Paired Savings</h2><table>${body}</table><p><small>Signed exact deltas only. Negative values remain visible; unavailable fields are not converted to zero.</small></p></body></html>`;
+}
