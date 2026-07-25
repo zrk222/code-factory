@@ -16,6 +16,13 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "not UI screenshots or measured outcome evidence" in page
     assert '<meta name="viewport"' in page
+    assert "Prove your next change across CLI and 8 IDEs." in page
+    assert "276 Python tests passed" in page
+    assert "Verified release checks" in page
+    assert "factory-studio-control-room-1080.png" in page
+    assert "prefers-reduced-motion" in page
+    assert "Skip to product proof" in page
+    assert 'class="brand" href="#main"' in page
 
 
 def test_huggingface_workflow_uses_secret_and_scoped_source_directory() -> None:
