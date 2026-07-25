@@ -95,7 +95,7 @@
         <p class="lede">Code Factory turns specifications, tests, policies, design contracts, and signed receipts into a reviewable delivery line—then deliberately sabotages the gates to prove they reject bad builds.</p>
         <div class="actions">
           <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Install Code Factory</a>
-          <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.21.0">Inspect the release</a>
+          <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.22.0">Inspect the release</a>
         </div>
         <div class="trust">✓ MIT or Apache-2.0 &nbsp; ✓ Source available &nbsp; ✓ Archived release</div>
       </div>
@@ -122,12 +122,28 @@
     <section>
       <div class="shell proof">
         <div>
+          <div class="eyebrow">New in 0.22</div>
+          <h2>Measure the saving. Keep the caveat.</h2>
+          <p>Record exact baseline-versus-Factory time, token, and cost observations. Negative results stay visible, and productivity is withheld until equivalent outcomes are explicitly asserted and hash-bound.</p>
+        </div>
+        <pre><code>factory savings record checkout \
+  --baseline-elapsed-ms 600000 \
+  --factory-elapsed-ms 300000 \
+  --baseline-tokens 12000 \
+  --factory-tokens 8000
+factory savings report --out savings-public.json</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell proof">
+        <div>
           <div class="eyebrow">60-second first run</div>
           <h2>Start locally. See the gap immediately.</h2>
           <p>The coverage command intentionally exits nonzero when a generated application has requirements without meaningful tests. The scaffold is starting state, not a readiness claim.</p>
-          <a class="button" href="https://github.com/zrk222/code-factory/releases/download/v0.21.0/code-factory-quickstart-v0171.mp4">Watch the shipped UI walkthrough</a>
+          <a class="button" href="https://github.com/zrk222/code-factory/releases/download/v0.22.0/code-factory-quickstart-v0171.mp4">Watch the shipped UI walkthrough</a>
         </div>
-        <pre><code>pip install factoryline-code-factory==0.21.0
+        <pre><code>pip install factoryline-code-factory==0.22.0
 factory create "Build an approval tracker" \
   --target web --out approval-tracker
 factory coverage --root approval-tracker --json</code></pre>
@@ -154,14 +170,14 @@ factory coverage --root approval-tracker --json</code></pre>
         <h2>Make the next change carry its own proof.</h2>
         <div class="actions" style="justify-content:center">
           <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Install from PyPI</a>
-          <a class="button" href="https://doi.org/10.5281/zenodo.21543621">Open the archived release</a>
+          <a class="button" href="https://doi.org/10.5281/zenodo.21381405">Open the archived releases</a>
         </div>
       </div>
     </section>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.21.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://doi.org/10.5281/zenodo.21543621">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.22.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

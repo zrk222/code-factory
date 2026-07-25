@@ -1,5 +1,12 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.7.0
+
+- Add a bounded Paired Savings Report action backed by the local FactoryLine
+  CLI.
+- Preserve exact negative results and unknown productivity values.
+- Align the plugin package with Code Factory 0.22.0.
+
 ## 0.6.0
 
 - Add a state-aware Continue Assembly action that stops at the next human boundary.

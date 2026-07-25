@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.21.0"
+version = "0.22.0"
 description = "A proof-first software factory with durable missions, secret-free multi-provider BYOK routing, signed receipts, and supervised enterprise control."
 authors = [
   { name = "Richard Katz" },

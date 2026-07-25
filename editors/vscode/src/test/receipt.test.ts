@@ -1,7 +1,7 @@
 import * as assert from "node:assert/strict";
 import { escapeHtml, receiptHtml, summarizeReceipt } from "../receipt";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "../runner";
-import { meterHtml } from "../meter";
+import { meterHtml, savingsHtml } from "../meter";
 import { requirementIds } from "../requirement";
 
 const receipt = {
@@ -26,6 +26,9 @@ assert.equal(factoryExecutable("factory", "linux"), "factory");
 assert.match(meterHtml({ summary: { stages_measured: 2, build_wall_ms: 10, tokens_reported_by_modules: false }, activity: { stages_successful: 2, latest_stage: { module: "hsf", stage: "compile", ok: true } } }), /not reported by modules/);
 assert.match(meterHtml({ summary: { flow: { agent_ms: { value: 12, known: 1, unknown: 0 }, first_pass_gate_rate: { value: 1, known: 1, unknown: 0 }, token_quality: { exact: 1, estimated: 0, unknown: 0 } } }, activity: {} }), /Agent time/);
 assert.match(meterHtml({ summary: { flow: { agent_ms: { value: 12, known: 1, unknown: 0 }, first_pass_gate_rate: { value: 1, known: 1, unknown: 0 }, token_quality: { exact: 1, estimated: 0, unknown: 0 } } }, activity: {} }), /100.0%/);
+assert.match(savingsHtml({ pairs: 2, time: { saved_total: 100, weighted_savings_rate: 0.25 }, tokens: { saved_total: -4, weighted_savings_rate: -0.1 }, cost_usd: { saved_total: null }, productivity: { gain_rate: null, coverage_rate: 0 } }), /100 ms/);
+assert.match(savingsHtml({ pairs: 2, time: { saved_total: 100, weighted_savings_rate: 0.25 }, tokens: { saved_total: -4, weighted_savings_rate: -0.1 }, cost_usd: { saved_total: null }, productivity: { gain_rate: null, coverage_rate: 0 } }), /-4/);
+assert.match(savingsHtml({ pairs: 2, time: {}, tokens: {}, cost_usd: {}, productivity: { gain_rate: null } }), /withheld until equivalent-outcome proof/);
 assert.equal(isFeatureName("editor-layer_1"), true);
 assert.equal(isFeatureName("editor layer; rm"), false);
 assert.equal(factoryStudioUrl("marker: STUDIO_STARTED\nFactory Studio: http://127.0.0.1:43117/\n"), "http://127.0.0.1:43117/");

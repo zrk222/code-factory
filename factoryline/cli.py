@@ -21,6 +21,12 @@ from .contract import MODULES, STAGES, ensure_layout, LAYOUT
 from .assembly import detect, assemble, DEFAULT_CHAIN, rollup_receipts
 from .continuation import ContinuationError, continue_assembly
 from .run_metrics import export_public_metrics, public_metrics
+from .savings import (
+    SavingsError,
+    export_public_savings_report,
+    public_savings_report,
+    record_savings_pair,
+)
 from .meter import live_snapshot, live_summary_table, overhead, summarize, summary_table
 from .proof import (
     build_trace,
@@ -337,6 +343,26 @@ def main(argv=None) -> int:
     s.add_argument("--root", default=".")
     s.add_argument("--out")
     s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("savings", help="record and report exact paired savings")
+    savings_sub = s.add_subparsers(dest="savings_cmd")
+    record = savings_sub.add_parser("record", help="record one baseline-versus-Factory pair")
+    record.add_argument("pair_id")
+    record.add_argument("--root", default=".")
+    record.add_argument("--baseline-elapsed-ms", type=int, required=True)
+    record.add_argument("--factory-elapsed-ms", type=int, required=True)
+    record.add_argument("--baseline-tokens", type=int)
+    record.add_argument("--factory-tokens", type=int)
+    record.add_argument("--baseline-cost-usd", type=float)
+    record.add_argument("--factory-cost-usd", type=float)
+    record.add_argument("--equivalent-outcome", action="store_true")
+    record.add_argument("--evidence")
+    record.add_argument("--replace", action="store_true")
+    record.add_argument("--json", action="store_true")
+    report = savings_sub.add_parser("report", help="show or export aggregate-safe savings")
+    report.add_argument("--root", default=".")
+    report.add_argument("--out")
+    report.add_argument("--json", action="store_true")
 
     s = sub.add_parser("verify", help="summarize all existing receipts into one shippability decision")
     s.add_argument("feature")
@@ -1268,6 +1294,55 @@ def main(argv=None) -> int:
         else:
             print(f"public Assembly metrics written to {Path(a.out).resolve()}")
         return 0
+    if a.cmd == "savings":
+        if a.savings_cmd == "record":
+            baseline = {
+                "elapsed_ms": a.baseline_elapsed_ms,
+                "tokens": a.baseline_tokens,
+                "cost_usd": a.baseline_cost_usd,
+            }
+            factory_observation = {
+                "elapsed_ms": a.factory_elapsed_ms,
+                "tokens": a.factory_tokens,
+                "cost_usd": a.factory_cost_usd,
+            }
+            try:
+                payload = record_savings_pair(
+                    Path(a.root), a.pair_id, baseline, factory_observation,
+                    equivalent_outcome=a.equivalent_outcome,
+                    evidence=Path(a.evidence) if a.evidence else None,
+                    replace=a.replace,
+                )
+            except (SavingsError, OSError) as exc:
+                code = getattr(exc, "code", "SAVINGS_INPUT_INVALID")
+                print(
+                    json.dumps({"code": code, "message": str(exc)}, indent=2)
+                    if a.json else f"savings failed: {code}: {exc}",
+                    file=sys.stderr,
+                )
+                return 2
+            if a.json:
+                print(json.dumps(payload, indent=2))
+            else:
+                values = payload["savings"]
+                print("factory paired savings")
+                print(f"pair          : {payload['pair_id']}")
+                print(f"time saved    : {values['time_saved_ms']} ms")
+                print(f"tokens saved  : {values['tokens_saved'] if values['tokens_saved'] is not None else 'unknown'}")
+                print(f"cost saved    : {values['cost_saved_usd'] if values['cost_saved_usd'] is not None else 'unknown'}")
+                print(f"productivity  : {values['productivity_gain_rate'] if values['productivity_gain_rate'] is not None else 'unknown'}")
+                print(f"receipt       : {payload['receipt']}")
+            return 0
+        if a.savings_cmd == "report":
+            payload = public_savings_report(Path(a.root))
+            if a.out:
+                export_public_savings_report(Path(a.root), Path(a.out))
+            if a.json or not a.out:
+                print(json.dumps(payload, indent=2))
+            else:
+                print(f"public savings report written to {Path(a.out).resolve()}")
+            return 0
+        p.error("savings requires record or report")
     if a.cmd == "verify":
         result = verify_feature(Path(a.root), a.feature)
         if a.json:

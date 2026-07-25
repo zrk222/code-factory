@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { receiptHtml } from "./receipt";
-import { meterHtml } from "./meter";
+import { meterHtml, savingsHtml } from "./meter";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "./runner";
 import { findRequirementEvidence, requirementIds } from "./requirement";
 
@@ -226,6 +226,28 @@ async function openMeter(): Promise<void> {
   }
 }
 
+async function openSavings(): Promise<void> {
+  const root = requireTrustedWorkspace();
+  if (!root) {
+    return;
+  }
+  const confirmed = await vscode.window.showWarningMessage(
+    "FactoryLine will read aggregate-safe paired savings receipts from this workspace.",
+    { modal: true },
+    "Read paired savings",
+  );
+  if (confirmed !== "Read paired savings") {
+    return;
+  }
+  try {
+    const raw = await runFactory(root, ["savings", "report", "--root", root, "--json"]);
+    const panel = vscode.window.createWebviewPanel("factorylineSavings", "FactoryLine Paired Savings", vscode.ViewColumn.Beside, { enableScripts: false });
+    panel.webview.html = savingsHtml(parseMeterSnapshot(raw));
+  } catch (error) {
+    void vscode.window.showErrorMessage(`${error instanceof Error ? error.message : String(error)} See the FactoryLine output channel.`);
+  }
+}
+
 async function openFactoryStudio(productMode = false): Promise<void> {
   const root = requireTrustedWorkspace();
   if (!root) {
@@ -309,6 +331,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("factoryline.continue", continueAssembly),
     vscode.commands.registerCommand("factoryline.verify", () => runFeature("verify")),
     vscode.commands.registerCommand("factoryline.openMeter", openMeter),
+    vscode.commands.registerCommand("factoryline.openSavings", openSavings),
     vscode.commands.registerCommand("factoryline.openLatestReceipt", openLatestReceipt),
     vscode.commands.registerCommand("factoryline.openStudio", () => openFactoryStudio(false)),
     vscode.commands.registerCommand("factoryline.openProductMissions", () => openFactoryStudio(true)),

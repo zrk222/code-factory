@@ -81,6 +81,9 @@ enum class MissionGraphOperation(val label: String, val command: String) {
 }
 
 object FactoryLineCommands {
+    fun savings(root: Path): List<String> =
+        listOf("savings", "report", "--root", root.toString(), "--json")
+
     fun missionGraph(operation: MissionGraphOperation, mission: Path, root: Path): List<String> {
         require(operation !in setOf(MissionGraphOperation.EVENT, MissionGraphOperation.ROUTE))
         return listOf("langgraph", operation.command, mission.toString(), "--root", root.toString(), "--json")
@@ -301,6 +304,12 @@ object FactoryLineRunner {
 
     fun meter(project: Project): CommandResult =
         execute(project, "Open Local Meter", listOf("meter") + rootArguments(project) + "--json")
+
+    fun savings(project: Project): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Open Paired Savings Report", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        return execute(project, "Open Paired Savings Report", FactoryLineCommands.savings(root))
+    }
 
     fun runMissionGraph(project: Project, operation: MissionGraphOperation, mission: Path): CommandResult {
         val root = project.basePath?.let(Path::of)

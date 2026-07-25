@@ -12,8 +12,8 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "sdk: static" in readme
     assert "app_file: index.html" in readme
     assert "factoryline-code-factory" in page
-    assert "github.com/zrk222/code-factory/releases/tag/v0.21.0" in page
-    assert "doi.org/10.5281/zenodo.21543621" in page
+    assert "github.com/zrk222/code-factory/releases/tag/v0.22.0" in page
+    assert "doi.org/10.5281/zenodo.21381405" in page
     assert "not UI screenshots or measured outcome evidence" in page
     assert '<meta name="viewport"' in page
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.22.0 - 2026-07-25
+
+- Add exact baseline-versus-Factory savings receipts for elapsed time, tokens,
+  and cost, preserving unknown and negative results.
+- Add aggregate-safe public savings exports that omit pair identifiers,
+  evidence paths, and per-pair observations.
+- Withhold productivity gain unless an equivalent outcome is explicitly
+  asserted and bound to a SHA-256 evidence digest.
+- Surface the same savings report in Factory Studio, VS Code 0.7.0, and the
+  JetBrains plugin 0.7.0.
+
 ## 0.21.0 - 2026-07-24
 
 ### Added

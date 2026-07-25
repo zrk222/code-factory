@@ -18,6 +18,7 @@ from factoryline.studio import (
     serve_studio,
     studio_dashboard,
     continue_from_studio,
+    savings_from_studio,
     studio_status,
 )
 
@@ -33,6 +34,23 @@ def test_studio_assembly_uses_shared_continuation_and_preserves_authority(tmp_pa
     status = studio_status(tmp_path, 0)
     assert status["authority"]["can_continue_assembly_to_human_boundary"] is True
     assert status["authority"]["can_publish"] is False
+
+
+def test_studio_savings_records_exact_pair_and_rejects_path_escape(tmp_path):
+    result = savings_from_studio(tmp_path, {
+        "action": "savings-record", "pair_id": "studio-pair",
+        "baseline_elapsed_ms": 1000, "factory_elapsed_ms": 600,
+        "baseline_tokens": 100, "factory_tokens": 70,
+    })
+    assert result["studio_marker"] == "SAVINGS_STUDIO_CONTAINED"
+    assert result["savings"]["time_saved_ms"] == 400
+    assert studio_dashboard(tmp_path)["savings"]["tokens"]["saved_total"] == 30
+    with pytest.raises(StudioRequestError, match="PATH_REJECTED"):
+        savings_from_studio(tmp_path, {
+            "action": "savings-record", "pair_id": "escape",
+            "baseline_elapsed_ms": 1, "factory_elapsed_ms": 1,
+            "equivalent_outcome": True, "evidence": "../private.txt",
+        })
 
 
 def test_studio_status_is_exact_and_loopback_only(tmp_path: Path):
@@ -149,6 +167,30 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         assert response.status == 200
         dashboard = json.loads(response.read())
         assert dashboard["schema"] == "factory.studio.dashboard.v1"
+
+        connection.request("GET", "/api/savings")
+        response = connection.getresponse()
+        assert response.status == 403
+        response.read()
+
+        savings_body = json.dumps({
+            "action": "savings-record", "pair_id": "http-pair",
+            "baseline_elapsed_ms": 500, "factory_elapsed_ms": 300,
+            "baseline_tokens": 50, "factory_tokens": 40,
+        })
+        connection.request(
+            "POST", "/api/savings", body=savings_body,
+            headers={"Content-Type": "application/json", "X-Factory-Studio-Token": token},
+        )
+        response = connection.getresponse()
+        assert response.status == 201
+        assert json.loads(response.read())["savings"]["time_saved_ms"] == 200
+
+        connection.request("GET", "/api/savings", headers={"X-Factory-Studio-Token": token})
+        response = connection.getresponse()
+        assert response.status == 200
+        savings = json.loads(response.read())
+        assert savings["tokens"]["saved_total"] == 10
 
         connection.request("GET", "/favicon.ico")
         response = connection.getresponse()
