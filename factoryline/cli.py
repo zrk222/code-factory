@@ -19,6 +19,8 @@ from pathlib import Path
 
 from .contract import MODULES, STAGES, ensure_layout, LAYOUT
 from .assembly import detect, assemble, DEFAULT_CHAIN, rollup_receipts
+from .continuation import ContinuationError, continue_assembly
+from .run_metrics import export_public_metrics, public_metrics
 from .meter import live_snapshot, live_summary_table, overhead, summarize, summary_table
 from .proof import (
     build_trace,
@@ -323,6 +325,18 @@ def main(argv=None) -> int:
     s.add_argument("feature")
     s.add_argument("--root", default=".")
     s.add_argument("--dry-run", action="store_true")
+
+    s = sub.add_parser("continue", help="resume assembly from the next safe stage")
+    s.add_argument("feature", nargs="?")
+    s.add_argument("--root", default=".")
+    s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--usage-json", help="exact measured usage JSON file")
+    s.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("metrics", help="export privacy-safe Assembly run metrics")
+    s.add_argument("--root", default=".")
+    s.add_argument("--out")
+    s.add_argument("--json", action="store_true")
 
     s = sub.add_parser("verify", help="summarize all existing receipts into one shippability decision")
     s.add_argument("feature")
@@ -1220,6 +1234,40 @@ def main(argv=None) -> int:
         report = assemble(Path(a.root), a.feature, dry_run=a.dry_run)
         print(json.dumps(report, indent=2))
         return 0 if "halted_at" not in report else 1
+    if a.cmd == "continue":
+        try:
+            usage = json.loads(Path(a.usage_json).read_text(encoding="utf-8")) if a.usage_json else None
+            report = continue_assembly(Path(a.root), a.feature, dry_run=a.dry_run, usage=usage)
+        except (ContinuationError, ValueError, OSError, json.JSONDecodeError) as exc:
+            code = getattr(exc, "code", "CONTINUATION_INPUT_INVALID")
+            payload = {"schema": "factory.assembly-continuation.error.v1", "code": code, "message": str(exc)}
+            if isinstance(exc, ContinuationError):
+                payload["candidates"] = exc.candidates
+            print(json.dumps(payload, indent=2) if a.json else f"continue failed: {code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print("factory continuation")
+            print(f"feature : {report['feature']}")
+            print(f"status  : {report['status']}")
+            print(f"stages  : {len(report['stages'])}")
+            if report.get("next_action"):
+                print(f"next    : {report['next_action']['label']}")
+                if report["next_action"].get("command"):
+                    print(f"command : {report['next_action']['command']}")
+            if report.get("receipt"):
+                print(f"receipt : {report['receipt']}")
+        return 3 if report["status"] == "waiting_for_human" else 1 if report["status"] == "halted" else 0
+    if a.cmd == "metrics":
+        payload = public_metrics(Path(a.root))
+        if a.out:
+            export_public_metrics(Path(a.root), Path(a.out))
+        if a.json or not a.out:
+            print(json.dumps(payload, indent=2))
+        else:
+            print(f"public Assembly metrics written to {Path(a.out).resolve()}")
+        return 0
     if a.cmd == "verify":
         result = verify_feature(Path(a.root), a.feature)
         if a.json:

@@ -17,8 +17,22 @@ from factoryline.studio import (
     make_handler,
     serve_studio,
     studio_dashboard,
+    continue_from_studio,
     studio_status,
 )
+
+
+def test_studio_assembly_uses_shared_continuation_and_preserves_authority(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "factoryline.studio.continue_assembly",
+        lambda root, feature: {"status": "waiting_for_human", "feature": feature, "next_action": {"label": "Review"}},
+    )
+    result = continue_from_studio(tmp_path, {"action": "continue", "feature": "sample"})
+    assert result["studio_marker"] == "STUDIO_ASSEMBLY_CONTAINED"
+    assert result["status"] == "waiting_for_human"
+    status = studio_status(tmp_path, 0)
+    assert status["authority"]["can_continue_assembly_to_human_boundary"] is True
+    assert status["authority"]["can_publish"] is False
 
 
 def test_studio_status_is_exact_and_loopback_only(tmp_path: Path):

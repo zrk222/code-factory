@@ -1,7 +1,8 @@
 # FactoryLine for IntelliJ Changelog
 
-## 0.5.0
+## 0.6.0
 
+- Add a state-aware Continue Assembly action that stops at the next human boundary.
 - Add Mission Operations for durable graph initialization, status, history,
   verification, Mermaid export, guarded events, and JetBrains-selected BYOK routing.
 - Contain all mission, policy, receipt, and payload paths to the workspace and

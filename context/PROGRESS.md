@@ -96,3 +96,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-07-20 03:45] GATE plan receipt-graph-runtime approver=human tasks=8 sha=07804db3d425d4e9
 - [2026-07-20 03:48] GATE spec receipt-graph-runtime approver=human strict=True sha=59fa08d5b5d8dec8
 - [2026-07-20 03:48] GATE plan receipt-graph-runtime approver=human tasks=8 sha=59fa08d5b5d8dec8
+- [2026-07-25 02:53] GATE spec assembly-continue-v1 approver=user strict=True sha=186c4ab39ee26e24
+- [2026-07-25 02:55] GATE plan assembly-continue-v1 approver=user tasks=14 sha=186c4ab39ee26e24
+- [2026-07-25 03:00] GATE plan assembly-continue-v1 approver=user tasks=14 sha=186c4ab39ee26e24
+- [2026-07-25 03:01] GATE plan assembly-continue-v1 approver=user tasks=18 sha=186c4ab39ee26e24

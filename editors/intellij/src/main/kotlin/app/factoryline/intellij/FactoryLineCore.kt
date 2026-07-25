@@ -125,6 +125,7 @@ object FactoryLineCommands {
 
 enum class FactoryLineOperation(val arguments: List<String>, val title: String) {
     ASSEMBLE(listOf("assemble"), "Spec-to-Ship Assembly"),
+    CONTINUE(listOf("continue"), "Continue Assembly"),
     VERIFY(listOf("verify"), "Verify Feature Receipts")
 }
 

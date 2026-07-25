@@ -135,6 +135,18 @@ def _stage_order(module: str, stage: str) -> tuple[int, str, str]:
     return (order.get((module, normalized), len(DEFAULT_CHAIN)), module, normalized)
 
 
+def _ssat_contract(root: Path, feature: str) -> Path:
+    """Resolve the supported SSAT locations without adopting a near match."""
+    for path in (
+        root / "specs" / f"{feature}.ssat.yaml",
+        root / f"{feature}.ssat.yaml",
+        root / f"{feature}.adoption.ssat.yaml",
+    ):
+        if path.is_file():
+            return path
+    return root / "specs" / f"{feature}.ssat.yaml"
+
+
 def assemble(root: Path, feature: str, chain=None, dry_run: bool = False) -> dict:
     """Run the assembly line for a feature. Returns a per-stage report.
     Missing modules are skipped with a clear note (Lego stud left open)."""
@@ -165,13 +177,15 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False) -> dic
         cli = MODULES[module]["cli"]
         present = installed[module].installed
         args = [a.replace("{f}", feature) for a in args_tmpl]
+        if module == "forgeline" and len(args) > 2 and args[2] == f"{feature}.ssat.yaml":
+            args[2] = str(_ssat_contract(root, feature).relative_to(root))
         stage_name = args[0]
         if not present:
             report["stages"].append({"module": module, "stage": stage_name,
                                      "status": "skipped", "reason": f"{cli} not installed"})
             continue
         if not dry_run and module == "forgeline" and stage_name == "architect":
-            ssat = root / f"{feature}.ssat.yaml"
+            ssat = _ssat_contract(root, feature)
             state_path = root / ".forge" / feature / "state.json"
             state = None
             if state_path.exists():
@@ -181,7 +195,7 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False) -> dic
                     state = None
             if not ssat.exists():
                 report["paused_at"] = "architecture_contract"
-                report["next_command"] = f"write {feature}.ssat.yaml, then run forge expand {feature}"
+                report["next_command"] = f"write specs/{feature}.ssat.yaml, then run forge expand {feature}"
                 break
             if state in {None, "intent"}:
                 ok, out = _run_cli(cli, ["expand", feature], root)

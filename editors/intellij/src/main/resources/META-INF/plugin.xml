@@ -47,6 +47,10 @@
                     class="app.factoryline.intellij.RunAssemblyAction"
                     text="Run Spec-to-Ship Assembly"
                     description="Run FactoryLine assembly for a feature"/>
+            <action id="app.factoryline.intellij.continue"
+                    class="app.factoryline.intellij.ContinueAssemblyAction"
+                    text="Continue Assembly to Next Boundary"
+                    description="Resume FactoryLine from the next safe stage"/>
             <action id="app.factoryline.intellij.verify"
                     class="app.factoryline.intellij.VerifyReceiptsAction"
                     text="Verify Feature Receipts"

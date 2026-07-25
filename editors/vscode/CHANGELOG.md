@@ -1,8 +1,9 @@
 # Changelog
 
-## 0.5.0
+## 0.6.0
 
-- Align the extension and release bundle with Code Factory 0.20.0.
+- Align the extension and release bundle with Code Factory 0.21.0.
+- Add a state-aware Continue Assembly command that stops at the next human boundary.
 - Document the durable mission graph and secret-free BYOK policy available to
   VS Code workspaces through the local FactoryLine CLI and loopback Studio.
 
