@@ -89,6 +89,15 @@ def test_marketplace_workflow_uses_current_gradle_action_and_scoped_secret():
     assert "Publish verified plugin update" in workflow
 
 
+def test_intellij_workflow_avoids_duplicate_feature_branch_runs():
+    workflow = (ROOT / ".github" / "workflows" / "intellij-plugin.yml").read_text(encoding="utf-8")
+
+    assert "push:\n    branches: [main]" in workflow
+    assert "pull_request:" in workflow
+    assert "group: intellij-" in workflow
+    assert "cancel-in-progress: true" in workflow
+
+
 def test_hosted_release_and_editor_versions_are_synchronized():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     vscode = json.loads((ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8"))

@@ -2,6 +2,7 @@ name: IntelliJ plugin
 
 on:
   push:
+    branches: [main]
     paths:
       - "editors/intellij/**"
       - ".github/workflows/intellij-plugin.yml"
@@ -10,6 +11,10 @@ on:
       - "editors/intellij/**"
       - ".github/workflows/intellij-plugin.yml"
   workflow_dispatch:
+
+concurrency:
+  group: intellij-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test-package-verify:
