@@ -1,6 +1,7 @@
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.models.ProductRelease
+import org.jetbrains.intellij.platform.gradle.tasks.PublishPluginTask
 import java.nio.charset.StandardCharsets
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
@@ -110,5 +111,14 @@ tasks.register("marketplacePreflight") {
             "plugin.xml must expose a reachable vendor URL and email."
         }
         check(pluginXml.contains("<change-notes>")) { "plugin.xml must include release notes." }
+    }
+}
+
+// CI validates the Marketplace ZIP in an unprivileged job, uploads it as an
+// immutable Actions artifact, and passes that exact file to the privileged
+// publishing job. Local publishing keeps the plugin task's normal build output.
+tasks.named<PublishPluginTask>("publishPlugin") {
+    providers.gradleProperty("factorylineMarketplaceArchive").orNull?.let { archive ->
+        archiveFile.set(file(archive))
     }
 }
