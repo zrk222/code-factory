@@ -15,7 +15,9 @@ from zipfile import BadZipFile, ZipFile
 
 SCHEMA_VERSION = 1
 EXPECTED_PLUGIN_ID = "app.factoryline"
-TAG_PATTERN = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?\Z")
+TAG_PATTERN = re.compile(
+    r"jetbrains-v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?\Z"
+)
 
 
 class ArtifactError(ValueError):
@@ -65,12 +67,20 @@ def create_manifest(
 ) -> dict[str, object]:
     """Describe an inspected Marketplace ZIP without including credentials."""
     if not TAG_PATTERN.fullmatch(release_ref):
-        raise ArtifactError("release_ref must be an immutable semantic version tag such as v0.22.0.")
+        raise ArtifactError(
+            "release_ref must be a dedicated immutable tag such as jetbrains-v0.7.1."
+        )
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ArtifactError("commit must be a full lowercase 40-character Git SHA.")
     if not channel or any(char.isspace() for char in channel):
         raise ArtifactError("channel must be non-empty and contain no whitespace.")
     plugin = _plugin_metadata(archive)
+    tagged_version = release_ref.removeprefix("jetbrains-v")
+    if plugin["version"] != tagged_version:
+        raise ArtifactError(
+            f"Release tag version {tagged_version!r} does not match plugin version "
+            f"{plugin['version']!r}."
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "artifact": {

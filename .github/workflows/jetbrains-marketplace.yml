@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_ref:
-        description: "Immutable semantic-version release tag to publish (for example v0.22.0)"
+        description: "Immutable JetBrains release tag to publish (for example jetbrains-v0.7.1)"
         required: true
       channel:
         description: "JetBrains Marketplace release channel"
@@ -36,8 +36,8 @@ jobs:
           RELEASE_REF: ${{ inputs.release_ref }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || {
-            echo "release_ref must be a semantic version tag such as v0.22.0." >&2
+          [[ "$RELEASE_REF" =~ ^jetbrains-v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || {
+            echo "release_ref must be a dedicated tag such as jetbrains-v0.7.1." >&2
             exit 1
           }
           test "$(git rev-list -n 1 "$RELEASE_REF")" = "$(git rev-parse HEAD)" || {

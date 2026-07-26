@@ -13,7 +13,9 @@ from scripts.jetbrains_release_artifact import ArtifactError, create_manifest, v
 COMMIT = "a" * 40
 
 
-def _write_plugin_archive(path: Path, *, plugin_id: str = "app.factoryline") -> None:
+def _write_plugin_archive(
+    path: Path, *, plugin_id: str = "app.factoryline", version: str = "0.7.1"
+) -> None:
     plugin_jar = io.BytesIO()
     with ZipFile(plugin_jar, "w", ZIP_DEFLATED) as jar:
         jar.writestr(
@@ -21,7 +23,7 @@ def _write_plugin_archive(path: Path, *, plugin_id: str = "app.factoryline") -> 
             f"""<idea-plugin>
                 <id>{plugin_id}</id>
                 <name>FactoryLine</name>
-                <version>0.7.0</version>
+                <version>{version}</version>
             </idea-plugin>""",
         )
     with ZipFile(path, "w", ZIP_DEFLATED) as distribution:
@@ -34,21 +36,21 @@ def test_manifest_round_trip_binds_archive_and_release_inputs(tmp_path: Path) ->
     _write_plugin_archive(archive)
 
     manifest = create_manifest(
-        archive, release_ref="v0.22.0", commit=COMMIT, channel="default"
+        archive, release_ref="jetbrains-v0.7.1", commit=COMMIT, channel="default"
     )
     manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
 
     assert verify_manifest(
         archive,
         manifest_path,
-        release_ref="v0.22.0",
+        release_ref="jetbrains-v0.7.1",
         commit=COMMIT,
         channel="default",
     ) == manifest
     assert manifest["plugin"] == {
         "id": "app.factoryline",
         "name": "FactoryLine",
-        "version": "0.7.0",
+        "version": "0.7.1",
     }
 
 
@@ -57,7 +59,7 @@ def test_manifest_rejects_tampered_archive(tmp_path: Path) -> None:
     manifest_path = tmp_path / "manifest.json"
     _write_plugin_archive(archive)
     manifest = create_manifest(
-        archive, release_ref="v0.22.0", commit=COMMIT, channel="default"
+        archive, release_ref="jetbrains-v0.7.1", commit=COMMIT, channel="default"
     )
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     archive.write_bytes(archive.read_bytes() + b"tampered")
@@ -66,7 +68,7 @@ def test_manifest_rejects_tampered_archive(tmp_path: Path) -> None:
         verify_manifest(
             archive,
             manifest_path,
-            release_ref="v0.22.0",
+            release_ref="jetbrains-v0.7.1",
             commit=COMMIT,
             channel="default",
         )
@@ -76,8 +78,9 @@ def test_manifest_rejects_tampered_archive(tmp_path: Path) -> None:
     ("release_ref", "commit", "channel"),
     [
         ("main", COMMIT, "default"),
-        ("v0.22.0", "short", "default"),
-        ("v0.22.0", COMMIT, "bad channel"),
+        ("v0.22.0", COMMIT, "default"),
+        ("jetbrains-v0.7.1", "short", "default"),
+        ("jetbrains-v0.7.1", COMMIT, "bad channel"),
     ],
 )
 def test_manifest_rejects_mutable_or_malformed_inputs(
@@ -98,5 +101,21 @@ def test_manifest_rejects_wrong_plugin_identity(tmp_path: Path) -> None:
 
     with pytest.raises(ArtifactError, match="Expected plugin id"):
         create_manifest(
-            archive, release_ref="v0.22.0", commit=COMMIT, channel="default"
+            archive,
+            release_ref="jetbrains-v0.7.1",
+            commit=COMMIT,
+            channel="default",
+        )
+
+
+def test_manifest_rejects_tag_plugin_version_mismatch(tmp_path: Path) -> None:
+    archive = tmp_path / "factoryline-intellij.zip"
+    _write_plugin_archive(archive, version="0.7.0")
+
+    with pytest.raises(ArtifactError, match="does not match plugin version"):
+        create_manifest(
+            archive,
+            release_ref="jetbrains-v0.7.1",
+            commit=COMMIT,
+            channel="default",
         )
