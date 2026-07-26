@@ -87,6 +87,7 @@ def test_marketplace_workflow_uses_current_gradle_action_and_scoped_secret():
     assert "actions/download-artifact@v8.0.1" in workflow
     assert "factorylineMarketplaceArchive" in workflow
     assert "Publish verified plugin update" in workflow
+    assert workflow.count("chmod +x gradlew") == 2
 
 
 def test_intellij_workflow_avoids_duplicate_feature_branch_runs():

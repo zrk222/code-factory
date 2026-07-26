@@ -140,7 +140,9 @@ jobs:
       - name: Publish verified plugin update
         env:
           PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
-        run: >-
-          ./gradlew publishPlugin --stacktrace
-          -PfactorylineMarketplaceChannel="${{ inputs.channel }}"
-          -PfactorylineMarketplaceArchive="$GITHUB_WORKSPACE/marketplace-candidate/factoryline-intellij.zip"
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew publishPlugin --stacktrace \
+            -PfactorylineMarketplaceChannel="${{ inputs.channel }}" \
+            -PfactorylineMarketplaceArchive="$GITHUB_WORKSPACE/marketplace-candidate/factoryline-intellij.zip"
