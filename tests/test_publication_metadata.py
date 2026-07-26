@@ -74,13 +74,28 @@ def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
 def test_marketplace_workflow_uses_current_gradle_action_and_scoped_secret():
     workflow = (ROOT / ".github" / "workflows" / "jetbrains-marketplace.yml").read_text(encoding="utf-8")
 
-    assert 'default: "v0.22.0"' in workflow
+    assert "  validate:" in workflow
+    assert "  publish:" in workflow
+    assert "needs: validate" in workflow
     assert "environment: jetbrains-marketplace" in workflow
     assert "gradle/actions/setup-gradle@v6.2.0" in workflow
     assert "gradle/actions/setup-gradle@v4" not in workflow
     assert "secrets.JETBRAINS_MARKETPLACE_TOKEN" in workflow
     assert "Test, verify, and check Marketplace package metadata" in workflow
+    assert "jetbrains_release_artifact.py" in workflow
+    assert "actions/upload-artifact@v7.0.1" in workflow
+    assert "actions/download-artifact@v8.0.1" in workflow
+    assert "factorylineMarketplaceArchive" in workflow
     assert "Publish verified plugin update" in workflow
+
+
+def test_intellij_workflow_avoids_duplicate_feature_branch_runs():
+    workflow = (ROOT / ".github" / "workflows" / "intellij-plugin.yml").read_text(encoding="utf-8")
+
+    assert "push:\n    branches: [main]" in workflow
+    assert "pull_request:" in workflow
+    assert "group: intellij-" in workflow
+    assert "cancel-in-progress: true" in workflow
 
 
 def test_hosted_release_and_editor_versions_are_synchronized():

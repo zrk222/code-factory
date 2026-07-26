@@ -60,9 +60,17 @@ After JetBrains accepts the first upload:
    Marketplace plugin.
 2. Run **Publish JetBrains Marketplace plugin** from GitHub Actions against an
    immutable release tag and the intended Marketplace channel.
-3. The workflow runs Kotlin tests, builds the ZIP, performs binary verification,
-   and runs `marketplacePreflight` before `publishPlugin` receives the token.
-4. Confirm the new Marketplace version and public compatibility display before
+3. The unprivileged validation job confirms the ref is a semantic-version tag,
+   runs Kotlin tests, builds the ZIP, performs binary verification, and runs
+   `marketplacePreflight` without access to the publisher token.
+4. Validation writes a secret-free manifest binding the ZIP to its SHA-256,
+   size, plugin identity and version, release tag, commit, and channel. Both the
+   ZIP and manifest are uploaded as one short-lived Actions artifact.
+5. The protected publication job downloads that artifact, verifies every bound
+   value, and passes the exact validated ZIP to `publishPlugin`. The scoped token
+   is available only in this final job. Verifier and test reports are retained
+   for failed as well as successful validation runs.
+6. Confirm the new Marketplace version and public compatibility display before
    announcing it.
 
 The workflow does not perform the first upload automatically. JetBrains requires
