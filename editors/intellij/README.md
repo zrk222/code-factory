@@ -38,9 +38,14 @@ untrusted/missing receipt into a green state.
 
 1. Install `factoryline-code-factory==0.22.0` into the Python environment that
    IntelliJ inherits.
-2. Download `factoryline-intellij-0.7.0.zip` from the matching GitHub release.
-3. In your JetBrains IDE, open **Settings > Plugins > gear menu > Install Plugin from Disk...** and select the ZIP.
-4. Restart the IDE, then use the **Tools > FactoryLine** menu or the **FactoryLine** tool window.
+2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
+   **FactoryLine**, and install the
+   [official listing](https://plugins.jetbrains.com/plugin/33009-factoryline).
+3. Restart the IDE, then use the **Tools > FactoryLine** menu or the
+   **FactoryLine** tool window.
+
+For an offline installation, download a verified plugin ZIP from a matching
+FactoryLine release and use **Install Plugin from Disk...**.
 
 Set an absolute executable path under **Settings > Tools > FactoryLine** only
 when `factory` is not already discoverable on IntelliJ's PATH.

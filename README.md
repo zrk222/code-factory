@@ -250,12 +250,13 @@ local receipt data. Neither uploads the workspace, signs a receipt, or makes a
 release decision.
 
 - **VS Code:** install the release VSIX. See [FactoryLine for VS Code](docs/VSCODE.md).
-- **IntelliJ Platform:** install the release ZIP in IntelliJ IDEA, PyCharm,
-  WebStorm, Rider, CLion, GoLand, RustRover, or DataGrip. The ZIP carries a
-  Marketplace preflight gate; a public Marketplace listing is not claimed until
-  JetBrains completes its first-upload review. See [FactoryLine for JetBrains
-  IDEs](docs/INTELLIJ.md), the [Marketplace release runbook](docs/JETBRAINS_MARKETPLACE.md),
-  and the [control-room boundary](docs/JETBRAINS_CONTROL_ROOM.md).
+- **IntelliJ Platform:** install
+  [FactoryLine from JetBrains Marketplace](https://plugins.jetbrains.com/plugin/33009-factoryline)
+  in IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, or
+  DataGrip. JetBrains reviews new versions before they become the listed
+  update. See [FactoryLine for JetBrains IDEs](docs/INTELLIJ.md), the
+  [Marketplace release runbook](docs/JETBRAINS_MARKETPLACE.md), and the
+  [control-room boundary](docs/JETBRAINS_CONTROL_ROOM.md).
 
 ## Public workflow
 
