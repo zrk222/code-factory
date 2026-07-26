@@ -62,10 +62,13 @@ candidate files.
    pip install factoryline-code-factory==0.22.0
    ```
 
-2. Download `factoryline-intellij-0.7.0.zip` from the FactoryLine GitHub
-   release that introduced this adapter.
-3. In your JetBrains IDE: **Settings > Plugins > gear menu > Install Plugin from Disk...**.
-4. Select the ZIP, restart, then open **Tools > FactoryLine**.
+2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
+   **FactoryLine**, and install the
+   [official listing](https://plugins.jetbrains.com/plugin/33009-factoryline).
+3. Restart the IDE, then open **Tools > FactoryLine**.
+
+For an offline installation, download a verified plugin ZIP from a FactoryLine
+release and use **Settings > Plugins > gear menu > Install Plugin from Disk...**.
 
 The default command is `factory` (`factory.exe` on Windows). Configure an
 absolute path under **Settings > Tools > FactoryLine** when IntelliJ does not
