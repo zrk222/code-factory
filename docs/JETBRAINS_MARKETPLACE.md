@@ -58,9 +58,10 @@ After JetBrains accepts the first upload:
 1. Create a scoped `JETBRAINS_MARKETPLACE_TOKEN` secret in the GitHub
    `jetbrains-marketplace` environment. It must belong only to the FactoryLine
    Marketplace plugin.
-2. Run **Publish JetBrains Marketplace plugin** from GitHub Actions against an
-   immutable release tag and the intended Marketplace channel.
-3. The unprivileged validation job confirms the ref is a semantic-version tag,
+2. Create a dedicated immutable tag matching the plugin version, such as
+   `jetbrains-v0.7.1`, then run **Publish JetBrains Marketplace plugin** from
+   GitHub Actions against that tag and the intended Marketplace channel.
+3. The unprivileged validation job confirms the ref is a dedicated JetBrains version tag,
    runs Kotlin tests, builds the ZIP, performs binary verification, and runs
    `marketplacePreflight` without access to the publisher token.
 4. Validation writes a secret-free manifest binding the ZIP to its SHA-256,

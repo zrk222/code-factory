@@ -1,5 +1,13 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.7.1
+
+- Publish the verified Marketplace ZIP through a hash-bound artifact manifest
+  tied to the release tag, commit, channel, plugin identity, version, and size.
+- Isolate the Marketplace publisher token to the protected promotion job.
+- Preserve the full eight-product compatibility matrix and all existing local,
+  approval-bounded FactoryLine actions.
+
 ## 0.7.0
 
 - Add a bounded Paired Savings Report action backed by the local FactoryLine

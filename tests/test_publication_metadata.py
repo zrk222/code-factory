@@ -98,7 +98,7 @@ def test_intellij_workflow_avoids_duplicate_feature_branch_runs():
     assert "cancel-in-progress: true" in workflow
 
 
-def test_hosted_release_and_editor_versions_are_synchronized():
+def test_hosted_release_and_editor_versions_are_declared():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     vscode = json.loads((ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8"))
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
@@ -107,7 +107,7 @@ def test_hosted_release_and_editor_versions_are_synchronized():
     assert project["version"] == "0.22.0"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.7.0"
-    assert 'version = "0.7.0"' in gradle
+    assert 'version = "0.7.1"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
