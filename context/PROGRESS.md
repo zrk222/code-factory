@@ -108,3 +108,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-07-25 05:52] GATE code savings-tracker-v1 approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
 - [2026-08-01 01:48] GATE spec proof-reuse-v1 approver=human strict=True sha=b432e749d0040c5e
 - [2026-08-01 01:48] GATE plan proof-reuse-v1 approver=human tasks=8 sha=b432e749d0040c5e
+- [2026-08-01 05:13] GATE spec vscode-supply-chain-v1 approver=human strict=True sha=a44d2bb4faabdc93
+- [2026-08-01 05:13] GATE plan vscode-supply-chain-v1 approver=human tasks=13 sha=a44d2bb4faabdc93
+- [2026-08-01 05:21] GATE spec vscode-supply-chain-v1 approver=human strict=True sha=c35b71751cb06114
+- [2026-08-01 05:21] GATE plan vscode-supply-chain-v1 approver=human tasks=13 sha=c35b71751cb06114

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.23.1 - 2026-08-01
+
+- Patch the two high-severity npm advisories in the VS Code build toolchain by
+  resolving `brace-expansion` to 5.0.9 and `fast-uri` to 3.1.5.
+- Fail pull-request and release packaging when npm reports a high or critical
+  vulnerability.
+- Preserve the extension's dependency-free VSIX and runtime authority; the
+  affected packages are development-only packaging dependencies.
+
 ## 0.23.0 - 2026-07-31
 
 - Add content-addressed read-only proof receipts and exact verification of

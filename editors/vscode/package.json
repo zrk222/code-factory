@@ -87,7 +87,12 @@
   "scripts": {
     "compile": "tsc -p .",
     "test": "npm run compile && node ./dist/test/receipt.test.js",
+    "audit": "npm audit --audit-level=high",
     "package": "npm run test && vsce package --no-dependencies"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.9",
+    "fast-uri": "3.1.5"
   },
   "devDependencies": {
     "@types/node": "^20.17.30",
