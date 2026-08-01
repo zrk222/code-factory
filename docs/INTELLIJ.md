@@ -1,17 +1,20 @@
 # FactoryLine for JetBrains IDEs
 
 FactoryLine for JetBrains IDEs brings the local proof loop into the IDE without
-turning it into a hidden agent. It offers nine explicit action groups:
+turning it into a hidden agent. Start with **Run First Proof**, which executes
+`factory doctor --json` only after workspace confirmation and shows the redacted
+local result. The remaining explicit actions are:
 
 1. Run Spec-to-Ship Assembly.
-2. Verify Feature Receipts.
-3. Open Latest Receipt.
-4. Analyze Changed Proof.
-5. Check Latest Receipt Signature State.
-6. Open Local Meter.
-7. Open Local Factory Studio.
-8. Open Product Missions.
-9. Mission Graph & Provider Operations.
+2. Continue Assembly to Next Boundary.
+3. Verify Feature Receipts.
+4. Open Latest Receipt.
+5. Analyze Changed Proof.
+6. Check Latest Receipt Signature State.
+7. Open Local Meter and Paired Savings Report.
+8. Open Local Factory Studio.
+9. Open Product Missions.
+10. Mission Graph & Provider Operations.
 
 `REQ-*`, `FR-*`, and `NFR-*` text also receives a read-only FactoryLine gutter
 marker. Selecting it opens the first deterministic local proof match under
@@ -63,9 +66,9 @@ candidate files.
    ```
 
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
-   **FactoryLine**, and install the
+   **FactoryLine AI Proof**, and install the
    [official listing](https://plugins.jetbrains.com/plugin/33009-factoryline).
-3. Restart the IDE, then open **Tools > FactoryLine**.
+3. Restart the IDE, then open **Tools > FactoryLine > Run First Proof**.
 
 For an offline installation, download a verified plugin ZIP from a FactoryLine
 release and use **Settings > Plugins > gear menu > Install Plugin from Disk...**.

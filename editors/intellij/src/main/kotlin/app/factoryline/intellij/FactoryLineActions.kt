@@ -54,6 +54,11 @@ object FactoryLineController {
         })
     }
 
+    fun runFirstProof(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Run First Proof")) return
+        runBackground(project, "Run First Proof") { FactoryLineRunner.firstProof(project) }
+    }
+
     fun missionOperations(project: Project) {
         val options = MissionGraphOperation.entries.map { it.label }.toTypedArray()
         val selected = Messages.showChooseDialog(
@@ -261,6 +266,12 @@ abstract class FactoryLineAction : AnAction() {
 
     override fun update(event: AnActionEvent) {
         event.presentation.isEnabledAndVisible = event.project != null
+    }
+}
+
+class RunFirstProofAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.runFirstProof(it) }
     }
 }
 

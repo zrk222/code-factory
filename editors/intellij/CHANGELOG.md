@@ -1,5 +1,11 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.7.2
+
+- Add a zero-configuration **Run First Proof** action backed by `factory doctor --json`.
+- Replace the jargon-first Marketplace preview with an outcome-led getting-started flow.
+- Keep local execution confirmation, output redaction, stable plugin identity, and verified IDE compatibility.
+
 ## 0.7.1
 
 - Publish the verified Marketplace ZIP through a hash-bound artifact manifest

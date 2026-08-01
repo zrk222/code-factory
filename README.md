@@ -274,10 +274,12 @@ release decision.
 
 - **VS Code:** install the release VSIX. See [FactoryLine for VS Code](docs/VSCODE.md).
 - **IntelliJ Platform:** install
-  [FactoryLine from JetBrains Marketplace](https://plugins.jetbrains.com/plugin/33009-factoryline)
+  [FactoryLine AI Proof from JetBrains Marketplace](https://plugins.jetbrains.com/plugin/33009-factoryline)
   in IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, or
   DataGrip. JetBrains reviews new versions before they become the listed
-  update. See [FactoryLine for JetBrains IDEs](docs/INTELLIJ.md), the
+  update. All features are free through December 31, 2026; the planned 2027
+  pricing benchmark is publication-safe and explicitly provisional. See
+  [FactoryLine for JetBrains IDEs](docs/INTELLIJ.md), the
   [Marketplace release runbook](docs/JETBRAINS_MARKETPLACE.md), and the
   [control-room boundary](docs/JETBRAINS_CONTROL_ROOM.md).
 

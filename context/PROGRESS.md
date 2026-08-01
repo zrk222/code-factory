@@ -112,3 +112,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-01 05:13] GATE plan vscode-supply-chain-v1 approver=human tasks=13 sha=a44d2bb4faabdc93
 - [2026-08-01 05:21] GATE spec vscode-supply-chain-v1 approver=human strict=True sha=c35b71751cb06114
 - [2026-08-01 05:21] GATE plan vscode-supply-chain-v1 approver=human tasks=13 sha=c35b71751cb06114
+- [2026-08-01 06:14] GATE spec jetbrains-marketplace-growth-v1 approver=human strict=True sha=981c4b2d291dd207
+- [2026-08-01 06:14] GATE plan jetbrains-marketplace-growth-v1 approver=human tasks=7 sha=981c4b2d291dd207
+- [2026-08-01 06:31] GATE spec jetbrains-marketplace-growth-v1 approver=human strict=True sha=50960cfcf4d7b008
+- [2026-08-01 06:31] GATE plan jetbrains-marketplace-growth-v1 approver=human tasks=8 sha=50960cfcf4d7b008

@@ -129,9 +129,34 @@ def test_hosted_release_and_editor_versions_are_declared():
     assert project["version"] == "0.23.1"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.7.0"
-    assert 'version = "0.7.1"' in gradle
+    assert 'version = "0.7.2"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
+
+
+def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
+    plugin_xml = (ROOT / "editors" / "intellij" / "src" / "main" / "resources" / "META-INF" / "plugin.xml").read_text(encoding="utf-8")
+    screenshot_brief = (ROOT / "docs" / "JETBRAINS_MARKETPLACE_SCREENSHOTS.md").read_text(encoding="utf-8")
+
+    assert "<id>app.factoryline</id>" in plugin_xml
+    assert "<name>FactoryLine AI Proof</name>" in plugin_xml
+    assert "<p>Verify AI code before you ship.</p>" in plugin_xml
+    assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
+    assert "Run First Proof" in plugin_xml
+    assert "Use real plugin UI, not concept art." in screenshot_brief
+    assert "1200x760" in screenshot_brief
+
+
+def test_jetbrains_pricing_sample_is_reproducible_and_not_claimed_live():
+    sample = json.loads((ROOT / "docs" / "JETBRAINS_PRICING_BENCHMARK.json").read_text(encoding="utf-8"))
+    prices = [entry["monthly_price"] for entry in sample["comparables"]]
+
+    average = sum(prices) / len(prices)
+    assert round(average, 2) == sample["sample_average"]
+    assert round(average * (1 - sample["discount_target_rate"]), 3) == sample["unrounded_target"]
+    assert sample["illustrative_rounded_target"] == 5.1
+    assert sample["status"] == "planning_sample_not_a_marketplace_price"
+    assert sample["free_through"] == "2026-12-31"
 
 
 def test_ci_builds_checks_and_smokes_the_installable_package():

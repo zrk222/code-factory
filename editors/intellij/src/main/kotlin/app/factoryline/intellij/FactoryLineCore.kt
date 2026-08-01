@@ -81,6 +81,8 @@ enum class MissionGraphOperation(val label: String, val command: String) {
 }
 
 object FactoryLineCommands {
+    fun firstProof(): List<String> = listOf("doctor", "--json")
+
     fun savings(root: Path): List<String> =
         listOf("savings", "report", "--root", root.toString(), "--json")
 
@@ -289,6 +291,9 @@ class FactoryLineSettingsConfigurable : Configurable {
 }
 
 object FactoryLineRunner {
+    fun firstProof(project: Project): CommandResult =
+        execute(project, "Run First Proof", FactoryLineCommands.firstProof())
+
     fun run(project: Project, operation: FactoryLineOperation, feature: String): CommandResult {
         if (!FeatureName.isValid(feature)) {
             return CommandResult(operation.title, emptyList(), null, false, "Blocked: feature names use letters, digits, hyphens, and underscores only.")

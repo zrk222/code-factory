@@ -68,7 +68,7 @@ def create_manifest(
     """Describe an inspected Marketplace ZIP without including credentials."""
     if not TAG_PATTERN.fullmatch(release_ref):
         raise ArtifactError(
-            "release_ref must be a dedicated immutable tag such as jetbrains-v0.7.1."
+            "release_ref must be a dedicated immutable tag such as jetbrains-v0.7.2."
         )
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ArtifactError("commit must be a full lowercase 40-character Git SHA.")
