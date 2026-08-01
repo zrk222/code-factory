@@ -53,6 +53,7 @@ jobs:
         working-directory: editors/vscode
         run: |
           npm ci
+          npm run audit
           npm test
           npx vsce package --no-dependencies --out factoryline-vscode-${{ github.event.release.tag_name }}.vsix
 
