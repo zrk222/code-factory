@@ -1,0 +1,28 @@
+{
+  "checks": [
+    {
+      "name": "pending_listing_classification_is_fail_closed",
+      "kind": "python",
+      "run": "from scripts.jetbrains_marketplace_status import classify_status\nresult=classify_status({'id':33009,'approve':False,'hasUnapprovedUpdate':True},[{'version':'0.7.1','approve':True,'listed':True}])\nassert result['marker']=='MARKETPLACE_UPDATE_PENDING'\nassert result['clear'] is False\n",
+      "covers": [
+        "MARKETPLACE_UPDATE_PENDING",
+        "MARKETPLACE_UPDATE_CLEAR"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "paid_launch_artifacts_are_staged",
+      "kind": "python",
+      "run": "from pathlib import Path\nimport json\nroot=Path.cwd()\nplan=json.loads((root/'docs/JETBRAINS_MONETIZATION_2027.json').read_text(encoding='utf-8'))\nactive=(root/'editors/intellij/src/main/resources/META-INF/plugin.xml').read_text(encoding='utf-8')\nstaged=(root/'editors/intellij/monetization/plugin-product-descriptor-2027.xml').read_text(encoding='utf-8')\nassert plan['offer']['monthly_price_usd']==4.95\nassert plan['offer']['paid_from']=='2027-01-01'\nassert plan['current_verdict']=='MONETIZATION_GATE_BLOCKED'\nassert '<product-descriptor' not in active\nassert 'PFACTORYLINE' in staged and '20270101' in staged and '20271' in staged\n",
+      "covers": [
+        "OWNER_PRICE_LOCKED",
+        "FREE_PERIOD_PRESERVED",
+        "PAID_DESCRIPTOR_STAGED",
+        "LICENSE_GATE_REQUIRED",
+        "ADVANCE_NOTICE_COMPLETE",
+        "MONETIZATION_GATE_BLOCKED"
+      ],
+      "must_fail_on_stub": false
+    }
+  ]
+}

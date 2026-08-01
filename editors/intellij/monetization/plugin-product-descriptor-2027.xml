@@ -1,0 +1,10 @@
+<!--
+  STAGING TEMPLATE ONLY. Do not copy into active plugin.xml before every gate in
+  docs/JETBRAINS_MONETIZATION_2027.json is verified and January activation is
+  explicitly approved. Product Code registration must be confirmed first.
+-->
+<product-descriptor
+    code="PFACTORYLINE"
+    release-date="20270101"
+    release-version="20271"
+    optional="false"/>

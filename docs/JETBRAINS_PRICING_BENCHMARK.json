@@ -3,7 +3,7 @@
   "observed_on": "2026-08-01",
   "currency": "USD",
   "billing_basis": "commercial_monthly_list_price",
-  "status": "planning_sample_not_a_marketplace_price",
+  "status": "owner_approved_future_price_not_active_on_marketplace",
   "comparables": [
     {
       "plugin_id": 27573,
@@ -37,13 +37,12 @@
     }
   ],
   "sample_average": 5.66,
-  "discount_target_rate": 0.1,
-  "unrounded_target": 5.094,
-  "illustrative_rounded_target": 5.1,
+  "owner_approved_monthly_price": 4.95,
+  "discount_from_sample_average": 0.1254416961,
   "effective_date_planned": "2027-01-01",
   "free_through": "2026-12-31",
   "required_before_activation": [
-    "revalidate every comparable price",
+    "revalidate every comparable price for context without changing the owner-approved 4.95 price",
     "complete JetBrains paid-plugin onboarding",
     "define and test the license boundary",
     "announce the final price before changing the payment model",

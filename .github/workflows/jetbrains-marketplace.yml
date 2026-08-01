@@ -48,6 +48,8 @@ jobs:
             echo "$RELEASE_REF is not an immutable tag pointing at HEAD." >&2
             exit 1
           }
+      - name: Require the previous Marketplace update to be clear
+        run: python3 "$GITHUB_WORKSPACE/scripts/jetbrains_marketplace_status.py" --plugin-id 33009 --require-clear --json
       - uses: actions/setup-java@v5
         with:
           distribution: temurin

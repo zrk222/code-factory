@@ -26,13 +26,14 @@ descriptor is the source of truth for the full description and change notes.
 Use only tags offered by the Marketplace vendor UI that accurately match shipped
 behavior. Do not repeat keywords or select unrelated languages and frameworks.
 
-All shipped features remain free through December 31, 2026. The planned January
-1, 2027 payment-model change requires Marketplace paid-plugin onboarding, a
-Product Code, license checks, advance user notice, and JetBrains approval. The
-price target is about 10% below the then-current comparable average; re-run and
-publish the benchmark before setting the price. The current illustrative target
-and its limitations are in
-[JetBrains Pricing Benchmark](JETBRAINS_PRICING_BENCHMARK.json).
+All shipped features remain free through December 31, 2026. The owner-approved
+future price is **USD 4.95 per month**, planned for January 1, 2027 with a 30-day
+trial, subject to JetBrains approval. The payment-model change requires paid-plugin
+onboarding, a registered Product Code, license checks, advance user notice, and
+verified Sales Info. The price is about 12.54% below the recorded USD 5.66 sample
+average; that comparison may drift, but the $4.95 owner decision does not. See the
+[pricing benchmark](JETBRAINS_PRICING_BENCHMARK.json) and the complete
+[2027 monetization runbook](JETBRAINS_MONETIZATION_2027.md).
 
 Replace the current concept-art images with the real-product sequence in
 [JetBrains Marketplace Screenshot Brief](JETBRAINS_MARKETPLACE_SCREENSHOTS.md).
@@ -57,6 +58,8 @@ baseline forward.
 
 1. Confirm the vendor dashboard has no update that would be unintentionally
    replaced. Resolve any pending JetBrains feedback first.
+   `python scripts/jetbrains_marketplace_status.py --plugin-id 33009 --require-clear --json`
+   must return `MARKETPLACE_UPDATE_CLEAR`.
 2. Merge the tested release commit to `main`.
 3. Create the immutable tag matching the plugin version, currently
    `jetbrains-v0.7.2`.
