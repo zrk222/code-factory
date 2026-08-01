@@ -8,6 +8,29 @@
 > One intent, seven software targets, and proof that the gates reject
 > deliberately sabotaged builds.
 
+## New in 0.23.0: reuse proof, not side effects
+
+Code Factory can now record a completed read-only validation and route a future
+request to exactly one disposition: RUN, REUSE, SKIP, or BLOCK.
+
+```bash
+factory proofs record proofs.json --gate python-tests --elapsed-ms 600000 --root .
+factory proofs plan proofs.json --changed src/app.py --auto-savings --out proof-plan.json --root .
+factory proofs verify .factory/proofs/<proof-key>.json --root .
+factory proofs challenge .factory/proofs/<proof-key>.json --root .
+```
+
+The proof key binds the relevant input hashes, command digest, toolchain, and
+environment. REUSE requires unchanged inputs and outputs plus a valid green
+receipt. SKIP requires an explicit reviewed relevance declaration. Ambiguity
+fails closed to RUN, while any gate that is not explicitly read-only is BLOCK.
+
+Verified reuse can automatically create the existing paired savings receipt.
+That records the original full-run observation beside measured routing time;
+missing token observations remain null. Proof reuse never publishes, deploys,
+signs, approves, discovers credentials, or sends messages. See
+[Content-addressed proof reuse](docs/PROOF_REUSE.md).
+
 ![Code Factory target compiler](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/target-compiler.svg)
 
 ## 60-second first run
@@ -15,9 +38,9 @@
 **Exact shipped UI:** the walkthrough below is rendered from the actual Factory
 Studio surface; it is not concept art.
 
-[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.22.0/code-factory-quickstart-v0171.mp4)
+[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.23.0/code-factory-quickstart-v0171.mp4)
 
-[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.22.0/code-factory-quickstart-v0171.mp4).
+[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.23.0/code-factory-quickstart-v0171.mp4).
 The absolute cover and release-asset URLs render from both GitHub and PyPI.
 
 The one-minute walkthrough is rendered from an actual 1920x1080 Factory
@@ -42,7 +65,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.22.0
+pip install factoryline-code-factory==0.23.0
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -390,7 +413,7 @@ an instruction or edit the Architecture Opinion Dock. See
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.22.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.23.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
 factory doctor --json
 ```
 

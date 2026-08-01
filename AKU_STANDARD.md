@@ -72,6 +72,36 @@ flowchart LR
 
 The rule is simple: more autonomy requires more deterministic evidence.
 
+## AKU: Content-addressed validation reuse
+
+**Intent.** Activate when an already-completed, read-only validation may be
+relevant to the exact current source, toolchain, environment, and outputs.
+
+**Procedure.** Declare a `factory.proof-request.v1` manifest; record the green
+run; route the next request with `factory proofs plan`; independently verify or
+challenge any REUSE receipt; then review the paired savings receipt when one
+was requested. Ambiguous or incomplete evidence routes to RUN.
+
+**Tools.** `factory proofs record`, `plan`, `verify`, and `challenge`; local
+files under `.factory/proofs/` and `.factory/savings/`; SHA-256 hashing.
+
+**Metadata.** Owner: repository maintainer. Version: 1. Schemas:
+`factory.proof-request.v1`, `factory.proof-receipt.v1`, and
+`factory.proof-plan.v1`. Source of truth: the request plus hash-bound receipt.
+
+**Governance.** Supervised. Only explicitly read-only gates qualify. This AKU
+may read workspace files and write local receipts; it cannot execute the gate,
+publish, deploy, sign, approve, use credentials, or send external messages.
+
+**Continuations.** REUSE continues to receipt review; SKIP continues only with
+reviewed relevance; RUN returns to the declared validator; BLOCK escalates the
+unsafe or malformed request to a human.
+
+**Validators.** Pre: paths are regular files inside the workspace and the gate
+is read-only. Post: receipt self-hash, proof key, inputs, and outputs verify.
+Invariant: an isolated input mutation invalidates reuse, and unknown token
+observations remain null rather than estimated.
+
 ## Topology
 
 AKUs should compose into a navigable topology:
