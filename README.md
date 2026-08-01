@@ -277,8 +277,10 @@ release decision.
   [FactoryLine AI Proof from JetBrains Marketplace](https://plugins.jetbrains.com/plugin/33009-factoryline)
   in IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, or
   DataGrip. JetBrains reviews new versions before they become the listed
-  update. All features are free through December 31, 2026; the planned 2027
-  pricing benchmark is publication-safe and explicitly provisional. See
+  update. All features are free through December 31, 2026. The owner-approved
+  future price is **$4.95 USD per month** from January 1, 2027, subject to
+  JetBrains approval, with a planned 30-day trial. See the
+  [2027 monetization runbook](docs/JETBRAINS_MONETIZATION_2027.md),
   [FactoryLine for JetBrains IDEs](docs/INTELLIJ.md), the
   [Marketplace release runbook](docs/JETBRAINS_MARKETPLACE.md), and the
   [control-room boundary](docs/JETBRAINS_CONTROL_ROOM.md).

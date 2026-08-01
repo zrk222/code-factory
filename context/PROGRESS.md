@@ -116,3 +116,8 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-01 06:14] GATE plan jetbrains-marketplace-growth-v1 approver=human tasks=7 sha=981c4b2d291dd207
 - [2026-08-01 06:31] GATE spec jetbrains-marketplace-growth-v1 approver=human strict=True sha=50960cfcf4d7b008
 - [2026-08-01 06:31] GATE plan jetbrains-marketplace-growth-v1 approver=human tasks=8 sha=50960cfcf4d7b008
+- [2026-08-01 07:12] GATE spec jetbrains-monetization-2027-v1 approver=human strict=True sha=54ac5a156ebafbab
+- [2026-08-01 07:12] GATE plan jetbrains-monetization-2027-v1 approver=human tasks=6 sha=54ac5a156ebafbab
+- [2026-08-01 07:25] GATE spec jetbrains-monetization-2027-v1 approver=human strict=True sha=9dc15ebd6a39adb9
+- [2026-08-01 07:25] GATE plan jetbrains-monetization-2027-v1 approver=human tasks=6 sha=9dc15ebd6a39adb9
+- [2026-08-01 07:26] GATE code jetbrains-monetization-2027-v1 approver=codex reviewer=personas/reviewer.md auditor=personas/security_auditor.md
