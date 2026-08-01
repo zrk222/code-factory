@@ -26,15 +26,16 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
 }
 
 class FactoryLinePanel(private val project: Project) : JPanel(BorderLayout(0, 8)) {
-    private val status = JLabel("Run a FactoryLine action to inspect local output and receipts.")
+    private val status = JLabel("Start with a local proof. Your code and receipts stay on this machine.")
     private val output = JBTextArea().apply {
         isEditable = false
         lineWrap = false
-        text = "FactoryLine keeps the proof loop local. Command actions require explicit workspace confirmation."
+        text = "Run first proof to check the local Code Factory setup. Every command requires workspace confirmation."
     }
 
     init {
         val controls = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            add(JButton("Run first proof").apply { addActionListener { FactoryLineController.runFirstProof(project) } })
             add(JButton("Run assembly").apply { addActionListener { FactoryLineController.requestFeature(project, FactoryLineOperation.ASSEMBLE) } })
             add(JButton("Continue assembly").apply { addActionListener { FactoryLineController.requestFeature(project, FactoryLineOperation.CONTINUE) } })
             add(JButton("Verify receipts").apply { addActionListener { FactoryLineController.requestFeature(project, FactoryLineOperation.VERIFY) } })

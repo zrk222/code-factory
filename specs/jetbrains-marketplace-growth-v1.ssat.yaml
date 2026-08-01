@@ -1,0 +1,16 @@
+name: jetbrains-marketplace-growth-v1
+modules:
+  - name: listing_contract_tests
+    path: tests/test_publication_metadata.py
+    functions:
+      - name: test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable
+        args: []
+        returns: unknown
+dependencies: []
+invariants:
+  - name: listing_tests_do_not_publish
+    forbid_pattern: "\\b(?:publishPlugin|gh release|git push)\\b"
+    scopes:
+      - module: listing_contract_tests
+        symbol: test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable
+        max_lines: 40

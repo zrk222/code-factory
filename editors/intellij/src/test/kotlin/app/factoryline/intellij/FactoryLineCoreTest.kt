@@ -10,6 +10,11 @@ import kotlin.test.assertTrue
 
 class FactoryLineCoreTest {
     @Test
+    fun firstProofIsZeroConfigurationAndMachineReadable() {
+        assertEquals(listOf("doctor", "--json"), FactoryLineCommands.firstProof())
+    }
+
+    @Test
     fun featureNamesAreBounded() {
         assertTrue(FeatureName.isValid("receipt-integrity_2"))
         assertFalse(FeatureName.isValid("receipt integrity"))

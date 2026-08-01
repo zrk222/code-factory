@@ -1,27 +1,35 @@
 <idea-plugin url="https://github.com/zrk222/code-factory">
     <id>app.factoryline</id>
-    <name>FactoryLine</name>
+    <name>FactoryLine AI Proof</name>
     <vendor email="rkatz22@gmail.com" url="https://github.com/zrk222/code-factory">FactoryLine</vendor>
     <description><![CDATA[
-        <p>Run local FactoryLine gates and inspect receipts without leaving your IDE.</p>
+        <p>Verify AI code before you ship.</p>
+        <p>FactoryLine turns tests, requirements, policies, and build evidence into local proof you can inspect in your JetBrains IDE.</p>
+        <h3>Start here</h3>
+        <ol>
+            <li>Open <strong>Tools | FactoryLine | Run First Proof</strong>.</li>
+            <li>Confirm the current workspace.</li>
+            <li>Review the local setup result in the FactoryLine tool window.</li>
+        </ol>
+        <h3>Know what is safe to ship</h3>
         <ul>
-            <li>Run explicit assembly and receipt-verification commands.</li>
-            <li>Inspect changed-proof risk and the latest local receipt.</li>
-            <li>Open a read-only local time and token meter.</li>
-            <li>Inspect exact paired time, token, cost, and proven productivity savings.</li>
-            <li>Open the loopback-only Factory Studio target compiler.</li>
-            <li>Compile PRDs into supervised, passport-bound Product Missions.</li>
-            <li>Operate durable mission graphs and route secret-free BYOK policies for JetBrains.</li>
-            <li>Require workspace confirmation before any command executes.</li>
+            <li><strong>Check changed code:</strong> see which proof is invalidated by your current diff.</li>
+            <li><strong>Verify receipts:</strong> inspect local evidence before a release decision.</li>
+            <li><strong>Measure real savings:</strong> compare paired time, token, and cost data without inferred values.</li>
+            <li><strong>Run supervised workflows:</strong> assemble features and continue from safe boundaries.</li>
         </ul>
-        <p>The plugin never uploads project files or receipts, signs artifacts, or decides whether a release is ready.</p>
-        <p><a href="https://github.com/zrk222/code-factory">Documentation and source</a></p>
+        <h3>Local by design</h3>
+        <p>The plugin asks before running a command. It does not upload project files or receipts, store API keys, sign artifacts, or decide whether a release is ready.</p>
+        <p>Works with IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip from the 2025.2 platform baseline.</p>
+        <h3>Launch offer</h3>
+        <p>All features are free through December 31, 2026. Paid Marketplace pricing is planned for January 1, 2027 at about 10% below the then-current average of a documented comparable-plugin set. The final price and free-versus-paid feature boundary will be announced before the payment model changes and remain subject to JetBrains approval.</p>
+        <p>Free and open source. <a href="https://github.com/zrk222/code-factory">Read the documentation or inspect the source</a>.</p>
     ]]></description>
     <change-notes><![CDATA[
         <ul>
-            <li>Publish the verified plugin ZIP through a hash-bound, immutable artifact-promotion path.</li>
-            <li>Retain compatibility verification across IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip.</li>
-            <li>Preserve all local assembly, mission, savings, meter, receipt-verification, and proof-risk actions without expanding plugin authority.</li>
+            <li>Add Run First Proof for a zero-configuration local setup check.</li>
+            <li>Clarify the Marketplace name, preview, getting-started flow, and privacy boundary.</li>
+            <li>Keep the stable plugin ID and verified compatibility across eight JetBrains IDEs.</li>
         </ul>
     ]]></change-notes>
 
@@ -41,6 +49,10 @@
     <actions>
         <group id="app.factoryline.intellij.actions" text="FactoryLine" description="Run local FactoryLine commands">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="app.factoryline.intellij.firstProof"
+                    class="app.factoryline.intellij.RunFirstProofAction"
+                    text="Run First Proof"
+                    description="Check the local Code Factory setup and show machine-readable results"/>
             <action id="app.factoryline.intellij.assemble"
                     class="app.factoryline.intellij.RunAssemblyAction"
                     text="Run Spec-to-Ship Assembly"
