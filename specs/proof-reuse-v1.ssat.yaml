@@ -1,0 +1,41 @@
+name: proof-reuse-v1
+language: python
+modules:
+  - name: proof_reuse
+    path: factoryline/proof_reuse.py
+    functions:
+      - name: proof_key
+        args: [root, gate]
+        returns: str
+      - name: record_proof
+        args: [root, gate]
+        returns: dict
+      - name: verify_proof_receipt
+        args: [root, receipt_path]
+        returns: dict
+      - name: plan_proofs
+        args: [root, manifest]
+        returns: dict
+      - name: challenge_proof_receipt
+        args: [root, receipt_path]
+        returns: dict
+dependencies: []
+invariants:
+  - name: proof_planner_has_no_command_execution_or_remote_authority
+    forbid_pattern: "\\b(?:subprocess|requests|httpx|urllib|socket)\\b|\\b(?:publish|deploy|sign|approve|send_message)\\s*\\("
+    scopes:
+      - module: proof_reuse
+        symbol: plan_proofs
+        max_lines: 115
+  - name: proof_record_has_no_command_execution_or_remote_authority
+    forbid_pattern: "\\b(?:subprocess|requests|httpx|urllib|socket)\\b|\\b(?:publish|deploy|sign|approve|send_message)\\s*\\("
+    scopes:
+      - module: proof_reuse
+        symbol: record_proof
+        max_lines: 95
+  - name: proof_verification_has_no_command_execution
+    forbid_pattern: "\\b(?:subprocess|os\\.system|popen|exec|eval)\\b"
+    scopes:
+      - module: proof_reuse
+        symbol: verify_proof_receipt
+        max_lines: 80

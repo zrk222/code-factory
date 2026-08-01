@@ -27,6 +27,14 @@ from .savings import (
     public_savings_report,
     record_savings_pair,
 )
+from .proof_reuse import (
+    ProofReuseError,
+    challenge_proof_receipt,
+    load_manifest as load_proof_manifest,
+    plan_proofs,
+    record_proof,
+    verify_proof_receipt,
+)
 from .meter import live_snapshot, live_summary_table, overhead, summarize, summary_table
 from .proof import (
     build_trace,
@@ -363,6 +371,32 @@ def main(argv=None) -> int:
     report.add_argument("--root", default=".")
     report.add_argument("--out")
     report.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("proofs", help="record and route content-addressed read-only proof receipts")
+    proofs_sub = s.add_subparsers(dest="proofs_cmd")
+    proof_record = proofs_sub.add_parser("record", help="record one completed green proof from a request manifest")
+    proof_record.add_argument("manifest")
+    proof_record.add_argument("--gate", help="gate name; required when the manifest contains multiple gates")
+    proof_record.add_argument("--root", default=".")
+    proof_record.add_argument("--elapsed-ms", type=int, required=True)
+    proof_record.add_argument("--tokens", type=int)
+    proof_record.add_argument("--replace", action="store_true")
+    proof_record.add_argument("--json", action="store_true")
+    proof_plan = proofs_sub.add_parser("plan", help="route requested gates to RUN, REUSE, SKIP, or BLOCK")
+    proof_plan.add_argument("manifest")
+    proof_plan.add_argument("--root", default=".")
+    proof_plan.add_argument("--changed", action="append", default=[])
+    proof_plan.add_argument("--auto-savings", action="store_true")
+    proof_plan.add_argument("--out")
+    proof_plan.add_argument("--json", action="store_true")
+    proof_verify = proofs_sub.add_parser("verify", help="verify a private proof receipt and all current hashes")
+    proof_verify.add_argument("receipt")
+    proof_verify.add_argument("--root", default=".")
+    proof_verify.add_argument("--json", action="store_true")
+    proof_challenge = proofs_sub.add_parser("challenge", help="prove an isolated input mutation invalidates reuse")
+    proof_challenge.add_argument("receipt")
+    proof_challenge.add_argument("--root", default=".")
+    proof_challenge.add_argument("--json", action="store_true")
 
     s = sub.add_parser("verify", help="summarize all existing receipts into one shippability decision")
     s.add_argument("feature")
@@ -1343,6 +1377,51 @@ def main(argv=None) -> int:
                 print(f"public savings report written to {Path(a.out).resolve()}")
             return 0
         p.error("savings requires record or report")
+
+    if a.cmd == "proofs":
+        try:
+            if a.proofs_cmd == "record":
+                manifest = load_proof_manifest(Path(a.manifest))
+                gates = manifest.get("gates") if isinstance(manifest, dict) else None
+                if not isinstance(gates, list) or not gates:
+                    raise ProofReuseError("PROOF_MANIFEST_INVALID", "manifest contains no gates")
+                selected = [gate for gate in gates if isinstance(gate, dict) and (a.gate is None or gate.get("name") == a.gate)]
+                if len(selected) != 1:
+                    raise ProofReuseError("PROOF_GATE_AMBIGUOUS", "select exactly one gate with --gate")
+                payload = record_proof(
+                    Path(a.root), selected[0], elapsed_ms=a.elapsed_ms,
+                    tokens=a.tokens, replace=a.replace,
+                )
+            elif a.proofs_cmd == "plan":
+                payload = plan_proofs(
+                    Path(a.root), load_proof_manifest(Path(a.manifest)),
+                    changed_paths=a.changed, auto_savings=a.auto_savings,
+                    out=Path(a.out) if a.out else None,
+                )
+            elif a.proofs_cmd == "verify":
+                payload = verify_proof_receipt(Path(a.root), Path(a.receipt))
+            elif a.proofs_cmd == "challenge":
+                payload = challenge_proof_receipt(Path(a.root), Path(a.receipt))
+            else:
+                p.error("proofs requires record, plan, verify, or challenge")
+        except ProofReuseError as exc:
+            failure = {"schema": "factory.proof-error.v1", "code": exc.code, "message": str(exc)}
+            print(json.dumps(failure, indent=2) if getattr(a, "json", False) else f"proofs failed: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        if getattr(a, "json", False):
+            print(json.dumps(payload, indent=2))
+        else:
+            if a.proofs_cmd == "plan":
+                print("factory proof plan")
+                print("=" * 44)
+                for item in payload["items"]:
+                    print(f"{item['gate']}: {item['disposition']} - {item['reason']}")
+                print(f"receipt: {payload['plan']}")
+            else:
+                print(json.dumps(payload, indent=2))
+        if a.proofs_cmd in {"verify", "challenge"}:
+            return 0 if payload.get("valid", payload.get("passed", False)) else 1
+        return 0
     if a.cmd == "verify":
         result = verify_feature(Path(a.root), a.feature)
         if a.json:

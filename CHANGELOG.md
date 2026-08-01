@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.23.0 - 2026-07-31
+
+- Add content-addressed read-only proof receipts and exact verification of
+  inputs, outputs, command digest, toolchain, and environment.
+- Add `factory proofs record|plan|verify|challenge` with fail-closed RUN,
+  REUSE, SKIP, and BLOCK dispositions.
+- Add automatic paired savings receipts for verified reuse observations while
+  preserving unavailable token measurements as null.
+- Add compact proof-plan receipts that omit source, commands, logs, prompts,
+  credentials, and absolute workspace paths.
+- Key IntelliJ workflow concurrency by commit SHA to collapse identical proof
+  across eligible GitHub triggers.
+- Add strict SpecLine and ForgeLine contracts, a proof mutation challenge, and
+  grade-A feature QA evidence.
+
 ## 0.22.0 - 2026-07-25
 
 - Add exact baseline-versus-Factory savings receipts for elapsed time, tokens,

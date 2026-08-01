@@ -106,3 +106,5 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-07-25 05:38] GATE plan savings-tracker-v1 approver=human tasks=20 sha=c781d6cd016bee6e
 - [2026-07-25 05:50] GATE plan savings-tracker-v1 approver=human tasks=20 sha=c781d6cd016bee6e
 - [2026-07-25 05:52] GATE code savings-tracker-v1 approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
+- [2026-08-01 01:48] GATE spec proof-reuse-v1 approver=human strict=True sha=b432e749d0040c5e
+- [2026-08-01 01:48] GATE plan proof-reuse-v1 approver=human tasks=8 sha=b432e749d0040c5e

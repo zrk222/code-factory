@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "name": "proof-reuse-behavior",
+      "kind": "python",
+      "run": "from pathlib import Path; from tempfile import TemporaryDirectory; from factoryline.proof_reuse import proof_key; t=TemporaryDirectory(); r=Path(t.name); p=r/'input.txt'; p.write_text('green', encoding='utf-8'); g={'name':'unit','command':['python','-m','pytest'],'inputs':['input.txt'],'outputs':[],'read_only':True,'toolchain':{'python':'3.11'},'environment':{'os':'smoke'}}; k=proof_key(r,g); assert len(k)==64 and k==proof_key(r,g); p.write_text('changed', encoding='utf-8'); assert proof_key(r,g)!=k",
+      "expect_exit": 0,
+      "timeout_s": 60,
+      "must_fail_on_stub": true
+    }
+  ]
+}

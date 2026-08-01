@@ -108,11 +108,11 @@
         <p class="lede">Install one local developer CLI. Turn specifications, tests, policies, and signed receipts into a reviewable workflow—then deliberately sabotage the gates to prove they reject bad builds.</p>
         <div class="actions">
           <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Start free with pip</a>
-          <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.22.0">Review verified release</a>
+          <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.23.0">Review verified release</a>
         </div>
         <div class="trust" id="release-proof" aria-label="Verified release facts">
           <span>✓ Verified release checks</span>
-          <span>✓ 276 Python tests passed</span>
+          <span>✓ 295 Python tests passed</span>
           <span>✓ 8-IDE compatibility matrix</span>
           <span>✓ No source upload</span>
         </div>
@@ -141,16 +141,14 @@
     <section>
       <div class="shell proof">
         <div>
-          <div class="eyebrow">New in 0.22</div>
-          <h2>Measure the saving. Keep the caveat.</h2>
-          <p>Record exact baseline-versus-Factory time, token, and cost observations. Negative results stay visible, and productivity is withheld until equivalent outcomes are explicitly asserted and hash-bound.</p>
+          <div class="eyebrow">New in 0.23</div>
+          <h2>Reuse the proof. Keep the boundary.</h2>
+          <p>Content-addressed receipts route read-only gates to RUN, REUSE, SKIP, or BLOCK. Exact reuse verifies every bound input and output; ambiguity runs again, and side effects stay blocked.</p>
         </div>
-        <pre><code>factory savings record release-cycle \
-  --baseline-elapsed-ms 600000 \
-  --factory-elapsed-ms 300000 \
-  --baseline-tokens 12000 \
-  --factory-tokens 8000
-factory savings report --out savings-public.json</code></pre>
+        <pre><code>factory proofs record proofs.json \
+  --gate python-tests --elapsed-ms 600000 --root .
+factory proofs plan proofs.json --changed src/app.py \
+  --auto-savings --out proof-plan.json --root .</code></pre>
       </div>
     </section>
 
@@ -160,9 +158,9 @@ factory savings report --out savings-public.json</code></pre>
           <div class="eyebrow">60-second first run</div>
           <h2>Start locally. See the gap immediately.</h2>
           <p>The coverage command intentionally exits nonzero when a generated application has requirements without meaningful tests. The scaffold is starting state, not a readiness claim.</p>
-          <a class="button" href="https://github.com/zrk222/code-factory/releases/download/v0.22.0/code-factory-quickstart-v0171.mp4">Watch the shipped UI walkthrough</a>
+          <a class="button" href="https://github.com/zrk222/code-factory/releases/download/v0.23.0/code-factory-quickstart-v0171.mp4">Watch the shipped UI walkthrough</a>
         </div>
-        <pre><code>pip install factoryline-code-factory==0.22.0
+        <pre><code>pip install factoryline-code-factory==0.23.0
 factory create "Build an approval tracker" \
   --target web --out approval-tracker
 factory coverage --root approval-tracker --json</code></pre>
@@ -196,7 +194,7 @@ factory coverage --root approval-tracker --json</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.22.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.23.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

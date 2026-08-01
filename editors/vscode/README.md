@@ -26,7 +26,7 @@ pass arbitrary shell fragments to your terminal.
 Install the Code Factory CLI first:
 
 ```powershell
-pip install factoryline-code-factory==0.22.0
+pip install factoryline-code-factory==0.23.0
 ```
 
 Build a local VSIX from this directory, then install it in VS Code:

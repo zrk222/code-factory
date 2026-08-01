@@ -13,6 +13,14 @@ from scripts.jetbrains_release_artifact import ArtifactError, create_manifest, v
 COMMIT = "a" * 40
 
 
+def test_intellij_workflow_deduplicates_identical_sha_triggers() -> None:
+    workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "intellij-plugin.yml").read_text(encoding="utf-8")
+    assert "branches: [main]" in workflow
+    assert "pull_request:" in workflow
+    assert "group: intellij-plugin-${{ github.sha }}" in workflow
+    assert "cancel-in-progress: true" in workflow
+
+
 def _write_plugin_archive(
     path: Path, *, plugin_id: str = "app.factoryline", version: str = "0.7.1"
 ) -> None:
