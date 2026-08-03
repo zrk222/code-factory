@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.23.2 - 2026-08-03
+
+- Add strict Core-5 agent contracts with canonical digests and execution rails.
+- Require fresh-context creator/verifier attestations for mission completion.
+- Reconcile run telemetry across receipts, traces, and meter observations without
+  exposing feature names, prompts, paths, or raw logs in public summaries.
+- Add provider capability, privacy, latency, context, cost, and output-contract
+  constraints plus conditional Prestige UI validation.
+
 ## 0.23.1 - 2026-08-01
 
 - Patch the two high-severity npm advisories in the VS Code build toolchain by

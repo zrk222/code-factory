@@ -21,6 +21,8 @@ from .contract import MODULES, STAGES, ensure_layout, LAYOUT
 from .assembly import detect, assemble, DEFAULT_CHAIN, rollup_receipts
 from .continuation import ContinuationError, continue_assembly
 from .run_metrics import export_public_metrics, public_metrics
+from .telemetry import telemetry_inventory
+from .agent_contract import AgentContractError, validate_agent_contract, validate_verifier_attestation
 from .savings import (
     SavingsError,
     export_public_savings_report,
@@ -298,6 +300,8 @@ def _plan() -> int:
     for module, args in DEFAULT_CHAIN:
         cli = MODULES[module]["cli"]
         tag = "" if installed.get(module) else "   (skipped - not installed)"
+        if module == "prestige":
+            tag += "   (runs only when smoke/<feature>.ui declares UI scope)"
         print(f"  {module:<10} -> {cli} {' '.join(args)}{tag}")
     print("\nEach arrow is a Lego seam: the output of one stage is the input of the next,")
     print("passed on disk under the shared factory layout (portable across IDE/agent/OS).")
@@ -703,6 +707,23 @@ def main(argv=None) -> int:
     pack_compose.add_argument("--name", default="default")
     pack_compose.add_argument("--force", action="store_true")
 
+    agent = sub.add_parser("agent", help="validate secret-free Core-5 agent contracts and verifier receipts")
+    agent_sub = agent.add_subparsers(dest="agent_cmd", required=True)
+    agent_contract = agent_sub.add_parser("contract", help="validate one hash-bound Core-5 contract")
+    agent_contract.add_argument("manifest")
+    agent_contract.add_argument("--json", action="store_true")
+    agent_attest = agent_sub.add_parser("attestation", help="validate a fresh creator/verifier adapter attestation")
+    agent_attest.add_argument("receipt")
+    agent_attest.add_argument("--mission-digest")
+    agent_attest.add_argument("--contract-digest")
+    agent_attest.add_argument("--json", action="store_true")
+
+    telemetry = sub.add_parser("telemetry", help="reconcile local receipts, runs, traces, and meter ledgers")
+    telemetry_sub = telemetry.add_subparsers(dest="telemetry_cmd", required=True)
+    telemetry_inventory_parser = telemetry_sub.add_parser("inventory", help="emit a privacy-safe reconciled inventory")
+    telemetry_inventory_parser.add_argument("--root", default=".")
+    telemetry_inventory_parser.add_argument("--json", action="store_true")
+
     target = sub.add_parser("create", help="compile one prompt or PRD into one governed starter target")
     target.add_argument("prompt", nargs="?", help="plain-language intent; mutually exclusive with --prd")
     target.add_argument("--prd", help="UTF-8 PRD path; mutually exclusive with prompt")
@@ -827,6 +848,12 @@ def main(argv=None) -> int:
     provider_route.add_argument("--preferred-model")
     provider_route.add_argument("--cache-provider")
     provider_route.add_argument("--cache-model")
+    provider_route.add_argument("--projected-tokens", type=int, default=0)
+    provider_route.add_argument("--projected-cost-usd", type=float)
+    provider_route.add_argument("--latency-budget-ms", type=int, default=5000)
+    provider_route.add_argument("--required-capability", action="append", default=[])
+    provider_route.add_argument("--privacy-class", choices=["standard", "restricted", "local_only"], default="standard")
+    provider_route.add_argument("--output-contract", choices=["text", "json", "jsonl"], default="json")
     provider_route.add_argument("--json", action="store_true")
 
     migration = sub.add_parser("migration", help="prove agent readiness before a large migration mission")
@@ -1003,9 +1030,17 @@ def main(argv=None) -> int:
         return _home(Path(a.root), a.json)
     if a.cmd == "doctor":
         return _doctor(a.strict, a.json)
-    if a.cmd in {"product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider"}:
+    if a.cmd in {"product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider", "agent", "telemetry"}:
         try:
-            if a.cmd == "langgraph" and a.langgraph_cmd == "doctor":
+            if a.cmd == "agent" and a.agent_cmd == "contract":
+                result = validate_agent_contract(Path(a.manifest))
+            elif a.cmd == "agent" and a.agent_cmd == "attestation":
+                result = validate_verifier_attestation(
+                    Path(a.receipt), mission_digest=a.mission_digest, contract_digest=a.contract_digest,
+                )
+            elif a.cmd == "telemetry":
+                result = telemetry_inventory(Path(a.root))
+            elif a.cmd == "langgraph" and a.langgraph_cmd == "doctor":
                 result = langgraph_doctor()
             elif a.cmd == "langgraph" and a.langgraph_cmd == "init":
                 result = init_mission_graph(Path(a.mission), Path(a.root))
@@ -1042,6 +1077,8 @@ def main(argv=None) -> int:
                 result = route_provider(
                     Path(a.policy), Path(a.mission), Path(a.root), a.ide, a.risk,
                     a.preferred_provider, a.preferred_model, a.cache_provider, a.cache_model,
+                    a.projected_tokens, a.projected_cost_usd, a.latency_budget_ms,
+                    a.required_capability, a.privacy_class, a.output_contract,
                 )
             elif a.cmd == "migration" and a.migration_cmd == "assess":
                 result = assess_migration_readiness(Path(a.manifest), Path(a.root), force=a.force)
@@ -1138,7 +1175,7 @@ def main(argv=None) -> int:
                 )
             else:
                 result = outcome_summary(Path(a.root), a.mission_id)
-        except (ProductMissionError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProviderRouterError) as exc:
+        except (ProductMissionError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProviderRouterError, AgentContractError) as exc:
             print(json.dumps({
                 "schema": "factory.workflow_error.v1", "status": "failed",
                 "code": exc.code, "message": exc.message,
@@ -1159,8 +1196,9 @@ def main(argv=None) -> int:
             or (a.cmd == "opinion" and a.opinion_cmd == "verify")
             or (a.cmd == "langgraph" and a.langgraph_cmd == "verify")
             or (a.cmd == "provider" and a.provider_cmd == "verify")
+            or (a.cmd == "agent" and a.agent_cmd in {"contract", "attestation"})
         ):
-            return 0 if result["valid"] else 1
+            return 0 if result.get("valid", True) else 1
         return 0
     if a.cmd == "targets":
         payload = {"schema": "factory.targets.v1", "targets": TARGETS}
