@@ -18,7 +18,7 @@ proof-first software factory for AI-assisted delivery.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.23.1` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.23.2` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21543621).
 
 The illustrations explain the workflow; they are not UI screenshots or

@@ -126,7 +126,7 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.23.1"
+    assert project["version"] == "0.23.2"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.7.0"
     assert 'version = "0.7.2"' in gradle
@@ -219,7 +219,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.23.1"
+    assert metadata["version"] == "0.23.2"
     assert metadata["publication_date"] == "2026-08-01"
     assert "conceptual visual walkthrough" in metadata["description"]
 
