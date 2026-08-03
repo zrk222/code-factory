@@ -19,6 +19,7 @@ from .loop_passport import (
 )
 from .failure_guidance import explain_failure
 from .migration import verify_migration_readiness, verify_repository_context
+from .agent_contract import AgentContractError, validate_verifier_attestation
 
 
 PRODUCT_GRAPH_SCHEMA = "factory.product_graph.v1"
@@ -899,6 +900,7 @@ def create_mission(slices_path: Path, slice_id: str, root: Path, owner: str, exe
                 "prior_attempt_context_allowed": False,
                 "attempt_summary": "hash_bound_outcomes_only",
                 "runtime_enforcement": "external_adapter_must_attest",
+                "adapter_attestation_required": True,
             },
             "routing_policy": _routing_policy(selected["risk"]),
         },
@@ -1079,6 +1081,14 @@ def _validate_context_wall(mission: dict[str, Any], manifest: dict[str, Any]) ->
         or forbidden.intersection(contexts)
     ):
         raise ProductMissionError("CREATOR_VERIFIER_CONTEXT_WALL", "verifier context must contain only review inputs and exclude creator-private context")
+    if mission["orchestration"]["attempt_policy"].get("adapter_attestation_required") is True:
+        raw = manifest.get("adapter_attestation")
+        if not isinstance(raw, dict):
+            raise ProductMissionError("VERIFIER_ADAPTER_ATTESTATION_REQUIRED", "fresh adapter attestation is required before mission completion")
+        try:
+            validate_verifier_attestation(raw, mission_digest=mission["mission_sha256"])
+        except AgentContractError as exc:
+            raise ProductMissionError(exc.code, exc.message) from exc
 
 
 def _browser_flow_artifacts(mission: dict[str, Any], criterion: dict[str, Any], evidence_path: Path,
@@ -1191,11 +1201,12 @@ def close_mission(mission_path: Path, validation_path: Path, root: Path, *, forc
         "creator_id": manifest["creator_id"].strip(),
         "verifier_id": manifest["verifier_id"].strip(),
         "verifier_context": manifest["verifier_context"],
+        "adapter_attestation": manifest.get("adapter_attestation"),
         "criteria": results,
         "evidence": evidence,
         "status": "completed",
         "authority": {"merge": False, "publish": False, "deploy": False},
-        "markers": ["CREATOR_VERIFIER_CONTEXT_WALL", "VERIFIER_IDENTITY_DISTINCT", "NO_FINISH_CONTRACT", "VALIDATION_EVIDENCE_BOUND"],
+        "markers": ["CREATOR_VERIFIER_CONTEXT_WALL", "VERIFIER_IDENTITY_DISTINCT", "VERIFIER_ADAPTER_ATTESTED", "NO_FINISH_CONTRACT", "VALIDATION_EVIDENCE_BOUND"],
     }
     receipt = {**core, "completion_sha256": _sha_bytes(_canonical(core)), "generated_at": _now()}
     path = Path(mission_path).resolve().parent / "completion.json"

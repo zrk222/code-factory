@@ -16,6 +16,7 @@ from pathlib import Path
 from .contract import MODULES, STAGES, Meter, ensure_layout, Receipt
 from .meter import MeterLog, StageTiming, stopwatch
 from .attribution import Attribution, FailureClass
+from .agent_contract import AgentContractError, validate_agent_contract
 
 
 @dataclass
@@ -115,6 +116,7 @@ DEFAULT_CHAIN = [
     ("forgeline", ["arch-gate", "{f}", "{f}.ssat.yaml"]),
     ("forgeline", ["verify-tests", "{f}", "{f}.ssat.yaml"]),
     ("forgeline", ["smoke", "{f}"]),
+    ("prestige",   ["score", "smoke/{f}.ui", "--json", "--strict"]),
     ("hsf",       ["compile", "specs/{f}.yaml"]),
     ("forgeline", ["ship", "{f}"]),
 ]
@@ -157,6 +159,17 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False) -> dic
     run_id = uuid.uuid4().hex
     report = {"feature": feature, "root": str(root), "run_id": run_id, "stages": [], "dry_run": dry_run}
 
+    contract_path = root / ".factory" / "agent-contract.json"
+    if contract_path.is_file():
+        try:
+            contract = validate_agent_contract(contract_path)
+        except AgentContractError as exc:
+            report["stages"].append({"module": "factoryline", "stage": "agent-contract", "status": "failed", "code": exc.code, "message": exc.message})
+            report["halted_at"] = "factoryline:agent-contract"
+            return report
+        report["agent_contract"] = {"path": str(contract_path), "digest": contract["contract_digest"], "marker": "AGENT_CONTRACT_BOUND"}
+        report["stages"].append({"module": "factoryline", "stage": "agent-contract", "status": "ok", "marker": "AGENT_CONTRACT_BOUND"})
+
     spec_path = root / "specs" / f"{feature}.md"
     if not dry_run and not spec_path.exists() and installed["specline"].installed:
         with stopwatch() as sw:
@@ -184,6 +197,13 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False) -> dic
             report["stages"].append({"module": module, "stage": stage_name,
                                      "status": "skipped", "reason": f"{cli} not installed"})
             continue
+        if module == "prestige":
+            ui_path = root / "smoke" / f"{feature}.ui"
+            if not ui_path.is_file():
+                report["stages"].append({"module": module, "stage": stage_name,
+                                         "status": "skipped", "reason": "ui_scope_not_declared",
+                                         "marker": "UI_PRESTIGE_GATE_NOT_APPLICABLE"})
+                continue
         if not dry_run and module == "forgeline" and stage_name == "architect":
             ssat = _ssat_contract(root, feature)
             state_path = root / ".forge" / feature / "state.json"

@@ -100,6 +100,8 @@ def public_metrics(root: Path) -> dict[str, Any]:
     exact = [row["usage"] for row in rows if isinstance(row.get("usage"), dict) and row["usage"].get("quality") == "exact"]
     all_exact = bool(rows) and len(exact) == len(rows)
     completed = terminals.get("completed", 0)
+    from .telemetry import public_inventory_summary
+
     return {
         "schema": PUBLIC_SCHEMA,
         "marker": "PUBLIC_METRICS_AGGREGATE_SAFE",
@@ -130,6 +132,7 @@ def public_metrics(root: Path) -> dict[str, Any]:
             "tokens_saved": None,
             "reason": "A measured counterfactual baseline is required before savings can be claimed.",
         },
+        "telemetry_reconciliation": public_inventory_summary(root),
     }
 
 
