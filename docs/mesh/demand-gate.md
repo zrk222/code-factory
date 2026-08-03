@@ -53,3 +53,17 @@ At the end of the experiment, publish a small redacted receipt beside the Mesh b
 - the pivot or continuation decision and its owner.
 
 Until that receipt exists, demand is **`[U]`** and the Mesh PRD must not describe enterprise demand as established. Interleave this gate with implementation milestones; do not wait for the NEW units to finish before testing it.
+
+## Commitment before cash
+
+The first audits are deliberately free: they buy product information and avoid a procurement-heavy false negative. They are not low-friction favors. An audit counts only when the team commits to the costly inputs that make it useful:
+
+- a named owner for the follow-up;
+- an NDA or equivalent confidentiality approval when required;
+- a representative configuration and receipt sample, with production secrets excluded;
+- **three hours of a security or engineering reviewer’s time**; and
+- an agreed one-week audit window.
+
+Pre-commit the next gate now: run **N-free = 3** qualifying audits, and require **X-paid ≥ 1** paid follow-on (the second audit or fixed-scope remediation) from those three. `[F]` If fewer than one converts, do not call the audit a validated business or expand services. Record the clean no as evidence, keep the public benchmark and open Memory CI free, and revisit the product thesis rather than turning bespoke consulting into the default business.
+
+Payment is accepted only for a fixed-scope follow-on with a written cap and an explicit deliverable that becomes a redacted Memory CI test case. The audit remains a research instrument that may bill; it is not permission to create an uncapped compliance-consulting lane.
