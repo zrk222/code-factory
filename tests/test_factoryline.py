@@ -23,7 +23,33 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.23.2"
+    assert factoryline.__version__ == "0.24.0"
+
+
+def test_cli_mvp_builds_one_contained_web_starter_with_a_proof_path(tmp_path, capsys):
+    from factoryline.cli import main
+
+    code = main(["mvp", "Build an approval tracker for a small team.", "--root", str(tmp_path), "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["schema"] == "factory.mvp.v1"
+    assert payload["marker"] == "MVP_STARTER_CONTAINED"
+    assert payload["target_kind"] == "web"
+    assert Path(payload["out_dir"]) == tmp_path / "my-mvp"
+    assert (tmp_path / "my-mvp" / "app_blueprint.json").is_file()
+    assert payload["next_proof_commands"]
+    assert all(value is False for value in payload["authority"].values())
+
+
+def test_cli_mvp_refuses_to_overwrite_an_existing_starter(tmp_path, capsys):
+    from factoryline.cli import main
+
+    assert main(["mvp", "Build a tracker.", "--root", str(tmp_path)]) == 0
+    assert main(["mvp", "Build a different tracker.", "--root", str(tmp_path), "--json"]) == 1
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["marker"] == "MVP_STARTER_FAILED"
+    assert payload["code"] == "OUTPUT_EXISTS"
 
 
 def test_layout_created(tmp_path):

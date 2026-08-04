@@ -178,7 +178,7 @@ Show HN: A proof-first factory for AI-assisted software work
 > The components work independently, but the base package connects them:
 >
 > ```bash
-> pip install factoryline-code-factory==0.23.2 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
+> pip install factoryline-code-factory==0.24.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
 > factory doctor --strict --json
 > ```
 >

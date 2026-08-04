@@ -4,7 +4,7 @@
     "marketplace_id": 33009,
     "xml_id": "app.factoryline",
     "name": "FactoryLine AI Proof",
-    "current_free_version": "0.7.2",
+    "current_free_version": "0.8.0",
     "paid_launch_version": "2027.1.0"
   },
   "governance": {
@@ -37,7 +37,7 @@
     "staging_template": "editors/intellij/monetization/plugin-product-descriptor-2027.xml"
   },
   "feature_boundary": {
-    "through_2026_12_31": "all_0_7_2_features_free",
+    "through_2026_12_31": "all_0_8_0_features_free",
     "from_2027_01_01": "2027_1_0_requires_paid_license_or_active_trial",
     "source_license": "MIT OR Apache-2.0 remains unchanged",
     "privacy": "no new telemetry, source upload, credential storage, signing, or release authority"

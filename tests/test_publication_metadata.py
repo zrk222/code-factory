@@ -24,7 +24,7 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-01"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-03"
 
 
 def test_pypi_storefront_has_identity_and_canonical_links():
@@ -126,10 +126,10 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.23.2"
+    assert project["version"] == "0.24.0"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.7.0"
-    assert 'version = "0.7.2"' in gradle
+    assert vscode["version"] == "0.8.0"
+    assert 'version = "0.8.0"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -143,6 +143,8 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "<p>Verify AI code before you ship.</p>" in plugin_xml
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
     assert "Run First Proof" in plugin_xml
+    assert 'id="app.factoryline.intellij.openGraphOps"' in plugin_xml
+    assert "Unified Graph Ops" in plugin_xml
     assert "Use real plugin UI, not concept art." in screenshot_brief
     assert "1200x760" in screenshot_brief
 
@@ -169,6 +171,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     assert plan["offer"]["monthly_price_usd"] == 4.95
     assert plan["offer"]["monthly_price_status"] == "owner_approved"
     assert plan["offer"]["paid_from"] == "2027-01-01"
+    assert plan["plugin"]["current_free_version"] == "0.8.0"
     assert plan["paid_descriptor"] == {
         "product_code": "PFACTORYLINE",
         "product_code_status": "proposed_not_registered",
@@ -219,8 +222,9 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.23.2"
-    assert metadata["publication_date"] == "2026-08-01"
+    assert metadata["version"] == "0.24.0"
+    assert metadata["publication_date"] == "2026-08-03"
+    assert "Unified Graph Ops" in metadata["description"]
     assert "conceptual visual walkthrough" in metadata["description"]
 
     assets = ROOT / "docs" / "assets"
@@ -242,6 +246,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
 
     source_manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
     assert "recursive-include docs *.md *.gif *.png *.svg *.mp4 *.json" in source_manifest
+    assert "graph_ops.html" in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
     for path in (
         ROOT / "README.md",

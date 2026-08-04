@@ -12,13 +12,15 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "sdk: static" in readme
     assert "app_file: index.html" in readme
     assert "factoryline-code-factory" in page
-    assert "github.com/zrk222/code-factory/releases/tag/v0.23.2" in page
+    assert "github.com/zrk222/code-factory/releases/tag/v0.24.0" in page
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "not UI screenshots or measured outcome evidence" in page
     assert '<meta name="viewport"' in page
     assert "Prove your next change across CLI and 8 IDEs." in page
     assert "296 Python tests passed" in page
     assert "Verified release checks" in page
+    assert "Unified Graph Ops" in page
+    assert "factory graph ops --root . --json" in page
     assert "factory-studio-control-room-1080.png" in page
     assert "prefers-reduced-motion" in page
     assert "Skip to product proof" in page

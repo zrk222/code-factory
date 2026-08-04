@@ -234,15 +234,16 @@ object FactoryLineController {
         runBackground(project, "Open Paired Savings Report") { FactoryLineRunner.savings(project) }
     }
 
-    fun openStudio(project: Project, productMode: Boolean = false) {
+    fun openStudio(project: Project, productMode: Boolean = false, graphMode: Boolean = false) {
+        require(!(productMode && graphMode))
         val root = project.basePath ?: run {
             Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
             return
         }
         val confirmed = Messages.showYesNoDialog(
             project,
-            "Open ${if (productMode) "Product Missions" else "Factory Studio"} on loopback for:\n$root\n\nLocal artifacts may be created. This grants no execute, merge, deploy, publish, credential, connector, or external-message authority.",
-            "FactoryLine: ${if (productMode) "Open Product Missions" else "Open Local Factory Studio"}",
+            "Open ${if (graphMode) "Unified Graph Ops" else if (productMode) "Product Missions" else "Factory Studio"} on loopback for:\n$root\n\nGraph Ops only inspects local artifacts. Studio grants no execute, merge, deploy, publish, credential, connector, or external-message authority.",
+            "FactoryLine: ${if (graphMode) "Open Unified Graph Ops" else if (productMode) "Open Product Missions" else "Open Local Factory Studio"}",
             "Start local Studio",
             "Cancel",
             Messages.getWarningIcon()
@@ -251,9 +252,9 @@ object FactoryLineController {
         FactoryLineRunner.startStudio(
             project,
             onStarted = { url ->
-                val targetUrl = if (productMode) "$url?mode=product" else url
+                val targetUrl = if (graphMode) "${url}graph-ops" else if (productMode) "$url?mode=product" else url
                 BrowserUtil.browse(targetUrl)
-                val marker = if (productMode) "EDITOR_PRODUCT_MISSION_CONFIRMED" else "EDITOR_TRUST_CONFIRMED"
+                val marker = if (graphMode) "EDITOR_GRAPH_OPS_CONFIRMED" else if (productMode) "EDITOR_PRODUCT_MISSION_CONFIRMED" else "EDITOR_TRUST_CONFIRMED"
                 Messages.showInfoMessage(project, "Factory Studio is running at $targetUrl\n\nmarker: $marker", "FactoryLine")
             },
             onFailure = { message -> Messages.showErrorDialog(project, message, "FactoryLine") }
@@ -332,6 +333,12 @@ class OpenStudioAction : FactoryLineAction() {
 class OpenProductMissionsAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.openStudio(it, productMode = true) }
+    }
+}
+
+class OpenGraphOpsAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.openStudio(it, graphMode = true) }
     }
 }
 

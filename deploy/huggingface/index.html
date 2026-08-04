@@ -108,7 +108,7 @@
         <p class="lede">Install one local developer CLI. Turn specifications, tests, policies, and signed receipts into a reviewable workflow—then deliberately sabotage the gates to prove they reject bad builds.</p>
         <div class="actions">
           <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Start free with pip</a>
-          <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.23.2">Review verified release</a>
+          <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.24.0">Review verified release</a>
         </div>
         <div class="trust" id="release-proof" aria-label="Verified release facts">
           <span>✓ Verified release checks</span>
@@ -141,6 +141,32 @@
     <section>
       <div class="shell proof">
         <div>
+          <div class="eyebrow">Start with an outcome</div>
+          <h2>Build an MVP now. Add enterprise rigor when it earns its keep.</h2>
+          <p>Use one outcome-first command for a contained local web MVP, then retain the same artifact path as you add proof, Graph Ops, team review, policy, assurance, and tenant controls. The factory does not switch into an autonomous publisher at any stage.</p>
+        </div>
+        <pre><code>factory mvp "Build an approval tracker" --root .
+factory coverage --root .\my-mvp --json
+factory graph ops --root .\my-mvp --json</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">New in 0.24</div>
+          <h2>See the whole proof path, safely.</h2>
+          <p>Unified Graph Ops connects the local Product Graph, value slices, missions, approvals, completions, proofs, gate plans, traces, receipts, and artifacts into one bounded visual result. It recommends one next action from current facts and never executes a gate or release action.</p>
+        </div>
+        <pre><code>factory graph ops --root . --json
+factory graph ops --root . --mermaid
+factory studio --root .</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell proof">
+        <div>
           <div class="eyebrow">New in 0.23</div>
           <h2>Reuse the proof. Keep the boundary.</h2>
           <p>Content-addressed receipts route read-only gates to RUN, REUSE, SKIP, or BLOCK. Exact reuse verifies every bound input and output; ambiguity runs again, and side effects stay blocked.</p>
@@ -160,7 +186,7 @@ factory proofs plan proofs.json --changed src/app.py \
           <p>The coverage command intentionally exits nonzero when a generated application has requirements without meaningful tests. The scaffold is starting state, not a readiness claim.</p>
           <a class="button" href="https://github.com/zrk222/code-factory/releases/download/v0.23.2/code-factory-quickstart-v0171.mp4">Watch the shipped UI walkthrough</a>
         </div>
-        <pre><code>pip install factoryline-code-factory==0.23.2
+        <pre><code>pip install factoryline-code-factory==0.24.0
 factory create "Build an approval tracker" \
   --target web --out approval-tracker
 factory coverage --root approval-tracker --json</code></pre>
@@ -194,7 +220,7 @@ factory coverage --root approval-tracker --json</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.23.2 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.24.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

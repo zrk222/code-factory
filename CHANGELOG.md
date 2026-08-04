@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.24.0 - 2026-08-03
+
+- Add bounded, read-only Unified Graph Ops across the CLI, Factory Studio,
+  VS Code, and JetBrains integrations.
+- Add `factory mvp` and an outcome-first Studio default so a novice can build a
+  contained local web MVP before learning the full factory vocabulary.
+- Add `factory graph impact` for exact changed-input-to-proof mapping and a
+  stale-only rerun set; it never treats an unmatched path as safe.
+- Link existing Product Graph, slice, mission, approval, completion, proof,
+  gate-plan, trace, receipt, and artifact facts without replacing their source
+  verification or authority boundaries.
+- Add accessible lane-based visual inspection and one exact fact-derived next
+  action; no time, token, cost, or productivity savings are claimed.
+
 ## 0.23.2 - 2026-08-03
 
 - Add strict Core-5 agent contracts with canonical digests and execution rails.

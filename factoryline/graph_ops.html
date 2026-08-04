@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Factory Studio — Graph Ops</title>
+  <style>
+    :root { --ink:#eaf1ff; --muted:#a8b5ce; --panel:#121b2c; --line:#2b3a57; --page:#080d17; --blue:#74b5ff; --green:#74e0ad; --amber:#ffd071; --red:#ff9b9b; --radius:16px; --space:clamp(14px,2vw,28px); font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); background:var(--page); }
+    * { box-sizing:border-box; }
+    body { margin:0; min-width:320px; background:radial-gradient(circle at top right,#172e55 0,transparent 34rem),var(--page); }
+    a { color:var(--blue); }
+    button { font:inherit; }
+    .shell { max-width:1440px; margin:0 auto; padding:var(--space); }
+    .top { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; border-bottom:1px solid var(--line); padding-bottom:20px; }
+    .eyebrow { margin:0 0 8px; color:var(--blue); font-size:.75rem; font-weight:800; letter-spacing:.14em; text-transform:uppercase; }
+    h1 { margin:0; font-size:clamp(2rem,5vw,3.4rem); letter-spacing:-.04em; }
+    .lede { color:var(--muted); line-height:1.6; max-width:70ch; margin:12px 0 0; }
+    .top-actions { align-self:center; display:flex; flex-wrap:wrap; gap:10px; justify-content:flex-end; }
+    .back { border:1px solid var(--line); border-radius:999px; color:var(--ink); padding:10px 14px; text-decoration:none; white-space:nowrap; }
+    .back:hover,.back:focus-visible { border-color:var(--blue); outline:none; }
+    .notice { border:1px solid #37537c; background:#101c31; color:#d8e8ff; border-radius:var(--radius); margin:20px 0; padding:14px 16px; line-height:1.5; }
+    .notice strong { color:var(--green); }
+    .summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:20px 0; }
+    .stat,.card { background:color-mix(in srgb,var(--panel) 94%,transparent); border:1px solid var(--line); border-radius:var(--radius); padding:18px; }
+    .stat p,.card h2 { margin:0; }
+    .stat p { color:var(--muted); font-size:.82rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em; }
+    .stat strong { display:block; margin-top:8px; font-size:1.65rem; }
+    .layout { display:grid; grid-template-columns:minmax(0,1.7fr) minmax(280px,.7fr); gap:var(--space); align-items:start; }
+    .card h2 { font-size:1rem; letter-spacing:.01em; }
+    .card p { color:var(--muted); line-height:1.55; }
+    .recommendation { border-color:#34649d; background:linear-gradient(135deg,#142742,#112039); }
+    .recommendation code { color:var(--green); font-weight:800; word-break:break-word; }
+    .lanes { display:grid; gap:16px; margin-top:18px; }
+    .lane { border:1px solid var(--line); border-radius:12px; padding:12px; background:#0d1524; }
+    .lane h3 { margin:0 0 10px; color:var(--muted); font-size:.78rem; letter-spacing:.09em; text-transform:uppercase; }
+    .node-list { display:flex; flex-wrap:wrap; gap:8px; }
+    .node { appearance:none; border:1px solid #3a4d70; background:#17243a; color:var(--ink); border-radius:10px; min-height:44px; padding:9px 11px; text-align:left; cursor:pointer; max-width:100%; }
+    .node:hover,.node:focus-visible,.node[aria-pressed="true"] { border-color:var(--blue); box-shadow:0 0 0 3px #316aa044; outline:none; }
+    .node .kind { color:var(--blue); display:block; font-size:.72rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
+    .node .label { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:220px; }
+    .node[data-status="stale"],.node[data-status="invalid"],.node[data-status="BLOCK"] { border-color:#9a4d5a; }
+    .node[data-status="verified"],.node[data-status="REUSE"] { border-color:#39795c; }
+    .detail dl { display:grid; grid-template-columns:minmax(86px,.35fr) 1fr; gap:10px 14px; margin:16px 0 0; }
+    .detail dt { color:var(--muted); font-weight:700; }.detail dd { margin:0; overflow-wrap:anywhere; }
+    .empty { border:1px dashed #4a607f; color:var(--muted); border-radius:12px; padding:24px; margin-top:18px; line-height:1.5; }
+    .errors { margin:16px 0 0; padding-left:20px; color:var(--amber); }.errors li { margin:7px 0; overflow-wrap:anywhere; }
+    .foot { color:var(--muted); font-size:.85rem; line-height:1.5; margin:20px 0 0; }
+    .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+    @media (max-width:900px) { .summary { grid-template-columns:repeat(2,minmax(0,1fr)); }.layout { grid-template-columns:1fr; } }
+    @media (max-width:768px) { .shell { padding:16px; }.top { flex-direction:column; }.top-actions { align-self:flex-start; justify-content:flex-start; }.summary { grid-template-columns:1fr 1fr; }.node .label { max-width:calc(100vw - 88px); }.detail dl { grid-template-columns:1fr; gap:4px; }.detail dd { margin-bottom:10px; } }
+    @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; transition:none!important; } }
+  </style>
+</head>
+<body data-marker="GRAPH_OPS_VISUAL_ACCESSIBLE GRAPH_OPS_TEXT_NODE_RENDERING">
+  <main class="shell">
+    <header class="top">
+      <div>
+        <p class="eyebrow">Factory Studio / Graph Ops</p>
+        <h1>Follow the proof path.</h1>
+        <p class="lede">A bounded visual map of local Product, Mission, Proof, Gate, and Trace artifacts. It reveals what exists; it never executes it.</p>
+      </div>
+      <nav class="top-actions" aria-label="Graph Ops navigation">
+        <a class="back" href="https://github.com/zrk222/code-factory/blob/main/docs/GRAPH_OPS.md" rel="noreferrer">View Graph Ops docs</a>
+        <a class="back" href="/">Back to Studio</a>
+      </nav>
+    </header>
+    <section class="notice" aria-label="Read-only authority notice"><strong>Read-only inspection.</strong> Graph Ops cannot execute, approve, publish, deploy, sign, message, access credentials, or grant connectors.</section>
+    <p id="live" class="visually-hidden" aria-live="polite"></p>
+    <section class="summary" aria-label="Graph totals">
+      <div class="stat"><p>Nodes</p><strong id="node-count">—</strong></div>
+      <div class="stat"><p>Edges</p><strong id="edge-count">—</strong></div>
+      <div class="stat"><p>Evidenced</p><strong id="evidence-count">—</strong></div>
+      <div class="stat"><p>Graph status</p><strong id="complete-status">Loading</strong></div>
+    </section>
+    <section class="layout">
+      <div class="card" aria-labelledby="graph-title">
+        <h2 id="graph-title">Graph lanes</h2>
+        <p id="graph-description">Loading the authenticated local graph result.</p>
+        <div id="graph-empty" class="empty" hidden>No local evidence path exists yet. Start by compiling a Product Graph, then inspect this view again.</div>
+        <div id="lanes" class="lanes" aria-describedby="graph-description"></div>
+      </div>
+      <aside class="detail" aria-label="Selected node detail">
+        <section class="card recommendation" aria-labelledby="next-title"><h2 id="next-title">One next action</h2><p><code id="next-action">Loading</code></p><p id="next-reason">Graph Ops will derive this from the local result.</p></section>
+        <section class="card" aria-labelledby="detail-title"><h2 id="detail-title">Selected node</h2><p id="selected-empty">Choose a node to see its verified status and local source.</p><dl id="selected-detail" hidden></dl></section>
+        <section class="card" aria-labelledby="errors-title"><h2 id="errors-title">Known source errors</h2><p id="errors-empty">None reported in the current bounded result.</p><ul id="errors" class="errors" hidden></ul></section>
+      </aside>
+    </section>
+    <p class="foot">Only <code>/api/graph-ops</code> is requested, with the existing local Factory Studio session token. Labels are rendered as text nodes.</p>
+  </main>
+  <script>
+    "use strict";
+    const sessionToken=__FACTORY_STUDIO_TOKEN__;
+    const endpoint="/api/graph-ops";
+    const laneOrder=["product","requirement","slice","mission","approval","completion","proof","gate","trace","receipt","artifact"];
+    const byId=(id)=>document.getElementById(id);
+    const addText=(parent,text,tag="span")=>{const node=document.createElement(tag);node.textContent=String(text);parent.appendChild(node);return node;};
+    const setText=(id,text)=>{byId(id).textContent=String(text);};
+    const status=(text)=>{setText("live",text);};
+    let selectedButton=null;
+    function selectNode(node,button){
+      if(selectedButton) selectedButton.setAttribute("aria-pressed","false");
+      selectedButton=button; button.setAttribute("aria-pressed","true");
+      byId("selected-empty").hidden=true; const detail=byId("selected-detail"); detail.hidden=false; detail.replaceChildren();
+      const rows=[["Kind",node.kind],["Status",node.status||"unknown"],["Source",node.source||"not recorded"],["Identifier",node.id]];
+      if(node.facts) rows.push(["Facts",JSON.stringify(node.facts)]);
+      rows.forEach(([name,value])=>{addText(detail,name,"dt");addText(detail,value,"dd");});
+    }
+    function renderErrors(errors){
+      const list=byId("errors"); list.replaceChildren(); const empty=byId("errors-empty");
+      if(!errors.length){empty.hidden=false;list.hidden=true;return;}
+      empty.hidden=true;list.hidden=false; errors.forEach(item=>addText(list,`${item.code}: ${item.source}`,"li"));
+    }
+    function renderGraph(payload){
+      const facts=payload.facts||{}; const nodes=Array.isArray(payload.nodes)?payload.nodes:[];
+      setText("node-count",facts.node_count??nodes.length); setText("edge-count",facts.edge_count??0);
+      setText("evidence-count",`${facts.evidenced_requirement_count??0}/${(facts.evidenced_requirement_count??0)+(facts.unevidenced_requirement_count??0)}`);
+      setText("complete-status",payload.complete?"Complete":"Partial"); setText("next-action",payload.recommendation?.action||"unavailable"); setText("next-reason",payload.recommendation?.reason||"No fact-derived action is available.");
+      const lanes=byId("lanes"); lanes.replaceChildren(); const empty=byId("graph-empty"); empty.hidden=nodes.length!==0;
+      laneOrder.forEach(kind=>{const members=nodes.filter(node=>node.kind===kind);if(!members.length)return;const lane=document.createElement("section");lane.className="lane";const heading=addText(lane,`${kind} · ${members.length}`,"h3");heading.id=`lane-${kind}`;const list=document.createElement("div");list.className="node-list";list.setAttribute("aria-labelledby",heading.id);members.slice(0,40).forEach(node=>{const button=document.createElement("button");button.type="button";button.className="node";button.dataset.status=node.status||"unknown";button.setAttribute("aria-pressed","false");addText(button,node.kind,"span").className="kind";addText(button,node.label,"span").className="label";button.addEventListener("click",()=>selectNode(node,button));list.appendChild(button);});if(members.length>40)addText(list,`${members.length-40} more nodes remain in the signed result.`,"span");lane.appendChild(list);lanes.appendChild(lane);});
+      renderErrors(Array.isArray(payload.source_errors)?payload.source_errors:[]); status(`Graph Ops loaded ${nodes.length} nodes. Next action: ${payload.recommendation?.action||"unavailable"}.`);
+    }
+    async function load(){
+      try {const response=await fetch(endpoint,{headers:{"X-Factory-Studio-Token":sessionToken}});const payload=await response.json();if(!response.ok)throw new Error(payload.code||"Graph Ops request failed");renderGraph(payload);} catch(error) {setText("complete-status","Unavailable");setText("next-action","inspect_local_studio");setText("next-reason",String(error));status("Graph Ops could not load the local result.");}
+    }
+    load();
+  </script>
+</body>
+</html>
