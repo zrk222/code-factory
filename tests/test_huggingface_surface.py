@@ -16,12 +16,15 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "not UI screenshots or measured outcome evidence" in page
     assert '<meta name="viewport"' in page
-    assert "Prove your next change across CLI and 8 IDEs." in page
-    assert "296 Python tests passed" in page
+    assert "Describe the outcome. See what is proved." in page
+    assert "Install free in JetBrains" in page
+    assert "JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md" in page
+    assert "Release test suite passed" in page
     assert "Verified release checks" in page
     assert "Unified Graph Ops" in page
     assert "factory graph ops --root . --json" in page
-    assert "factory-studio-control-room-1080.png" in page
+    assert "factory-studio-mvp-1280x800.png" in page
+    assert "graph-ops-studio-1280x800.png" in page
     assert "prefers-reduced-motion" in page
     assert "Skip to product proof" in page
     assert 'class="brand" href="#main"' in page

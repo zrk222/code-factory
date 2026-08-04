@@ -146,7 +146,38 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert 'id="app.factoryline.intellij.openGraphOps"' in plugin_xml
     assert "Unified Graph Ops" in plugin_xml
     assert "Use real plugin UI, not concept art." in screenshot_brief
-    assert "1200x760" in screenshot_brief
+    assert "1280x800" in screenshot_brief
+
+
+def test_marketplace_acquisition_kit_uses_real_product_assets_and_observed_metrics_only():
+    kit = (ROOT / "docs" / "JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md").read_text(encoding="utf-8")
+    baseline = json.loads((ROOT / "docs" / "JETBRAINS_MARKETPLACE_MEASUREMENT.json").read_text(encoding="utf-8"))
+
+    assert "Verify AI code before you ship." in kit
+    assert "Run First Proof" in kit
+    assert "factory mvp" in kit
+    assert "Graph Ops" in kit
+    assert "conversion rate" in kit
+    assert "causal uplift" in kit
+    assert "deliberately leaves" in kit
+    assert baseline == {
+        "schema": "factory.jetbrains-marketplace-baseline.v1",
+        "recorded_at": "2026-08-04T05:00:00Z",
+        "source": "https://plugins.jetbrains.com/api/plugins/33009",
+        "plugin_id": 33009,
+        "downloads": 46,
+        "listed_version": "0.7.1",
+        "listing_status": "MARKETPLACE_UPDATE_PENDING",
+        "measurement_boundary": {
+            "download_delta": "publicly observable",
+            "conversion_rate": "unavailable_without_Marketplace_impressions_or_page_views",
+            "causal_uplift": "unavailable_without_attribution_or_a_controlled_experiment",
+            "productivity_or_savings": "not a_Marketplace_download_metric",
+        },
+    }
+    assets = ROOT / "docs" / "assets" / "marketplace"
+    for name in ("factory-studio-mvp-1280x800.png", "graph-ops-studio-1280x800.png"):
+        assert (assets / name).is_file(), name
 
 
 def test_jetbrains_price_is_owner_locked_reproducible_and_not_claimed_live():

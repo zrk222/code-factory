@@ -41,7 +41,7 @@
     nav a { color: var(--muted); font-size: 1rem; font-weight: 700; text-decoration: none; }
     .hero { display: grid; grid-template-columns: 1.02fr .98fr; gap: clamp(40px, 6vw, 82px); align-items: center; padding: 76px 0 100px; }
     .eyebrow { color: var(--amber-dark); font-size: .9rem; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
-    h1 { max-width: 12ch; margin: 16px 0 24px; font-size: clamp(3.2rem, 7vw, 6.8rem); line-height: .91; letter-spacing: -.075em; }
+    h1 { max-width: 12ch; margin: 16px 0 24px; font-size: clamp(3.2rem, 7vw, 6.8rem); line-height: normal; letter-spacing: -.075em; }
     .lede { max-width: 58ch; margin: 0 0 32px; color: var(--muted); font-size: clamp(1.05rem, 2vw, 1.3rem); }
     .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
     .actions-center { justify-content: center; }
@@ -55,7 +55,7 @@
     .visual figcaption { padding: 14px 18px; border-top: 1px solid var(--line); color: var(--muted); background: white; font-size: .95rem; }
     section { padding: 7vw 0; }
     .section-head { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; align-items: end; margin-bottom: 42px; }
-    h2 { margin: 0; font-size: clamp(2.2rem, 5vw, 4.4rem); line-height: 1; letter-spacing: -.055em; }
+    h2 { margin: 0; font-size: clamp(2.2rem, 5vw, 4.4rem); line-height: normal; letter-spacing: -.055em; }
     .section-head p { margin: 0; color: var(--muted); }
     .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
     .card { padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,.66); }
@@ -93,9 +93,9 @@
     <header>
       <a class="brand" href="#main" aria-label="Code Factory home"><span class="mark">CF</span> Code Factory</a>
       <nav aria-label="Primary navigation">
-        <a href="#proof">How it works</a>
+        <a href="#tour">Product tour</a>
         <a href="https://github.com/zrk222/code-factory">GitHub source</a>
-        <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Start free with pip</a>
+        <a class="button" href="https://plugins.jetbrains.com/plugin/33009-factoryline">Install free in JetBrains</a>
       </nav>
     </header>
   </div>
@@ -104,22 +104,23 @@
     <div class="shell hero">
       <div>
         <div class="eyebrow">Open source · Local first · Evidence backed</div>
-        <h1>Prove your next change across CLI and 8 IDEs.</h1>
+        <h1>Describe the outcome. See what is proved.</h1>
         <p class="lede">Install one local developer CLI. Turn specifications, tests, policies, and signed receipts into a reviewable workflow—then deliberately sabotage the gates to prove they reject bad builds.</p>
         <div class="actions">
-          <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Start free with pip</a>
+          <a class="button primary" href="https://plugins.jetbrains.com/plugin/33009-factoryline">Install free in JetBrains</a>
+          <a class="button" href="https://pypi.org/project/factoryline-code-factory/">Start free with pip</a>
           <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.24.0">Review verified release</a>
         </div>
         <div class="trust" id="release-proof" aria-label="Verified release facts">
           <span>✓ Verified release checks</span>
-          <span>✓ 296 Python tests passed</span>
+          <span>✓ Release test suite passed</span>
           <span>✓ 8-IDE compatibility matrix</span>
           <span>✓ No source upload</span>
         </div>
       </div>
       <figure class="visual">
-        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/factory-studio-control-room-1080.png" alt="Exact Factory Studio product screenshot showing the local dashboard, approval inbox, proof timeline, and authority boundary.">
-        <figcaption>Exact product screenshot · local dashboard · terminal quickstart · public demo</figcaption>
+        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" alt="Actual Factory Studio showing the outcome-first MVP path and explicit local-only authority boundary.">
+        <figcaption>Actual Factory Studio product capture · outcome-first MVP · local-only boundary</figcaption>
       </figure>
     </div>
 
@@ -134,6 +135,20 @@
           <article class="card"><span>02 · Challenge</span><h3>Sabotage the gates</h3><p>Delete, invert, and corrupt critical controls. A surviving mutation blocks the claim.</p></article>
           <article class="card"><span>03 · Route</span><h3>Choose models under rails</h3><p>Select provider and model references by IDE, quality floor, budget, and cache continuity without storing keys.</p></article>
           <article class="card"><span>04 · Ship</span><h3>Carry the evidence</h3><p>Hash-link receipts and release artifacts so reviewers can reproduce the decision.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="tour">
+      <div class="shell">
+        <div class="section-head">
+          <h2>From first MVP to the exact proof path.</h2>
+          <p>These are real local product captures, not concept art or a simulated IDE. The Marketplace media set remains IDE-native and review-gated.</p>
+        </div>
+        <div class="gallery">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" alt="Factory Studio showing the outcome-first MVP and professional workflow tabs.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-studio-1280x800.png" alt="Factory Studio Graph Ops showing local graph lanes, proof counts, and a fact-derived next action.">
+          <article class="card"><span>Two-minute start</span><h3>Run First Proof</h3><p>Install FactoryLine, confirm the local workspace, then create a contained MVP. The exact listing copy and capture brief are public in the Marketplace Acquisition Kit.</p><p><a href="https://github.com/zrk222/code-factory/blob/main/docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md">Open the kit →</a></p></article>
         </div>
       </div>
     </section>
@@ -181,15 +196,30 @@ factory proofs plan proofs.json --changed src/app.py \
     <section>
       <div class="shell proof">
         <div>
-          <div class="eyebrow">60-second first run</div>
-          <h2>Start locally. See the gap immediately.</h2>
-          <p>The coverage command intentionally exits nonzero when a generated application has requirements without meaningful tests. The scaffold is starting state, not a readiness claim.</p>
+          <div class="eyebrow">Two-minute first run</div>
+          <h2>Start locally. See the next proof gap immediately.</h2>
+          <p>Create a contained MVP, then let Graph Ops reveal the requirement or receipt that needs evidence. A starter is useful starting state, not a readiness claim.</p>
           <a class="button" href="https://github.com/zrk222/code-factory/releases/download/v0.23.2/code-factory-quickstart-v0171.mp4">Watch the shipped UI walkthrough</a>
         </div>
         <pre><code>pip install factoryline-code-factory==0.24.0
-factory create "Build an approval tracker" \
-  --target web --out approval-tracker
-factory coverage --root approval-tracker --json</code></pre>
+factory mvp "Build an approval tracker" --root .
+factory studio --root .\my-mvp
+# Open Graph Ops in the local Studio</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Launch terms</div>
+          <h2>Free through 2026. Clear before the paid change.</h2>
+          <p>All features are free through December 31, 2026. A $4.95 USD monthly Marketplace price is planned for January 1, 2027, subject to JetBrains paid-plugin approval and a planned 30-day trial. No checkout is live; total price, taxes, fees, and billing terms must be shown before any approved purchase.</p>
+        </div>
+        <pre><code>Observed Marketplace downloads: 46
+Conversion rate: unavailable without Marketplace views
+Causal uplift: unavailable without attribution
+
+Never substitute CI or repository traffic for installs.</code></pre>
       </div>
     </section>
 
@@ -212,7 +242,8 @@ factory coverage --root approval-tracker --json</code></pre>
       <div class="shell">
         <h2>Make the next change carry its own proof.</h2>
         <div class="actions actions-center">
-          <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Start free with pip</a>
+          <a class="button" href="https://plugins.jetbrains.com/plugin/33009-factoryline">Install free in JetBrains</a>
+          <a class="button" href="https://pypi.org/project/factoryline-code-factory/">Start free with pip</a>
           <a class="button" href="https://doi.org/10.5281/zenodo.21381405">Review the permanent archive</a>
         </div>
       </div>

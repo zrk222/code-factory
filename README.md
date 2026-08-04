@@ -73,6 +73,34 @@ Studio capture. Its focus frames point to the shipped Product Graph, value
 slice, approval, proof, and Meter v2 panels; it does not substitute a mock
 dashboard for the product UI.
 
+## A two-minute JetBrains trial
+
+Install [FactoryLine AI Proof from JetBrains Marketplace](https://plugins.jetbrains.com/plugin/33009-factoryline),
+then open **Tools | FactoryLine | Run First Proof** and confirm the local workspace.
+The first action runs the local setup check only; you can decline it, and the
+plugin never uploads the workspace, stores keys, or decides a release is ready.
+
+To make the path tangible, create a contained MVP and inspect its proof graph:
+
+```powershell
+pip install factoryline-code-factory==0.24.0
+factory mvp "Build an approval tracker" --root .
+factory studio --root .\my-mvp
+```
+
+Open **Graph Ops** in the local Studio. It shows the requirements, value slices,
+missions, proofs, gates, and one fact-derived next action without executing work.
+
+<p align="center">
+  <img alt="Actual Factory Studio showing the outcome-first MVP path and explicit local-only authority boundary." src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" width="49%">
+  <img alt="Actual Factory Studio Graph Ops view showing local Product, requirement, slice, and mission nodes plus a fact-derived next action." src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-studio-1280x800.png" width="49%">
+</p>
+
+These are real Factory Studio product captures, not JetBrains IDE screenshots.
+The [Marketplace Acquisition Kit](docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md)
+contains the approved listing copy, IDE-native media brief, and observed-only
+download measurement protocol.
+
 ## Concept illustrations: how the proof line works
 
 The following concept illustrations explain the workflow; they are not UI
@@ -307,6 +335,7 @@ release decision.
   JetBrains approval, with a planned 30-day trial. See the
   [2027 monetization runbook](docs/JETBRAINS_MONETIZATION_2027.md),
   [FactoryLine for JetBrains IDEs](docs/INTELLIJ.md), the
+  [Marketplace acquisition kit](docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md),
   [Marketplace release runbook](docs/JETBRAINS_MARKETPLACE.md), and the
   [control-room boundary](docs/JETBRAINS_CONTROL_ROOM.md).
 

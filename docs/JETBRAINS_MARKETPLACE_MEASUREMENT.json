@@ -1,0 +1,15 @@
+{
+  "schema": "factory.jetbrains-marketplace-baseline.v1",
+  "recorded_at": "2026-08-04T05:00:00Z",
+  "source": "https://plugins.jetbrains.com/api/plugins/33009",
+  "plugin_id": 33009,
+  "downloads": 46,
+  "listed_version": "0.7.1",
+  "listing_status": "MARKETPLACE_UPDATE_PENDING",
+  "measurement_boundary": {
+    "download_delta": "publicly observable",
+    "conversion_rate": "unavailable_without_Marketplace_impressions_or_page_views",
+    "causal_uplift": "unavailable_without_attribution_or_a_controlled_experiment",
+    "productivity_or_savings": "not a_Marketplace_download_metric"
+  }
+}
