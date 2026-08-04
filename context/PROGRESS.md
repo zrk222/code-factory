@@ -142,3 +142,15 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-04 02:22] GATE plan graph-ops-visual-v1 approver=human tasks=14 sha=f69b2079746a1ec6
 - [2026-08-04 02:23] GATE spec graph-ops-visual-v1 approver=human strict=True sha=ceb4c0dc63f14afe
 - [2026-08-04 02:23] GATE plan graph-ops-visual-v1 approver=human tasks=14 sha=ceb4c0dc63f14afe
+- [2026-08-04 06:13] GATE spec mcp-mermaid-v1 approver=human strict=True sha=95af0422a6a6834a
+- [2026-08-04 06:13] GATE plan mcp-mermaid-v1 approver=human tasks=7 sha=95af0422a6a6834a
+- [2026-08-04 06:14] GATE spec mcp-mermaid-v1 approver=human strict=True sha=21b2cafd006057fa
+- [2026-08-04 06:14] GATE plan mcp-mermaid-v1 approver=human tasks=7 sha=21b2cafd006057fa
+- [2026-08-04 06:15] GATE spec mcp-mermaid-v1 approver=human strict=True sha=1a1fdc25888d5582
+- [2026-08-04 06:15] GATE plan mcp-mermaid-v1 approver=human tasks=7 sha=1a1fdc25888d5582
+- [2026-08-04 06:15] GATE spec mcp-mermaid-v1 approver=human strict=True sha=7e477c293e6e500a
+- [2026-08-04 06:15] GATE plan mcp-mermaid-v1 approver=human tasks=7 sha=7e477c293e6e500a
+- [2026-08-04 06:30] GATE spec mcp-mermaid-v1 approver=human strict=True sha=86a7c9706fbf3694
+- [2026-08-04 06:31] GATE plan mcp-mermaid-v1 approver=human tasks=9 sha=86a7c9706fbf3694
+- [2026-08-04 06:31] GATE spec mcp-mermaid-v1 approver=human strict=True sha=86a7c9706fbf3694
+- [2026-08-04 06:39] GATE plan mcp-mermaid-v1 approver=human tasks=9 sha=86a7c9706fbf3694

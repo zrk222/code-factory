@@ -51,6 +51,26 @@ New to Code Factory? Start with the outcome-first `factory mvp "..."` command,
 then graduate through proof, Graph Ops, team review, and enterprise controls
 without switching to a different workflow. See [Start Here](docs/START_HERE.md).
 
+## Local MCP inspection and output maps
+
+Agents can consume the same deterministic Graph Ops facts through the
+local-only stdio server—without remote transport or authority to execute,
+approve, publish, deploy, sign, message, access credentials, or grant a
+connector.
+
+```powershell
+factory mcp status --root . --json
+factory mcp serve --root .
+```
+
+Every `factory create`, `factory mvp`, and `factory app` output now includes
+`docs/CODE_FACTORY_OUTPUT_MAP.md`: a deterministic Mermaid inventory of the
+files produced, its source-digest prefix, and the blocked promotion boundary.
+It helps a new user see what was made and gives an experienced reviewer a quick
+artifact map; it never claims the starter is production-ready. See the
+[MCP and output-map contract](docs/MCP.md) and the guarded
+[Open VSX release lane](docs/OPENVSX.md).
+
 ## New in 0.23.0: reuse proof, not side effects
 
 Code Factory can now record a completed read-only validation and route a future

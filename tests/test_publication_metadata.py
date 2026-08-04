@@ -92,6 +92,26 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
         assert install < audit < tests
 
 
+def test_openvsx_workflow_seals_a_tested_immutable_candidate_before_manual_publish():
+    workflow = (ROOT / ".github" / "workflows" / "openvsx.yml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "release_ref:" in workflow
+    assert "publish:" in workflow
+    assert "Require an immutable release tag" in workflow
+    assert "git tag --points-at HEAD" in workflow
+    assert "npm ci" in workflow
+    assert "npm run audit" in workflow
+    assert "npm test" in workflow
+    assert workflow.index("npm ci") < workflow.index("npm run audit") < workflow.index("npm test")
+    assert "sha256sum factoryline-vscode.vsix" in workflow
+    assert "environment: openvsx" in workflow
+    assert "if: inputs.publish == true" in workflow
+    assert "secrets.OPENVSX_TOKEN" in workflow
+    assert "ovsx@1.1.0 publish" in workflow
+    assert "OPENVSX_TOKEN is required" in workflow
+
+
 def test_marketplace_workflow_uses_current_gradle_action_and_scoped_secret():
     workflow = (ROOT / ".github" / "workflows" / "jetbrains-marketplace.yml").read_text(encoding="utf-8")
 

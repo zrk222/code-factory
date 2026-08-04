@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+from io import StringIO
+import json
+from pathlib import Path
+
+from factoryline.graph_ops import graph_ops_impact, graph_ops_snapshot
+from factoryline.mcp import MCP_PROTOCOL_VERSION, dispatch, mcp_status, serve_stdio
+
+
+def _content(response: dict[str, object]) -> dict[str, object]:
+    result = response["result"]
+    assert isinstance(result, dict)
+    content = result["content"]
+    assert isinstance(content, list)
+    return json.loads(content[0]["text"])
+
+
+def _files(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path):
+    status = mcp_status(tmp_path)
+
+    assert status["schema"] == "factory.mcp.status.v1"
+    assert status["marker"] == "FACTORY_MCP_LOCAL_READ_ONLY"
+    assert status["markers"] == ["FACTORY_MCP_LOCAL_READ_ONLY", "MCP_STDLIB_ONLY"]
+    assert status["transport"] == "stdio"
+    assert status["workspace_root"] == str(tmp_path.resolve())
+    assert status["tools"] == [
+        "factory.status",
+        "factory.graph_ops",
+        "factory.graph_impact",
+        "factory.next_action",
+    ]
+    assert status["resources"] == ["factory://status", "factory://graph"]
+    assert all(value is False for value in status["authority"].values())
+
+
+def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
+    before = _files(tmp_path)
+    initialized = dispatch({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": MCP_PROTOCOL_VERSION},
+    }, tmp_path)
+    assert initialized == {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "marker": "MCP_INITIALIZED",
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "serverInfo": {"name": "code-factory", "version": "0.24.1"},
+            "capabilities": {"tools": {}, "resources": {}},
+        },
+    }
+
+    inventory = dispatch({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, tmp_path)
+    assert inventory["result"]["marker"] == "FACTORY_MCP_TOOL_INVENTORY"
+    assert [tool["name"] for tool in inventory["result"]["tools"]] == mcp_status(tmp_path)["tools"]
+
+    graph = _content(dispatch({
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "factory.graph_ops"},
+    }, tmp_path))
+    assert graph == {"marker": "MCP_GRAPH_OPS_PARITY", "graph": graph_ops_snapshot(tmp_path)}
+
+    impact = _content(dispatch({
+        "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+        "params": {"name": "factory.graph_impact", "arguments": {"changed_paths": ["input.txt"]}},
+    }, tmp_path))
+    assert impact == {
+        "marker": "MCP_GRAPH_IMPACT_PARITY",
+        "impact": graph_ops_impact(tmp_path, ["input.txt"]),
+    }
+
+    next_action = _content(dispatch({
+        "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "factory.next_action"},
+    }, tmp_path))
+    snapshot = graph_ops_snapshot(tmp_path)
+    assert next_action == {
+        "marker": "MCP_GRAPH_OPS_PARITY",
+        "graph_sha256": snapshot["graph_sha256"],
+        "recommendation": snapshot["recommendation"],
+        "authority": snapshot["authority"],
+    }
+
+    resources = dispatch({"jsonrpc": "2.0", "id": 6, "method": "resources/list"}, tmp_path)
+    assert resources["result"]["marker"] == "MCP_RESOURCES_PARITY"
+    assert [item["uri"] for item in resources["result"]["resources"]] == mcp_status(tmp_path)["resources"]
+    resource = dispatch({
+        "jsonrpc": "2.0", "id": 7, "method": "resources/read", "params": {"uri": "factory://graph"},
+    }, tmp_path)
+    assert resource["result"]["marker"] == "MCP_RESOURCES_PARITY"
+    assert json.loads(resource["result"]["contents"][0]["text"]) == graph_ops_snapshot(tmp_path)
+    assert _files(tmp_path) == before
+
+
+def test_mcp_rejects_malformed_and_unsafe_requests_without_writing(tmp_path: Path):
+    before = _files(tmp_path)
+    requests = [
+        {"id": 1, "method": "tools/list"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "unknown"}},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+            "name": "factory.graph_impact", "arguments": {"changed_paths": ["../outside.txt"]},
+        }},
+        {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+            "name": "factory.graph_impact", "arguments": {"changed_paths": [str(tmp_path / "outside.txt")]},
+        }},
+    ]
+    for request in requests:
+        response = dispatch(request, tmp_path)
+        assert response["error"]["code"] == -32602
+        assert response["error"]["data"]["marker"] == "MCP_INVALID_PARAMS_REJECTED"
+
+    unknown_method = dispatch({"jsonrpc": "2.0", "id": 5, "method": "factory/nope"}, tmp_path)
+    assert unknown_method["error"]["code"] == -32601
+    assert unknown_method["error"]["data"]["marker"] == "MCP_UNKNOWN_METHOD_REJECTED"
+    missing_root = dispatch({"jsonrpc": "2.0", "id": 6, "method": "tools/list"}, tmp_path / "missing")
+    assert missing_root["error"]["code"] == -32602
+    assert missing_root["error"]["data"]["marker"] == "MCP_INVALID_PARAMS_REJECTED"
+    assert _files(tmp_path) == before
+
+
+def test_mcp_stdio_emits_only_newline_delimited_json_rpc(tmp_path: Path):
+    incoming = StringIO(
+        '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n'
+        'this is not json\n'
+        '{"jsonrpc":"2.0","method":"notifications/initialized"}\n'
+    )
+    outgoing = StringIO()
+
+    assert serve_stdio(tmp_path, input_stream=incoming, output_stream=outgoing) == 0
+    lines = outgoing.getvalue().splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["result"]["marker"] == "FACTORY_MCP_TOOL_INVENTORY"
+    assert json.loads(lines[1])["error"]["data"]["marker"] == "MCP_INVALID_PARAMS_REJECTED"

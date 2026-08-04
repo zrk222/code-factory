@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 import json
 import re
+
+from .output_map import write_output_map
 
 
 APP_SCHEMA = "factory.app_blueprint.v1"
@@ -528,12 +531,21 @@ export default defineConfig({ plugins: [react()] });
             "must_fail_on_stub": True,
         }]
     }, indent=2))
+    output_map = write_output_map(
+        out_dir,
+        name=blueprint.name,
+        source_sha256=sha256(prd_text.encode("utf-8")).hexdigest(),
+        status="compiled_blocked",
+    )
     paths = sorted(str(path.relative_to(out_dir)).replace("\\", "/") for path in out_dir.rglob("*") if path.is_file())
     return {
         "schema": "factory.app_scaffold.v1",
         "app": blueprint.name,
         "out_dir": str(out_dir),
         "files": paths,
+        "output_map": str(out_dir / str(output_map["path"])),
+        "output_map_sha256": output_map["sha256"],
+        "markers": ["APP_OUTPUT_MAP_WRITTEN"],
         "next_commands": [
             f"specline optimize-prd {out_dir / 'PRD.md'}",
             f"prestige brief {out_dir / 'PRD.md'} --purpose {blueprint.purpose}",

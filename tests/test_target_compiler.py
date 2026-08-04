@@ -30,6 +30,7 @@ def test_each_target_has_governance_proof_and_hashes(tmp_path: Path, target: str
     assert result["target_kind"] == target
     assert "SOURCE_EXACTLY_ONE" in result["markers"]
     assert "COMPILE_RECEIPT_BOUND" in result["markers"]
+    assert "OUTPUT_MERMAID_MAP_WRITTEN" in result["markers"]
     assert "TARGET_DEPLOYMENT_PROFILE_BOUND" in result["markers"]
     assert "TARGET_PACK_GENERATOR_DISPATCHED" in result["markers"]
     assert TARGETS[target]["generator_adapter"] in GENERATOR_ADAPTERS
@@ -48,6 +49,17 @@ def test_each_target_has_governance_proof_and_hashes(tmp_path: Path, target: str
     assert receipt["manifest_sha256"] == sha256((output / "target_manifest.json").read_bytes()).hexdigest()
     for relative, expected in receipt["files"].items():
         assert sha256((output / relative).read_bytes()).hexdigest() == expected
+    output_map = output / "docs" / "CODE_FACTORY_OUTPUT_MAP.md"
+    map_text = output_map.read_text(encoding="utf-8")
+    assert result["output_map"] == str(output_map)
+    assert result["output_map_sha256"] == sha256(output_map.read_bytes()).hexdigest()
+    assert receipt["output_map"] == {"path": "docs/CODE_FACTORY_OUTPUT_MAP.md", "sha256": result["output_map_sha256"]}
+    assert "CODE_FACTORY_OUTPUT_MAP_V1" in map_text
+    assert "flowchart TD" in map_text
+    assert "Promotion: **compiled_blocked**" in map_text
+    mapped = {line[3:-1] for line in map_text.splitlines() if line.startswith("- `") and line.endswith("`")}
+    assert mapped == set(result["files"])
+    assert ".factory/target-compile-receipt.json" in mapped
 
     assert (output / f"review-{target}.ssat.yaml").is_file()
     assert (output / "smoke" / f"review-{target}.json").is_file()

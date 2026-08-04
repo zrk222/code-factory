@@ -1,4 +1,5 @@
 """Tests for the factoryline connector — Lego assembly + honest metering."""
+from hashlib import sha256
 import json
 from pathlib import Path
 from factoryline.contract import ensure_layout, LAYOUT, Receipt, Meter, MODULES, STAGES
@@ -38,6 +39,8 @@ def test_cli_mvp_builds_one_contained_web_starter_with_a_proof_path(tmp_path, ca
     assert payload["target_kind"] == "web"
     assert Path(payload["out_dir"]) == tmp_path / "my-mvp"
     assert (tmp_path / "my-mvp" / "app_blueprint.json").is_file()
+    assert Path(payload["output_map"]) == tmp_path / "my-mvp" / "docs" / "CODE_FACTORY_OUTPUT_MAP.md"
+    assert Path(payload["output_map"]).is_file()
     assert payload["next_proof_commands"]
     assert all(value is False for value in payload["authority"].values())
 
@@ -714,6 +717,15 @@ def test_app_builder_scaffolds_full_stack_repo(tmp_path):
     assert package["dependencies"]["next"] == "16.2.10"
     assert package["scripts"]["typecheck"] == "tsc --noEmit"
     assert package["overrides"]["postcss"] == "8.5.19"
+    output_map = tmp_path / "prior-auth" / "docs" / "CODE_FACTORY_OUTPUT_MAP.md"
+    assert result["output_map"] == str(output_map)
+    assert result["output_map_sha256"] == sha256(output_map.read_bytes()).hexdigest()
+    assert "APP_OUTPUT_MAP_WRITTEN" in result["markers"]
+    mapped = {
+        line[3:-1] for line in output_map.read_text(encoding="utf-8").splitlines()
+        if line.startswith("- `") and line.endswith("`")
+    }
+    assert mapped == set(result["files"])
 
 
 def test_app_builder_requirement_coverage_blocks_uncovered_product_reqs(tmp_path):

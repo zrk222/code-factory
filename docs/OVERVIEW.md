@@ -15,6 +15,10 @@ known, what is missing, and the one fact-derived next action.
 - **Makes delivery state legible.** Factory Studio, Graph Ops, and the VS Code
   and JetBrains integrations present requirements, gates, proofs, and blocked
   work in one local, read-only view.
+- **Gives agents bounded context.** The local stdio MCP server exposes the same
+  Graph Ops facts, impact, and next action without execution or external
+  authority. Every generated starter also includes a deterministic Mermaid
+  output map.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.
@@ -57,4 +61,5 @@ boundaries. Savings reports keep unknown token or cost values unknown; they do
 not invent productivity claims.
 
 Next: follow [Start Here](START_HERE.md), explore [Unified Graph Ops](GRAPH_OPS.md),
-or see the [Target Compiler and Factory Studio](TARGET_COMPILER.md).
+connect the [Local MCP inspection server](MCP.md), or see the
+[Target Compiler and Factory Studio](TARGET_COMPILER.md).
