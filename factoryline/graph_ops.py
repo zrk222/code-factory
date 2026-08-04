@@ -1,0 +1,492 @@
+"""Read-only, deterministic unification of local Factory graph artifacts.
+
+Graph Ops is deliberately an overlay.  It never becomes an authority source and
+never runs a gate: it links the existing Product Mission, proof reuse, and
+proof-trace receipts so a user can inspect the smallest fact-derived next step.
+"""
+from __future__ import annotations
+
+from collections import Counter
+from importlib import resources
+from pathlib import Path
+from typing import Any
+import hashlib
+import json
+
+from .product_missions import verify_mission_completion
+from .proof import verify_trace
+from .proof_reuse import verify_proof_receipt
+
+
+GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
+MAX_SOURCE_BYTES = 1_048_576
+MAX_NODES = 500
+MAX_EDGES = 1_000
+_AUTHORITY = {
+    "execution": False,
+    "approval": False,
+    "publication": False,
+    "deployment": False,
+    "signing": False,
+    "messaging": False,
+    "credential": False,
+    "connector": False,
+}
+
+
+def _canonical(value: object) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _sha(value: object) -> str:
+    return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _source(root: Path, path: Path) -> tuple[Path, str]:
+    """Resolve a source only when it remains a regular file below *root*."""
+    resolved = Path(path).resolve()
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("OUTSIDE_ROOT") from exc
+    if not resolved.is_file():
+        raise ValueError("NOT_A_FILE")
+    return resolved, relative.as_posix()
+
+
+def _record_error(errors: list[dict[str, str]], path: Path, code: str) -> None:
+    value = {"source": str(path).replace("\\", "/"), "code": code}
+    if value not in errors:
+        errors.append(value)
+
+
+def _load_json(root: Path, candidate: Path, errors: list[dict[str, str]]) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        path, relative = _source(root, candidate)
+    except ValueError as exc:
+        _record_error(errors, candidate, str(exc))
+        return None, None
+    try:
+        if path.stat().st_size > MAX_SOURCE_BYTES:
+            _record_error(errors, relative, "SOURCE_TOO_LARGE")
+            return None, relative
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        _record_error(errors, relative, "SOURCE_UNREADABLE")
+        return None, relative
+    if not isinstance(value, dict):
+        _record_error(errors, relative, "SOURCE_NOT_OBJECT")
+        return None, relative
+    return value, relative
+
+
+def _text(value: object, fallback: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()[:240]
+    return fallback
+
+
+def _node(state: dict[str, Any], *, node_id: str, kind: str, label: str,
+          source: str | None = None, status: str | None = None, facts: dict[str, Any] | None = None) -> bool:
+    if node_id in state["nodes"]:
+        return True
+    if len(state["nodes"]) >= MAX_NODES:
+        state["truncated"] = True
+        _record_error(state["errors"], ".factory", "NODE_LIMIT")
+        return False
+    value: dict[str, Any] = {"id": node_id, "kind": kind, "label": label}
+    if source:
+        value["source"] = source
+    if status:
+        value["status"] = status
+    if facts:
+        value["facts"] = facts
+    state["nodes"][node_id] = value
+    return True
+
+
+def _edge(state: dict[str, Any], source: str, target: str, relation: str) -> bool:
+    if source not in state["nodes"] or target not in state["nodes"]:
+        return False
+    key = (source, target, relation)
+    if key in state["edge_keys"]:
+        return True
+    if len(state["edges"]) >= MAX_EDGES:
+        state["truncated"] = True
+        _record_error(state["errors"], ".factory", "EDGE_LIMIT")
+        return False
+    state["edge_keys"].add(key)
+    state["edges"].append({"source": source, "target": target, "relation": relation})
+    return True
+
+
+def _artifact(state: dict[str, Any], root: Path, raw: object, *, source: str, role: str) -> str | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    candidate = Path(raw)
+    candidate = candidate if candidate.is_absolute() else root / candidate
+    try:
+        path, relative = _source(root, candidate)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.stat().st_size <= MAX_SOURCE_BYTES else None
+        if digest is None:
+            _record_error(state["errors"], relative, "SOURCE_TOO_LARGE")
+            return None
+    except (OSError, ValueError):
+        _record_error(state["errors"], candidate, "ARTIFACT_UNREADABLE")
+        return None
+    node_id = f"artifact:{_sha({'path': relative, 'sha256': digest})[:24]}"
+    _node(state, node_id=node_id, kind="artifact", label=relative, source=source, status="bound",
+          facts={"path": relative, "sha256": digest, "role": role})
+    return node_id
+
+
+def _append_product_graphs(state: dict[str, Any], root: Path) -> tuple[dict[tuple[str, str], str], dict[str, list[str]]]:
+    requirements: dict[tuple[str, str], str] = {}
+    slices: dict[str, list[str]] = {}
+    state["slice_plan_seen"] = False
+    state["slice_links_exact"] = True
+    product_root = root / ".factory" / "products"
+    for graph_path in sorted(product_root.glob("*/product_graph.json")):
+        graph, source = _load_json(root, graph_path, state["errors"])
+        if graph is None or source is None:
+            continue
+        project = _text(graph.get("project"), graph_path.parent.name)
+        product_id = f"product:{project}"
+        _node(state, node_id=product_id, kind="product", label=project, source=source, status=_text(graph.get("status"), "unknown"))
+        for entry in graph.get("requirements", []):
+            if not isinstance(entry, dict):
+                continue
+            requirement_id = _text(entry.get("id"), "requirement")
+            node_id = f"requirement:{project}:{requirement_id}"
+            _node(state, node_id=node_id, kind="requirement", label=requirement_id, source=source,
+                  status="unverified", facts={"statement": _text(entry.get("statement"), requirement_id)})
+            _edge(state, product_id, node_id, "declares")
+            requirements[(project, requirement_id)] = node_id
+
+        slices_path = graph_path.parent / "value_slices.json"
+        plan, plan_source = _load_json(root, slices_path, state["errors"]) if slices_path.exists() else (None, None)
+        if plan is None or plan_source is None:
+            continue
+        state["slice_plan_seen"] = True
+        planned_slices: list[tuple[dict[str, Any], str]] = []
+        for entry in plan.get("slices", []):
+            if not isinstance(entry, dict):
+                continue
+            slice_id = _text(entry.get("id"), "slice")
+            node_id = f"slice:{project}:{slice_id}"
+            _node(state, node_id=node_id, kind="slice", label=slice_id, source=plan_source,
+                  status=_text(entry.get("risk"), "unknown"), facts={"theme": _text(entry.get("theme"), "unknown")})
+            _edge(state, product_id, node_id, "plans")
+            slices.setdefault(slice_id, []).append(node_id)
+            planned_slices.append((entry, node_id))
+            for req_id in entry.get("requirement_ids", []):
+                requirement = requirements.get((project, str(req_id)))
+                if requirement:
+                    _edge(state, requirement, node_id, "assigned_to")
+        for entry, node_id in planned_slices:
+            for dependency in entry.get("depends_on", []):
+                for dependency_id in slices.get(str(dependency), []):
+                    _edge(state, dependency_id, node_id, "depends_on")
+        for requirement_id, requirement_node in (
+            (item["id"], requirements.get((project, item["id"])))
+            for item in graph.get("requirements", []) if isinstance(item, dict) and isinstance(item.get("id"), str)
+        ):
+            assigned = [edge for edge in state["edges"] if edge["source"] == requirement_node and edge["relation"] == "assigned_to"]
+            if requirement_node is None or len(assigned) != 1:
+                state["slice_links_exact"] = False
+                _record_error(state["errors"], plan_source, f"SLICE_ASSIGNMENT_{requirement_id}")
+        for entry, node_id in planned_slices:
+            for dependency in entry.get("depends_on", []):
+                expected = [(dependency_id, node_id, "depends_on") for dependency_id in slices.get(str(dependency), [])]
+                if len(expected) != 1 or expected[0] not in state["edge_keys"]:
+                    state["slice_links_exact"] = False
+                    _record_error(state["errors"], plan_source, f"SLICE_DEPENDENCY_{dependency}")
+    return requirements, slices
+
+
+def _append_missions(state: dict[str, Any], root: Path, requirements: dict[tuple[str, str], str],
+                     slices: dict[str, list[str]]) -> set[str]:
+    evidenced: set[str] = set()
+    mission_root = root / ".factory" / "missions"
+    for mission_path in sorted(mission_root.glob("*/mission.json")):
+        mission, source = _load_json(root, mission_path, state["errors"])
+        if mission is None or source is None:
+            continue
+        mission_id = _text(mission.get("id"), mission_path.parent.name)
+        node_id = f"mission:{mission_id}"
+        _node(state, node_id=node_id, kind="mission", label=mission_id, source=source,
+              status=_text(mission.get("approval_state"), _text(mission.get("status"), "unknown")))
+        slice_id = _text(mission.get("slice_id"), "")
+        for slice_node in slices.get(slice_id, []):
+            _edge(state, slice_node, node_id, "governs")
+
+        decision_path = mission_path.parent / "execution_decision.json"
+        if decision_path.exists():
+            decision, decision_source = _load_json(root, decision_path, state["errors"])
+            if decision is not None and decision_source is not None:
+                decision_id = f"approval:{mission_id}"
+                _node(state, node_id=decision_id, kind="approval", label=f"approval for {mission_id}", source=decision_source,
+                      status=_text(decision.get("decision"), "unknown"))
+                _edge(state, decision_id, node_id, "decides")
+
+        completion_path = mission_path.parent / "completion.json"
+        if completion_path.exists():
+            completion, completion_source = _load_json(root, completion_path, state["errors"])
+            verification: dict[str, Any] | None = None
+            if completion is not None:
+                try:
+                    verification = verify_mission_completion(completion_path)
+                except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                    verification = {"valid": False, "errors": ["completion verification failed"]}
+            if completion is not None and completion_source is not None:
+                completion_id = f"completion:{mission_id}"
+                status = "verified" if verification and verification.get("valid") is True else "invalid"
+                _node(state, node_id=completion_id, kind="completion", label=f"completion for {mission_id}", source=completion_source,
+                      status=status, facts={"errors": verification.get("errors", []) if verification else []})
+                _edge(state, node_id, completion_id, "completed_by")
+                if verification and verification.get("valid") is True:
+                    project = _text(mission.get("project"), "")
+                    for requirement_id in mission.get("slice", {}).get("requirement_ids", []):
+                        req_node = requirements.get((project, str(requirement_id)))
+                        if req_node:
+                            _edge(state, completion_id, req_node, "verifies")
+                            evidenced.add(req_node)
+    return evidenced
+
+
+def _append_proofs(state: dict[str, Any], root: Path) -> int:
+    stale = 0
+    proof_root = root / ".factory" / "proofs"
+    for receipt_path in sorted(proof_root.glob("*.json")):
+        receipt, source = _load_json(root, receipt_path, state["errors"])
+        if receipt is None or source is None:
+            continue
+        key = _text(receipt.get("proof_key"), receipt_path.stem)
+        try:
+            verification = verify_proof_receipt(root, receipt_path)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            verification = {"valid": False, "errors": ["proof verification failed"]}
+        status = "verified" if verification.get("valid") is True else "stale"
+        stale += status == "stale"
+        proof_id = f"proof:{key}"
+        _node(state, node_id=proof_id, kind="proof", label=_text(receipt.get("gate"), key), source=source,
+              status=status, facts={"proof_key": key, "errors": verification.get("errors", [])})
+        for role in ("inputs", "outputs"):
+            for item in receipt.get(role, []):
+                if not isinstance(item, dict):
+                    continue
+                artifact_id = _artifact(state, root, item.get("path"), source=source, role=role[:-1])
+                if artifact_id:
+                    _edge(state, artifact_id, proof_id, "input_to" if role == "inputs" else "validated_by")
+    return stale
+
+
+def _append_plans(state: dict[str, Any], root: Path) -> Counter[str]:
+    dispositions: Counter[str] = Counter()
+    for plan_path in sorted((root / ".factory" / "proof-plans").glob("*.json")):
+        plan, source = _load_json(root, plan_path, state["errors"])
+        if plan is None or source is None:
+            continue
+        for index, item in enumerate(plan.get("items", []), 1):
+            if not isinstance(item, dict):
+                continue
+            disposition = _text(item.get("disposition"), "UNKNOWN").upper()
+            dispositions[disposition] += 1
+            proof_key = _text(item.get("proof_key"), f"item-{index}")
+            gate_id = f"gate:{plan_path.stem}:{index}"
+            _node(state, node_id=gate_id, kind="gate", label=_text(item.get("gate"), proof_key), source=source,
+                  status=disposition, facts={"reason": _text(item.get("reason"), "not declared"), "proof_key": proof_key})
+            proof_id = f"proof:{proof_key}"
+            if proof_id in state["nodes"]:
+                _edge(state, gate_id, proof_id, "uses_proof")
+    return dispositions
+
+
+def _append_traces(state: dict[str, Any], root: Path) -> None:
+    for trace_path in sorted((root / ".factory" / "traces").glob("*.trace.json")):
+        trace, source = _load_json(root, trace_path, state["errors"])
+        if trace is None or source is None:
+            continue
+        try:
+            verification = verify_trace(trace_path, root=root)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            verification = {"valid": False, "errors": ["trace verification failed"]}
+        trace_id = f"trace:{_text(trace.get('feature'), trace_path.stem)}"
+        _node(state, node_id=trace_id, kind="trace", label=_text(trace.get("feature"), trace_path.stem), source=source,
+              status="verified" if verification.get("valid") is True else "invalid",
+              facts={"errors": verification.get("errors", [])})
+        for index, item in enumerate(trace.get("nodes", []), 1):
+            if not isinstance(item, dict):
+                continue
+            receipt_hash = _text(item.get("receipt_sha256"), f"receipt-{index}")
+            receipt_id = f"receipt:{receipt_hash[:24]}"
+            _node(state, node_id=receipt_id, kind="receipt", label=_text(item.get("receipt_path"), receipt_hash[:12]), source=source,
+                  status="verified" if verification.get("valid") is True else "unverified")
+            _edge(state, trace_id, receipt_id, "contains")
+            for artifact in item.get("artifacts", []):
+                if not isinstance(artifact, dict):
+                    continue
+                artifact_id = _artifact(state, root, artifact.get("path"), source=source, role=_text(artifact.get("kind"), "artifact"))
+                if artifact_id:
+                    _edge(state, receipt_id, artifact_id, "observes")
+
+
+def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
+    visible = nodes[:80]
+    allowed = {node["id"] for node in visible}
+    lines = ["flowchart LR"]
+    aliases = {node_id: f"N{index}" for index, node_id in enumerate(sorted(allowed), 1)}
+    for node in visible:
+        label = node["label"].replace('"', "'")[:80]
+        lines.append(f'    {aliases[node["id"]]}["{label}"]')
+    for edge in edges:
+        if edge["source"] in allowed and edge["target"] in allowed:
+            lines.append(f'    {aliases[edge["source"]]} -->|{edge["relation"]}| {aliases[edge["target"]]}')
+    return "\n".join(lines) + "\n"
+
+
+def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
+    if facts["node_count"] == 0:
+        return "initialize_graph", "No readable local Factory graph artifacts were found."
+    if facts["stale_proof_count"] > 0:
+        return "rerun_invalid_proof", "At least one recorded proof is stale."
+    if facts["blocked_gate_count"] > 0:
+        return "resolve_blocked_gate", "At least one declared proof gate is blocked."
+    if facts["run_gate_count"] > 0:
+        return "run_required_validation", "At least one declared proof gate requires validation."
+    if facts["unevidenced_requirement_count"] > 0:
+        return "collect_completion_evidence", "At least one declared requirement lacks a valid completion receipt."
+    return "review_verified_graph", "All currently represented requirements have valid completion evidence."
+
+
+def graph_ops_snapshot(root: Path) -> dict[str, Any]:
+    """Compile a bounded graph snapshot from existing local files without writes."""
+    workspace = Path(root).resolve()
+    state: dict[str, Any] = {
+        "nodes": {}, "edges": [], "edge_keys": set(), "errors": [], "truncated": False,
+    }
+    requirements, slices = _append_product_graphs(state, workspace)
+    evidenced = _append_missions(state, workspace, requirements, slices)
+    stale_proof_count = _append_proofs(state, workspace)
+    gates = _append_plans(state, workspace)
+    _append_traces(state, workspace)
+
+    nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
+    edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
+    requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
+    facts = {
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "stale_proof_count": stale_proof_count,
+        "blocked_gate_count": gates["BLOCK"],
+        "run_gate_count": gates["RUN"],
+        "unevidenced_requirement_count": sum(node not in evidenced for node in requirement_nodes),
+        "evidenced_requirement_count": sum(node in evidenced for node in requirement_nodes),
+    }
+    action, reason = _recommendation(facts)
+    complete = not state["errors"] and not state["truncated"]
+    markers = [
+        "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
+        "GRAPH_OPS_AUTHORITY_RETAINED",
+    ]
+    if state["slice_plan_seen"] and state["slice_links_exact"]:
+        markers.append("GRAPH_OPS_SLICE_LINKS_EXACT")
+    if any(node["kind"] == "mission" for node in nodes):
+        markers.append("GRAPH_OPS_MISSION_EVIDENCE_LINKED")
+    if any(node["kind"] == "proof" for node in nodes):
+        markers.append("GRAPH_OPS_PROOF_HASH_STATUS")
+    if any(node["kind"] in {"gate", "trace", "receipt"} for node in nodes):
+        markers.append("GRAPH_OPS_DECLARED_GATE_STATE")
+    if not complete:
+        markers.append("GRAPH_OPS_PARTIAL_RESULT")
+    core = {
+        "schema": GRAPH_OPS_SCHEMA,
+        "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
+        "markers": sorted(markers),
+        "complete": complete,
+        "authority": _AUTHORITY,
+        "nodes": nodes,
+        "edges": edges,
+        "facts": facts,
+        "recommendation": {"action": action, "reason": reason},
+        "source_errors": sorted(state["errors"], key=lambda item: (item["source"], item["code"])),
+    }
+    return {**core, "graph_sha256": _sha(core), "mermaid": _mermaid(nodes, edges)}
+
+
+def _changed_path(value: str) -> str:
+    path = str(value).replace("\\", "/").strip().lstrip("./").rstrip("/")
+    if not path or path.startswith("../") or "/../" in path:
+        raise ValueError("changed paths must be non-empty workspace-relative paths")
+    return path
+
+
+def graph_ops_impact(root: Path, changed_paths: list[str]) -> dict[str, Any]:
+    """Return exact input-edge impact facts without running or skipping validation."""
+    changed = sorted({_changed_path(value) for value in changed_paths})
+    if not changed:
+        raise ValueError("at least one changed path is required")
+    snapshot = graph_ops_snapshot(root)
+    nodes = {node["id"]: node for node in snapshot["nodes"]}
+    inputs = {
+        edge["source"]: edge["target"]
+        for edge in snapshot["edges"]
+        if edge["relation"] == "input_to" and nodes.get(edge["source"], {}).get("kind") == "artifact"
+    }
+    gate_for_proof: dict[str, list[str]] = {}
+    for edge in snapshot["edges"]:
+        if edge["relation"] == "uses_proof":
+            gate_for_proof.setdefault(edge["target"], []).append(edge["source"])
+
+    matched: dict[str, dict[str, Any]] = {}
+    for artifact_id, proof_id in inputs.items():
+        artifact = nodes[artifact_id]
+        artifact_path = str(artifact.get("facts", {}).get("path", artifact.get("label", "")))
+        path_matches = [path for path in changed if artifact_path == path or artifact_path.startswith(path + "/")]
+        if not path_matches:
+            continue
+        proof = nodes.get(proof_id)
+        if proof is None:
+            continue
+        entry = matched.setdefault(proof_id, {
+            "proof_id": proof_id,
+            "label": proof["label"],
+            "status": proof.get("status", "unknown"),
+            "input_artifacts": [],
+            "gates": [],
+        })
+        entry["input_artifacts"].append({"path": artifact_path, "changed_paths": path_matches})
+    for proof_id, entry in matched.items():
+        entry["input_artifacts"].sort(key=lambda item: item["path"])
+        entry["gates"] = sorted({
+            nodes[gate_id]["label"]
+            for gate_id in gate_for_proof.get(proof_id, [])
+            if gate_id in nodes
+        })
+    matched_rows = [matched[key] for key in sorted(matched)]
+    stale = [item for item in matched_rows if item["status"] == "stale"]
+    verified_current = [item for item in matched_rows if item["status"] == "verified"]
+    core = {
+        "schema": "factory.graph-impact.v1",
+        "marker": "GRAPH_OPS_IMPACT_EXACT",
+        "markers": ["GRAPH_OPS_IMPACT_EXACT", "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_AUTHORITY_RETAINED"],
+        "changed_paths": changed,
+        "matched_proofs": matched_rows,
+        "verified_current_proofs": verified_current,
+        "rerun_proofs": stale,
+        "unmatched_changed_paths": [
+            path for path in changed
+            if not any(path in artifact["changed_paths"] for item in matched_rows for artifact in item["input_artifacts"])
+        ],
+        "authority": _AUTHORITY,
+        "graph_sha256": snapshot["graph_sha256"],
+        "complete": snapshot["complete"],
+        "source_errors": snapshot["source_errors"],
+    }
+    return {**core, "impact_sha256": _sha(core)}
+
+
+def graph_ops_html(token: str) -> str:
+    """Load the local visual template and inject only the current session token."""
+    template = resources.files("factoryline").joinpath("graph_ops.html").read_text(encoding="utf-8")
+    return template.replace("__FACTORY_STUDIO_TOKEN__", json.dumps(token))

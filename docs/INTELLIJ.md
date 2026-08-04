@@ -14,7 +14,8 @@ local result. The remaining explicit actions are:
 7. Open Local Meter and Paired Savings Report.
 8. Open Local Factory Studio.
 9. Open Product Missions.
-10. Mission Graph & Provider Operations.
+10. Open Unified Graph Ops.
+11. Mission Graph & Provider Operations.
 
 `REQ-*`, `FR-*`, and `NFR-*` text also receives a read-only FactoryLine gutter
 marker. Selecting it opens the first deterministic local proof match under
@@ -37,14 +38,20 @@ same workspace confirmation. The tool window distinguishes measured wall time
 from token values that a module has not reported.
 
 **Open Local Factory Studio** starts `factory studio --root <project> --port 0
---no-browser` after an explicit confirmation. The plugin accepts only a literal
-`127.0.0.1` URL, opens the live dashboard plus target and deployment-route
-selectors with the JetBrains browser API, and terminates the child process when
-the project closes.
+--no-browser` after an explicit confirmation. It opens the outcome-first
+**Instant MVP** path by default; the Professional workflow tab retains Graph
+Ops, Product Missions, proof reuse, policy, and enterprise controls. The plugin
+accepts only a literal `127.0.0.1` URL and terminates the child process when the
+project closes.
 
 **Open Product Missions** uses the same confirmation, process lifecycle, and
 literal-loopback checks, then opens Studio at `?mode=product`. Compiled missions
 remain supervised and require separate execution and promotion approvals.
+
+**Open Unified Graph Ops** uses the same loopback boundary and opens
+`/graph-ops`. It visualizes the currently readable local Product, mission,
+completion, proof, gate, trace, receipt, and artifact links; its one suggested
+next action is fact-derived and it runs no validation or release operation.
 
 **Mission Graph & Provider Operations** exposes initialization, status,
 history, verification, Mermaid export, guarded event recording, and provider
@@ -62,7 +69,7 @@ candidate files.
 1. Install FactoryLine:
 
    ```powershell
-   pip install factoryline-code-factory==0.23.2
+   pip install factoryline-code-factory==0.24.0
    ```
 
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for

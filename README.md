@@ -8,6 +8,31 @@
 > One intent, seven software targets, and proof that the gates reject
 > deliberately sabotaged builds.
 
+## New in 0.24.0: Unified Graph Ops
+
+Graph Ops turns the local Product Graph, value slices, mission and approval
+receipts, completion evidence, content-addressed proofs, proof plans, traces,
+stage receipts, and bound artifacts into one deterministic visual map. It
+shows the exact path that exists, keeps unknowns visible, and chooses one
+fact-derived next action without running a command.
+
+```powershell
+factory graph ops --root . --json
+factory graph ops --root . --mermaid
+factory graph impact --root . --changed src/app.py --json
+factory studio --root .
+```
+
+Open Studio's **Graph Ops** link or visit `/graph-ops` on its loopback URL to
+follow the graph in accessible lanes. The surface is read-only: it cannot
+execute, approve, publish, deploy, sign, message, access credentials, or grant
+connectors. Requirements count as evidenced only when a valid completion
+receipt verifies them. See [Unified Graph Ops](docs/GRAPH_OPS.md).
+
+New to Code Factory? Start with the outcome-first `factory mvp "..."` command,
+then graduate through proof, Graph Ops, team review, and enterprise controls
+without switching to a different workflow. See [Start Here](docs/START_HERE.md).
+
 ## New in 0.23.0: reuse proof, not side effects
 
 Code Factory can now record a completed read-only validation and route a future
@@ -65,7 +90,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.23.2
+pip install factoryline-code-factory==0.24.0
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -417,7 +442,7 @@ an instruction or edit the Architecture Opinion Dock. See
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.23.2 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
+pip install factoryline-code-factory==0.24.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
 factory doctor --json
 ```
 

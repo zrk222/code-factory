@@ -7,7 +7,7 @@ Marketplace release is planned for **January 1, 2027** at exactly **USD 4.95 per
 month**. The monthly price is owner-approved. It is not the current Marketplace
 price and must not be shown as active before JetBrains approves the paid release.
 
-The launch model is **paid**, not freemium. Version `0.7.2` remains the final
+The launch model is **paid**, not freemium. Version `0.8.0` remains the current
 planned free Marketplace release. Paid version `2027.1.0` requires either an
 active 30-day trial or a valid Marketplace license. The repository continues
 under `MIT OR Apache-2.0`; users may inspect and build the source themselves.
@@ -24,7 +24,7 @@ Use this text on the Marketplace listing, README, release notes, and upgrade FAQ
 > **Free through December 31, 2026.** FactoryLine AI Proof becomes a paid
 > JetBrains Marketplace plugin on January 1, 2027 at **$4.95 USD per month**,
 > subject to Marketplace approval. New users will receive a planned 30-day trial.
-> Version 0.7.2 and the open-source repository remain available; the 2027.1.0
+> Version 0.8.0 and the open-source repository remain available; the 2027.1.0
 > Marketplace update requires a valid trial or paid license. This change adds no
 > telemetry, source upload, credential storage, signing authority, or automatic
 > release authority.
@@ -54,7 +54,7 @@ The Product Code is difficult to change after sales begin. Confirm
 
 ## What customers keep
 
-- All functionality shipped in free version `0.7.2` remains usable under the
+- All functionality shipped in free version `0.8.0` remains usable under the
   terms that applied to that artifact.
 - The public source remains available under the repository license.
 - Local-only execution, explicit workspace confirmation, output redaction, and
@@ -119,7 +119,7 @@ two-business-day review window, send the prepared evidence below to
 ### Now through September 30, 2026
 
 - Clear the current unapproved listing update.
-- Publish 0.7.2 as the final free activation release only after clearance.
+- Publish 0.8.0 as the current free activation release only after clearance.
 - Replace concept art with real IDE screenshots and record the new baseline.
 - Keep the $4.95 notice visible.
 
@@ -193,7 +193,7 @@ dated evidence reference:
 - Before public approval: withdraw or correct the draft through the vendor
   dashboard; do not retag an immutable release.
 - After approval but before sales: contact Marketplace Support for payment-model
-  correction and keep 0.7.2 installation instructions available.
+  correction and keep 0.8.0 installation instructions available.
 - After sales begin: do not remove paid access or alter Product Code unilaterally.
   Coordinate any rollback, refund, or entitlement repair with JetBrains and
   publish a customer notice.

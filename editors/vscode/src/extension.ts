@@ -248,13 +248,19 @@ async function openSavings(): Promise<void> {
   }
 }
 
-async function openFactoryStudio(productMode = false): Promise<void> {
+type StudioView = "studio" | "product" | "graph";
+
+async function openFactoryStudio(view: StudioView = "studio"): Promise<void> {
+  const productMode = view === "product";
+  const graphMode = view === "graph";
+  const title = graphMode ? "Open Graph Ops" : productMode ? "Open Product Missions" : "Start Factory Studio";
+  const route = (url: string): string => graphMode ? `${url}graph-ops` : productMode ? `${url}?mode=product` : url;
   const root = requireTrustedWorkspace();
   if (!root) {
     return;
   }
   const confirmed = await vscode.window.showWarningMessage(
-    `${productMode ? "Open Product Missions" : "Start Factory Studio"} on loopback for this workspace? Local artifacts may be created, but this grants no execute, merge, deploy, publish, credential, connector, or external-message authority.`,
+    `${title} on loopback for this workspace? Graph Ops only inspects local artifacts; Studio grants no execute, merge, deploy, publish, credential, connector, or external-message authority.`,
     { modal: true },
     "Start local Studio",
   );
@@ -265,9 +271,12 @@ async function openFactoryStudio(productMode = false): Promise<void> {
   if (productMode) {
     output.appendLine("marker: EDITOR_PRODUCT_MISSION_CONFIRMED");
   }
+  if (graphMode) {
+    output.appendLine("marker: EDITOR_GRAPH_OPS_CONFIRMED");
+  }
   if (studioProcess && studioProcess.exitCode === null) {
     if (studioUrl) {
-      await vscode.env.openExternal(vscode.Uri.parse(productMode ? `${studioUrl}?mode=product` : studioUrl));
+      await vscode.env.openExternal(vscode.Uri.parse(route(studioUrl)));
     } else {
       void vscode.window.showInformationMessage("Factory Studio is still starting. See the FactoryLine output channel.");
     }
@@ -281,6 +290,9 @@ async function openFactoryStudio(productMode = false): Promise<void> {
   output.appendLine("marker: EDITOR_TRUST_CONFIRMED");
   if (productMode) {
     output.appendLine("marker: EDITOR_PRODUCT_MISSION_CONFIRMED");
+  }
+  if (graphMode) {
+    output.appendLine("marker: EDITOR_GRAPH_OPS_CONFIRMED");
   }
   output.appendLine(`$ ${command} studio --root <workspace> --port 0 --no-browser`);
   output.show(true);
@@ -301,7 +313,7 @@ async function openFactoryStudio(productMode = false): Promise<void> {
     if (!studioUrl && parsed) {
       studioUrl = parsed;
       clearTimeout(timeout);
-      const opened = await vscode.env.openExternal(vscode.Uri.parse(productMode ? `${parsed}?mode=product` : parsed));
+      const opened = await vscode.env.openExternal(vscode.Uri.parse(route(parsed)));
       if (!opened) {
         void vscode.window.showWarningMessage(`Factory Studio is running at ${parsed}`);
       }
@@ -333,8 +345,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("factoryline.openMeter", openMeter),
     vscode.commands.registerCommand("factoryline.openSavings", openSavings),
     vscode.commands.registerCommand("factoryline.openLatestReceipt", openLatestReceipt),
-    vscode.commands.registerCommand("factoryline.openStudio", () => openFactoryStudio(false)),
-    vscode.commands.registerCommand("factoryline.openProductMissions", () => openFactoryStudio(true)),
+    vscode.commands.registerCommand("factoryline.openStudio", () => openFactoryStudio()),
+    vscode.commands.registerCommand("factoryline.openProductMissions", () => openFactoryStudio("product")),
+    vscode.commands.registerCommand("factoryline.openGraphOps", () => openFactoryStudio("graph")),
     vscode.commands.registerCommand("factoryline.openRequirementEvidence", openRequirementEvidence),
     { dispose: () => { if (studioProcess?.exitCode === null) { studioProcess.kill(); } } },
   );

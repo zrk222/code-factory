@@ -16,6 +16,7 @@ newest local JSON receipt in a tool window.
 - `FactoryLine: Check Latest Receipt Signature State` runs `factory receipt status` on that receipt. It reports signature presence or `UNSIGNED`; it does not claim signer identity.
 - `FactoryLine: Open Local Factory Studio` opens the confirmed loopback target compiler.
 - `FactoryLine: Open Product Missions` opens Studio in deterministic PRD-to-mission mode.
+- `FactoryLine: Open Unified Graph Ops` opens the bounded, read-only local evidence map.
 - `FactoryLine: Mission Graph & Provider Operations` initializes and inspects
   durable graphs, verifies receipt chains, exports Mermaid, records guarded
   events, and routes a JetBrains-selected secret-free BYOK policy.
@@ -36,7 +37,7 @@ untrusted/missing receipt into a green state.
 
 ## Install
 
-1. Install `factoryline-code-factory==0.23.2` into the Python environment that
+1. Install `factoryline-code-factory==0.24.0` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the

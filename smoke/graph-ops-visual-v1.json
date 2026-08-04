@@ -1,0 +1,28 @@
+{
+  "checks": [
+    {
+      "name": "graph_ops_paths_are_read_only_and_exact",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_graph_ops.py', 'tests/test_studio.py', 'tests/test_factoryline.py']) == 0\n",
+      "covers": [
+        "GRAPH_OPS_UNIFIED_READ_ONLY",
+        "GRAPH_OPS_TYPED_LOCAL_NODES",
+        "GRAPH_OPS_SLICE_LINKS_EXACT",
+        "GRAPH_OPS_MISSION_EVIDENCE_LINKED",
+        "GRAPH_OPS_PROOF_HASH_STATUS",
+        "GRAPH_OPS_DECLARED_GATE_STATE",
+        "GRAPH_OPS_PARTIAL_RESULT",
+        "GRAPH_OPS_RECOMMENDATION_EXACT",
+        "GRAPH_OPS_AUTHORITY_RETAINED",
+        "GRAPH_OPS_CLI_READ_ONLY",
+        "GRAPH_OPS_STUDIO_AUTHENTICATED",
+        "GRAPH_OPS_VISUAL_ACCESSIBLE",
+        "GRAPH_OPS_TEXT_NODE_RENDERING",
+        "MVP_STARTER_CONTAINED",
+        "FACTORY_DUAL_TRACK_START",
+        "GRAPH_OPS_IMPACT_EXACT"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

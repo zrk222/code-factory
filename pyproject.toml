@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.23.2"
+version = "0.24.0"
 description = "A proof-first software factory with content-addressed proof reuse, exact savings receipts, durable missions, signed evidence, and supervised enterprise control."
 authors = [
   { name = "Richard Katz" },
@@ -69,4 +69,4 @@ factory = "factoryline.cli:main"
 packages = ["factoryline", "factoryline.builtin_packs"]
 
 [tool.setuptools.package-data]
-factoryline = ["builtin_packs/**/*", "hosted_console.html"]
+factoryline = ["builtin_packs/**/*", "hosted_console.html", "graph_ops.html"]

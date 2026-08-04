@@ -17,16 +17,18 @@
             <li><strong>Verify receipts:</strong> inspect local evidence before a release decision.</li>
             <li><strong>Measure real savings:</strong> compare paired time, token, and cost data without inferred values.</li>
             <li><strong>Run supervised workflows:</strong> assemble features, continue from safe boundaries, inspect durable mission graphs, and route secret-free BYOK policies.</li>
+            <li><strong>Follow the exact evidence path:</strong> Unified Graph Ops visualizes local requirements, slices, missions, approvals, completions, proofs, gates, traces, and artifacts without executing them.</li>
         </ul>
         <h3>Local by design</h3>
         <p>The plugin asks before running a command. It does not upload project files or receipts, store API keys, sign artifacts, or decide whether a release is ready.</p>
         <p>Works with IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip from the 2025.2 platform baseline.</p>
         <h3>Launch offer</h3>
-        <p>All features are free through December 31, 2026. FactoryLine AI Proof is planned to become a paid Marketplace plugin on January 1, 2027 at $4.95 USD per month, subject to JetBrains approval, with a planned 30-day trial. Version 0.7.2 and the open-source repository remain available. The payment change adds no telemetry, source upload, credential storage, signing authority, or automatic release authority.</p>
+        <p>All features are free through December 31, 2026. FactoryLine AI Proof is planned to become a paid Marketplace plugin on January 1, 2027 at $4.95 USD per month, subject to JetBrains approval, with a planned 30-day trial. Version 0.8.0 and the open-source repository remain available. The payment change adds no telemetry, source upload, credential storage, signing authority, or automatic release authority.</p>
         <p>Free and open source. <a href="https://github.com/zrk222/code-factory">Read the documentation or inspect the source</a>.</p>
     ]]></description>
     <change-notes><![CDATA[
         <ul>
+            <li>Add Unified Graph Ops: a local, read-only visual map with one fact-derived next action.</li>
             <li>Add Run First Proof for a zero-configuration local setup check.</li>
             <li>Clarify the Marketplace name, preview, getting-started flow, and privacy boundary.</li>
             <li>Keep the stable plugin ID and verified compatibility across eight JetBrains IDEs.</li>
@@ -85,6 +87,10 @@
                     class="app.factoryline.intellij.OpenProductMissionsAction"
                     text="Open Product Missions"
                     description="Compile a PRD into supervised, passport-bound value missions"/>
+            <action id="app.factoryline.intellij.openGraphOps"
+                    class="app.factoryline.intellij.OpenGraphOpsAction"
+                    text="Open Unified Graph Ops"
+                    description="Inspect the local evidence graph without executing or approving work"/>
             <action id="app.factoryline.intellij.missionOperations"
                     class="app.factoryline.intellij.MissionOperationsAction"
                     text="Mission Graph &amp; Provider Operations"

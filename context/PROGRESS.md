@@ -125,3 +125,20 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-03 13:31] GATE plan code-factory-agent-contract-v2 approver=human tasks=5 sha=e125d02c642add2b
 - [2026-08-03 13:44] GATE spec code-factory-agent-contract-v2 approver=human strict=True sha=e125d02c642add2b
 - [2026-08-03 13:44] GATE plan code-factory-agent-contract-v2 approver=human tasks=5 sha=e125d02c642add2b
+
+- [2026-08-04 01:49] GATE spec graph-ops-visual-v1 approver=human strict=True sha=633d0f69b2690f8b
+- [2026-08-04 01:49] GATE plan graph-ops-visual-v1 approver=human tasks=9 sha=633d0f69b2690f8b
+- [2026-08-04 01:50] GATE spec graph-ops-visual-v1 approver=human strict=True sha=74aca884d89e8376
+- [2026-08-04 01:50] GATE plan graph-ops-visual-v1 approver=human tasks=9 sha=74aca884d89e8376
+- [2026-08-04 01:53] GATE spec graph-ops-visual-v1 approver=human strict=True sha=bc621f603a2ad296
+- [2026-08-04 01:53] GATE plan graph-ops-visual-v1 approver=human tasks=9 sha=bc621f603a2ad296
+- [2026-08-04 01:53] GATE spec graph-ops-visual-v1 approver=human strict=True sha=7f8ec0f2a541ef6f
+- [2026-08-04 01:53] GATE plan graph-ops-visual-v1 approver=human tasks=9 sha=7f8ec0f2a541ef6f
+- [2026-08-04 02:07] GATE spec graph-ops-visual-v1 approver=human strict=True sha=9d007d18e1235c45
+- [2026-08-04 02:07] GATE plan graph-ops-visual-v1 approver=human tasks=13 sha=9d007d18e1235c45
+- [2026-08-04 02:15] GATE spec graph-ops-visual-v1 approver=human strict=True sha=f69b2079746a1ec6
+- [2026-08-04 02:15] GATE plan graph-ops-visual-v1 approver=human tasks=14 sha=f69b2079746a1ec6
+- [2026-08-04 02:22] GATE spec graph-ops-visual-v1 approver=human strict=True sha=f69b2079746a1ec6
+- [2026-08-04 02:22] GATE plan graph-ops-visual-v1 approver=human tasks=14 sha=f69b2079746a1ec6
+- [2026-08-04 02:23] GATE spec graph-ops-visual-v1 approver=human strict=True sha=ceb4c0dc63f14afe
+- [2026-08-04 02:23] GATE plan graph-ops-visual-v1 approver=human tasks=14 sha=ceb4c0dc63f14afe

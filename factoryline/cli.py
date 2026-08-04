@@ -3,8 +3,10 @@
     factory doctor            # which Lego pieces are installed + how to get the rest
     factory plan              # print the assembly pipeline (no execution)
     factory assemble <feat>   # run the chain for a feature (skips missing modules)
+    factory mvp <outcome>     # compile a contained local web MVP starter
     factory meter [--runs N --baseline T]   # real savings summary from your runs
     factory trace <feat>      # write a hash-linked proof-carrying PR trace
+    factory graph ops         # inspect the unified local Graph Ops result
     factory init <root>       # create the shared factory layout
 """
 from __future__ import annotations
@@ -69,6 +71,7 @@ from .migration import (
     verify_repository_context,
 )
 from .studio import StudioRequestError, serve_studio, studio_status
+from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .coverage import requirement_coverage
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
@@ -626,6 +629,17 @@ def main(argv=None) -> int:
     s.add_argument("--changed", action="append", default=[], help="changed path; repeat as needed")
     s.add_argument("--json", action="store_true")
 
+    s = sub.add_parser("graph", help="inspect bounded, read-only Factory graph views")
+    graph_sub = s.add_subparsers(required=True, dest="graph_cmd")
+    graph_ops = graph_sub.add_parser("ops", help="compile the unified local Graph Ops result without writes")
+    graph_ops.add_argument("--root", default=".")
+    graph_ops.add_argument("--json", action="store_true")
+    graph_ops.add_argument("--mermaid", action="store_true", help="print the bounded Mermaid projection")
+    graph_impact = graph_sub.add_parser("impact", help="map changed paths to explicit bound proof inputs without execution")
+    graph_impact.add_argument("--root", default=".")
+    graph_impact.add_argument("--changed", action="append", required=True, help="workspace-relative changed path; repeat as needed")
+    graph_impact.add_argument("--json", action="store_true")
+
     s = sub.add_parser("attest", help="export in-toto/SLSA-shaped proof statements for a trace")
     s.add_argument("trace")
     s.add_argument("--out-dir", default="dist/attestations")
@@ -737,6 +751,13 @@ def main(argv=None) -> int:
         help="deployment route id shown by `factory targets --json`; defaults to the local or preview route",
     )
     target.add_argument("--json", action="store_true")
+
+    mvp = sub.add_parser("mvp", help="turn one outcome into a contained local web MVP starter")
+    mvp.add_argument("outcome", help="plain-language outcome for the first MVP")
+    mvp.add_argument("--root", default=".", help="workspace that receives the new my-mvp directory")
+    mvp.add_argument("--name", help="optional product name; the output directory remains my-mvp")
+    mvp.add_argument("--purpose", default="auto", help="auto, developer, healthcare, fintech, marketplace, saas")
+    mvp.add_argument("--json", action="store_true")
 
     studio = sub.add_parser("studio", help="run the loopback-only local target builder")
     studio.add_argument("--root", default=".", help="directory beneath which Studio may create targets")
@@ -1605,6 +1626,93 @@ def main(argv=None) -> int:
                 print(f"{stage['module']}:{stage['stage']}")
                 for reason in stage["reasons"]:
                     print(f"  reason: {reason}")
+        return 0
+    if a.cmd == "mvp":
+        root = Path(a.root).resolve()
+        try:
+            result = create_target_from_prompt(
+                a.outcome,
+                target="web",
+                out_dir=root / "my-mvp",
+                name=a.name,
+                purpose=a.purpose,
+                trigger="manual",
+            )
+        except TargetCompileError as exc:
+            payload = {
+                "schema": "factory.mvp.error.v1",
+                "status": "failed",
+                "code": exc.code,
+                "marker": "MVP_STARTER_FAILED",
+                "message": exc.message,
+                "failure": exc.guidance,
+            }
+            print(json.dumps(payload, indent=2) if a.json else f"MVP starter failed: {exc.code}: {exc.message}", file=sys.stderr)
+            return 1
+        payload = {
+            "schema": "factory.mvp.v1",
+            "marker": "MVP_STARTER_CONTAINED",
+            "markers": sorted(set(result["markers"] + ["MVP_STARTER_CONTAINED", "MVP_PROOF_PATH_EXPLICIT"])),
+            "status": result["status"],
+            "out_dir": result["out_dir"],
+            "target_kind": result["target_kind"],
+            "name": result["name"],
+            "next_proof_commands": result["next_commands"],
+            "authority": {
+                "execution": False,
+                "approval": False,
+                "publication": False,
+                "deployment": False,
+                "signing": False,
+                "messaging": False,
+                "credential": False,
+                "connector": False,
+            },
+            "claims": result["claims"],
+        }
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("Your local MVP starter is ready.")
+            print(f"path       : {payload['out_dir']}")
+            print("next proof :")
+            for command in payload["next_proof_commands"]:
+                print(f"  {command}")
+            print("boundary   : deployment, publication, credentials, connectors, and messages remain unavailable")
+        return 0
+    if a.cmd == "graph":
+        if a.graph_cmd == "impact":
+            try:
+                payload = graph_ops_impact(Path(a.root), a.changed)
+            except ValueError as exc:
+                print(json.dumps({"schema": "factory.graph-impact.error.v1", "code": "CHANGED_PATH_INVALID", "message": str(exc)}, indent=2), file=sys.stderr)
+                return 2
+            if a.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print("factory graph impact (read-only)")
+                print("=" * 44)
+                print(f"matched proofs  : {len(payload['matched_proofs'])}")
+                print(f"rerun proofs    : {len(payload['rerun_proofs'])}")
+                print(f"verified current: {len(payload['verified_current_proofs'])}")
+                if payload["unmatched_changed_paths"]:
+                    print("unmatched paths : " + ", ".join(payload["unmatched_changed_paths"]))
+        else:
+            snapshot = graph_ops_snapshot(Path(a.root))
+            if a.mermaid:
+                print(snapshot["mermaid"])
+            else:
+                payload = {**snapshot, "cli_marker": "GRAPH_OPS_CLI_READ_ONLY"}
+                if a.json:
+                    print(json.dumps(payload, indent=2, sort_keys=True))
+                else:
+                    print("factory graph ops (read-only)")
+                    print("=" * 44)
+                    print(f"nodes       : {snapshot['facts']['node_count']}")
+                    print(f"edges       : {snapshot['facts']['edge_count']}")
+                    print(f"complete    : {snapshot['complete']}")
+                    print(f"next action : {snapshot['recommendation']['action']}")
+                    print(f"reason      : {snapshot['recommendation']['reason']}")
         return 0
     if a.cmd == "attest":
         outputs = export_attestations(load_trace(Path(a.trace)), out_dir=Path(a.out_dir))

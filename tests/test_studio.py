@@ -23,6 +23,19 @@ from factoryline.studio import (
 )
 
 
+def test_studio_dual_track_defaults_to_instant_mvp_and_keeps_pro_controls_visible():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("session-token")
+
+    assert "FACTORY_DUAL_TRACK_START" in page
+    assert "Instant MVP" in page
+    assert "Professional workflow" in page
+    assert "GRAPH_OPS_UNIFIED_READ_ONLY" in page
+    assert "else setMode('starter')" in page
+    assert "Build my MVP" in page
+
+
 def test_studio_assembly_uses_shared_continuation_and_preserves_authority(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "factoryline.studio.continue_assembly",
@@ -172,6 +185,25 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         response = connection.getresponse()
         assert response.status == 403
         response.read()
+
+        connection.request("GET", "/api/graph-ops")
+        response = connection.getresponse()
+        assert response.status == 403
+        response.read()
+
+        connection.request("GET", "/graph-ops")
+        response = connection.getresponse()
+        assert response.status == 200
+        page = response.read().decode("utf-8")
+        assert "GRAPH_OPS_VISUAL_ACCESSIBLE" in page
+        assert "session-token" not in page
+
+        connection.request("GET", "/api/graph-ops", headers={"X-Factory-Studio-Token": token})
+        response = connection.getresponse()
+        assert response.status == 200
+        graph_ops = json.loads(response.read())
+        assert graph_ops["schema"] == "factory.graph-ops.v1"
+        assert graph_ops["authority"]["publication"] is False
 
         savings_body = json.dumps({
             "action": "savings-record", "pair_id": "http-pair",
