@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.24.1 - 2026-08-04
+
+- Publish the Marketplace Acquisition Kit: outcome-led listing copy, the
+  two-minute first-use path, accurate tag guidance, and an IDE-native media
+  capture gate.
+- Add verified Factory Studio and Unified Graph Ops product-tour captures to
+  the README, public landing page, and source distribution. They are explicitly
+  not represented as JetBrains IDE screenshots.
+- Add an observed-only Marketplace download-delta command and baseline. It
+  leaves conversion and causal uplift unavailable without vendor analytics.
+- Add a concise public product overview of the MVP path, proof boundaries,
+  Graph Ops, proof reuse, team controls, and authority limits.
+- Refresh the public Hugging Face surface and retain the pending JetBrains
+  review, free-through-2026, and planned-2027 pricing boundaries.
+
 ## 0.24.0 - 2026-08-03
 
 - Add bounded, read-only Unified Graph Ops across the CLI, Factory Studio,

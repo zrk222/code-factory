@@ -53,7 +53,7 @@ unless the published plugin actually exposes that Marketplace category.
 ## Product-tour assets
 
 The checked-in images below are actual Factory Studio captures from the shipped
-0.24.0 codepath. They are product-tour assets for GitHub, PyPI, and the public
+0.24.1 codepath. They are product-tour assets for GitHub, PyPI, and the public
 landing page; they are **not** JetBrains Marketplace screenshots because they
 do not show a JetBrains IDE.
 

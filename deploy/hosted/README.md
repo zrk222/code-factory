@@ -3,7 +3,7 @@
 Build from the repository root:
 
 ```bash
-docker build -f deploy/hosted/Dockerfile -t code-factory-hosted:0.24.0 .
+docker build -f deploy/hosted/Dockerfile -t code-factory-hosted:0.24.1 .
 ```
 
 Inject every required variable through a managed secret store. Do not commit

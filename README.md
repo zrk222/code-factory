@@ -8,6 +8,24 @@
 > One intent, seven software targets, and proof that the gates reject
 > deliberately sabotaged builds.
 
+## What Code Factory is
+
+Code Factory is a local-first, evidence-driven workflow for taking a software
+outcome from a short intent to a reviewable starting state. It can create a
+typed scaffold for web, mobile, API, CLI, worker, MCP, or agent UI targets;
+turn the outcome into explicit requirements, value slices, missions, and
+gates; then show what is proven, missing, blocked, or safe to do next. Factory
+Studio and the editor integrations make the same workflow visible without
+granting them release, credential, approval, or publishing authority.
+
+It is designed for two speeds: use `factory mvp "..."` to get a novice from
+idea to an inspectable MVP path, or compose capability packs, signed receipts,
+proof reuse, Graph Ops impact analysis, and supervised enterprise controls for
+professional teams. Its central promise is deliberately narrow: it accelerates
+the work and preserves evidence, but it does not label a scaffold production
+ready until the relevant non-hollow tests and receipts exist. Read the concise
+[product overview](docs/OVERVIEW.md) or start with [Start Here](docs/START_HERE.md).
+
 ## New in 0.24.0: Unified Graph Ops
 
 Graph Ops turns the local Product Graph, value slices, mission and approval
@@ -83,7 +101,7 @@ plugin never uploads the workspace, stores keys, or decides a release is ready.
 To make the path tangible, create a contained MVP and inspect its proof graph:
 
 ```powershell
-pip install factoryline-code-factory==0.24.0
+pip install factoryline-code-factory==0.24.1
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -118,7 +136,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.24.0
+pip install factoryline-code-factory==0.24.1
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -471,7 +489,7 @@ an instruction or edit the Architecture Opinion Dock. See
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.24.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
+pip install factoryline-code-factory==0.24.1 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
 factory doctor --json
 ```
 
