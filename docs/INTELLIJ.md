@@ -101,4 +101,8 @@ and vendor metadata, light/dark 40px logos, release notes, and the packaged
 artifact structure must all be present. GitHub releases remain the current
 installation channel. JetBrains Marketplace initial upload is a one-time human
 Vendor-profile action; subsequent verified updates are published by the scoped
-GitHub workflow. See [JetBrains Marketplace Release](JETBRAINS_MARKETPLACE.md).
+GitHub workflow. See the
+[Marketplace Acquisition Kit](JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md) for the
+two-minute start and IDE-native capture brief, and
+[JetBrains Marketplace Release](JETBRAINS_MARKETPLACE.md) for the protected
+publication gate.

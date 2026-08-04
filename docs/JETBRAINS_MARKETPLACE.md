@@ -5,10 +5,11 @@
 FactoryLine is public as Marketplace plugin `33009`:
 <https://plugins.jetbrains.com/plugin/33009-factoryline>.
 
-The measured baseline on 2026-08-01 was 46 downloads. Treat later totals as
-observed growth, not proof that a particular copy or screenshot change caused it.
-The Marketplace API also showed an unapproved update at that snapshot, so inspect
-the vendor dashboard before submitting or replacing anything pending.
+The public [measurement baseline](JETBRAINS_MARKETPLACE_MEASUREMENT.json) is
+46 downloads on 2026-08-04. Treat later totals as observed growth, not proof that
+a particular copy or screenshot change caused it. The Marketplace API also showed
+an unapproved update at that snapshot, so inspect the vendor dashboard before
+submitting or replacing anything pending.
 
 ## Conversion-focused listing
 
@@ -26,6 +27,11 @@ descriptor is the source of truth for the full description and change notes.
 Use only tags offered by the Marketplace vendor UI that accurately match shipped
 behavior. Do not repeat keywords or select unrelated languages and frameworks.
 
+The paste-ready [Marketplace Acquisition Kit](JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md)
+contains the two-minute first-use path, approved copy, public product-tour assets,
+and the distinction between those web assets and required IDE-native Marketplace
+screenshots.
+
 All shipped features remain free through December 31, 2026. The owner-approved
 future price is **USD 4.95 per month**, planned for January 1, 2027 with a 30-day
 trial, subject to JetBrains approval. The payment-model change requires paid-plugin
@@ -35,8 +41,9 @@ average; that comparison may drift, but the $4.95 owner decision does not. See t
 [pricing benchmark](JETBRAINS_PRICING_BENCHMARK.json) and the complete
 [2027 monetization runbook](JETBRAINS_MONETIZATION_2027.md).
 
-Replace the current concept-art images with the real-product sequence in
-[JetBrains Marketplace Screenshot Brief](JETBRAINS_MARKETPLACE_SCREENSHOTS.md).
+Use the actual Factory Studio product-tour assets on GitHub, PyPI, and the public
+landing page. For Marketplace media, replace concept art with the IDE-native
+sequence in [JetBrains Marketplace Screenshot Brief](JETBRAINS_MARKETPLACE_SCREENSHOTS.md).
 Keep the strongest first-use screenshot first. Add a short product video only
 after it shows the same real workflow without stale metrics.
 
@@ -77,6 +84,11 @@ new version as live until the public Marketplace API and page both show it.
 ## Growth measurement
 
 Record the following at submission, approval, day 7, and day 30:
+
+```powershell
+python scripts/jetbrains_marketplace_status.py --plugin-id 33009 --json
+python scripts/jetbrains_marketplace_measurement.py --json
+```
 
 - public downloads and absolute delta from 46;
 - ratings count and average rating, if present;
