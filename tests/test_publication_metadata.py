@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import struct
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - exercised by the Python 3.10 CI lane
@@ -40,6 +41,54 @@ def test_pypi_storefront_has_identity_and_canonical_links():
         "Issues": "https://github.com/zrk222/code-factory/issues",
         "Changelog": "https://github.com/zrk222/code-factory/releases",
     }
+    assert project["description"] == (
+        "Create a reviewable MVP starting state in minutes with local receipts, proof paths, and room to extend."
+    )
+    assert {"mvp", "mcp", "graph-ops"}.issubset(project["keywords"])
+
+
+def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    vscode_package = json.loads((ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8"))
+    vscode_readme = (ROOT / "editors" / "vscode" / "README.md").read_text(encoding="utf-8")
+    intellij_plugin = (ROOT / "editors" / "intellij" / "src" / "main" / "resources" / "META-INF" / "plugin.xml").read_text(encoding="utf-8")
+    intellij_readme = (ROOT / "editors" / "intellij" / "README.md").read_text(encoding="utf-8")
+
+    value = "Why pay for opaque app generators?"
+    assert value in readme
+    assert readme.index(value) < readme.index("## What Code Factory is")
+    assert "factory mvp \"Build an approval tracker\" --root ." in readme
+    assert "Watch the exact shipped UI in 60 seconds" in readme
+    assert "star Code Factory" in readme
+    assert "production-ready before the relevant proof exists" in readme
+    assert "reviewable MVP starting state in minutes" in vscode_package["description"]
+    assert {"mvp", "mcp", "graph-ops"}.issubset(vscode_package["keywords"])
+    for content in (vscode_readme, intellij_plugin, intellij_readme):
+        assert value in content
+        assert "Graph Ops" in content
+    assert "Star Code Factory" in vscode_readme
+    assert "Star Code Factory" in intellij_readme
+
+
+def test_github_discovery_assets_and_community_drafts_are_reviewable_only():
+    guide = (ROOT / "docs" / "GITHUB_DISCOVERY.md").read_text(encoding="utf-8")
+    preview = ROOT / "docs" / "assets" / "github-social-preview-1280x640.png"
+
+    with preview.open("rb") as handle:
+        assert handle.read(8) == b"\x89PNG\r\n\x1a\n"
+        assert struct.unpack(">I", handle.read(4)) == (13,)
+        assert handle.read(4) == b"IHDR"
+        width, height = struct.unpack(">II", handle.read(8))
+    assert (width, height) == (1280, 640)
+    assert "Settings → General → Social preview" in guide
+    assert "not proof that a live Open Graph image is configured" in guide
+    assert "Show HN" in guide
+    assert "Indie Hackers" in guide
+    assert "r/devops" in guide
+    assert "r/platformengineering" in guide
+    assert "r/sre" in guide
+    assert "r/kubernetes" in guide
+    assert "Code Factory does not submit, vote on, or coordinate votes" in guide
 
 
 def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():

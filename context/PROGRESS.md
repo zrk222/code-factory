@@ -154,3 +154,8 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-04 06:31] GATE plan mcp-mermaid-v1 approver=human tasks=9 sha=86a7c9706fbf3694
 - [2026-08-04 06:31] GATE spec mcp-mermaid-v1 approver=human strict=True sha=86a7c9706fbf3694
 - [2026-08-04 06:39] GATE plan mcp-mermaid-v1 approver=human tasks=9 sha=86a7c9706fbf3694
+- [2026-08-05 09:55] GATE spec github-star-growth-v1 approver=human strict=True sha=4c6ff0993a3ae9c0
+- [2026-08-05 10:10] GATE spec github-star-growth-v1 approver=human strict=True sha=4f98ebd82dfc4462
+- [2026-08-05 10:10] GATE plan github-star-growth-v1 approver=human tasks=10 sha=4f98ebd82dfc4462
+- [2026-08-05 10:19] GATE spec github-star-growth-v1 approver=human strict=True sha=b38f20e26764ed2f
+- [2026-08-05 10:19] GATE plan github-star-growth-v1 approver=human tasks=11 sha=b38f20e26764ed2f

@@ -43,20 +43,23 @@ object FactoryLineController {
         }
     }
 
-    private fun runBackground(project: Project, title: String, operation: () -> CommandResult) {
+    private fun runBackground(project: Project, title: String, offerGitHubStar: Boolean = false, operation: () -> CommandResult) {
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "FactoryLine: $title", true) {
             private lateinit var result: CommandResult
             override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
                 indicator.isIndeterminate = true
                 result = operation()
             }
-            override fun onSuccess() = FactoryLinePanels.show(project, result)
+            override fun onSuccess() {
+                FactoryLinePanels.show(project, result)
+                if (offerGitHubStar) FactoryLineGitHubStarPrompt.afterSuccessfulLocalWork(project, result)
+            }
         })
     }
 
     fun runFirstProof(project: Project) {
         if (!FactoryLineExecutionConfirmation.confirm(project, "Run First Proof")) return
-        runBackground(project, "Run First Proof") { FactoryLineRunner.firstProof(project) }
+        runBackground(project, "Run First Proof", offerGitHubStar = true) { FactoryLineRunner.firstProof(project) }
     }
 
     fun missionOperations(project: Project) {
@@ -144,6 +147,7 @@ object FactoryLineController {
 
             override fun onSuccess() {
                 FactoryLinePanels.show(project, result)
+                FactoryLineGitHubStarPrompt.afterSuccessfulLocalWork(project, result)
             }
         })
     }

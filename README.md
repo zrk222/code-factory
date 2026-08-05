@@ -8,6 +8,21 @@
 > One intent, seven software targets, and proof that the gates reject
 > deliberately sabotaged builds.
 
+> **Why pay for opaque app generators?** Create a reviewable MVP starting state
+> in minutes—with source-bound receipts, a clear proof path, and an output you
+> can extend when you’re ready. Code Factory is free, local-first, and does not
+> call a starter production-ready before the relevant proof exists.
+
+```powershell
+pip install factoryline-code-factory==0.24.1
+factory mvp "Build an approval tracker" --root .
+factory studio --root .\my-mvp
+```
+
+[Watch the exact shipped UI in 60 seconds](https://github.com/zrk222/code-factory/releases/download/v0.23.2/code-factory-quickstart-v0171.mp4)
+to see the outcome-to-MVP path, then open **Graph Ops** in the local Studio to
+inspect the evidence path and next action.
+
 ## What Code Factory is
 
 Code Factory is a local-first, evidence-driven workflow for taking a software
@@ -105,6 +120,10 @@ Studio surface; it is not concept art.
 
 [Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.23.2/code-factory-quickstart-v0171.mp4).
 The absolute cover and release-asset URLs render from both GitHub and PyPI.
+
+If the free, local-first workflow helps you move from an idea to a reviewable
+starting state, you can [star Code Factory](https://github.com/zrk222/code-factory).
+It is optional, opens only the repository, and helps you follow future releases.
 
 The one-minute walkthrough is rendered from an actual 1920x1080 Factory
 Studio capture. Its focus frames point to the shipped Product Graph, value

@@ -57,6 +57,12 @@ def test_each_target_has_governance_proof_and_hashes(tmp_path: Path, target: str
     assert "CODE_FACTORY_OUTPUT_MAP_V1" in map_text
     assert "flowchart TD" in map_text
     assert "Promotion: **compiled_blocked**" in map_text
+    assert "## Optional sharing" in map_text
+    share_section = map_text.split("## Optional sharing", maxsplit=1)[1]
+    assert "[Built with Code Factory](https://github.com/zrk222/code-factory)" in share_section
+    assert "does not post it, edit other files, or send output data" in share_section
+    assert str(output) not in share_section
+    assert "approval-tracker" not in share_section
     mapped = {line[3:-1] for line in map_text.splitlines() if line.startswith("- `") and line.endswith("`")}
     assert mapped == set(result["files"])
     assert ".factory/target-compile-receipt.json" in mapped
