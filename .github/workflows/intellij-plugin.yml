@@ -94,8 +94,20 @@ jobs:
       - name: Verify plugin against selected IDE
         shell: bash
         run: |
-          if [ "${{ matrix.product }}" = "DataGrip" ]; then
-            ./gradlew buildPlugin verifyPlugin -PfactorylineVerificationProduct=DataGrip -PfactorylineLocalVerificationIde="$RUNNER_TEMP/datagrip"
-          else
-            ./gradlew buildPlugin verifyPlugin -PfactorylineVerificationProduct=${{ matrix.product }}
-          fi
+          # The verifier and IDE artifacts are resolved from JetBrains-hosted
+          # repositories. Retry only at the CI boundary for transient 5xx
+          # responses; a persistent compatibility defect still fails the job.
+          for attempt in 1 2 3; do
+            if [ "${{ matrix.product }}" = "DataGrip" ]; then
+              if ./gradlew buildPlugin verifyPlugin -PfactorylineVerificationProduct=DataGrip -PfactorylineLocalVerificationIde="$RUNNER_TEMP/datagrip"; then
+                exit 0
+              fi
+            elif ./gradlew buildPlugin verifyPlugin -PfactorylineVerificationProduct=${{ matrix.product }}; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Verifier attempt $attempt failed; retrying once the upstream repository recovers."
+              sleep 20
+            fi
+          done
+          exit 1

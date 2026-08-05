@@ -12,6 +12,7 @@ import tempfile
 
 from .app_builder import app_from_prd, app_from_prompt, _extract_name, _purpose_from_text
 from .capability_packs import target_inventory
+from .output_map import write_output_map
 
 
 TARGET_SCHEMA = "factory.target.v1"
@@ -849,7 +850,14 @@ testpaths = ["tests"]
     _write(root / ".factory" / "target-architecture.mmd", _architecture_mermaid(target))
     _write_json(root / ".forge" / name / "state.json", _forge_state(name))
     _write(root / "docs" / "TARGET_WORKFLOW.md", _common_docs(name, target, manifest))
-    markers = ["TARGET_MANIFEST_WRITTEN", "MERMAID_PROOF_WRITTEN"]
+    output_map = write_output_map(
+        root,
+        name=name,
+        source_sha256=source_sha256,
+        status="compiled_blocked",
+        expected_paths=[".factory/target-compile-receipt.json"],
+    )
+    markers = ["TARGET_MANIFEST_WRITTEN", "MERMAID_PROOF_WRITTEN", "OUTPUT_MERMAID_MAP_WRITTEN"]
     files = sorted(
         path for path in root.rglob("*")
         if path.is_file() and path.name != "target-compile-receipt.json"
@@ -866,6 +874,7 @@ testpaths = ["tests"]
         "source_sha256": source_sha256,
         "manifest_sha256": relative_hashes["target_manifest.json"],
         "files": relative_hashes,
+        "output_map": {"path": output_map["path"], "sha256": output_map["sha256"]},
         "claims": {
             "model_calls": 0,
             "runtime_tokens": 0 if target == "worker" else "not_claimed",
@@ -974,6 +983,8 @@ def _compile(text: str, *, source_kind: str, source_ref: Path | None, target: st
         "files": files,
         "receipt": str(destination / ".factory" / "target-compile-receipt.json"),
         "receipt_sha256": _file_sha(destination / ".factory" / "target-compile-receipt.json"),
+        "output_map": str(destination / str(receipt["output_map"]["path"])),
+        "output_map_sha256": receipt["output_map"]["sha256"],
         "markers": markers,
         "deployment": manifest["deployment"],
         "next_commands": [

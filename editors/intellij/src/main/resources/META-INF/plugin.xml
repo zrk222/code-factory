@@ -4,12 +4,14 @@
     <vendor email="rkatz22@gmail.com" url="https://github.com/zrk222/code-factory">FactoryLine</vendor>
     <description><![CDATA[
         <p>Verify AI code before you ship.</p>
-        <p>FactoryLine turns tests, requirements, policies, and build evidence into local proof you can inspect in your JetBrains IDE.</p>
+        <p><strong>Why pay for opaque app generators?</strong> Create a reviewable MVP starting state in minutes, with local receipts, a clear proof path, and an output you can extend when you are ready.</p>
+        <p>FactoryLine turns tests, requirements, policies, and build evidence into local proof you can inspect in your JetBrains IDE. It does not call a starter production-ready by itself.</p>
         <h3>Start here</h3>
         <ol>
             <li>Open <strong>Tools | FactoryLine | Run First Proof</strong>.</li>
             <li>Confirm the current workspace.</li>
             <li>Review the local setup result in the FactoryLine tool window.</li>
+            <li>Run <code>factory mvp "Build an approval tracker" --root .</code>, then open <strong>Graph Ops</strong> to inspect the next evidence step.</li>
         </ol>
         <h3>Know what is safe to ship</h3>
         <ul>
@@ -24,7 +26,7 @@
         <p>Works with IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip from the 2025.2 platform baseline.</p>
         <h3>Launch offer</h3>
         <p>All features are free through December 31, 2026. FactoryLine AI Proof is planned to become a paid Marketplace plugin on January 1, 2027 at $4.95 USD per month, subject to JetBrains approval, with a planned 30-day trial. Version 0.8.0 and the open-source repository remain available. The payment change adds no telemetry, source upload, credential storage, signing authority, or automatic release authority.</p>
-        <p>Free and open source. <a href="https://github.com/zrk222/code-factory">Read the documentation or inspect the source</a>.</p>
+        <p>Free and open source. <a href="https://github.com/zrk222/code-factory">Read the documentation, inspect the source, or optionally star Code Factory after it has helped</a>.</p>
     ]]></description>
     <change-notes><![CDATA[
         <ul>
@@ -44,6 +46,7 @@
         <toolWindow id="FactoryLine"
                     anchor="right"
                     factoryClass="app.factoryline.intellij.FactoryLineToolWindowFactory"/>
+        <notificationGroup id="FactoryLine" displayType="BALLOON" isLogByDefault="false"/>
         <codeInsight.lineMarkerProvider language="ANY"
                                         implementationClass="app.factoryline.intellij.FactoryLineRequirementLineMarkerProvider"/>
     </extensions>

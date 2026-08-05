@@ -7,6 +7,7 @@ import { receiptHtml } from "./receipt";
 import { meterHtml, savingsHtml } from "./meter";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "./runner";
 import { findRequirementEvidence, requirementIds } from "./requirement";
+import { GITHUB_REPOSITORY_URL, shouldOfferGitHubStar, starPromptKey } from "./star_prompt";
 
 const output = vscode.window.createOutputChannel("FactoryLine");
 const receiptDirectories = [".factory", "receipts"];
@@ -63,6 +64,23 @@ async function runFactory(root: string, args: string[]): Promise<string> {
     child.on("error", reject);
     child.on("close", (code) => code === 0 ? resolve(combined) : reject(new Error(`FactoryLine exited with ${code ?? "an unknown error"}.`)));
   });
+}
+
+async function offerGitHubStar(context: vscode.ExtensionContext): Promise<void> {
+  const installedVersion = String(context.extension.packageJSON.version);
+  const key = starPromptKey();
+  if (!shouldOfferGitHubStar(context.globalState.get<string>(key), installedVersion)) {
+    return;
+  }
+  await context.globalState.update(key, installedVersion);
+  const choice = await vscode.window.showInformationMessage(
+    "FactoryLine completed local work. If it clarified what is proven, you can star Code Factory to follow updates.",
+    "Star Code Factory",
+    "Not now",
+  );
+  if (choice === "Star Code Factory") {
+    await vscode.env.openExternal(vscode.Uri.parse(GITHUB_REPOSITORY_URL));
+  }
 }
 
 function parseMeterSnapshot(outputText: string): unknown {
@@ -158,7 +176,7 @@ async function openRequirementEvidence(requirementId: string): Promise<void> {
   editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
 }
 
-async function runFeature(command: "assemble" | "verify"): Promise<void> {
+async function runFeature(context: vscode.ExtensionContext, command: "assemble" | "verify"): Promise<void> {
   const root = requireTrustedWorkspace();
   if (!root) {
     return;
@@ -175,12 +193,13 @@ async function runFeature(command: "assemble" | "verify"): Promise<void> {
       await showReceipt(latest);
     }
     void vscode.window.showInformationMessage(`FactoryLine ${command} completed for ${feature}.`);
+    await offerGitHubStar(context);
   } catch (error) {
     void vscode.window.showErrorMessage(`${error instanceof Error ? error.message : String(error)} See the FactoryLine output channel.`);
   }
 }
 
-async function continueAssembly(): Promise<void> {
+async function continueAssembly(context: vscode.ExtensionContext): Promise<void> {
   const root = requireTrustedWorkspace();
   if (!root) {
     return;
@@ -199,6 +218,7 @@ async function continueAssembly(): Promise<void> {
       () => runFactory(root, args),
     );
     void vscode.window.showInformationMessage("FactoryLine reached the next assembly boundary. See the output channel for the exact next action.");
+    await offerGitHubStar(context);
   } catch (error) {
     void vscode.window.showErrorMessage(`${error instanceof Error ? error.message : String(error)} See the FactoryLine output channel.`);
   }
@@ -339,9 +359,9 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     output,
     vscode.languages.registerCodeLensProvider({ scheme: "file" }, new RequirementCodeLensProvider()),
-    vscode.commands.registerCommand("factoryline.assemble", () => runFeature("assemble")),
-    vscode.commands.registerCommand("factoryline.continue", continueAssembly),
-    vscode.commands.registerCommand("factoryline.verify", () => runFeature("verify")),
+    vscode.commands.registerCommand("factoryline.assemble", () => runFeature(context, "assemble")),
+    vscode.commands.registerCommand("factoryline.continue", () => continueAssembly(context)),
+    vscode.commands.registerCommand("factoryline.verify", () => runFeature(context, "verify")),
     vscode.commands.registerCommand("factoryline.openMeter", openMeter),
     vscode.commands.registerCommand("factoryline.openSavings", openSavings),
     vscode.commands.registerCommand("factoryline.openLatestReceipt", openLatestReceipt),

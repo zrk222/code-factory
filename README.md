@@ -8,6 +8,21 @@
 > One intent, seven software targets, and proof that the gates reject
 > deliberately sabotaged builds.
 
+> **Why pay for opaque app generators?** Create a reviewable MVP starting state
+> in minutes—with source-bound receipts, a clear proof path, and an output you
+> can extend when you’re ready. Code Factory is free, local-first, and does not
+> call a starter production-ready before the relevant proof exists.
+
+```powershell
+pip install factoryline-code-factory==0.24.2
+factory mvp "Build an approval tracker" --root .
+factory studio --root .\my-mvp
+```
+
+[Watch the exact shipped UI in 60 seconds](https://github.com/zrk222/code-factory/releases/download/v0.23.2/code-factory-quickstart-v0171.mp4)
+to see the outcome-to-MVP path, then open **Graph Ops** in the local Studio to
+inspect the evidence path and next action.
+
 ## What Code Factory is
 
 Code Factory is a local-first, evidence-driven workflow for taking a software
@@ -51,6 +66,26 @@ New to Code Factory? Start with the outcome-first `factory mvp "..."` command,
 then graduate through proof, Graph Ops, team review, and enterprise controls
 without switching to a different workflow. See [Start Here](docs/START_HERE.md).
 
+## Local MCP inspection and output maps
+
+Agents can consume the same deterministic Graph Ops facts through the
+local-only stdio server—without remote transport or authority to execute,
+approve, publish, deploy, sign, message, access credentials, or grant a
+connector.
+
+```powershell
+factory mcp status --root . --json
+factory mcp serve --root .
+```
+
+Every `factory create`, `factory mvp`, and `factory app` output now includes
+`docs/CODE_FACTORY_OUTPUT_MAP.md`: a deterministic Mermaid inventory of the
+files produced, its source-digest prefix, and the blocked promotion boundary.
+It helps a new user see what was made and gives an experienced reviewer a quick
+artifact map; it never claims the starter is production-ready. See the
+[MCP and output-map contract](docs/MCP.md) and the guarded
+[Open VSX release lane](docs/OPENVSX.md).
+
 ## New in 0.23.0: reuse proof, not side effects
 
 Code Factory can now record a completed read-only validation and route a future
@@ -86,6 +121,10 @@ Studio surface; it is not concept art.
 [Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.23.2/code-factory-quickstart-v0171.mp4).
 The absolute cover and release-asset URLs render from both GitHub and PyPI.
 
+If the free, local-first workflow helps you move from an idea to a reviewable
+starting state, you can [star Code Factory](https://github.com/zrk222/code-factory).
+It is optional, opens only the repository, and helps you follow future releases.
+
 The one-minute walkthrough is rendered from an actual 1920x1080 Factory
 Studio capture. Its focus frames point to the shipped Product Graph, value
 slice, approval, proof, and Meter v2 panels; it does not substitute a mock
@@ -101,7 +140,7 @@ plugin never uploads the workspace, stores keys, or decides a release is ready.
 To make the path tangible, create a contained MVP and inspect its proof graph:
 
 ```powershell
-pip install factoryline-code-factory==0.24.1
+pip install factoryline-code-factory==0.24.2
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -136,7 +175,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.24.1
+pip install factoryline-code-factory==0.24.2
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -489,7 +528,7 @@ an instruction or edit the Architecture Opinion Dock. See
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.24.1 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
+pip install factoryline-code-factory==0.24.2 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
 factory doctor --json
 ```
 

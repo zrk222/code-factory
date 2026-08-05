@@ -1,0 +1,37 @@
+{
+  "checks": [
+    {
+      "name": "vscode_star_prompt_has_version_scoped_opt_in_behavior",
+      "kind": "python",
+      "run": "from pathlib import Path\nsource = Path('editors/vscode/src/star_prompt.ts').read_text(encoding='utf-8')\nassert 'factoryline.githubStarPromptedVersion' in source\nassert 'promptedForVersion !== installedVersion' in source\nassert 'https://github.com/zrk222/code-factory' in source\nassert 'fetch(' not in source\n",
+      "covers": [
+        "STAR_VSCODE",
+        "STAR_BROWSER_ONLY",
+        "STAR_NO_AUTOMATION",
+        "STAR_MINIMAL_LOCAL_STATE"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "output_map_share_is_static_and_opt_in",
+      "kind": "python",
+      "run": "import importlib.util\nfrom pathlib import Path\nfrom tempfile import TemporaryDirectory\nmodule_path = Path('factoryline/output_map.py')\nspec = importlib.util.spec_from_file_location('candidate_output_map', module_path)\nmodule = importlib.util.module_from_spec(spec)\nassert spec.loader is not None\nspec.loader.exec_module(module)\nwith TemporaryDirectory() as value:\n    root = Path(value)\n    receipt = module.write_output_map(root, name='starter', source_sha256='0' * 64, status='blocked')\n    text = (root / receipt['path']).read_text(encoding='utf-8')\n    assert '## Optional sharing' in text\n    assert 'Code Factory does not post it, edit other files, or send output data' in text\n    assert '[Built with Code Factory](https://github.com/zrk222/code-factory)' in text\n",
+      "covers": [
+        "STAR_OUTPUT_MAP_SHARE"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "public_ctas_and_community_drafts_are_pinned_by_tests",
+      "kind": "python",
+      "run": "import subprocess\nimport sys\nresult = subprocess.run([sys.executable, '-m', 'pytest', '-q', 'tests/test_publication_metadata.py', 'tests/test_huggingface_surface.py'], check=False)\nassert result.returncode == 0\n",
+      "covers": [
+        "STAR_GITHUB_FIRST_VIEW",
+        "STAR_SOCIAL_PREVIEW_SOURCE",
+        "STAR_DISTRIBUTION_CTA",
+        "STAR_COMMUNITY_DRAFTS"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+name: github-star-growth-v1
+language: typescript,kotlin,python
+modules:
+  - name: vscode_star_prompt
+    path: editors/vscode/src/star_prompt.ts
+    functions:
+      - name: starPromptKey
+        args: [version]
+        returns: string
+      - name: shouldOfferGitHubStar
+        args: [promptedForVersion, version]
+        returns: boolean
+  - name: intellij_star_prompt
+    path: editors/intellij/src/main/kotlin/app/factoryline/intellij/FactoryLineGitHubStarPrompt.kt
+    functions:
+      - name: shouldOffer
+        args: [exitCode, timedOut, promptedVersion, installedVersion]
+        returns: boolean
+  - name: output_map
+    path: factoryline/output_map.py
+    functions:
+      - name: write_output_map
+        args: [root, name, source_sha256, status, expected_paths]
+        returns: dict[str, object]
+dependencies: []
+invariants:
+  - name: star_prompt_never_runs_or_transmits_factory_work
+    forbid_pattern: "(?:ProcessBuilder|GeneralCommandLine|subprocess|fetch\\(|axios|http://|https://(?!github\\.com/zrk222/code-factory))"
+    scopes:
+      - module: vscode_star_prompt
+        symbol: shouldOfferGitHubStar
+        max_lines: 20
+      - module: intellij_star_prompt
+        symbol: shouldOffer
+        max_lines: 20
+  - name: output_map_share_is_static_and_local
+    forbid_pattern: "(?:requests\\.|httpx\\.|urllib\\.|socket\\.|subprocess\\.|https://(?!github\\.com/zrk222/code-factory))"
+    scopes:
+      - module: output_map
+        symbol: write_output_map
+        max_lines: 120

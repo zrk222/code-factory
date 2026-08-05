@@ -3,6 +3,13 @@
 Run a bounded FactoryLine command and inspect the local JSON receipt without
 leaving VS Code. The extension never uploads your workspace, code, or receipts.
 
+**Why pay for opaque app generators?** Start a reviewable MVP in minutes, keep
+the receipts and proof path next to the code, and extend it when you are ready.
+Start with **FactoryLine: Open Local Factory Studio** or run
+`factory mvp "Build an approval tracker" --root .`; then open **Graph Ops** to
+see what is evidenced, blocked, or next. The extension never calls a starter
+production-ready by itself.
+
 ## Commands
 
 - **FactoryLine: Run Spec-to-Ship Assembly** runs `factory assemble <feature> --root <workspace>`.
@@ -27,7 +34,7 @@ pass arbitrary shell fragments to your terminal.
 Install the Code Factory CLI first:
 
 ```powershell
-pip install factoryline-code-factory==0.24.1
+pip install factoryline-code-factory==0.24.2
 ```
 
 Build a local VSIX from this directory, then install it in VS Code:
@@ -43,6 +50,9 @@ Product Missions create only supervised, approval-required local packets and do
 not grant execute, merge, deploy, publish, connector, credential, or messaging authority.
 Requirement CodeLens navigation reads bounded local text artifacts only; it does
 not run FactoryLine or change approval state.
+
+If this free, local-first workflow helps, use the post-success **Star Code Factory** action or visit [the GitHub repository](https://github.com/zrk222/code-factory).
+That action is optional, opens only GitHub when selected, and sends no workspace data.
 
 Code Factory 0.20 also includes an optional hosted GitHub PR-assurance adapter,
 durable mission graphs, and secret-free BYOK policies. VS Code workspaces use

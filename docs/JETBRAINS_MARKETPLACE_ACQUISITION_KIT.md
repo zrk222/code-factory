@@ -21,6 +21,11 @@ not been observed.
 > you ship. FactoryLine keeps requirements, tests, policies, receipts, and
 > Graph Ops in your workspace for inspection.
 >
+> **Why pay for opaque app generators?** Create a reviewable MVP starting
+> state in minutes—with local receipts, a clear proof path, and an output you
+> can extend when you are ready. A starter is not called production-ready until
+> product-specific proof exists.
+>
 > **Start in two minutes**
 >
 > 1. In your IDE, open **Tools | FactoryLine | Run First Proof** and confirm
@@ -40,6 +45,9 @@ not been observed.
 >
 > The plugin asks before it runs a command. It does not upload project files or
 > receipts, store API keys, sign artifacts, or decide that a release is ready.
+> After successful local work, it may offer an optional **Star Code Factory**
+> action once per installed plugin version; selecting it opens only the public
+> repository and sends no workspace data.
 > Works with IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover,
 > and DataGrip from the 2025.2 platform baseline.
 
@@ -53,7 +61,7 @@ unless the published plugin actually exposes that Marketplace category.
 ## Product-tour assets
 
 The checked-in images below are actual Factory Studio captures from the shipped
-0.24.1 codepath. They are product-tour assets for GitHub, PyPI, and the public
+0.24.2 codepath. They are product-tour assets for GitHub, PyPI, and the public
 landing page; they are **not** JetBrains Marketplace screenshots because they
 do not show a JetBrains IDE.
 

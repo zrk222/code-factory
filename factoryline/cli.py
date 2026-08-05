@@ -640,6 +640,14 @@ def main(argv=None) -> int:
     graph_impact.add_argument("--changed", action="append", required=True, help="workspace-relative changed path; repeat as needed")
     graph_impact.add_argument("--json", action="store_true")
 
+    mcp = sub.add_parser("mcp", help="serve or inspect the local read-only MCP adapter")
+    mcp_sub = mcp.add_subparsers(required=True, dest="mcp_cmd")
+    mcp_status = mcp_sub.add_parser("status", help="show the stdio-only MCP boundary")
+    mcp_status.add_argument("--root", default=".")
+    mcp_status.add_argument("--json", action="store_true")
+    mcp_serve = mcp_sub.add_parser("serve", help="serve newline-delimited JSON-RPC over stdio only")
+    mcp_serve.add_argument("--root", default=".")
+
     s = sub.add_parser("attest", help="export in-toto/SLSA-shaped proof statements for a trace")
     s.add_argument("trace")
     s.add_argument("--out-dir", default="dist/attestations")
@@ -1657,6 +1665,8 @@ def main(argv=None) -> int:
             "out_dir": result["out_dir"],
             "target_kind": result["target_kind"],
             "name": result["name"],
+            "output_map": result["output_map"],
+            "output_map_sha256": result["output_map_sha256"],
             "next_proof_commands": result["next_commands"],
             "authority": {
                 "execution": False,
@@ -1675,6 +1685,7 @@ def main(argv=None) -> int:
         else:
             print("Your local MVP starter is ready.")
             print(f"path       : {payload['out_dir']}")
+            print(f"output map : {payload['output_map']}")
             print("next proof :")
             for command in payload["next_proof_commands"]:
                 print(f"  {command}")
@@ -1714,6 +1725,25 @@ def main(argv=None) -> int:
                     print(f"next action : {snapshot['recommendation']['action']}")
                     print(f"reason      : {snapshot['recommendation']['reason']}")
         return 0
+    if a.cmd == "mcp":
+        from .mcp import McpError, mcp_status, serve_stdio
+
+        try:
+            if a.mcp_cmd == "status":
+                payload = mcp_status(Path(a.root))
+                if a.json:
+                    print(json.dumps(payload, indent=2, sort_keys=True))
+                else:
+                    print("Factory MCP status")
+                    print(f"marker    : {payload['marker']}")
+                    print(f"transport : {payload['transport']}")
+                    print(f"tools     : {', '.join(payload['tools'])}")
+                    print("authority : all external-effect authority is false")
+                return 0
+            return serve_stdio(Path(a.root))
+        except McpError as exc:
+            print(f"mcp failed: {exc.marker}: {exc}", file=sys.stderr)
+            return 2
     if a.cmd == "attest":
         outputs = export_attestations(load_trace(Path(a.trace)), out_dir=Path(a.out_dir))
         if a.json:

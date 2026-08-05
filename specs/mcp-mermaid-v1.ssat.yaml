@@ -1,0 +1,61 @@
+name: mcp-mermaid-v1
+language: python
+modules:
+  - name: mcp
+    path: factoryline/mcp.py
+    functions:
+      - name: dispatch
+        args: [request, root]
+        returns: dict[str, Any] | None
+      - name: serve_stdio
+        args: [root]
+        returns: int
+  - name: output_map
+    path: factoryline/output_map.py
+    functions:
+      - name: write_output_map
+        args: [root]
+        returns: dict[str, Any]
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_snapshot
+        args: [root]
+        returns: dict[str, Any]
+      - name: graph_ops_impact
+        args: [root, changed_paths]
+        returns: dict[str, Any]
+  - name: target_compiler
+    path: factoryline/target_compiler.py
+    functions:
+      - name: _write_proof_contract
+        args: [root, name, target, manifest, source_sha256]
+        returns: tuple[dict[str, Any], list[str]]
+  - name: app_builder
+    path: factoryline/app_builder.py
+    functions:
+      - name: scaffold_app
+        args: [blueprint]
+        returns: dict
+dependencies:
+  - from: mcp
+    to: graph_ops
+  - from: target_compiler
+    to: app_builder
+  - from: target_compiler
+    to: output_map
+  - from: app_builder
+    to: output_map
+invariants:
+  - name: mcp_dispatch_is_read_only
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:deploy|publish|sign|send_message|grant_connector|approve)\\s*\\("
+    scopes:
+      - module: mcp
+        symbol: dispatch
+        max_lines: 180
+  - name: output_map_is_deterministic_and_local
+    forbid_pattern: "datetime\\.|uuid\\.|requests\\.|httpx\\.|urllib\\.|socket\\."
+    scopes:
+      - module: output_map
+        symbol: write_output_map
+        max_lines: 100

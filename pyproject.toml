@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.24.1"
-description = "A proof-first software factory with content-addressed proof reuse, exact savings receipts, durable missions, signed evidence, and supervised enterprise control."
+version = "0.24.2"
+description = "Create a reviewable MVP starting state in minutes with local receipts, proof paths, and room to extend."
 authors = [
   { name = "Richard Katz" },
   { email = "rkatz22@gmail.com" },
@@ -23,6 +23,9 @@ keywords = [
   "mutation-testing",
   "release-evidence",
   "developer-tools",
+  "mvp",
+  "mcp",
+  "graph-ops",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",

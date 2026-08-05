@@ -4,6 +4,12 @@ FactoryLine for JetBrains IDEs keeps the local proof loop next to the project. I
 runs an explicit FactoryLine command, then displays the command result and the
 newest local JSON receipt in a tool window.
 
+**Why pay for opaque app generators?** Create a reviewable MVP starting state
+in minutes, inspect the proof path in the IDE, and extend it when you are ready.
+Start with **Tools > FactoryLine > Run First Proof**, then run
+`factory mvp "Build an approval tracker" --root .` and open **Graph Ops**. A
+starter remains a starting state until product-specific proof exists.
+
 ## What It Does
 
 - `FactoryLine: Run Spec-to-Ship Assembly` runs `factory assemble <feature> --root <project>`.
@@ -37,7 +43,7 @@ untrusted/missing receipt into a green state.
 
 ## Install
 
-1. Install `factoryline-code-factory==0.24.1` into the Python environment that
+1. Install `factoryline-code-factory==0.24.2` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the
@@ -54,6 +60,10 @@ Product Missions create only supervised, approval-required local packets and do
 not grant execute, merge, deploy, publish, connector, credential, or messaging authority.
 The gutter navigator reads bounded local evidence only and never executes a
 mission or changes an approval.
+
+After a successful local proof or assembly command, FactoryLine may offer an
+optional **Star Code Factory** action once per installed plugin version. It only
+opens the repository when you select it and shares no workspace data.
 
 ## Local Development
 

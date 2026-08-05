@@ -3,6 +3,7 @@ import { escapeHtml, receiptHtml, summarizeReceipt } from "../receipt";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "../runner";
 import { meterHtml, savingsHtml } from "../meter";
 import { requirementIds } from "../requirement";
+import { GITHUB_REPOSITORY_URL, shouldOfferGitHubStar, starPromptKey } from "../star_prompt";
 
 const receipt = {
   schema: "factory.trace.v1",
@@ -34,3 +35,8 @@ assert.equal(isFeatureName("editor layer; rm"), false);
 assert.equal(factoryStudioUrl("marker: STUDIO_STARTED\nFactory Studio: http://127.0.0.1:43117/\n"), "http://127.0.0.1:43117/");
 assert.equal(factoryStudioUrl("Factory Studio: http://0.0.0.0:43117/"), undefined);
 assert.deepEqual(requirementIds("FR-101 maps to NFR-A11Y and FR-101."), ["FR-101", "NFR-A11Y"]);
+assert.equal(starPromptKey(), "factoryline.githubStarPromptedVersion");
+assert.equal(shouldOfferGitHubStar(undefined, "0.8.0"), true);
+assert.equal(shouldOfferGitHubStar("0.8.0", "0.8.0"), false);
+assert.equal(shouldOfferGitHubStar("0.7.0", "0.8.0"), true);
+assert.equal(GITHUB_REPOSITORY_URL, "https://github.com/zrk222/code-factory");

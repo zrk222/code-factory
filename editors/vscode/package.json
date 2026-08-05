@@ -1,7 +1,7 @@
 {
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
-  "description": "Run bounded Code Factory gates and inspect local receipts without leaving VS Code.",
+  "description": "Create a reviewable MVP starting state in minutes and inspect bounded Code Factory proof in VS Code.",
   "version": "0.8.0",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
@@ -20,7 +20,10 @@
     "code-factory",
     "receipts",
     "verification",
-    "testing"
+    "testing",
+    "mvp",
+    "mcp",
+    "graph-ops"
   ],
   "activationEvents": [
     "onCommand:factoryline.assemble",

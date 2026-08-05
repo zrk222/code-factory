@@ -48,3 +48,5 @@
 {"phase": "fill", "failure_code": "QA_COMPLEXITY", "fix": "QA_COMPLEXITY factoryline/proof_reuse.py:record_proof complexity 12 > 10; policy=hard", "feature": "proof-reuse-v1", "count": 1, "last_seen": "2026-08-01T02:02:40.411233+00:00"}
 {"phase": "fill", "failure_code": "QA_COMPLEXITY", "fix": "QA_COMPLEXITY factoryline/proof_reuse.py:verify_proof_receipt complexity 15 > 10; policy=hard", "feature": "proof-reuse-v1", "count": 1, "last_seen": "2026-08-01T02:02:40.422240+00:00"}
 {"phase": "fill", "failure_code": "QA_COMPLEXITY", "fix": "QA_COMPLEXITY factoryline/proof_reuse.py:plan_proofs complexity 22 > 10; policy=hard", "feature": "proof-reuse-v1", "count": 1, "last_seen": "2026-08-01T02:02:40.432233+00:00"}
+{"phase": "fill", "failure_code": "QA_COMPLEXITY", "fix": "QA_COMPLEXITY factoryline/mcp.py:dispatch complexity 19 > 10; policy=hard", "feature": "mcp-mermaid-v1", "count": 1, "last_seen": "2026-08-04T06:28:01.328381+00:00"}
+{"phase": "fill", "failure_code": "QA_COMPLEXITY", "fix": "QA_COMPLEXITY factoryline/mcp.py:dispatch complexity 12 > 10; policy=hard", "feature": "mcp-mermaid-v1", "count": 1, "last_seen": "2026-08-04T06:29:10.405455+00:00"}

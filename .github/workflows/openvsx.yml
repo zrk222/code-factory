@@ -1,0 +1,119 @@
+name: Publish Open VSX extension
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_ref:
+        description: "Immutable repository tag to package (for example v0.24.1)"
+        required: true
+        type: string
+      publish:
+        description: "Publish the verified VSIX to Open VSX after the protected-environment review"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openvsx-${{ inputs.release_ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: validate immutable Open VSX candidate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_ref }}
+          fetch-depth: 0
+      - name: Require an immutable release tag
+        shell: bash
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || {
+            echo "release_ref must be an immutable tag such as v0.24.1." >&2
+            exit 1
+          }
+          test "$(git rev-list -n 1 "$RELEASE_REF")" = "$(git rev-parse HEAD)" || {
+            echo "Checked-out commit does not match $RELEASE_REF." >&2
+            exit 1
+          }
+          git tag --points-at HEAD --format='%(refname:short)' | grep -Fx "$RELEASE_REF" >/dev/null || {
+            echo "$RELEASE_REF is not an immutable tag pointing at HEAD." >&2
+            exit 1
+          }
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: Install, audit, test, and package
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run audit
+          npm test
+          npx vsce package --no-dependencies --out factoryline-vscode.vsix
+      - name: Seal the verified Open VSX candidate
+        shell: bash
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+        run: |
+          set -euo pipefail
+          test -f factoryline-vscode.vsix
+          mkdir -p "$GITHUB_WORKSPACE/openvsx-candidate"
+          cp factoryline-vscode.vsix "$GITHUB_WORKSPACE/openvsx-candidate/"
+          sha256sum factoryline-vscode.vsix > "$GITHUB_WORKSPACE/openvsx-candidate/SHA256SUMS.txt"
+          printf 'release_ref=%s\ncommit=%s\npublisher=zrk222\n' \
+            "$RELEASE_REF" "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/openvsx-candidate/manifest.txt"
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: openvsx-candidate-${{ inputs.release_ref }}
+          path: openvsx-candidate/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: publish verified Open VSX candidate
+    if: inputs.publish == true
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: openvsx
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: openvsx-candidate-${{ inputs.release_ref }}
+          path: openvsx-candidate
+      - name: Require the scoped Open VSX publisher token
+        shell: bash
+        env:
+          OPENVSX_TOKEN: ${{ secrets.OPENVSX_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$OPENVSX_TOKEN" || {
+            echo "OPENVSX_TOKEN is required in the openvsx environment." >&2
+            exit 1
+          }
+      - name: Verify sealed candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd openvsx-candidate
+          sha256sum --check SHA256SUMS.txt
+          test -f manifest.txt
+          test -f factoryline-vscode.vsix
+      - name: Publish verified VSIX to Open VSX
+        shell: bash
+        env:
+          OPENVSX_TOKEN: ${{ secrets.OPENVSX_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes ovsx@1.1.0 publish openvsx-candidate/factoryline-vscode.vsix -p "$OPENVSX_TOKEN"

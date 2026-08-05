@@ -1,0 +1,24 @@
+# ForgeLine's current executable topology supports Python and JavaScript/TypeScript.
+# The version-scoped VS Code prompt is therefore its narrow executable scope here.
+# Kotlin remains validated by the JetBrains compiler/test/package gates, and the
+# keyword-only Python map function remains validated by the Python test suite.
+name: github-star-growth-v1
+language: typescript
+modules:
+  - name: vscode_star_prompt
+    path: editors/vscode/src/star_prompt.ts
+    functions:
+      - name: starPromptKey
+        args: []
+        returns: string
+      - name: shouldOfferGitHubStar
+        args: [promptedForVersion, installedVersion]
+        returns: boolean
+dependencies: []
+invariants:
+  - name: star_prompt_never_runs_or_transmits_factory_work
+    forbid_pattern: "(?:childProcess|subprocess|fetch\\(|axios|http://|https://(?!github\\.com/zrk222/code-factory))"
+    scopes:
+      - module: vscode_star_prompt
+        symbol: shouldOfferGitHubStar
+        max_lines: 20

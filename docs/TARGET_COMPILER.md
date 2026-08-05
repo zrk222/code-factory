@@ -58,6 +58,9 @@ Every target contains:
 - `.factory/target-architecture.mmd`.
 - `.factory/target-compile-receipt.json` with exact source, manifest, and file
   SHA-256 values.
+- `docs/CODE_FACTORY_OUTPUT_MAP.md` with a deterministic Mermaid inventory of
+  every generated file, source-digest prefix, and explicitly blocked promotion
+  state. The compile receipt binds the map's SHA-256.
 
 Deployment, publication, signing, destructive actions, connector grants,
 credential injection, and external messages are not granted by generation.
