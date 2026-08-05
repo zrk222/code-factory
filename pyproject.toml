@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.24.1"
+version = "0.24.2"
 description = "Create a reviewable MVP starting state in minutes with local receipts, proof paths, and room to extend."
 authors = [
   { name = "Richard Katz" },

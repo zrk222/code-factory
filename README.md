@@ -14,7 +14,7 @@
 > call a starter production-ready before the relevant proof exists.
 
 ```powershell
-pip install factoryline-code-factory==0.24.1
+pip install factoryline-code-factory==0.24.2
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -140,7 +140,7 @@ plugin never uploads the workspace, stores keys, or decides a release is ready.
 To make the path tangible, create a contained MVP and inspect its proof graph:
 
 ```powershell
-pip install factoryline-code-factory==0.24.1
+pip install factoryline-code-factory==0.24.2
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -175,7 +175,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.24.1
+pip install factoryline-code-factory==0.24.2
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -528,7 +528,7 @@ an instruction or edit the Architecture Opinion Dock. See
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.24.1 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
+pip install factoryline-code-factory==0.24.2 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
 factory doctor --json
 ```
 

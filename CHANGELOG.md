@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.24.2 - 2026-08-05
+
+- Add optional, local-only post-success GitHub Star actions in the VS Code and
+  JetBrains adapters; neither editor opens a browser or sends data without the
+  user's explicit click.
+- Add optional output-map attribution so a team can choose to credit the
+  proof-first workflow in a public artifact without Code Factory posting or
+  editing any file beyond the generated output map.
+- Refresh the GitHub, PyPI, editor, Hugging Face, and community-launch copy
+  around the outcome-first MVP path, source-bound receipts, and Graph Ops.
+- Remove the internal JetBrains plugin-manager API from the star action, so
+  the package verifies across the supported IDE matrix.
+
 ## 0.24.1 - 2026-08-04
 
 - Publish the Marketplace Acquisition Kit: outcome-led listing copy, the
