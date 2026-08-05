@@ -11,6 +11,12 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
 
     assert "sdk: static" in readme
     assert "app_file: index.html" in readme
+    short_description = next(
+        line.removeprefix("short_description: ")
+        for line in readme.splitlines()
+        if line.startswith("short_description: ")
+    )
+    assert len(short_description) <= 60
     assert "factoryline-code-factory" in page
     assert "github.com/zrk222/code-factory/releases/tag/v0.24.2" in page
     assert "doi.org/10.5281/zenodo.21381405" in page

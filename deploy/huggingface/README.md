@@ -15,7 +15,7 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Create reviewable MVP starting states in minutes with local proof
+short_description: Reviewable MVPs in minutes with local proof
 ---
 
 # Code Factory
