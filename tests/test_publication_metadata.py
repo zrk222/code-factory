@@ -187,6 +187,8 @@ def test_intellij_workflow_avoids_duplicate_feature_branch_runs():
     assert "pull_request:" in workflow
     assert "group: intellij-" in workflow
     assert "cancel-in-progress: true" in workflow
+    assert "for attempt in 1 2 3" in workflow
+    assert "sleep 20" in workflow
 
 
 def test_hosted_release_and_editor_versions_are_declared():
