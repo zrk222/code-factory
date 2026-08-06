@@ -32,7 +32,7 @@
         <p>The plugin asks before running a command. It does not upload project files or receipts, store API keys, sign artifacts, or decide whether a release is ready.</p>
         <p>Works with IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip from the 2025.2 platform baseline.</p>
         <h3>Launch offer</h3>
-        <p>All features are free through December 31, 2026. FactoryLine AI Proof is planned to become a paid Marketplace plugin on January 1, 2027 at $4.95 USD per month, subject to JetBrains approval, with a planned 30-day trial. Version 0.8.0 and the open-source repository remain available. The payment change adds no telemetry, source upload, credential storage, signing authority, or automatic release authority.</p>
+        <p>All features are free through December 31, 2026. FactoryLine AI Proof is planned to become a paid Marketplace plugin on January 1, 2027 at $4.95 USD per month, subject to JetBrains approval, with a planned 30-day trial. Version 0.8.1 and the open-source repository remain available. The payment change adds no telemetry, source upload, credential storage, signing authority, or automatic release authority.</p>
         <p>Free and open source. <a href="https://github.com/zrk222/code-factory">Read the documentation, inspect the source, or optionally star Code Factory after it has helped</a>.</p>
     ]]></description>
     <change-notes><![CDATA[
