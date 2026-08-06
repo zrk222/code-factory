@@ -1,0 +1,24 @@
+{
+  "checks": [
+    {
+      "name": "prd_grill_binds_source_and_defers_dependent_questions",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.prd_grill import grill_prd, verify_prd_grill\nwith TemporaryDirectory() as value:\n    root = Path(value)\n    source = root / 'PRD.md'\n    original = '# Draft\\n\\nA useful idea without a product contract.\\n'\n    source.write_text(original, encoding='utf-8')\n    result = grill_prd(source, root, mode='quick')\n    assert source.read_text(encoding='utf-8') == original\n    assert [item['id'] for item in result['questions']] == ['Q-REQUIREMENTS', 'Q-ACTORS', 'Q-OUTCOMES']\n    assert {item['id']: item['deferred_by'] for item in result['deferred_questions']}['Q-ACCEPTANCE'] == ['Q-REQUIREMENTS']\n    assert result['authority'] == {'implementation': 'not_authorized', 'external_effects': 'not_authorized'}\n    assert verify_prd_grill(Path(result['path']))['valid'] is True\n",
+      "covers": [
+        "PRD_GRILL_SOURCE_BOUND",
+        "PRD_GRILL_QUESTIONS_BOUND",
+        "PRD_GRILL_DRAFT_REVIEW_REQUIRED"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "prd_grill_confirmation_requires_a_complete_contract",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.product_missions import ProductMissionError\nfrom factoryline.prd_grill import grill_prd\nwith TemporaryDirectory() as value:\n    root = Path(value)\n    source = root / 'PRD.md'\n    source.write_text('# Draft\\n', encoding='utf-8')\n    try:\n        grill_prd(source, root, confirm=True)\n    except ProductMissionError as error:\n        assert error.code == 'PRD_GRILL_UNRESOLVED'\n    else:\n        raise AssertionError('confirmation unexpectedly bypassed unresolved questions')\n",
+      "covers": [
+        "PRD_GRILL_SHARED_UNDERSTANDING_CONFIRMED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

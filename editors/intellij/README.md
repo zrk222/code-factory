@@ -23,6 +23,9 @@ starter remains a starting state until product-specific proof exists.
 - `FactoryLine: Open Local Factory Studio` opens the confirmed loopback target compiler.
 - `FactoryLine: Open Product Missions` opens Studio in deterministic PRD-to-mission mode.
 - `FactoryLine: Open Unified Graph Ops` opens the bounded, read-only local evidence map.
+- **PRD Grill (terminal workflow)** runs `factory prd grill PRD.md --root <project>`
+  to write a capped, source-bound clarification sheet before PRD optimization
+  or compilation. It never modifies the PRD or authorizes implementation.
 - `FactoryLine: Mission Graph & Provider Operations` initializes and inspects
   durable graphs, verifies receipt chains, exports Mermaid, records guarded
   events, and routes a JetBrains-selected secret-free BYOK policy.
@@ -43,7 +46,7 @@ untrusted/missing receipt into a green state.
 
 ## Install
 
-1. Install `factoryline-code-factory==0.24.2` into the Python environment that
+1. Install `factoryline-code-factory==0.24.3` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the

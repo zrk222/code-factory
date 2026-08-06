@@ -24,6 +24,15 @@ next proof commands, and leaves deploy, publish, credentials, connectors, and
 messages unavailable. Open `factory studio --root .` for the same outcome-first
 flow; **Instant MVP** is its default mode.
 
+If you already have a PRD, clarify its current unknowns before scaffolding:
+
+```powershell
+factory prd grill .\PRD.md --root . --mode quick
+```
+
+The local answer sheet is source-bound and capped at three current questions;
+it does not modify the PRD or grant build authority. See [PRD Grill](PRD_GRILL.md).
+
 The starter is deliberately `compiled_blocked`: it is useful code and a
 concrete product shape, not an unsupported claim that it is production-ready.
 

@@ -14,7 +14,7 @@
 > call a starter production-ready before the relevant proof exists.
 
 ```powershell
-pip install factoryline-code-factory==0.24.2
+pip install factoryline-code-factory==0.24.3
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -40,6 +40,26 @@ professional teams. Its central promise is deliberately narrow: it accelerates
 the work and preserves evidence, but it does not label a scaffold production
 ready until the relevant non-hollow tests and receipts exist. Read the concise
 [product overview](docs/OVERVIEW.md) or start with [Start Here](docs/START_HERE.md).
+
+## Clarify a PRD before the build starts
+
+Before optimization, Product Graph compilation, or scaffolding, use **PRD
+Grill** to turn observed PRD gaps into a small, dependency-safe question
+frontier. It writes a local answer sheet with recommendations, source evidence,
+and answer stubs; it never rewrites the PRD, invents answers, calls a model, or
+authorizes implementation.
+
+```powershell
+factory prd grill .\PRD.md --root . --mode quick
+# Update the PRD deliberately, then rerun until the contract is complete.
+specline optimize-prd .\PRD.md
+factory product compile .\PRD.md --root . --json
+```
+
+The quick pass asks at most three current questions; deep mode asks at most
+five. Dependent decisions wait for their prerequisite rather than being guessed.
+See [PRD Grill](docs/PRD_GRILL.md) for the receipt, verification, and human
+confirmation boundary.
 
 ## New in 0.24.0: Unified Graph Ops
 
@@ -140,7 +160,7 @@ plugin never uploads the workspace, stores keys, or decides a release is ready.
 To make the path tangible, create a contained MVP and inspect its proof graph:
 
 ```powershell
-pip install factoryline-code-factory==0.24.2
+pip install factoryline-code-factory==0.24.3
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -175,7 +195,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.24.2
+pip install factoryline-code-factory==0.24.3
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -528,7 +548,7 @@ an instruction or edit the Architecture Opinion Dock. See
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.24.2 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
+pip install factoryline-code-factory==0.24.3 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
 factory doctor --json
 ```
 

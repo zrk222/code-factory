@@ -317,9 +317,9 @@ def _product_gaps(requirements: list[dict[str, Any]], acceptance: list[dict[str,
     return gaps
 
 
-def compile_product_text(text: str, *, root: Path, source_name: str, project: str | None = None,
-                         force: bool = False, bindings: dict[str, str] | None = None) -> dict[str, Any]:
-    """Compile UTF-8 PRD text into a local Product Graph and gap inventory."""
+def analyze_product_text(text: str, source_name: str, project: str | None = None,
+                         bindings: dict[str, str] | None = None) -> dict[str, Any]:
+    """Return deterministic Product Graph facts without writing product artifacts."""
     source_bytes = text.encode("utf-8")
     if not source_bytes or len(source_bytes) > MAX_PRD_BYTES:
         raise ProductMissionError("PRD_SIZE_INVALID", f"PRD must be 1-{MAX_PRD_BYTES} UTF-8 bytes")
@@ -356,6 +356,14 @@ def compile_product_text(text: str, *, root: Path, source_name: str, project: st
             "UX_STATES_AUDITED", "PRODUCT_TRUST_MODEL_BOUND", "PRODUCT_OUTCOME_EVENTS_BOUND",
         ],
     }
+    return core
+
+
+def compile_product_text(text: str, *, root: Path, source_name: str, project: str | None = None,
+                         force: bool = False, bindings: dict[str, str] | None = None) -> dict[str, Any]:
+    """Compile UTF-8 PRD text into a local Product Graph and gap inventory."""
+    core = analyze_product_text(text, source_name=source_name, project=project, bindings=bindings)
+    project_id = core["project"]
     graph = {**core, "graph_sha256": _sha_bytes(_canonical(core)), "generated_at": _now()}
     directory = Path(root).resolve() / ".factory" / "products" / project_id
     graph_path = directory / "product_graph.json"

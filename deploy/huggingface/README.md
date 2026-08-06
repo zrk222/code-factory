@@ -15,7 +15,7 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Reviewable MVPs in minutes with local proof
+short_description: Reviewable MVPs with proof-first PRD clarification
 ---
 
 # Code Factory
@@ -31,8 +31,13 @@ proof exists.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.24.2` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.24.3` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21543621).
+
+Before a PRD becomes a scaffold, run `factory prd grill PRD.md --root .` for a
+capped, source-bound clarification sheet with recommendations and answer stubs.
+It never rewrites the PRD, invents answers, calls a model, or authorizes a
+build. Read the full [PRD Grill guide](https://github.com/zrk222/code-factory/blob/main/docs/PRD_GRILL.md).
 
 The illustrations explain the workflow; they are not UI screenshots or
 measured outcome evidence. The quick-start video is rendered from the shipped

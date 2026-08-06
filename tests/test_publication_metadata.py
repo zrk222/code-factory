@@ -25,7 +25,7 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-04"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-06"
 
 
 def test_pypi_storefront_has_identity_and_canonical_links():
@@ -44,7 +44,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
     assert project["description"] == (
         "Create a reviewable MVP starting state in minutes with local receipts, proof paths, and room to extend."
     )
-    assert {"mvp", "mcp", "graph-ops"}.issubset(project["keywords"])
+    assert {"mvp", "mcp", "graph-ops", "prd-grill"}.issubset(project["keywords"])
 
 
 def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
@@ -68,6 +68,9 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
         assert "Graph Ops" in content
     assert "Star Code Factory" in vscode_readme
     assert "Star Code Factory" in intellij_readme
+    for content in (readme, vscode_readme, intellij_plugin, intellij_readme):
+        assert "PRD Grill" in content
+        assert "factory prd grill" in content
 
 
 def test_github_discovery_assets_and_community_drafts_are_reviewable_only():
@@ -222,10 +225,10 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.24.2"
+    assert project["version"] == "0.24.3"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.8.0"
-    assert 'version = "0.8.1"' in gradle
+    assert vscode["version"] == "0.8.1"
+    assert 'version = "0.8.2"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -352,10 +355,11 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.24.2"
-    assert metadata["publication_date"] == "2026-08-05"
+    assert metadata["version"] == "0.24.3"
+    assert metadata["publication_date"] == "2026-08-06"
     assert "Unified Graph Ops" in metadata["description"]
     assert "conceptual visual walkthrough" in metadata["description"]
+    assert "prd-grill" in metadata["keywords"]
 
     assets = ROOT / "docs" / "assets"
     for name in (

@@ -2,7 +2,7 @@
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
   "description": "Create a reviewable MVP starting state in minutes and inspect bounded Code Factory proof in VS Code.",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -23,7 +23,8 @@
     "testing",
     "mvp",
     "mcp",
-    "graph-ops"
+    "graph-ops",
+    "prd-grill"
   ],
   "activationEvents": [
     "onCommand:factoryline.assemble",

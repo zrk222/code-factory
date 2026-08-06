@@ -35,12 +35,16 @@ not been observed.
 >    fact-derived next action. Graph Ops is read-only: it cannot execute,
 >    approve, publish, deploy, sign, message, access credentials, or grant
 >    connectors.
+> 4. If you have a PRD, run `factory prd grill PRD.md --root .` before
+>    optimization or compilation. It writes a capped, source-bound question
+>    sheet with answer stubs; it never rewrites the PRD or starts a build.
 >
 > **Use it when you need to:**
 >
 > - start an inspectable MVP from a plain-language outcome;
 > - find requirements without verified completion evidence;
 > - understand which prior read-only proof may be reused or must rerun;
+> - clarify the next unresolved PRD decisions before a scaffold compounds them;
 > - record paired time, token, and cost observations without inferred savings.
 >
 > **Useful for a first MVP, a careful code review, and a team workflow:**
@@ -85,6 +89,7 @@ be recaptured in a supported JetBrains IDE after the visible plugin UI changes.
 | --- | --- | --- | --- |
 | Evaluate | Install from Marketplace | Plugin appears under **Tools | FactoryLine** | Installation does not grant filesystem export, credential, or release authority. |
 | Activate | Run **Run First Proof** | A confirmed `factory doctor --json` result is shown locally | The user can decline; no command then runs. |
+| Clarify | Run `factory prd grill PRD.md --root .` | A local, source-bound question sheet with answer stubs | It does not rewrite the PRD, invent answers, or authorize implementation. |
 | Create | Run `factory mvp` | A contained `my-mvp` workspace is generated | A starter is not certified production-ready. |
 | Understand | Open Studio → **Graph Ops** | Local requirements, slices, mission, proof, and gate state are visualized | Graph Ops remains read-only. |
 | Improve | Record paired observations | Time/token/cost fields stay unknown until measured | No modeled productivity or conversion claim is emitted. |
