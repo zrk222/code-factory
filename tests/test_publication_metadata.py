@@ -237,6 +237,9 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.openGraphOps"' in plugin_xml
     assert "Unified Graph Ops" in plugin_xml
+    assert "Use FactoryLine when you want to" in plugin_xml
+    assert "Turn an outcome into a buildable starting point" in plugin_xml
+    assert "Review AI or teammate changes with evidence" in plugin_xml
     assert "Use real plugin UI, not concept art." in screenshot_brief
     assert "1280x800" in screenshot_brief
 

@@ -43,6 +43,11 @@ not been observed.
 > - understand which prior read-only proof may be reused or must rerun;
 > - record paired time, token, and cost observations without inferred savings.
 >
+> **Useful for a first MVP, a careful code review, and a team workflow:**
+> start from an outcome, inspect the evidence behind a change, recover the
+> fact-derived next step after a diff, and keep supervision plus measured
+> observations explicit.
+>
 > The plugin asks before it runs a command. It does not upload project files or
 > receipts, store API keys, sign artifacts, or decide that a release is ready.
 > After successful local work, it may offer an optional **Star Code Factory**
