@@ -11,7 +11,7 @@ listing has accepted the artifact.
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
 | VS Code | `factoryline-vscode-0.8.0.vsix` | GitHub release bundle; Marketplace requires a separately configured publisher token | Installable VSIX or public Marketplace version |
-| JetBrains | `factoryline-intellij-0.8.0.zip` | Scoped workflow update to public plugin 33009 | Installable ZIP or public plugin/version page after moderation |
+| JetBrains | `factoryline-intellij-0.8.1.zip` | Scoped workflow update to public plugin 33009 | Installable ZIP or public plugin/version page after moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
 The release pipeline never treats a queued review, draft listing, uploaded
@@ -19,5 +19,5 @@ artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured.
 
 JetBrains Marketplace publication remains blocked while the current submitted
-update is pending Marketplace approval. Do not dispatch the 0.8.0 candidate
+update is pending Marketplace approval. Do not dispatch the 0.8.1 candidate
 until the Marketplace status gate reports clear.

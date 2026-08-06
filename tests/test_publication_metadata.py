@@ -191,6 +191,31 @@ def test_intellij_workflow_avoids_duplicate_feature_branch_runs():
     assert "sleep 20" in workflow
 
 
+def test_intellij_compatibility_reuses_verified_package_with_cached_dependencies():
+    workflow = (ROOT / ".github" / "workflows" / "intellij-plugin.yml").read_text(encoding="utf-8")
+    gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
+    package_job = workflow.split("  compatibility:", maxsplit=1)[0]
+
+    assert workflow.count("gradle/actions/setup-gradle@v6.2.0") == 2
+    assert "Build, verify, and preflight plugin package" in package_job
+    assert "Package verification attempt $attempt failed" in package_job
+    assert package_job.count("for attempt in 1 2 3") == 1
+    assert "actions/download-artifact@v8.0.1" in workflow
+    assert "name: factoryline-intellij-plugin" in workflow
+    assert "Resolve verified plugin archive" in workflow
+    assert 'test "${#archives[@]}" -eq 1' in workflow
+    assert "factorylineVerificationArchive" in workflow
+    assert "./gradlew buildPlugin verifyPlugin -PfactorylineVerificationProduct" not in workflow
+    assert "tasks.named<VerifyPluginTask>(\"verifyPlugin\")" in gradle
+    assert "archiveFile.set(file(archive))" in gradle
+
+
+def test_python_ci_matrix_caches_package_downloads():
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "python-version: ${{ matrix.python }}\n          cache: pip" in workflow
+
+
 def test_hosted_release_and_editor_versions_are_declared():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     vscode = json.loads((ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8"))
@@ -200,7 +225,7 @@ def test_hosted_release_and_editor_versions_are_declared():
     assert project["version"] == "0.24.2"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.8.0"
-    assert 'version = "0.8.0"' in gradle
+    assert 'version = "0.8.1"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -216,6 +241,9 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.openGraphOps"' in plugin_xml
     assert "Unified Graph Ops" in plugin_xml
+    assert "Use FactoryLine when you want to" in plugin_xml
+    assert "Turn an outcome into a buildable starting point" in plugin_xml
+    assert "Review AI or teammate changes with evidence" in plugin_xml
     assert "Use real plugin UI, not concept art." in screenshot_brief
     assert "1280x800" in screenshot_brief
 
@@ -273,7 +301,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     assert plan["offer"]["monthly_price_usd"] == 4.95
     assert plan["offer"]["monthly_price_status"] == "owner_approved"
     assert plan["offer"]["paid_from"] == "2027-01-01"
-    assert plan["plugin"]["current_free_version"] == "0.8.0"
+    assert plan["plugin"]["current_free_version"] == "0.8.1"
     assert plan["paid_descriptor"] == {
         "product_code": "PFACTORYLINE",
         "product_code_status": "proposed_not_registered",

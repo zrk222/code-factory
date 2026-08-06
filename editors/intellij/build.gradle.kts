@@ -2,6 +2,7 @@ import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.models.ProductRelease
 import org.jetbrains.intellij.platform.gradle.tasks.PublishPluginTask
+import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
 import java.nio.charset.StandardCharsets
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
@@ -12,7 +13,7 @@ plugins {
 }
 
 group = "app.factoryline"
-version = "0.8.0"
+version = "0.8.1"
 
 kotlin {
     jvmToolchain(21)
@@ -67,6 +68,14 @@ intellijPlatform {
 // the IntelliJ runtime, so only the production plugin classes need instrumentation.
 tasks.named("instrumentTestCode") {
     enabled = false
+}
+
+// Compatibility jobs verify the immutable ZIP already built and checked by the
+// upstream CI job. Local invocations retain the plugin task's normal output.
+tasks.named<VerifyPluginTask>("verifyPlugin") {
+    providers.gradleProperty("factorylineVerificationArchive").orNull?.let { archive ->
+        archiveFile.set(file(archive))
+    }
 }
 
 tasks.register("marketplacePreflight") {

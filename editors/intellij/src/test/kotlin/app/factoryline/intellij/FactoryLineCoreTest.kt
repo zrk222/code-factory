@@ -16,11 +16,11 @@ class FactoryLineCoreTest {
 
     @Test
     fun githubStarPromptRequiresACompletedCommandAndANewPluginVersion() {
-        assertTrue(FactoryLineGitHubStarPrompt.shouldOffer(0, false, null, "0.8.0"))
-        assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(1, false, null, "0.8.0"))
-        assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(0, true, null, "0.8.0"))
-        assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(0, false, "0.8.0", "0.8.0"))
-        assertTrue(FactoryLineGitHubStarPrompt.shouldOffer(0, false, "0.7.0", "0.8.0"))
+        assertTrue(FactoryLineGitHubStarPrompt.shouldOffer(0, false, null, "0.8.1"))
+        assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(1, false, null, "0.8.1"))
+        assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(0, true, null, "0.8.1"))
+        assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(0, false, "0.8.1", "0.8.1"))
+        assertTrue(FactoryLineGitHubStarPrompt.shouldOffer(0, false, "0.8.0", "0.8.1"))
     }
 
     @Test
