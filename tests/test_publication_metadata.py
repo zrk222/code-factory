@@ -191,6 +191,27 @@ def test_intellij_workflow_avoids_duplicate_feature_branch_runs():
     assert "sleep 20" in workflow
 
 
+def test_intellij_compatibility_reuses_verified_package_with_cached_dependencies():
+    workflow = (ROOT / ".github" / "workflows" / "intellij-plugin.yml").read_text(encoding="utf-8")
+    gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
+
+    assert workflow.count("gradle/actions/setup-gradle@v6.2.0") == 2
+    assert "actions/download-artifact@v8.0.1" in workflow
+    assert "name: factoryline-intellij-plugin" in workflow
+    assert "Resolve verified plugin archive" in workflow
+    assert 'test "${#archives[@]}" -eq 1' in workflow
+    assert "factorylineVerificationArchive" in workflow
+    assert "./gradlew buildPlugin verifyPlugin -PfactorylineVerificationProduct" not in workflow
+    assert "tasks.named<VerifyPluginTask>(\"verifyPlugin\")" in gradle
+    assert "archiveFile.set(file(archive))" in gradle
+
+
+def test_python_ci_matrix_caches_package_downloads():
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "python-version: ${{ matrix.python }}\n          cache: pip" in workflow
+
+
 def test_hosted_release_and_editor_versions_are_declared():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     vscode = json.loads((ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8"))

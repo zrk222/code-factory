@@ -159,3 +159,4 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-05 10:10] GATE plan github-star-growth-v1 approver=human tasks=10 sha=4f98ebd82dfc4462
 - [2026-08-05 10:19] GATE spec github-star-growth-v1 approver=human strict=True sha=b38f20e26764ed2f
 - [2026-08-05 10:19] GATE plan github-star-growth-v1 approver=human tasks=11 sha=b38f20e26764ed2f
+- [2026-08-06 05:30] GATE spec ci-runtime-optimization approver=human strict=True sha=08a832c5d09ef2a4
