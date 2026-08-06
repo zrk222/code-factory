@@ -12,6 +12,9 @@ known, what is missing, and the one fact-derived next action.
 - **Gets a project moving quickly.** `factory mvp "..."` provides an
   outcome-first route to a contained MVP. `factory create` supports web, mobile,
   API, CLI, worker, MCP, and agent-UI starters.
+- **Clarifies the contract before automation compounds it.** `factory prd grill
+  PRD.md --root .` creates a capped, source-bound question sheet with answer
+  stubs. It does not rewrite the PRD, invent answers, or authorize a build.
 - **Makes delivery state legible.** Factory Studio, Graph Ops, and the VS Code
   and JetBrains integrations present requirements, gates, proofs, and blocked
   work in one local, read-only view.
@@ -33,7 +36,7 @@ known, what is missing, and the one fact-derived next action.
 ## Typical path
 
 ```powershell
-pip install factoryline-code-factory==0.24.2
+pip install factoryline-code-factory==0.24.3
 factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid

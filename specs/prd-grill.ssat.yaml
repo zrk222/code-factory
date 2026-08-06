@@ -1,0 +1,33 @@
+name: prd-grill
+modules:
+  - name: prd_grill
+    path: factoryline/prd_grill.py
+    functions:
+      - name: grill_prd
+        args: ["prd_path: Path", "root: Path", "mode: str = 'quick'", "project: str | None = None", "out_path: Path | None = None", "confirm: bool = False", "force: bool = False"]
+        returns: dict
+      - name: verify_prd_grill
+        args: ["receipt_path: Path"]
+        returns: dict
+  - name: product_missions
+    path: factoryline/product_missions.py
+    functions:
+      - name: analyze_product_text
+        args: ["text: str", "source_name: str", "project: str | None = None", "bindings: dict[str, str] | None = None"]
+        returns: dict
+dependencies:
+  - from: prd_grill
+    to: product_missions
+invariants:
+  - name: no_agent_or_external_effect
+    forbid_pattern: "subprocess\\.(?:run|Popen)|\\b(?:merge|deploy|publish|send)\\s*\\("
+    scopes:
+      - module: prd_grill
+        symbol: grill_prd
+        max_lines: 220
+  - name: no_input_prd_mutation
+    forbid_pattern: "(?:prd_path|source)\\.write_(?:text|bytes)\\("
+    scopes:
+      - module: prd_grill
+        symbol: grill_prd
+        max_lines: 220

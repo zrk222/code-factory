@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+- Surface the local `factory prd grill` workflow for source-bound PRD
+  clarification before optimization or product compilation.
+- Align the extension bundle with Code Factory 0.24.3.
+
 ## 0.7.0
 
 - Add a confirmed read-only paired savings report with exact time, token, and

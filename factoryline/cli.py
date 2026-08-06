@@ -93,6 +93,7 @@ from .product_missions import (
     verify_mission_completion,
     verify_product_graph,
 )
+from .prd_grill import grill_prd, verify_prd_grill
 from .mission_graph import (
     MissionGraphError,
     apply_mission_event,
@@ -792,6 +793,21 @@ def main(argv=None) -> int:
     product_slices.add_argument("--force", action="store_true")
     product_slices.add_argument("--json", action="store_true")
 
+    prd = sub.add_parser("prd", help="clarify a PRD before optimization and product compilation")
+    prd_sub = prd.add_subparsers(dest="prd_cmd", required=True)
+    prd_grill = prd_sub.add_parser("grill", help="write a bounded local PRD clarification frontier")
+    prd_grill.add_argument("prd")
+    prd_grill.add_argument("--root", default=".")
+    prd_grill.add_argument("--mode", default="quick", choices=("quick", "deep"))
+    prd_grill.add_argument("--project")
+    prd_grill.add_argument("--out")
+    prd_grill.add_argument("--confirm", action="store_true")
+    prd_grill.add_argument("--force", action="store_true")
+    prd_grill.add_argument("--json", action="store_true")
+    prd_verify = prd_sub.add_parser("verify", help="verify a source-bound PRD Grill receipt")
+    prd_verify.add_argument("receipt")
+    prd_verify.add_argument("--json", action="store_true")
+
     mission = sub.add_parser("mission", help="create or verify a supervised, passport-bound value mission")
     mission_sub = mission.add_subparsers(dest="mission_cmd", required=True)
     mission_create = mission_sub.add_parser("create", help="bind one value slice to a bounded mission")
@@ -1059,9 +1075,16 @@ def main(argv=None) -> int:
         return _home(Path(a.root), a.json)
     if a.cmd == "doctor":
         return _doctor(a.strict, a.json)
-    if a.cmd in {"product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider", "agent", "telemetry"}:
+    if a.cmd in {"prd", "product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider", "agent", "telemetry"}:
         try:
-            if a.cmd == "agent" and a.agent_cmd == "contract":
+            if a.cmd == "prd" and a.prd_cmd == "grill":
+                result = grill_prd(
+                    Path(a.prd), Path(a.root), a.mode, a.project,
+                    Path(a.out) if a.out else None, a.confirm, a.force,
+                )
+            elif a.cmd == "prd" and a.prd_cmd == "verify":
+                result = verify_prd_grill(Path(a.receipt))
+            elif a.cmd == "agent" and a.agent_cmd == "contract":
                 result = validate_agent_contract(Path(a.manifest))
             elif a.cmd == "agent" and a.agent_cmd == "attestation":
                 result = validate_verifier_attestation(

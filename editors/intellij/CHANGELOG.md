@@ -1,5 +1,11 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.2
+
+- Add Marketplace and editor documentation for PRD Grill: a deterministic,
+  source-bound clarification sheet that never rewrites the PRD or starts a build.
+- Align the plugin bundle with Code Factory 0.24.3.
+
 ## 0.7.2
 
 - Add a zero-configuration **Run First Proof** action backed by `factory doctor --json`.

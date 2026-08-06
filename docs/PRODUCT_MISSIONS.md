@@ -49,6 +49,8 @@ add the missing product-engineering structure:
 ## CLI quick start
 
 ```powershell
+factory prd grill .\PRD.md --root . --mode quick --json
+# Answer the source-bound current frontier in PRD.md, then rerun as needed.
 factory product compile .\PRD.md --root . --json
 factory product slices .\.factory\products\my-product\product_graph.json --root . --json
 factory mission create .\.factory\products\my-product\value_slices.json `
@@ -63,6 +65,25 @@ factory pr draft .\.factory\missions\my-product-slice-core-12345678\mission.json
 
 Use the emitted `path` and slice `id` fields rather than guessing filenames in
 automation. The example names show the artifact layout only.
+
+## PRD Grill preflight
+
+Use [PRD Grill](PRD_GRILL.md) before compiling when a PRD is thin, ambiguous,
+or likely to hide a decision that would otherwise surface after scaffolding.
+It converts the Product Graph compiler's observed gaps into a deterministic
+current question frontier: at most three questions in quick mode or five in
+deep mode. Each question carries its source evidence, target PRD section,
+recommendation, and answer stub. The command writes a local receipt and never
+edits the input PRD or starts a mission.
+
+```powershell
+factory prd grill .\PRD.md --root . --mode deep
+factory prd verify .\.factory\prd-grills\<project>\<source-digest>.json --json
+```
+
+Update the PRD deliberately and rerun. `--confirm` records only a human
+shared-understanding marker when no observed gaps remain; it is not
+implementation approval.
 
 For a large migration, bind a `factory.migration.readiness.v1` receipt with
 `--readiness`. Mission creation fails until all eight readiness lanes have
@@ -143,20 +164,21 @@ verification, release authority, Meter v2, Studio, and both IDE families.
 
 ```mermaid
 flowchart LR
-    A["PRD intent"] --> B["Product Graph and gap gate"]
-    B --> C["Exact value-slice coverage"]
-    C --> D["Supervised mission and Loop Passport"]
-    D --> E["Evidence-linked PR draft"]
-    E --> F["Classified outcome chain"]
-    F -. "learning without silent policy changes" .-> A
+    A["PRD intent"] --> B["PRD Grill question frontier"]
+    B --> C["Product Graph and gap gate"]
+    C --> D["Exact value-slice coverage"]
+    D --> E["Supervised mission and Loop Passport"]
+    E --> F["Evidence-linked PR draft"]
+    F --> G["Classified outcome chain"]
+    G -. "learning without silent policy changes" .-> A
     classDef input fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef plan fill:#fef3c7,stroke:#d97706,color:#451a03
     classDef proof fill:#dcfce7,stroke:#16a34a,color:#052e16
     classDef outcome fill:#ccfbf1,stroke:#0f766e,color:#042f2e
     class A input
-    class B,C,D plan
-    class E proof
-    class F outcome
+    class B,C,D,E plan
+    class F proof
+    class G outcome
 ```
 
 ## Scope boundary

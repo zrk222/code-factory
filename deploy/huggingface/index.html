@@ -181,6 +181,20 @@ factory studio --root .</code></pre>
     <section>
       <div class="shell proof">
         <div>
+          <div class="eyebrow">New in 0.24.3</div>
+          <h2>Clarify the PRD before automation compounds ambiguity.</h2>
+          <p>PRD Grill turns the gaps observed in your local PRD into a capped, dependency-safe question frontier with source evidence, recommendations, and answer stubs. It never rewrites the PRD, invents an answer, calls a model, or starts a build.</p>
+        </div>
+        <pre><code>factory prd grill PRD.md --root . --mode quick
+# Update the PRD deliberately, then rerun until gaps are resolved.
+specline optimize-prd PRD.md
+factory product compile PRD.md --root . --json</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell proof">
+        <div>
           <div class="eyebrow">New in 0.23</div>
           <h2>Reuse the proof. Keep the boundary.</h2>
           <p>Content-addressed receipts route read-only gates to RUN, REUSE, SKIP, or BLOCK. Exact reuse verifies every bound input and output; ambiguity runs again, and side effects stay blocked.</p>
@@ -204,7 +218,7 @@ factory proofs plan proofs.json --changed src/app.py \
             <a class="button" href="https://plugins.jetbrains.com/plugin/33009-factoryline">Install free in JetBrains</a>
           </div>
         </div>
-        <pre><code>pip install factoryline-code-factory==0.24.2
+        <pre><code>pip install factoryline-code-factory==0.24.3
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 # Open Graph Ops in the local Studio</code></pre>
@@ -254,7 +268,7 @@ Never substitute CI or repository traffic for installs.</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.24.2 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.24.2">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.24.3 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.24.3">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

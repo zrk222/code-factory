@@ -21,6 +21,9 @@ production-ready by itself.
 - **FactoryLine: Open Local Factory Studio** opens the confirmed loopback target compiler.
 - **FactoryLine: Open Product Missions** opens Studio in deterministic PRD-to-mission mode.
 - **FactoryLine: Open Unified Graph Ops** opens the bounded, read-only local evidence map.
+- **PRD Grill (terminal workflow)** runs `factory prd grill PRD.md --root <workspace>`
+  to create a capped, source-bound clarification sheet before PRD optimization
+  or compilation. It never rewrites the PRD or starts a build.
 - Requirement IDs such as `REQ-*`, `FR-*`, and `NFR-*` receive a read-only
   CodeLens that opens matching local proof in `.factory`, `receipts`,
   `coverage`, `tests`, or `specs`.
@@ -34,7 +37,7 @@ pass arbitrary shell fragments to your terminal.
 Install the Code Factory CLI first:
 
 ```powershell
-pip install factoryline-code-factory==0.24.2
+pip install factoryline-code-factory==0.24.3
 ```
 
 Build a local VSIX from this directory, then install it in VS Code:
@@ -42,7 +45,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.8.0.vsix
+code --install-extension factoryline-vscode-0.8.1.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

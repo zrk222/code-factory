@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.24.3 - 2026-08-06
+
+- Add PRD Grill: a deterministic, local clarification pass that writes a
+  capped current question frontier, answer stubs, source evidence, deferred
+  dependencies, and a verifiable source-bound receipt before PRD optimization,
+  Product Graph compilation, or scaffolding.
+- Preserve author control: PRD Grill never rewrites the source PRD, invents
+  answers, calls a model, starts a build, or authorizes external effects.
+- Update the GitHub, PyPI, Hugging Face, VS Code, JetBrains, and Marketplace
+  listing surfaces with the PRD Grill workflow and its proof boundary.
+
 ## 0.24.2 - 2026-08-05
 
 - Add optional, local-only post-success GitHub Star actions in the VS Code and
