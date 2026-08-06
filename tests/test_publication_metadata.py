@@ -194,8 +194,12 @@ def test_intellij_workflow_avoids_duplicate_feature_branch_runs():
 def test_intellij_compatibility_reuses_verified_package_with_cached_dependencies():
     workflow = (ROOT / ".github" / "workflows" / "intellij-plugin.yml").read_text(encoding="utf-8")
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
+    package_job = workflow.split("  compatibility:", maxsplit=1)[0]
 
     assert workflow.count("gradle/actions/setup-gradle@v6.2.0") == 2
+    assert "Build, verify, and preflight plugin package" in package_job
+    assert "Package verification attempt $attempt failed" in package_job
+    assert package_job.count("for attempt in 1 2 3") == 1
     assert "actions/download-artifact@v8.0.1" in workflow
     assert "name: factoryline-intellij-plugin" in workflow
     assert "Resolve verified plugin archive" in workflow

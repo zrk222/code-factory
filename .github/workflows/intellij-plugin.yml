@@ -37,7 +37,22 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v6.2.0
       - run: chmod +x gradlew
-      - run: ./gradlew check buildPlugin verifyPlugin marketplacePreflight
+      - name: Build, verify, and preflight plugin package
+        shell: bash
+        run: |
+          # JetBrains-hosted dependency metadata can return transient 5xx
+          # responses. Retry only at the CI boundary; a persistent build,
+          # package, verifier, or preflight defect still fails the job.
+          for attempt in 1 2 3; do
+            if ./gradlew check buildPlugin verifyPlugin marketplacePreflight; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Package verification attempt $attempt failed; retrying once the upstream repository recovers."
+              sleep 20
+            fi
+          done
+          exit 1
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: factoryline-intellij-plugin
