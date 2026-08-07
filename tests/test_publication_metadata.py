@@ -420,3 +420,15 @@ def test_codex_usage_sample_is_privacy_safe_and_does_not_invent_savings():
     assert sample["productivity_claims"]["time_saved_seconds"] is None
     assert sample["productivity_claims"]["tokens_saved"] is None
     assert all(value is False for value in sample["privacy"].values())
+
+
+def test_historical_release_headings_are_not_renamed_by_version_bumps() -> None:
+    """A blanket version-string replace once renamed a past section heading.
+
+    README section headings record which release introduced a feature. Rewriting
+    them makes the document claim a feature shipped in a version it did not.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "## New in 0.25.0: the contradiction gate" in readme
+    assert "## New in 0.24.0: Unified Graph Ops" in readme
+    assert readme.count("## New in 0.26.0:") == 1, "exactly one section may claim 0.26.0"

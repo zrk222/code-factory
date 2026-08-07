@@ -61,7 +61,43 @@ five. Dependent decisions wait for their prerequisite rather than being guessed.
 See [PRD Grill](docs/PRD_GRILL.md) for the receipt, verification, and human
 confirmation boundary.
 
-## New in 0.26.0: the contradiction gate
+## New in 0.26.0: is anyone still actually reading the code?
+
+Code Factory checks plenty before letting work through. It never checked the one
+thing everything else rests on: whether the human approving still has their eyes
+open.
+
+People get used to approving machine-written code. The same reviewer approves
+more of it over time and comments on it less. Nothing looks broken — approvals
+arrive, receipts say approved. That is exactly what makes it worth measuring.
+
+```bash
+factory habituation record pr-4482 --reviewer alice@corp.com \
+  --author-kind agent --review-seconds 8 --changed-lines 100 --approved
+
+factory habituation status
+# HABITUATION_GATE action=second_approver blocking=False
+#   You asked it to block. It won't yet: nobody has spot-checked any of these
+#   approvals, so this is still a hunch. Run the sample first.
+```
+
+It compares you against **your own** habits — how long you spend on the agent's
+code versus a colleague's — never against other people. Getting used to
+something is what repetition does to humans, not a personal failing, and there
+is no leaderboard here.
+
+It also won't stop a merge on a hunch. Reading time is a rough proxy for
+attention; a quick expert looks identical to a bored reviewer. So spot-check a
+few approvals for real before it can block anything:
+
+```bash
+factory habituation sample --rate 10
+factory habituation resample pr-4482 --reviewer bob@corp.com
+```
+
+Ask it to block before that and it refuses, and tells you why.
+
+## New in 0.25.0: the contradiction gate
 
 SpecLine removes ambiguity from a spec. CDTE removes contradiction. They are
 different defects: ambiguity is resolved by asking the author what they meant,
