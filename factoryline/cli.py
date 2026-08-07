@@ -380,6 +380,11 @@ def main(argv=None) -> int:
     report.add_argument("--out")
     report.add_argument("--json", action="store_true")
 
+    s = sub.add_parser("update-check", help="report whether a newer release exists; installs nothing")
+    s.add_argument("--root", default=".")
+    s.add_argument("--force", action="store_true", help="ignore the 24h cache")
+    s.add_argument("--json", action="store_true")
+
     # Habituation: thin delegates only; logic lives in factoryline/habituation.py.
     s = sub.add_parser("habituation", help="calibrate the human approval signal instead of trusting it")
     hab_sub = s.add_subparsers(dest="hab_cmd")
@@ -1482,6 +1487,12 @@ def main(argv=None) -> int:
         else:
             print(f"public Assembly metrics written to {Path(a.out).resolve()}")
         return 0
+    if a.cmd == "update-check":
+        from .update_check import check_for_update, render
+        result = check_for_update(Path(a.root), force=a.force)
+        print(json.dumps(result, indent=2, sort_keys=True) if a.json else render(result))
+        return 0
+
     if a.cmd == "habituation":
         from .habituation import (
             HabituationError, blind_spot_sample, evaluate_gate,
