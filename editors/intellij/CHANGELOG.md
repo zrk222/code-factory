@@ -1,5 +1,11 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.0 - 2026-08-07
+
+- Surface the 0.25.0 contradiction gate: conflicts detected before the
+  build, tier-labelled analysis, and withheld quantification shown as
+  withheld rather than estimated.
+
 ## 0.8.2
 
 - Add Marketplace and editor documentation for PRD Grill: a deterministic,

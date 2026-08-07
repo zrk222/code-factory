@@ -46,7 +46,7 @@ untrusted/missing receipt into a green state.
 
 ## Install
 
-1. Install `factoryline-code-factory==0.24.3` into the Python environment that
+1. Install `factoryline-code-factory==0.26.0` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the
@@ -97,3 +97,19 @@ missing. GitHub releases remain the current installation channel. The initial
 Marketplace upload requires a human Vendor profile and review; after that
 bootstrap, the scoped GitHub workflow publishes verified updates using a
 Marketplace publisher token. See [the Marketplace runbook](../../docs/JETBRAINS_MARKETPLACE.md).
+
+### Contradiction gate (0.26.0)
+
+`factory cdte scan` detects architecturally incompatible NFR pairs before any
+code is generated, by deterministic lookup over a decision table. No model is
+called. Analysis is tiered `measured` / `modeled` / `structural`, and a modeled
+analysis whose inputs are absent is withheld rather than estimated. Critical and
+high severity conflicts engage the fail-closed boundary and pause the line at
+`nfr_conflict`.
+
+### Habituation gate (0.26.0)
+
+`factory habituation status` calibrates the human approval signal against each
+reviewer's own baseline and escalates: surface, second approver, fail closed.
+Blocking is refused until blind-spot re-review outcomes correct the proxy.
+Public exports carry distributions only, never per-reviewer rows.

@@ -1,0 +1,189 @@
+# ==============================================================================
+# CDTE Phase 1 — Constraint Synthesis Evaluation Suite
+# ==============================================================================
+# Rebuilt from agent-factory-eval-suite.yaml. Changes from the original, and why:
+#
+#   1. `llm-as-judge` -> `llm-rubric`.   `llm-as-judge` is not a Promptfoo
+#      assertion type; the suite errored at load rather than failing a test.
+#   2. `select-json`  -> `javascript`.   Also not a Promptfoo type. JSON-path
+#      extraction is done in a javascript assertion.
+#   3. The NFR schema is now INLINE in the prompt. The original cited it as
+#      "[662]" — a footnote into a research document the model cannot see —
+#      then asserted exact field names from it. That measured whether the model
+#      could guess a schema, not whether it could apply one.
+#   4. Citation markers stripped from all prompt content. They were footnote
+#      references being sent to the model as if they were instructions.
+#   5. Added negative cases. The original asserted only that the model FINDS
+#      things. Nothing tested that it stays silent when it should, which is the
+#      metric that decides whether developers keep the tool switched on.
+#
+# CDTE Phase 2 (detection) is NOT evaluated here. It is a deterministic table
+# lookup with no model involved; it is covered by tests/test_cdte.py, where a
+# unit test is both cheaper and stricter than an eval.
+# ==============================================================================
+
+description: "CDTE Phase 1: extract NFR constraints from unstructured prose"
+
+providers:
+  # Pin a current model. Verify the id against your provider's model list before
+  # running; ids go stale and a silently-wrong id fails at request time.
+  - id: anthropic:messages:claude-sonnet-4-5
+    label: "Constraint Synthesis"
+    config:
+      temperature: 0
+      max_tokens: 2048
+
+defaultTest:
+  assert:
+    - type: is-json
+      value:
+        type: object
+        required: [constraints]
+        properties:
+          constraints:
+            type: array
+            items:
+              type: object
+              required: [constraintId, category, metric]
+              properties:
+                constraintId: {type: string}
+                category:
+                  type: string
+                  enum: [performance, security, compliance, scalability, resource, infrastructure, availability]
+                metric: {type: string}
+                operator:
+                  type: [string, "null"]
+                  enum: [lt, lte, gt, gte, eq, null]
+                value: {type: [number, string, "null"]}
+
+prompts:
+  - id: constraint_synthesis
+    label: "Constraint Synthesis"
+    raw: |
+      You extract non-functional requirements from unstructured product prose.
+
+      Return ONLY a JSON object of this exact shape. No prose, no code fence.
+
+      {
+        "constraints": [
+          {
+            "constraintId": "c-001",
+            "category": "performance|security|compliance|scalability|resource|infrastructure|availability",
+            "metric": "snake_case_identifier",
+            "operator": "lt|lte|gt|gte|eq|null",
+            "value": <number or string or null>,
+            "description": "one short clause quoting the source"
+          }
+        ]
+      }
+
+      Rules:
+      - One constraint per distinct requirement. Do not merge two requirements.
+      - `metric` must be a stable snake_case token, not a sentence.
+      - Use these canonical metric names when they apply:
+        p95_latency_ms, p99_latency_ms, field_level_encryption, data_residency,
+        provider_routing, access_model, credential_type, sandbox_memory_mb,
+        max_parallel_agents, max_websocket_sessions, uptime_pct
+      - Numeric requirements carry an operator and a numeric value.
+        Categorical requirements carry a string value and a null operator.
+      - Extract ONLY what the text states. Do not infer unstated requirements,
+        do not add industry-standard defaults, and do not resolve contradictions.
+        Contradiction detection happens downstream and is not your job.
+
+      Text:
+      {{signal}}
+
+tests:
+  # --------------------------------------------------------------------------
+  # Extraction accuracy
+  # --------------------------------------------------------------------------
+  - description: "Extracts both sides of the latency-versus-encryption tension"
+    vars:
+      signal: >-
+        We need field-level AES-256 encryption on the checkout DB tables to meet
+        PCI compliance. At the same time we must hold p95 latency under 50ms on
+        the /api/v1/checkout endpoint.
+    assert:
+      - type: javascript
+        value: |
+          const cs = JSON.parse(output).constraints;
+          const perf = cs.find(c => c.metric === 'p95_latency_ms');
+          const sec  = cs.find(c => c.metric === 'field_level_encryption');
+          if (!perf) return { pass: false, reason: 'p95_latency_ms not extracted' };
+          if (!sec)  return { pass: false, reason: 'field_level_encryption not extracted' };
+          if (perf.category !== 'performance') return { pass: false, reason: 'latency miscategorized' };
+          if (perf.value !== 50) return { pass: false, reason: `expected 50, got ${perf.value}` };
+          if (!['lt','lte'].includes(perf.operator)) return { pass: false, reason: 'operator wrong' };
+          return true;
+
+  - description: "Extracts residency and routing as separate constraints"
+    vars:
+      signal: >-
+        All customer PII must remain within the EU under GDPR. We plan to run
+        the service multi-region for latency reasons.
+    assert:
+      - type: javascript
+        value: |
+          const cs = JSON.parse(output).constraints;
+          return cs.some(c => c.metric === 'data_residency')
+              && cs.some(c => c.metric === 'provider_routing');
+
+  # --------------------------------------------------------------------------
+  # Negative cases — the original suite had none of these
+  # --------------------------------------------------------------------------
+  - description: "NEGATIVE: does not invent NFRs from prose that states none"
+    vars:
+      signal: >-
+        The checkout page should use the new brand colours and move the promo
+        banner above the fold. Marketing signed off on the copy last week.
+    assert:
+      - type: javascript
+        value: |
+          const cs = JSON.parse(output).constraints;
+          return cs.length === 0
+            ? true
+            : { pass: false, reason: `invented ${cs.length} constraint(s) from copy with no NFRs` };
+
+  - description: "NEGATIVE: does not add unstated industry-default thresholds"
+    vars:
+      signal: "The API should be fast and secure."
+      # Vague adjectives with no numbers. A model that emits p95_latency_ms=200
+      # has fabricated a requirement nobody stated — the exact failure mode CDTE
+      # would then treat as fact.
+    assert:
+      - type: javascript
+        value: |
+          const cs = JSON.parse(output).constraints;
+          const fabricated = cs.filter(c => typeof c.value === 'number');
+          return fabricated.length === 0
+            ? true
+            : { pass: false, reason: `fabricated numeric threshold(s): ${JSON.stringify(fabricated)}` };
+
+  - description: "NEGATIVE: does not resolve the contradiction itself"
+    vars:
+      signal: >-
+        Zero-trust everywhere, every request independently authenticated. The
+        legacy billing job will keep using its static API key.
+    assert:
+      - type: javascript
+        value: |
+          const cs = JSON.parse(output).constraints;
+          return cs.some(c => c.metric === 'access_model')
+              && cs.some(c => c.metric === 'credential_type');
+      - type: llm-rubric
+        value: >-
+          The output contains only extracted constraints. It does NOT contain
+          any recommendation, resolution, warning about the conflict, or
+          commentary. Contradiction handling is a downstream concern.
+
+  # --------------------------------------------------------------------------
+  # FinOps guardrails
+  # --------------------------------------------------------------------------
+  - description: "Extraction stays inside cost and latency budget"
+    vars:
+      signal: "We need p95 under 50ms and AES-256 field encryption on checkout."
+    assert:
+      - type: cost
+        threshold: 0.02
+      - type: latency
+        threshold: 2500

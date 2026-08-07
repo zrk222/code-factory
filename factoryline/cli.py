@@ -380,6 +380,75 @@ def main(argv=None) -> int:
     report.add_argument("--out")
     report.add_argument("--json", action="store_true")
 
+    s = sub.add_parser("update-check", help="report whether a newer release exists; installs nothing")
+    s.add_argument("--root", default=".")
+    s.add_argument("--force", action="store_true", help="ignore the 24h cache")
+    s.add_argument("--json", action="store_true")
+
+    # Habituation: thin delegates only; logic lives in factoryline/habituation.py.
+    s = sub.add_parser("habituation", help="calibrate the human approval signal instead of trusting it")
+    hab_sub = s.add_subparsers(dest="hab_cmd")
+    hab_record = hab_sub.add_parser("record", help="record one observed review event")
+    hab_record.add_argument("review_id")
+    hab_record.add_argument("--root", default=".")
+    hab_record.add_argument("--reviewer", required=True)
+    hab_record.add_argument("--author-kind", required=True, choices=["agent", "human"])
+    hab_record.add_argument("--review-seconds", type=float, required=True)
+    hab_record.add_argument("--changed-lines", type=int, required=True)
+    hab_record.add_argument("--inline-comments", type=int, default=0)
+    hab_record.add_argument("--approved", action="store_true")
+    hab_record.add_argument("--replace", action="store_true")
+    hab_record.add_argument("--json", action="store_true")
+    hab_status = hab_sub.add_parser("status", help="evaluate the gate and show the intervention")
+    hab_status.add_argument("--root", default=".")
+    hab_status.add_argument("--allow-block", action="store_true",
+                            help="permit fail-closed; refused until blind-spot outcomes exist")
+    hab_status.add_argument("--json", action="store_true")
+    hab_sample = hab_sub.add_parser("sample", help="select low-scrutiny approvals for independent re-review")
+    hab_sample.add_argument("--root", default=".")
+    hab_sample.add_argument("--rate", type=int, default=10)
+    hab_sample.add_argument("--json", action="store_true")
+    hab_resample = hab_sub.add_parser("resample", help="record what an independent re-review found")
+    hab_resample.add_argument("review_id")
+    hab_resample.add_argument("--root", default=".")
+    hab_resample.add_argument("--reviewer", required=True)
+    hab_resample.add_argument("--defect-found", action="store_true")
+    hab_resample.add_argument("--notes", default="")
+    hab_resample.add_argument("--json", action="store_true")
+    hab_report = hab_sub.add_parser("report", help="show or export the aggregate-safe public report")
+    hab_report.add_argument("--root", default=".")
+    hab_report.add_argument("--out")
+    hab_report.add_argument("--enable-defect-linkage", action="store_true",
+                            help="opt in to the modeled correlation; read its assumptions first")
+
+    # CDTE: thin delegates only. Logic lives in factoryline/cdte.py — cli.py is
+    # already the largest module in the package and the architecture gate flags it.
+    s = sub.add_parser("cdte", help="detect NFR contradictions before any code is generated")
+    cdte_sub = s.add_subparsers(dest="cdte_cmd")
+    scan = cdte_sub.add_parser("scan", help="scan extracted NFR constraints for lethal pairs")
+    scan.add_argument("run_id")
+    scan.add_argument("constraints", help="path to a JSON file of extracted NFR constraints")
+    scan.add_argument("--root", default=".")
+    scan.add_argument("--evidence", help="benchmark file to hash-bind, promoting modeled proofs to measured")
+    scan.add_argument("--adr", action="store_true", help="draft an ADR for each detected conflict")
+    scan.add_argument("--replace", action="store_true")
+    scan.add_argument("--json", action="store_true")
+    cdte_report = cdte_sub.add_parser("report", help="show or export aggregate-safe conflict statistics")
+    cdte_report.add_argument("--root", default=".")
+    cdte_report.add_argument("--out")
+    cdte_report.add_argument("--json", action="store_true")
+    resolve = cdte_sub.add_parser("resolve", help="record an ADR decision or an expiring override")
+    resolve.add_argument("run_id")
+    resolve.add_argument("conflict_id")
+    resolve.add_argument("--root", default=".")
+    resolve.add_argument("--decision", required=True)
+    resolve.add_argument("--approved-by", required=True)
+    resolve.add_argument("--adr-path")
+    resolve.add_argument("--override", action="store_true",
+                         help="accept the contradiction; requires --expires")
+    resolve.add_argument("--expires", help="ISO date after which the override lapses")
+    resolve.add_argument("--json", action="store_true")
+
     s = sub.add_parser("proofs", help="record and route content-addressed read-only proof receipts")
     proofs_sub = s.add_subparsers(dest="proofs_cmd")
     proof_record = proofs_sub.add_parser("record", help="record one completed green proof from a request manifest")
@@ -1418,6 +1487,128 @@ def main(argv=None) -> int:
         else:
             print(f"public Assembly metrics written to {Path(a.out).resolve()}")
         return 0
+    if a.cmd == "update-check":
+        from .update_check import check_for_update, render
+        result = check_for_update(Path(a.root), force=a.force)
+        print(json.dumps(result, indent=2, sort_keys=True) if a.json else render(result))
+        return 0
+
+    if a.cmd == "habituation":
+        from .habituation import (
+            HabituationError, blind_spot_sample, evaluate_gate,
+            export_public_habituation_report, public_habituation_report,
+            record_resample_outcome, record_review,
+        )
+        root = Path(a.root)
+        try:
+            if a.hab_cmd == "record":
+                payload = record_review(root, {
+                    "review_id": a.review_id, "reviewer": a.reviewer,
+                    "author_kind": a.author_kind, "review_seconds": a.review_seconds,
+                    "changed_lines": a.changed_lines, "inline_comments": a.inline_comments,
+                    "approved": a.approved,
+                }, replace=a.replace)
+                print(json.dumps(payload, indent=2, sort_keys=True) if a.json
+                      else f"REVIEW_OBSERVED {a.review_id} scrutiny={payload['scrutiny_ratio']:.1f}s/100L")
+                return 0
+            if a.hab_cmd == "status":
+                gate = evaluate_gate(root, allow_block=a.allow_block)
+                if a.json:
+                    print(json.dumps(gate, indent=2, sort_keys=True))
+                else:
+                    print(f"HABITUATION_GATE action={gate['action']} blocking={gate['blocking']}")
+                    print(f"  warned={gate['reviewers_warned']} breached={gate['reviewers_breached']} "
+                          f"proxy_corrected={gate['proxy_corrected_by_resampling']}")
+                    print(f"  {gate['reason']}")
+                return 1 if gate["blocking"] else 0
+            if a.hab_cmd == "sample":
+                payload = blind_spot_sample(root, rate=a.rate)
+                print(json.dumps(payload, indent=2, sort_keys=True) if a.json
+                      else f"BLIND_SPOT_SAMPLE_RECEIPTED selected={payload['selected_count']} "
+                           f"of {payload['eligible_low_scrutiny']} low-scrutiny approvals")
+                return 0
+            if a.hab_cmd == "resample":
+                payload = record_resample_outcome(
+                    root, a.review_id, defect_found=a.defect_found,
+                    reviewer=a.reviewer, notes=a.notes)
+                print(json.dumps(payload, indent=2, sort_keys=True) if a.json
+                      else f"RESAMPLE_OUTCOME_RECEIPTED {a.review_id} defect={payload['defect_found']}")
+                return 0
+            if a.hab_cmd == "report":
+                if a.out:
+                    path = export_public_habituation_report(
+                        root, Path(a.out), enable_defect_linkage=a.enable_defect_linkage)
+                    print(f"HABITUATION_PUBLIC_REPORT_EXPORTED {path}")
+                else:
+                    print(json.dumps(public_habituation_report(
+                        root, enable_defect_linkage=a.enable_defect_linkage),
+                        indent=2, sort_keys=True))
+                return 0
+        except (HabituationError, OSError) as exc:
+            print(f"HABITUATION_REFUSED {getattr(exc, 'code', '')}: {exc}")
+            return 2
+        print("usage: factory habituation {record|status|sample|resample|report}")
+        return 2
+
+    if a.cmd == "cdte":
+        from .cdte import (
+            CDTEError, draft_adr, export_public_cdte_report,
+            public_cdte_report, record_scan, resolve_conflict,
+        )
+        root = Path(a.root)
+        if a.cdte_cmd == "scan":
+            try:
+                raw = json.loads(Path(a.constraints).read_text(encoding="utf-8"))
+                constraints = raw["constraints"] if isinstance(raw, dict) else raw
+                payload = record_scan(
+                    root, a.run_id, constraints,
+                    evidence=Path(a.evidence) if a.evidence else None,
+                    replace=a.replace,
+                )
+            except (CDTEError, OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                code = getattr(exc, "code", type(exc).__name__)
+                print(f"CDTE_SCAN_REFUSED {code}: {exc}")
+                return 2
+            if a.adr:
+                for index, conflict in enumerate(payload["conflicts"], start=1):
+                    path = draft_adr(root, payload, conflict["conflict_id"], number=index)
+                    print(f"ADR_DRAFTED {path}")
+            if a.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(f"CDTE_SCAN_RECEIPTED {payload['run_id']} "
+                      f"conflicts={len(payload['conflicts'])} "
+                      f"fail_closed={payload['fail_closed']}")
+                for conflict in payload["conflicts"]:
+                    analysis = conflict["incompatibility_analysis"]
+                    state = "withheld" if analysis["withheld"] else analysis["tier"]
+                    print(f"  [{conflict['severity']}] {conflict['conflict_id']} "
+                          f"{conflict['pair_id']} (analysis: {state})")
+            # Non-zero exit so CI fails closed on a blocking contradiction.
+            return 1 if payload["fail_closed"] else 0
+        if a.cdte_cmd == "report":
+            if a.out:
+                print(f"CDTE_PUBLIC_REPORT_EXPORTED {export_public_cdte_report(root, Path(a.out))}")
+            else:
+                print(json.dumps(public_cdte_report(root), indent=2, sort_keys=True))
+            return 0
+        if a.cdte_cmd == "resolve":
+            try:
+                payload = resolve_conflict(
+                    root, a.run_id, a.conflict_id,
+                    decision=a.decision, approved_by=a.approved_by,
+                    adr_path=Path(a.adr_path) if a.adr_path else None,
+                    override=a.override, expires=a.expires,
+                )
+            except (CDTEError, OSError) as exc:
+                print(f"CDTE_RESOLUTION_REFUSED {getattr(exc, 'code', '')}: {exc}")
+                return 2
+            print(json.dumps(payload, indent=2, sort_keys=True) if a.json
+                  else f"CDTE_RESOLUTION_RECEIPTED {a.conflict_id} by {payload['approved_by']}")
+            return 0
+        print("usage: factory cdte {scan|report|resolve}")
+        return 2
+
     if a.cmd == "savings":
         if a.savings_cmd == "record":
             baseline = {

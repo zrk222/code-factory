@@ -225,7 +225,7 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.24.3"
+    assert project["version"] == "0.26.0"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.8.1"
     assert 'version = "0.8.2"' in gradle
@@ -355,7 +355,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.24.3"
+    assert metadata["version"] == "0.26.0"
     assert metadata["publication_date"] == "2026-08-06"
     assert "Unified Graph Ops" in metadata["description"]
     assert "conceptual visual walkthrough" in metadata["description"]
@@ -420,3 +420,15 @@ def test_codex_usage_sample_is_privacy_safe_and_does_not_invent_savings():
     assert sample["productivity_claims"]["time_saved_seconds"] is None
     assert sample["productivity_claims"]["tokens_saved"] is None
     assert all(value is False for value in sample["privacy"].values())
+
+
+def test_historical_release_headings_are_not_renamed_by_version_bumps() -> None:
+    """A blanket version-string replace once renamed a past section heading.
+
+    README section headings record which release introduced a feature. Rewriting
+    them makes the document claim a feature shipped in a version it did not.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "## New in 0.25.0: the contradiction gate" in readme
+    assert "## New in 0.24.0: Unified Graph Ops" in readme
+    assert readme.count("## New in 0.26.0:") == 1, "exactly one section may claim 0.26.0"
