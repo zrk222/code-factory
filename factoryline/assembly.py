@@ -9,6 +9,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -186,6 +187,29 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False) -> dic
         report["rollup"] = rollup_attributions(report["stages"])
         return report
 
+    # ---------------------------------------------------------------------
+    # CDTE — contradiction gate.
+    #
+    # Runs after the spec exists and before any build stage. Deliberately
+    # model-free: constraints are read from a file that `factory cdte scan`
+    # wrote, so assembly stays deterministic and offline. A spec with no
+    # constraint file skips the gate rather than blocking on one.
+    # ---------------------------------------------------------------------
+    if not dry_run:
+        cdte_outcome = _cdte_gate(root, feature)
+        if cdte_outcome is not None:
+            report["stages"].append(cdte_outcome["stage"])
+            if cdte_outcome["blocking"]:
+                report["cdte"] = cdte_outcome["summary"]
+                report["paused_at"] = "nfr_conflict"
+                report["next_command"] = (
+                    f"factory cdte resolve {cdte_outcome['summary']['run_id']} "
+                    f"<conflict-id> --decision ... --approved-by ..."
+                )
+                report["rollup"] = rollup_attributions(report["stages"])
+                return report
+            report["cdte"] = cdte_outcome["summary"]
+
     for module, args_tmpl in chain:
         cli = MODULES[module]["cli"]
         present = installed[module].installed
@@ -345,4 +369,61 @@ def rollup_attributions(stages: list[dict]) -> dict:
             "structural" if first and first["dominant_failure_class"] else
             "inspect_stage_output" if first else None
         ),
+    }
+
+
+def _cdte_gate(root: Path, feature: str) -> dict[str, Any] | None:
+    """Run the contradiction gate for a feature, if constraints were extracted.
+
+    Returns None when no constraint file exists, so the gate is additive: an
+    existing repository keeps working untouched until someone runs
+    `factory cdte scan`.
+    """
+    constraints_path = root / "specs" / f"{feature}.nfr.json"
+    if not constraints_path.is_file():
+        return None
+
+    from .cdte import CDTEError, record_scan
+
+    try:
+        payload = json.loads(constraints_path.read_text(encoding="utf-8"))
+        constraints = payload["constraints"] if isinstance(payload, dict) else payload
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        return {
+            "blocking": False,
+            "summary": {"error": f"unreadable constraints: {exc}"},
+            "stage": {"module": "factoryline", "stage": "cdte", "status": "skipped",
+                      "reason": f"unreadable constraints file: {exc}"},
+        }
+
+    run_id = re.sub(r"[^a-z0-9._-]", "-", feature.lower()) or "run"
+    try:
+        scan = record_scan(root, run_id, constraints, replace=True)
+    except CDTEError as exc:
+        return {
+            "blocking": False,
+            "summary": {"error": exc.code},
+            "stage": {"module": "factoryline", "stage": "cdte", "status": "skipped",
+                      "reason": f"{exc.code}: {exc}"},
+        }
+
+    blocking = bool(scan["fail_closed"])
+    summary = {
+        "run_id": scan["run_id"],
+        "conflicts": [
+            {"conflict_id": c["conflict_id"], "pair_id": c["pair_id"], "severity": c["severity"]}
+            for c in scan["conflicts"]
+        ],
+        "requires_hitl_escalation": scan["requires_hitl_escalation"],
+        "receipt": scan["receipt"],
+    }
+    return {
+        "blocking": blocking,
+        "summary": summary,
+        "stage": {
+            "module": "factoryline",
+            "stage": "cdte",
+            "status": "blocked" if blocking else "ok",
+            "marker": "FAIL_CLOSED_ENGAGED" if blocking else "NO_LETHAL_PAIR_MATCHED",
+        },
     }

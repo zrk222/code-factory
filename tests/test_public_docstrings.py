@@ -49,6 +49,15 @@ def test_fail_closed_public_surfaces_document_refusal_semantics() -> None:
             "build_repository_context": "MigrationError",
             "verify_repository_context": "structured invalid",
         },
+        "factoryline/cdte.py": {
+            "normalize_constraint": "CDTEError",
+            "normalize_constraints": "CDTEError",
+            "load_registry": "CDTEError",
+            "record_scan": "CDTEError",
+            "resolve_conflict": "CDTEError",
+            "draft_adr": "CDTEError",
+            "bind_evidence": "CDTEError",
+        },
         "factoryline/signed_receipts.py": {
             "validate_receipt": "SignedReceiptError",
             "resolve_sigstore_command": "SignedReceiptError",

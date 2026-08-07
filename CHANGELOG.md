@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.25.0 - 2026-08-07
+
+- Add CDTE, the contradiction gate: a deterministic pre-build check that detects
+  architecturally incompatible non-functional requirements before any code is
+  generated. SpecLine removes ambiguity from a spec; CDTE removes contradiction.
+- Detect conflicts by lookup over `factoryline/data/lethal_pairs.json`, a
+  decision table. Detection calls no model, so the gate is reproducible, free to
+  run on every assembly, and extended by a data change plus a table test rather
+  than a prompt rewrite.
+- Constrain incompatibility analysis to three declared tiers: `measured`
+  (hash-bound benchmark), `modeled` (formula with printed assumptions), and
+  `structural` (no numbers). A modeled analysis whose inputs the spec did not
+  supply is withheld, never estimated. The conflict is still reported.
+- Engage the existing fail-closed boundary on critical and high severity
+  conflicts, pausing the assembly line at `nfr_conflict` with a continuation
+  command instead of generating code against contradictory requirements.
+- Require every override to name an approver and carry an expiry. Permanent or
+  anonymous overrides are not recordable.
+- Add `factory cdte scan|report|resolve`. `scan` exits non-zero when the gate
+  engages so CI fails closed. `report` exports aggregate counts only, with no
+  constraint text, run identifiers, or paths.
+- Draft an ADR per conflict, tier-labelled, with the Decision section left for
+  the author.
+- Compute savings deltas in exact decimal arithmetic. Cash fields previously
+  carried binary float artifacts such as `0.060000000000000005` into published
+  receipts; they now carry `0.06`. Sub-cent costs are preserved.
+- Update the GitHub, PyPI, Hugging Face, VS Code, JetBrains, and Marketplace
+  listing surfaces with the contradiction gate and its evidence boundary.
+
 ## 0.24.3 - 2026-08-06
 
 - Add PRD Grill: a deterministic, local clarification pass that writes a

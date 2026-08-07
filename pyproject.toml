@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.24.3"
+version = "0.25.0"
 description = "Create a reviewable MVP starting state in minutes with local receipts, proof paths, and room to extend."
 authors = [
   { name = "Richard Katz" },
@@ -73,4 +73,4 @@ factory = "factoryline.cli:main"
 packages = ["factoryline", "factoryline.builtin_packs"]
 
 [tool.setuptools.package-data]
-factoryline = ["builtin_packs/**/*", "hosted_console.html", "graph_ops.html"]
+factoryline = ["builtin_packs/**/*", "data/*.json", "hosted_console.html", "graph_ops.html"]

@@ -380,6 +380,34 @@ def main(argv=None) -> int:
     report.add_argument("--out")
     report.add_argument("--json", action="store_true")
 
+    # CDTE: thin delegates only. Logic lives in factoryline/cdte.py — cli.py is
+    # already the largest module in the package and the architecture gate flags it.
+    s = sub.add_parser("cdte", help="detect NFR contradictions before any code is generated")
+    cdte_sub = s.add_subparsers(dest="cdte_cmd")
+    scan = cdte_sub.add_parser("scan", help="scan extracted NFR constraints for lethal pairs")
+    scan.add_argument("run_id")
+    scan.add_argument("constraints", help="path to a JSON file of extracted NFR constraints")
+    scan.add_argument("--root", default=".")
+    scan.add_argument("--evidence", help="benchmark file to hash-bind, promoting modeled proofs to measured")
+    scan.add_argument("--adr", action="store_true", help="draft an ADR for each detected conflict")
+    scan.add_argument("--replace", action="store_true")
+    scan.add_argument("--json", action="store_true")
+    cdte_report = cdte_sub.add_parser("report", help="show or export aggregate-safe conflict statistics")
+    cdte_report.add_argument("--root", default=".")
+    cdte_report.add_argument("--out")
+    cdte_report.add_argument("--json", action="store_true")
+    resolve = cdte_sub.add_parser("resolve", help="record an ADR decision or an expiring override")
+    resolve.add_argument("run_id")
+    resolve.add_argument("conflict_id")
+    resolve.add_argument("--root", default=".")
+    resolve.add_argument("--decision", required=True)
+    resolve.add_argument("--approved-by", required=True)
+    resolve.add_argument("--adr-path")
+    resolve.add_argument("--override", action="store_true",
+                         help="accept the contradiction; requires --expires")
+    resolve.add_argument("--expires", help="ISO date after which the override lapses")
+    resolve.add_argument("--json", action="store_true")
+
     s = sub.add_parser("proofs", help="record and route content-addressed read-only proof receipts")
     proofs_sub = s.add_subparsers(dest="proofs_cmd")
     proof_record = proofs_sub.add_parser("record", help="record one completed green proof from a request manifest")
@@ -1418,6 +1446,65 @@ def main(argv=None) -> int:
         else:
             print(f"public Assembly metrics written to {Path(a.out).resolve()}")
         return 0
+    if a.cmd == "cdte":
+        from .cdte import (
+            CDTEError, draft_adr, export_public_cdte_report,
+            public_cdte_report, record_scan, resolve_conflict,
+        )
+        root = Path(a.root)
+        if a.cdte_cmd == "scan":
+            try:
+                raw = json.loads(Path(a.constraints).read_text(encoding="utf-8"))
+                constraints = raw["constraints"] if isinstance(raw, dict) else raw
+                payload = record_scan(
+                    root, a.run_id, constraints,
+                    evidence=Path(a.evidence) if a.evidence else None,
+                    replace=a.replace,
+                )
+            except (CDTEError, OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                code = getattr(exc, "code", type(exc).__name__)
+                print(f"CDTE_SCAN_REFUSED {code}: {exc}")
+                return 2
+            if a.adr:
+                for index, conflict in enumerate(payload["conflicts"], start=1):
+                    path = draft_adr(root, payload, conflict["conflict_id"], number=index)
+                    print(f"ADR_DRAFTED {path}")
+            if a.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(f"CDTE_SCAN_RECEIPTED {payload['run_id']} "
+                      f"conflicts={len(payload['conflicts'])} "
+                      f"fail_closed={payload['fail_closed']}")
+                for conflict in payload["conflicts"]:
+                    analysis = conflict["incompatibility_analysis"]
+                    state = "withheld" if analysis["withheld"] else analysis["tier"]
+                    print(f"  [{conflict['severity']}] {conflict['conflict_id']} "
+                          f"{conflict['pair_id']} (analysis: {state})")
+            # Non-zero exit so CI fails closed on a blocking contradiction.
+            return 1 if payload["fail_closed"] else 0
+        if a.cdte_cmd == "report":
+            if a.out:
+                print(f"CDTE_PUBLIC_REPORT_EXPORTED {export_public_cdte_report(root, Path(a.out))}")
+            else:
+                print(json.dumps(public_cdte_report(root), indent=2, sort_keys=True))
+            return 0
+        if a.cdte_cmd == "resolve":
+            try:
+                payload = resolve_conflict(
+                    root, a.run_id, a.conflict_id,
+                    decision=a.decision, approved_by=a.approved_by,
+                    adr_path=Path(a.adr_path) if a.adr_path else None,
+                    override=a.override, expires=a.expires,
+                )
+            except (CDTEError, OSError) as exc:
+                print(f"CDTE_RESOLUTION_REFUSED {getattr(exc, 'code', '')}: {exc}")
+                return 2
+            print(json.dumps(payload, indent=2, sort_keys=True) if a.json
+                  else f"CDTE_RESOLUTION_RECEIPTED {a.conflict_id} by {payload['approved_by']}")
+            return 0
+        print("usage: factory cdte {scan|report|resolve}")
+        return 2
+
     if a.cmd == "savings":
         if a.savings_cmd == "record":
             baseline = {

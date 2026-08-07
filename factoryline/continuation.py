@@ -65,6 +65,11 @@ def _next_action(paused_at: str, feature: str) -> dict[str, Any]:
         "architecture_contract": ("human", "Complete the SSAT architecture contract", None),
         "architecture_approval": ("command", "Approve the architecture gate", f"forge gate architected {feature}"),
         "implementation_fill": ("human", "Implement the scaffold and record the fill gate", None),
+        "nfr_conflict": (
+            "command",
+            "Resolve the NFR contradiction or record an expiring override",
+            f"factory cdte resolve {feature} <conflict-id> --decision ... --approved-by ...",
+        ),
     }
     kind, label, command = actions.get(paused_at, ("human", "Review the assembly boundary", None))
     return {"kind": kind, "label": label, "command": command, "requires_human": True}

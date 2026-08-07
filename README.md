@@ -14,7 +14,7 @@
 > call a starter production-ready before the relevant proof exists.
 
 ```powershell
-pip install factoryline-code-factory==0.24.3
+pip install factoryline-code-factory==0.25.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -60,6 +60,47 @@ The quick pass asks at most three current questions; deep mode asks at most
 five. Dependent decisions wait for their prerequisite rather than being guessed.
 See [PRD Grill](docs/PRD_GRILL.md) for the receipt, verification, and human
 confirmation boundary.
+
+## New in 0.25.0: the contradiction gate
+
+SpecLine removes ambiguity from a spec. CDTE removes contradiction. They are
+different defects: ambiguity is resolved by asking the author what they meant,
+contradiction is resolved by telling the author they cannot have both.
+
+`p95 under 50ms` and `field-level AES-256 on the checkout path` are each
+perfectly unambiguous. A spec containing both passes every clarity gate, reaches
+the build, and fails in runtime smoke — after the code exists.
+
+```bash
+factory cdte scan checkout specs/checkout.nfr.json --root . --adr
+# CDTE_SCAN_RECEIPTED checkout conflicts=2 fail_closed=True
+#   [critical] checkout-00 data_residency_vs_cross_region_routing (analysis: structural)
+#   [critical] checkout-01 latency_vs_field_encryption (analysis: withheld)
+# exit 1 — CI fails closed
+
+factory cdte resolve checkout checkout-00 --root . \
+  --decision "Pin routing to eu-west-1 per ADR-0001" --approved-by rick
+
+factory cdte report --root . --out cdte-public.json
+```
+
+Detection is a lookup over `factoryline/data/lethal_pairs.json`, a decision
+table. **No model is called.** The gate is therefore reproducible, cheap enough
+to run on every assembly, and extended by a data change plus a table test rather
+than a prompt rewrite.
+
+Incompatibility analysis carries one of three declared tiers:
+
+| Tier | What backs it |
+|---|---|
+| `measured` | a benchmark file, bound by SHA-256 |
+| `modeled` | a formula, printed with every assumption it rests on |
+| `structural` | no numbers — a set-membership contradiction |
+
+There is no fourth tier. An analysis whose inputs the spec did not supply is
+**withheld, not estimated**. The conflict is still reported; only the
+quantification is held back. Overrides require a named approver and an expiry —
+permanent or anonymous overrides are not recordable.
 
 ## New in 0.24.0: Unified Graph Ops
 
@@ -160,7 +201,7 @@ plugin never uploads the workspace, stores keys, or decides a release is ready.
 To make the path tangible, create a contained MVP and inspect its proof graph:
 
 ```powershell
-pip install factoryline-code-factory==0.24.3
+pip install factoryline-code-factory==0.25.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -195,7 +236,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.24.3
+pip install factoryline-code-factory==0.25.0
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -548,7 +589,7 @@ an instruction or edit the Architecture Opinion Dock. See
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.24.3 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
+pip install factoryline-code-factory==0.25.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
 factory doctor --json
 ```
 

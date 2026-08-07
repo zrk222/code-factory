@@ -31,7 +31,7 @@ proof exists.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.24.3` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.25.0` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21543621).
 
 Before a PRD becomes a scaffold, run `factory prd grill PRD.md --root .` for a
@@ -42,3 +42,12 @@ build. Read the full [PRD Grill guide](https://github.com/zrk222/code-factory/bl
 The illustrations explain the workflow; they are not UI screenshots or
 measured outcome evidence. The quick-start video is rendered from the shipped
 Factory Studio interface.
+
+### Contradiction gate (0.25.0)
+
+`factory cdte scan` detects architecturally incompatible NFR pairs before any
+code is generated, by deterministic lookup over a decision table. No model is
+called. Analysis is tiered `measured` / `modeled` / `structural`, and a modeled
+analysis whose inputs are absent is withheld rather than estimated. Critical and
+high severity conflicts engage the fail-closed boundary and pause the line at
+`nfr_conflict`.

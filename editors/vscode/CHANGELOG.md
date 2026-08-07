@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0 - 2026-08-07
+
+- Surface the 0.25.0 contradiction gate: conflicts detected before the
+  build, tier-labelled analysis, and withheld quantification shown as
+  withheld rather than estimated.
+
 ## 0.8.1
 
 - Surface the local `factory prd grill` workflow for source-bound PRD

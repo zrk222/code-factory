@@ -1,0 +1,155 @@
+{
+  "schema": "factory.lethal-pairs.v1",
+  "version": 1,
+  "documentation": {
+    "purpose": "A decision table, not a prompt. Detection is a deterministic lookup over this file; no model is consulted. Adding a pair is a data change plus a table test, never a prompt rewrite.",
+    "proof_tiers": {
+      "measured": "A benchmark in this repo's evidence store, hash-bound at scan time. Numbers are real or the analysis is withheld.",
+      "modeled": "A formula whose assumptions are printed alongside the result. Never presented as a measurement.",
+      "structural": "No numbers at all. A categorical impossibility."
+    },
+    "no_fourth_tier": "A pair that cannot be placed in one of these tiers is reported as a conflict with its quantification withheld.",
+    "format": "json rather than yaml so the package keeps a single runtime dependency"
+  },
+  "pairs": [
+    {
+      "id": "latency_vs_field_encryption",
+      "title": "Sub-100ms latency SLA versus field-level encryption on the hot path",
+      "severity": "critical",
+      "left": {
+        "category": "performance",
+        "metric": "p95_latency_ms",
+        "operator": "lt",
+        "threshold": 100
+      },
+      "right": {
+        "category": "security",
+        "metric": "field_level_encryption",
+        "value_in": [
+          "aes-256",
+          "aes-256-gcm",
+          "aes-128",
+          "asymmetric",
+          "enabled",
+          "true"
+        ]
+      },
+      "proof": {
+        "tier": "modeled",
+        "formula": "budget_ms - (encrypt_ms + decrypt_ms) * fields_on_path",
+        "assumptions": [
+          "Per-field symmetric encrypt/decrypt cost is not measured in this repo.",
+          "Field count on the request path is taken from the constraint, not inferred.",
+          "Key retrieval latency (KMS/HSM round trip) is excluded from the formula."
+        ],
+        "remediation": [
+          "Relax the latency SLA to a value that accommodates measured crypto overhead.",
+          "Encrypt at rest only, leaving the read path in plaintext inside the trust boundary.",
+          "Move encryption off the synchronous request path via a write-behind queue."
+        ]
+      }
+    },
+    {
+      "id": "memory_bound_vs_high_concurrency",
+      "title": "Constrained sandbox memory versus high parallel agent concurrency",
+      "severity": "high",
+      "left": {
+        "category": "resource",
+        "metric": "sandbox_memory_mb",
+        "operator": "lte",
+        "threshold": 512
+      },
+      "right": {
+        "category": "scalability",
+        "metric": "max_parallel_agents",
+        "operator": "gte",
+        "threshold": 8
+      },
+      "proof": {
+        "tier": "modeled",
+        "formula": "sandbox_memory_mb - (per_agent_resident_mb * max_parallel_agents)",
+        "assumptions": [
+          "Per-agent resident memory is not measured in this repo and must be supplied.",
+          "Assumes no memory overcommit and no swap in the target sandbox.",
+          "Excludes runtime and interpreter baseline overhead."
+        ],
+        "remediation": [
+          "Raise the sandbox memory ceiling.",
+          "Lower the parallelism ceiling.",
+          "Move to a work-queue model with a bounded worker pool."
+        ]
+      }
+    },
+    {
+      "id": "data_residency_vs_cross_region_routing",
+      "title": "Strict data residency versus cross-region provider routing",
+      "severity": "critical",
+      "left": {
+        "category": "compliance",
+        "metric": "data_residency",
+        "value_in": [
+          "eu-only",
+          "on-premise",
+          "in-country",
+          "gdpr-strict",
+          "hipaa-local"
+        ]
+      },
+      "right": {
+        "category": "infrastructure",
+        "metric": "provider_routing",
+        "value_in": [
+          "multi-region",
+          "global",
+          "any-region",
+          "cross-region",
+          "nearest-edge"
+        ]
+      },
+      "proof": {
+        "tier": "structural",
+        "statement": "A residency constraint restricts the set of permitted physical processing locations. A routing policy that may select any region necessarily includes locations outside that set. The intersection of \"must remain within R\" and \"may execute anywhere\" is empty whenever the routing domain is not a subset of R. This is a set-membership contradiction and does not depend on any measured quantity.",
+        "remediation": [
+          "Pin routing to the residency region set.",
+          "Narrow the residency constraint if the data class genuinely permits it.",
+          "Split the workload so only non-restricted data leaves the region."
+        ]
+      }
+    },
+    {
+      "id": "zero_trust_vs_static_credentials",
+      "title": "Zero-trust posture versus static long-lived credentials",
+      "severity": "critical",
+      "left": {
+        "category": "security",
+        "metric": "access_model",
+        "value_in": [
+          "zero-trust",
+          "mtls-required",
+          "per-request-auth",
+          "workload-identity"
+        ]
+      },
+      "right": {
+        "category": "security",
+        "metric": "credential_type",
+        "value_in": [
+          "static-pat",
+          "long-lived-token",
+          "shared-secret",
+          "embedded-key",
+          "api-key-static"
+        ]
+      },
+      "proof": {
+        "tier": "structural",
+        "statement": "Zero-trust requires that every request carry independently verifiable, short-lived proof of identity. A static credential is, by definition, a bearer secret valid until manually revoked: possession alone grants access and no per-request verification of the caller occurs. The two requirements assert incompatible truth conditions for the same authorization decision.",
+        "remediation": [
+          "Replace static credentials with short-lived workload identity tokens.",
+          "Introduce mTLS or request signing so authorization is per-request.",
+          "Record an explicit, expiring override if a legacy integration blocks this."
+        ]
+      }
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 import hashlib
 import json
 from pathlib import Path
@@ -46,12 +47,35 @@ def _observation(value: dict[str, Any], label: str) -> dict[str, Any]:
     return result
 
 
+def _exact(value: Any) -> Any:
+    """Lift a float to Decimal through str so 0.1 is exactly 0.1.
+
+    Binary floats cannot represent most decimal cash amounts, so 0.10 - 0.04
+    yields 0.060000000000000005. A savings receipt is a public auditable
+    artifact; that artifact must not contain arithmetic noise it cannot defend.
+    Ints are already exact and pass through untouched.
+    """
+    return Decimal(str(value)) if isinstance(value, float) else value
+
+
+def _plain(value: Any) -> Any:
+    """Return a JSON-native number. Decimals become floats, preserving type."""
+    return float(value) if isinstance(value, Decimal) else value
+
+
+def _ratio(numerator: Any, denominator: Any) -> float | None:
+    """Divide exactly when possible. Returns None on a non-positive divisor."""
+    if denominator is None or denominator <= 0:
+        return None
+    return float(_exact(numerator) / _exact(denominator))
+
+
 def _delta(baseline: dict[str, Any], factory: dict[str, Any], key: str) -> tuple[Any, Any]:
     before, after = baseline.get(key), factory.get(key)
     if before is None or after is None:
         return None, None
-    saved = before - after
-    return saved, saved / before if before > 0 else None
+    saved = _exact(before) - _exact(after)
+    return _plain(saved), _ratio(saved, before)
 
 
 def _savings_dir(root: Path, *, create: bool = True) -> Path:
@@ -113,7 +137,11 @@ def record_savings_pair(
     time_saved, time_rate = _delta(before, after, "elapsed_ms")
     tokens_saved, token_rate = _delta(before, after, "tokens")
     cost_saved, cost_rate = _delta(before, after, "cost_usd")
-    productivity = before["elapsed_ms"] / after["elapsed_ms"] - 1 if evidence_digest else None
+    productivity = (
+        float(_exact(before["elapsed_ms"]) / _exact(after["elapsed_ms"]) - 1)
+        if evidence_digest
+        else None
+    )
     markers = _pair_markers(
         evidence_digest,
         (time_saved, tokens_saved, cost_saved, productivity),
@@ -162,16 +190,16 @@ def load_savings_pairs(root: Path) -> list[dict[str, Any]]:
 
 def _metric(rows: list[dict[str, Any]], key: str, saved_key: str) -> dict[str, Any]:
     exact = [row for row in rows if row["baseline"].get(key) is not None and row["factory"].get(key) is not None]
-    before = sum(row["baseline"][key] for row in exact)
-    after = sum(row["factory"][key] for row in exact)
-    saved = sum(row["savings"][saved_key] for row in exact)
+    before = _plain(sum((_exact(row["baseline"][key]) for row in exact), start=_exact(0)))
+    after = _plain(sum((_exact(row["factory"][key]) for row in exact), start=_exact(0)))
+    saved = _plain(sum((_exact(row["savings"][saved_key]) for row in exact), start=_exact(0)))
     return {
         "exact_pairs": len(exact),
         "coverage_rate": len(exact) / len(rows) if rows else None,
         "baseline_total": before if exact else None,
         "factory_total": after if exact else None,
         "saved_total": saved if exact else None,
-        "weighted_savings_rate": saved / before if exact and before > 0 else None,
+        "weighted_savings_rate": _ratio(saved, before) if exact else None,
     }
 
 
@@ -181,7 +209,9 @@ def public_savings_report(root: Path) -> dict[str, Any]:
     equivalent = [row for row in rows if row["equivalence"]["asserted"]]
     before = sum(row["baseline"]["elapsed_ms"] for row in equivalent)
     after = sum(row["factory"]["elapsed_ms"] for row in equivalent)
-    productivity = before / after - 1 if equivalent and after > 0 else None
+    productivity = (
+        float(_exact(before) / _exact(after) - 1) if equivalent and after > 0 else None
+    )
     report = {
         "schema": PUBLIC_SCHEMA,
         "marker": "SAVINGS_REPORT_AGGREGATE_SAFE",
