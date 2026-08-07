@@ -380,6 +380,42 @@ def main(argv=None) -> int:
     report.add_argument("--out")
     report.add_argument("--json", action="store_true")
 
+    # Habituation: thin delegates only; logic lives in factoryline/habituation.py.
+    s = sub.add_parser("habituation", help="calibrate the human approval signal instead of trusting it")
+    hab_sub = s.add_subparsers(dest="hab_cmd")
+    hab_record = hab_sub.add_parser("record", help="record one observed review event")
+    hab_record.add_argument("review_id")
+    hab_record.add_argument("--root", default=".")
+    hab_record.add_argument("--reviewer", required=True)
+    hab_record.add_argument("--author-kind", required=True, choices=["agent", "human"])
+    hab_record.add_argument("--review-seconds", type=float, required=True)
+    hab_record.add_argument("--changed-lines", type=int, required=True)
+    hab_record.add_argument("--inline-comments", type=int, default=0)
+    hab_record.add_argument("--approved", action="store_true")
+    hab_record.add_argument("--replace", action="store_true")
+    hab_record.add_argument("--json", action="store_true")
+    hab_status = hab_sub.add_parser("status", help="evaluate the gate and show the intervention")
+    hab_status.add_argument("--root", default=".")
+    hab_status.add_argument("--allow-block", action="store_true",
+                            help="permit fail-closed; refused until blind-spot outcomes exist")
+    hab_status.add_argument("--json", action="store_true")
+    hab_sample = hab_sub.add_parser("sample", help="select low-scrutiny approvals for independent re-review")
+    hab_sample.add_argument("--root", default=".")
+    hab_sample.add_argument("--rate", type=int, default=10)
+    hab_sample.add_argument("--json", action="store_true")
+    hab_resample = hab_sub.add_parser("resample", help="record what an independent re-review found")
+    hab_resample.add_argument("review_id")
+    hab_resample.add_argument("--root", default=".")
+    hab_resample.add_argument("--reviewer", required=True)
+    hab_resample.add_argument("--defect-found", action="store_true")
+    hab_resample.add_argument("--notes", default="")
+    hab_resample.add_argument("--json", action="store_true")
+    hab_report = hab_sub.add_parser("report", help="show or export the aggregate-safe public report")
+    hab_report.add_argument("--root", default=".")
+    hab_report.add_argument("--out")
+    hab_report.add_argument("--enable-defect-linkage", action="store_true",
+                            help="opt in to the modeled correlation; read its assumptions first")
+
     # CDTE: thin delegates only. Logic lives in factoryline/cdte.py — cli.py is
     # already the largest module in the package and the architecture gate flags it.
     s = sub.add_parser("cdte", help="detect NFR contradictions before any code is generated")
@@ -1446,6 +1482,63 @@ def main(argv=None) -> int:
         else:
             print(f"public Assembly metrics written to {Path(a.out).resolve()}")
         return 0
+    if a.cmd == "habituation":
+        from .habituation import (
+            HabituationError, blind_spot_sample, evaluate_gate,
+            export_public_habituation_report, public_habituation_report,
+            record_resample_outcome, record_review,
+        )
+        root = Path(a.root)
+        try:
+            if a.hab_cmd == "record":
+                payload = record_review(root, {
+                    "review_id": a.review_id, "reviewer": a.reviewer,
+                    "author_kind": a.author_kind, "review_seconds": a.review_seconds,
+                    "changed_lines": a.changed_lines, "inline_comments": a.inline_comments,
+                    "approved": a.approved,
+                }, replace=a.replace)
+                print(json.dumps(payload, indent=2, sort_keys=True) if a.json
+                      else f"REVIEW_OBSERVED {a.review_id} scrutiny={payload['scrutiny_ratio']:.1f}s/100L")
+                return 0
+            if a.hab_cmd == "status":
+                gate = evaluate_gate(root, allow_block=a.allow_block)
+                if a.json:
+                    print(json.dumps(gate, indent=2, sort_keys=True))
+                else:
+                    print(f"HABITUATION_GATE action={gate['action']} blocking={gate['blocking']}")
+                    print(f"  warned={gate['reviewers_warned']} breached={gate['reviewers_breached']} "
+                          f"proxy_corrected={gate['proxy_corrected_by_resampling']}")
+                    print(f"  {gate['reason']}")
+                return 1 if gate["blocking"] else 0
+            if a.hab_cmd == "sample":
+                payload = blind_spot_sample(root, rate=a.rate)
+                print(json.dumps(payload, indent=2, sort_keys=True) if a.json
+                      else f"BLIND_SPOT_SAMPLE_RECEIPTED selected={payload['selected_count']} "
+                           f"of {payload['eligible_low_scrutiny']} low-scrutiny approvals")
+                return 0
+            if a.hab_cmd == "resample":
+                payload = record_resample_outcome(
+                    root, a.review_id, defect_found=a.defect_found,
+                    reviewer=a.reviewer, notes=a.notes)
+                print(json.dumps(payload, indent=2, sort_keys=True) if a.json
+                      else f"RESAMPLE_OUTCOME_RECEIPTED {a.review_id} defect={payload['defect_found']}")
+                return 0
+            if a.hab_cmd == "report":
+                if a.out:
+                    path = export_public_habituation_report(
+                        root, Path(a.out), enable_defect_linkage=a.enable_defect_linkage)
+                    print(f"HABITUATION_PUBLIC_REPORT_EXPORTED {path}")
+                else:
+                    print(json.dumps(public_habituation_report(
+                        root, enable_defect_linkage=a.enable_defect_linkage),
+                        indent=2, sort_keys=True))
+                return 0
+        except (HabituationError, OSError) as exc:
+            print(f"HABITUATION_REFUSED {getattr(exc, 'code', '')}: {exc}")
+            return 2
+        print("usage: factory habituation {record|status|sample|resample|report}")
+        return 2
+
     if a.cmd == "cdte":
         from .cdte import (
             CDTEError, draft_adr, export_public_cdte_report,

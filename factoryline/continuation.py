@@ -65,6 +65,11 @@ def _next_action(paused_at: str, feature: str) -> dict[str, Any]:
         "architecture_contract": ("human", "Complete the SSAT architecture contract", None),
         "architecture_approval": ("command", "Approve the architecture gate", f"forge gate architected {feature}"),
         "implementation_fill": ("human", "Implement the scaffold and record the fill gate", None),
+        "scrutiny_floor": (
+            "command",
+            "Scrutiny drift breached the floor; obtain a second independent approver",
+            "factory habituation status --allow-block",
+        ),
         "nfr_conflict": (
             "command",
             "Resolve the NFR contradiction or record an expiring override",

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.26.0 - 2026-08-07
+
+- Add the habituation gate: calibrate the human approval signal rather than
+  trusting it. Every other gate receipts an outcome; none receipted the
+  reliability of the signal that produced it, and the most important such signal
+  is a human clicking approve.
+- Measure scrutiny as review seconds per 100 changed lines and compare it only
+  against the same reviewer's own human-authored baseline. There is no
+  cross-reviewer comparison and no population norm.
+- Withhold drift below five agent-authored reviews or five baseline reviews. A
+  drift figure from a smaller sample is noise wearing the costume of a
+  measurement.
+- Escalate deterministically: surface the comparison, then require a second
+  independent approver, then fail closed at `scrutiny_floor`.
+- Refuse to block on an uncorrected proxy. Fail-closed requires blind-spot
+  re-review outcomes to exist, because scrutiny time is a proxy for attention
+  and a self-confirming proxy is not a gate.
+- Select blind-spot re-reviews deterministically from the low-scrutiny half so
+  an auditor can reproduce the sample without trusting this process. Re-review
+  identity must differ from the original approver.
+- Keep escaped-defect linkage `modeled` and withheld by default, with its
+  assumptions printed and a stated minimum sample. It reports rates across a
+  sample and never attributes a defect to an individual.
+- Store reviewer identities as digests. Public exports carry distributions only,
+  with no per-reviewer rows even pseudonymously.
+- Add `factory habituation record|status|sample|resample|report`. `status` exits
+  non-zero only when the gate actually blocks.
+
 ## 0.25.0 - 2026-08-07
 
 - Add CDTE, the contradiction gate: a deterministic pre-build check that detects

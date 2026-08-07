@@ -5,7 +5,7 @@ small feature or risky workflow, not a whole migration.
 
 ```powershell
 cd path\to\your-repository
-pip install factoryline-code-factory==0.25.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7
+pip install factoryline-code-factory==0.26.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7
 factory doctor --json
 factory init .
 forge adopt <feature> --root .
@@ -62,7 +62,7 @@ where it helped, and where it made you stop. Open the [first external run
 template](https://github.com/zrk222/code-factory/issues/new?template=first-external-run.yml).
 Remove secrets, customer data, and private paths before posting.
 
-### Contradiction gate (0.25.0)
+### Contradiction gate (0.26.0)
 
 `factory cdte scan` detects architecturally incompatible NFR pairs before any
 code is generated, by deterministic lookup over a decision table. No model is
@@ -70,3 +70,10 @@ called. Analysis is tiered `measured` / `modeled` / `structural`, and a modeled
 analysis whose inputs are absent is withheld rather than estimated. Critical and
 high severity conflicts engage the fail-closed boundary and pause the line at
 `nfr_conflict`.
+
+### Habituation gate (0.26.0)
+
+`factory habituation status` calibrates the human approval signal against each
+reviewer's own baseline and escalates: surface, second approver, fail closed.
+Blocking is refused until blind-spot re-review outcomes correct the proxy.
+Public exports carry distributions only, never per-reviewer rows.

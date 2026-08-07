@@ -49,6 +49,14 @@ def test_fail_closed_public_surfaces_document_refusal_semantics() -> None:
             "build_repository_context": "MigrationError",
             "verify_repository_context": "structured invalid",
         },
+        "factoryline/habituation.py": {
+            "normalize_review": "HabituationError",
+            "record_review": "HabituationError",
+            "record_calibration": "HabituationError",
+            "blind_spot_sample": "HabituationError",
+            "record_resample_outcome": "HabituationError",
+            "evaluate_gate": "HabituationError",
+        },
         "factoryline/cdte.py": {
             "normalize_constraint": "CDTEError",
             "normalize_constraints": "CDTEError",

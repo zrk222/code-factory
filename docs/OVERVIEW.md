@@ -36,7 +36,7 @@ known, what is missing, and the one fact-derived next action.
 ## Typical path
 
 ```powershell
-pip install factoryline-code-factory==0.25.0
+pip install factoryline-code-factory==0.26.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid
@@ -67,7 +67,7 @@ Next: follow [Start Here](START_HERE.md), explore [Unified Graph Ops](GRAPH_OPS.
 connect the [Local MCP inspection server](MCP.md), or see the
 [Target Compiler and Factory Studio](TARGET_COMPILER.md).
 
-### Contradiction gate (0.25.0)
+### Contradiction gate (0.26.0)
 
 `factory cdte scan` detects architecturally incompatible NFR pairs before any
 code is generated, by deterministic lookup over a decision table. No model is
@@ -75,3 +75,10 @@ called. Analysis is tiered `measured` / `modeled` / `structural`, and a modeled
 analysis whose inputs are absent is withheld rather than estimated. Critical and
 high severity conflicts engage the fail-closed boundary and pause the line at
 `nfr_conflict`.
+
+### Habituation gate (0.26.0)
+
+`factory habituation status` calibrates the human approval signal against each
+reviewer's own baseline and escalates: surface, second approver, fail closed.
+Blocking is refused until blind-spot re-review outcomes correct the proxy.
+Public exports carry distributions only, never per-reviewer rows.

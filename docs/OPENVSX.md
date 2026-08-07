@@ -18,7 +18,7 @@ workflow is not evidence of an available marketplace listing.
    repository, then store a least-privilege `OPENVSX_TOKEN` in the protected
    `openvsx` GitHub environment.
 2. Start **Publish Open VSX extension** manually and supply an existing,
-   immutable repository tag such as `v0.25.0`.
+   immutable repository tag such as `v0.26.0`.
 3. Leave `publish` false to produce and retain only the verified VSIX candidate,
    SHA-256 manifest, audit result, and tests.
 4. Set `publish` true only after the environment reviewer approves the target
