@@ -47,6 +47,13 @@ def test_pypi_storefront_has_identity_and_canonical_links():
     assert {"mvp", "mcp", "graph-ops", "prd-grill"}.issubset(project["keywords"])
 
 
+def test_python_wheel_data_is_explicit_and_does_not_depend_on_package_discovery():
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "include-package-data = false" in project
+    assert 'factoryline = ["builtin_packs/**/*", "data/*.json", "hosted_console.html", "graph_ops.html"]' in project
+
+
 def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     vscode_package = json.loads((ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8"))
@@ -98,9 +105,11 @@ def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
     workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
 
     assert "permissions:\n  contents: read" in workflow
-    assert "  validate:" in workflow
+    assert "  validate_python:" in workflow
+    assert "  validate_vscode:" in workflow
+    assert "  validate_intellij:" in workflow
     assert "  publish:" in workflow
-    assert "needs: validate" in workflow
+    assert "needs: [validate_python, validate_vscode, validate_intellij]" in workflow
     assert "environment: pypi" in workflow
     assert "id-token: write" in workflow
     assert "actions/setup-node@v7.0.0" in workflow
@@ -114,6 +123,11 @@ def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
     assert "attestations: true" in workflow
     assert "gradle/actions/setup-gradle@v6.2.0" in workflow
     assert '.[dev,enterprise,hosted]' in workflow
+    assert "name: release-python-${{ github.event.release.tag_name }}" in workflow
+    assert "name: release-vscode-${{ github.event.release.tag_name }}" in workflow
+    assert "name: release-intellij-${{ github.event.release.tag_name }}" in workflow
+    assert "path: release-bundle/python" in workflow
+    assert "path: release-bundle/editors" in workflow
     for forbidden in (
         "PYPI_TOKEN",
         "API_TOKEN",
@@ -161,9 +175,15 @@ def test_openvsx_workflow_seals_a_tested_immutable_candidate_before_manual_publi
     assert "sha256sum factoryline-vscode.vsix" in workflow
     assert "environment: openvsx" in workflow
     assert "if: inputs.publish == true" in workflow
+    assert "  authorize:" in workflow
+    assert "Require the scoped Open VSX publisher token before candidate work" in workflow
+    assert "needs: authorize" in workflow
+    assert "inputs.publish == false || needs.authorize.result == 'success'" in workflow
+    assert "needs: [authorize, validate]" in workflow
     assert "secrets.OPENVSX_TOKEN" in workflow
     assert "ovsx@1.1.0 publish" in workflow
     assert "OPENVSX_TOKEN is required" in workflow
+    assert workflow.index("Require the scoped Open VSX publisher token before candidate work") < workflow.index("Install, audit, test, and package")
 
 
 def test_marketplace_workflow_uses_current_gradle_action_and_scoped_secret():
@@ -251,6 +271,23 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "Review AI or teammate changes with evidence" in plugin_xml
     assert "Use real plugin UI, not concept art." in screenshot_brief
     assert "1280x800" in screenshot_brief
+
+
+def test_intellij_source_uses_supported_choice_dialog_api_with_medium_risk_default():
+    actions = (ROOT / "editors" / "intellij" / "src" / "main" / "kotlin" / "app" / "factoryline" / "intellij" / "FactoryLineActions.kt").read_text(encoding="utf-8")
+
+    assert "Messages.showChooseDialog" not in actions
+    assert actions.count("Messages.showDialog(") == 4
+    assert 'risks, 1, Messages.getQuestionIcon()' in actions
+
+
+def test_intellij_build_uses_the_gradle_9_5_compatible_kotlin_plugin_line():
+    settings = (ROOT / "editors" / "intellij" / "settings.gradle.kts").read_text(encoding="utf-8")
+    build = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
+
+    assert 'id("org.jetbrains.kotlin.jvm") version "2.4.10"' in settings
+    assert 'id("org.jetbrains.kotlin.jvm") version "2.1.20"' not in settings
+    assert "jvmDefault.set(JvmDefaultMode.NO_COMPATIBILITY)" in build
 
 
 def test_marketplace_acquisition_kit_uses_real_product_assets_and_observed_metrics_only():

@@ -1,0 +1,23 @@
+{
+  "checks": [
+    {
+      "name": "release_workflow_integrity_is_read_only_and_mutation_resistant",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_release_integrity.py', 'tests/test_publication_metadata.py', 'tests/test_huggingface_surface.py']) == 0\n",
+      "covers": [
+        "RELEASE_INTEGRITY_READ_ONLY",
+        "RELEASE_FAN_IN_EXACT",
+        "RELEASE_VALIDATION_PARTITIONED",
+        "OPENVSX_AUTHORIZATION_EARLY",
+        "PYPI_TRUSTED_PUBLISHING",
+        "JETBRAINS_APPROVAL_GUARD",
+        "INTELLIJ_COMPATIBILITY_DECLARED",
+        "HUGGINGFACE_METADATA_PREFLIGHT",
+        "HUGGINGFACE_SPACE_METADATA_INVALID",
+        "PYTHON_PACKAGE_DATA_EXPLICIT",
+        "RELEASE_INTEGRITY_FAILURE"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

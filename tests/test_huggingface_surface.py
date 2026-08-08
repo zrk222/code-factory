@@ -1,4 +1,9 @@
+import json
+import subprocess
+import sys
 from pathlib import Path
+
+from scripts.huggingface_space_metadata import inspect
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,3 +62,59 @@ def test_huggingface_workflow_uses_secret_and_scoped_source_directory() -> None:
     assert 'repo_id="zrk222/code-factory"' in workflow
     assert 'repo_type="space"' in workflow
     assert 'folder_path="deploy/huggingface"' in workflow
+    validate = workflow.index("Validate static Space metadata before remote upload")
+    install = workflow.index("Install Hugging Face CLI")
+    publish = workflow.index("Publish static Space")
+    assert validate < install < publish
+    assert "scripts/huggingface_space_metadata.py" in workflow
+
+
+def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(tmp_path: Path) -> None:
+    valid_result = inspect(SPACE / "README.md")
+    assert valid_result["ok"] is True
+    assert valid_result["marker"] == "HUGGINGFACE_SPACE_METADATA_VALID"
+    assert valid_result["short_description_length"] == 50
+
+    invalid_readme = tmp_path / "README.md"
+    invalid_readme.write_text(
+        (SPACE / "README.md").read_text(encoding="utf-8").replace(
+            "short_description: Reviewable MVPs with proof-first PRD clarification",
+            f"short_description: {'x' * 61}",
+        ),
+        encoding="utf-8",
+    )
+    result = inspect(invalid_readme)
+    assert result["ok"] is False
+    assert result["marker"] == "HUGGINGFACE_SPACE_METADATA_INVALID"
+    assert result["short_description_length"] == 61
+
+
+def test_huggingface_metadata_preflight_cli_reports_the_local_result(tmp_path: Path) -> None:
+    script = ROOT / "scripts" / "huggingface_space_metadata.py"
+    valid = subprocess.run(
+        [sys.executable, str(script), "--readme", str(SPACE / "README.md"), "--json"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert valid.returncode == 0
+    assert json.loads(valid.stdout)["marker"] == "HUGGINGFACE_SPACE_METADATA_VALID"
+
+    invalid_readme = tmp_path / "invalid-README.md"
+    invalid_readme.write_text(
+        (SPACE / "README.md").read_text(encoding="utf-8").replace(
+            "short_description: Reviewable MVPs with proof-first PRD clarification",
+            f"short_description: {'x' * 61}",
+        ),
+        encoding="utf-8",
+    )
+    invalid = subprocess.run(
+        [sys.executable, str(script), "--readme", str(invalid_readme), "--json"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert invalid.returncode == 1
+    invalid_result = json.loads(invalid.stdout)
+    assert invalid_result["marker"] == "HUGGINGFACE_SPACE_METADATA_INVALID"
+    assert invalid_result["short_description_length"] == 61

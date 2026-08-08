@@ -3,6 +3,7 @@ import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.models.ProductRelease
 import org.jetbrains.intellij.platform.gradle.tasks.PublishPluginTask
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
+import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 import java.nio.charset.StandardCharsets
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
@@ -17,6 +18,13 @@ version = "0.8.2"
 
 kotlin {
     jvmToolchain(21)
+    compilerOptions {
+        // Kotlin 2.2+ defaults to compatibility bridges for interface defaults.
+        // Those bridges make this Java-platform ToolWindowFactory appear to
+        // override IntelliJ internal/deprecated methods. The plugin exposes no
+        // Kotlin interfaces as public API, so direct JVM defaults are safe.
+        jvmDefault.set(JvmDefaultMode.NO_COMPATIBILITY)
+    }
 }
 
 dependencies {

@@ -74,6 +74,7 @@ from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
+from .release_integrity import release_integrity, render_release_integrity
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
 from .verification import verify_feature
@@ -719,6 +720,12 @@ def main(argv=None) -> int:
     change_review.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
     change_review.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
     change_review.add_argument("--json", action="store_true")
+
+    release = sub.add_parser("release", help="inspect local release workflow boundaries without publishing")
+    release_sub = release.add_subparsers(required=True, dest="release_cmd")
+    release_integrity_parser = release_sub.add_parser("integrity", help="verify release workflow fan-in and protected-gate topology")
+    release_integrity_parser.add_argument("--root", default=".")
+    release_integrity_parser.add_argument("--json", action="store_true")
 
     mcp = sub.add_parser("mcp", help="serve or inspect the local read-only MCP adapter")
     mcp_sub = mcp.add_subparsers(required=True, dest="mcp_cmd")
@@ -1975,6 +1982,13 @@ def main(argv=None) -> int:
                 print(f"packet      : {review['artifacts']['paths']['markdown']}")
             print("authority   : no execution, merge, publication, deployment, or credential access")
         return 0
+    if a.cmd == "release":
+        result = release_integrity(Path(a.root))
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(render_release_integrity(result))
+        return 0 if result["ok"] else 1
     if a.cmd == "mcp":
         from .mcp import McpError, mcp_status, serve_stdio
 

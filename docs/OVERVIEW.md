@@ -31,6 +31,9 @@ known, what is missing, and the one fact-derived next action.
 - **Turns a diff into a reviewable proof plan.** `factory change review` joins
   explicit change impact, stale proofs, coverage gaps, and existing risk policy
   into one analysis-only reviewer packet and Mermaid map.
+- **Makes release blockers visible before dispatch.** `factory release integrity`
+  checks local artifact fan-in, trusted PyPI publishing, and protected
+  marketplace boundaries without touching credentials or publication state.
 - **Scales without blurring authority.** Capability packs, signed receipts,
   approval boundaries, and the optional hosted adapter support team and
   enterprise workflows while keeping publishing, credential access, approvals,
@@ -44,6 +47,7 @@ factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid
 factory change review --root . --base origin/main
+factory release integrity --root . --json
 ```
 
 Start with the local MVP, open Studio to inspect its state, then use Graph Ops

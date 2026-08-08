@@ -21,8 +21,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  authorize:
+    name: authorize protected Open VSX publication
+    if: inputs.publish == true
+    runs-on: ubuntu-latest
+    environment: openvsx
+    steps:
+      - name: Require the scoped Open VSX publisher token before candidate work
+        shell: bash
+        env:
+          OPENVSX_TOKEN: ${{ secrets.OPENVSX_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$OPENVSX_TOKEN" || {
+            echo "OPENVSX_TOKEN is required in the openvsx environment." >&2
+            exit 1
+          }
+
   validate:
     name: validate immutable Open VSX candidate
+    needs: authorize
+    if: ${{ always() && (inputs.publish == false || needs.authorize.result == 'success') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -83,8 +102,8 @@ jobs:
 
   publish:
     name: publish verified Open VSX candidate
-    if: inputs.publish == true
-    needs: validate
+    if: ${{ always() && inputs.publish == true && needs.authorize.result == 'success' && needs.validate.result == 'success' }}
+    needs: [authorize, validate]
     runs-on: ubuntu-latest
     environment: openvsx
     steps:

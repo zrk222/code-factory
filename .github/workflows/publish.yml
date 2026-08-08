@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  validate:
-    name: validate release artifacts
+  validate_python:
+    name: validate Python release artifacts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -21,19 +21,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
-      - uses: actions/setup-node@v7.0.0
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: editors/vscode/package-lock.json
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - uses: gradle/actions/setup-gradle@v6.2.0
+          cache: pip
 
       - name: Install release test and build tools
         run: |
@@ -49,20 +37,6 @@ jobs:
       - name: Check distributions
         run: python -m twine check dist/*
 
-      - name: Test and package VS Code extension
-        working-directory: editors/vscode
-        run: |
-          npm ci
-          npm run audit
-          npm test
-          npx vsce package --no-dependencies --out factoryline-vscode-${{ github.event.release.tag_name }}.vsix
-
-      - name: Test and package JetBrains plugin
-        working-directory: editors/intellij
-        run: |
-          chmod +x gradlew
-          ./gradlew check buildPlugin verifyPlugin marketplacePreflight
-
       - name: Clean wheel smoke
         run: |
           python -m venv /tmp/factory-wheel
@@ -73,23 +47,73 @@ jobs:
             exit 1
           fi
 
-      - name: Stage immutable release bundle
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-python-${{ github.event.release.tag_name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  validate_vscode:
+    name: validate VS Code release artifact
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Test and package VS Code extension
         run: |
-          mkdir -p release-bundle/python release-bundle/editors
-          cp dist/* release-bundle/python/
-          cp editors/vscode/*.vsix release-bundle/editors/
-          cp editors/intellij/build/distributions/*.zip release-bundle/editors/
+          npm ci
+          npm run audit
+          npm test
+          npx vsce package --no-dependencies --out factoryline-vscode-${{ github.event.release.tag_name }}.vsix
 
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: release-bundle-${{ github.event.release.tag_name }}
-          path: release-bundle/
+          name: release-vscode-${{ github.event.release.tag_name }}
+          path: editors/vscode/factoryline-vscode-${{ github.event.release.tag_name }}.vsix
+          if-no-files-found: error
+          retention-days: 30
+
+  validate_intellij:
+    name: validate JetBrains release artifact
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/intellij
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v6.2.0
+
+      - name: Test and package JetBrains plugin
+        run: |
+          chmod +x gradlew
+          ./gradlew check buildPlugin verifyPlugin marketplacePreflight
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-intellij-${{ github.event.release.tag_name }}
+          path: editors/intellij/build/distributions/*.zip
           if-no-files-found: error
           retention-days: 30
 
   publish:
     name: publish verified release
-    needs: validate
+    needs: [validate_python, validate_vscode, validate_intellij]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -100,8 +124,18 @@ jobs:
 
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: release-bundle-${{ github.event.release.tag_name }}
-          path: release-bundle
+          name: release-python-${{ github.event.release.tag_name }}
+          path: release-bundle/python
+
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-vscode-${{ github.event.release.tag_name }}
+          path: release-bundle/editors
+
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-intellij-${{ github.event.release.tag_name }}
+          path: release-bundle/editors
 
       - name: Attach distributions to GitHub release
         env:

@@ -178,3 +178,11 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-08 06:58] GATE plan diff-to-proof-review approver=human tasks=4 sha=d40af3ea328e7ad5
 - [2026-08-08 06:59] GATE spec diff-to-proof-review approver=human strict=True sha=4dae9c211e74569d
 - [2026-08-08 06:59] GATE plan diff-to-proof-review approver=human tasks=4 sha=4dae9c211e74569d
+- [2026-08-08 07:12] GATE spec release-reliability-hardening approver=human strict=True sha=4993246fe0fd1237
+- [2026-08-08 07:12] GATE plan release-reliability-hardening approver=human tasks=4 sha=4993246fe0fd1237
+- [2026-08-08 07:13] GATE spec release-reliability-hardening approver=human strict=True sha=d8bcd3d34a65c9c6
+- [2026-08-08 07:13] GATE plan release-reliability-hardening approver=human tasks=4 sha=d8bcd3d34a65c9c6
+- [2026-08-08 07:13] GATE spec release-reliability-hardening approver=human strict=True sha=5493d6591d367f44
+- [2026-08-08 07:13] GATE plan release-reliability-hardening approver=human tasks=4 sha=5493d6591d367f44
+- [2026-08-08 07:54] GATE spec release-reliability-hardening approver=human strict=True sha=3b0d4dd9a6f8db1d
+- [2026-08-08 07:54] GATE plan release-reliability-hardening approver=human tasks=8 sha=3b0d4dd9a6f8db1d

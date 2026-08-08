@@ -64,9 +64,9 @@ object FactoryLineController {
 
     fun missionOperations(project: Project) {
         val options = MissionGraphOperation.entries.map { it.label }.toTypedArray()
-        val selected = Messages.showChooseDialog(
+        val selected = Messages.showDialog(
             project, "Choose a receipt-governed mission operation.", "FactoryLine Mission Operations",
-            Messages.getQuestionIcon(), options, options.first()
+            options, 0, Messages.getQuestionIcon()
         )
         if (selected < 0) return
         val operation = MissionGraphOperation.entries[selected]
@@ -83,14 +83,14 @@ object FactoryLineController {
 
     private fun recordMissionEvent(project: Project) {
         val mission = workspacePath(project, "Mission JSON path") ?: return
-        val eventIndex = Messages.showChooseDialog(
-            project, "Event to record:", "FactoryLine Guarded Event", Messages.getQuestionIcon(), graphEvents, graphEvents.first()
+        val eventIndex = Messages.showDialog(
+            project, "Event to record:", "FactoryLine Guarded Event", graphEvents, 0, Messages.getQuestionIcon()
         )
         if (eventIndex < 0) return
         val actor = Messages.showInputDialog(project, "Actor identity:", "FactoryLine Guarded Event", null)?.trim().orEmpty()
         if (actor.isBlank()) return
         val roles = arrayOf("owner", "worker", "validator", "operator")
-        val roleIndex = Messages.showChooseDialog(project, "Actor role:", "FactoryLine Guarded Event", Messages.getQuestionIcon(), roles, roles.first())
+        val roleIndex = Messages.showDialog(project, "Actor role:", "FactoryLine Guarded Event", roles, 0, Messages.getQuestionIcon())
         if (roleIndex < 0) return
         val key = Messages.showInputDialog(project, "Unique idempotency key:", "FactoryLine Guarded Event", null)?.trim().orEmpty()
         if (key.isBlank()) return
@@ -115,7 +115,7 @@ object FactoryLineController {
         val policy = workspacePath(project, "Provider policy JSON path") ?: return
         val mission = workspacePath(project, "Mission JSON path") ?: return
         val risks = arrayOf("low", "medium", "high")
-        val riskIndex = Messages.showChooseDialog(project, "Mission risk:", "FactoryLine BYOK Router", Messages.getQuestionIcon(), risks, "medium")
+        val riskIndex = Messages.showDialog(project, "Mission risk:", "FactoryLine BYOK Router", risks, 1, Messages.getQuestionIcon())
         if (riskIndex < 0) return
         val provider = Messages.showInputDialog(project, "Preferred provider ID (optional):", "FactoryLine BYOK Router", null) ?: return
         val model = Messages.showInputDialog(project, "Preferred model ID (optional):", "FactoryLine BYOK Router", null) ?: return

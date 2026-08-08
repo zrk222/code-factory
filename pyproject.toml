@@ -71,6 +71,7 @@ factory = "factoryline.cli:main"
 
 [tool.setuptools]
 packages = ["factoryline", "factoryline.builtin_packs"]
+include-package-data = false
 
 [tool.setuptools.package-data]
 factoryline = ["builtin_packs/**/*", "data/*.json", "hosted_console.html", "graph_ops.html"]
