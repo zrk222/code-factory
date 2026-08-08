@@ -73,6 +73,7 @@ from .migration import (
 from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .coverage import requirement_coverage
+from .change_review import ChangeReviewError, review_change, write_review_artifacts
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
 from .verification import verify_feature
@@ -709,6 +710,15 @@ def main(argv=None) -> int:
     graph_impact.add_argument("--root", default=".")
     graph_impact.add_argument("--changed", action="append", required=True, help="workspace-relative changed path; repeat as needed")
     graph_impact.add_argument("--json", action="store_true")
+
+    change = sub.add_parser("change", help="prepare a deterministic, analysis-only diff-to-proof review")
+    change_sub = change.add_subparsers(required=True, dest="change_cmd")
+    change_review = change_sub.add_parser("review", help="join diff impact, coverage gaps, and plan-only reruns")
+    change_review.add_argument("--root", default=".")
+    change_review.add_argument("--base", default="main")
+    change_review.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
+    change_review.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
+    change_review.add_argument("--json", action="store_true")
 
     mcp = sub.add_parser("mcp", help="serve or inspect the local read-only MCP adapter")
     mcp_sub = mcp.add_subparsers(required=True, dest="mcp_cmd")
@@ -1938,6 +1948,32 @@ def main(argv=None) -> int:
                     print(f"complete    : {snapshot['complete']}")
                     print(f"next action : {snapshot['recommendation']['action']}")
                     print(f"reason      : {snapshot['recommendation']['reason']}")
+        return 0
+    if a.cmd == "change":
+        try:
+            review = review_change(Path(a.root), base=a.base, changed=a.changed or None)
+            if a.out_dir:
+                review["artifacts"] = write_review_artifacts(review, Path(a.out_dir))
+        except ChangeReviewError as exc:
+            payload = {
+                "schema": "factory.change_review.error.v1",
+                "marker": "DIFF_TO_PROOF_PATH_REJECTED" if exc.code in {"CHANGED_PATH_INVALID", "CHANGED_PATH_LIMIT"} else "DIFF_TO_PROOF_INPUT_UNAVAILABLE",
+                "code": exc.code,
+                "message": str(exc),
+            }
+            print(json.dumps(payload, indent=2) if a.json else f"change review failed: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(review, indent=2, sort_keys=True))
+        else:
+            print("factory change review (analysis only)")
+            print("=" * 44)
+            print(f"changed paths: {len(review['changed_paths'])}")
+            print(f"next action : {review['next_action']['action']}")
+            print(f"findings    : {len(review['findings'])}")
+            if review.get("artifacts"):
+                print(f"packet      : {review['artifacts']['paths']['markdown']}")
+            print("authority   : no execution, merge, publication, deployment, or credential access")
         return 0
     if a.cmd == "mcp":
         from .mcp import McpError, mcp_status, serve_stdio

@@ -28,6 +28,9 @@ known, what is missing, and the one fact-derived next action.
 - **Avoids unnecessary repeat work.** Content-addressed proof reuse can route a
   matching read-only validation to RUN, REUSE, SKIP, or BLOCK, preserving the
   reason and paired savings evidence instead of silently skipping a check.
+- **Turns a diff into a reviewable proof plan.** `factory change review` joins
+  explicit change impact, stale proofs, coverage gaps, and existing risk policy
+  into one analysis-only reviewer packet and Mermaid map.
 - **Scales without blurring authority.** Capability packs, signed receipts,
   approval boundaries, and the optional hosted adapter support team and
   enterprise workflows while keeping publishing, credential access, approvals,
@@ -40,6 +43,7 @@ pip install factoryline-code-factory==0.26.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid
+factory change review --root . --base origin/main
 ```
 
 Start with the local MVP, open Studio to inspect its state, then use Graph Ops
