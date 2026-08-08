@@ -49,6 +49,11 @@ flowchart LR
 - An explicit **Save Review Handoff** action that writes the current review's
   hash-bound JSON, Markdown, and Mermaid packet below
   `.factory/change-reviews/`; it never applies a suggested change.
+- A **Verified Repair Sandbox** tab that seals one native Change List as a
+  local Scope Passport, exposes exact bytes without token or credit estimates,
+  and rejects textual candidate patches that cross its current path scope. It
+  does not invoke a repair model, apply the patch, or replace independent
+  verifier evidence and a human IDE decision.
 - Plugin Verifier CI across IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion,
   GoLand, RustRover, and DataGrip.
 - One Mission Operations entry point for graph initialization, status, history,

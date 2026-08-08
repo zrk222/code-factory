@@ -1,6 +1,7 @@
 package app.factoryline.intellij
 
 import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -10,7 +11,11 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.util.Computable
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.vcs.changes.Change
+import com.intellij.openapi.vcs.changes.ChangeListManager
+import java.nio.file.Files
 import java.nio.file.Path
 
 object FactoryLineExecutionConfirmation {
@@ -237,6 +242,81 @@ object FactoryLineController {
         }
     }
 
+    fun prepareRepairScope(project: Project) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val scopes = runCatching { NativeChangeListScopes.collect(project, root) }.getOrElse { failure ->
+            Messages.showErrorDialog(project, "Could not read local Change Lists: ${failure.message}", "FactoryLine")
+            return
+        }.filter { it.paths.isNotEmpty() || it.unavailableChanges > 0 }
+        if (scopes.isEmpty()) {
+            Messages.showInfoMessage(project, "No local Change List contains a project change. Make or select a local change first.", "FactoryLine Repair Sandbox")
+            return
+        }
+        val selectedIndex = Messages.showDialog(
+            project,
+            "Select one Change List to seal. FactoryLine will send only its explicit project paths to the local CLI.",
+            "FactoryLine: Prepare Repair Scope",
+            scopes.map { it.displayName() }.toTypedArray(),
+            0,
+            Messages.getQuestionIcon(),
+        )
+        if (selectedIndex < 0) return
+        val selected = scopes[selectedIndex]
+        if (selected.unavailableChanges > 0) {
+            Messages.showErrorDialog(
+                project,
+                "'${selected.name}' includes ${selected.unavailableChanges} change(s) outside the project or without a resolvable file path. FactoryLine will not silently drop them; use a fully project-contained Change List.",
+                "FactoryLine Repair Sandbox",
+            )
+            return
+        }
+        if (selected.paths.isEmpty()) {
+            Messages.showErrorDialog(project, "The selected Change List contains no project files to seal.", "FactoryLine Repair Sandbox")
+            return
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Prepare Repair Scope")) return
+        val outDir = root.resolve(".factory").resolve("repair-sandboxes")
+        runBackground(project, "Prepare Repair Scope", onCompleted = { FactoryLinePanels.showRepairSandbox(project, it) }) {
+            FactoryLineRunner.repairScope(project, selected.name, selected.paths, outDir)
+        }
+    }
+
+    fun validateRepairCandidate(project: Project, scope: RepairScopeSummary?) {
+        val selectedScope = scope ?: run {
+            Messages.showInfoMessage(project, "Prepare a trusted Change List scope before validating a candidate patch.", "FactoryLine Repair Sandbox")
+            return
+        }
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val scopePath = selectedScope.artifactPaths.firstOrNull { it.endsWith(".json", ignoreCase = true) }?.let {
+            WorkspacePath.resolve(root, it)
+        } ?: run {
+            Messages.showErrorDialog(project, "The selected scope has no project-contained JSON packet. Prepare the Change List again.", "FactoryLine Repair Sandbox")
+            return
+        }
+        val patchValue = Messages.showInputDialog(
+            project,
+            "Candidate patch path (inside this workspace; textual Git diff only):",
+            "FactoryLine: Validate Repair Candidate",
+            null,
+        )?.trim() ?: return
+        val patchPath = WorkspacePath.resolve(root, patchValue)
+        if (patchPath == null || !Files.isRegularFile(patchPath)) {
+            Messages.showErrorDialog(project, "Candidate patch must be an existing regular file inside the current workspace.", "FactoryLine Repair Sandbox")
+            return
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Validate Repair Candidate")) return
+        val outDir = root.resolve(".factory").resolve("repair-sandboxes")
+        runBackground(project, "Validate Repair Candidate", onCompleted = { FactoryLinePanels.showRepairSandbox(project, it) }) {
+            FactoryLineRunner.repairCandidate(project, scopePath, patchPath, outDir)
+        }
+    }
+
     fun checkLatestReceiptSignature(project: Project) {
         if (!FactoryLineExecutionConfirmation.confirm(project, "Check Receipt Signature State")) return
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "FactoryLine: Check Receipt Signature State", true) {
@@ -356,9 +436,52 @@ class AnalyzeChangedProofAction : FactoryLineAction() {
     }
 }
 
+data class NativeChangeListScope(
+    val name: String,
+    val paths: List<String>,
+    val unavailableChanges: Int,
+) {
+    fun displayName(): String = buildString {
+        append("$name â€” ${paths.size} project file(s)")
+        if (unavailableChanges > 0) append("; $unavailableChanges unavailable")
+    }
+}
+
+/** Reads only native local Change Lists; it neither modifies VCS state nor runs Git. */
+object NativeChangeListScopes {
+    fun collect(project: Project, root: Path): List<NativeChangeListScope> =
+        ApplicationManager.getApplication().runReadAction(Computable {
+            ChangeListManager.getInstance(project).changeLists.map { changeList ->
+                val paths = linkedSetOf<String>()
+                var unavailable = 0
+                changeList.changes.forEach { change ->
+                    val rawPaths = revisionPaths(change)
+                    val resolved = rawPaths.mapNotNull { raw ->
+                        WorkspacePath.resolve(root, raw)?.let { path ->
+                            root.toAbsolutePath().normalize().relativize(path).toString().replace('\\', '/')
+                        }
+                    }
+                    if (rawPaths.isEmpty() || resolved.size != rawPaths.size) unavailable += 1 else paths.addAll(resolved)
+                }
+                NativeChangeListScope(changeList.name, paths.toList().sorted(), unavailable)
+            }.sortedBy { it.name.lowercase() }
+        })
+
+    private fun revisionPaths(change: Change): List<String> = listOfNotNull(
+        change.beforeRevision?.file?.path,
+        change.afterRevision?.file?.path,
+    ).distinct()
+}
+
 class ReviewCurrentDiffAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.reviewCurrentDiff(it) }
+    }
+}
+
+class PrepareRepairScopeAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.prepareRepairScope(it) }
     }
 }
 

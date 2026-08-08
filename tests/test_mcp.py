@@ -37,6 +37,12 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.graph_ops",
         "factory.graph_impact",
         "factory.next_action",
+        "factory.list_receipts",
+        "factory.get_receipt",
+        "factory.verifier_status",
+        "factory.proof_reuse",
+        "factory.cdte_status",
+        "factory.prd_grill_status",
     ]
     assert status["resources"] == ["factory://status", "factory://graph"]
     assert all(value is False for value in status["authority"].values())
@@ -61,11 +67,24 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     inventory = dispatch({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, tmp_path)
     assert inventory["result"]["marker"] == "FACTORY_MCP_TOOL_INVENTORY"
     assert [tool["name"] for tool in inventory["result"]["tools"]] == mcp_status(tmp_path)["tools"]
+    assert all(tool["annotations"] == {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    } for tool in inventory["result"]["tools"])
 
     graph = _content(dispatch({
         "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "factory.graph_ops"},
     }, tmp_path))
     assert graph == {"marker": "MCP_GRAPH_OPS_PARITY", "graph": graph_ops_snapshot(tmp_path)}
+
+    summary = _content(dispatch({
+        "jsonrpc": "2.0", "id": 30, "method": "tools/call",
+        "params": {"name": "factory.graph_ops", "arguments": {"format": "summary"}},
+    }, tmp_path))
+    assert summary["marker"] == "MCP_GRAPH_OPS_PARITY"
+    assert summary["summary"]["graph_sha256"] == graph_ops_snapshot(tmp_path)["graph_sha256"]
 
     impact = _content(dispatch({
         "jsonrpc": "2.0", "id": 4, "method": "tools/call",
@@ -98,6 +117,55 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     assert _files(tmp_path) == before
 
 
+def test_mcp_read_only_receipt_and_gate_status_tools(tmp_path: Path):
+    receipt = tmp_path / "receipts" / "build.json"
+    receipt.parent.mkdir()
+    receipt.write_text(json.dumps({"schema": "factory.receipt.v1", "feature": "checkout", "created_at": "2026-08-08T00:00:00Z"}), encoding="utf-8")
+    session = tmp_path / ".factory" / "verifier-sessions" / "checkout.session.json"
+    session.parent.mkdir(parents=True)
+    session.write_text(json.dumps({
+        "schema": "factory.verifier-session.v1", "mission_id": "checkout", "session_sha256": "a" * 64,
+        "budgets": {"max_attempts": 5, "max_wall_seconds": 3600, "max_tokens": 100000, "max_cost_usd": 25.0},
+    }), encoding="utf-8")
+    prd = tmp_path / "PRD.md"
+    prd.write_text("# Checkout", encoding="utf-8")
+    before = _files(tmp_path)
+
+    listed = _content(dispatch({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "factory.list_receipts", "arguments": {"feature": "checkout"}},
+    }, tmp_path))
+    assert listed["marker"] == "MCP_RECEIPTS_UNASSESSED"
+    assert listed["entries"][0]["assessment"] == "unassessed"
+
+    loaded = _content(dispatch({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "factory.get_receipt", "arguments": {"path": "receipts/build.json"}},
+    }, tmp_path))
+    assert loaded["receipt"]["feature"] == "checkout"
+    assert loaded["metadata"]["verification"] == "not_run"
+
+    verifier = _content(dispatch({
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "factory.verifier_status", "arguments": {"mission": "checkout"}},
+    }, tmp_path))
+    assert verifier["worker"]["result"] == "not_supplied"
+    assert verifier["budget"]["remaining"] == "unobserved"
+
+    reuse = _content(dispatch({
+        "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "factory.proof_reuse", "arguments": {"gate": "python-tests"}},
+    }, tmp_path))
+    assert reuse["disposition"] == "BLOCK"
+
+    cdte = _content(dispatch({
+        "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "factory.cdte_status"},
+    }, tmp_path))
+    assert cdte["marker"] == "MCP_CDTE_SCAN_REQUIRED"
+
+    grill = _content(dispatch({
+        "jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "factory.prd_grill_status", "arguments": {"prd_path": "PRD.md"}},
+    }, tmp_path))
+    assert grill["marker"] == "MCP_PRD_GRILL_REQUIRED"
+    assert _files(tmp_path) == before
+
+
 def test_mcp_rejects_malformed_and_unsafe_requests_without_writing(tmp_path: Path):
     before = _files(tmp_path)
     requests = [
@@ -109,16 +177,22 @@ def test_mcp_rejects_malformed_and_unsafe_requests_without_writing(tmp_path: Pat
         {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
             "name": "factory.graph_impact", "arguments": {"changed_paths": [str(tmp_path / "outside.txt")]},
         }},
+        {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+            "name": "factory.get_receipt", "arguments": {"path": "../outside.json"},
+        }},
+        {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {
+            "name": "factory.prd_grill_status", "arguments": {"prd_path": "../outside.md"},
+        }},
     ]
     for request in requests:
         response = dispatch(request, tmp_path)
         assert response["error"]["code"] == -32602
         assert response["error"]["data"]["marker"] == "MCP_INVALID_PARAMS_REJECTED"
 
-    unknown_method = dispatch({"jsonrpc": "2.0", "id": 5, "method": "factory/nope"}, tmp_path)
+    unknown_method = dispatch({"jsonrpc": "2.0", "id": 7, "method": "factory/nope"}, tmp_path)
     assert unknown_method["error"]["code"] == -32601
     assert unknown_method["error"]["data"]["marker"] == "MCP_UNKNOWN_METHOD_REJECTED"
-    missing_root = dispatch({"jsonrpc": "2.0", "id": 6, "method": "tools/list"}, tmp_path / "missing")
+    missing_root = dispatch({"jsonrpc": "2.0", "id": 8, "method": "tools/list"}, tmp_path / "missing")
     assert missing_root["error"]["code"] == -32602
     assert missing_root["error"]["data"]["marker"] == "MCP_INVALID_PARAMS_REJECTED"
     assert _files(tmp_path) == before

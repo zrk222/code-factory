@@ -12,6 +12,8 @@ local result. The remaining explicit actions are:
 | An AI or teammate diff is hard to trust | Proof Review turns the declared local diff into its review hash, proof gaps, severity-ordered findings, and one fact-derived next action. | It reports facts; it does not call code correct or ready to ship. |
 | One workspace contains several tasks | Review Current Diff analyzes the whole local change set; Review This File isolates the active file. | The focused path is explicit and avoids unrelated Git paths. |
 | Review context vanishes across handoffs | Save Review Handoff writes local JSON, Markdown, and Mermaid evidence under `.factory/change-reviews`. | A packet is not an approval, a commit, or a repair. |
+| An AI repair attempt needs too much or the wrong context | Verified Repair Sandbox seals one native Change List, reports its exact bytes, and accepts only a textual candidate patch that stays inside its Scope Passport. | Bytes are not a token or credit estimate; FactoryLine never runs the agent or applies the patch. |
+| AI Chat lacks trustworthy project context | The Repair Sandbox can copy the current local proof context or a local MCP configuration for a manual paste/setup. | The plugin does not configure AI, upload source, call a provider, or spend credits. |
 | Automation can overreach privacy or release controls | Every command has workspace confirmation and runs directly, not through a shell. | No source upload, credential access, edit, test, commit, publish, deploy, or release decision. |
 
 1. Run Spec-to-Ship Assembly.
@@ -22,12 +24,13 @@ local result. The remaining explicit actions are:
 6. Review Current Diff.
 7. Review This File.
 8. Save Review Handoff.
-9. Check Latest Receipt Signature State.
-10. Open Local Meter and Paired Savings Report.
-11. Open Local Factory Studio.
-12. Open Product Missions.
-13. Open Unified Graph Ops.
-14. Mission Graph & Provider Operations.
+9. Prepare Verified Repair Sandbox.
+10. Check Latest Receipt Signature State.
+11. Open Local Meter and Paired Savings Report.
+12. Open Local Factory Studio.
+13. Open Product Missions.
+14. Open Unified Graph Ops.
+15. Mission Graph & Provider Operations.
 
 `REQ-*`, `FR-*`, and `NFR-*` text also receives a read-only FactoryLine gutter
 marker. Selecting it opens the first deterministic local proof match under
@@ -57,6 +60,28 @@ another developer can inspect or resume from locally. The review tab can open
 only project-contained changed files and copy a local handoff brief. It does
 not edit files, run a test, commit, publish, deploy, access credentials, or
 make a release decision.
+
+**Verified Repair Sandbox** starts from one native local Change List rather
+than the whole working tree. **Prepare Change List** records only that list's
+project-contained paths as a hash-bound Scope Passport under
+`.factory/repair-sandboxes`, including the existing review facts and an exact
+file/byte Context Budget. The byte budget can recommend splitting a large
+external-agent payload, but never estimates tokens, provider credits, latency,
+or quality. **Validate candidate patch** then accepts only a UTF-8 textual Git
+candidate patch whose declared file paths remain inside the current Scope
+Passport. It rejects scope drift, path traversal, binary/combined/quoted patch
+forms, and any path outside the Change List. The adapter does not invoke a
+candidate runner or apply a patch: independent verifier evidence and the final
+IDE diff/apply action remain human-owned. See
+[Verified Repair Sandbox](REPAIR_SANDBOX.md).
+
+The Repair Sandbox can also copy a bounded local proof context for a developer
+to paste into AI Chat and copy a local stdio MCP configuration. Both are manual
+handoffs: no AI Chat API is called, no provider or BYOK setting changes, and no
+source or receipt leaves the workspace through the plugin. The MCP tools expose
+receipt, verifier-session, PRD Grill, CDTE, proof-reuse, and Graph Ops facts as
+read-only context. They never create a CDTE scan, execute a proof gate, or
+authorize implementation. See [Local MCP proof-context server](MCP.md).
 
 **Open Local Meter** runs `factory meter --root <project> --json` only after the
 same workspace confirmation. The tool window distinguishes measured wall time

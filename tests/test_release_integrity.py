@@ -106,6 +106,23 @@ def test_release_integrity_rejects_intellij_compatibility_configuration_regressi
     assert result["failed_check_ids"] == ["INTELLIJ_COMPATIBILITY_DECLARED"]
 
 
+def test_release_integrity_rejects_missing_repair_scope_confirmation(tmp_path: Path) -> None:
+    root = _workflow_copy(tmp_path)
+    actions = root / "editors" / "intellij" / "src" / "main" / "kotlin" / "app" / "factoryline" / "intellij" / "FactoryLineActions.kt"
+    actions.write_text(
+        actions.read_text(encoding="utf-8").replace(
+            'FactoryLineExecutionConfirmation.confirm(project, "Prepare Repair Scope")',
+            "true",
+        ),
+        encoding="utf-8",
+    )
+
+    result = release_integrity(root)
+
+    assert result["ok"] is False
+    assert result["failed_check_ids"] == ["INTELLIJ_COMPATIBILITY_DECLARED"]
+
+
 def test_release_integrity_rejects_huggingface_metadata_that_would_fail_remotely(tmp_path: Path) -> None:
     root = _workflow_copy(tmp_path)
     readme = root / "deploy" / "huggingface" / "README.md"

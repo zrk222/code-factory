@@ -21,6 +21,8 @@ starter remains a starting state until product-specific proof exists.
 - `FactoryLine: Review Current Diff` runs `factory change review --root <project> --json` and shows an attention-first, structured local review of the branch delta, staged changes, unstaged changes, and non-ignored untracked files.
 - `FactoryLine: Review This File` runs the same analysis with an explicit active-editor path, so a developer can exclude unrelated local work from the review scope.
 - `FactoryLine: Save Review Handoff` writes the exact review JSON, Markdown, and Mermaid map below `.factory/change-reviews/` only after a second workspace confirmation. It is a local handoff packet, not an approval or an automatic repair.
+- `FactoryLine: Prepare Verified Repair Sandbox` selects one native Change List, seals its exact project paths and measured bytes in a local Scope Passport, then permits an explicit textual candidate-patch check. It never calls an AI runner, estimates token/credit savings, applies a patch, runs a test, or commits.
+- The Repair Sandbox can copy its current local proof context for a manual AI Chat paste, plus a local stdio MCP configuration. Neither action configures AI, uploads source, consumes AI credits, or grants execution authority.
 - `FactoryLine: Open Latest Receipt` shows the newest JSON receipt below `.factory/` or `receipts/`.
 - `FactoryLine: Check Latest Receipt Signature State` runs `factory receipt status` on that receipt. It reports signature presence or `UNSIGNED`; it does not claim signer identity.
 - `FactoryLine: Open Local Factory Studio` opens the confirmed loopback target compiler.
@@ -57,6 +59,13 @@ project, and can copy a concise handoff brief. It never edits code, runs a
 test, commits, publishes, deploys, accesses credentials, or sends project data
 over the network. A future repair flow must create an isolated candidate and
 pass independent checks before a human chooses whether to apply it.
+
+Verified Repair Sandbox is that first professional repair-control surface: it
+keeps a candidate's declared Git patch paths inside one native Change List,
+blocks stale scope bytes, and leaves a local JSON/Markdown/Mermaid handoff for
+the developer and independent verifier. It does not claim that scope control
+proves a patch correct, nor does it call or configure a repair model. See
+[`docs/REPAIR_SANDBOX.md`](../../docs/REPAIR_SANDBOX.md).
 
 ## Install
 

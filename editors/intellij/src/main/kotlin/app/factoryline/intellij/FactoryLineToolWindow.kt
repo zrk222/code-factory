@@ -19,13 +19,18 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val panel = FactoryLinePanel(project)
         val proofReview = FactoryLineProofReviewPanel(project)
+        val repairSandbox = FactoryLineRepairSandboxPanel(project)
         project.putUserData(FactoryLinePanels.key, panel)
         project.putUserData(FactoryLinePanels.proofReviewKey, proofReview)
+        project.putUserData(FactoryLinePanels.repairSandboxKey, repairSandbox)
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(panel, "Receipts", false)
         )
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(proofReview, "Proof Review", false)
+        )
+        toolWindow.contentManager.addContent(
+            ContentFactory.getInstance().createContent(repairSandbox, "Repair Sandbox", false)
         )
     }
 }
@@ -88,6 +93,7 @@ class FactoryLinePanel(private val project: Project) : JPanel(BorderLayout(0, 8)
 object FactoryLinePanels {
     val key: Key<FactoryLinePanel> = Key.create("app.factoryline.intellij.panel")
     val proofReviewKey: Key<FactoryLineProofReviewPanel> = Key.create("app.factoryline.intellij.proofReview")
+    val repairSandboxKey: Key<FactoryLineRepairSandboxPanel> = Key.create("app.factoryline.intellij.repairSandbox")
 
     fun show(project: Project, result: CommandResult) {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
@@ -115,6 +121,15 @@ object FactoryLinePanels {
         toolWindow?.show {
             ApplicationManager.getApplication().invokeLater {
                 project.getUserData(proofReviewKey)?.show(result)
+            }
+        }
+    }
+
+    fun showRepairSandbox(project: Project, result: CommandResult) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater {
+                project.getUserData(repairSandboxKey)?.show(result)
             }
         }
     }

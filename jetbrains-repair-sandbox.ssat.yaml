@@ -1,0 +1,39 @@
+name: jetbrains-repair-sandbox
+language: python
+modules:
+  - name: repair_sandbox
+    path: factoryline/repair_sandbox.py
+    language: python
+    functions:
+      - name: create_repair_scope
+        args: ["root: Path", "change_list: str", "changed: list[str]"]
+        returns: dict[str, Any]
+      - name: verify_repair_scope
+        args: ["scope: dict[str, Any]", "root: Path"]
+        returns: dict[str, Any]
+      - name: inspect_repair_candidate
+        args: ["root: Path", "scope_path: Path", "patch_path: Path"]
+        returns: dict[str, Any]
+  - name: change_review
+    path: factoryline/change_review.py
+    language: python
+    functions:
+      - name: review_change
+        args: ["root: Path", "base: str = 'main'", "changed: list[str] | None = None"]
+        returns: dict
+dependencies:
+  - from: repair_sandbox
+    to: change_review
+invariants:
+  - name: scope_creation_has_no_runner_or_source_write
+    forbid_pattern: "\\b(?:subprocess|requests|httpx|urllib|socket|write_text|write_bytes|commit|publish|deploy)\\s*\\("
+    scopes:
+      - module: repair_sandbox
+        symbol: create_repair_scope
+        max_lines: 90
+  - name: candidate_inspection_never_applies_or_executes
+    forbid_pattern: "\\b(?:subprocess|requests|httpx|urllib|socket|write_text|write_bytes|replace|apply|commit|publish|deploy)\\s*\\("
+    scopes:
+      - module: repair_sandbox
+        symbol: inspect_repair_candidate
+        max_lines: 70

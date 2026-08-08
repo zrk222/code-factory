@@ -90,6 +90,21 @@ object FactoryLineCommands {
         add("--json")
     }
 
+    fun repairScope(root: Path, changeList: String, changedPaths: List<String>, outDir: Path): List<String> {
+        require(changeList.isNotBlank())
+        require(changedPaths.isNotEmpty())
+        return buildList {
+            addAll(listOf("repair", "scope", "--root", root.toString(), "--change-list", changeList))
+            changedPaths.forEach { addAll(listOf("--changed", it)) }
+            addAll(listOf("--out-dir", outDir.toString(), "--json"))
+        }
+    }
+
+    fun repairCandidate(root: Path, scope: Path, patch: Path, outDir: Path): List<String> = listOf(
+        "repair", "candidate", "--root", root.toString(), "--scope", scope.toString(),
+        "--patch", patch.toString(), "--out-dir", outDir.toString(), "--json",
+    )
+
     fun savings(root: Path): List<String> =
         listOf("savings", "report", "--root", root.toString(), "--json")
 
@@ -310,6 +325,29 @@ object FactoryLineRunner {
         }
         val title = if (boundedOutDir == null) "Proof Review" else "Save Proof Review Handoff"
         return execute(project, title, FactoryLineCommands.proofReview(root, changedPath, boundedOutDir))
+    }
+
+    fun repairScope(project: Project, changeList: String, changedPaths: List<String>, outDir: Path): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Prepare Repair Scope", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        val boundedOutDir = WorkspacePath.resolve(root, outDir.toString())
+            ?: return CommandResult("Prepare Repair Scope", emptyList(), null, false, "Blocked: the repair artifact directory must stay inside the project.")
+        if (changedPaths.isEmpty()) {
+            return CommandResult("Prepare Repair Scope", emptyList(), null, false, "Blocked: a Change List must contain at least one project file.")
+        }
+        return execute(project, "Prepare Repair Scope", FactoryLineCommands.repairScope(root, changeList, changedPaths, boundedOutDir))
+    }
+
+    fun repairCandidate(project: Project, scope: Path, patch: Path, outDir: Path): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Validate Repair Candidate", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        val boundedScope = WorkspacePath.resolve(root, scope.toString())
+            ?: return CommandResult("Validate Repair Candidate", emptyList(), null, false, "Blocked: the scope packet must stay inside the project.")
+        val boundedPatch = WorkspacePath.resolve(root, patch.toString())
+            ?: return CommandResult("Validate Repair Candidate", emptyList(), null, false, "Blocked: the candidate patch must stay inside the project.")
+        val boundedOutDir = WorkspacePath.resolve(root, outDir.toString())
+            ?: return CommandResult("Validate Repair Candidate", emptyList(), null, false, "Blocked: the repair artifact directory must stay inside the project.")
+        return execute(project, "Validate Repair Candidate", FactoryLineCommands.repairCandidate(root, boundedScope, boundedPatch, boundedOutDir))
     }
 
     fun run(project: Project, operation: FactoryLineOperation, feature: String): CommandResult {

@@ -273,12 +273,13 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "1280x800" in screenshot_brief
 
 
-def test_intellij_source_uses_supported_choice_dialog_api_with_medium_risk_default():
+def test_intellij_source_uses_supported_choice_dialog_api_with_safe_defaults():
     actions = (ROOT / "editors" / "intellij" / "src" / "main" / "kotlin" / "app" / "factoryline" / "intellij" / "FactoryLineActions.kt").read_text(encoding="utf-8")
 
     assert "Messages.showChooseDialog" not in actions
-    assert actions.count("Messages.showDialog(") == 4
+    assert actions.count("Messages.showDialog(") >= 4
     assert 'risks, 1, Messages.getQuestionIcon()' in actions
+    assert 'FactoryLineExecutionConfirmation.confirm(project, "Prepare Repair Scope")' in actions
 
 
 def test_intellij_build_uses_the_gradle_9_5_compatible_kotlin_plugin_line():

@@ -1,13 +1,18 @@
 """Local stdio-only MCP adapter over deterministic Graph Ops facts."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from hashlib import sha256
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any, TextIO
 
 from . import __version__
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
+from .proof_reuse import verify_proof_receipt
+from .prd_grill import verify_prd_grill
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -23,6 +28,25 @@ _AUTHORITY = {
     "credential": False,
     "connector": False,
 }
+_READ_ONLY_ANNOTATIONS = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": False,
+}
+_MAX_RECEIPT_BYTES = 262_144
+_MAX_RECEIPTS = 250
+_RECEIPT_ROOTS = (
+    Path("receipts"),
+    Path(".factory/proofs"),
+    Path(".factory/runs"),
+    Path(".factory/change-reviews"),
+    Path(".factory/repair-sandboxes"),
+    Path(".factory/prd-grills"),
+    Path(".factory/cdte"),
+    Path(".factory/verifier-sessions"),
+    Path(".factory/proof-plans"),
+)
 
 
 class McpError(ValueError):
@@ -49,13 +73,19 @@ def _tool_definitions() -> list[dict[str, object]]:
     return [
         {
             "name": "factory.status",
-            "description": "Read the local Code Factory MCP boundary and authority status.",
+            "description": "Return the local Code Factory MCP boundary, version, workspace root, and tool inventory. Read only.",
             "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.graph_ops",
-            "description": "Read the deterministic local Graph Ops snapshot without executing work.",
-            "inputSchema": no_args,
+            "description": "Return deterministic local Graph Ops facts. summary is a compact next-action view; neither format executes work.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"format": {"type": "string", "enum": ["json", "summary"], "default": "json"}},
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.graph_impact",
@@ -73,11 +103,89 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["changed_paths"],
                 "additionalProperties": False,
             },
+            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.next_action",
             "description": "Read the one fact-derived Graph Ops recommendation without executing it.",
             "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.list_receipts",
+            "description": "List up to 50 newest local receipt-like JSON artifacts. Entries are unassessed until a named verification path runs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+                    "feature": {"type": "string", "minLength": 1, "maxLength": 80},
+                },
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.get_receipt",
+            "description": "Return one local receipt by root-relative path or exact feature identifier. The payload stays unassessed unless a verifier was explicitly run.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "feature": {"type": "string", "minLength": 1, "maxLength": 80},
+                },
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.verifier_status",
+            "description": "Read a local Verifier Plane session. It never starts a worker or verifier and reports unknown evidence and budget use as unobserved.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "mission": {"type": "string", "minLength": 1, "maxLength": 64},
+                },
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.proof_reuse",
+            "description": "Read the reuse disposition for an exact local proof receipt. It never runs a gate; missing a complete gate request fails closed as BLOCK.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "gate": {"type": "string", "minLength": 1, "maxLength": 120},
+                    "changed_paths": {
+                        "type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 512}, "maxItems": 50,
+                    },
+                },
+                "required": ["gate"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.cdte_status",
+            "description": "Read the latest existing deterministic CDTE scan for an optional feature. It never synthesizes constraints or writes a scan receipt.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"feature": {"type": "string", "minLength": 1, "maxLength": 80}},
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.prd_grill_status",
+            "description": "Read the newest PRD Grill receipt bound to a root-relative PRD path. It never rewrites a PRD or authorizes implementation.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"prd_path": {"type": "string", "minLength": 1, "maxLength": 512}},
+                "required": ["prd_path"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
         },
     ]
 
@@ -95,6 +203,143 @@ def mcp_status(root: Path | str) -> dict[str, object]:
         "authority": dict(_AUTHORITY),
         "tools": [tool["name"] for tool in _tool_definitions()],
         "resources": ["factory://status", "factory://graph"],
+    }
+
+
+def _relative_path(root: Path, value: object, label: str, *, must_exist: bool = False) -> tuple[str, Path]:
+    if not isinstance(value, str) or not value or value.strip() != value or len(value) > 512:
+        raise McpError(f"{label} must be a non-empty root-relative path")
+    supplied = Path(value)
+    if supplied.is_absolute() or ".." in supplied.parts:
+        raise McpError(f"{label} must be root-relative without parent traversal")
+    candidate = (root / supplied).resolve()
+    try:
+        relative = candidate.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise McpError(f"{label} must remain beneath the workspace root") from exc
+    if must_exist and not candidate.is_file():
+        raise McpError(f"{label} must name an existing regular file")
+    return relative, candidate
+
+
+def _receipt_path(root: Path, value: object, *, must_exist: bool = False) -> tuple[str, Path]:
+    relative, candidate = _relative_path(root, value, "receipt path", must_exist=must_exist)
+    if candidate.suffix.lower() != ".json" or not any(candidate.is_relative_to(root / item) for item in _RECEIPT_ROOTS):
+        raise McpError("receipt path must be a JSON file beneath a local receipt directory")
+    return relative, candidate
+
+
+def _receipt_files(root: Path) -> list[Path]:
+    files: list[Path] = []
+    for relative in _RECEIPT_ROOTS:
+        directory = root / relative
+        if not directory.is_dir():
+            continue
+        for path in directory.rglob("*.json"):
+            if path.is_file():
+                candidate = path.resolve()
+                if candidate.is_relative_to(root):
+                    files.append(candidate)
+    return sorted(files, key=lambda path: (-path.stat().st_mtime_ns, path.as_posix()))[:_MAX_RECEIPTS]
+
+
+def _load_small_json(path: Path) -> dict[str, Any] | None:
+    try:
+        if path.stat().st_size > _MAX_RECEIPT_BYTES:
+            return None
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _receipt_metadata(root: Path, path: Path) -> dict[str, object]:
+    relative = path.relative_to(root).as_posix()
+    stat = path.stat()
+    payload = _load_small_json(path)
+    timestamp = None
+    schema = None
+    if payload is not None:
+        schema = payload.get("schema") if isinstance(payload.get("schema"), str) else None
+        for field in ("recorded_at", "created_at", "generated_at"):
+            if isinstance(payload.get(field), str):
+                timestamp = payload[field]
+                break
+    return {
+        "path": relative,
+        "schema": schema,
+        "timestamp": timestamp,
+        "timestamp_source": "receipt" if timestamp else "filesystem_mtime",
+        "filesystem_mtime": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        "size_bytes": stat.st_size,
+        "assessment": "unassessed",
+        "verification": "not_run",
+    }
+
+
+def _feature(value: object, label: str = "feature") -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", value):
+        raise McpError(f"{label} must use 1-80 letters, digits, dots, underscores, or hyphens")
+    return value
+
+
+def _feature_matches(payload: dict[str, Any], feature: str) -> bool:
+    return any(payload.get(field) == feature for field in ("feature", "project", "mission_id", "run_id"))
+
+
+def _find_feature_receipt(root: Path, feature: str, *, schema: str | None = None) -> tuple[Path, dict[str, Any]] | None:
+    for path in _receipt_files(root):
+        payload = _load_small_json(path)
+        if payload is None or (schema is not None and payload.get("schema") != schema):
+            continue
+        if _feature_matches(payload, feature):
+            return path, payload
+    return None
+
+
+def _receipt_listing(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"limit", "feature"}:
+        raise McpError("factory.list_receipts accepts only limit and optional feature")
+    limit = arguments.get("limit", 10)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+        raise McpError("limit must be an integer from 1 to 50")
+    feature = _feature(arguments["feature"]) if "feature" in arguments else None
+    entries = []
+    for path in _receipt_files(root):
+        payload = _load_small_json(path)
+        if feature is not None and (payload is None or not _feature_matches(payload, feature)):
+            continue
+        entries.append(_receipt_metadata(root, path))
+        if len(entries) == limit:
+            break
+    return {
+        "marker": "MCP_RECEIPTS_UNASSESSED",
+        "feature": feature,
+        "entries": entries,
+        "scope": "Only bounded local JSON files under documented receipt directories are listed.",
+    }
+
+
+def _get_receipt(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"path", "feature"}:
+        raise McpError("factory.get_receipt accepts only path or feature")
+    has_path, has_feature = "path" in arguments, "feature" in arguments
+    if has_path == has_feature:
+        raise McpError("factory.get_receipt requires exactly one of path or feature")
+    if has_path:
+        _, path = _receipt_path(root, arguments["path"], must_exist=True)
+        payload = _load_small_json(path)
+    else:
+        match = _find_feature_receipt(root, _feature(arguments["feature"]))
+        path, payload = match if match is not None else (None, None)
+    if path is None or payload is None:
+        return {"marker": "MCP_RECEIPT_NOT_FOUND", "found": False, "assessment": "unassessed"}
+    return {
+        "marker": "MCP_RECEIPT_UNASSESSED",
+        "found": True,
+        "metadata": _receipt_metadata(root, path),
+        "receipt": payload,
+        "scope": "The receipt is returned as local data; this tool does not verify, sign, approve, or promote it.",
     }
 
 
@@ -131,6 +376,131 @@ def _changed_paths(arguments: object) -> list[str]:
     return paths
 
 
+def _graph_summary(graph: dict[str, Any]) -> dict[str, object]:
+    counts: dict[str, int] = {}
+    for node in graph.get("nodes", []):
+        if isinstance(node, dict) and isinstance(node.get("kind"), str):
+            counts[node["kind"]] = counts.get(node["kind"], 0) + 1
+    return {
+        "graph_sha256": graph["graph_sha256"],
+        "recommendation": graph["recommendation"],
+        "authority": graph["authority"],
+        "node_counts": dict(sorted(counts.items())),
+        "errors": graph.get("errors", []),
+    }
+
+
+def _graph_ops(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"format"}:
+        raise McpError("factory.graph_ops accepts only optional format")
+    output_format = arguments.get("format", "json")
+    if output_format not in {"json", "summary"}:
+        raise McpError("format must be json or summary")
+    graph = graph_ops_snapshot(root)
+    payload: dict[str, object] = {"marker": "MCP_GRAPH_OPS_PARITY"}
+    payload["graph" if output_format == "json" else "summary"] = graph if output_format == "json" else _graph_summary(graph)
+    return payload
+
+
+def _verifier_session_path(root: Path, arguments: object) -> tuple[Path, dict[str, Any]] | None:
+    if not isinstance(arguments, dict) or set(arguments) - {"session", "mission"}:
+        raise McpError("factory.verifier_status accepts only session or mission")
+    has_session, has_mission = "session" in arguments, "mission" in arguments
+    if has_session == has_mission:
+        raise McpError("factory.verifier_status requires exactly one of session or mission")
+    if has_session:
+        _, path = _receipt_path(root, arguments["session"], must_exist=True)
+        payload = _load_small_json(path)
+        return (path, payload) if payload is not None else None
+    return _find_feature_receipt(root, _feature(arguments["mission"], "mission"), schema="factory.verifier-session.v1")
+
+
+def _verifier_status(root: Path, arguments: object) -> dict[str, object]:
+    found = _verifier_session_path(root, arguments)
+    if found is None:
+        return {"marker": "MCP_VERIFIER_SESSION_NOT_FOUND", "found": False, "assessment": "unassessed"}
+    path, session = found
+    if session.get("schema") != "factory.verifier-session.v1" or not isinstance(session.get("budgets"), dict):
+        return {"marker": "MCP_VERIFIER_SESSION_INVALID", "found": True, "assessment": "unassessed", "path": path.relative_to(root).as_posix()}
+    budgets = session["budgets"]
+    return {
+        "marker": "MCP_VERIFIER_SESSION_UNASSESSED",
+        "found": True,
+        "session": {"path": path.relative_to(root).as_posix(), "mission_id": session.get("mission_id"), "session_sha256": session.get("session_sha256")},
+        "worker": {"identity": "unobserved", "result": "not_supplied"},
+        "verifier": {"identity": "unobserved", "result": "not_supplied", "independence": "unassessed"},
+        "budget": {"limits": budgets, "remaining": "unobserved"},
+        "independent_evidence": "not_supplied",
+        "assessment": "unassessed",
+        "scope": "Session bytes are local facts. This tool does not start workers, infer budget use, or claim independent verification.",
+    }
+
+
+def _proof_reuse(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"gate", "changed_paths"} or "gate" not in arguments:
+        raise McpError("factory.proof_reuse requires gate and accepts optional changed_paths")
+    gate = _feature(arguments["gate"], "gate")
+    changed = _changed_paths({"changed_paths": arguments["changed_paths"]}) if "changed_paths" in arguments else []
+    matches: list[dict[str, object]] = []
+    for path in _receipt_files(root):
+        payload = _load_small_json(path)
+        if payload is None or payload.get("schema") != "factory.proof-receipt.v1" or payload.get("gate") != gate:
+            continue
+        verification = verify_proof_receipt(root, path)
+        matches.append({"path": path.relative_to(root).as_posix(), "verification": verification})
+    return {
+        "marker": "MCP_PROOF_REUSE_REQUEST_INCOMPLETE",
+        "gate": gate,
+        "changed_paths": changed,
+        "disposition": "BLOCK",
+        "reason": "A complete proof request (command, inputs, outputs, toolchain, and environment) is required before RUN, REUSE, or SKIP can be determined.",
+        "matching_receipts": matches,
+        "next_action": "Run factory proofs plan with an explicit proof-request manifest; this MCP tool will not run it.",
+    }
+
+
+def _cdte_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"feature"}:
+        raise McpError("factory.cdte_status accepts only optional feature")
+    feature = _feature(arguments["feature"]) if "feature" in arguments else None
+    records = []
+    directory = root / ".factory" / "cdte"
+    for item in _receipt_files(root):
+        if not item.is_relative_to(directory):
+            continue
+        payload = _load_small_json(item)
+        if payload is not None and payload.get("schema") == "factory.cdte-scan.v1" and (feature is None or payload.get("run_id") == feature):
+            records.append({"metadata": _receipt_metadata(root, item), "fail_closed": payload.get("fail_closed"), "requires_hitl_escalation": payload.get("requires_hitl_escalation"), "conflicts": len(payload.get("conflicts", [])) if isinstance(payload.get("conflicts"), list) else None})
+            break
+    if records:
+        return {"marker": "MCP_CDTE_SCAN_OBSERVED", "feature": feature, "scan": records[0], "assessment": "unassessed"}
+    return {"marker": "MCP_CDTE_SCAN_REQUIRED", "feature": feature, "assessment": "unassessed", "next_action": "Run factory cdte scan explicitly to create a deterministic, receipted gate result."}
+
+
+def _prd_grill_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) != {"prd_path"}:
+        raise McpError("factory.prd_grill_status requires only prd_path")
+    relative, source = _relative_path(root, arguments["prd_path"], "prd_path", must_exist=True)
+    if source.stat().st_size > _MAX_RECEIPT_BYTES:
+        raise McpError("prd_path must be at most 262144 bytes")
+    source_sha = sha256(source.read_bytes()).hexdigest()
+    matches = []
+    directory = root / ".factory" / "prd-grills"
+    if directory.is_dir():
+        for path in _receipt_files(root):
+            if not path.is_relative_to(directory):
+                continue
+            payload = _load_small_json(path)
+            source_record = payload.get("source") if isinstance(payload, dict) else None
+            if payload is not None and payload.get("schema") == "factory.prd_grill.v1" and isinstance(source_record, dict) and source_record.get("sha256") == source_sha:
+                matches.append(path)
+    if not matches:
+        return {"marker": "MCP_PRD_GRILL_REQUIRED", "prd_path": relative, "assessment": "unassessed", "next_action": "Run factory prd grill explicitly to create a source-bound clarification receipt."}
+    path = matches[0]
+    verification = verify_prd_grill(path)
+    return {"marker": "MCP_PRD_GRILL_STATUS", "prd_path": relative, "metadata": _receipt_metadata(root, path), "verification": verification, "current_source_sha256": source_sha}
+
+
 def _tool_call(root: Path, params: object) -> dict[str, object]:
     if not isinstance(params, dict) or set(params) - {"name", "arguments"}:
         raise McpError("tools/call requires name and optional arguments")
@@ -143,9 +513,7 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
             raise McpError("factory.status accepts no arguments")
         return _content(mcp_status(root))
     if name == "factory.graph_ops":
-        if arguments != {}:
-            raise McpError("factory.graph_ops accepts no arguments")
-        return _content({"marker": "MCP_GRAPH_OPS_PARITY", "graph": graph_ops_snapshot(root)})
+        return _content(_graph_ops(root, arguments))
     if name == "factory.graph_impact":
         return _content({
             "marker": "MCP_GRAPH_IMPACT_PARITY",
@@ -161,6 +529,18 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
             "recommendation": graph["recommendation"],
             "authority": graph["authority"],
         })
+    if name == "factory.list_receipts":
+        return _content(_receipt_listing(root, arguments))
+    if name == "factory.get_receipt":
+        return _content(_get_receipt(root, arguments))
+    if name == "factory.verifier_status":
+        return _content(_verifier_status(root, arguments))
+    if name == "factory.proof_reuse":
+        return _content(_proof_reuse(root, arguments))
+    if name == "factory.cdte_status":
+        return _content(_cdte_status(root, arguments))
+    if name == "factory.prd_grill_status":
+        return _content(_prd_grill_status(root, arguments))
     raise McpError("unknown MCP tool")
 
 

@@ -34,6 +34,75 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun repairSandboxCommandsAreDirectAndBindOnlyExplicitPaths() {
+        val root = Files.createTempDirectory("factoryline-repair-sandbox")
+        val outDir = root.resolve(".factory/repair-sandboxes")
+        val scope = root.resolve(".factory/repair-sandboxes/repair-scope-abc.json")
+        val patch = root.resolve("candidate.patch")
+
+        assertEquals(
+            listOf(
+                "repair", "scope", "--root", root.toString(), "--change-list", "Checkout", "--changed", "src/service.py",
+                "--changed", "src/ui.kt", "--out-dir", outDir.toString(), "--json",
+            ),
+            FactoryLineCommands.repairScope(root, "Checkout", listOf("src/service.py", "src/ui.kt"), outDir),
+        )
+        assertEquals(
+            listOf(
+                "repair", "candidate", "--root", root.toString(), "--scope", scope.toString(), "--patch", patch.toString(),
+                "--out-dir", outDir.toString(), "--json",
+            ),
+            FactoryLineCommands.repairCandidate(root, scope, patch, outDir),
+        )
+    }
+
+    @Test
+    fun repairSandboxParsersAcceptOnlyStableScopeAndCandidateSchemas() {
+        val scope = RepairScopeSummary.fromJson(
+            """
+                {
+                  "schema":"factory.repair_scope.v1",
+                  "scope_sha256":"scope-123",
+                  "change_list":"Checkout",
+                  "paths":[{"path":"src/service.py","exists":true}],
+                  "context_budget":{"measured_bytes":128,"limit_bytes":262144,"decision":"within_budget"},
+                  "review":{"review_sha256":"review-123","next_action":{"action":"rerun_stale_proof","reason":"Proof changed."}},
+                  "verification":{"required_checks":[{"id":"scope_current"},{"id":"independent_verifier"}]},
+                  "artifacts":{"paths":{"json":".factory/repair-sandboxes/scope.json","markdown":".factory/repair-sandboxes/scope.md","mermaid":".factory/repair-sandboxes/scope.mmd"}}
+                }
+            """.trimIndent(),
+        )
+        val candidate = RepairCandidateSummary.fromJson(
+            """
+                {
+                  "schema":"factory.repair_candidate.v1",
+                  "candidate_sha256":"candidate-123",
+                  "scope_sha256":"scope-123",
+                  "patch":{"path":"candidate.patch"},
+                  "touched_paths":["src/service.py"],
+                  "artifacts":{"paths":{"json":".factory/repair-sandboxes/candidate.json","markdown":".factory/repair-sandboxes/candidate.md"}}
+                }
+            """.trimIndent(),
+        )
+
+        assertNotNull(scope)
+        assertEquals("Checkout", scope.changeList)
+        assertEquals(listOf("src/service.py"), scope.paths)
+        assertEquals(listOf("scope_current", "independent_verifier"), scope.requiredChecks)
+        assertEquals("128", scope.contextMeasuredBytes)
+        assertEquals("262144", scope.contextLimitBytes)
+        assertEquals(3, scope.artifactPaths.size)
+        assertTrue(scope.brief().contains("no candidate runner"))
+        assertNotNull(candidate)
+        assertEquals("candidate.patch", candidate.patchPath)
+        assertEquals(listOf("src/service.py"), candidate.touchedPaths)
+        assertEquals(2, candidate.artifactPaths.size)
+        assertTrue(candidate.brief().contains("human IDE apply"))
+        assertEquals(null, RepairScopeSummary.fromJson("{\"schema\":\"untrusted\"}"))
+        assertEquals(null, RepairCandidateSummary.fromJson("{\"schema\":\"untrusted\"}"))
+    }
+
+    @Test
     fun proofReviewParserUsesOnlyKnownSchemaFieldsAndRanksAttentionFirst() {
         val raw = """
             {

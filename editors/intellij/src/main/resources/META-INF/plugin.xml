@@ -10,6 +10,7 @@
         <ul>
             <li><strong>Unclear AI or teammate diffs:</strong> review the exact local scope, see the declared proof gap, and follow one fact-derived next action.</li>
             <li><strong>Several tasks in one working tree:</strong> review the full diff or focus only the active file, instead of mixing unrelated local changes.</li>
+            <li><strong>AI repair scope can drift or overreach:</strong> seal one native Change List, validate only a candidate patch that stays inside it, and keep independent verification plus final IDE apply under human control.</li>
             <li><strong>Lost review context:</strong> save a hash-bound local JSON, Markdown, and Mermaid handoff packet that another developer can inspect.</li>
             <li><strong>Automation without control:</strong> every command needs confirmation; FactoryLine does not edit, commit, publish, deploy, upload source, or make a release decision.</li>
         </ul>
@@ -25,6 +26,7 @@
             <li><strong>Check changed code:</strong> see which proof is invalidated by your current diff.</li>
             <li><strong>Review the exact local scope:</strong> inspect the full current diff or just the active file in a dedicated Proof Review tab, with declared findings and one fact-derived next action.</li>
             <li><strong>Leave a durable local handoff:</strong> save the hash-bound review as JSON, Markdown, and Mermaid for a teammate or a later supervised repair attempt.</li>
+            <li><strong>Use AI repair without losing team control:</strong> turn a selected Change List into a Scope Passport, bind a textual candidate patch to it, and make the separate verifier and human apply steps explicit.</li>
             <li><strong>Verify receipts:</strong> inspect local evidence before a release decision.</li>
             <li><strong>Measure real savings:</strong> compare paired time, token, and cost data without inferred values.</li>
             <li><strong>Run supervised workflows:</strong> assemble features, continue from safe boundaries, inspect durable mission graphs, and route secret-free BYOK policies.</li>
@@ -49,6 +51,7 @@
     <change-notes><![CDATA[
         <ul>
             <li>Add JetBrains Proof Review: review the full local diff or active file with structured, attention-first evidence, safe changed-file navigation, and an explicit local JSON/Markdown/Mermaid handoff packet.</li>
+            <li>Add Verified Repair Sandbox: select one native Change List, create a hash-bound Scope Passport, and reject textual candidate patches that cross its paths. Candidate generation, independent verification, and IDE patch application remain explicit supervised steps.</li>
             <li>Add the Verifier Plane: hash-bound worker and independent-verifier receipts, deterministic no-progress review, and a visible Graph Ops verifier lane.</li>
             <li>Add a concise use-case guide for MVP creation, evidence review, safe proof reuse, and supervised team automation.</li>
             <li>Add Unified Graph Ops: a local, read-only visual map with one fact-derived next action.</li>
@@ -60,6 +63,7 @@
     ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.vcs</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <applicationService serviceImplementation="app.factoryline.intellij.FactoryLineSettings"/>
@@ -128,6 +132,10 @@
                     class="app.factoryline.intellij.ReviewCurrentDiffAction"
                     text="Review Current Diff"
                     description="Map the local diff to exact proof gaps without applying or publishing changes"/>
+            <action id="app.factoryline.intellij.prepareRepairScope"
+                    class="app.factoryline.intellij.PrepareRepairScopeAction"
+                    text="Prepare Verified Repair Sandbox"
+                    description="Seal one native Change List and create a local repair scope without applying changes"/>
             <action id="app.factoryline.intellij.reviewCurrentFile"
                     class="app.factoryline.intellij.ReviewCurrentFileAction"
                     text="Review This File"

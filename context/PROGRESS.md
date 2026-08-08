@@ -206,3 +206,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-08 09:23] GATE plan jetbrains-proof-review approver=human tasks=5 sha=1cbd69dc4b752bbf
 - [2026-08-08 09:24] GATE spec jetbrains-proof-review approver=human strict=True sha=abfbca590b5f0f89
 - [2026-08-08 09:24] GATE plan jetbrains-proof-review approver=human tasks=5 sha=abfbca590b5f0f89
+- [2026-08-08 10:12] GATE spec jetbrains-repair-sandbox approver=human strict=True sha=75baaaa02a536685
+- [2026-08-08 10:12] GATE plan jetbrains-repair-sandbox approver=human tasks=5 sha=75baaaa02a536685
+- [2026-08-08 10:18] GATE spec jetbrains-repair-sandbox approver=human strict=True sha=75baaaa02a536685
+- [2026-08-08 10:18] GATE plan jetbrains-repair-sandbox approver=human tasks=5 sha=75baaaa02a536685

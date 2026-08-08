@@ -280,7 +280,7 @@ data class ProofReviewUnavailable(
 }
 
 /** Minimal JSON reader for fixed, schema-bound FactoryLine CLI fields. */
-private object JsonFields {
+internal object JsonFields {
     fun string(raw: String, key: String): String? {
         val keyIndex = keyIndex(raw, key) ?: return null
         val colon = raw.indexOf(':', keyIndex)
@@ -302,6 +302,17 @@ private object JsonFields {
             }
         }
         return result
+    }
+
+    fun number(raw: String, key: String): String? {
+        val keyIndex = keyIndex(raw, key) ?: return null
+        val colon = raw.indexOf(':', keyIndex)
+        if (colon < 0) return null
+        val start = raw.indexOfFirstNonWhitespace(colon + 1)
+        if (start !in raw.indices) return null
+        val end = generateSequence(start) { index -> (index + 1).takeIf { it < raw.length && raw[it].isDigit() } }
+            .lastOrNull() ?: return null
+        return raw.substring(start, end + 1).takeIf { it.all(Char::isDigit) }
     }
 
     fun objects(raw: String, key: String): List<String> {

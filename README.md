@@ -197,6 +197,12 @@ factory mcp status --root . --json
 factory mcp serve --root .
 ```
 
+The MCP server also exposes bounded local receipt inventory, verifier session
+status, existing CDTE and PRD Grill status, and proof-reuse context. These are
+read-only proof facts for an AI client or ACP wrapper: they never start a
+worker, write a scan, apply a patch, infer a cost saving, or mark work
+production-ready.
+
 Every `factory create`, `factory mvp`, and `factory app` output now includes
 `docs/CODE_FACTORY_OUTPUT_MAP.md`: a deterministic Mermaid inventory of the
 files produced, its source-digest prefix, and the blocked promotion boundary.
@@ -266,6 +272,12 @@ factory studio --root .\my-mvp
 
 Open **Graph Ops** in the local Studio. It shows the requirements, value slices,
 missions, proofs, gates, and one fact-derived next action without executing work.
+
+For professional repair work, open **Tools | FactoryLine | Prepare Verified
+Repair Sandbox**. It seals one native Change List, reports exact context bytes
+without estimating tokens or credits, and accepts only a candidate patch whose
+paths remain inside that scope. An independent verifier and a human IDE apply
+decision remain required. See [Verified Repair Sandbox](docs/REPAIR_SANDBOX.md).
 
 <p align="center">
   <img alt="Actual Factory Studio showing the outcome-first MVP path and explicit local-only authority boundary." src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" width="49%">
