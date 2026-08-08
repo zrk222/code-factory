@@ -23,6 +23,10 @@ starter remains a starting state until product-specific proof exists.
 - `FactoryLine: Open Local Factory Studio` opens the confirmed loopback target compiler.
 - `FactoryLine: Open Product Missions` opens Studio in deterministic PRD-to-mission mode.
 - `FactoryLine: Open Unified Graph Ops` opens the bounded, read-only local evidence map.
+- **Verifier Plane (terminal workflow)** runs `factory verifier session|verify|progress`
+  to bind a worker receipt to distinct verifier evidence, deterministic checks,
+  and hard budgets. The CLI validates supplied evidence; it does not run or
+  sandbox the external verifier.
 - **PRD Grill (terminal workflow)** runs `factory prd grill PRD.md --root <project>`
   to write a capped, source-bound clarification sheet before PRD optimization
   or compilation. It never modifies the PRD or authorizes implementation.
@@ -46,7 +50,7 @@ untrusted/missing receipt into a green state.
 
 ## Install
 
-1. Install `factoryline-code-factory==0.26.0` into the Python environment that
+1. Install `factoryline-code-factory==0.27.0` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the
@@ -97,6 +101,14 @@ missing. GitHub releases remain the current installation channel. The initial
 Marketplace upload requires a human Vendor profile and review; after that
 bootstrap, the scoped GitHub workflow publishes verified updates using a
 Marketplace publisher token. See [the Marketplace runbook](../../docs/JETBRAINS_MARKETPLACE.md).
+
+### Verifier Plane (0.27.0)
+
+`factory verifier` keeps the worker and verifier identities distinct, locks the
+verifier bundle and evidence to SHA-256 receipts, and halts deterministic
+no-progress loops for owner review. Unified Graph Ops exposes those sessions as
+read-only `runtime-unattested` state until independently supplied evidence is
+verified. The plugin never claims to provide a runtime sandbox.
 
 ### Contradiction gate (0.26.0)
 

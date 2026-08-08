@@ -1,17 +1,17 @@
 # Release Channels
 
-Code Factory v0.26.0 publishes one verified source state through channel-specific
+Code Factory v0.27.0 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.26.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.26.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.27.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.27.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code | `factoryline-vscode-0.8.1.vsix` | GitHub release bundle; Marketplace requires a separately configured publisher token | Installable VSIX or public Marketplace version |
-| JetBrains | `factoryline-intellij-0.8.2.zip` | Scoped workflow update to public plugin 33009 | Installable ZIP or public plugin/version page after moderation |
+| VS Code | `factoryline-vscode-0.8.2.vsix` | GitHub release bundle; Marketplace requires a separately configured publisher token | Installable VSIX or public Marketplace version |
+| JetBrains | `factoryline-intellij-0.8.3.zip` | Scoped workflow update to public plugin 33009 | Installable ZIP or public plugin/version page after moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
 The release pipeline never treats a queued review, draft listing, uploaded
@@ -19,8 +19,15 @@ artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured.
 
 JetBrains Marketplace publication remains blocked while the current submitted
-update is pending Marketplace approval. Do not dispatch the 0.8.2 candidate
+update is pending Marketplace approval. Do not dispatch the 0.8.3 candidate
 until the Marketplace status gate reports clear.
+
+### Verifier Plane (0.27.0)
+
+The Verifier Plane is release-visible but not a release authority. Its receipts
+prove supplied local byte bindings, declared independent identities, and
+deterministic checks. Runtime isolation, egress policy, and credential handling
+remain separately evidenced by an external supervised runner.
 
 ### Contradiction gate (0.26.0)
 

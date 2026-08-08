@@ -104,7 +104,7 @@
     <div class="shell hero">
       <div>
         <div class="eyebrow">Open source · Local first · Evidence backed</div>
-        <h1>Describe the outcome. See what is proved.</h1>
+        <h1>Create your reviewable MVP. See its proof in minutes.</h1>
         <p class="lede"><strong>Why pay for opaque app generators?</strong> Create a reviewable MVP starting state in minutes—with local receipts, a clear proof path, and an output you can extend when you are ready.</p>
         <div class="actions">
           <a class="button primary" href="#first-run">Start free with pip</a>
@@ -181,14 +181,14 @@ factory studio --root .</code></pre>
     <section>
       <div class="shell proof">
         <div>
-          <div class="eyebrow">New in 0.26.0</div>
-          <h2>Clarify the PRD before automation compounds ambiguity.</h2>
-          <p>PRD Grill turns the gaps observed in your local PRD into a capped, dependency-safe question frontier with source evidence, recommendations, and answer stubs. It never rewrites the PRD, invents an answer, calls a model, or starts a build.</p>
+          <div class="eyebrow">New in 0.27.0</div>
+          <h2>Keep the builder and verifier independent.</h2>
+          <p>The Verifier Plane binds a worker receipt to distinct verifier evidence, immutable check files, deterministic checks, and hard budgets. It rejects self-verification and byte drift. Graph Ops makes the session visible without pretending that a local contract is a runtime sandbox. Start from a clear product contract with <code>factory prd grill PRD.md --root . --mode quick</code>.</p>
         </div>
-        <pre><code>factory prd grill PRD.md --root . --mode quick
-# Update the PRD deliberately, then rerun until gaps are resolved.
-specline optimize-prd PRD.md
-factory product compile PRD.md --root . --json</code></pre>
+        <pre><code>factory verifier session .factory/missions/&lt;mission&gt;/mission.json ./candidate \
+  --bundle ./verification/checks.json --owner engineering-owner --root .
+factory verifier verify ./session.json ./worker-result.json ./verifier-result.json --root . --json
+factory verifier progress ./attempts.json --json</code></pre>
       </div>
     </section>
 
@@ -218,7 +218,7 @@ factory proofs plan proofs.json --changed src/app.py \
             <a class="button" href="https://plugins.jetbrains.com/plugin/33009-factoryline">Install free in JetBrains</a>
           </div>
         </div>
-        <pre><code>pip install factoryline-code-factory==0.26.0
+        <pre><code>pip install factoryline-code-factory==0.27.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 # Open Graph Ops in the local Studio</code></pre>
@@ -268,7 +268,7 @@ Never substitute CI or repository traffic for installs.</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.26.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.26.0">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.27.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.27.0">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

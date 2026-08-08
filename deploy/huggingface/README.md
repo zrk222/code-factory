@@ -15,7 +15,7 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Reviewable MVPs with proof-first PRD clarification
+short_description: Reviewable MVPs with independent verifier receipts
 ---
 
 # Code Factory
@@ -31,13 +31,22 @@ proof exists.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.26.0` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.27.0` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21543621).
 
 Before a PRD becomes a scaffold, run `factory prd grill PRD.md --root .` for a
 capped, source-bound clarification sheet with recommendations and answer stubs.
 It never rewrites the PRD, invents answers, calls a model, or authorizes a
 build. Read the full [PRD Grill guide](https://github.com/zrk222/code-factory/blob/main/docs/PRD_GRILL.md).
+
+### Independent verification (0.27.0)
+
+`factory verifier` binds a worker result to distinct verifier evidence,
+immutable check files, deterministic checks, and hard declared budgets. It
+rejects self-grading and byte drift, then Graph Ops shows the session as
+`runtime-unattested` until independently supplied evidence is verified. Code
+Factory validates the contract; an external supervised runner must enforce
+runtime sandbox, network, and credential boundaries.
 
 The illustrations explain the workflow; they are not UI screenshots or
 measured outcome evidence. The quick-start video is rendered from the shipped

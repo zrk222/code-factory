@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.27.0 - 2026-08-08
+
+- Add the Verifier Plane: a hash-bound evidence contract that separates a
+  worker from an independently declared verifier without giving either merge,
+  publish, deploy, or credential authority.
+- Bind the mission receipt, candidate-tree digest, immutable verifier bundle,
+  exact worker receipt, verifier evidence, deterministic checks, and declared
+  ceilings for attempts, wall time, tokens, and cost.
+- Reject self-verification, non-fresh verifier contexts, candidate and verifier
+  bundle drift, path escape, evidence drift, budget overrun, and a passing
+  verdict that contains a failed deterministic check.
+- Add `factory verifier session|verify|progress`. The progress command halts
+  repeated exact deterministic failures for owner review instead of using an
+  LLM judgment to keep retrying.
+- Add a Graph Ops verifier-session lane. A session is labelled
+  `runtime-unattested` until supplied independent evidence is verified; the UI
+  does not misrepresent a local contract as host or container isolation.
+- Document the boundary for LLM rubrics: they may add evidence but cannot
+  override deterministic gates or authorize external effects.
+
 ## 0.26.0 - 2026-08-07
 
 - Add the habituation gate: calibrate the human approval signal rather than

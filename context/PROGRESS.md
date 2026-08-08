@@ -186,3 +186,17 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-08 07:13] GATE plan release-reliability-hardening approver=human tasks=4 sha=5493d6591d367f44
 - [2026-08-08 07:54] GATE spec release-reliability-hardening approver=human strict=True sha=3b0d4dd9a6f8db1d
 - [2026-08-08 07:54] GATE plan release-reliability-hardening approver=human tasks=8 sha=3b0d4dd9a6f8db1d
+- [2026-08-08 08:12] GATE spec verifier-plane approver=human strict=True sha=135799b92dfaf633
+- [2026-08-08 08:12] GATE plan verifier-plane approver=human tasks=3 sha=135799b92dfaf633
+- [2026-08-08 08:12] GATE spec verifier-plane approver=human strict=True sha=cb4b377118a1f852
+- [2026-08-08 08:12] GATE plan verifier-plane approver=human tasks=3 sha=cb4b377118a1f852
+- [2026-08-08 08:13] GATE spec verifier-plane approver=human strict=True sha=2efc268996b97add
+- [2026-08-08 08:13] GATE plan verifier-plane approver=human tasks=3 sha=2efc268996b97add
+- [2026-08-08 08:30] GATE spec verifier-plane approver=human strict=True sha=2efc268996b97add
+- [2026-08-08 08:30] GATE plan verifier-plane approver=human tasks=3 sha=2efc268996b97add
+- [2026-08-08 08:42] GATE spec verifier-plane approver=human strict=True sha=98175e8ecfd90d18
+- [2026-08-08 08:42] GATE plan verifier-plane approver=human tasks=4 sha=98175e8ecfd90d18
+- [2026-08-08 08:47] GATE spec verifier-plane approver=human strict=True sha=a38c9f3f13c7b6c0
+- [2026-08-08 08:47] GATE plan verifier-plane approver=human tasks=4 sha=a38c9f3f13c7b6c0
+- [2026-08-08 08:48] GATE spec verifier-plane approver=human strict=True sha=31b537a93ca08fba
+- [2026-08-08 08:48] GATE plan verifier-plane approver=human tasks=4 sha=31b537a93ca08fba

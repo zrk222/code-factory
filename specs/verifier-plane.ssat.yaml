@@ -1,0 +1,29 @@
+name: verifier-plane
+language: python
+modules:
+  - name: verifier_plane
+    path: factoryline/verifier_plane.py
+    functions:
+      - name: create_verifier_session
+        args: ["root: Path", "mission_path: Path", "candidate_root: Path", "verifier_bundle: list[Path]", "owner: str"]
+        returns: dict[str, Any]
+      - name: verify_verifier_result
+        args: ["session_path: Path", "worker_result_path: Path", "verifier_result_path: Path", "root: Path"]
+        returns: dict[str, Any]
+      - name: evaluate_progress
+        args: ["attempts: list[dict[str, Any]]"]
+        returns: dict[str, Any]
+dependencies: []
+invariants:
+  - name: verifier_plane_never_executes_or_publishes
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|(?:merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: verifier_plane
+        symbol: verify_verifier_result
+        max_lines: 160
+  - name: verifier_requires_distinct_identity
+    forbid_pattern: "if\\s+verifier_id\\s*==\\s*worker\\.worker_id\\s*:\\s*(?:return|pass)"
+    scopes:
+      - module: verifier_plane
+        symbol: verify_verifier_result
+        max_lines: 160

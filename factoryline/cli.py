@@ -25,6 +25,12 @@ from .continuation import ContinuationError, continue_assembly
 from .run_metrics import export_public_metrics, public_metrics
 from .telemetry import telemetry_inventory
 from .agent_contract import AgentContractError, validate_agent_contract, validate_verifier_attestation
+from .verifier_plane import (
+    VerifierPlaneError,
+    create_verifier_session,
+    evaluate_progress,
+    verify_verifier_result,
+)
 from .savings import (
     SavingsError,
     export_public_savings_report,
@@ -833,6 +839,33 @@ def main(argv=None) -> int:
     telemetry_inventory_parser.add_argument("--root", default=".")
     telemetry_inventory_parser.add_argument("--json", action="store_true")
 
+    verifier = sub.add_parser(
+        "verifier",
+        help="bind independent verifier evidence without execution, merge, or publish authority",
+    )
+    verifier_sub = verifier.add_subparsers(dest="verifier_cmd", required=True)
+    verifier_session = verifier_sub.add_parser("session", help="create a hash-bound verifier session contract")
+    verifier_session.add_argument("mission", help="factory.mission.v1 mission receipt")
+    verifier_session.add_argument("candidate_root", help="candidate tree the worker may change")
+    verifier_session.add_argument("--bundle", action="append", required=True, help="immutable verifier bundle file; repeatable")
+    verifier_session.add_argument("--owner", required=True, help="human owner responsible for review")
+    verifier_session.add_argument("--root", default=".")
+    verifier_session.add_argument("--max-attempts", type=int, default=5)
+    verifier_session.add_argument("--max-wall-seconds", type=int, default=3600)
+    verifier_session.add_argument("--max-tokens", type=int, default=100000)
+    verifier_session.add_argument("--max-cost-usd", type=float, default=25.0)
+    verifier_session.add_argument("--force", action="store_true")
+    verifier_session.add_argument("--json", action="store_true")
+    verifier_verify = verifier_sub.add_parser("verify", help="validate one independent verifier result against its bound session")
+    verifier_verify.add_argument("session", help="verifier session receipt")
+    verifier_verify.add_argument("worker_result", help="factory.verifier-worker-result.v1 receipt")
+    verifier_verify.add_argument("verifier_result", help="factory.verifier-result.v1 receipt")
+    verifier_verify.add_argument("--root", default=".")
+    verifier_verify.add_argument("--json", action="store_true")
+    verifier_progress = verifier_sub.add_parser("progress", help="halt repeated deterministic failures without using an LLM judgment")
+    verifier_progress.add_argument("attempts", help="JSON array of worker attempt observations")
+    verifier_progress.add_argument("--json", action="store_true")
+
     target = sub.add_parser("create", help="compile one prompt or PRD into one governed starter target")
     target.add_argument("prompt", nargs="?", help="plain-language intent; mutually exclusive with --prd")
     target.add_argument("--prd", help="UTF-8 PRD path; mutually exclusive with prompt")
@@ -1161,7 +1194,7 @@ def main(argv=None) -> int:
         return _home(Path(a.root), a.json)
     if a.cmd == "doctor":
         return _doctor(a.strict, a.json)
-    if a.cmd in {"prd", "product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider", "agent", "telemetry"}:
+    if a.cmd in {"prd", "product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider", "agent", "telemetry", "verifier"}:
         try:
             if a.cmd == "prd" and a.prd_cmd == "grill":
                 result = grill_prd(
@@ -1178,6 +1211,20 @@ def main(argv=None) -> int:
                 )
             elif a.cmd == "telemetry":
                 result = telemetry_inventory(Path(a.root))
+            elif a.cmd == "verifier" and a.verifier_cmd == "session":
+                result = create_verifier_session(
+                    Path(a.root), Path(a.mission), Path(a.candidate_root),
+                    [Path(item) for item in a.bundle], a.owner,
+                    max_attempts=a.max_attempts, max_wall_seconds=a.max_wall_seconds,
+                    max_tokens=a.max_tokens, max_cost_usd=a.max_cost_usd, force=a.force,
+                )
+            elif a.cmd == "verifier" and a.verifier_cmd == "verify":
+                result = verify_verifier_result(
+                    Path(a.session), Path(a.worker_result), Path(a.verifier_result), Path(a.root),
+                )
+            elif a.cmd == "verifier":
+                attempts = json.loads(Path(a.attempts).read_text(encoding="utf-8"))
+                result = evaluate_progress(attempts)
             elif a.cmd == "langgraph" and a.langgraph_cmd == "doctor":
                 result = langgraph_doctor()
             elif a.cmd == "langgraph" and a.langgraph_cmd == "init":
@@ -1313,11 +1360,12 @@ def main(argv=None) -> int:
                 )
             else:
                 result = outcome_summary(Path(a.root), a.mission_id)
-        except (ProductMissionError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProviderRouterError, AgentContractError) as exc:
+        except (ProductMissionError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProviderRouterError, AgentContractError, VerifierPlaneError) as exc:
             print(json.dumps({
                 "schema": "factory.workflow_error.v1", "status": "failed",
                 "code": exc.code, "message": exc.message,
-                "failure": exc.guidance,
+                "marker": getattr(exc, "marker", "WORKFLOW_REJECTED"),
+                "failure": getattr(exc, "guidance", explain_failure(exc.code, exc.message)),
             }, indent=2), file=sys.stderr)
             return 1
         except (OSError, json.JSONDecodeError) as exc:
@@ -1335,6 +1383,7 @@ def main(argv=None) -> int:
             or (a.cmd == "langgraph" and a.langgraph_cmd == "verify")
             or (a.cmd == "provider" and a.provider_cmd == "verify")
             or (a.cmd == "agent" and a.agent_cmd in {"contract", "attestation"})
+            or (a.cmd == "verifier" and a.verifier_cmd == "verify")
         ):
             return 0 if result.get("valid", True) else 1
         return 0

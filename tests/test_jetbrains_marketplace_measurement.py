@@ -24,7 +24,7 @@ def test_marketplace_measurement_reports_only_observed_download_movement() -> No
     }
     plugin = {
         "downloads": 53,
-        "version": "0.8.1",
+        "version": "0.8.3",
         "pricingModel": "FREE",
         "approve": False,
         "hasUnapprovedUpdate": True,

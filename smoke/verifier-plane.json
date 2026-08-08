@@ -1,0 +1,19 @@
+{
+  "checks": [
+    {
+      "name": "verifier_plane_rejects_self_grading_drift_and_no_progress_loops",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_verifier_plane.py', 'tests/test_graph_ops.py']) == 0\n",
+      "covers": [
+        "VERIFIER_SESSION_BOUND",
+        "VERIFIER_WORKER_RESULT_REJECTED",
+        "VERIFIER_RESULT_BOUND",
+        "VERIFIER_RESULT_REJECTED",
+        "VERIFIER_HARNESS_ATTESTATION_BOUND",
+        "VERIFIER_PROGRESS_STALLED",
+        "GRAPH_OPS_VERIFIER_SESSIONS_READ_ONLY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

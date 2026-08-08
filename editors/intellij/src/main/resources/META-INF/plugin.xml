@@ -19,7 +19,8 @@
             <li><strong>Verify receipts:</strong> inspect local evidence before a release decision.</li>
             <li><strong>Measure real savings:</strong> compare paired time, token, and cost data without inferred values.</li>
             <li><strong>Run supervised workflows:</strong> assemble features, continue from safe boundaries, inspect durable mission graphs, and route secret-free BYOK policies.</li>
-            <li><strong>Follow the exact evidence path:</strong> Unified Graph Ops visualizes local requirements, slices, missions, approvals, completions, proofs, gates, traces, and artifacts without executing them.</li>
+            <li><strong>Follow the exact evidence path:</strong> Unified Graph Ops visualizes local requirements, slices, missions, approvals, completions, proofs, verifier sessions, gates, traces, and artifacts without executing them.</li>
+            <li><strong>Keep generation and grading separate:</strong> <code>factory verifier</code> binds independent worker and verifier evidence, immutable checks, and hard budgets. It validates receipts; an external supervised runner must enforce runtime isolation.</li>
             <li><strong>Clarify a PRD before the build compounds ambiguity:</strong> run <code>factory prd grill PRD.md --root .</code> for a capped, source-bound question sheet with answer stubs. It never rewrites the PRD or authorizes implementation.</li>
         </ul>
         <h3>Use FactoryLine when you want to</h3>
@@ -38,6 +39,7 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
+            <li>Add the Verifier Plane: hash-bound worker and independent-verifier receipts, deterministic no-progress review, and a visible Graph Ops verifier lane.</li>
             <li>Add a concise use-case guide for MVP creation, evidence review, safe proof reuse, and supervised team automation.</li>
             <li>Add Unified Graph Ops: a local, read-only visual map with one fact-derived next action.</li>
             <li>Add PRD Grill: a deterministic, source-bound question frontier before PRD optimization, compilation, or scaffolding.</li>

@@ -14,7 +14,7 @@
 > call a starter production-ready before the relevant proof exists.
 
 ```powershell
-pip install factoryline-code-factory==0.26.0
+pip install factoryline-code-factory==0.27.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -60,6 +60,28 @@ The quick pass asks at most three current questions; deep mode asks at most
 five. Dependent decisions wait for their prerequisite rather than being guessed.
 See [PRD Grill](docs/PRD_GRILL.md) for the receipt, verification, and human
 confirmation boundary.
+
+## New in 0.27.0: independent verification has a visible boundary
+
+Generated work should not grade itself. The new **Verifier Plane** binds a
+mission, the candidate tree, an immutable verifier bundle, worker receipt,
+verifier receipt, deterministic checks, and declared hard budgets. It rejects
+self-verification, byte drift, candidate-path escape, false passing verdicts,
+and budget overrunâ€”then Graph Ops shows the verifier session in its own lane.
+
+```powershell
+factory verifier session .factory\missions\<mission>\mission.json .\candidate `
+  --bundle .\verification\checks.json --owner engineering-owner --root .
+factory verifier verify .factory\verifier-sessions\<session>.session.json `
+  .\worker-result.json .\verifier-result.json --root . --json
+factory verifier progress .\attempts.json --json
+```
+
+Code Factory validates the supplied evidence but does not start a worker,
+container, or model. An external supervised runner must actually enforce its
+filesystem, network, process, and credential boundaries. An LLM rubric may add
+evidence; it can never override a compiler, schema, policy check, or test, nor
+grant merge or release authority. See the [Verifier Plane contract](docs/VERIFIER_PLANE.md).
 
 ## New in 0.26.0: is anyone still actually reading the code?
 
@@ -142,7 +164,7 @@ permanent or anonymous overrides are not recordable.
 
 Graph Ops turns the local Product Graph, value slices, mission and approval
 receipts, completion evidence, content-addressed proofs, proof plans, traces,
-stage receipts, and bound artifacts into one deterministic visual map. It
+stage receipts, verifier sessions, and bound artifacts into one deterministic visual map. It
 shows the exact path that exists, keeps unknowns visible, and chooses one
 fact-derived next action without running a command.
 
@@ -237,7 +259,7 @@ plugin never uploads the workspace, stores keys, or decides a release is ready.
 To make the path tangible, create a contained MVP and inspect its proof graph:
 
 ```powershell
-pip install factoryline-code-factory==0.26.0
+pip install factoryline-code-factory==0.27.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -272,7 +294,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.26.0
+pip install factoryline-code-factory==0.27.0
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -625,7 +647,7 @@ an instruction or edit the Architecture Opinion Dock. See
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.26.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
+pip install factoryline-code-factory==0.27.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
 factory doctor --json
 ```
 

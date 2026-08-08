@@ -331,6 +331,58 @@ def _append_traces(state: dict[str, Any], root: Path) -> None:
                     _edge(state, receipt_id, artifact_id, "observes")
 
 
+def _append_verifier_sessions(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Expose declared verifier-session boundaries without treating them as execution proof."""
+    facts = {"session_count": 0, "runtime_unattested_count": 0}
+    session_root = root / ".factory" / "verifier-sessions"
+    for session_path in sorted(session_root.glob("*.session.json")):
+        session, source = _load_json(root, session_path, state["errors"])
+        if session is None or source is None:
+            continue
+        digest = _text(session.get("session_sha256"), session_path.stem)
+        runtime_unattested = "VERIFIER_RUNTIME_UNATTESTED" in session.get("markers", [])
+        status = "runtime-unattested" if runtime_unattested else "bound"
+        session_id = f"verifier-session:{digest[:24]}"
+        _node(
+            state,
+            node_id=session_id,
+            kind="verifier_session",
+            label=f"verifier session for {_text(session.get('mission_id'), session_path.stem)}",
+            source=source,
+            status=status,
+            facts={
+                "mission_id": _text(session.get("mission_id"), "unknown"),
+                "owner": _text(session.get("owner"), "unknown"),
+                "candidate_root": _text(session.get("candidate_root"), "unknown"),
+                "scope": "evidence contract only",
+            },
+        )
+        mission_id = _artifact(state, root, session.get("mission_path"), source=source, role="mission")
+        if mission_id:
+            _edge(state, mission_id, session_id, "governs")
+        candidate_root = _text(session.get("candidate_root"), "candidate")
+        candidate_id = f"candidate-tree:{_sha({'session': digest, 'path': candidate_root})[:24]}"
+        _node(
+            state,
+            node_id=candidate_id,
+            kind="candidate_tree",
+            label=candidate_root,
+            source=source,
+            status="declared",
+            facts={"baseline_sha256": _text(session.get("candidate_baseline_sha256"), "unavailable")},
+        )
+        _edge(state, session_id, candidate_id, "bounds")
+        for entry in session.get("verifier_bundle", []):
+            if not isinstance(entry, dict):
+                continue
+            bundle_id = _artifact(state, root, entry.get("path"), source=source, role="verifier_bundle")
+            if bundle_id:
+                _edge(state, bundle_id, session_id, "verifies_with")
+        facts["session_count"] += 1
+        facts["runtime_unattested_count"] += int(runtime_unattested)
+    return facts
+
+
 def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
     visible = nodes[:80]
     allowed = {node["id"] for node in visible}
@@ -348,6 +400,8 @@ def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
 def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
     if facts["node_count"] == 0:
         return "initialize_graph", "No readable local Factory graph artifacts were found."
+    if facts["runtime_unattested_session_count"] > 0:
+        return "collect_independent_verifier_evidence", "A verifier session is bound, but no Code Factory runtime isolation has been proven."
     if facts["stale_proof_count"] > 0:
         return "rerun_invalid_proof", "At least one recorded proof is stale."
     if facts["blocked_gate_count"] > 0:
@@ -370,6 +424,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     stale_proof_count = _append_proofs(state, workspace)
     gates = _append_plans(state, workspace)
     _append_traces(state, workspace)
+    verifier_sessions = _append_verifier_sessions(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
@@ -382,6 +437,8 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "run_gate_count": gates["RUN"],
         "unevidenced_requirement_count": sum(node not in evidenced for node in requirement_nodes),
         "evidenced_requirement_count": sum(node in evidenced for node in requirement_nodes),
+        "verifier_session_count": verifier_sessions["session_count"],
+        "runtime_unattested_session_count": verifier_sessions["runtime_unattested_count"],
     }
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
@@ -397,6 +454,8 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers.append("GRAPH_OPS_PROOF_HASH_STATUS")
     if any(node["kind"] in {"gate", "trace", "receipt"} for node in nodes):
         markers.append("GRAPH_OPS_DECLARED_GATE_STATE")
+    if verifier_sessions["session_count"]:
+        markers.append("GRAPH_OPS_VERIFIER_SESSIONS_READ_ONLY")
     if not complete:
         markers.append("GRAPH_OPS_PARTIAL_RESULT")
     core = {

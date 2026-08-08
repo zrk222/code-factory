@@ -18,6 +18,10 @@ known, what is missing, and the one fact-derived next action.
 - **Makes delivery state legible.** Factory Studio, Graph Ops, and the VS Code
   and JetBrains integrations present requirements, gates, proofs, and blocked
   work in one local, read-only view.
+- **Separates creation from verification.** The Verifier Plane hash-binds a
+  mission, candidate tree, immutable verifier bundle, independent identities,
+  evidence, deterministic checks, and declared hard budgets. It validates a
+  supplied result but does not claim to execute or sandbox the runner.
 - **Gives agents bounded context.** The local stdio MCP server exposes the same
   Graph Ops facts, impact, and next action without execution or external
   authority. Every generated starter also includes a deterministic Mermaid
@@ -42,10 +46,11 @@ known, what is missing, and the one fact-derived next action.
 ## Typical path
 
 ```powershell
-pip install factoryline-code-factory==0.26.0
+pip install factoryline-code-factory==0.27.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid
+factory verifier progress .\attempts.json --json
 factory change review --root . --base origin/main
 factory release integrity --root . --json
 ```
@@ -69,11 +74,14 @@ Code Factory is local by default. It does not discover credentials, publish,
 deploy, sign, approve, message, or grant connectors merely because a graph or
 UI exists. Those actions stay behind explicit human-controlled or supervised
 boundaries. Savings reports keep unknown token or cost values unknown; they do
-not invent productivity claims.
+not invent productivity claims. The Verifier Plane also keeps its boundary
+explicit: it proves supplied byte bindings and declared identities, while an
+external runner must prove any runtime isolation or egress policy.
 
 Next: follow [Start Here](START_HERE.md), explore [Unified Graph Ops](GRAPH_OPS.md),
 connect the [Local MCP inspection server](MCP.md), or see the
-[Target Compiler and Factory Studio](TARGET_COMPILER.md).
+[Target Compiler and Factory Studio](TARGET_COMPILER.md), or review the
+[Verifier Plane](VERIFIER_PLANE.md).
 
 ### Contradiction gate (0.26.0)
 

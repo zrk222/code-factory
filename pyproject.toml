@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.26.0"
-description = "Create a reviewable MVP starting state in minutes with local receipts, proof paths, and room to extend."
+version = "0.27.0"
+description = "Create a reviewable MVP starting state in minutes with proof paths and independent verifier receipts."
 authors = [
   { name = "Richard Katz" },
   { email = "rkatz22@gmail.com" },
@@ -27,6 +27,8 @@ keywords = [
   "mcp",
   "graph-ops",
   "prd-grill",
+  "independent-verification",
+  "verifier-plane",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
