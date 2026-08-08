@@ -83,6 +83,13 @@ enum class MissionGraphOperation(val label: String, val command: String) {
 object FactoryLineCommands {
     fun firstProof(): List<String> = listOf("doctor", "--json")
 
+    fun proofReview(root: Path, changedPath: String? = null, outDir: Path? = null): List<String> = buildList {
+        addAll(listOf("change", "review", "--root", root.toString()))
+        changedPath?.let { addAll(listOf("--changed", it)) }
+        outDir?.let { addAll(listOf("--out-dir", it.toString())) }
+        add("--json")
+    }
+
     fun savings(root: Path): List<String> =
         listOf("savings", "report", "--root", root.toString(), "--json")
 
@@ -293,6 +300,17 @@ class FactoryLineSettingsConfigurable : Configurable {
 object FactoryLineRunner {
     fun firstProof(project: Project): CommandResult =
         execute(project, "Run First Proof", FactoryLineCommands.firstProof())
+
+    fun proofReview(project: Project, changedPath: String? = null, outDir: Path? = null): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Proof Review", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        val boundedOutDir = outDir?.let { WorkspacePath.resolve(root, it.toString()) }
+        if (outDir != null && boundedOutDir == null) {
+            return CommandResult("Save Proof Review Handoff", emptyList(), null, false, "Blocked: the handoff directory must stay inside the project.")
+        }
+        val title = if (boundedOutDir == null) "Proof Review" else "Save Proof Review Handoff"
+        return execute(project, title, FactoryLineCommands.proofReview(root, changedPath, boundedOutDir))
+    }
 
     fun run(project: Project, operation: FactoryLineOperation, feature: String): CommandResult {
         if (!FeatureName.isValid(feature)) {

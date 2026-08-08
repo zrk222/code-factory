@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
 from factoryline.change_review import ChangeReviewError, review_change, write_review_artifacts
+from factoryline.proof import git_changed_paths
 from factoryline.cli import main
 from factoryline.proof_reuse import record_proof
 
@@ -119,3 +121,46 @@ def test_change_review_uses_git_paths_only_when_no_explicit_paths_are_supplied(t
     assert review["input_source"] == "git"
     assert review["base"] == "origin/main"
     assert review["changed_paths"] == ["from-git.py"]
+
+
+def test_git_changed_paths_includes_branch_index_worktree_and_untracked_paths(tmp_path: Path) -> None:
+    def git(*arguments: str) -> None:
+        subprocess.run(["git", *arguments], cwd=tmp_path, check=True, capture_output=True, text=True)
+
+    git("init")
+    git("config", "user.email", "factoryline@example.test")
+    git("config", "user.name", "FactoryLine Test")
+    for path in ("tracked-staged.py", "tracked-unstaged.py"):
+        (tmp_path / path).write_text("before\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-m", "base")
+
+    (tmp_path / "branch.py").write_text("branch\n", encoding="utf-8")
+    git("add", "branch.py")
+    git("commit", "-m", "branch")
+    (tmp_path / "tracked-staged.py").write_text("after\n", encoding="utf-8")
+    git("add", "tracked-staged.py")
+    (tmp_path / "tracked-unstaged.py").write_text("after\n", encoding="utf-8")
+    (tmp_path / "untracked.py").write_text("new\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("ignored.py\n", encoding="utf-8")
+    (tmp_path / "ignored.py").write_text("ignored\n", encoding="utf-8")
+
+    assert git_changed_paths(tmp_path, "HEAD~1") == [
+        ".gitignore",
+        "branch.py",
+        "tracked-staged.py",
+        "tracked-unstaged.py",
+        "untracked.py",
+    ]
+
+
+def test_change_review_explicit_paths_bypass_git_collection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("explicit paths must not invoke Git collection")
+
+    monkeypatch.setattr("factoryline.change_review.git_changed_paths", fail_if_called)
+
+    review = review_change(tmp_path, changed=["src/only.py"])
+
+    assert review["input_source"] == "explicit"
+    assert review["changed_paths"] == ["src/only.py"]

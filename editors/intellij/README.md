@@ -18,6 +18,9 @@ starter remains a starting state until product-specific proof exists.
 - `FactoryLine: Verify Feature Receipts` runs `factory verify <feature> --root <project>`.
 - `FactoryLine: Open Local Meter` runs `factory meter --root <project> --json` after workspace confirmation.
 - `FactoryLine: Analyze Changed Proof` runs `factory risk-diff --root <project> --json`.
+- `FactoryLine: Review Current Diff` runs `factory change review --root <project> --json` and shows an attention-first, structured local review of the branch delta, staged changes, unstaged changes, and non-ignored untracked files.
+- `FactoryLine: Review This File` runs the same analysis with an explicit active-editor path, so a developer can exclude unrelated local work from the review scope.
+- `FactoryLine: Save Review Handoff` writes the exact review JSON, Markdown, and Mermaid map below `.factory/change-reviews/` only after a second workspace confirmation. It is a local handoff packet, not an approval or an automatic repair.
 - `FactoryLine: Open Latest Receipt` shows the newest JSON receipt below `.factory/` or `receipts/`.
 - `FactoryLine: Check Latest Receipt Signature State` runs `factory receipt status` on that receipt. It reports signature presence or `UNSIGNED`; it does not claim signer identity.
 - `FactoryLine: Open Local Factory Studio` opens the confirmed loopback target compiler.
@@ -47,6 +50,13 @@ The receipt viewer is deliberately fail-closed: a readable receipt is marked
 **unassessed** until an explicit verification path establishes the claim. The
 adapter never silently signs a receipt, applies an override, or converts an
 untrusted/missing receipt into a green state.
+
+Proof Review is deliberately conservative: it displays CLI facts, orders the
+most urgent findings first, opens only changed files that remain inside the
+project, and can copy a concise handoff brief. It never edits code, runs a
+test, commits, publishes, deploys, accesses credentials, or sends project data
+over the network. A future repair flow must create an isolated candidate and
+pass independent checks before a human chooses whether to apply it.
 
 ## Install
 

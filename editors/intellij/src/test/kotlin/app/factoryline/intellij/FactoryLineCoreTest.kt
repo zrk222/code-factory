@@ -15,6 +15,66 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun proofReviewCommandsAreDirectAndCanFocusOneWorkspacePath() {
+        val root = Files.createTempDirectory("factoryline-proof-review")
+
+        assertEquals(
+            listOf("change", "review", "--root", root.toString(), "--json"),
+            FactoryLineCommands.proofReview(root),
+        )
+        assertEquals(
+            listOf("change", "review", "--root", root.toString(), "--changed", "src/service.py", "--json"),
+            FactoryLineCommands.proofReview(root, "src/service.py"),
+        )
+        val handoff = root.resolve(".factory/change-reviews")
+        assertEquals(
+            listOf("change", "review", "--root", root.toString(), "--out-dir", handoff.toString(), "--json"),
+            FactoryLineCommands.proofReview(root, outDir = handoff),
+        )
+    }
+
+    @Test
+    fun proofReviewParserUsesOnlyKnownSchemaFieldsAndRanksAttentionFirst() {
+        val raw = """
+            {
+              "schema": "factory.change_review.v1",
+              "review_sha256": "abc123",
+              "input_source": "explicit",
+              "changed_paths": ["src/service.py", "src/ui.kt"],
+              "next_action": {"action": "bind_changed_path_to_proof", "reason": "A path is unbound."},
+              "findings": [
+                {"severity": "info", "kind": "ready_for_human_review", "message": "No release claim."},
+                {"severity": "blocking", "kind": "unmatched_changed_path", "message": "Bind the path."}
+              ],
+              "unproven_claims": ["No explicit proof-input edge is declared for src/service.py."],
+              "artifacts": {"paths": {"json": ".factory/change-reviews/review.json", "markdown": ".factory/change-reviews/review.md", "mermaid": ".factory/change-reviews/review.mmd"}},
+              "authority": {"execution": false}
+            }
+        """.trimIndent()
+
+        val review = ProofReviewSummary.fromJson(raw)
+
+        assertNotNull(review)
+        assertEquals(listOf("src/service.py", "src/ui.kt"), review.changedPaths)
+        assertEquals("bind_changed_path_to_proof", review.nextAction)
+        assertEquals("blocking", review.orderedFindings.first().severity)
+        assertEquals(3, review.handoffArtifactPaths.size)
+        assertTrue(ProofReviewMarkers.EXPLICIT_SCOPE in review.markers)
+        assertTrue(ProofReviewMarkers.HANDOFF_SAVED in review.markers)
+        assertTrue(review.brief().contains("analysis only"))
+    }
+
+    @Test
+    fun proofReviewRejectsUnknownSchemaAsUnavailable() {
+        assertEquals(null, ProofReviewSummary.fromJson("{\"schema\":\"untrusted\"}"))
+        val unavailable = ProofReviewUnavailable.from(
+            CommandResult("Proof Review", emptyList(), 2, false, "{\"code\":\"DIFF_BASE_UNAVAILABLE\",\"message\":\"base missing\"}"),
+        )
+        assertTrue(ProofReviewMarkers.UNAVAILABLE in unavailable.markers)
+        assertTrue(unavailable.message.contains("DIFF_BASE_UNAVAILABLE"))
+    }
+
+    @Test
     fun githubStarPromptRequiresACompletedCommandAndANewPluginVersion() {
         assertTrue(FactoryLineGitHubStarPrompt.shouldOffer(0, false, null, "0.8.2"))
         assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(1, false, null, "0.8.2"))

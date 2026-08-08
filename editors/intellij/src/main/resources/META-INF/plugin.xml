@@ -6,6 +6,13 @@
         <p>Verify AI code before you ship.</p>
         <p><strong>Why pay for opaque app generators?</strong> Create a reviewable MVP starting state in minutes, with local receipts, a clear proof path, and an output you can extend when you are ready.</p>
         <p>FactoryLine turns tests, requirements, policies, and build evidence into local proof you can inspect in your JetBrains IDE. It does not call a starter production-ready by itself.</p>
+        <h3>What this solves</h3>
+        <ul>
+            <li><strong>Unclear AI or teammate diffs:</strong> review the exact local scope, see the declared proof gap, and follow one fact-derived next action.</li>
+            <li><strong>Several tasks in one working tree:</strong> review the full diff or focus only the active file, instead of mixing unrelated local changes.</li>
+            <li><strong>Lost review context:</strong> save a hash-bound local JSON, Markdown, and Mermaid handoff packet that another developer can inspect.</li>
+            <li><strong>Automation without control:</strong> every command needs confirmation; FactoryLine does not edit, commit, publish, deploy, upload source, or make a release decision.</li>
+        </ul>
         <h3>Start here</h3>
         <ol>
             <li>Open <strong>Tools | FactoryLine | Run First Proof</strong>.</li>
@@ -16,6 +23,8 @@
         <h3>Know what is safe to ship</h3>
         <ul>
             <li><strong>Check changed code:</strong> see which proof is invalidated by your current diff.</li>
+            <li><strong>Review the exact local scope:</strong> inspect the full current diff or just the active file in a dedicated Proof Review tab, with declared findings and one fact-derived next action.</li>
+            <li><strong>Leave a durable local handoff:</strong> save the hash-bound review as JSON, Markdown, and Mermaid for a teammate or a later supervised repair attempt.</li>
             <li><strong>Verify receipts:</strong> inspect local evidence before a release decision.</li>
             <li><strong>Measure real savings:</strong> compare paired time, token, and cost data without inferred values.</li>
             <li><strong>Run supervised workflows:</strong> assemble features, continue from safe boundaries, inspect durable mission graphs, and route secret-free BYOK policies.</li>
@@ -39,6 +48,7 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
+            <li>Add JetBrains Proof Review: review the full local diff or active file with structured, attention-first evidence, safe changed-file navigation, and an explicit local JSON/Markdown/Mermaid handoff packet.</li>
             <li>Add the Verifier Plane: hash-bound worker and independent-verifier receipts, deterministic no-progress review, and a visible Graph Ops verifier lane.</li>
             <li>Add a concise use-case guide for MVP creation, evidence review, safe proof reuse, and supervised team automation.</li>
             <li>Add Unified Graph Ops: a local, read-only visual map with one fact-derived next action.</li>
@@ -114,6 +124,14 @@
                     class="app.factoryline.intellij.AnalyzeChangedProofAction"
                     text="Analyze Changed Proof"
                     description="Show FactoryLine receipt invalidation caused by current changes"/>
+            <action id="app.factoryline.intellij.reviewCurrentDiff"
+                    class="app.factoryline.intellij.ReviewCurrentDiffAction"
+                    text="Review Current Diff"
+                    description="Map the local diff to exact proof gaps without applying or publishing changes"/>
+            <action id="app.factoryline.intellij.reviewCurrentFile"
+                    class="app.factoryline.intellij.ReviewCurrentFileAction"
+                    text="Review This File"
+                    description="Focus a local proof review on the active project file"/>
             <action id="app.factoryline.intellij.checkReceiptSignature"
                     class="app.factoryline.intellij.CheckLatestReceiptSignatureAction"
                     text="Check Latest Receipt Signature State"

@@ -1,0 +1,25 @@
+{
+  "checks": [
+    {
+      "name": "change_review_keeps_explicit_scope_local_and_analysis_only",
+      "kind": "python",
+      "run": "import importlib.util\nimport sys\nimport types\nfrom pathlib import Path\nfrom tempfile import TemporaryDirectory\nroot = Path.cwd()\npackage = types.ModuleType('factoryline')\npackage.__path__ = [str(root / 'factoryline')]\nsys.modules['factoryline'] = package\nspec = importlib.util.spec_from_file_location('factoryline.change_review', root / 'factoryline' / 'change_review.py')\nmodule = importlib.util.module_from_spec(spec)\nsys.modules['factoryline.change_review'] = module\nspec.loader.exec_module(module)\nwith TemporaryDirectory() as value:\n    result = module.review_change(Path(value), changed=['src/service.py'])\n    assert result['schema'] == 'factory.change_review.v1'\n    assert result['input_source'] == 'explicit'\n    assert result['changed_paths'] == ['src/service.py']\n    assert result['authority'] == {'execution': False, 'approval': False, 'publication': False, 'deployment': False, 'signing': False, 'messaging': False, 'credential': False, 'connector': False}\n    assert len(result['review_sha256']) == 64\n",
+      "covers": [
+        "PROOF_REVIEW_EXPLICIT_SCOPE",
+        "PROOF_REVIEW_FACTS_PRESERVED",
+        "PROOF_REVIEW_NO_AUTONOMY"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "change_review_covers_real_worktree_and_artifact_behavior",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_change_review.py']) == 0\n",
+      "covers": [
+        "PROOF_REVIEW_LOCAL_SCOPE_UNION",
+        "PROOF_REVIEW_HANDOFF_SAVED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

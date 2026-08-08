@@ -4,10 +4,13 @@ import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vfs.VirtualFile
 import java.nio.file.Path
 
 object FactoryLineExecutionConfirmation {
@@ -43,7 +46,13 @@ object FactoryLineController {
         }
     }
 
-    private fun runBackground(project: Project, title: String, offerGitHubStar: Boolean = false, operation: () -> CommandResult) {
+    private fun runBackground(
+        project: Project,
+        title: String,
+        offerGitHubStar: Boolean = false,
+        onCompleted: (CommandResult) -> Unit = { FactoryLinePanels.show(project, it) },
+        operation: () -> CommandResult,
+    ) {
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "FactoryLine: $title", true) {
             private lateinit var result: CommandResult
             override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
@@ -51,7 +60,7 @@ object FactoryLineController {
                 result = operation()
             }
             override fun onSuccess() {
-                FactoryLinePanels.show(project, result)
+                onCompleted(result)
                 if (offerGitHubStar) FactoryLineGitHubStarPrompt.afterSuccessfulLocalWork(project, result)
             }
         })
@@ -191,6 +200,43 @@ object FactoryLineController {
         })
     }
 
+    fun reviewCurrentDiff(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Review Current Diff")) return
+        runBackground(project, "Proof Review", onCompleted = { FactoryLinePanels.showProofReview(project, it) }) {
+            FactoryLineRunner.proofReview(project)
+        }
+    }
+
+    fun reviewCurrentFile(project: Project, requestedFile: VirtualFile? = null) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val file = requestedFile ?: FileEditorManager.getInstance(project).selectedFiles.firstOrNull()
+        val resolved = file?.let { WorkspacePath.resolve(root, it.path) }
+        if (file == null || resolved == null || resolved == root || file.isDirectory) {
+            Messages.showErrorDialog(project, "Open a project file before starting a focused Proof Review.", "FactoryLine")
+            return
+        }
+        val relative = root.toAbsolutePath().normalize().relativize(resolved).toString().replace('\\', '/')
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Review This File")) return
+        runBackground(project, "Proof Review This File", onCompleted = { FactoryLinePanels.showProofReview(project, it) }) {
+            FactoryLineRunner.proofReview(project, relative)
+        }
+    }
+
+    fun saveProofReviewHandoff(project: Project) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val outDir = root.resolve(".factory").resolve("change-reviews")
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Save Review Handoff")) return
+        runBackground(project, "Save Proof Review Handoff", onCompleted = { FactoryLinePanels.showProofReview(project, it) }) {
+            FactoryLineRunner.proofReview(project, outDir = outDir)
+        }
+    }
+
     fun checkLatestReceiptSignature(project: Project) {
         if (!FactoryLineExecutionConfirmation.confirm(project, "Check Receipt Signature State")) return
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "FactoryLine: Check Receipt Signature State", true) {
@@ -307,6 +353,23 @@ class OpenLatestReceiptAction : FactoryLineAction() {
 class AnalyzeChangedProofAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.analyzeChangedProof(it) }
+    }
+}
+
+class ReviewCurrentDiffAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.reviewCurrentDiff(it) }
+    }
+}
+
+class ReviewCurrentFileAction : FactoryLineAction() {
+    override fun update(event: AnActionEvent) {
+        super.update(event)
+        event.presentation.isEnabledAndVisible = event.project != null && event.getData(CommonDataKeys.VIRTUAL_FILE)?.isDirectory == false
+    }
+
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.reviewCurrentFile(it, event.getData(CommonDataKeys.VIRTUAL_FILE)) }
     }
 }
 

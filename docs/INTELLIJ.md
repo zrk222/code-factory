@@ -5,17 +5,29 @@ turning it into a hidden agent. Start with **Run First Proof**, which executes
 `factory doctor --json` only after workspace confirmation and shows the redacted
 local result. The remaining explicit actions are:
 
+## What this solves
+
+| Professional pain point | FactoryLine resolution | Boundary |
+| --- | --- | --- |
+| An AI or teammate diff is hard to trust | Proof Review turns the declared local diff into its review hash, proof gaps, severity-ordered findings, and one fact-derived next action. | It reports facts; it does not call code correct or ready to ship. |
+| One workspace contains several tasks | Review Current Diff analyzes the whole local change set; Review This File isolates the active file. | The focused path is explicit and avoids unrelated Git paths. |
+| Review context vanishes across handoffs | Save Review Handoff writes local JSON, Markdown, and Mermaid evidence under `.factory/change-reviews`. | A packet is not an approval, a commit, or a repair. |
+| Automation can overreach privacy or release controls | Every command has workspace confirmation and runs directly, not through a shell. | No source upload, credential access, edit, test, commit, publish, deploy, or release decision. |
+
 1. Run Spec-to-Ship Assembly.
 2. Continue Assembly to Next Boundary.
 3. Verify Feature Receipts.
 4. Open Latest Receipt.
 5. Analyze Changed Proof.
-6. Check Latest Receipt Signature State.
-7. Open Local Meter and Paired Savings Report.
-8. Open Local Factory Studio.
-9. Open Product Missions.
-10. Open Unified Graph Ops.
-11. Mission Graph & Provider Operations.
+6. Review Current Diff.
+7. Review This File.
+8. Save Review Handoff.
+9. Check Latest Receipt Signature State.
+10. Open Local Meter and Paired Savings Report.
+11. Open Local Factory Studio.
+12. Open Product Missions.
+13. Open Unified Graph Ops.
+14. Mission Graph & Provider Operations.
 
 `REQ-*`, `FR-*`, and `NFR-*` text also receives a read-only FactoryLine gutter
 marker. Selecting it opens the first deterministic local proof match under
@@ -32,6 +44,19 @@ Receipt Signature State** is backed by `factory receipt status`. A signature
 state is not a signature-identity claim:
 the plugin labels receipts unassessed until an explicit verification path proves
 the expected signer identity.
+
+**Review Current Diff** runs `factory change review --root <project> --json`.
+It combines the merge-base branch delta with staged, unstaged, and non-ignored
+untracked paths, then renders only the declared fields: the review hash, scope,
+changed paths, fact-derived next action, severity-ordered findings, and
+unproven claims. **Review This File** supplies the active project file as an
+explicit scope, avoiding unrelated working-tree noise. **Save Review Handoff**
+adds the CLI's explicit `--out-dir .factory/change-reviews` option after its
+own confirmation; it writes hash-bound JSON, Markdown, and Mermaid files that
+another developer can inspect or resume from locally. The review tab can open
+only project-contained changed files and copy a local handoff brief. It does
+not edit files, run a test, commit, publish, deploy, access credentials, or
+make a release decision.
 
 **Open Local Meter** runs `factory meter --root <project> --json` only after the
 same workspace confirmation. The tool window distinguishes measured wall time
