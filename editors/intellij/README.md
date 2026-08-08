@@ -18,6 +18,8 @@ starter remains a starting state until product-specific proof exists.
 - `FactoryLine: Verify Feature Receipts` runs `factory verify <feature> --root <project>`.
 - `FactoryLine: Open Local Meter` runs `factory meter --root <project> --json` after workspace confirmation.
 - `FactoryLine: Analyze Changed Proof` runs `factory risk-diff --root <project> --json`.
+- `FactoryLine: Analyze Workspace Load and Remote/WSL Preflight` runs `factory workspace inspect --root <project> --json`, measures only bounded local filesystem/path facts, and offers manual review paths. It never changes heap, caches, indexes, inspections, plugins, project files, credentials, or remote settings, and it is not an IDE performance diagnosis.
+- `Workspace Advisor: Save local report` explicitly writes JSON, Markdown, and Mermaid under `.factory/workspace-advice`; MCP inspection never writes those artifacts.
 - `FactoryLine: Review Current Diff` runs `factory change review --root <project> --json` and shows an attention-first, structured local review of the branch delta, staged changes, unstaged changes, and non-ignored untracked files.
 - `FactoryLine: Review This File` runs the same analysis with an explicit active-editor path, so a developer can exclude unrelated local work from the review scope.
 - `FactoryLine: Save Review Handoff` writes the exact review JSON, Markdown, and Mermaid map below `.factory/change-reviews/` only after a second workspace confirmation. It is a local handoff packet, not an approval or an automatic repair.
@@ -66,6 +68,12 @@ blocks stale scope bytes, and leaves a local JSON/Markdown/Mermaid handoff for
 the developer and independent verifier. It does not claim that scope control
 proves a patch correct, nor does it call or configure a repair model. See
 [`docs/REPAIR_SANDBOX.md`](../../docs/REPAIR_SANDBOX.md).
+
+Workspace Load Advisor is the parallel performance-and-remote **observation**
+surface. It makes project shape visible before a developer manually changes
+JetBrains project exclusions or evaluates a remote/WSL path setup. It measures
+neither IDE runtime behavior nor performance improvement and cannot apply a
+configuration change. See [`docs/WORKSPACE_ADVISOR.md`](../../docs/WORKSPACE_ADVISOR.md).
 
 ## Install
 

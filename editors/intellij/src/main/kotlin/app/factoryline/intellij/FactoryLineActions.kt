@@ -76,6 +76,24 @@ object FactoryLineController {
         runBackground(project, "Run First Proof", offerGitHubStar = true) { FactoryLineRunner.firstProof(project) }
     }
 
+    fun analyzeWorkspaceAdvisor(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Analyze Workspace Load and Remote/WSL Preflight")) return
+        runBackground(project, "Workspace Load Advisor", onCompleted = { FactoryLinePanels.showWorkspaceAdvisor(project, it) }) {
+            FactoryLineRunner.workspaceAdvisor(project)
+        }
+    }
+
+    fun saveWorkspaceAdvisorReport(project: Project) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Save Workspace Advisor Report")) return
+        runBackground(project, "Save Workspace Advisor Report", onCompleted = { FactoryLinePanels.showWorkspaceAdvisor(project, it) }) {
+            FactoryLineRunner.workspaceAdvisor(project, root.resolve(".factory").resolve("workspace-advice"))
+        }
+    }
+
     fun missionOperations(project: Project) {
         val options = MissionGraphOperation.entries.map { it.label }.toTypedArray()
         val selected = Messages.showDialog(
@@ -433,6 +451,12 @@ class OpenLatestReceiptAction : FactoryLineAction() {
 class AnalyzeChangedProofAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.analyzeChangedProof(it) }
+    }
+}
+
+class AnalyzeWorkspaceAdvisorAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.analyzeWorkspaceAdvisor(it) }
     }
 }
 

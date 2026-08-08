@@ -54,6 +54,9 @@ flowchart LR
   and rejects textual candidate patches that cross its current path scope. It
   does not invoke a repair model, apply the patch, or replace independent
   verifier evidence and a human IDE decision.
+- A **Workspace Advisor** tab that renders bounded local filesystem shape and
+  path-only Remote/WSL facts, then offers manual review paths without changing
+  IDE settings, indexes, caches, plugins, project files, or remote state.
 - Plugin Verifier CI across IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion,
   GoLand, RustRover, and DataGrip.
 - One Mission Operations entry point for graph initialization, status, history,
@@ -77,6 +80,12 @@ or an automated policy override. Existing CLI/CI surfaces remain the correct
 integration boundary: `factory ci init` can create the opt-in GitHub PR-comment
 workflow, and `factory control` remains the separately governed local
 control-plane adapter.
+
+Workspace Advisor is not a PSI or IDE-runtime observer. It does not sample
+heap, CPU, GC, indexing time, UI responsiveness, remote connectivity, or
+plugin behavior, so it cannot claim a performance diagnosis or automatic
+remediation. Its facts remain an input to a human-controlled JetBrains or
+platform-team decision.
 
 ## Security Boundary
 

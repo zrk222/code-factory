@@ -1,0 +1,36 @@
+name: jetbrains-workspace-advisor
+language: python
+modules:
+  - name: workspace_advisor
+    path: factoryline/workspace_advisor.py
+    language: python
+    functions:
+      - name: inspect_workspace
+        args: ["root: Path | str"]
+        returns: dict[str, object]
+      - name: write_workspace_advisor_artifacts
+        args: ["report: Mapping[str, object]", "root: Path | str", "out_dir: Path | str"]
+        returns: dict[str, str]
+  - name: mcp
+    path: factoryline/mcp.py
+    language: python
+    functions:
+      - name: dispatch
+        args: ["request: object", "root: Path | str"]
+        returns: dict[str, object] | None
+dependencies:
+  - from: mcp
+    to: workspace_advisor
+invariants:
+  - name: workspace_inspection_has_no_remote_or_process_execution
+    forbid_pattern: "\\b(?:subprocess|requests|httpx|urllib|socket|Popen|run)\\s*\\("
+    scopes:
+      - module: workspace_advisor
+        symbol: inspect_workspace
+        max_lines: 150
+  - name: workspace_inspection_has_no_ide_configuration_mutation
+    forbid_pattern: "\\b(?:write_text|write_bytes|replace|unlink|rmtree|invalidate|index|heap)\\s*\\("
+    scopes:
+      - module: workspace_advisor
+        symbol: inspect_workspace
+        max_lines: 150

@@ -87,6 +87,11 @@ from .repair_sandbox import (
     write_repair_candidate_artifacts,
     write_repair_scope_artifacts,
 )
+from .workspace_advisor import (
+    WorkspaceAdvisorError,
+    inspect_workspace,
+    write_workspace_advisor_artifacts,
+)
 from .release_integrity import release_integrity, render_release_integrity
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
@@ -713,6 +718,13 @@ def main(argv=None) -> int:
     s.add_argument("--base", default="main")
     s.add_argument("--changed", action="append", default=[], help="changed path; repeat as needed")
     s.add_argument("--json", action="store_true")
+
+    workspace = sub.add_parser("workspace", help="inspect local workspace shape and remote/WSL preflight without IDE mutation")
+    workspace_sub = workspace.add_subparsers(required=True, dest="workspace_cmd")
+    workspace_inspect = workspace_sub.add_parser("inspect", help="measure bounded filesystem shape and offer manual review paths")
+    workspace_inspect.add_argument("--root", default=".")
+    workspace_inspect.add_argument("--out-dir", help="explicit workspace-contained directory for local JSON, Markdown, and Mermaid advice artifacts")
+    workspace_inspect.add_argument("--json", action="store_true")
 
     s = sub.add_parser("graph", help="inspect bounded, read-only Factory graph views")
     graph_sub = s.add_subparsers(required=True, dest="graph_cmd")
@@ -1575,6 +1587,40 @@ def main(argv=None) -> int:
             print(json.dumps(payload, indent=2))
         else:
             print(f"public Assembly metrics written to {Path(a.out).resolve()}")
+        return 0
+    if a.cmd == "workspace":
+        root = Path(a.root)
+        try:
+            payload = inspect_workspace(root)
+            payload = dict(payload)
+            payload["artifacts"] = {}
+            if a.out_dir:
+                artifacts = write_workspace_advisor_artifacts(payload, root, Path(a.out_dir))
+                payload["artifacts"] = {"paths": artifacts, "write_mode": "explicit_local"}
+                payload["markers"] = [*payload["markers"], "WORKSPACE_ADVISOR_ARTIFACTS_EXPLICIT"]
+        except WorkspaceAdvisorError as exc:
+            error = {
+                "schema": "factory.workspace_advisor.error.v1",
+                "status": "failed",
+                "code": exc.code,
+                "marker": "WORKSPACE_ADVISOR_REFUSED",
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"workspace advisor refused: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            scan = payload["scan"]
+            workspace = payload["workspace"]
+            print("FactoryLine Workspace Load Advisor")
+            print(f"workspace : {workspace['name']} ({workspace['path_classification']})")
+            print(f"observed  : {scan['files_scanned']} files, {scan['bytes_scanned']} bytes; limited={scan['scan_limited']}")
+            print("boundary  : local filesystem shape only; no IDE, cache, index, or remote changes.")
+            for recommendation in payload["recommendations"]:
+                print(f"  - [{recommendation['priority']}] {recommendation['action']}")
+            if payload.get("artifacts"):
+                print(f"artifacts : {payload['artifacts']['paths']}")
         return 0
     if a.cmd == "update-check":
         from .update_check import check_for_update, render

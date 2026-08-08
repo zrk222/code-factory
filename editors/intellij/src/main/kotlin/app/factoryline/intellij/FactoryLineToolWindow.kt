@@ -20,9 +20,11 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         val panel = FactoryLinePanel(project)
         val proofReview = FactoryLineProofReviewPanel(project)
         val repairSandbox = FactoryLineRepairSandboxPanel(project)
+        val workspaceAdvisor = FactoryLineWorkspaceAdvisorPanel(project)
         project.putUserData(FactoryLinePanels.key, panel)
         project.putUserData(FactoryLinePanels.proofReviewKey, proofReview)
         project.putUserData(FactoryLinePanels.repairSandboxKey, repairSandbox)
+        project.putUserData(FactoryLinePanels.workspaceAdvisorKey, workspaceAdvisor)
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(panel, "Receipts", false)
         )
@@ -31,6 +33,9 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         )
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(repairSandbox, "Repair Sandbox", false)
+        )
+        toolWindow.contentManager.addContent(
+            ContentFactory.getInstance().createContent(workspaceAdvisor, "Workspace Advisor", false)
         )
     }
 }
@@ -50,6 +55,7 @@ class FactoryLinePanel(private val project: Project) : JPanel(BorderLayout(0, 8)
             add(JButton("Continue assembly").apply { addActionListener { FactoryLineController.requestFeature(project, FactoryLineOperation.CONTINUE) } })
             add(JButton("Verify receipts").apply { addActionListener { FactoryLineController.requestFeature(project, FactoryLineOperation.VERIFY) } })
             add(JButton("Analyze changed proof").apply { addActionListener { FactoryLineController.analyzeChangedProof(project) } })
+            add(JButton("Analyze workspace").apply { addActionListener { FactoryLineController.analyzeWorkspaceAdvisor(project) } })
             add(JButton("Open local meter").apply { addActionListener { FactoryLineController.openMeter(project) } })
             add(JButton("Unified Graph Ops").apply { addActionListener { FactoryLineController.openStudio(project, graphMode = true) } })
             add(JButton("Product missions").apply { addActionListener { FactoryLineController.openStudio(project, productMode = true) } })
@@ -94,6 +100,7 @@ object FactoryLinePanels {
     val key: Key<FactoryLinePanel> = Key.create("app.factoryline.intellij.panel")
     val proofReviewKey: Key<FactoryLineProofReviewPanel> = Key.create("app.factoryline.intellij.proofReview")
     val repairSandboxKey: Key<FactoryLineRepairSandboxPanel> = Key.create("app.factoryline.intellij.repairSandbox")
+    val workspaceAdvisorKey: Key<FactoryLineWorkspaceAdvisorPanel> = Key.create("app.factoryline.intellij.workspaceAdvisor")
 
     fun show(project: Project, result: CommandResult) {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
@@ -130,6 +137,16 @@ object FactoryLinePanels {
         toolWindow?.show {
             ApplicationManager.getApplication().invokeLater {
                 project.getUserData(repairSandboxKey)?.show(result)
+            }
+        }
+    }
+
+    fun showWorkspaceAdvisor(project: Project, result: CommandResult) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater {
+                toolWindow.contentManager.findContent("Workspace Advisor")?.let { toolWindow.contentManager.setSelectedContent(it) }
+                project.getUserData(workspaceAdvisorKey)?.show(result)
             }
         }
     }

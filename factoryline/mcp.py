@@ -13,6 +13,7 @@ from . import __version__
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .proof_reuse import verify_proof_receipt
 from .prd_grill import verify_prd_grill
+from .workspace_advisor import inspect_workspace
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -185,6 +186,12 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["prd_path"],
                 "additionalProperties": False,
             },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.workspace_advisor",
+            "description": "Measure bounded local workspace shape and a path-only Remote/WSL preflight. It does not query the IDE, connect remotely, change caches, indexes, inspections, or settings, and is not a performance diagnosis.",
+            "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
     ]
@@ -501,6 +508,17 @@ def _prd_grill_status(root: Path, arguments: object) -> dict[str, object]:
     return {"marker": "MCP_PRD_GRILL_STATUS", "prd_path": relative, "metadata": _receipt_metadata(root, path), "verification": verification, "current_source_sha256": source_sha}
 
 
+def _workspace_advisor(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.workspace_advisor accepts no arguments")
+    report = inspect_workspace(root)
+    return {
+        "marker": "MCP_WORKSPACE_ADVISOR_READ_ONLY",
+        "report": report,
+        "scope": "In-memory local filesystem inspection only; no artifacts are written by MCP.",
+    }
+
+
 def _tool_call(root: Path, params: object) -> dict[str, object]:
     if not isinstance(params, dict) or set(params) - {"name", "arguments"}:
         raise McpError("tools/call requires name and optional arguments")
@@ -541,6 +559,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_cdte_status(root, arguments))
     if name == "factory.prd_grill_status":
         return _content(_prd_grill_status(root, arguments))
+    if name == "factory.workspace_advisor":
+        return _content(_workspace_advisor(root, arguments))
     raise McpError("unknown MCP tool")
 
 

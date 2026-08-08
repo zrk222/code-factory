@@ -14,6 +14,7 @@ local result. The remaining explicit actions are:
 | Review context vanishes across handoffs | Save Review Handoff writes local JSON, Markdown, and Mermaid evidence under `.factory/change-reviews`. | A packet is not an approval, a commit, or a repair. |
 | An AI repair attempt needs too much or the wrong context | Verified Repair Sandbox seals one native Change List, reports its exact bytes, and accepts only a textual candidate patch that stays inside its Scope Passport. | Bytes are not a token or credit estimate; FactoryLine never runs the agent or applies the patch. |
 | AI Chat lacks trustworthy project context | The Repair Sandbox can copy the current local proof context or a local MCP configuration for a manual paste/setup. | The plugin does not configure AI, upload source, call a provider, or spend credits. |
+| A large, generated, or WSL/UNC workspace is hard to triage | Workspace Advisor measures bounded local file/byte shape and path-only remote context, then offers manual review paths for managed directories. | It never changes heap, caches, indexes, inspections, plugins, project files, or remote settings; it is not an IDE performance diagnosis. |
 | Automation can overreach privacy or release controls | Every command has workspace confirmation and runs directly, not through a shell. | No source upload, credential access, edit, test, commit, publish, deploy, or release decision. |
 
 1. Run Spec-to-Ship Assembly.
@@ -31,6 +32,7 @@ local result. The remaining explicit actions are:
 13. Open Product Missions.
 14. Open Unified Graph Ops.
 15. Mission Graph & Provider Operations.
+16. Analyze Workspace Load and Remote/WSL Preflight.
 
 `REQ-*`, `FR-*`, and `NFR-*` text also receives a read-only FactoryLine gutter
 marker. Selecting it opens the first deterministic local proof match under
@@ -74,6 +76,17 @@ forms, and any path outside the Change List. The adapter does not invoke a
 candidate runner or apply a patch: independent verifier evidence and the final
 IDE diff/apply action remain human-owned. See
 [Verified Repair Sandbox](REPAIR_SANDBOX.md).
+
+**Workspace Load Advisor + Remote/WSL Preflight** runs `factory workspace
+inspect --root <project> --json` after the same confirmation and renders its
+schema-bound result in a dedicated tool-window tab. It measures a bounded local
+filesystem shape, managed generated/dependency directory signals, and the
+local path/runtime relationship only. **Save local report** explicitly writes
+JSON, Markdown, and Mermaid files under `.factory/workspace-advice`. The
+advisor does not measure IDE CPU, heap, GC, indexing time, UI freezes, or remote
+connectivity; it changes no IDE setting and makes no repair claim. For larger
+team workspaces it can suggest a manual evaluation of JetBrains Shared Indexes,
+not configure them. See [Workspace Load Advisor](WORKSPACE_ADVISOR.md).
 
 The Repair Sandbox can also copy a bounded local proof context for a developer
 to paste into AI Chat and copy a local stdio MCP configuration. Both are manual

@@ -279,6 +279,13 @@ without estimating tokens or credits, and accepts only a candidate patch whose
 paths remain inside that scope. An independent verifier and a human IDE apply
 decision remain required. See [Verified Repair Sandbox](docs/REPAIR_SANDBOX.md).
 
+When a large, generated, or WSL/UNC workspace is difficult to triage, open
+**Tools | FactoryLine | Analyze Workspace Load and Remote/WSL Preflight**. It
+measures bounded local workspace shape and offers manual review paths without
+changing IDE heap, caches, indexes, inspections, project files, or remote
+settings. It is not an IDE performance diagnosis. See [Workspace Load
+Advisor](docs/WORKSPACE_ADVISOR.md).
+
 <p align="center">
   <img alt="Actual Factory Studio showing the outcome-first MVP path and explicit local-only authority boundary." src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" width="49%">
   <img alt="Actual Factory Studio Graph Ops view showing local Product, requirement, slice, and mission nodes plus a fact-derived next action." src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-studio-1280x800.png" width="49%">

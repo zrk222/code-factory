@@ -315,6 +315,17 @@ internal object JsonFields {
         return raw.substring(start, end + 1).takeIf { it.all(Char::isDigit) }
     }
 
+    fun boolean(raw: String, key: String): String? {
+        val keyIndex = keyIndex(raw, key) ?: return null
+        val colon = raw.indexOf(':', keyIndex)
+        if (colon < 0) return null
+        return when {
+            raw.startsWith("true", raw.indexOfFirstNonWhitespace(colon + 1)) -> "true"
+            raw.startsWith("false", raw.indexOfFirstNonWhitespace(colon + 1)) -> "false"
+            else -> null
+        }
+    }
+
     fun objects(raw: String, key: String): List<String> {
         val value = container(raw, key, '[', ']') ?: return emptyList()
         val objects = mutableListOf<String>()

@@ -43,6 +43,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.proof_reuse",
         "factory.cdte_status",
         "factory.prd_grill_status",
+        "factory.workspace_advisor",
     ]
     assert status["resources"] == ["factory://status", "factory://graph"]
     assert all(value is False for value in status["authority"].values())
@@ -158,6 +159,14 @@ def test_mcp_read_only_receipt_and_gate_status_tools(tmp_path: Path):
         "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "factory.cdte_status"},
     }, tmp_path))
     assert cdte["marker"] == "MCP_CDTE_SCAN_REQUIRED"
+
+    advisor = _content(dispatch({
+        "jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "factory.workspace_advisor"},
+    }, tmp_path))
+    assert advisor["marker"] == "MCP_WORKSPACE_ADVISOR_READ_ONLY"
+    assert advisor["report"]["marker"] == "WORKSPACE_ADVISOR_LOCAL_READ_ONLY"
+    assert advisor["scope"].startswith("In-memory local")
+    assert _files(tmp_path) == before
 
     grill = _content(dispatch({
         "jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "factory.prd_grill_status", "arguments": {"prd_path": "PRD.md"}},

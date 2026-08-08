@@ -64,6 +64,7 @@ credits, or turn on BYOK on the user's behalf.
 | `factory.proof_reuse` | Fails closed until a complete explicit proof request can establish a disposition | Read only |
 | `factory.cdte_status` | Latest existing deterministic CDTE scan; never creates a scan record | Read only |
 | `factory.prd_grill_status` | Existing source-bound PRD Grill state for the supplied PRD | Read only |
+| `factory.workspace_advisor` | Bounded local workspace shape and path-only Remote/WSL preflight; no report artifacts are written through MCP | Read only |
 | `factory://status` | The same status payload | Read only |
 | `factory://graph` | The same Graph Ops payload | Read only |
 
@@ -85,6 +86,11 @@ and resolve ambiguity with a human; CDTE records known constraint conflicts;
 FactoryLine supplies the local facts to an AI client without granting it
 execution, approval, publishing, deployment, signing, messaging, credential,
 or connector authority.
+
+`factory.workspace_advisor` is also intentionally advisory: it measures only
+the local filesystem and path context. It does not query an IDE, connect to
+WSL/Gateway/Docker/SSH, or change heap, caches, indexes, inspections, or
+settings. See [Workspace Load Advisor](WORKSPACE_ADVISOR.md).
 
 Tool and resource payloads are canonical UTF-8 JSON embedded in MCP text
 content. The graph and impact tools directly call the same native functions as

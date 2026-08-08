@@ -210,3 +210,11 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-08 10:12] GATE plan jetbrains-repair-sandbox approver=human tasks=5 sha=75baaaa02a536685
 - [2026-08-08 10:18] GATE spec jetbrains-repair-sandbox approver=human strict=True sha=75baaaa02a536685
 - [2026-08-08 10:18] GATE plan jetbrains-repair-sandbox approver=human tasks=5 sha=75baaaa02a536685
+- [2026-08-08 10:47] GATE spec jetbrains-workspace-advisor approver=codex strict=True sha=fedeabc353f6da83
+- [2026-08-08 10:47] GATE plan jetbrains-workspace-advisor approver=codex tasks=4 sha=fedeabc353f6da83
+- [2026-08-08 10:49] GATE spec jetbrains-workspace-advisor approver=codex strict=True sha=8ce037387ef04e67
+- [2026-08-08 10:49] GATE plan jetbrains-workspace-advisor approver=codex tasks=4 sha=8ce037387ef04e67
+- [2026-08-08 10:51] GATE spec jetbrains-workspace-advisor approver=codex strict=True sha=02c1b7490a07c6e5
+- [2026-08-08 10:51] GATE plan jetbrains-workspace-advisor approver=codex tasks=4 sha=02c1b7490a07c6e5
+- [2026-08-08 11:03] GATE spec jetbrains-workspace-advisor approver=codex strict=True sha=d5c5204f9b19ac41
+- [2026-08-08 11:03] GATE plan jetbrains-workspace-advisor approver=codex tasks=4 sha=d5c5204f9b19ac41

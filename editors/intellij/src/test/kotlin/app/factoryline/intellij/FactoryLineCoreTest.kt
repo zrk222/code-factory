@@ -15,6 +15,47 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun workspaceAdvisorIsExplicitWorkspaceBoundAndWritesOnlyWhenRequested() {
+        val root = Files.createTempDirectory("factoryline-workspace-advisor")
+        val outDir = root.resolve(".factory/workspace-advice")
+
+        assertEquals(
+            listOf("workspace", "inspect", "--root", root.toString(), "--json"),
+            FactoryLineCommands.workspaceAdvisor(root),
+        )
+        assertEquals(
+            listOf("workspace", "inspect", "--root", root.toString(), "--out-dir", outDir.toString(), "--json"),
+            FactoryLineCommands.workspaceAdvisor(root, outDir),
+        )
+    }
+
+    @Test
+    fun workspaceAdvisorParserAcceptsOnlyItsFixedSchemaAndKeepsTheDiagnosticBoundary() {
+        val summary = WorkspaceAdvisorSummary.fromJson(
+            """
+                {
+                  "schema":"factory.workspace_advisor.v1",
+                  "workspace":{"name":"demo","path_classification":"wsl_unc","ecosystems":["node","python"]},
+                  "scan":{"files_scanned":150,"bytes_scanned":4096,"scan_limited":false},
+                  "recommendations":[{
+                    "id":"remote_path_preflight","priority":"high","state":"review",
+                    "action":"Verify shared paths.","boundary":"No remote connection."
+                  }]
+                }
+            """.trimIndent(),
+        )
+
+        assertNotNull(summary)
+        assertEquals("demo", summary.workspaceName)
+        assertEquals("wsl_unc", summary.pathClassification)
+        assertEquals(listOf("node", "python"), summary.ecosystems)
+        assertEquals("false", summary.scanLimited)
+        assertTrue(summary.brief().contains("not an IDE heap"))
+        assertEquals("WORKSPACE_ADVISOR_CONFIRMATION_REQUIRED", WorkspaceAdvisorMarkers.CONFIRMATION_REQUIRED)
+        assertEquals(null, WorkspaceAdvisorSummary.fromJson("{\"schema\":\"untrusted\"}"))
+    }
+
+    @Test
     fun proofReviewCommandsAreDirectAndCanFocusOneWorkspacePath() {
         val root = Files.createTempDirectory("factoryline-proof-review")
 
