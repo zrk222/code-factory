@@ -131,9 +131,11 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
     assert package["overrides"] == {
         "brace-expansion": "5.0.9",
         "fast-uri": "3.1.5",
+        "js-yaml": "^4.3.1",
     }
     assert lock["packages"]["node_modules/brace-expansion"]["version"] == "5.0.9"
     assert lock["packages"]["node_modules/fast-uri"]["version"] == "3.1.5"
+    assert lock["packages"]["node_modules/js-yaml"]["version"] == "4.3.1"
     assert "dependencies" not in package
 
     for relative in ("vscode-extension.yml", "publish.yml"):
