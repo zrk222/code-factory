@@ -37,6 +37,22 @@ inspect the evidence path and next action. Prefer a browser preview? Open the
 | Connect | [Cursor or OpenCode MCP](docs/AI_CLIENTS.md) | Portable, local proof context |
 | Prove | `factory verify <feature> --root .` | A fail-closed decision with evidence |
 
+## Verify in GitHub Actions
+
+Use the root composite action when a pull request or release should carry the
+same proof decision as a local run:
+
+```yaml
+- uses: zrk222/code-factory@main
+  with:
+    feature: my-feature
+```
+
+It uploads the JSON decision and manifest as a workflow artifact, and fails the
+job when the evidence is incomplete. Pin the action to a released tag after
+this branch is merged. See [GitHub Marketplace action](docs/GITHUB_MARKETPLACE_ACTION.md)
+for the input contract and publication boundary.
+
 ## What Code Factory is
 
 Code Factory is a local-first, evidence-driven workflow for taking a software

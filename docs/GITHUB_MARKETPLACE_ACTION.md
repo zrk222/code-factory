@@ -3,10 +3,13 @@
 The repository root now exposes a composite action in `action.yml`:
 
 ```yaml
-- uses: zrk222/code-factory@v0.28.0
+- uses: zrk222/code-factory@main
   with:
     feature: my-feature
 ```
+
+Pin `uses` to an immutable release tag once the marketplace-ready branch has
+been merged; the `main` example is intentionally the review-stage reference.
 
 The action installs the published `factoryline-code-factory` package, runs
 `factory verify <feature> --json`, uploads the JSON decision and its manifest,
