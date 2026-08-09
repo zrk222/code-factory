@@ -1,0 +1,40 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.zrk222/code-factory",
+  "title": "Code Factory proof context",
+  "description": "Read-only Graph Ops and proof context for AI coding clients.",
+  "version": "0.28.0",
+  "websiteUrl": "https://zrk222-code-factory.static.hf.space",
+  "repository": {
+    "url": "https://github.com/zrk222/code-factory",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "factoryline-code-factory",
+      "version": "0.28.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeArguments": [
+        {
+          "type": "positional",
+          "value": "factory"
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        },
+        {
+          "type": "positional",
+          "value": "serve"
+        }
+      ]
+    }
+  ]
+}
