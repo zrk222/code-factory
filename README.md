@@ -221,6 +221,9 @@ read-only proof facts for an AI client or ACP wrapper: they never start a
 worker, write a scan, apply a patch, infer a cost saving, or mark work
 production-ready.
 
+Use the same local MCP boundary from [Cursor or OpenCode](docs/AI_CLIENTS.md)
+when you want portable proof context inside another AI coding client.
+
 Every `factory create`, `factory mvp`, and `factory app` output now includes
 `docs/CODE_FACTORY_OUTPUT_MAP.md`: a deterministic Mermaid inventory of the
 files produced, its source-digest prefix, and the blocked promotion boundary.
