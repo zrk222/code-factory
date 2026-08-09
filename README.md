@@ -1,12 +1,14 @@
-# code-factory
+# Code Factory
 
 [![CI](https://github.com/zrk222/code-factory/actions/workflows/ci.yml/badge.svg)](https://github.com/zrk222/code-factory/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/factoryline-code-factory.svg)](https://pypi.org/project/factoryline-code-factory/)
 [![Python](https://img.shields.io/pypi/pyversions/factoryline-code-factory.svg)](https://pypi.org/project/factoryline-code-factory/)
 [![Hugging Face Space](https://img.shields.io/badge/Hugging%20Face-Space-ffd21e.svg)](https://huggingface.co/spaces/zrk222/code-factory)
+[![GitHub stars](https://img.shields.io/github/stars/zrk222/code-factory?style=social)](https://github.com/zrk222/code-factory/stargazers)
+[![Latest release](https://img.shields.io/github/v/release/zrk222/code-factory)](https://github.com/zrk222/code-factory/releases/latest)
 
-> One intent, seven software targets, and proof that the gates reject
-> deliberately sabotaged builds.
+> Turn a plain-language outcome into a reviewable MVP with deterministic proof—
+> without pretending generated code is production-ready.
 
 > **Why pay for opaque app generators?** Create a reviewable MVP starting state
 > in minutes—with source-bound receipts, a clear proof path, and an output you
@@ -21,7 +23,17 @@ factory studio --root .\my-mvp
 
 [Watch the exact shipped UI in 60 seconds](https://github.com/zrk222/code-factory/releases/download/v0.28.0/code-factory-quickstart-v0171.mp4)
 to see the outcome-to-MVP path, then open **Graph Ops** in the local Studio to
-inspect the evidence path and next action.
+inspect the evidence path and next action. Prefer a browser preview? Open the
+[live Hugging Face Space](https://zrk222-code-factory.static.hf.space).
+
+**Choose the shortest path:**
+
+| Goal | Start here | What you get |
+| --- | --- | --- |
+| Create | `factory mvp "..."` | A contained, app-shaped starting state |
+| Inspect | `factory studio --root .` | Graph Ops, receipts, and one next action |
+| Connect | [Cursor or OpenCode MCP](docs/AI_CLIENTS.md) | Portable, local proof context |
+| Prove | `factory verify <feature> --root .` | A fail-closed decision with evidence |
 
 ## What Code Factory is
 
@@ -32,6 +44,10 @@ turn the outcome into explicit requirements, value slices, missions, and
 gates; then show what is proven, missing, blocked, or safe to do next. Factory
 Studio and the editor integrations make the same workflow visible without
 granting them release, credential, approval, or publishing authority.
+
+It works with the local workflows developers already use—including Codex,
+Claude Code, Cursor, OpenCode, VS Code, and JetBrains—through the same
+receipt-bound contract rather than a provider-specific lock-in.
 
 It is designed for two speeds: use `factory mvp "..."` to get a novice from
 idea to an inspectable MVP path, or compose capability packs, signed receipts,

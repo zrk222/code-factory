@@ -128,7 +128,7 @@ def test_release_integrity_rejects_huggingface_metadata_that_would_fail_remotely
     readme = root / "deploy" / "huggingface" / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-                "short_description: Reviewable MVPs with verifier, repair, and workspace proof",
+                "short_description: Proof-backed AI coding workflows with local MCP context",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",
