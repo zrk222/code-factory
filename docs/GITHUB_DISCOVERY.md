@@ -25,6 +25,23 @@ The README then shows the shipped UI walkthrough and an optional GitHub-star
 link. It makes no star-count, download, conversion, productivity, or causal
 growth claim.
 
+## Client and demo discovery
+
+Make the first click useful for both novices and experienced AI-tool users:
+
+- [Live browser preview](https://zrk222-code-factory.static.hf.space) for a
+  no-install product tour.
+- [60-second shipped UI walkthrough](https://github.com/zrk222/code-factory/releases/download/v0.28.0/code-factory-quickstart-v0171.mp4)
+  for the visual path.
+- [Cursor and OpenCode MCP setup](AI_CLIENTS.md) for local, read-only proof
+  context inside the clients developers already use.
+- [PyPI install](https://pypi.org/project/factoryline-code-factory/) for the
+  shortest executable path.
+
+Use one of these links per post, with one concrete question or outcome. Do not
+paste every channel link into a community thread; the extra links dilute the
+action and can look promotional rather than useful.
+
 ## Ethical compounding loop
 
 ```mermaid

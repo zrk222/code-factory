@@ -44,7 +44,16 @@ def test_pypi_storefront_has_identity_and_canonical_links():
     assert project["description"] == (
         "Create reviewable MVPs with independent verification, proof review, repair guardrails, and workspace guidance."
     )
-    assert {"mvp", "mcp", "graph-ops", "prd-grill", "verifier-plane"}.issubset(project["keywords"])
+    assert {
+        "mvp",
+        "mcp",
+        "model-context-protocol",
+        "cursor",
+        "opencode",
+        "graph-ops",
+        "prd-grill",
+        "verifier-plane",
+    }.issubset(project["keywords"])
 
 
 def test_python_wheel_data_is_explicit_and_does_not_depend_on_package_discovery():
@@ -66,6 +75,9 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     assert readme.index(value) < readme.index("## What Code Factory is")
     assert "factory mvp \"Build an approval tracker\" --root ." in readme
     assert "Watch the exact shipped UI in 60 seconds" in readme
+    assert "live Hugging Face Space" in readme
+    assert "Cursor or OpenCode MCP" in readme
+    assert "deterministic proof" in readme
     assert "star Code Factory" in readme
     assert "production-ready before the relevant proof exists" in readme
     assert "reviewable MVP starting state in minutes" in vscode_package["description"]

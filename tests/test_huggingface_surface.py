@@ -35,6 +35,12 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "developer-tools" in readme
     assert "ai-agents" in readme
     assert "devops" in readme
+    assert "model-context-protocol" in readme
+    assert "cursor" in readme
+    assert "opencode" in readme
+    assert "Cursor or OpenCode" in readme
+    assert "Observed Marketplace downloads: 46" not in page
+    assert "Unique installs: not exposed by the listing" in page
     assert 'id="first-run"' in page
     assert "Start free with pip" in page
     assert "Watch the exact 60-second UI" in page
@@ -73,12 +79,12 @@ def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(tm
     valid_result = inspect(SPACE / "README.md")
     assert valid_result["ok"] is True
     assert valid_result["marker"] == "HUGGINGFACE_SPACE_METADATA_VALID"
-    assert valid_result["short_description_length"] == 58
+    assert valid_result["short_description_length"] == 55
 
     invalid_readme = tmp_path / "README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Reviewable MVPs with verifier, repair, and workspace proof",
+            "short_description: Proof-backed AI coding workflows with local MCP context",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",
@@ -103,7 +109,7 @@ def test_huggingface_metadata_preflight_cli_reports_the_local_result(tmp_path: P
     invalid_readme = tmp_path / "invalid-README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Reviewable MVPs with verifier, repair, and workspace proof",
+            "short_description: Proof-backed AI coding workflows with local MCP context",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",

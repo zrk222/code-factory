@@ -12,10 +12,13 @@ tags:
   - devops
   - software-quality
   - mcp
+  - model-context-protocol
+  - cursor
+  - opencode
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Reviewable MVPs with verifier, repair, and workspace proof
+short_description: Proof-backed AI coding workflows with local MCP context
 ---
 
 # Code Factory
@@ -33,6 +36,11 @@ The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
 Release `v0.28.0` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21381405).
+
+Use the same local proof context from Cursor or OpenCode through the documented
+[MCP connection](https://github.com/zrk222/code-factory/blob/main/docs/AI_CLIENTS.md).
+The client connection is local and read-only; it does not upload source or
+grant provider, credential, deployment, or publishing authority.
 
 Before a PRD becomes a scaffold, run `factory prd grill PRD.md --root .` for a
 capped, source-bound clarification sheet with recommendations and answer stubs.
