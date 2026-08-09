@@ -40,7 +40,7 @@ pass arbitrary shell fragments to your terminal.
 Install the Code Factory CLI first:
 
 ```powershell
-pip install factoryline-code-factory==0.27.0
+pip install factoryline-code-factory==0.28.0
 ```
 
 Build a local VSIX from this directory, then install it in VS Code:
@@ -48,7 +48,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.8.2.vsix
+code --install-extension factoryline-vscode-0.8.3.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
@@ -72,7 +72,7 @@ It is deployed separately from this local editor extension; see
 This is the VS Code adapter. The separate JetBrains Platform adapter and its
 compatibility boundary are documented in [docs/INTELLIJ.md](../../docs/INTELLIJ.md).
 
-### Verifier Plane (0.27.0)
+### Verifier Plane (0.28.0)
 
 `factory verifier` separates a worker's candidate receipt from a distinct
 verifier's evidence. It rejects self-verification, drift, path escape, false

@@ -14,12 +14,12 @@
 > call a starter production-ready before the relevant proof exists.
 
 ```powershell
-pip install factoryline-code-factory==0.27.0
+pip install factoryline-code-factory==0.28.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
 
-[Watch the exact shipped UI in 60 seconds](https://github.com/zrk222/code-factory/releases/download/v0.23.2/code-factory-quickstart-v0171.mp4)
+[Watch the exact shipped UI in 60 seconds](https://github.com/zrk222/code-factory/releases/download/v0.28.0/code-factory-quickstart-v0171.mp4)
 to see the outcome-to-MVP path, then open **Graph Ops** in the local Studio to
 inspect the evidence path and next action.
 
@@ -60,6 +60,24 @@ The quick pass asks at most three current questions; deep mode asks at most
 five. Dependent decisions wait for their prerequisite rather than being guessed.
 See [PRD Grill](docs/PRD_GRILL.md) for the receipt, verification, and human
 confirmation boundary.
+
+## New in 0.28.0: proof review, repair guardrails, and workspace guidance
+
+The 0.28 release extends the evidence-first workflow into the IDE handoff:
+
+- **Proof Review** orders the most urgent facts in a branch diff and saves a
+  local JSON/Markdown/Mermaid handoff without editing, testing, committing, or
+  publishing.
+- **Verified Repair Sandbox** seals one native Change List, checks candidate
+  patch paths and measured bytes, and prepares an independent-verifier handoff.
+  It does not call a model or apply a patch.
+- **Workspace Load Advisor** measures bounded project-shape and remote/WSL
+  preflight facts. It never changes IDE settings and is not a performance
+  diagnosis.
+
+These are control surfaces around a developer's decisions, not autonomous
+deployment authority. The Verifier Plane below remains the source of truth for
+independent evidence.
 
 ## New in 0.27.0: independent verification has a visible boundary
 
@@ -241,9 +259,9 @@ signs, approves, discovers credentials, or sends messages. See
 **Exact shipped UI:** the walkthrough below is rendered from the actual Factory
 Studio surface; it is not concept art.
 
-[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.23.2/code-factory-quickstart-v0171.mp4)
+[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.28.0/code-factory-quickstart-v0171.mp4)
 
-[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.23.2/code-factory-quickstart-v0171.mp4).
+[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.28.0/code-factory-quickstart-v0171.mp4).
 The absolute cover and release-asset URLs render from both GitHub and PyPI.
 
 If the free, local-first workflow helps you move from an idea to a reviewable
@@ -265,7 +283,7 @@ plugin never uploads the workspace, stores keys, or decides a release is ready.
 To make the path tangible, create a contained MVP and inspect its proof graph:
 
 ```powershell
-pip install factoryline-code-factory==0.27.0
+pip install factoryline-code-factory==0.28.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -313,7 +331,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.27.0
+pip install factoryline-code-factory==0.28.0
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -666,7 +684,7 @@ an instruction or edit the Architecture Opinion Dock. See
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.27.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
+pip install factoryline-code-factory==0.28.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
 factory doctor --json
 ```
 

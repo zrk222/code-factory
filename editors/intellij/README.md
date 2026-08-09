@@ -77,7 +77,7 @@ configuration change. See [`docs/WORKSPACE_ADVISOR.md`](../../docs/WORKSPACE_ADV
 
 ## Install
 
-1. Install `factoryline-code-factory==0.27.0` into the Python environment that
+1. Install `factoryline-code-factory==0.28.0` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the
@@ -128,6 +128,12 @@ missing. GitHub releases remain the current installation channel. The initial
 Marketplace upload requires a human Vendor profile and review; after that
 bootstrap, the scoped GitHub workflow publishes verified updates using a
 Marketplace publisher token. See [the Marketplace runbook](../../docs/JETBRAINS_MARKETPLACE.md).
+
+### 0.28.0 control surfaces
+
+Proof Review, Verified Repair Sandbox, and Workspace Load Advisor are local,
+review-first controls. They produce bounded handoffs and do not edit code,
+call a model, apply a patch, or claim IDE performance or runtime isolation.
 
 ### Verifier Plane (0.27.0)
 
