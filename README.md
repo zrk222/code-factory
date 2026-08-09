@@ -43,14 +43,13 @@ Use the root composite action when a pull request or release should carry the
 same proof decision as a local run:
 
 ```yaml
-- uses: zrk222/code-factory@main
+- uses: zrk222/code-factory@v0.28.1
   with:
     feature: my-feature
 ```
 
 It uploads the JSON decision and manifest as a workflow artifact, and fails the
-job when the evidence is incomplete. Pin the action to a released tag after
-this branch is merged. See [GitHub Marketplace action](docs/GITHUB_MARKETPLACE_ACTION.md)
+job when the evidence is incomplete. See [GitHub Marketplace action](docs/GITHUB_MARKETPLACE_ACTION.md)
 for the input contract and publication boundary.
 
 ## What Code Factory is
