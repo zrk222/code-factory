@@ -1,0 +1,70 @@
+name: Code Factory proof verification
+description: Run a fail-closed Code Factory shippability decision and retain its JSON proof artifact.
+author: zrk222
+branding:
+  icon: shield
+  color: green
+
+inputs:
+  feature:
+    description: Existing feature id whose local receipts and verifier evidence should be summarized.
+    required: true
+  root:
+    description: Workspace root passed to Code Factory.
+    required: false
+    default: .
+  package-version:
+    description: Published factoryline-code-factory version to run.
+    required: false
+    default: 0.28.0
+  artifact-name:
+    description: Artifact name used for the JSON proof output.
+    required: false
+    default: code-factory-proof
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Install Code Factory
+      shell: bash
+      env:
+        FACTORY_PACKAGE_VERSION: ${{ inputs.package-version }}
+      run: |
+        set -euo pipefail
+        python -m pip install --disable-pip-version-check \
+          "factoryline-code-factory==${FACTORY_PACKAGE_VERSION}"
+    - name: Run fail-closed proof decision
+      shell: bash
+      env:
+        FACTORY_FEATURE: ${{ inputs.feature }}
+        FACTORY_ROOT: ${{ inputs.root }}
+      run: |
+        set -euo pipefail
+        proof_dir="$GITHUB_WORKSPACE/factory-proof"
+        mkdir -p "$proof_dir"
+        set +e
+        factory verify "$FACTORY_FEATURE" --root "$FACTORY_ROOT" --json \
+          | tee "$proof_dir/verify.json"
+        status=${PIPESTATUS[0]}
+        set -e
+        printf 'exit_code=%s\nfeature=%s\n' "$status" "$FACTORY_FEATURE" \
+          > "$proof_dir/manifest.txt"
+        echo "FACTORY_VERIFY_EXIT=$status" >> "$GITHUB_ENV"
+        exit "$status"
+    - name: Upload proof artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: factory-proof/
+        if-no-files-found: error
+    - name: Preserve the proof decision as the action result
+      if: always()
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "${FACTORY_VERIFY_EXIT:-1}" -eq 0

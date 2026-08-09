@@ -26,3 +26,15 @@ def test_vscode_marketplace_docs_keep_publication_boundary_explicit():
     assert "candidate prepared" in docs
     assert "VSCE_PAT" in docs
     assert "code.visualstudio.com/api/working-with-extensions/publishing-extension" in docs
+
+
+def test_github_marketplace_action_is_rooted_and_fail_closed():
+    action = (ROOT / "action.yml").read_text(encoding="utf-8")
+    docs = (ROOT / "docs" / "GITHUB_MARKETPLACE_ACTION.md").read_text(encoding="utf-8")
+
+    assert "using: composite" in action
+    assert "factory verify \"$FACTORY_FEATURE\" --root \"$FACTORY_ROOT\" --json" in action
+    assert "actions/upload-artifact@v4" in action
+    assert "FACTORY_VERIFY_EXIT" in action
+    assert "if: always()" in action
+    assert "github.com/en/actions/how-tos/create-and-publish-actions/publish-in-github-marketplace" in docs
