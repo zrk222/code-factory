@@ -50,6 +50,14 @@ This is a proof-context connection, not an AI-provider connection. Code Factory
 does not call JetBrains AI, send source code to a provider, consume provider
 credits, or turn on BYOK on the user's behalf.
 
+### Cursor and OpenCode
+
+Cursor and OpenCode can use this same local proof-context server without a
+client-specific plugin. See [AI client connections](AI_CLIENTS.md) for the
+exact `.cursor/mcp.json` and `opencode.json` snippets. The connection remains
+local and read-only; client support does not add provider credentials,
+network transport, or mutation authority.
+
 ## Tools and resources
 
 | Surface | Purpose | Authority |
