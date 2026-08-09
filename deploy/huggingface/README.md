@@ -42,6 +42,13 @@ Use the same local proof context from Cursor or OpenCode through the documented
 The client connection is local and read-only; it does not upload source or
 grant provider, credential, deployment, or publishing authority.
 
+Try the public **Proof Playground** before installing: enter an outcome and
+watch a deterministic browser-only preview assemble intent, checks, and a
+local proof reference. It is deliberately not a production mission, does not
+call a model, and never sends the text away. The same page includes copyable
+recipes for repository readiness, contained MVPs, Graph Ops, independent
+verification, Cursor, and OpenCode.
+
 Before a PRD becomes a scaffold, run `factory prd grill PRD.md --root .` for a
 capped, source-bound clarification sheet with recommendations and answer stubs.
 It never rewrites the PRD, invents answers, calls a model, or authorizes a

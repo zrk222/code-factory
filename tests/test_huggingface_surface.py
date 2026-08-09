@@ -57,6 +57,18 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "prefers-reduced-motion" in page
     assert "Skip to product proof" in page
     assert 'class="brand" href="#main"' in page
+    assert 'id="proof-playground"' in page
+    assert "Bake a proof preview" in page
+    assert "deterministic browser animation only" in page
+    assert 'id="receipt-result"' in page
+    assert "Local proof reference copied." in page
+    assert 'id="recipes"' in page
+    assert "Repository readiness" in page
+    assert "Independent verifier" in page
+    assert 'id="mcp-recipes"' in page
+    assert "factory mcp serve --root ." in page
+    assert "data-copy" in page
+    assert "prefers-reduced-motion" in page
 
 
 def test_huggingface_workflow_uses_secret_and_scoped_source_directory() -> None:

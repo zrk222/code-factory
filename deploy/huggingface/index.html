@@ -67,15 +67,63 @@
     pre { overflow-x: auto; margin: 0; padding: 24px; border: 1px solid rgba(255,255,255,.14); border-radius: 18px; background: #0d0d0b; color: #ffd47c; font: 600 .95rem/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
     .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
     .gallery img { display: block; width: 100%; border-radius: 18px; border: 1px solid var(--line); background: var(--cream); }
+    .playground-section { padding-top: 3vw; }
+    .playground { display: grid; grid-template-columns: .82fr 1.18fr; gap: 20px; padding: clamp(20px, 4vw, 34px); border: 1px solid var(--line); border-radius: var(--radius); background: linear-gradient(135deg, rgba(255,255,255,.88), rgba(255,241,207,.9)); box-shadow: var(--shadow); }
+    .playground-input { padding: 18px 10px 18px 6px; }
+    .playground-input h3 { margin: 10px 0 8px; font-size: clamp(1.6rem, 3vw, 2.4rem); letter-spacing: -.045em; line-height: 1.5; }
+    .bake-action { background: var(--amber); color: var(--ink); border-color: var(--amber); }
+    .bake-action:hover { background: #ffc65d; }
+    .playground-input p { color: var(--muted); }
+    .field-label { display: block; margin: 24px 0 8px; font-size: .9rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+    textarea { display: block; width: 100%; min-height: 116px; resize: vertical; padding: 15px 16px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); background: rgba(255,255,255,.82); font: inherit; line-height: 1.5; }
+    textarea:focus { outline: 3px solid rgba(7,95,216,.22); border-color: var(--focus); }
+    .preset-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }
+    .preset { min-height: 40px; padding: .55rem .78rem; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.68); color: var(--muted); font: 750 .85rem/1.2 inherit; cursor: pointer; }
+    .preset:hover, .preset:focus-visible { border-color: var(--amber-dark); color: var(--ink); background: white; }
+    .fine-print { margin: 12px 0 0; color: var(--muted); font-size: .86rem; line-height: 1.5; }
+    .receipt-panel { min-height: 390px; padding: 24px; border: 1px solid rgba(255,255,255,.18); border-radius: 22px; background: var(--ink); color: white; position: relative; overflow: hidden; }
+    .receipt-panel::after { content: ""; position: absolute; inset: auto -20% -60% 20%; height: 70%; background: radial-gradient(circle, rgba(244,169,40,.22), transparent 64%); pointer-events: none; }
+    .receipt-empty { display: grid; min-height: 340px; place-items: center; text-align: center; color: #d9d3c7; position: relative; z-index: 1; }
+    .receipt-empty .oven { display: grid; place-items: center; width: 78px; height: 78px; margin: 0 auto 16px; border: 1px solid rgba(255,255,255,.25); border-radius: 24px; background: #2a2820; color: var(--amber); font-size: 2.2rem; }
+    .receipt-result { position: relative; z-index: 1; }
+    .receipt-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 18px; border-bottom: 1px solid rgba(255,255,255,.15); }
+    .receipt-top h3 { margin: 0; font-size: 1.45rem; letter-spacing: -.03em; }
+    .receipt-top p { margin: 4px 0 0; color: #cfc7b7; font-size: .9rem; }
+    .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 999px; background: rgba(99,208,132,.16); color: #a9efb8; font-size: .78rem; font-weight: 850; white-space: nowrap; }
+    .receipt-stages { display: grid; gap: 10px; margin: 20px 0; }
+    .receipt-stage { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid rgba(255,255,255,.11); border-radius: 12px; color: #bdb5a7; transition: background-color .25s ease, color .25s ease, transform .25s ease; }
+    .receipt-stage.complete { background: rgba(99,208,132,.1); color: white; transform: translateX(3px); }
+    .stage-dot { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #3b382e; color: #cfc7b7; font-size: .74rem; font-weight: 900; }
+    .complete .stage-dot { background: #398354; color: white; }
+    .stage-name { font-weight: 800; }
+    .stage-detail { color: #aaa294; font-size: .82rem; }
+    .complete .stage-detail { color: #a9efb8; }
+    .receipt-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; color: #bdb5a7; font-size: .82rem; }
+    .copy-button { min-height: 42px; padding: .62rem .84rem; border: 1px solid rgba(255,255,255,.2); border-radius: 11px; background: #2a2820; color: white; font: 800 .85rem/1.2 inherit; cursor: pointer; }
+    .copy-button:hover, .copy-button:focus-visible { border-color: var(--amber); color: #ffd47c; }
+    .recipe-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    .recipe-card { display: flex; flex-direction: column; gap: 12px; min-height: 250px; padding: 22px; border: 1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,.68); }
+    .recipe-card h3 { margin: 0; font-size: 1.2rem; letter-spacing: -.02em; }
+    .recipe-card p { margin: 0; color: var(--muted); font-size: .94rem; line-height: 1.5; }
+    .recipe-card code { display: block; margin-top: auto; padding: 10px; border-radius: 10px; background: #f2e8d1; color: var(--amber-dark); font: 700 .78rem/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+    .recipe-card .copy-button { align-self: flex-start; border-color: var(--line); background: white; color: var(--ink); }
+    .recipe-card .copy-button:hover, .recipe-card .copy-button:focus-visible { border-color: var(--amber-dark); color: var(--amber-dark); }
+    .mcp-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: stretch; }
+    .mcp-strip .proof { padding: 30px; }
+    .mcp-note { display: flex; align-items: center; gap: 10px; margin-top: 14px; color: var(--green); font-size: .9rem; font-weight: 750; }
+    .toast { position: fixed; right: 20px; bottom: 20px; z-index: 30; padding: 12px 16px; border-radius: 12px; background: var(--ink); color: white; box-shadow: var(--shadow); font-weight: 750; opacity: 0; transform: translateY(10px); pointer-events: none; transition: opacity .2s ease, transform .2s ease; }
+    .toast.visible { opacity: 1; transform: translateY(0); }
+    @keyframes oven-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(244,169,40,.12); } 50% { box-shadow: 0 0 0 12px rgba(244,169,40,0); } }
+    .is-baking .oven { animation: oven-pulse 1.3s ease-in-out infinite; }
     .boundary { margin-top: 18px; color: var(--muted); font-size: .95rem; text-align: center; }
     .final { text-align: center; padding-bottom: 120px; }
     .final h2 { max-width: 16ch; margin: 0 auto 28px; }
     footer { display: flex; justify-content: space-between; gap: 20px; padding: 28px 0 42px; border-top: 1px solid var(--line); color: var(--muted); font-size: .95rem; }
     @media (max-width: 50rem) {
       nav a:not(.button) { display: none; }
-      .hero, .section-head, .proof { grid-template-columns: 1fr; }
+      .hero, .section-head, .proof, .playground, .mcp-strip { grid-template-columns: 1fr; }
       .hero { padding-top: 48px; }
-      .grid, .gallery { grid-template-columns: 1fr; }
+      .grid, .gallery, .recipe-grid { grid-template-columns: 1fr; }
       h1 { font-size: clamp(3.2rem, 17vw, 5.4rem); }
       section { padding: 68px 0; }
       footer { flex-direction: column; }
@@ -84,6 +132,9 @@
       html { scroll-behavior: auto; }
       .button { transition: none; }
       .button:hover { transform: none; }
+      .receipt-stage { transition: none; }
+      .is-baking .oven { animation: none; }
+      .toast { transition: none; }
     }
   </style>
 </head>
@@ -93,6 +144,8 @@
     <header>
       <a class="brand" href="#main" aria-label="Code Factory home"><span class="mark">CF</span> Code Factory</a>
       <nav aria-label="Primary navigation">
+        <a href="#proof-playground">Try proof</a>
+        <a href="#recipes">Recipes</a>
         <a href="#tour">Product tour</a>
         <a href="https://github.com/zrk222/code-factory">GitHub source</a>
         <a class="button" href="#first-run">Start free</a>
@@ -123,6 +176,48 @@
       </figure>
     </div>
 
+    <section id="proof-playground" class="playground-section">
+      <div class="shell">
+        <div class="section-head">
+          <h2>Feel the proof path before you install.</h2>
+          <p>A no-signup browser preview turns one outcome into a reviewable shape. It is a local product tour, not a production mission and never sends your text anywhere.</p>
+        </div>
+        <div class="playground">
+          <div class="playground-input">
+            <div class="eyebrow">Public proof playground</div>
+            <h3>Tell the factory what “done” should mean.</h3>
+            <p>Choose a starting point or write your own. The preview shows how Code Factory makes intent, checks, and receipts visible before you run the real command.</p>
+            <form id="playground-form">
+              <label class="field-label" for="outcome-input">Your outcome</label>
+              <textarea id="outcome-input" maxlength="240">Build an approval tracker with manager review and an audit trail.</textarea>
+              <div class="preset-row" aria-label="Outcome presets">
+                <button class="preset" type="button" data-outcome="Audit a repository before a risky migration.">Repository audit</button>
+                <button class="preset" type="button" data-outcome="Create a release checklist with signed receipts.">Release proof</button>
+                <button class="preset" type="button" data-outcome="Build an approval tracker with manager review and an audit trail.">Approval flow</button>
+              </div>
+              <button class="button bake-action" type="submit">Bake a proof preview</button>
+              <p class="fine-print">Demo boundary: deterministic browser animation only. No model call, source upload, credential access, or deployment.</p>
+            </form>
+          </div>
+          <div class="receipt-panel" id="receipt-output" aria-live="polite">
+            <div class="receipt-empty" id="receipt-empty">
+              <div><div class="oven" aria-hidden="true">CF</div><strong>Your proof receipt will appear here.</strong><br><span>Start with an outcome and watch the line assemble.</span></div>
+            </div>
+            <div class="receipt-result" id="receipt-result" hidden>
+              <div class="receipt-top"><div><h3 id="receipt-title">Proof preview</h3><p id="receipt-outcome"></p></div><span class="status-badge" id="receipt-status">● Ready</span></div>
+              <div class="receipt-stages">
+                <div class="receipt-stage" data-stage="0"><span class="stage-dot">1</span><span class="stage-name">Intent locked</span><span class="stage-detail">bounded outcome</span></div>
+                <div class="receipt-stage" data-stage="1"><span class="stage-dot">2</span><span class="stage-name">Plan shaped</span><span class="stage-detail">checks declared</span></div>
+                <div class="receipt-stage" data-stage="2"><span class="stage-dot">3</span><span class="stage-name">Gates challenged</span><span class="stage-detail">failure paths named</span></div>
+                <div class="receipt-stage" data-stage="3"><span class="stage-dot">4</span><span class="stage-name">Receipt ready</span><span class="stage-detail">reviewable next step</span></div>
+              </div>
+              <div class="receipt-foot"><span id="receipt-id">Local preview · no external claim</span><button class="copy-button" type="button" id="copy-proof">Copy proof reference</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="proof">
       <div class="shell">
         <div class="section-head">
@@ -148,6 +243,37 @@
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" alt="Factory Studio showing the outcome-first MVP and professional workflow tabs.">
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-studio-1280x800.png" alt="Factory Studio Graph Ops showing local graph lanes, proof counts, and a fact-derived next action.">
           <article class="card"><span>Two-minute start</span><h3>Run First Proof</h3><p>Install FactoryLine, confirm the local workspace, then create a contained MVP. The exact listing copy and capture brief are public in the Marketplace Acquisition Kit.</p><p><a href="https://github.com/zrk222/code-factory/blob/main/docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md">Open the kit →</a></p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="recipes">
+      <div class="shell">
+        <div class="section-head">
+          <h2>Start from a useful recipe.</h2>
+          <p>These are outcomes people can recognize in one glance. Copy the command, then adapt the spec and keep the proof boundary.</p>
+        </div>
+        <div class="recipe-grid">
+          <article class="recipe-card"><span>Audit</span><h3>Repository readiness</h3><p>Find missing tests, contracts, and proof inputs before an agent changes code.</p><code>factory coverage --root . --json</code><button class="copy-button" type="button" data-copy="factory coverage --root . --json">Copy command</button></article>
+          <article class="recipe-card"><span>Build</span><h3>Contained MVP</h3><p>Turn a plain-language outcome into a reviewable local starter with explicit gaps.</p><code>factory mvp &quot;Build an approval tracker&quot; --root .</code><button class="copy-button" type="button" data-copy='factory mvp "Build an approval tracker" --root .'>Copy command</button></article>
+          <article class="recipe-card"><span>Inspect</span><h3>Graph Ops map</h3><p>See products, missions, proofs, gates, traces, and artifacts without executing them.</p><code>factory graph ops --root . --json</code><button class="copy-button" type="button" data-copy="factory graph ops --root . --json">Copy command</button></article>
+          <article class="recipe-card"><span>Verify</span><h3>Independent verifier</h3><p>Bind worker output to distinct checks and reject self-grading or byte drift.</p><code>factory verifier verify ... --json</code><button class="copy-button" type="button" data-copy="factory verifier verify ./session.json ./worker-result.json ./verifier-result.json --root . --json">Copy command</button></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="mcp-recipes">
+      <div class="shell mcp-strip">
+        <div class="proof">
+          <div><div class="eyebrow">MCP recipes</div><h2>Bring the same proof context to your client.</h2><p>Use the read-only local MCP server from Cursor or OpenCode. The connection exposes Graph Ops facts; it does not upload source or grant release authority.</p><div class="mcp-note">✓ Local · read-only · provider keys stay with you</div></div>
+          <pre><code>factory mcp serve --root .</code></pre>
+        </div>
+        <div class="proof">
+          <div><div class="eyebrow">Choose your lane</div><h2>Copy the smallest setup.</h2><p><a href="https://github.com/zrk222/code-factory/blob/main/docs/AI_CLIENTS.md#cursor">Cursor recipe →</a><br><a href="https://github.com/zrk222/code-factory/blob/main/docs/AI_CLIENTS.md#opencode">OpenCode recipe →</a><br><a href="https://github.com/zrk222/code-factory/blob/main/docs/MCP.md">MCP contract →</a></p><div class="mcp-note">✓ Read the contract before connecting</div></div>
+          <pre><code>"factory": {
+  "command": "factory",
+  "args": ["mcp", "serve", "--root", "."]
+}</code></pre>
         </div>
       </div>
     </section>
@@ -270,5 +396,89 @@ Never substitute CI or repository traffic for installs.</code></pre>
   <div class="shell">
     <footer><span>Code Factory v0.28.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.28.0">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script>
+    (() => {
+      const form = document.getElementById('playground-form');
+      const input = document.getElementById('outcome-input');
+      const empty = document.getElementById('receipt-empty');
+      const result = document.getElementById('receipt-result');
+      const panel = document.getElementById('receipt-output');
+      const title = document.getElementById('receipt-title');
+      const outcome = document.getElementById('receipt-outcome');
+      const status = document.getElementById('receipt-status');
+      const receiptId = document.getElementById('receipt-id');
+      const toast = document.getElementById('toast');
+      let reference = '';
+      const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      const showToast = (message) => {
+        toast.textContent = message;
+        toast.classList.add('visible');
+        window.clearTimeout(showToast.timer);
+        showToast.timer = window.setTimeout(() => toast.classList.remove('visible'), 2200);
+      };
+      const copyText = async (value) => {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          try { await navigator.clipboard.writeText(value); return true; } catch (error) { /* fall through to the local fallback */ }
+        }
+        const helper = document.createElement('textarea');
+        helper.value = value;
+        helper.setAttribute('readonly', '');
+        helper.style.position = 'fixed';
+        helper.style.opacity = '0';
+        document.body.appendChild(helper);
+        helper.select();
+        let copied = false;
+        try { copied = document.execCommand('copy'); } catch (error) { copied = false; }
+        helper.remove();
+        return copied;
+      };
+      const digest = async (value) => {
+        if (window.crypto && window.crypto.subtle) {
+          const bytes = new TextEncoder().encode(value);
+          const hash = await window.crypto.subtle.digest('SHA-256', bytes);
+          return Array.from(new Uint8Array(hash)).slice(0, 6).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+        }
+        let hash = 2166136261;
+        for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+        return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 12);
+      };
+      const encodeOutcome = (value) => btoa(unescape(encodeURIComponent(value))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const decodeOutcome = (value) => decodeURIComponent(escape(atob(value.replace(/-/g, '+').replace(/_/g, '/'))));
+      const runPreview = async (value, updateUrl = true) => {
+        const clean = value.trim().replace(/\s+/g, ' ');
+        if (!clean) { input.focus(); showToast('Add an outcome first.'); return; }
+        input.value = clean;
+        empty.hidden = true;
+        result.hidden = false;
+        panel.classList.add('is-baking');
+        title.textContent = 'Baking your proof preview';
+        outcome.textContent = clean;
+        status.textContent = '● In progress';
+        status.style.color = '#ffd47c';
+        document.querySelectorAll('.receipt-stage').forEach((stage) => stage.classList.remove('complete'));
+        reference = await digest(clean + '|code-factory-public-preview-v1');
+        if (updateUrl) window.history.replaceState({}, '', `${window.location.pathname}#proof=${encodeOutcome(clean)}`);
+        const stages = Array.from(document.querySelectorAll('.receipt-stage'));
+        for (let index = 0; index < stages.length; index += 1) {
+          if (!reduced) await new Promise((resolve) => window.setTimeout(resolve, 360));
+          stages[index].classList.add('complete');
+        }
+        title.textContent = 'Proof preview ready';
+        status.textContent = '● Reviewable';
+        status.style.color = '#a9efb8';
+        receiptId.textContent = `Local preview · reference ${reference} · no external claim`;
+        panel.classList.remove('is-baking');
+      };
+      form.addEventListener('submit', (event) => { event.preventDefault(); runPreview(input.value); });
+      document.querySelectorAll('[data-outcome]').forEach((button) => button.addEventListener('click', () => { input.value = button.dataset.outcome; input.focus(); }));
+      document.querySelectorAll('[data-copy]').forEach((button) => button.addEventListener('click', async () => { showToast(await copyText(button.dataset.copy) ? 'Command copied.' : 'Select the command to copy it.'); }));
+      document.getElementById('copy-proof').addEventListener('click', async () => { showToast(await copyText(`${window.location.origin}${window.location.pathname}#proof=${encodeOutcome(input.value)}`) ? 'Local proof reference copied.' : 'Select the reference to copy it.'); });
+      if (window.location.hash.startsWith('#proof=')) {
+        try { const restored = decodeOutcome(window.location.hash.slice(7)); if (restored) runPreview(restored, false); } catch (error) { /* ignore malformed public preview links */ }
+      }
+    })();
+  </script>
 </body>
 </html>
