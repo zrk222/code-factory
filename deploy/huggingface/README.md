@@ -32,7 +32,7 @@ proof exists.
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
 Release `v0.28.0` is archived under the repository's stable Zenodo concept DOI at
-[Zenodo](https://doi.org/10.5281/zenodo.21543621).
+[Zenodo](https://doi.org/10.5281/zenodo.21381405).
 
 Before a PRD becomes a scaffold, run `factory prd grill PRD.md --root .` for a
 capped, source-bound clarification sheet with recommendations and answer stubs.
