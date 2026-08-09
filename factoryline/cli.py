@@ -80,6 +80,18 @@ from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
+from .repair_sandbox import (
+    RepairSandboxError,
+    create_repair_scope,
+    inspect_repair_candidate,
+    write_repair_candidate_artifacts,
+    write_repair_scope_artifacts,
+)
+from .workspace_advisor import (
+    WorkspaceAdvisorError,
+    inspect_workspace,
+    write_workspace_advisor_artifacts,
+)
 from .release_integrity import release_integrity, render_release_integrity
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
@@ -707,6 +719,13 @@ def main(argv=None) -> int:
     s.add_argument("--changed", action="append", default=[], help="changed path; repeat as needed")
     s.add_argument("--json", action="store_true")
 
+    workspace = sub.add_parser("workspace", help="inspect local workspace shape and remote/WSL preflight without IDE mutation")
+    workspace_sub = workspace.add_subparsers(required=True, dest="workspace_cmd")
+    workspace_inspect = workspace_sub.add_parser("inspect", help="measure bounded filesystem shape and offer manual review paths")
+    workspace_inspect.add_argument("--root", default=".")
+    workspace_inspect.add_argument("--out-dir", help="explicit workspace-contained directory for local JSON, Markdown, and Mermaid advice artifacts")
+    workspace_inspect.add_argument("--json", action="store_true")
+
     s = sub.add_parser("graph", help="inspect bounded, read-only Factory graph views")
     graph_sub = s.add_subparsers(required=True, dest="graph_cmd")
     graph_ops = graph_sub.add_parser("ops", help="compile the unified local Graph Ops result without writes")
@@ -726,6 +745,22 @@ def main(argv=None) -> int:
     change_review.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
     change_review.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
     change_review.add_argument("--json", action="store_true")
+
+    repair = sub.add_parser("repair", help="prepare a sealed Change List scope and inspect a candidate patch without applying it")
+    repair_sub = repair.add_subparsers(required=True, dest="repair_cmd")
+    repair_scope = repair_sub.add_parser("scope", help="seal explicit Change List paths and optional local handoff artifacts")
+    repair_scope.add_argument("--root", default=".")
+    repair_scope.add_argument("--change-list", required=True, help="native Change List label supplied by the IDE")
+    repair_scope.add_argument("--changed", action="append", required=True, help="explicit workspace-relative Change List path; repeat as needed")
+    repair_scope.add_argument("--context-budget-bytes", type=int, default=262144, help="measured-byte threshold that recommends splitting an oversized agent context")
+    repair_scope.add_argument("--out-dir", help="explicit workspace-contained directory for local scope artifacts")
+    repair_scope.add_argument("--json", action="store_true")
+    repair_candidate = repair_sub.add_parser("candidate", help="bind a textual Git patch to a current sealed scope without applying it")
+    repair_candidate.add_argument("--root", default=".")
+    repair_candidate.add_argument("--scope", required=True, help="workspace-contained factory.repair_scope.v1 JSON packet")
+    repair_candidate.add_argument("--patch", required=True, help="workspace-contained textual Git candidate patch")
+    repair_candidate.add_argument("--out-dir", help="explicit workspace-contained directory for local candidate artifacts")
+    repair_candidate.add_argument("--json", action="store_true")
 
     release = sub.add_parser("release", help="inspect local release workflow boundaries without publishing")
     release_sub = release.add_subparsers(required=True, dest="release_cmd")
@@ -1553,6 +1588,40 @@ def main(argv=None) -> int:
         else:
             print(f"public Assembly metrics written to {Path(a.out).resolve()}")
         return 0
+    if a.cmd == "workspace":
+        root = Path(a.root)
+        try:
+            payload = inspect_workspace(root)
+            payload = dict(payload)
+            payload["artifacts"] = {}
+            if a.out_dir:
+                artifacts = write_workspace_advisor_artifacts(payload, root, Path(a.out_dir))
+                payload["artifacts"] = {"paths": artifacts, "write_mode": "explicit_local"}
+                payload["markers"] = [*payload["markers"], "WORKSPACE_ADVISOR_ARTIFACTS_EXPLICIT"]
+        except WorkspaceAdvisorError as exc:
+            error = {
+                "schema": "factory.workspace_advisor.error.v1",
+                "status": "failed",
+                "code": exc.code,
+                "marker": "WORKSPACE_ADVISOR_REFUSED",
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"workspace advisor refused: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            scan = payload["scan"]
+            workspace = payload["workspace"]
+            print("FactoryLine Workspace Load Advisor")
+            print(f"workspace : {workspace['name']} ({workspace['path_classification']})")
+            print(f"observed  : {scan['files_scanned']} files, {scan['bytes_scanned']} bytes; limited={scan['scan_limited']}")
+            print("boundary  : local filesystem shape only; no IDE, cache, index, or remote changes.")
+            for recommendation in payload["recommendations"]:
+                print(f"  - [{recommendation['priority']}] {recommendation['action']}")
+            if payload.get("artifacts"):
+                print(f"artifacts : {payload['artifacts']['paths']}")
+        return 0
     if a.cmd == "update-check":
         from .update_check import check_for_update, render
         result = check_for_update(Path(a.root), force=a.force)
@@ -2030,6 +2099,40 @@ def main(argv=None) -> int:
             if review.get("artifacts"):
                 print(f"packet      : {review['artifacts']['paths']['markdown']}")
             print("authority   : no execution, merge, publication, deployment, or credential access")
+        return 0
+    if a.cmd == "repair":
+        try:
+            if a.repair_cmd == "scope":
+                result = create_repair_scope(Path(a.root), a.change_list, a.changed, context_budget_bytes=a.context_budget_bytes)
+                if a.out_dir:
+                    result["artifacts"] = write_repair_scope_artifacts(result, Path(a.root), Path(a.out_dir))
+            else:
+                result = inspect_repair_candidate(Path(a.root), Path(a.scope), Path(a.patch))
+                if a.out_dir:
+                    result["artifacts"] = write_repair_candidate_artifacts(result, Path(a.root), Path(a.out_dir))
+        except RepairSandboxError as exc:
+            schema = "factory.repair_scope.error.v1" if a.repair_cmd == "scope" else "factory.repair_candidate.error.v1"
+            marker = "REPAIR_SANDBOX_PATH_REJECTED" if "PATH" in exc.code or exc.code == "REPAIR_CANDIDATE_OUT_OF_SCOPE" else "REPAIR_SANDBOX_INPUT_UNAVAILABLE"
+            payload = {"schema": schema, "marker": marker, "code": exc.code, "message": str(exc)}
+            print(json.dumps(payload, indent=2, sort_keys=True) if a.json else f"repair {a.repair_cmd} failed: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(f"factory repair {a.repair_cmd} (supervised, no patch apply)")
+            print("=" * 54)
+            if a.repair_cmd == "scope":
+                print(f"scope       : {result['scope_id']}")
+                print(f"changed path: {len(result['paths'])}")
+                print(f"context     : {result['context_budget']['measured_bytes']} / {result['context_budget']['limit_bytes']} bytes ({result['context_budget']['decision']})")
+                print("next        : external supervised candidate, independent verifier, human apply")
+            else:
+                print(f"candidate   : {result['candidate_sha256']}")
+                print(f"touched path: {len(result['touched_paths'])}")
+                print("next        : independent verifier, then human diff review and apply")
+            if result.get("artifacts"):
+                print(f"packet      : {result['artifacts']['paths']['markdown']}")
+            print("authority   : no source modification, test execution, commit, merge, publication, deployment, credential, or network action")
         return 0
     if a.cmd == "release":
         result = release_integrity(Path(a.root))

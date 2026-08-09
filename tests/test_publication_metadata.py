@@ -42,7 +42,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
         "Changelog": "https://github.com/zrk222/code-factory/releases",
     }
     assert project["description"] == (
-        "Create a reviewable MVP starting state in minutes with proof paths and independent verifier receipts."
+        "Create reviewable MVPs with independent verification, proof review, repair guardrails, and workspace guidance."
     )
     assert {"mvp", "mcp", "graph-ops", "prd-grill", "verifier-plane"}.issubset(project["keywords"])
 
@@ -247,10 +247,10 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.27.0"
+    assert project["version"] == "0.28.0"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.8.2"
-    assert 'version = "0.8.3"' in gradle
+    assert vscode["version"] == "0.8.3"
+    assert 'version = "0.8.4"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -273,12 +273,13 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "1280x800" in screenshot_brief
 
 
-def test_intellij_source_uses_supported_choice_dialog_api_with_medium_risk_default():
+def test_intellij_source_uses_supported_choice_dialog_api_with_safe_defaults():
     actions = (ROOT / "editors" / "intellij" / "src" / "main" / "kotlin" / "app" / "factoryline" / "intellij" / "FactoryLineActions.kt").read_text(encoding="utf-8")
 
     assert "Messages.showChooseDialog" not in actions
-    assert actions.count("Messages.showDialog(") == 4
+    assert actions.count("Messages.showDialog(") >= 4
     assert 'risks, 1, Messages.getQuestionIcon()' in actions
+    assert 'FactoryLineExecutionConfirmation.confirm(project, "Prepare Repair Scope")' in actions
 
 
 def test_intellij_build_uses_the_gradle_9_5_compatible_kotlin_plugin_line():
@@ -343,7 +344,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     assert plan["offer"]["monthly_price_usd"] == 4.95
     assert plan["offer"]["monthly_price_status"] == "owner_approved"
     assert plan["offer"]["paid_from"] == "2027-01-01"
-    assert plan["plugin"]["current_free_version"] == "0.8.3"
+    assert plan["plugin"]["current_free_version"] == "0.8.4"
     assert plan["paid_descriptor"] == {
         "product_code": "PFACTORYLINE",
         "product_code_status": "proposed_not_registered",
@@ -394,7 +395,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.27.0"
+    assert metadata["version"] == "0.28.0"
     assert metadata["publication_date"] == "2026-08-08"
     assert "Unified Graph Ops" in metadata["description"]
     assert "conceptual visual walkthrough" in metadata["description"]

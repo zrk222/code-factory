@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.28.0 - 2026-08-08
+
+- Add the Proof Review handoff for attention-first, structured review of the
+  current diff and its local evidence.
+- Add the Verified Repair Sandbox, which seals a native Change List scope and
+  produces a local handoff without editing code, running tests, or invoking an
+  AI runner.
+- Add the Workspace Load Advisor for bounded project-shape and remote/WSL
+  preflight observations without changing IDE settings or claiming a
+  performance diagnosis.
+- Ship release and editor documentation with the same explicit authority
+  boundaries: local evidence is not a deployment, sandbox, or readiness claim.
+
 ## 0.27.0 - 2026-08-08
 
 - Add the Verifier Plane: a hash-bound evidence contract that separates a

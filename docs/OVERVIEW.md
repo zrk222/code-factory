@@ -35,6 +35,11 @@ known, what is missing, and the one fact-derived next action.
 - **Turns a diff into a reviewable proof plan.** `factory change review` joins
   explicit change impact, stale proofs, coverage gaps, and existing risk policy
   into one analysis-only reviewer packet and Mermaid map.
+- **Keeps supervised repair context exact.** `factory repair scope` seals one
+  explicit Change List's paths, current file hashes, and measured bytes, then
+  `factory repair candidate` rejects a textual patch that crosses that scope.
+  Neither command runs an agent, estimates credits, applies a patch, or replaces
+  independent verification and human review.
 - **Makes release blockers visible before dispatch.** `factory release integrity`
   checks local artifact fan-in, trusted PyPI publishing, and protected
   marketplace boundaries without touching credentials or publication state.
@@ -46,7 +51,7 @@ known, what is missing, and the one fact-derived next action.
 ## Typical path
 
 ```powershell
-pip install factoryline-code-factory==0.27.0
+pip install factoryline-code-factory==0.28.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid

@@ -121,8 +121,9 @@ def _intellij_compatibility_check(root: Path) -> dict[str, Any]:
     build = _read_source(root, "editors/intellij/build.gradle.kts")
     passed = (
         "Messages.showChooseDialog" not in actions
-        and actions.count("Messages.showDialog(") == 4
+        and actions.count("Messages.showDialog(") >= 4
         and all(value in actions for value in ("options, 0, Messages.getQuestionIcon()", "graphEvents, 0, Messages.getQuestionIcon()", "roles, 0, Messages.getQuestionIcon()", "risks, 1, Messages.getQuestionIcon()"))
+        and 'FactoryLineExecutionConfirmation.confirm(project, "Prepare Repair Scope")' in actions
         and 'id("org.jetbrains.kotlin.jvm") version "2.4.10"' in settings
         and "jvmDefault.set(JvmDefaultMode.NO_COMPATIBILITY)" in build
     )

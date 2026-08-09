@@ -6,6 +6,13 @@
   build, tier-labelled analysis, and withheld quantification shown as
   withheld rather than estimated.
 
+## 0.8.4
+
+- Add Proof Review handoffs for changed-file attention and local evidence.
+- Add a Verified Repair Sandbox with sealed Change List scope checks.
+- Add Workspace Load Advisor observations for project shape and remote/WSL
+  preflight without mutating IDE configuration.
+
 ## 0.8.2
 
 - Add Marketplace and editor documentation for PRD Grill: a deterministic,

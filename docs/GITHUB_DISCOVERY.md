@@ -16,7 +16,7 @@ Lead with the low-friction value that a developer can verify:
 The intended next action is one local command:
 
 ```powershell
-pip install factoryline-code-factory==0.27.0
+pip install factoryline-code-factory==0.28.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```

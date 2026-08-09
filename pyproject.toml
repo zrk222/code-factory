@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.27.0"
-description = "Create a reviewable MVP starting state in minutes with proof paths and independent verifier receipts."
+version = "0.28.0"
+description = "Create reviewable MVPs with independent verification, proof review, repair guardrails, and workspace guidance."
 authors = [
   { name = "Richard Katz" },
   { email = "rkatz22@gmail.com" },
