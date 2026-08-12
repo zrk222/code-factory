@@ -1,0 +1,135 @@
+name: Publish VS Code Marketplace extension
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_ref:
+        description: "Immutable repository tag to package (for example v0.28.0)"
+        required: true
+        type: string
+      publish:
+        description: "Publish the verified VSIX after protected-environment review"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vscode-marketplace-${{ inputs.release_ref }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: authorize protected Marketplace publication
+    if: inputs.publish == true
+    runs-on: ubuntu-latest
+    environment: vscode-marketplace
+    steps:
+      - name: Record the protected release authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "The Marketplace trusted-publishing policy is verified during the publish step."
+
+  validate:
+    name: validate immutable Marketplace candidate
+    needs: authorize
+    if: ${{ always() && (inputs.publish == false || needs.authorize.result == 'success') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_ref }}
+          fetch-depth: 0
+
+      - name: Require an immutable release tag
+        shell: bash
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || {
+            echo "release_ref must be an immutable tag such as v0.28.0." >&2
+            exit 1
+          }
+          test "$(git rev-list -n 1 "$RELEASE_REF")" = "$(git rev-parse HEAD)" || {
+            echo "Checked-out commit does not match $RELEASE_REF." >&2
+            exit 1
+          }
+          git tag --points-at HEAD --format='%(refname:short)' | grep -Fx "$RELEASE_REF" >/dev/null || {
+            echo "$RELEASE_REF is not an immutable tag pointing at HEAD." >&2
+            exit 1
+          }
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Install, audit, test, and package
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run audit
+          npm test
+          npx vsce package --no-dependencies --out factoryline-vscode.vsix
+
+      - name: Seal the verified Marketplace candidate
+        shell: bash
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+        run: |
+          set -euo pipefail
+          test -f factoryline-vscode.vsix
+          mkdir -p "$GITHUB_WORKSPACE/vscode-marketplace-candidate"
+          cp factoryline-vscode.vsix "$GITHUB_WORKSPACE/vscode-marketplace-candidate/"
+          sha256sum factoryline-vscode.vsix > "$GITHUB_WORKSPACE/vscode-marketplace-candidate/SHA256SUMS.txt"
+          printf 'release_ref=%s\ncommit=%s\npublisher=zrk222\nextension=factoryline-vscode\n' \
+            "$RELEASE_REF" "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/vscode-marketplace-candidate/manifest.txt"
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: vscode-marketplace-candidate-${{ inputs.release_ref }}
+          path: vscode-marketplace-candidate/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: publish verified Marketplace candidate
+    if: ${{ always() && inputs.publish == true && needs.authorize.result == 'success' && needs.validate.result == 'success' }}
+    needs: [authorize, validate]
+    runs-on: ubuntu-latest
+    environment: vscode-marketplace
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: vscode-marketplace-candidate-${{ inputs.release_ref }}
+          path: vscode-marketplace-candidate
+
+      - name: Verify sealed candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd vscode-marketplace-candidate
+          sha256sum --check SHA256SUMS.txt
+          test -f manifest.txt
+          test -f factoryline-vscode.vsix
+          grep -Fx 'publisher=zrk222' manifest.txt >/dev/null
+          grep -Fx 'extension=factoryline-vscode' manifest.txt >/dev/null
+
+      - name: Publish verified VSIX to Visual Studio Marketplace
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes @vscode/vsce@3.9.1 publish --oidc \
+            --packagePath vscode-marketplace-candidate/factoryline-vscode.vsix \
+            --skip-duplicate

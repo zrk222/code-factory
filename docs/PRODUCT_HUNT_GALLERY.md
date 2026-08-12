@@ -21,6 +21,44 @@ Suggested tagline: **Measure every saving. Prove every ship.**
 Suggested CTA: **Compare your baseline, export the exact savings, and run the
 proof-first factory from the public repository.**
 
+## Version 0.28.0 update briefing
+
+Use this only as an update associated with the existing **Code Factory**
+Product Hunt product. It is not copy for a duplicate launch.
+
+**Headline:** Turn a current diff into a review packet with verifiable local
+evidence.
+
+**Tagline:** Proof Review, Verified Repair Sandbox, and Workspace Load Advisor
+for supervised local code changes.
+
+**Update copy:**
+
+Code Factory 0.28.0 adds three developer controls for the moment between a
+change and an independent review: Proof Review makes the current diff an
+attention-first JSON, Markdown, and Mermaid handoff; Verified Repair Sandbox
+seals one native Change List and checks candidate patch scope and measured
+bytes; Workspace Load Advisor reports bounded project-shape and remote/WSL
+preflight facts before workspace changes.
+
+These controls are deliberately local and supervised. They do not edit code,
+call an AI runner, access credentials, upload source, run tests, commit,
+publish, or claim production readiness. They help a developer bring concrete,
+bounded evidence to the next review decision.
+
+**Primary CTA:** Review a live diff, export its evidence packet, and decide
+what to verify next.
+
+**Proof links:**
+
+- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.28.0`
+- PyPI: `https://pypi.org/project/factoryline-code-factory/0.28.0/`
+- Source: `https://github.com/zrk222/code-factory`
+
+Do not add a claim that the controls improve IDE performance, eliminate review
+time, or provide runtime isolation; this release does not measure or provide
+those outcomes.
+
 Product Hunt currently requires at least 2 images for a visible gallery and
 recommends 1270 x 760 gallery images. Source images are 1122 x 1402 portrait PNGs;
 preview the uncropped originals in the Product Hunt editor before

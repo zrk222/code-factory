@@ -10,7 +10,7 @@ listing has accepted the artifact.
 | PyPI | `factoryline-code-factory==0.28.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code | `factoryline-vscode-0.8.3.vsix` | GitHub release bundle; Marketplace requires a separately configured publisher token | Installable VSIX or public Marketplace version |
+| VS Code | `factoryline-vscode-0.8.3.vsix` | GitHub release bundle; protected `vscode-marketplace.yml` publishes an immutable, verified VSIX when the publisher's GitHub OIDC trust policy is configured | Installable VSIX or public Marketplace version |
 | JetBrains | `factoryline-intellij-0.8.4.zip` | Scoped workflow update to public plugin 33009 | Installable ZIP or public plugin/version page after moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
@@ -21,6 +21,29 @@ reported as published, pending review, blocked, or not configured.
 JetBrains Marketplace publication remains blocked while the current submitted
 update is pending Marketplace approval. Do not dispatch the 0.8.4 candidate
 until the Marketplace status gate reports clear.
+
+### Visual Studio Marketplace publisher setup
+
+The package is already bound to publisher `zrk222` and extension name
+`factoryline-vscode`. To enable the separately protected marketplace lane:
+
+1. Sign in to the Visual Studio Marketplace publisher portal with the account
+   that owns `zrk222`.
+2. In that publisher's trusted-publishing settings, authorize GitHub repository
+   `zrk222/code-factory` and workflow
+   `.github/workflows/vscode-marketplace.yml`.
+3. Create or protect the GitHub Actions environment named
+   `vscode-marketplace` with the repository's normal release reviewers.
+4. Dispatch **Publish VS Code Marketplace extension** for the immutable
+   release tag, first with `publish=false`. After the green candidate receipt
+   is reviewed, dispatch it again with `publish=true`.
+
+The workflow verifies the tag-to-commit binding, restores from the lockfile,
+runs the high-severity audit and tests, seals the VSIX SHA-256, and verifies
+the sealed artifact again before it can call the Marketplace. It uses the
+Marketplace's GitHub Actions OIDC trusted-publishing exchange, so there is no
+long-lived publisher token in GitHub. A missing or mismatched Marketplace
+trusted-publishing policy fails closed at the publish boundary.
 
 ### 0.28.0 product surfaces
 
