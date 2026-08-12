@@ -2,7 +2,7 @@
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
   "description": "Create a reviewable MVP starting state in minutes, inspect proof, and keep independent verifier evidence visible in VS Code.",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -13,7 +13,6 @@
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Developer Tools",
     "Testing"
   ],
   "keywords": [

@@ -16,7 +16,7 @@ Lead with the low-friction value that a developer can verify:
 The intended next action is one local command:
 
 ```powershell
-pip install factoryline-code-factory==0.28.0
+pip install factoryline-code-factory==0.28.2
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -31,7 +31,7 @@ Make the first click useful for both novices and experienced AI-tool users:
 
 - [Live browser preview](https://zrk222-code-factory.static.hf.space) for a
   no-install product tour.
-- [60-second shipped UI walkthrough](https://github.com/zrk222/code-factory/releases/download/v0.28.0/code-factory-quickstart-v0171.mp4)
+- [60-second shipped UI walkthrough](https://github.com/zrk222/code-factory/releases/download/v0.28.2/code-factory-quickstart-v0171.mp4)
   for the visual path.
 - [Cursor and OpenCode MCP setup](AI_CLIENTS.md) for local, read-only proof
   context inside the clients developers already use.

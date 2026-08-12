@@ -34,7 +34,7 @@ proof exists.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.28.0` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.28.2` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21381405).
 
 Use the same local proof context from Cursor or OpenCode through the documented
@@ -47,9 +47,12 @@ capped, source-bound clarification sheet with recommendations and answer stubs.
 It never rewrites the PRD, invents answers, calls a model, or authorizes a
 build. Read the full [PRD Grill guide](https://github.com/zrk222/code-factory/blob/main/docs/PRD_GRILL.md).
 
-### What's new in 0.28.0
+### What's new in 0.28.2
 
-Proof Review, Verified Repair Sandbox, and Workspace Load Advisor give teams a
+This patch makes the companion VS Code adapter publishable under the Marketplace's
+supported `Testing` category. It does not change FactoryLine runtime behavior,
+permissions, or local-first data boundary. Proof Review, Verified Repair Sandbox,
+and Workspace Load Advisor give teams a
 clear local handoff before a repair or environment change. They are bounded
 observations and review packets: no automatic edits, model calls, deployment,
 credential access, or production-readiness claim.

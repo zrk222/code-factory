@@ -16,12 +16,12 @@
 > call a starter production-ready before the relevant proof exists.
 
 ```powershell
-pip install factoryline-code-factory==0.28.0
+pip install factoryline-code-factory==0.28.2
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
 
-[Watch the exact shipped UI in 60 seconds](https://github.com/zrk222/code-factory/releases/download/v0.28.0/code-factory-quickstart-v0171.mp4)
+[Watch the exact shipped UI in 60 seconds](https://github.com/zrk222/code-factory/releases/download/v0.28.2/code-factory-quickstart-v0171.mp4)
 to see the outcome-to-MVP path, then open **Graph Ops** in the local Studio to
 inspect the evidence path and next action. Prefer a browser preview? Open the
 [live Hugging Face Space](https://zrk222-code-factory.static.hf.space).
@@ -278,9 +278,9 @@ signs, approves, discovers credentials, or sends messages. See
 **Exact shipped UI:** the walkthrough below is rendered from the actual Factory
 Studio surface; it is not concept art.
 
-[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.28.0/code-factory-quickstart-v0171.mp4)
+[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.28.2/code-factory-quickstart-v0171.mp4)
 
-[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.28.0/code-factory-quickstart-v0171.mp4).
+[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.28.2/code-factory-quickstart-v0171.mp4).
 The absolute cover and release-asset URLs render from both GitHub and PyPI.
 
 If the free, local-first workflow helps you move from an idea to a reviewable
@@ -302,7 +302,7 @@ plugin never uploads the workspace, stores keys, or decides a release is ready.
 To make the path tangible, create a contained MVP and inspect its proof graph:
 
 ```powershell
-pip install factoryline-code-factory==0.28.0
+pip install factoryline-code-factory==0.28.2
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -350,7 +350,7 @@ Use Code Factory to create an app-shaped starting state, then immediately see
 which requirements it refuses to certify without real tests:
 
 ```bash
-pip install factoryline-code-factory==0.28.0
+pip install factoryline-code-factory==0.28.2
 factory targets --json
 factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
 factory coverage --root approval-tracker --json
@@ -703,7 +703,7 @@ an instruction or edit the Architecture Opinion Dock. See
 ## Install all five bricks
 
 ```bash
-pip install factoryline-code-factory==0.28.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
+pip install factoryline-code-factory==0.28.2 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
 factory doctor --json
 ```
 

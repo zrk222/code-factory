@@ -25,7 +25,7 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-08"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-11"
 
 
 def test_pypi_storefront_has_identity_and_canonical_links():
@@ -253,15 +253,26 @@ def test_python_ci_matrix_caches_package_downloads():
     assert "python-version: ${{ matrix.python }}\n          cache: pip" in workflow
 
 
+def test_vscode_marketplace_workflow_seals_the_candidate_and_requires_a_scoped_secret():
+    workflow = (ROOT / ".github" / "workflows" / "vscode-marketplace.yml").read_text(encoding="utf-8")
+
+    assert "environment: vscode-marketplace" in workflow
+    assert "secrets.VSCE_PAT" in workflow
+    assert "VSCE_PAT is required in the vscode-marketplace environment." in workflow
+    assert "sha256sum --check SHA256SUMS.txt" in workflow
+    assert "--packagePath vscode-marketplace-candidate/factoryline-vscode.vsix" in workflow
+    assert "--oidc" not in workflow
+
+
 def test_hosted_release_and_editor_versions_are_declared():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     vscode = json.loads((ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8"))
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.28.0"
+    assert project["version"] == "0.28.2"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.8.3"
+    assert vscode["version"] == "0.8.4"
     assert 'version = "0.8.4"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
@@ -407,8 +418,8 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.28.0"
-    assert metadata["publication_date"] == "2026-08-08"
+    assert metadata["version"] == "0.28.2"
+    assert metadata["publication_date"] == "2026-08-11"
     assert "Unified Graph Ops" in metadata["description"]
     assert "conceptual visual walkthrough" in metadata["description"]
     assert "prd-grill" in metadata["keywords"]

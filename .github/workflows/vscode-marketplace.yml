@@ -31,7 +31,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "The Marketplace trusted-publishing policy is verified during the publish step."
+          test -n "${{ secrets.VSCE_PAT }}" || {
+            echo "VSCE_PAT is required in the vscode-marketplace environment." >&2
+            exit 1
+          }
+          echo "A scoped Visual Studio Marketplace publisher credential is available."
 
   validate:
     name: validate immutable Marketplace candidate
@@ -108,7 +112,8 @@ jobs:
     environment: vscode-marketplace
     permissions:
       contents: read
-      id-token: write
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
     steps:
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -130,6 +135,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npx --yes @vscode/vsce@3.9.1 publish --oidc \
+          npx --yes @vscode/vsce@3.9.1 publish \
             --packagePath vscode-marketplace-candidate/factoryline-vscode.vsix \
             --skip-duplicate
