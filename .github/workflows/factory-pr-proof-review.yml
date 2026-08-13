@@ -1,0 +1,99 @@
+name: FactoryLine Proof Review
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+concurrency:
+  group: factoryline-proof-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  advisory-proof-review:
+    if: github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install local FactoryLine source
+        run: python -m pip install .
+      - name: Compile the local advisory payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_sha='${{ github.event.pull_request.base.sha }}'
+          head_sha='${{ github.event.pull_request.head.sha }}'
+          mapfile -t changed_paths < <(git diff --name-only "$base_sha" "$head_sha")
+          if (( ${#changed_paths[@]} == 0 )); then
+            echo "pull request has no changed paths" >&2
+            exit 1
+          fi
+          args=()
+          for changed_path in "${changed_paths[@]}"; do
+            args+=(--changed "$changed_path")
+          done
+          factory github proof-review \
+            --root . \
+            --base "$base_sha" \
+            --head-sha "$head_sha" \
+            "${args[@]}" \
+            --out-dir .factory/github-proof-review \
+            --json > github-proof-review.json
+      - name: Publish advisory Check and stable walkthrough comment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('github-proof-review.json', 'utf8'));
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = context.issue.number;
+            const marker = '<!-- factoryline-proof-review -->';
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.user.type === 'Bot' && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body: report.github_comment,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body: report.github_comment,
+              });
+            }
+            await github.rest.checks.create({
+              owner,
+              repo,
+              name: report.check.name,
+              head_sha: report.check.head_sha,
+              status: report.check.status,
+              conclusion: report.check.conclusion,
+              external_id: report.payload_sha256,
+              output: report.check.output,
+            });
+      - name: Add the exact walkthrough to the job summary
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          print(json.load(open("github-proof-review.json", encoding="utf-8"))["github_comment"])
+          PY
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: factoryline-github-proof-review
+          path: |
+            github-proof-review.json
+            .factory/github-proof-review/
+          if-no-files-found: error

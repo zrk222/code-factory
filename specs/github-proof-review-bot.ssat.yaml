@@ -1,0 +1,43 @@
+name: github-proof-review-bot
+language: python
+modules:
+  - name: github_proof_review
+    path: factoryline/github_proof_review.py
+    functions:
+      - name: render_github_proof_review
+        args: ["review: object", "head_sha: str"]
+        returns: dict[str, Any]
+      - name: compile_github_proof_review
+        args: ["root: Path", "base: str = 'main'", "changed: list[str] | None = None", "head_sha: str = ''"]
+        returns: dict[str, Any]
+      - name: write_github_proof_review_artifacts
+        args: ["payload: dict[str, Any]", "out_dir: Path"]
+        returns: dict[str, Any]
+  - name: change_review
+    path: factoryline/change_review.py
+    functions:
+      - name: review_change
+        args: ["root: Path", "base: str = 'main'", "changed: list[str] | None = None"]
+        returns: dict
+dependencies:
+  - from: github_proof_review
+    to: change_review
+invariants:
+  - name: proof_payload_rendering_has_no_remote_or_execution_authority
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:execute|approve|merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: github_proof_review
+        symbol: render_github_proof_review
+        max_lines: 120
+      - module: github_proof_review
+        symbol: compile_github_proof_review
+        max_lines: 20
+  - name: default_rendering_never_writes_artifacts
+    forbid_pattern: "write_(?:text|bytes)\\(|replace\\("
+    scopes:
+      - module: github_proof_review
+        symbol: render_github_proof_review
+        max_lines: 120
+      - module: github_proof_review
+        symbol: compile_github_proof_review
+        max_lines: 20

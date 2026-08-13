@@ -63,6 +63,19 @@ def test_change_review_prioritizes_unmatched_paths_before_other_gaps(tmp_path: P
     assert "Unmatched: app/service.py" in review["mermaid"]
 
 
+def test_change_review_preserves_hidden_workspace_paths_in_all_evidence(tmp_path: Path) -> None:
+    path = ".github/workflows/proof-review.yml"
+
+    review = review_change(tmp_path, changed=[path])
+
+    assert review["changed_paths"] == [path]
+    assert review["impact"]["changed_paths"] == [path]
+    assert review["impact"]["unmatched_changed_paths"] == [path]
+    assert review["findings"][0]["facts"]["path"] == path
+    assert f"`{path}`" in review["unproven_claims"][0]
+    assert f"Unmatched: {path}" in review["mermaid"]
+
+
 def test_change_review_writes_only_explicit_local_artifacts(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     out_dir = tmp_path / "review-artifacts"

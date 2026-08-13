@@ -80,6 +80,11 @@ from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
+from .github_proof_review import (
+    GitHubProofReviewError,
+    compile_github_proof_review,
+    write_github_proof_review_artifacts,
+)
 from .repair_sandbox import (
     RepairSandboxError,
     create_repair_scope,
@@ -745,6 +750,16 @@ def main(argv=None) -> int:
     change_review.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
     change_review.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
     change_review.add_argument("--json", action="store_true")
+
+    github = sub.add_parser("github", help="prepare an evidence-bound, advisory GitHub pull-request review without a network call")
+    github_sub = github.add_subparsers(required=True, dest="github_cmd")
+    github_proof_review = github_sub.add_parser("proof-review", help="compile a Diff-to-Proof Review into an advisory Check/comment payload")
+    github_proof_review.add_argument("--root", default=".")
+    github_proof_review.add_argument("--base", default="main")
+    github_proof_review.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
+    github_proof_review.add_argument("--head-sha", required=True, help="exact 40-character lowercase pull-request head SHA")
+    github_proof_review.add_argument("--out-dir", help="explicit local directory for JSON and Markdown payload artifacts")
+    github_proof_review.add_argument("--json", action="store_true")
 
     repair = sub.add_parser("repair", help="prepare a sealed Change List scope and inspect a candidate patch without applying it")
     repair_sub = repair.add_subparsers(required=True, dest="repair_cmd")
@@ -2099,6 +2114,35 @@ def main(argv=None) -> int:
             if review.get("artifacts"):
                 print(f"packet      : {review['artifacts']['paths']['markdown']}")
             print("authority   : no execution, merge, publication, deployment, or credential access")
+        return 0
+    if a.cmd == "github":
+        try:
+            payload = compile_github_proof_review(
+                Path(a.root), base=a.base, changed=a.changed or None, head_sha=a.head_sha,
+            )
+            if a.out_dir:
+                payload["artifacts"] = write_github_proof_review_artifacts(payload, Path(a.out_dir))
+        except (ChangeReviewError, GitHubProofReviewError) as exc:
+            error = {
+                "schema": "factory.github_proof_review.error.v1",
+                "marker": getattr(exc, "code", "GITHUB_PROOF_REVIEW_INPUT_INVALID"),
+                "code": getattr(exc, "code", "GITHUB_PROOF_REVIEW_INPUT_INVALID"),
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"github proof review failed: {error['code']}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("factory github proof-review (local, advisory only)")
+            print("=" * 54)
+            print(f"head SHA     : {payload['head_sha']}")
+            print(f"review SHA   : {payload['review_sha256']}")
+            print(f"next action  : {payload['next_action']['action']}")
+            print(f"cohorts      : {len(payload['path_cohorts'])}")
+            if payload.get("artifacts"):
+                print(f"packet       : {payload['artifacts']['paths']['markdown']}")
+            print("authority    : no network, source write, test execution, approval, merge, or credential access")
         return 0
     if a.cmd == "repair":
         try:

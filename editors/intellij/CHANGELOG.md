@@ -1,5 +1,11 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.5
+
+- Refresh the Marketplace surface for the optional GitHub Proof Review
+  workflow: it can coexist with CodeRabbit or another AI reviewer while
+  preserving the local-first, no-vendor-credential, no-auto-approval boundary.
+
 ## 0.8.0 - 2026-08-07
 
 - Surface the 0.25.0 contradiction gate: conflicts detected before the

@@ -46,6 +46,10 @@ not been observed.
 > - understand which prior read-only proof may be reused or must rerun;
 > - clarify the next unresolved PRD decisions before a scaffold compounds them;
 > - record paired time, token, and cost observations without inferred savings.
+> - keep AI-review suggestions separate from a neutral, commit-bound proof
+>   walkthrough in a GitHub pull request. The optional workflow can coexist
+>   with CodeRabbit or another reviewer; it does not require their account,
+>   import AI comments as proof, approve, or merge.
 >
 > **Useful for a first MVP, a careful code review, and a team workflow:**
 > start from an outcome, inspect the evidence behind a change, recover the
@@ -93,6 +97,7 @@ be recaptured in a supported JetBrains IDE after the visible plugin UI changes.
 | Create | Run `factory mvp` | A contained `my-mvp` workspace is generated | A starter is not certified production-ready. |
 | Understand | Open Studio → **Graph Ops** | Local requirements, slices, mission, proof, and gate state are visualized | Graph Ops remains read-only. |
 | Improve | Record paired observations | Time/token/cost fields stay unknown until measured | No modeled productivity or conversion claim is emitted. |
+| Review remotely | Add the optional GitHub Proof Review workflow | One neutral Check plus a stable, commit-bound proof walkthrough can sit beside CodeRabbit or another reviewer | It uses no vendor credential or comment as proof and cannot approve or merge. |
 
 ## Measurement protocol
 

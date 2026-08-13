@@ -62,6 +62,12 @@ test, commits, publishes, deploys, accesses credentials, or sends project data
 over the network. A future repair flow must create an isolated candidate and
 pass independent checks before a human chooses whether to apply it.
 
+For a GitHub pull request, the same local proof facts can appear beside
+CodeRabbit or another AI reviewer through the optional
+[`factory github proof-review`](../../docs/GITHUB_PROOF_REVIEW.md) workflow.
+It is complementary: FactoryLine does not require a vendor account, ingest AI
+comments, auto-approve, merge, or treat a suggestion as verification evidence.
+
 Verified Repair Sandbox is that first professional repair-control surface: it
 keeps a candidate's declared Git patch paths inside one native Change List,
 blocks stale scope bytes, and leaves a local JSON/Markdown/Mermaid handoff for
@@ -77,7 +83,7 @@ configuration change. See [`docs/WORKSPACE_ADVISOR.md`](../../docs/WORKSPACE_ADV
 
 ## Install
 
-1. Install `factoryline-code-factory==0.28.2` into the Python environment that
+1. Install `factoryline-code-factory==0.29.0` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the

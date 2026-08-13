@@ -52,12 +52,26 @@ developers can find it. This optional link only opens the repository.
 | Build a first slice | [`factory mvp`](docs/START_HERE.md) | A contained, app-shaped local starting state |
 | Clarify a fuzzy PRD | [`factory prd grill`](docs/PRD_GRILL.md) | Source-bound questions instead of invented requirements |
 | Review an AI-assisted diff | [`factory change review`](docs/DIFF_TO_PROOF_REVIEW.md) | A local risk, proof-gap, and next-action packet |
+| Add evidence to a GitHub PR | [`factory github proof-review`](docs/GITHUB_PROOF_REVIEW.md) | One neutral Check and stable proof walkthrough, tied to the head commit |
 | Inspect delivery state | [`factory studio`](docs/TARGET_COMPILER.md) | Graph Ops, receipts, and the next supported action |
 | Verify supplied work | [Verifier Plane](docs/VERIFIER_PLANE.md) | Independent, hash-bound evidence checks |
 
 For the short product map, read the [overview](docs/OVERVIEW.md). For a two-minute
 first run, follow [Start Here](docs/START_HERE.md). For full command and contract
 reference, browse the [documentation directory](docs/).
+
+## Use Code Factory with CodeRabbit or another AI reviewer
+
+They solve different parts of the review problem. CodeRabbit can supply AI
+findings and suggestions; Code Factory makes declared local proof gaps,
+coverage, and the next review action explicit. Enable the opt-in
+[GitHub Proof Review](docs/GITHUB_PROOF_REVIEW.md) workflow to put one neutral,
+commit-bound FactoryLine Check and walkthrough beside existing CodeRabbit
+comments. It uses no CodeRabbit account, API, credential, or output as proof.
+
+That makes Code Factory a standalone proof gate for teams that do not use an AI
+reviewer, and a complementary evidence layer for teams that do. It does not
+replace human review, auto-approve a pull request, or merge code.
 
 ## Use it where you work
 
@@ -105,7 +119,7 @@ output map make the same proof context reusable by a client you choose.
   [savings boundaries](docs/SAVINGS_TRACKER.md) for advanced evidence workflows.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.28.2.md),
+- See the [release notes](docs/RELEASE_NOTES_0.29.0.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

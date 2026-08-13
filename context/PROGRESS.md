@@ -220,3 +220,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-08 11:03] GATE plan jetbrains-workspace-advisor approver=codex tasks=4 sha=d5c5204f9b19ac41
 - [2026-08-09 01:49] GATE spec release-v0280 approver=human strict=True sha=e50cd344ec792077
 - [2026-08-09 02:33] GATE spec release-v0280 approver=human strict=True sha=e50cd344ec792077
+- [2026-08-13 07:10] GATE spec github-proof-review-bot approver=human strict=True sha=4a285855d663da82
+- [2026-08-13 07:10] GATE plan github-proof-review-bot approver=human tasks=3 sha=4a285855d663da82
+- [2026-08-13 07:13] GATE spec github-proof-review-bot approver=human strict=True sha=d705f0455af8858d
+- [2026-08-13 07:13] GATE plan github-proof-review-bot approver=human tasks=3 sha=d705f0455af8858d

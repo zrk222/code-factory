@@ -34,6 +34,12 @@ Each command requires a trusted VS Code workspace. FactoryLine accepts only a
 feature name containing letters, digits, hyphens, and underscores; it does not
 pass arbitrary shell fragments to your terminal.
 
+For a GitHub pull request, the optional
+[`factory github proof-review`](../../docs/GITHUB_PROOF_REVIEW.md) workflow
+can publish the same deterministic proof facts beside CodeRabbit or another AI
+reviewer. It does not require their account, import their comments as proof,
+auto-approve, merge, or modify source.
+
 ## Install
 
 Install the Code Factory CLI first:
@@ -47,7 +53,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.8.4.vsix
+code --install-extension factoryline-vscode-0.8.5.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

@@ -55,6 +55,30 @@ Use one of these links per post, with one concrete question or outcome. Do not
 paste every channel link into a community thread; the extra links dilute the
 action and can look promotional rather than useful.
 
+## Free integration message: AI review plus proof
+
+The useful comparison is not "Code Factory versus CodeRabbit." It is a clear
+division of work: an AI reviewer can surface code concerns; FactoryLine makes
+the declared proof state explicit. Teams can run both on one pull request
+without sharing credentials or treating a model comment as verification.
+
+Use this as a factual, owner-reviewed reply where a developer asks how Code
+Factory fits an existing review stack:
+
+```text
+Code Factory is not trying to replace the AI reviewer you already use. Its
+optional GitHub Proof Review adds one neutral, commit-bound walkthrough of the
+changed scope, declared proof gaps, and next action beside normal review
+comments. It needs no CodeRabbit account or API and never auto-approves or
+merges. The point is to keep suggestions and evidence distinct.
+
+https://github.com/zrk222/code-factory/blob/main/docs/GITHUB_PROOF_REVIEW.md
+```
+
+This is a draft for a relevant discussion, not an automated post. Disclose the
+maintainer relationship, check the target's rules, answer follow-up questions
+from the owner account, and do not solicit votes, reviews, or stars.
+
 ## Ethical compounding loop
 
 ```mermaid
@@ -123,6 +147,22 @@ skeptical feedback on the proof model, the generated MVP path, and what would
 make the local experience useful in a real team.
 
 Repository: https://github.com/zrk222/code-factory
+```
+
+### Show HN follow-up: review-stack integration
+
+Use only in a relevant existing discussion or a new owner-reviewed submission
+whose current rules permit it:
+
+```text
+I added an optional GitHub Proof Review adapter because I do not think another
+AI reviewer is the missing layer. It can sit next to CodeRabbit or any review
+tool and adds a neutral check with the exact changed scope, declared proof
+gaps, and one fact-derived next action. It does not use a vendor API, import AI
+comments as proof, auto-approve, or merge. I would value criticism of that
+separation: should review suggestions and deterministic evidence be distinct?
+
+https://github.com/zrk222/code-factory/blob/main/docs/GITHUB_PROOF_REVIEW.md
 ```
 
 ### Indie Hackers

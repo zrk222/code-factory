@@ -23,7 +23,7 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     )
     assert len(short_description) <= 60
     assert "factoryline-code-factory" in page
-    assert "github.com/zrk222/code-factory/releases/tag/v0.28.2" in page
+    assert "github.com/zrk222/code-factory/releases/tag/v0.29.0" in page
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "Actual product capture set" in page
     assert '<meta name="viewport"' in page
@@ -58,10 +58,13 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "code-factory-quickstart-v0171.mp4" not in page
     assert "how-it-works/" not in page
     assert "New in 0." not in page
-    assert "pip install factoryline-code-factory==0.28.2" not in page
+    assert "pip install factoryline-code-factory==0.29.0" not in page
     assert "prefers-reduced-motion" in page
     assert "Skip to product proof" in page
     assert 'class="brand" href="#main"' in page
+    assert "Use AI review suggestions and deterministic proof on the same PR." in page
+    assert "CodeRabbit or another reviewer" in page
+    assert "GitHub Proof Review" in readme
 
 
 def test_huggingface_workflow_uses_secret_and_scoped_source_directory() -> None:

@@ -279,7 +279,9 @@ def risk_for_paths(paths: Iterable[str]) -> dict:
     stage_reasons: dict[tuple[str, str], set[str]] = {}
     path_entries = []
     for raw in paths:
-        path = raw.replace("\\", "/").lstrip("./")
+        # Preserve dotfiles and hidden directories in the evidence presented
+        # to users; `.github/...` is not the same path as `github/...`.
+        path = raw.replace("\\", "/").removeprefix("./")
         stages: list[tuple[str, str, str]] = []
         if path.startswith(("specs/", "plans/", "handoff/")):
             stages.extend([
