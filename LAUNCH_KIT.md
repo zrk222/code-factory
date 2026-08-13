@@ -33,18 +33,11 @@ ask for votes, stars, or reviews.
 > I would love feedback on one question: what would you need to prove before
 > allowing an AI-generated change into a production repository?
 
-**Exact shipped UI:** the 60-second walkthrough at
-`docs/assets/code-factory-quickstart-v0171.mp4` shows the shipped Factory Studio
-UI, including the Product Graph, value-slice queue, approval decision, proof
-timeline, and Meter v2. Product Hunt accepts a full YouTube URL for video
-entries, not a local MP4; upload this exact file to YouTube before adding it as
-a video. Do not replace it with concept art or a stale dashboard image.
-
-**Concept illustrations:** upload all nine files from
-`docs/assets/how-it-works/` in the exact order recorded in
-`docs/PRODUCT_HUNT_GALLERY.md`. They explain the workflow and are not UI
-screenshots or measured outcome evidence. Preview the portrait originals in the
-Product Hunt editor before publishing.
+**Current product media:** use the FactoryLine logo and the two exact local
+Studio captures listed in `docs/PRODUCT_HUNT_GALLERY.md`. They show the
+outcome-first MVP path and Graph Ops proof path without fabricated metrics or
+a simulated IDE. Do not use the retired v0.17 recording, blank-dashboard
+captures, or concept art in a public listing.
 
 ## WizeMe.APP: Product Hunt Maker Comment
 

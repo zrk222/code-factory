@@ -21,9 +21,9 @@ factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
 
-The README then shows the shipped UI walkthrough and an optional GitHub-star
-link. It makes no star-count, download, conversion, productivity, or causal
-growth claim.
+The README then shows actual current Factory Studio captures and an optional
+GitHub-star link. It makes no star-count, download, conversion, productivity,
+or causal growth claim.
 
 ## Client and demo discovery
 
@@ -31,8 +31,8 @@ Make the first click useful for both novices and experienced AI-tool users:
 
 - [Live browser preview](https://zrk222-code-factory.static.hf.space) for a
   no-install product tour.
-- [60-second shipped UI walkthrough](https://github.com/zrk222/code-factory/releases/download/v0.28.2/code-factory-quickstart-v0171.mp4)
-  for the visual path.
+- [Current product visual set](PRODUCT_VISUALS.md) for the actual local Studio
+  path.
 - [Cursor and OpenCode MCP setup](AI_CLIENTS.md) for local, read-only proof
   context inside the clients developers already use.
 - [PyPI install](https://pypi.org/project/factoryline-code-factory/) for the
@@ -52,7 +52,7 @@ flowchart LR
     D --> E["A developer may share it in a PR, README, or team message"]
     C --> F["GitHub visitor"]
     E --> F
-    F --> G["One-command first run + exact UI walkthrough"]
+    F --> G["One-command first run + current product captures"]
     G --> A
 ```
 
@@ -117,30 +117,38 @@ Repository: https://github.com/zrk222/code-factory
 **Title**
 
 ```text
-I made a free, local-first way to start a reviewable MVP instead of another opaque app generator
+I built Code Factory because I kept getting fooled by passing tests
 ```
 
 **Draft body**
 
 ```text
-I am the founder/maintainer of Code Factory. The narrow idea is simple: a
-plain-language outcome should get you to an app-shaped, reviewable starting
-state in minutes, but generated code should not be labeled production-ready
-until product-specific proof exists.
+I am the founder/maintainer of Code Factory. I built it after falling into the
+same trap in my own work: a coding assistant would generate code, generate
+tests, and leave me with green checks. I would move on, then the important path
+would fail when I used the feature for real. The tests passed; the thing still
+failed.
 
-The first command creates a contained MVP. It also records source-bound
-evidence and writes a Mermaid output map. Graph Ops makes the requirements,
-receipts, gates, and next evidence step visible. The project is free and open
-source; it is designed to grow from a first MVP into more rigorous team and
-enterprise workflows without silently gaining release, credential, or
-publishing authority.
+The narrow goal is not to add another opaque agent. It is to make the proof path
+visible: what requirement a change supports, which checks exist, what evidence
+is missing, and what needs a human decision next. Code Factory can start a
+contained local MVP, produce receipts and a Mermaid output map, challenge
+declared controls for hollow behavior, and show a read-only Graph Ops view.
+It does not upload source, publish, deploy, discover credentials, or call a
+starter production-ready.
 
-I am looking for blunt feedback from builders and engineering leaders: where
-would this reduce handoff friction, and where would the proof model get in the
-way?
+It is free and open source because I built it to save my own time and aggravation
+first, and I think the problem is common enough to be worth sharing. I would
+value blunt feedback from builders and engineering leaders: where would this
+actually save you time, and where would it add ceremony without earning its keep?
 
 Repository: https://github.com/zrk222/code-factory
 ```
+
+For a longer community article, use
+[`docs/WHY_I_BUILT_CODE_FACTORY.md`](WHY_I_BUILT_CODE_FACTORY.md). Review and
+submit only from the owner account; do not turn the draft into a comment or a
+post without an explicit submission request.
 
 ## Reddit enterprise-operations lane — candidates, not preapproval
 

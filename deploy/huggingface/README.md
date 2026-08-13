@@ -66,9 +66,10 @@ rejects self-grading and byte drift, then Graph Ops shows the session as
 Factory validates the contract; an external supervised runner must enforce
 runtime sandbox, network, and credential boundaries.
 
-The illustrations explain the workflow; they are not UI screenshots or
-measured outcome evidence. The quick-start video is rendered from the shipped
-Factory Studio interface.
+The public visual set uses actual Factory Studio captures and the current
+FactoryLine identity asset. It is product behavior evidence, not measured time,
+token, cost, productivity, conversion, Marketplace approval, or
+production-readiness evidence.
 
 ### Contradiction gate (0.26.0)
 

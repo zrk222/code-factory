@@ -1,104 +1,105 @@
-"""Publication proof for the owner-supplied Code Factory concept artwork."""
+"""Publication proof for the current, product-only Code Factory visual set."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import struct
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ASSET_ROOT = ROOT / "docs" / "assets" / "how-it-works"
+ASSETS = ROOT / "docs" / "assets"
+CURRENT_PRODUCT_CAPTURES = (
+    ASSETS / "factoryline-logo-480.png",
+    ASSETS / "marketplace" / "factory-studio-mvp-1280x800.png",
+    ASSETS / "marketplace" / "graph-ops-studio-1280x800.png",
+)
 PUBLIC_VISUAL_SURFACES = (
     ROOT / "README.md",
     ROOT / "LAUNCH_KIT.md",
     ROOT / "PUBLICATION_GUIDE.md",
-    ROOT / "docs" / "HOW_IT_WORKS_VISUAL.md",
+    ROOT / "docs" / "PRODUCT_VISUALS.md",
     ROOT / "docs" / "PRODUCT_HUNT_GALLERY.md",
+    ROOT / "deploy" / "huggingface" / "index.html",
+)
+RETIRED_PUBLIC_VISUALS = (
+    "code-factory-quickstart-v0171.mp4",
+    "code-factory-quickstart-cover-v0171.png",
+    "factory-studio-control-room-1080.png",
+    "factory-studio-control-room.png",
+    "code-factory-design.png",
+    "code-factory-proof-first.png",
+    "how-it-works/",
+    "HOW_IT_WORKS_VISUAL.md",
 )
 
 
-def _png_dimensions(data: bytes) -> tuple[int, int]:
+def _png_dimensions(path: Path) -> tuple[int, int]:
+    data = path.read_bytes()
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
     assert data[12:16] == b"IHDR"
     return struct.unpack(">II", data[16:24])
 
 
-def _manifest() -> dict:
-    return json.loads((ASSET_ROOT / "manifest.json").read_text(encoding="utf-8"))
+def test_current_product_visuals_are_real_capture_shapes() -> None:
+    assert _png_dimensions(CURRENT_PRODUCT_CAPTURES[0]) == (480, 480)
+    assert _png_dimensions(CURRENT_PRODUCT_CAPTURES[1]) == (1280, 800)
+    assert _png_dimensions(CURRENT_PRODUCT_CAPTURES[2]) == (1280, 800)
+
+    visuals = (ROOT / "docs" / "PRODUCT_VISUALS.md").read_text(encoding="utf-8")
+    for asset in (
+        "factoryline-logo-480.png",
+        "factory-studio-mvp-1280x800.png",
+        "graph-ops-studio-1280x800.png",
+    ):
+        assert asset in visuals
+    assert "incomplete proof state" in visuals
+    assert "not a simulated green result" in visuals
 
 
-def test_visual_gallery_assets_are_exact_and_unique() -> None:
-    manifest = _manifest()
-    entries = manifest["illustrations"]
-
-    assert manifest["schema"] == "code-factory.visual-story.v1"
-    assert manifest["label"] == "Concept illustrations"
-    assert manifest["evidence_boundary"] == "Not UI screenshots or measured outcome evidence."
-    assert len(entries) == 9
-    assert [entry["order"] for entry in entries] == list(range(1, 10))
-    assert [entry["stage"] for entry in entries] == [
-        "idea intake",
-        "product shaping",
-        "deterministic compilation",
-        "security contracts",
-        "governed access",
-        "proof by sabotage",
-        "failure feedback",
-        "signed proof chain",
-        "verified release",
-    ]
-
-    digests = set()
-    for entry in entries:
-        path = ASSET_ROOT / entry["filename"]
-        data = path.read_bytes()
-        digest = hashlib.sha256(data).hexdigest()
-        assert digest == entry["sha256"]
-        assert _png_dimensions(data) == (1122, 1402)
-        assert entry["width"] == 1122
-        assert entry["height"] == 1402
-        assert entry["alt"].strip()
-        digests.add(digest)
-
-    assert len(digests) == 9
-    assert not (ASSET_ROOT / "code-factory-in-action.png").exists()
-
-
-def test_public_storefronts_label_concept_art_and_exclude_unsupported_claims() -> None:
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert readme.count("Concept illustrations") == 1
-    assert readme.count("Exact shipped UI") == 1
-    assert "docs/assets/marketplace/factory-studio-mvp-1280x800.png" in readme
-    assert "docs/HOW_IT_WORKS_VISUAL.md" in readme
-
+def test_public_storefronts_use_current_product_media_and_exclude_retired_visuals() -> None:
     public_copy = "\n".join(path.read_text(encoding="utf-8") for path in PUBLIC_VISUAL_SURFACES)
+
+    assert "docs/PRODUCT_VISUALS.md" in public_copy
+    assert "factory-studio-mvp-1280x800.png" in public_copy
+    assert "graph-ops-studio-1280x800.png" in public_copy
+    assert "factoryline-logo-480.png" in public_copy
+    for retired in RETIRED_PUBLIC_VISUALS:
+        assert retired not in public_copy
     for unsupported in ("2.6 hrs", "$14.37", "82%", "github.com/code-factory"):
         assert unsupported not in public_copy
-    assert "concept illustrations" in public_copy.lower()
-    assert "exact shipped ui" in public_copy.lower()
 
 
 def test_product_hunt_gallery_is_copy_ready_and_platform_accurate() -> None:
     guide = (ROOT / "docs" / "PRODUCT_HUNT_GALLERY.md").read_text(encoding="utf-8")
-    names = [entry["filename"] for entry in _manifest()["illustrations"]]
+    names = (
+        "factoryline-logo-480.png",
+        "factory-studio-mvp-1280x800.png",
+        "graph-ops-studio-1280x800.png",
+    )
     offsets = [guide.index(name) for name in names]
 
     assert offsets == sorted(offsets)
-    assert "at least 2 images" in guide
-    assert "1270 x 760" in guide
-    assert "full YouTube URL" in guide
-    assert "Source images are 1122 x 1402 portrait PNGs" in guide
+    assert "at least two images" in guide
+    assert "1270 × 760" in guide
+    assert "native aspect ratio" in guide
     assert "LISTING_NOT_FOUND" in guide
 
 
-def test_zenodo_and_release_metadata_include_the_visual_walkthrough() -> None:
+def test_zenodo_and_release_metadata_only_package_current_public_visuals() -> None:
     metadata = json.loads((ROOT / ".zenodo.json").read_text(encoding="utf-8"))
     workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
 
     assert metadata["version"] == "0.28.2"
     assert metadata["publication_date"] == "2026-08-11"
-    assert "conceptual visual walkthrough" in metadata["description"]
-    assert "not UI screenshots or measured outcome evidence" in metadata["description"]
-    assert "docs/assets/how-it-works/*.png" in workflow
+    assert "current FactoryLine identity asset" in metadata["description"]
+    assert "conceptual visual walkthrough" not in metadata["description"]
+    assert "product-captures" in metadata["keywords"]
+    for asset in (
+        "docs/assets/factoryline-logo-480.png",
+        "docs/assets/marketplace/factory-studio-mvp-1280x800.png",
+        "docs/assets/marketplace/graph-ops-studio-1280x800.png",
+    ):
+        assert asset in workflow
+    for retired in RETIRED_PUBLIC_VISUALS:
+        assert retired not in workflow
