@@ -18,11 +18,11 @@
 factory mvp "Build an approval tracker" --root .
 ```
 
-[Watch the exact shipped UI in 60 seconds](https://github.com/zrk222/code-factory/releases/download/v0.28.2/code-factory-quickstart-v0171.mp4),
-then inspect the evidence path and next action in local Factory Studio. Prefer a
-browser preview? Open the [live Hugging Face Space](https://zrk222-code-factory.static.hf.space).
+[Open the current product visuals](docs/PRODUCT_VISUALS.md), then inspect the
+evidence path and next action in local Factory Studio. Prefer a browser preview?
+Open the [live Hugging Face Space](https://zrk222-code-factory.static.hf.space).
 
-![Exact shipped UI: Factory Studio after generating a local MVP](docs/assets/marketplace/factory-studio-mvp-1280x800.png)
+![Actual Factory Studio: the outcome-first local MVP path](docs/assets/marketplace/factory-studio-mvp-1280x800.png)
 
 ## What it does
 
@@ -101,7 +101,12 @@ automatic repair or release authority. Browse the complete, versioned history in
 [CHANGELOG.md](CHANGELOG.md) instead of decoding it from this landing page.
 
 - See the [exact release notes](docs/RELEASE_NOTES_0.28.2.md), [release channels](docs/RELEASE_CHANNELS.md), and [publication guide](PUBLICATION_GUIDE.md).
-- Explore the [Concept illustrations](docs/HOW_IT_WORKS_VISUAL.md). They describe the workflow; they are not UI screenshots or measured outcome evidence.
+- View the [current product visuals](docs/PRODUCT_VISUALS.md). They are actual
+  product captures and a current FactoryLine identity asset, not conceptual art
+  or measured outcome evidence.
+- Read [why I built Code Factory](docs/WHY_I_BUILT_CODE_FACTORY.md): a personal
+  account of passing AI-generated tests that failed in real use, and why the
+  project is free and local-first.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md) for the design and limits of the habituation gate.
 - Read [Graph Ops](docs/GRAPH_OPS.md), [proof reuse](docs/PROOF_REUSE.md), and [savings boundaries](docs/SAVINGS_TRACKER.md) when the project needs more than a first MVP.
 

@@ -25,7 +25,7 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "factoryline-code-factory" in page
     assert "github.com/zrk222/code-factory/releases/tag/v0.28.2" in page
     assert "doi.org/10.5281/zenodo.21381405" in page
-    assert "not UI screenshots or measured outcome evidence" in page
+    assert "Actual product capture set" in page
     assert '<meta name="viewport"' in page
     assert "Create your reviewable MVP. See its proof in minutes." in page
     assert "Why pay for opaque app generators?" in readme
@@ -43,7 +43,7 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "Unique installs: not exposed by the listing" in page
     assert 'id="first-run"' in page
     assert "Start free with pip" in page
-    assert "Watch the exact 60-second UI" in page
+    assert "View current product visuals" in page
     assert "Install free in JetBrains" in page
     assert "JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md" in page
     assert "Release test suite passed" in page
@@ -54,6 +54,9 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "factory prd grill PRD.md --root . --mode quick" in page
     assert "factory-studio-mvp-1280x800.png" in page
     assert "graph-ops-studio-1280x800.png" in page
+    assert "factoryline-logo-480.png" in page
+    assert "code-factory-quickstart-v0171.mp4" not in page
+    assert "how-it-works/" not in page
     assert "prefers-reduced-motion" in page
     assert "Skip to product proof" in page
     assert 'class="brand" href="#main"' in page

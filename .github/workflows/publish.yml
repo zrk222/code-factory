@@ -144,9 +144,9 @@ jobs:
           gh release upload "${{ github.event.release.tag_name }}"
           release-bundle/python/*
           release-bundle/editors/*
-          docs/assets/code-factory-quickstart-v0171.mp4
-          docs/assets/code-factory-quickstart-cover-v0171.png
-          docs/assets/how-it-works/*.png
+          docs/assets/factoryline-logo-480.png
+          docs/assets/marketplace/factory-studio-mvp-1280x800.png
+          docs/assets/marketplace/graph-ops-studio-1280x800.png
           docs/assets/*.svg
           docs/assets/verify-policy.gif
           --clobber

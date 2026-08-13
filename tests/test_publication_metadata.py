@@ -73,7 +73,7 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     assert "Generate a local MVP, then catch hollow tests before review." in readme
     assert readme.index(value) < readme.index("## What it does")
     assert "factory mvp \"Build an approval tracker\" --root ." in readme
-    assert "Watch the exact shipped UI in 60 seconds" in readme
+    assert "Open the current product visuals" in readme
     assert "factory-studio-mvp-1280x800.png" in readme
     assert readme.index("factory mvp \"Build an approval tracker\" --root .") < readme.index("## Install")
     assert "live Hugging Face Space" in readme
@@ -422,29 +422,35 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["version"] == "0.28.2"
     assert metadata["publication_date"] == "2026-08-11"
     assert "Unified Graph Ops" in metadata["description"]
-    assert "conceptual visual walkthrough" in metadata["description"]
+    assert "current FactoryLine identity asset" in metadata["description"]
+    assert "conceptual visual walkthrough" not in metadata["description"]
     assert "prd-grill" in metadata["keywords"]
     assert "verifier-plane" in metadata["keywords"]
 
     assets = ROOT / "docs" / "assets"
     for name in (
         "verify-policy.gif",
-        "code-factory-proof-first.png",
+        "factoryline-logo-480.png",
         "factory-editor-control-room.svg",
         "prd-to-app-factory.svg",
         "product-missions.svg",
         "signal-loop.svg",
-        "code-factory-quickstart-cover-v0171.png",
-        "code-factory-quickstart-v0171.mp4",
     ):
         assert (assets / name).is_file(), name
-    visual_assets = assets / "how-it-works"
-    assert len(list(visual_assets.glob("*.png"))) == 9
-    assert (visual_assets / "manifest.json").is_file()
-    assert (ROOT / "docs" / "HOW_IT_WORKS_VISUAL.md").is_file()
+    for retired in (
+        "code-factory-proof-first.png",
+        "code-factory-quickstart-cover-v0171.png",
+        "code-factory-quickstart-v0171.mp4",
+        "factory-studio-control-room.png",
+        "factory-studio-control-room-1080.png",
+    ):
+        assert not (assets / retired).exists(), retired
+    assert not (assets / "how-it-works").exists()
+    assert (ROOT / "docs" / "PRODUCT_VISUALS.md").is_file()
+    assert not (ROOT / "docs" / "HOW_IT_WORKS_VISUAL.md").exists()
 
     source_manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
-    assert "recursive-include docs *.md *.gif *.png *.svg *.mp4 *.json" in source_manifest
+    assert "recursive-include docs *.md *.gif *.png *.svg *.json" in source_manifest
     assert "graph_ops.html" in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
     for path in (
@@ -460,7 +466,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
         "include .zenodo.json",
         "include CITATION.cff",
         "recursive-include docs *.md *.gif *.png *.svg",
-        "*.mp4",
+        "*.json",
     ):
         assert entry in manifest
 

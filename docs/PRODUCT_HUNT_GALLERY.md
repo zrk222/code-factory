@@ -1,30 +1,32 @@
-# Product Hunt Visual Gallery
+# Product Hunt visual gallery
 
-## Concept illustrations
+Use this gallery only on the existing **Code Factory** Product Hunt product.
+It is not a duplicate-launch kit.
 
-These images are explanatory artwork, not screenshots of the shipped Factory
-Studio UI and not measured outcome evidence. Keep the exact UI demonstration
-separate from this gallery.
+## Approved current media
 
-Release v0.22.0 adds three concrete operational use cases to the listing copy:
+Use the files in this exact order:
 
-- Exact paired time, token, and cost savings with aggregate-safe exports,
-  negative results preserved, and productivity withheld until equivalent
-  outcomes are explicitly asserted and hash-bound.
-- Durable, receipt-backed missions that pause for human plan review, resume
-  with fresh worker context, and refuse completion without independent proof.
-- Secret-free multi-provider BYOK routing across CLI, Studio, VS Code, and
-  JetBrains with explicit quality, budget, allowlist, and cache rails.
+1. `docs/assets/factoryline-logo-480.png` — current FactoryLine identity.
+2. `docs/assets/marketplace/factory-studio-mvp-1280x800.png` — actual local,
+   outcome-first MVP flow and explicit local-only boundary.
+3. `docs/assets/marketplace/graph-ops-studio-1280x800.png` — actual Graph Ops
+   proof path and fact-derived next action.
 
-Suggested tagline: **Measure every saving. Prove every ship.**
+These are product captures, not a claim of measured performance, savings,
+conversion, Marketplace approval, or production readiness. Do not use the
+retired v0.17 walkthrough, blank-dashboard images, or concept art.
 
-Suggested CTA: **Compare your baseline, export the exact savings, and run the
-proof-first factory from the public repository.**
+Product Hunt currently requires at least two images for a visible gallery and
+recommends 1270 × 760 media. Upload the two 1280 × 800 product captures at
+their native aspect ratio; do not crop in a way that removes the authority or
+proof-status text. Use the 480 × 480 logo as the product icon rather than as a
+gallery replacement.
 
-## Version 0.28.0 update briefing
+## Current upgrade copy
 
 Use this only as an update associated with the existing **Code Factory**
-Product Hunt product. It is not copy for a duplicate launch.
+Product Hunt product.
 
 **Headline:** Turn a current diff into a review packet with verifiable local
 evidence.
@@ -34,12 +36,12 @@ for supervised local code changes.
 
 **Update copy:**
 
-Code Factory 0.28.0 adds three developer controls for the moment between a
-change and an independent review: Proof Review makes the current diff an
-attention-first JSON, Markdown, and Mermaid handoff; Verified Repair Sandbox
-seals one native Change List and checks candidate patch scope and measured
-bytes; Workspace Load Advisor reports bounded project-shape and remote/WSL
-preflight facts before workspace changes.
+Code Factory adds three developer controls for the moment between a change and
+an independent review: Proof Review makes the current diff an attention-first
+JSON, Markdown, and Mermaid handoff; Verified Repair Sandbox seals one native
+Change List and checks candidate patch scope and measured bytes; Workspace Load
+Advisor reports bounded project-shape and remote/WSL preflight facts before
+workspace changes.
 
 These controls are deliberately local and supervised. They do not edit code,
 call an AI runner, access credentials, upload source, run tests, commit,
@@ -51,42 +53,9 @@ what to verify next.
 
 **Proof links:**
 
-- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.28.0`
-- PyPI: `https://pypi.org/project/factoryline-code-factory/0.28.0/`
+- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.28.2`
+- PyPI: `https://pypi.org/project/factoryline-code-factory/0.28.2/`
 - Source: `https://github.com/zrk222/code-factory`
-
-Do not add a claim that the controls improve IDE performance, eliminate review
-time, or provide runtime isolation; this release does not measure or provide
-those outcomes.
-
-Product Hunt currently requires at least 2 images for a visible gallery and
-recommends 1270 x 760 gallery images. Source images are 1122 x 1402 portrait PNGs;
-preview the uncropped originals in the Product Hunt editor before
-publishing. Do not crop or regenerate owner-supplied artwork without review.
-
-Product Hunt video entries accept a full YouTube URL. A local MP4 or shortened
-URL is not a valid video entry. Publish the exact shipped UI walkthrough to
-YouTube first if a video should appear in the gallery.
-
-The repository MP4 remains appropriate for GitHub, PyPI, and Hugging Face. Do
-not claim it has been added to Product Hunt until a public, non-private full
-YouTube URL is available and the Product Hunt editor confirms the gallery item.
-
-## Upload order
-
-1. `01-idea-to-blueprint.png` - Turn a raw idea into an explicit blueprint.
-2. `02-prd-to-product-shape.png` - Bind the blueprint to a product shape.
-3. `03-ai-compiler-stack.png` - Compile recurring decisions deterministically.
-4. `04-security-contracts.png` - Make security contracts explicit.
-5. `05-governed-access.png` - Keep authority and access bounded.
-6. `06-proof-by-sabotage.png` - Prove that the gate catches sabotage.
-7. `07-failure-feedback.png` - Route concrete failures to the right stage.
-8. `08-signed-proof-chain.png` - Link accepted and rejected receipt evidence.
-9. `09-verified-release.png` - Release only after the required proof passes.
-
-Upload from `docs/assets/how-it-works/` and preserve this order. The first image
-explains the start state; the sixth makes the proof-by-sabotage differentiator
-visible; the ninth supplies the end beat.
 
 If no authenticated Code Factory post or draft exists, report
 `LISTING_NOT_FOUND` and keep this copy-ready gallery in the repository. Do not

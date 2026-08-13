@@ -3,7 +3,7 @@ modules:
   - name: visual_listing_tests
     path: tests/test_visual_listing.py
     functions:
-      - name: test_visual_gallery_assets_are_exact_and_unique
+      - name: test_current_product_visuals_are_real_capture_shapes
         args: []
         returns: unknown
 dependencies: []
@@ -12,5 +12,5 @@ invariants:
     forbid_pattern: "\\b(?:publish|deploy|merge|send_message)\\s*\\("
     scopes:
       - module: visual_listing_tests
-        symbol: test_visual_gallery_assets_are_exact_and_unique
+        symbol: test_current_product_visuals_are_real_capture_shapes
         max_lines: 120
