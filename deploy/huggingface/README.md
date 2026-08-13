@@ -18,19 +18,19 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Proof-backed AI coding workflows with local MCP context
+short_description: Build a local MVP. Catch hollow tests before review.
 ---
 
 # Code Factory
 
-This Space is the public product surface for
+This is the browser preview for
 [Code Factory](https://github.com/zrk222/code-factory), an open-source,
-proof-first software factory for AI-assisted delivery.
+local-first proof layer for AI-assisted code.
 
-**Why pay for opaque app generators?** Create a reviewable MVP starting state
-in minutes—with local receipts, a clear proof path, and an output you can
-extend when you are ready. A starter remains blocked until product-specific
-proof exists.
+**Generate a local MVP, then catch hollow tests before review.** Start from a
+plain-language outcome, a fuzzy PRD, or a risky diff. Code Factory keeps the
+proof path visible and does not call a starter production-ready before relevant
+evidence exists.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).

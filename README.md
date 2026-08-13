@@ -9,40 +9,43 @@
 
 > **Generate a local MVP, then catch hollow tests before review.**
 
-> **Why pay for opaque app generators?** Create a reviewable MVP starting state
-> in minutes—with source-bound receipts, a clear proof path, and an output you
-> can extend when you’re ready. Code Factory is free, local-first, and does not
-> call a starter production-ready before the relevant proof exists.
+> **Free, local proof for AI-assisted code.** Start from a plain-language
+> outcome, a fuzzy PRD, or a risky diff. Tests that only look green are not
+> proof: Code Factory makes the next proof gap visible and never calls a
+> starter production-ready before the relevant proof exists.
 
 ```powershell
 factory mvp "Build an approval tracker" --root .
 ```
 
-[Open the current product visuals](docs/PRODUCT_VISUALS.md), then inspect the
-evidence path and next action in local Factory Studio. Prefer a browser preview?
-Open the [live Hugging Face Space](https://zrk222-code-factory.static.hf.space).
+[See actual Factory Studio](docs/PRODUCT_VISUALS.md) or open the
+[live Hugging Face Space](https://zrk222-code-factory.static.hf.space).
 
 ![Actual Factory Studio: the outcome-first local MVP path](docs/assets/marketplace/factory-studio-mvp-1280x800.png)
 
 ## What it does
 
-- **Start a real project quickly.** Turn one outcome into a contained web, mobile,
-  API, CLI, worker, MCP, or agent-UI starting state.
-- **Make the work reviewable.** Turn requirements, diffs, proofs, and blockers into
+- **Start a real project.** Turn one outcome into a contained web, mobile, API,
+  CLI, worker, MCP, or agent-UI starting state.
+- **Review what AI produced.** Turn requirements, diffs, proofs, and blockers into
   receipts, Graph Ops, and one fact-derived next action.
-- **Keep "done" honest.** Challenge declared validators for hollow tests and keep a
-  project blocked until the relevant evidence exists; a green-looking scaffold is
-  never called production-ready by default.
+- **Keep "done" honest.** Challenge declared validators for hollow tests; a
+  green-looking scaffold is never called production-ready by default.
 
 ## Install
 
 ```powershell
-pip install factoryline-code-factory==0.28.2
+# No account, model key, or cloud connection is required for this local run.
+pip install factoryline-code-factory
 factory mvp "Build an approval tracker" --root .
-factory studio --root .
+factory studio --root .\my-mvp
 ```
 
-## Start here
+If Code Factory helps you find a proof gap or makes an AI-assisted change easier
+to review, [star Code Factory](https://github.com/zrk222/code-factory) so other
+developers can find it. This optional link only opens the repository.
+
+## Choose the job in front of you
 
 | If you need to… | Use | You get |
 | --- | --- | --- |
@@ -92,27 +95,19 @@ when a diff arrives, and the [Verifier Plane](docs/VERIFIER_PLANE.md) when a wor
 claims it is finished. The local [MCP contract](docs/MCP.md) and generated Mermaid
 output map make the same proof context reusable by a client you choose.
 
-## Latest release and deeper material
+## Go deeper when you need it
 
-The current source release is [v0.28.2](https://github.com/zrk222/code-factory/releases/tag/v0.28.2):
-Proof Review, the Verified Repair Sandbox, and the Workspace Load Advisor make the
-handoff from generated work to a developer's review more legible without granting
-automatic repair or release authority. Browse the complete, versioned history in
-[CHANGELOG.md](CHANGELOG.md) instead of decoding it from this landing page.
-
-- See the [exact release notes](docs/RELEASE_NOTES_0.28.2.md), [release channels](docs/RELEASE_CHANNELS.md), and [publication guide](PUBLICATION_GUIDE.md).
-- View the [current product visuals](docs/PRODUCT_VISUALS.md). They are actual
-  product captures and a current FactoryLine identity asset, not conceptual art
-  or measured outcome evidence.
-- Read [why I built Code Factory](docs/WHY_I_BUILT_CODE_FACTORY.md): a personal
-  account of passing AI-generated tests that failed in real use, and why the
-  project is free and local-first.
-- Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md) for the design and limits of the habituation gate.
-- Read [Graph Ops](docs/GRAPH_OPS.md), [proof reuse](docs/PROOF_REUSE.md), and [savings boundaries](docs/SAVINGS_TRACKER.md) when the project needs more than a first MVP.
-
-If Code Factory helped you find a proof gap or get a project moving, you can
-[star Code Factory](https://github.com/zrk222/code-factory). The optional action opens
-only the repository; it does not send workspace data or change your project.
+- Read [why I built Code Factory](docs/WHY_I_BUILT_CODE_FACTORY.md) for the
+  founder story behind catching passing tests that fail in real use.
+- Start with [PRD Grill](docs/PRD_GRILL.md), [Proof Review](docs/DIFF_TO_PROOF_REVIEW.md),
+  or [Verifier Plane](docs/VERIFIER_PLANE.md) when the job calls for it.
+- Browse [Graph Ops](docs/GRAPH_OPS.md), [proof reuse](docs/PROOF_REUSE.md), and
+  [savings boundaries](docs/SAVINGS_TRACKER.md) for advanced evidence workflows.
+- Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
+  for the design and limits of the habituation gate.
+- See the [release notes](docs/RELEASE_NOTES_0.28.2.md),
+  [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
+  [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 
 ## License
 

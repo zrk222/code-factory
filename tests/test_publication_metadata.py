@@ -68,20 +68,23 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     intellij_plugin = (ROOT / "editors" / "intellij" / "src" / "main" / "resources" / "META-INF" / "plugin.xml").read_text(encoding="utf-8")
     intellij_readme = (ROOT / "editors" / "intellij" / "README.md").read_text(encoding="utf-8")
 
-    value = "Why pay for opaque app generators?"
+    value = "Generate a local MVP, then catch hollow tests before review."
     assert value in readme
-    assert "Generate a local MVP, then catch hollow tests before review." in readme
+    assert "Tests that only look green are not" in readme
     assert readme.index(value) < readme.index("## What it does")
     assert "factory mvp \"Build an approval tracker\" --root ." in readme
-    assert "Open the current product visuals" in readme
+    assert "See actual Factory Studio" in readme
     assert "factory-studio-mvp-1280x800.png" in readme
     assert readme.index("factory mvp \"Build an approval tracker\" --root .") < readme.index("## Install")
     assert "live Hugging Face Space" in readme
     assert "Cursor or OpenCode MCP" in readme
     assert "deterministic proof" in readme
     assert "star Code Factory" in readme
+    assert "This optional link only opens the repository." in readme
     assert "production-ready before the relevant proof exists" in readme
-    assert "reviewable MVP starting state in minutes" in vscode_package["description"]
+    assert vscode_package["description"] == (
+        "Generate a local MVP, then catch hollow tests before review with local evidence in VS Code."
+    )
     assert {"mvp", "mcp", "graph-ops"}.issubset(vscode_package["keywords"])
     for content in (vscode_readme, intellij_plugin, intellij_readme):
         assert value in content
@@ -107,6 +110,8 @@ def test_github_discovery_assets_and_community_drafts_are_reviewable_only():
     assert "not proof that a live Open Graph image is configured" in guide
     assert "Show HN" in guide
     assert "Indie Hackers" in guide
+    assert "Generate a local MVP, then catch hollow tests before review." in guide
+    assert "code-generation" in guide
     assert "r/devops" in guide
     assert "r/platformengineering" in guide
     assert "r/sre" in guide

@@ -24,9 +24,9 @@ easy to understand and share without claiming unmeasured adoption.
   editor settings after the optional prompt is shown.
 - `README star CTA`: one optional sentence placed after the first-run value
   demonstration; it contains no star count, scarcity, or adoption claim.
-- `low-friction value message`: "Why pay for opaque app generators? Create a
-  reviewable MVP starting state in minutes—with source-bound receipts, a clear
-  proof path, and an output you can extend when you’re ready."
+- `low-friction value message`: "Generate a local MVP, then catch hollow tests
+  before review. Free, local proof for AI-assisted code makes the next proof
+  gap visible before a starter is called production-ready."
 - `social preview source`: `docs/assets/github-social-preview-1280x640.png`, a
   1280x640 PNG derived from a real Factory Studio capture.
 - `optional share snippet`: a static Markdown link in
@@ -47,7 +47,7 @@ easy to understand and share without claiming unmeasured adoption.
 - If `STAR_BROWSER_ONLY` the developer selects `Star Code Factory`, the system shall open only `https://github.com/zrk222/code-factory` in the developer's browser.
 - While `STAR_NO_AUTOMATION` the optional prompt is displayed, the system shall reject automatic browser opening, telemetry collection, workspace-data transmission, and extra FactoryLine commands.
 - The system shall store the `STAR_MINIMAL_LOCAL_STATE` requirement by recording only the installed extension version in the `prompt version` and rejecting workspace paths, receipts, feature names, and command output.
-- The system shall render the `STAR_GITHUB_FIRST_VIEW` requirement by rendering the README with the `low-friction value message`, a one-command first run, the existing exact-UI video, and the `README star CTA` before deep reference material.
+- The system shall render the `STAR_GITHUB_FIRST_VIEW` requirement by rendering the README with the `low-friction value message`, a one-command first run, a current Factory Studio capture, and the `README star CTA` before deep reference material.
 - The system shall satisfy `STAR_SOCIAL_PREVIEW_SOURCE` by storing the 1280x640 `social preview source` and documenting that a repository owner must upload it through GitHub repository settings before it becomes the live Open Graph image.
 - When `STAR_OUTPUT_MAP_SHARE` Code Factory writes `docs/CODE_FACTORY_OUTPUT_MAP.md`, the system shall emit the `optional share snippet` without modifying a user project README or contacting an external service.
 - The system shall render the `STAR_DISTRIBUTION_CTA` requirement by putting the `low-friction value message` and an unambiguous first action on every supported distribution source while retaining the local-only and not-production-ready boundaries.
@@ -72,7 +72,7 @@ Scenario: A developer completes Run First Proof in JetBrains
 Scenario: A stranger evaluates the repository
   Given the repository README is rendered from the default branch
   When the visitor reads the first section
-  Then they see the product outcome, first-run command, exact-UI video, and the defined `README star CTA`
+  Then they see the product outcome, first-run command, current Factory Studio capture, and the defined `README star CTA`
   And no star count, scarcity, or unmeasured adoption claim is shown
 
 Scenario: A developer chooses to share a generated output

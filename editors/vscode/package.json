@@ -1,7 +1,7 @@
 {
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
-  "description": "Create a reviewable MVP starting state in minutes, inspect proof, and keep independent verifier evidence visible in VS Code.",
+  "description": "Generate a local MVP, then catch hollow tests before review with local evidence in VS Code.",
   "version": "0.8.4",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
