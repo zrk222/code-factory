@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.28.2 - 2026-08-11
+
+- Correct the FactoryLine VS Code Marketplace classification to the supported
+  `Testing` category. This patch does not change FactoryLine runtime behavior,
+  permissions, local-first data boundary, or the v0.28 review controls.
+
 ## 0.28.0 - 2026-08-08
 
 - Add the Proof Review handoff for attention-first, structured review of the

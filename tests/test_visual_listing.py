@@ -70,8 +70,8 @@ def test_public_storefronts_label_concept_art_and_exclude_unsupported_claims() -
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert readme.count("Concept illustrations") == 1
     assert readme.count("Exact shipped UI") == 1
-    assert readme.count("https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/") == 3
-    assert "https://github.com/zrk222/code-factory/blob/main/docs/HOW_IT_WORKS_VISUAL.md" in readme
+    assert "docs/assets/marketplace/factory-studio-mvp-1280x800.png" in readme
+    assert "docs/HOW_IT_WORKS_VISUAL.md" in readme
 
     public_copy = "\n".join(path.read_text(encoding="utf-8") for path in PUBLIC_VISUAL_SURFACES)
     for unsupported in ("2.6 hrs", "$14.37", "82%", "github.com/code-factory"):
