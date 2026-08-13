@@ -41,9 +41,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
         "Issues": "https://github.com/zrk222/code-factory/issues",
         "Changelog": "https://github.com/zrk222/code-factory/releases",
     }
-    assert project["description"] == (
-        "Create reviewable MVPs with independent verification, proof review, repair guardrails, and workspace guidance."
-    )
+    assert project["description"] == "Generate a local MVP, then catch hollow tests before review."
     assert {
         "mvp",
         "mcp",
@@ -72,9 +70,12 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
 
     value = "Why pay for opaque app generators?"
     assert value in readme
-    assert readme.index(value) < readme.index("## What Code Factory is")
+    assert "Generate a local MVP, then catch hollow tests before review." in readme
+    assert readme.index(value) < readme.index("## What it does")
     assert "factory mvp \"Build an approval tracker\" --root ." in readme
     assert "Watch the exact shipped UI in 60 seconds" in readme
+    assert "factory-studio-mvp-1280x800.png" in readme
+    assert readme.index("factory mvp \"Build an approval tracker\" --root .") < readme.index("## Install")
     assert "live Hugging Face Space" in readme
     assert "Cursor or OpenCode MCP" in readme
     assert "deterministic proof" in readme
@@ -486,13 +487,23 @@ def test_codex_usage_sample_is_privacy_safe_and_does_not_invent_savings():
     assert all(value is False for value in sample["privacy"].values())
 
 
-def test_historical_release_headings_are_not_renamed_by_version_bumps() -> None:
-    """A blanket version-string replace once renamed a past section heading.
-
-    README section headings record which release introduced a feature. Rewriting
-    them makes the document claim a feature shipped in a version it did not.
-    """
+def test_release_history_lives_in_the_changelog_not_the_landing_page() -> None:
+    """Keep version provenance without making the README a release archive."""
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "## New in 0.25.0: the contradiction gate" in readme
-    assert "## New in 0.24.0: Unified Graph Ops" in readme
-    assert readme.count("## New in 0.26.0:") == 1, "exactly one section may claim 0.26.0"
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+
+    assert "[CHANGELOG.md](CHANGELOG.md)" in readme
+    assert "## New in 0.25.0:" not in readme
+    assert "## New in 0.24.0:" not in readme
+    for version in ("0.24.0", "0.25.0", "0.26.0", "0.27.0", "0.28.0", "0.28.2"):
+        assert version in changelog
+
+
+def test_habituation_essay_is_explicit_about_its_evidence_boundary() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    essay = (ROOT / "docs" / "HABITUATION_ESSAY.md").read_text(encoding="utf-8")
+
+    assert "docs/HABITUATION_ESSAY.md" in readme
+    assert "Treat it as a hypothesis, not a verdict" in essay
+    assert "blocking policy is even eligible" in essay
+    assert "does not rank people, compare teams, transmit observations" in essay
