@@ -3,12 +3,11 @@
 Run a bounded FactoryLine command and inspect the local JSON receipt without
 leaving VS Code. The extension never uploads your workspace, code, or receipts.
 
-**Why pay for opaque app generators?** Start a reviewable MVP in minutes, keep
-the receipts and proof path next to the code, and extend it when you are ready.
-Start with **FactoryLine: Open Local Factory Studio** or run
-`factory mvp "Build an approval tracker" --root .`; then open **Graph Ops** to
-see what is evidenced, blocked, or next. The extension never calls a starter
-production-ready by itself.
+**Generate a local MVP, then catch hollow tests before review.** Keep the
+receipts and proof path next to the code, then open **Graph Ops** to see what is
+evidenced, blocked, or next. Start with **FactoryLine: Open Local Factory
+Studio** or run `factory mvp "Build an approval tracker" --root .`. The
+extension never calls a starter production-ready by itself.
 
 ## Commands
 
@@ -40,7 +39,7 @@ pass arbitrary shell fragments to your terminal.
 Install the Code Factory CLI first:
 
 ```powershell
-pip install factoryline-code-factory==0.28.2
+pip install factoryline-code-factory
 ```
 
 Build a local VSIX from this directory, then install it in VS Code:

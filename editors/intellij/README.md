@@ -4,11 +4,11 @@ FactoryLine for JetBrains IDEs keeps the local proof loop next to the project. I
 runs an explicit FactoryLine command, then displays the command result and the
 newest local JSON receipt in a tool window.
 
-**Why pay for opaque app generators?** Create a reviewable MVP starting state
-in minutes, inspect the proof path in the IDE, and extend it when you are ready.
+**Generate a local MVP, then catch hollow tests before review.** Inspect the
+proof path in the IDE, then open **Graph Ops** to see the next evidence gap.
 Start with **Tools > FactoryLine > Run First Proof**, then run
-`factory mvp "Build an approval tracker" --root .` and open **Graph Ops**. A
-starter remains a starting state until product-specific proof exists.
+`factory mvp "Build an approval tracker" --root .`. A starter remains a
+starting state until product-specific proof exists.
 
 ## What It Does
 

@@ -4,7 +4,7 @@
     <vendor email="rkatz22@gmail.com" url="https://github.com/zrk222/code-factory">FactoryLine</vendor>
     <description><![CDATA[
         <p>Verify AI code before you ship.</p>
-        <p><strong>Why pay for opaque app generators?</strong> Create a reviewable MVP starting state in minutes, with local receipts, a clear proof path, and an output you can extend when you are ready.</p>
+        <p><strong>Generate a local MVP, then catch hollow tests before review.</strong> Keep local receipts and a clear proof path next to the code; a starter is never called production-ready before relevant evidence exists.</p>
         <p>FactoryLine turns tests, requirements, policies, and build evidence into local proof you can inspect in your JetBrains IDE. It does not call a starter production-ready by itself.</p>
         <h3>What this solves</h3>
         <ul>

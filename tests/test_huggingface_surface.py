@@ -27,10 +27,10 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "Actual product capture set" in page
     assert '<meta name="viewport"' in page
-    assert "Create your reviewable MVP. See its proof in minutes." in page
-    assert "Why pay for opaque app generators?" in readme
-    assert "Why pay for opaque app generators?" in page
-    assert "Inspect or star on GitHub" in page
+    assert "Build your local MVP. Catch hollow tests before review." in page
+    assert "Generate a local MVP, then catch hollow tests before review." in readme
+    assert "Free, local proof for AI-assisted code." in page
+    assert "Read or star on GitHub" in page
     assert "thumbnail: https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/github-social-preview-1280x640.png" in readme
     assert "developer-tools" in readme
     assert "ai-agents" in readme
@@ -42,9 +42,9 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "Observed Marketplace downloads: 46" not in page
     assert "Unique installs: not exposed by the listing" in page
     assert 'id="first-run"' in page
-    assert "Start free with pip" in page
-    assert "View current product visuals" in page
-    assert "Install free in JetBrains" in page
+    assert "Run your first local proof" in page
+    assert "See actual Factory Studio" in page
+    assert "Explore FactoryLine for JetBrains" in page
     assert "JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md" in page
     assert "Release test suite passed" in page
     assert "Verified release checks" in page
@@ -57,6 +57,8 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "factoryline-logo-480.png" in page
     assert "code-factory-quickstart-v0171.mp4" not in page
     assert "how-it-works/" not in page
+    assert "New in 0." not in page
+    assert "pip install factoryline-code-factory==0.28.2" not in page
     assert "prefers-reduced-motion" in page
     assert "Skip to product proof" in page
     assert 'class="brand" href="#main"' in page
@@ -82,12 +84,12 @@ def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(tm
     valid_result = inspect(SPACE / "README.md")
     assert valid_result["ok"] is True
     assert valid_result["marker"] == "HUGGINGFACE_SPACE_METADATA_VALID"
-    assert valid_result["short_description_length"] == 55
+    assert valid_result["short_description_length"] == 52
 
     invalid_readme = tmp_path / "README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Proof-backed AI coding workflows with local MCP context",
+            "short_description: Build a local MVP. Catch hollow tests before review.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",
@@ -112,7 +114,7 @@ def test_huggingface_metadata_preflight_cli_reports_the_local_result(tmp_path: P
     invalid_readme = tmp_path / "invalid-README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Proof-backed AI coding workflows with local MCP context",
+            "short_description: Build a local MVP. Catch hollow tests before review.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",

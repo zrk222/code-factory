@@ -7,23 +7,36 @@ covered by source/tests or as an explicitly labelled draft.
 
 ## Repository first view
 
-Lead with the low-friction value that a developer can verify:
+Lead with the concrete value that a developer can verify:
 
-> **Why pay for opaque app generators?** Create a reviewable MVP starting
-> state in minutes—with source-bound receipts, a clear proof path, and an
-> output you can extend when you’re ready.
+> **Generate a local MVP, then catch hollow tests before review.** Free, local
+> proof for AI-assisted code makes the next proof gap visible before a starter
+> is called production-ready.
 
 The intended next action is one local command:
 
 ```powershell
-pip install factoryline-code-factory==0.28.2
+pip install factoryline-code-factory
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
 
-The README then shows actual current Factory Studio captures and an optional
-GitHub-star link. It makes no star-count, download, conversion, productivity,
-or causal growth claim.
+The README then shows actual current Factory Studio captures and one optional
+GitHub-star link after the first-run value. It makes no star-count, download,
+conversion, productivity, or causal growth claim.
+
+## Repository metadata
+
+Keep the repository About description aligned with the PyPI summary:
+
+> Generate a local MVP, then catch hollow tests before review. Free,
+> receipt-backed proof for AI-assisted code.
+
+Use the repository homepage for the live Hugging Face Space. Keep the topic set
+focused on real discovery terms: `ai-agents`, `ai-coding-assistant`,
+`code-generation`, `developer-tools`, `mcp`, `testing`, `workflow-engine`,
+and the supported editor/client ecosystems. Do not add generic hype topics or
+claim an integration is available before its target marketplace approves it.
 
 ## Client and demo discovery
 
@@ -88,7 +101,7 @@ whether to submit a reviewed draft from their own account.
 **Title**
 
 ```text
-Show HN: Code Factory – Create a reviewable MVP in minutes, with receipts
+Show HN: Code Factory – Catch hollow tests before review
 ```
 
 **Draft body**
