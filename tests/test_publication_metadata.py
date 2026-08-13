@@ -437,6 +437,8 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
         "verify-policy.gif",
         "factoryline-logo-480.png",
         "factory-editor-control-room.svg",
+        "operational-proof-loop-1600x900.png",
+        "operational-proof-loop.svg",
         "prd-to-app-factory.svg",
         "product-missions.svg",
         "signal-loop.svg",
@@ -453,6 +455,17 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert not (assets / "how-it-works").exists()
     assert (ROOT / "docs" / "PRODUCT_VISUALS.md").is_file()
     assert not (ROOT / "docs" / "HOW_IT_WORKS_VISUAL.md").exists()
+
+    operational_loop = assets / "operational-proof-loop-1600x900.png"
+    with operational_loop.open("rb") as handle:
+        assert handle.read(8) == b"\x89PNG\r\n\x1a\n"
+        assert struct.unpack(">I", handle.read(4)) == (13,)
+        assert handle.read(4) == b"IHDR"
+        assert struct.unpack(">II", handle.read(8)) == (1600, 900)
+
+    visual_guide = (ROOT / "docs" / "PRODUCT_VISUALS.md").read_text(encoding="utf-8")
+    assert "Operational proof loop" in visual_guide
+    assert "editorial workflow diagram" in visual_guide
 
     source_manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
     assert "recursive-include docs *.md *.gif *.png *.svg *.json" in source_manifest

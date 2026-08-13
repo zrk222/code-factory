@@ -58,6 +58,12 @@ The other part is the bit I wanted most. Code Factory keeps asking:
 - What evidence is missing or stale?
 - What should be verified next?
 
+![Code Factory operational proof loop: start with the work, scope the proof, find gaps, bind evidence, and give the reviewer one next action](assets/operational-proof-loop-1600x900.png)
+
+The diagram is intentionally a workflow, not a dashboard full of invented
+success metrics. Code Factory can create and inspect local artifacts, but the
+human reviewer remains responsible for the release decision.
+
 Graph Ops makes that evidence path visible. Proof Review gives me a concrete
 handoff for a diff. The Verifier Plane keeps a worker's claim separate from the
 evidence used to check it.

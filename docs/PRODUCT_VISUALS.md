@@ -1,9 +1,12 @@
 # Current product visuals
 
-This is the only approved public visual set for the current Code Factory
-listing, GitHub social preview handoff, and Hugging Face product page. It uses
-actual local product captures and the current FactoryLine identity asset—never
-concept art, recreated dashboards, or made-up activity counts.
+This is the approved public visual set for the current Code Factory listing,
+GitHub social preview handoff, Hugging Face product page, and explanatory
+community posts. Product surfaces use actual local product captures and the
+current FactoryLine identity asset—never
+concept art, recreated dashboards, or made-up activity counts. The operational
+proof loop is explicitly an editorial workflow diagram, never a recreated
+product interface.
 
 ## 1. FactoryLine identity
 
@@ -27,10 +30,25 @@ Use for the second-screen story: Graph Ops reports the evidence state and the
 next supported action. The capture intentionally includes an incomplete proof state;
 it is not a simulated green result.
 
+## 4. Operational proof loop
+
+![Code Factory operational proof loop: scope work, inspect proof gaps, bind evidence, then show the reviewer one next action](assets/operational-proof-loop-1600x900.png)
+
+Use this **editorial diagram** in articles, comments, and documentation when a
+reader needs the workflow before they need a UI walkthrough. It summarizes the
+current local-first boundary: Code Factory scopes work, finds proof gaps, binds
+supplied evidence, and presents Graph Ops for a human decision. It is not a
+product capture, runtime dashboard, or claim that the system independently
+publishes, deploys, signs, or approves work.
+
 ## Placement rules
 
 - Use the logo plus both captures, in this order, for Product Hunt or other
   product galleries.
+- Use the operational proof loop for explanatory community posts, with the
+  caption: "Code Factory turns a prompt, fuzzy PRD, or risky AI-assisted diff
+  into inspectable local evidence. The release decision stays with the
+  reviewer."
 - Use the first Factory Studio capture on a landing page. Use the Graph Ops
   capture only where the proof boundary is explained.
 - Use native IDE captures—not these Studio captures—for JetBrains Marketplace
