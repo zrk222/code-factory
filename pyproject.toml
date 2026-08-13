@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.28.2"
+version = "0.29.0"
 description = "Generate a local MVP, then catch hollow tests before review."
 authors = [
   { name = "Richard Katz" },
@@ -33,6 +33,8 @@ keywords = [
   "prd-grill",
   "independent-verification",
   "verifier-plane",
+  "github-pull-request",
+  "proof-review",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",

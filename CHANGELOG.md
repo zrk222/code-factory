@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.29.0 - 2026-08-13
+
+- Add `factory github proof-review`, a local, deterministic adapter that
+  validates a current Diff-to-Proof Review, binds it to an exact pull-request
+  head SHA, and renders a neutral GitHub Check request plus stable Markdown
+  walkthrough.
+- Add the opt-in same-repository pull-request workflow. It can create or update
+  one bounded comment and one neutral Check using only `contents: read`,
+  `pull-requests: write`, and `checks: write`; it ignores fork PRs and never
+  uses `pull_request_target`, writes source, approves, merges, or invokes a
+  model.
+- Document CodeRabbit as a complementary AI-review surface rather than a
+  dependency or a copied feature. Code Factory neither requires CodeRabbit nor
+  imports vendor credentials or AI comments into verification receipts.
+- Update GitHub, PyPI, Hugging Face, VS Code, JetBrains, release, and
+  community-draft surfaces with the evidence-versus-suggestions boundary.
+
 ## 0.28.2 - 2026-08-11
 
 - Correct the FactoryLine VS Code Marketplace classification to the supported

@@ -474,8 +474,10 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
 
 
 def _changed_path(value: str) -> str:
-    path = str(value).replace("\\", "/").strip().lstrip("./").rstrip("/")
-    if not path or path.startswith("../") or "/../" in path:
+    # Remove one optional shell-style relative prefix without stripping a
+    # meaningful leading dot from workspace files such as `.github/...`.
+    path = str(value).replace("\\", "/").strip().removeprefix("./").rstrip("/")
+    if not path or path.startswith("/") or path.startswith("../") or "/../" in path:
         raise ValueError("changed paths must be non-empty workspace-relative paths")
     return path
 

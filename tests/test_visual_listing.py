@@ -90,8 +90,8 @@ def test_zenodo_and_release_metadata_only_package_current_public_visuals() -> No
     metadata = json.loads((ROOT / ".zenodo.json").read_text(encoding="utf-8"))
     workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
 
-    assert metadata["version"] == "0.28.2"
-    assert metadata["publication_date"] == "2026-08-11"
+    assert metadata["version"] == "0.29.0"
+    assert metadata["publication_date"] == "2026-08-13"
     assert "current FactoryLine identity asset" in metadata["description"]
     assert "conceptual visual walkthrough" not in metadata["description"]
     assert "product-captures" in metadata["keywords"]

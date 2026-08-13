@@ -34,7 +34,7 @@ evidence exists.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.28.2` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.29.0` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21381405).
 
 Use the same local proof context from Cursor or OpenCode through the documented
@@ -42,20 +42,25 @@ Use the same local proof context from Cursor or OpenCode through the documented
 The client connection is local and read-only; it does not upload source or
 grant provider, credential, deployment, or publishing authority.
 
+Use Code Factory alongside CodeRabbit or another AI reviewer when a pull
+request needs explicit evidence as well as suggestions. The opt-in
+[GitHub Proof Review](https://github.com/zrk222/code-factory/blob/main/docs/GITHUB_PROOF_REVIEW.md)
+adds one neutral, commit-bound Proof Review Check and stable walkthrough beside
+other review comments. It requires no CodeRabbit account or credential, never
+imports AI comments as proof, and never auto-approves or merges a pull request.
+
 Before a PRD becomes a scaffold, run `factory prd grill PRD.md --root .` for a
 capped, source-bound clarification sheet with recommendations and answer stubs.
 It never rewrites the PRD, invents answers, calls a model, or authorizes a
 build. Read the full [PRD Grill guide](https://github.com/zrk222/code-factory/blob/main/docs/PRD_GRILL.md).
 
-### What's new in 0.28.2
+### What's new in 0.29.0
 
-This patch makes the companion VS Code adapter publishable under the Marketplace's
-supported `Testing` category. It does not change FactoryLine runtime behavior,
-permissions, or local-first data boundary. Proof Review, Verified Repair Sandbox,
-and Workspace Load Advisor give teams a
-clear local handoff before a repair or environment change. They are bounded
-observations and review packets: no automatic edits, model calls, deployment,
-credential access, or production-readiness claim.
+`factory github proof-review` makes the existing Diff-to-Proof Review visible
+on an opted-in GitHub pull request as one neutral, commit-bound Check and
+stable walkthrough. It can sit beside CodeRabbit or another reviewer without a
+vendor account, credential, API call, AI comment becoming proof, automatic
+approval, merge, source edit, test execution, or production-readiness claim.
 
 ### Independent verification (0.27.0)
 

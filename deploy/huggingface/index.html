@@ -48,6 +48,7 @@
     .button { min-height: 50px; padding: .9rem 1.25rem; border: 1px solid var(--line); border-radius: 14px; font-weight: 850; text-decoration: none; transition: transform .2s ease, box-shadow .2s ease, background-color .2s ease; }
     .button:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(65, 40, 8, .13); }
     .primary { background: var(--ink); color: white; border-color: var(--ink); }
+    .proof .secondary { border-color: rgba(255,255,255,.46); color: white; }
     .trust { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 18px; color: var(--green); font-size: .95rem; font-weight: 750; }
     .trust span { display: inline-flex; align-items: center; gap: 6px; }
     .visual { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--cream); box-shadow: var(--shadow); }
@@ -135,6 +136,24 @@
           <article class="card"><span>03 · Review</span><h3>Challenge the green check</h3><p>Delete, invert, and corrupt declared controls. A surviving mutation blocks the claim.</p></article>
           <article class="card"><span>04 · Decide</span><h3>See the next proof gap</h3><p>Use receipts and Graph Ops to give a reviewer one fact-derived next action.</p></article>
         </div>
+      </div>
+    </section>
+
+    <section id="review-tools">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Your reviewer stays in control</div>
+          <h2>Use AI review suggestions and deterministic proof on the same PR.</h2>
+          <p>Code Factory complements CodeRabbit or another reviewer with one neutral, commit-bound proof walkthrough: exact scope, declared proof gaps, and the next fact-derived action. It does not need their account, copy their comments into receipts, approve, or merge code.</p>
+          <div class="actions">
+            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/GITHUB_PROOF_REVIEW.md">See the GitHub Proof Review</a>
+          </div>
+        </div>
+        <pre aria-label="GitHub Proof Review command">factory github proof-review \
+  --root . \
+  --base origin/main \
+  --head-sha &lt;pull-request-head-sha&gt; \
+  --json</pre>
       </div>
     </section>
 
@@ -234,7 +253,7 @@ factory studio --root .\my-mvp
         </div>
         <pre><code>Marketplace count: check the current listing
 Unique installs: not exposed by the listing
-0.8.4 update: pending Marketplace approval
+0.8.4 Marketplace update: pending approval; 0.8.5 remains a GitHub release artifact until that review clears
 
 Never substitute CI or repository traffic for installs.</code></pre>
       </div>
@@ -267,7 +286,7 @@ Never substitute CI or repository traffic for installs.</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.28.2 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.28.2">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.29.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.29.0">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

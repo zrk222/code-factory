@@ -10,7 +10,7 @@ Install the published package in the same environment that the client can
 launch, then verify the workspace boundary:
 
 ```powershell
-python -m pip install factoryline-code-factory==0.28.2
+python -m pip install factoryline-code-factory==0.29.0
 factory mcp status --root C:\work\my-mvp --json
 ```
 
@@ -85,6 +85,16 @@ workers, modify files, execute shell commands, access provider keys, call
 connectors, approve missions, publish releases, deploy services, sign
 artifacts, or send messages. A client can propose or explain the next step,
 but the existing human-controlled CLI and release gates remain authoritative.
+
+## AI code-review tools
+
+The MCP server stays independent of hosted review vendors. If a team uses
+CodeRabbit or another AI code-review product, keep its suggestions in that
+product's review surface and use the optional
+[GitHub Proof Review](GITHUB_PROOF_REVIEW.md) workflow for FactoryLine's
+deterministic changed-scope, proof-gap, and next-action packet. No provider
+credential, AI comment, or model judgment is imported into a FactoryLine
+receipt.
 
 ## Support boundary
 
