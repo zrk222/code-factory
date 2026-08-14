@@ -1,8 +1,8 @@
 {
   "title": "Code Factory: Proof-by-Sabotage Software Factory",
-  "description": "Code Factory is a proof-first, open-source software factory for turning specifications, behavior checks, design contracts, policy verification, and release receipts into auditable delivery. Version 0.29 adds GitHub Proof Review: a deterministic adapter that binds the current Diff-to-Proof Review to an exact pull-request head SHA, one neutral advisory Check request, and one stable Markdown walkthrough. It can coexist with CodeRabbit or another AI reviewer without a vendor account, credential, API call, or model comment becoming proof. It does not approve, merge, modify source, execute a test, or claim readiness. Unified Graph Ops remains a deterministic, read-only visual overlay over existing Product Graph, slice, mission, approval, completion, proof, gate-plan, trace, receipt, and artifact facts. Public documentation assets include exact Factory Studio captures, a current FactoryLine identity asset, and Mermaid diagrams; public listing media does not use conceptual artwork.\n\nEvidence boundary: Graph Ops is bounded to readable local artifacts and does not claim time, token, cost, productivity, or conversion savings. The optional GitHub workflow is limited to read contents plus scoped pull-request comment and Check publication, ignores fork pull requests, and never uses pull_request_target. Proof reuse is limited to read-only validation and never grants publish, deploy, sign, approval, credential, connector, or external-message authority. Savings receipts perform arithmetic over exact observations and do not generalize beyond the recorded pairs. The hosted reference is deployable and supervised but does not claim managed HA, automatic disaster recovery, SCIM, SAML enrollment, managed KMS, SOC 2, or an SLA. A passing receipt proves the declared checks and supplied environment, not arbitrary production security.\n\nDual licensed under MIT or Apache-2.0.",
-  "version": "0.29.0",
-  "publication_date": "2026-08-13",
+  "description": "Code Factory is a proof-first, open-source software factory for turning specifications, behavior checks, design contracts, policy verification, and release receipts into auditable delivery. Version 0.30 adds Plan-to-Proof Review: a deterministic comparison between a strict, human-approved agent plan and exact changed paths, declared test paths, review tiers, and existing Diff-to-Proof facts. It writes an explicit Proof Debt artifact for scope drift, missing declared tests, required deep-review routing, and source claims without proof; it does not execute tests, read AI transcripts, call a provider, approve, merge, modify source, publish, deploy, sign, or claim readiness. The optional GitHub adapter keeps one neutral advisory Check and stable Markdown walkthrough, and can coexist with CodeRabbit or another AI reviewer without a vendor account, credential, API call, or model comment becoming proof. The optional Prestige Design Review lane adds a purpose-led brief and visible review artifacts for hierarchy, responsive behavior, affordances, consistency, and declared design tokens; it informs human review and does not claim conversion, accessibility certification, or production readiness. Unified Graph Ops remains a deterministic, read-only visual overlay over existing Product Graph, slice, mission, approval, completion, proof, gate-plan, trace, receipt, and artifact facts. Public documentation assets include exact Factory Studio captures, a current FactoryLine identity asset, and Mermaid diagrams; public listing media does not use conceptual artwork.\n\nEvidence boundary: Graph Ops is bounded to readable local artifacts and does not claim time, token, cost, productivity, or conversion savings. The optional GitHub workflow is limited to read contents plus scoped pull-request comment and Check publication, ignores fork pull requests, and never uses pull_request_target. Proof reuse is limited to read-only validation and never grants publish, deploy, sign, approval, credential, connector, or external-message authority. Savings receipts perform arithmetic over exact observations and do not generalize beyond the recorded pairs. The hosted reference is deployable and supervised but does not claim managed HA, automatic disaster recovery, SCIM, SAML enrollment, managed KMS, SOC 2, or an SLA. A passing receipt proves the declared checks and supplied environment, not arbitrary production security.\n\nDual licensed under MIT or Apache-2.0.",
+  "version": "0.30.0",
+  "publication_date": "2026-08-14",
   "creators": [
     {
       "name": "Katz, Richard"
@@ -48,7 +48,11 @@
     "prd-grill",
     "verifier-plane",
     "github-pull-request",
-    "proof-review"
+    "proof-review",
+    "plan-to-proof-review",
+    "proof-debt",
+    "design-review",
+    "ui-quality"
   ],
   "related_identifiers": [
     {

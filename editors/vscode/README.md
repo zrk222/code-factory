@@ -40,6 +40,20 @@ can publish the same deterministic proof facts beside CodeRabbit or another AI
 reviewer. It does not require their account, import their comments as proof,
 auto-approve, merge, or modify source.
 
+For a team-operated agent change, run the CLI’s
+[`factory plan verify`](../../docs/PLAN_TO_PROOF_REVIEW.md) in the trusted
+workspace and attach the optional local JSON/Markdown/Mermaid packet to the
+review. It makes approved scope alignment and Proof Debt visible; it does not
+add an autonomous extension action, execute tests, approve, merge, or modify
+source. See the [Teams and Enterprise Operations Manual](../../docs/ENTERPRISE_TEAMS_OPERATIONS.md)
+for role boundaries and rollout.
+
+For UI-scoped work, add the optional [Prestige Design Review](../../docs/PRESTIGE_DESIGN.md)
+to the same local evidence path. It supplies a purpose-led design brief and
+review artifacts for hierarchy, responsive behavior, affordances, consistency,
+and design tokens. The extension does not apply a design change or treat a
+visual score as production readiness.
+
 ## Install
 
 Install the Code Factory CLI first:
@@ -53,7 +67,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.8.5.vsix
+code --install-extension factoryline-vscode-0.8.6.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

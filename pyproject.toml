@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.29.0"
-description = "Generate a local MVP, then catch hollow tests before review."
+version = "0.30.0"
+description = "Build local MVPs and review AI-assisted scope, proof, and UI-design gaps before merge."
 authors = [
   { name = "Richard Katz" },
   { email = "rkatz22@gmail.com" },
@@ -35,6 +35,10 @@ keywords = [
   "verifier-plane",
   "github-pull-request",
   "proof-review",
+  "proof-debt",
+  "ai-governance",
+  "design-review",
+  "ui-quality",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",

@@ -43,13 +43,35 @@ jobs:
           for changed_path in "${changed_paths[@]}"; do
             args+=(--changed "$changed_path")
           done
-          factory github proof-review \
-            --root . \
-            --base "$base_sha" \
-            --head-sha "$head_sha" \
-            "${args[@]}" \
-            --out-dir .factory/github-proof-review \
-            --json > github-proof-review.json
+          plan_path='.factory/agent-plan.json'
+          if [[ -f "$plan_path" ]]; then
+            plan_args=()
+            for changed_path in "${changed_paths[@]}"; do
+              if [[ "$changed_path" != "$plan_path" ]]; then
+                plan_args+=(--changed "$changed_path")
+              fi
+            done
+            if (( ${#plan_args[@]} == 0 )); then
+              echo "agent plan changed without an implementation, test, or documentation path" >&2
+              exit 1
+            fi
+            factory github plan-proof-review \
+              --root . \
+              --base "$base_sha" \
+              --plan "$plan_path" \
+              --head-sha "$head_sha" \
+              "${plan_args[@]}" \
+              --out-dir .factory/github-proof-review \
+              --json > github-proof-review.json
+          else
+            factory github proof-review \
+              --root . \
+              --base "$base_sha" \
+              --head-sha "$head_sha" \
+              "${args[@]}" \
+              --out-dir .factory/github-proof-review \
+              --json > github-proof-review.json
+          fi
       - name: Publish advisory Check and stable walkthrough comment
         uses: actions/github-script@v8
         with:

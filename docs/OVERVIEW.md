@@ -40,6 +40,16 @@ known, what is missing, and the one fact-derived next action.
   exact commit, an advisory neutral Check, and a stable walkthrough. It can
   coexist with CodeRabbit or another AI-review surface, but never imports their
   credentials or comments as verification evidence.
+- **Makes an approved agent plan reviewable after the code exists.**
+  `factory plan verify` binds a strict, named human-approved plan to the exact
+  changed paths, preserves Diff-to-Proof facts, and emits Proof Debt for scope,
+  declared-test, deep-review, and existing evidence obligations. It does not
+  call a test executed, interpret an AI summary as proof, or alter branch policy.
+- **Makes UI design reviewable without pretending it is proven.** The optional
+  [Prestige Design Review](PRESTIGE_DESIGN.md) adds purpose-led design briefs
+  and visible audit artifacts for hierarchy, responsive behavior, affordance,
+  consistency, and declared tokens. Its deterministic findings can inform a
+  gate; its heuristic critique remains a human review prompt.
 - **Keeps supervised repair context exact.** `factory repair scope` seals one
   explicit Change List's paths, current file hashes, and measured bytes, then
   `factory repair candidate` rejects a textual patch that crosses that scope.
@@ -56,7 +66,7 @@ known, what is missing, and the one fact-derived next action.
 ## Typical path
 
 ```powershell
-pip install factoryline-code-factory==0.29.0
+pip install factoryline-code-factory==0.30.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid
@@ -76,8 +86,11 @@ evidence and the next action that the local facts support.
 For a developer new to delivery automation, Code Factory provides a guided
 path from outcome to an honest MVP. For experienced developers and teams, it
 provides a shared, auditable model of delivery state, deterministic validation
-receipts, and reusable proof routing. In both cases, speed never replaces the
-evidence needed to certify work.
+receipts, reusable proof routing, and a Plan-to-Proof handoff for AI-created
+diffs. In both cases, speed never replaces the evidence needed to certify work.
+Read the concise [Teams and Enterprise Operations Manual](ENTERPRISE_TEAMS_OPERATIONS.md)
+for roles, rollout order, evidence artifacts, and the explicit non-delegable
+controls.
 
 ## Boundaries that matter
 

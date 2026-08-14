@@ -68,6 +68,20 @@ CodeRabbit or another AI reviewer through the optional
 It is complementary: FactoryLine does not require a vendor account, ingest AI
 comments, auto-approve, merge, or treat a suggestion as verification evidence.
 
+For team-operated AI changes, run the CLI’s
+[`factory plan verify`](../../docs/PLAN_TO_PROOF_REVIEW.md) from the same
+project environment, then use its JSON/Markdown/Mermaid packet in the tool
+window or pull request. It records approved scope alignment and Proof Debt; it
+does not add an autonomous JetBrains action, execute tests, approve, merge, or
+alter IDE settings. The concise [Teams and Enterprise Operations Manual](../../docs/ENTERPRISE_TEAMS_OPERATIONS.md)
+defines roles, rollout, and boundaries.
+
+For UI-scoped work, add the optional [Prestige Design Review](../../docs/PRESTIGE_DESIGN.md)
+to the same local evidence path. It supplies a purpose-led design brief and
+review artifacts for hierarchy, responsive behavior, affordances, consistency,
+and design tokens. The adapter does not apply a design change or treat a visual
+score as production readiness.
+
 Verified Repair Sandbox is that first professional repair-control surface: it
 keeps a candidate's declared Git patch paths inside one native Change List,
 blocks stale scope bytes, and leaves a local JSON/Markdown/Mermaid handoff for
@@ -83,7 +97,7 @@ configuration change. See [`docs/WORKSPACE_ADVISOR.md`](../../docs/WORKSPACE_ADV
 
 ## Install
 
-1. Install `factoryline-code-factory==0.29.0` into the Python environment that
+1. Install `factoryline-code-factory==0.30.0` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the

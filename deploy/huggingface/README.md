@@ -11,6 +11,8 @@ tags:
   - ai-agents
   - devops
   - software-quality
+  - design-review
+  - ui-quality
   - mcp
   - model-context-protocol
   - cursor
@@ -18,7 +20,7 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Build a local MVP. Catch hollow tests before review.
+short_description: Build fast. Prove AI-assisted code before review.
 ---
 
 # Code Factory
@@ -27,6 +29,13 @@ This is the browser preview for
 [Code Factory](https://github.com/zrk222/code-factory), an open-source,
 local-first proof layer for AI-assisted code.
 
+**For solo builders:** generate a local MVP, then make the next proof gap
+visible. **For teams:** keep AI-created diffs within an approved scope, route
+deep changes to named reviewers, and surface explicit Proof Debt before a human
+makes a merge decision. Read the [Teams and Enterprise Operations Manual](https://github.com/zrk222/code-factory/blob/main/docs/ENTERPRISE_TEAMS_OPERATIONS.md).
+
+**For UI work:** add the optional [Prestige Design Review](https://github.com/zrk222/code-factory/blob/main/docs/PRESTIGE_DESIGN.md): a purpose-led design brief plus visible review artifacts for hierarchy, responsive behavior, affordances, consistency, and declared design tokens. It informs review; it does not claim conversion, accessibility certification, or production readiness.
+
 **Generate a local MVP, then catch hollow tests before review.** Start from a
 plain-language outcome, a fuzzy PRD, or a risky diff. Code Factory keeps the
 proof path visible and does not call a starter production-ready before relevant
@@ -34,7 +43,7 @@ evidence exists.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.29.0` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.30.0` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21381405).
 
 Use the same local proof context from Cursor or OpenCode through the documented
@@ -49,18 +58,28 @@ adds one neutral, commit-bound Proof Review Check and stable walkthrough beside
 other review comments. It requires no CodeRabbit account or credential, never
 imports AI comments as proof, and never auto-approves or merges a pull request.
 
+### Plan-to-Proof and Teams
+
+`factory plan verify` compares a strict, human-approved agent plan with the
+exact changed paths and existing Diff-to-Proof facts. It exposes scope drift,
+missing declared test-path changes, deep-review routing, and proof debt as
+deterministic obligations. It does not execute tests, read AI transcripts, call
+a provider, change branch protections, approve, merge, publish, or deploy.
+
 Before a PRD becomes a scaffold, run `factory prd grill PRD.md --root .` for a
 capped, source-bound clarification sheet with recommendations and answer stubs.
 It never rewrites the PRD, invents answers, calls a model, or authorizes a
 build. Read the full [PRD Grill guide](https://github.com/zrk222/code-factory/blob/main/docs/PRD_GRILL.md).
 
-### What's new in 0.29.0
+### What's new in 0.30.0
 
-`factory github proof-review` makes the existing Diff-to-Proof Review visible
-on an opted-in GitHub pull request as one neutral, commit-bound Check and
-stable walkthrough. It can sit beside CodeRabbit or another reviewer without a
-vendor account, credential, API call, AI comment becoming proof, automatic
-approval, merge, source edit, test execution, or production-readiness claim.
+`factory plan verify` compares a strict, human-approved agent plan with exact
+changed paths, declared test paths, review tiers, and existing Diff-to-Proof
+facts. It writes explicit Proof Debt for scope drift, missing declared tests,
+deep-review routing, and source claims without evidence. The optional GitHub
+adapter publishes one neutral, commit-bound Check and stable walkthrough; it
+does not execute tests, call a provider, approve, merge, publish, deploy, or
+claim readiness.
 
 ### Independent verification (0.27.0)
 
