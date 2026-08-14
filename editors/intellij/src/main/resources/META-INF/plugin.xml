@@ -27,6 +27,8 @@
             <li><strong>Check changed code:</strong> see which proof is invalidated by your current diff.</li>
             <li><strong>Review the exact local scope:</strong> inspect the full current diff or just the active file in a dedicated Proof Review tab, with declared findings and one fact-derived next action.</li>
             <li><strong>Keep AI suggestions and proof distinct:</strong> use the optional GitHub Proof Review workflow beside CodeRabbit or another reviewer for one neutral, commit-bound evidence walkthrough. It does not need a vendor account, ingest AI comments, approve, or merge.</li>
+            <li><strong>Keep an agent inside agreed scope:</strong> run the local <code>factory plan verify</code> CLI contract to compare a named human-approved plan with the exact diff and surface Proof Debt. It records obligations; it does not execute tests, approve, merge, or change IDE settings.</li>
+            <li><strong>Make UI design reviewable:</strong> add the optional Prestige Design Review for a purpose-led brief and visible checks for hierarchy, responsive behavior, affordances, consistency, and declared design tokens. Its findings inform review; they do not certify accessibility, conversion, or production readiness.</li>
             <li><strong>Leave a durable local handoff:</strong> save the hash-bound review as JSON, Markdown, and Mermaid for a teammate or a later supervised repair attempt.</li>
             <li><strong>Use AI repair without losing team control:</strong> turn a selected Change List into a Scope Passport, bind a textual candidate patch to it, and make the separate verifier and human apply steps explicit.</li>
             <li><strong>Investigate workspace load safely:</strong> use <strong>Workspace Advisor</strong> for a bounded local measurement and manual review paths; it is not an IDE performance diagnosis and never mutates configuration.</li>
@@ -61,6 +63,8 @@
             <li>Add Unified Graph Ops: a local, read-only visual map with one fact-derived next action.</li>
             <li>Add PRD Grill: a deterministic, source-bound question frontier before PRD optimization, compilation, or scaffolding.</li>
             <li>Add optional GitHub Proof Review delivery: a neutral, commit-bound local evidence walkthrough that can coexist with CodeRabbit or another AI reviewer without importing vendor credentials or comments as proof.</li>
+            <li>Add Plan-to-Proof Review: a strict, human-approved agent-plan envelope, exact diff alignment, named deep-review routing, and explicit Proof Debt through the local CLI and PR evidence surface.</li>
+            <li>Clarify the optional Prestige Design Review lane for UI-scoped work and its review-only boundary.</li>
             <li>Add Run First Proof for a zero-configuration local setup check.</li>
             <li>Clarify the Marketplace name, preview, getting-started flow, and privacy boundary.</li>
             <li>Keep the stable plugin ID and verified compatibility across eight JetBrains IDEs.</li>

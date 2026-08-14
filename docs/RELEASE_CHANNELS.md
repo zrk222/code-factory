@@ -1,26 +1,26 @@
 # Release Channels
 
-Code Factory v0.29.0 publishes one verified source state through channel-specific
+Code Factory v0.30.0 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.29.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.29.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.30.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.30.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code | `factoryline-vscode-0.8.5.vsix` | GitHub release bundle; protected `vscode-marketplace.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX or public Marketplace version |
-| JetBrains | `factoryline-intellij-0.8.5.zip` | Scoped workflow update to public plugin 33009 after the existing pending update clears | Installable ZIP or public plugin/version page after moderation |
+| VS Code | `factoryline-vscode-0.8.6.vsix` | GitHub release bundle; protected `vscode-marketplace.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX or public Marketplace version |
+| JetBrains | `factoryline-intellij-0.8.6.zip` | Scoped workflow update to public plugin 33009 after the existing pending update clears | Installable ZIP or public plugin/version page after moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured.
 
-JetBrains Marketplace publication remains blocked while the submitted 0.8.4
-update is pending Marketplace approval. Do not dispatch the 0.8.5 candidate
-until the Marketplace status gate reports clear.
+JetBrains Marketplace publication remains blocked while any submitted update is
+pending Marketplace approval. Do not dispatch the 0.8.6 candidate until the
+Marketplace status gate reports clear.
 
 ### Visual Studio Marketplace publisher setup
 
@@ -46,6 +46,21 @@ the environment-scoped `VSCE_PAT` only in the protected publication job. A
 missing credential fails closed at the publish boundary. Replace this PAT path
 with the Marketplace's supported Microsoft Entra automation path before the
 December 1, 2026 global PAT retirement.
+
+### 0.30.0 plan-to-proof and design review
+
+`factory plan verify` turns a human-approved agent plan into a strict local
+review contract. It compares exact plan paths and declared tests with a changed
+diff, routes deep work to a named reviewer, and writes explicit Proof Debt for
+human triage. The optional GitHub workflow publishes one neutral, commit-bound
+advisory Check; it does not approve, merge, execute tests, invoke a provider,
+or turn a plan into authorization.
+
+The optional Prestige Design Review lane adds a purpose-led design brief and
+visible review artifacts for hierarchy, responsive behavior, affordances,
+consistency, and declared design tokens. It is evidence for a reviewer, not a
+conversion claim, an accessibility certification, or a production-readiness
+claim.
 
 ### 0.29.0 review-stack compatibility
 

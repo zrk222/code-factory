@@ -32,6 +32,16 @@ factory mvp "Build an approval tracker" --root .
 - **Keep "done" honest.** Challenge declared validators for hollow tests; a
   green-looking scaffold is never called production-ready by default.
 
+**For teams:** use the [Teams and Enterprise Operations Manual](docs/ENTERPRISE_TEAMS_OPERATIONS.md)
+to run the same proof-first loop with named reviewers, approved AI-change scope,
+and explicit Proof Debt—without giving Code Factory merge, release, or provider authority.
+
+**Design is part of the review.** For UI-scoped work, add the optional
+[Prestige Design Review](docs/PRESTIGE_DESIGN.md): a purpose-led design brief
+plus review artifacts for hierarchy, responsive behavior, affordances,
+consistency, and declared design tokens. It makes design quality visible; it
+does not claim a conversion result, WCAG certification, or production readiness.
+
 ## Install
 
 ```powershell
@@ -52,6 +62,7 @@ developers can find it. This optional link only opens the repository.
 | Build a first slice | [`factory mvp`](docs/START_HERE.md) | A contained, app-shaped local starting state |
 | Clarify a fuzzy PRD | [`factory prd grill`](docs/PRD_GRILL.md) | Source-bound questions instead of invented requirements |
 | Review an AI-assisted diff | [`factory change review`](docs/DIFF_TO_PROOF_REVIEW.md) | A local risk, proof-gap, and next-action packet |
+| Keep an agent diff inside approved scope | [`factory plan verify`](docs/PLAN_TO_PROOF_REVIEW.md) | Exact plan alignment and explicit Proof Debt—not another AI opinion |
 | Add evidence to a GitHub PR | [`factory github proof-review`](docs/GITHUB_PROOF_REVIEW.md) | One neutral Check and stable proof walkthrough, tied to the head commit |
 | Inspect delivery state | [`factory studio`](docs/TARGET_COMPILER.md) | Graph Ops, receipts, and the next supported action |
 | Verify supplied work | [Verifier Plane](docs/VERIFIER_PLANE.md) | Independent, hash-bound evidence checks |
@@ -69,9 +80,16 @@ coverage, and the next review action explicit. Enable the opt-in
 commit-bound FactoryLine Check and walkthrough beside existing CodeRabbit
 comments. It uses no CodeRabbit account, API, credential, or output as proof.
 
-That makes Code Factory a standalone proof gate for teams that do not use an AI
-reviewer, and a complementary evidence layer for teams that do. It does not
-replace human review, auto-approve a pull request, or merge code.
+For agent-created pull requests, add a small human-approved
+[`factory.agent_plan.v1` envelope](docs/PLAN_TO_PROOF_REVIEW.md). Plan-to-Proof
+compares that plan with the exact diff and exposes **Proof Debt**: unresolved
+scope, declared-test, human-routing, and existing proof obligations that must
+be settled before a team makes its own merge decision.
+
+That makes Code Factory a standalone proof layer for teams that do not use an AI
+reviewer, and a complementary evidence layer for teams that do. For
+agent-created pull requests, Code Factory does not replace human review,
+auto-approve a pull request, or merge code.
 
 ## Use it where you work
 
@@ -117,9 +135,11 @@ output map make the same proof context reusable by a client you choose.
   or [Verifier Plane](docs/VERIFIER_PLANE.md) when the job calls for it.
 - Browse [Graph Ops](docs/GRAPH_OPS.md), [proof reuse](docs/PROOF_REUSE.md), and
   [savings boundaries](docs/SAVINGS_TRACKER.md) for advanced evidence workflows.
+- For UI work, read [Prestige Design Review](docs/PRESTIGE_DESIGN.md) for the
+  optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.29.0.md),
+- See the [release notes](docs/RELEASE_NOTES_0.30.0.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

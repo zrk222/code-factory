@@ -85,6 +85,12 @@ from .github_proof_review import (
     compile_github_proof_review,
     write_github_proof_review_artifacts,
 )
+from .plan_proof_review import PlanProofReviewError, review_plan_proof, write_plan_proof_review_artifacts
+from .github_plan_proof_review import (
+    GitHubPlanProofReviewError,
+    compile_github_plan_proof_review,
+    write_github_plan_proof_review_artifacts,
+)
 from .repair_sandbox import (
     RepairSandboxError,
     create_repair_scope,
@@ -363,7 +369,15 @@ def main(argv=None) -> int:
     s = sub.add_parser("doctor", help="show brick versions and command compatibility")
     s.add_argument("--strict", action="store_true")
     s.add_argument("--json", action="store_true")
-    sub.add_parser("plan", help="print the assembly pipeline")
+    plan = sub.add_parser("plan", help="print the assembly pipeline or verify a human-approved agent plan")
+    plan_sub = plan.add_subparsers(dest="plan_cmd")
+    plan_verify = plan_sub.add_parser("verify", help="join an agent-plan envelope to local Diff-to-Proof facts without execution")
+    plan_verify.add_argument("--plan", required=True, help="factory.agent_plan.v1 JSON path")
+    plan_verify.add_argument("--root", default=".")
+    plan_verify.add_argument("--base", default="main")
+    plan_verify.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
+    plan_verify.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
+    plan_verify.add_argument("--json", action="store_true")
 
     s = sub.add_parser("init", help="create the shared factory layout")
     s.add_argument("root", nargs="?", default=".")
@@ -760,6 +774,14 @@ def main(argv=None) -> int:
     github_proof_review.add_argument("--head-sha", required=True, help="exact 40-character lowercase pull-request head SHA")
     github_proof_review.add_argument("--out-dir", help="explicit local directory for JSON and Markdown payload artifacts")
     github_proof_review.add_argument("--json", action="store_true")
+    github_plan_proof = github_sub.add_parser("plan-proof-review", help="compile Plan-to-Proof facts into one advisory Check/comment payload")
+    github_plan_proof.add_argument("--plan", required=True, help="factory.agent_plan.v1 JSON path")
+    github_plan_proof.add_argument("--root", default=".")
+    github_plan_proof.add_argument("--base", default="main")
+    github_plan_proof.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
+    github_plan_proof.add_argument("--head-sha", required=True, help="exact 40-character lowercase pull-request head SHA")
+    github_plan_proof.add_argument("--out-dir", help="explicit local directory for JSON and Markdown payload artifacts")
+    github_plan_proof.add_argument("--json", action="store_true")
 
     repair = sub.add_parser("repair", help="prepare a sealed Change List scope and inspect a candidate patch without applying it")
     repair_sub = repair.add_subparsers(required=True, dest="repair_cmd")
@@ -1558,7 +1580,36 @@ def main(argv=None) -> int:
             return 1
         return 0
     if a.cmd == "plan":
-        return _plan()
+        if a.plan_cmd is None:
+            return _plan()
+        try:
+            review = review_plan_proof(
+                Path(a.root), Path(a.plan), base=a.base, changed=a.changed or None,
+            )
+            if a.out_dir:
+                review["artifacts"] = write_plan_proof_review_artifacts(review, Path(a.out_dir))
+        except (ChangeReviewError, PlanProofReviewError) as exc:
+            error = {
+                "schema": "factory.plan_proof_review.error.v1",
+                "marker": getattr(exc, "code", "PLAN_TO_PROOF_PLAN_INVALID"),
+                "code": getattr(exc, "code", "PLAN_TO_PROOF_PLAN_INVALID"),
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"plan proof review failed: {error['code']}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(review, indent=2, sort_keys=True))
+        else:
+            print("factory plan verify (analysis only)")
+            print("=" * 44)
+            print(f"plan         : {review['plan']['provider']}/{review['plan']['plan_id']}")
+            print(f"changed paths: {len(review['changed_paths'])}")
+            print(f"proof debt   : {review['proof_debt']['count']} ({review['proof_debt']['state']})")
+            print(f"next action  : {review['next_action']['action']}")
+            if review.get("artifacts"):
+                print(f"packet       : {review['artifacts']['paths']['markdown']}")
+            print("authority    : no execution, approval, merge, publication, deployment, or credential access")
+        return 0
     if a.cmd == "init":
         ensure_layout(Path(a.root))
         print(f"factory layout created under {Path(a.root).resolve()}")
@@ -2117,16 +2168,24 @@ def main(argv=None) -> int:
         return 0
     if a.cmd == "github":
         try:
-            payload = compile_github_proof_review(
-                Path(a.root), base=a.base, changed=a.changed or None, head_sha=a.head_sha,
-            )
+            if a.github_cmd == "plan-proof-review":
+                payload = compile_github_plan_proof_review(
+                    Path(a.root), Path(a.plan), base=a.base, changed=a.changed or None, head_sha=a.head_sha,
+                )
+            else:
+                payload = compile_github_proof_review(
+                    Path(a.root), base=a.base, changed=a.changed or None, head_sha=a.head_sha,
+                )
             if a.out_dir:
-                payload["artifacts"] = write_github_proof_review_artifacts(payload, Path(a.out_dir))
-        except (ChangeReviewError, GitHubProofReviewError) as exc:
+                if a.github_cmd == "plan-proof-review":
+                    payload["artifacts"] = write_github_plan_proof_review_artifacts(payload, Path(a.out_dir))
+                else:
+                    payload["artifacts"] = write_github_proof_review_artifacts(payload, Path(a.out_dir))
+        except (ChangeReviewError, PlanProofReviewError, GitHubProofReviewError, GitHubPlanProofReviewError) as exc:
             error = {
-                "schema": "factory.github_proof_review.error.v1",
-                "marker": getattr(exc, "code", "GITHUB_PROOF_REVIEW_INPUT_INVALID"),
-                "code": getattr(exc, "code", "GITHUB_PROOF_REVIEW_INPUT_INVALID"),
+                "schema": "factory.github_plan_proof_review.error.v1" if a.github_cmd == "plan-proof-review" else "factory.github_proof_review.error.v1",
+                "marker": getattr(exc, "code", "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID" if a.github_cmd == "plan-proof-review" else "GITHUB_PROOF_REVIEW_INPUT_INVALID"),
+                "code": getattr(exc, "code", "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID" if a.github_cmd == "plan-proof-review" else "GITHUB_PROOF_REVIEW_INPUT_INVALID"),
                 "message": str(exc),
             }
             print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"github proof review failed: {error['code']}: {exc}", file=sys.stderr)
@@ -2134,7 +2193,7 @@ def main(argv=None) -> int:
         if a.json:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
-            print("factory github proof-review (local, advisory only)")
+            print(f"factory github {a.github_cmd} (local, advisory only)")
             print("=" * 54)
             print(f"head SHA     : {payload['head_sha']}")
             print(f"review SHA   : {payload['review_sha256']}")

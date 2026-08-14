@@ -23,7 +23,7 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     )
     assert len(short_description) <= 60
     assert "factoryline-code-factory" in page
-    assert "github.com/zrk222/code-factory/releases/tag/v0.29.0" in page
+    assert "github.com/zrk222/code-factory/releases/tag/v0.30.0" in page
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "Actual product capture set" in page
     assert '<meta name="viewport"' in page
@@ -35,6 +35,8 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "developer-tools" in readme
     assert "ai-agents" in readme
     assert "devops" in readme
+    assert "design-review" in readme
+    assert "ui-quality" in readme
     assert "model-context-protocol" in readme
     assert "cursor" in readme
     assert "opencode" in readme
@@ -58,13 +60,16 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "code-factory-quickstart-v0171.mp4" not in page
     assert "how-it-works/" not in page
     assert "New in 0." not in page
-    assert "pip install factoryline-code-factory==0.29.0" not in page
+    assert "pip install factoryline-code-factory==0.30.0" not in page
     assert "prefers-reduced-motion" in page
     assert "Skip to product proof" in page
     assert 'class="brand" href="#main"' in page
     assert "Use AI review suggestions and deterministic proof on the same PR." in page
     assert "CodeRabbit or another reviewer" in page
     assert "GitHub Proof Review" in readme
+    assert "Prestige Design Review" in readme
+    assert "Design is part of the review" in page
+    assert "See the design review lane" in page
 
 
 def test_huggingface_workflow_uses_secret_and_scoped_source_directory() -> None:
@@ -87,12 +92,12 @@ def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(tm
     valid_result = inspect(SPACE / "README.md")
     assert valid_result["ok"] is True
     assert valid_result["marker"] == "HUGGINGFACE_SPACE_METADATA_VALID"
-    assert valid_result["short_description_length"] == 52
+    assert valid_result["short_description_length"] == 49
 
     invalid_readme = tmp_path / "README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Build a local MVP. Catch hollow tests before review.",
+            "short_description: Build fast. Prove AI-assisted code before review.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",
@@ -117,7 +122,7 @@ def test_huggingface_metadata_preflight_cli_reports_the_local_result(tmp_path: P
     invalid_readme = tmp_path / "invalid-README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Build a local MVP. Catch hollow tests before review.",
+            "short_description: Build fast. Prove AI-assisted code before review.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",

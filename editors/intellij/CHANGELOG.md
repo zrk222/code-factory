@@ -1,5 +1,14 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.6 - 2026-08-14
+
+- Explain the Plan-to-Proof Review workflow for professional and team use:
+  approved change scope, declared-test obligations, deep-review routing, and
+  explicit Proof Debt before a human makes a merge decision.
+- Add the optional Prestige Design Review lane to the public plugin surface.
+  It creates visible design-review artifacts for human review and does not
+  certify conversion, accessibility, or production readiness.
+
 ## 0.8.5
 
 - Refresh the Marketplace surface for the optional GitHub Proof Review

@@ -214,6 +214,22 @@ factory verifier progress ./attempts.json --json</code></pre>
     <section>
       <div class="shell proof">
         <div>
+          <div class="eyebrow">Design is part of the review</div>
+          <h2>Make UI quality visible before a human says yes.</h2>
+          <p>For UI-scoped work, the optional Prestige Design Review adds a purpose-led brief and reviewer-visible checks for hierarchy, responsive behavior, affordances, consistency, and declared design tokens. Deterministic findings can inform a gate; heuristic critique stays a human prompt. It does not claim conversion, WCAG certification, or production readiness.</p>
+          <div class="actions">
+            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/PRESTIGE_DESIGN.md">See the design review lane</a>
+          </div>
+        </div>
+        <pre><code>pip install code-factory-4-design
+prestige init --root .
+prestige pr app.html --design DESIGN.md --root . --out-dir .prestige/pr</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell proof">
+        <div>
           <div class="eyebrow">Proof reuse</div>
           <h2>Reuse evidence only when the inputs still match.</h2>
           <p>Content-addressed receipts route read-only gates to RUN, REUSE, SKIP, or BLOCK. Exact reuse verifies every bound input and output; ambiguity runs again, and side effects stay blocked.</p>
@@ -253,7 +269,7 @@ factory studio --root .\my-mvp
         </div>
         <pre><code>Marketplace count: check the current listing
 Unique installs: not exposed by the listing
-0.8.4 Marketplace update: pending approval; 0.8.5 remains a GitHub release artifact until that review clears
+0.8.4 Marketplace update: pending approval; 0.8.6 remains a GitHub release artifact until that review clears
 
 Never substitute CI or repository traffic for installs.</code></pre>
       </div>
@@ -286,7 +302,7 @@ Never substitute CI or repository traffic for installs.</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.29.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.29.0">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.30.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.30.0">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

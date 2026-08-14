@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.30.0 - 2026-08-14
+
+- Add `factory plan verify`, a deterministic Plan-to-Proof Review that compares
+  a strict, human-approved agent plan with the exact changed paths, declared
+  test paths, review tiers, and existing Diff-to-Proof facts.
+- Add a content-addressed Proof Debt artifact for scope drift, missing declared
+  test-path changes, deep-review routing, and source claims without evidence.
+  It reports review obligations; it does not execute tests, read agent
+  transcripts, call a provider, change source, approve, merge, publish, deploy,
+  sign, or claim readiness.
+- Extend the optional GitHub advisory Check so it selects Plan-to-Proof Review
+  when `.factory/agent-plan.json` is present. It remains commit-bound, neutral,
+  same-repository only, and compatible with CodeRabbit or other AI reviewers.
+- Add the Enterprise and Teams Operations Manual and the optional Prestige
+  Design Review lane: a purpose-led brief plus visible UI-review artifacts that
+  inform human review without claiming conversion, accessibility certification,
+  or production readiness.
+- Refresh GitHub, PyPI, Hugging Face, VS Code, JetBrains, Zenodo, and release
+  surfaces with the same solo-builder and team-operating model.
+
 ## 0.29.0 - 2026-08-13
 
 - Add `factory github proof-review`, a local, deterministic adapter that
