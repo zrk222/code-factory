@@ -18,6 +18,13 @@ For the availability and commercial boundary, read [Commercial packaging]
 is design-partner only, and Enterprise Assurance is discovery-only. Neither is
 a purchasable managed service today.
 
+For up to three human-selected potential Team Proof Hub partners, use the
+[Team Pilot readiness gate](TEAM_PILOT_LAUNCH.md) to bind non-secret selection,
+security, retention, support, and commercial-review evidence before an owner
+reviews an external, customer-managed reference pilot. It cannot accept a
+partner, change an offer, process payment, provision access, or operate a
+managed service.
+
 ## Pick the operating mode
 
 | Mode | Use it when | Start here | Human decision remains |

@@ -248,3 +248,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-14 06:20] GATE plan commercial-packaging-v1 approver=human tasks=6 sha=cfdede3614f9e248
 - [2026-08-14 06:23] GATE spec commercial-packaging-v1 approver=human strict=True sha=cfdede3614f9e248
 - [2026-08-14 06:23] GATE plan commercial-packaging-v1 approver=human tasks=6 sha=cfdede3614f9e248
+- [2026-08-14 06:45] GATE spec team-pilot-readiness-v1 approver=human strict=True sha=61bc72bac91e79e4
+- [2026-08-14 06:45] GATE plan team-pilot-readiness-v1 approver=human tasks=7 sha=61bc72bac91e79e4
+- [2026-08-14 06:49] GATE spec team-pilot-readiness-v1 approver=human strict=True sha=b1e8b8932bc9e416
+- [2026-08-14 06:49] GATE plan team-pilot-readiness-v1 approver=human tasks=7 sha=b1e8b8932bc9e416

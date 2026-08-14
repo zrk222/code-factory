@@ -101,7 +101,10 @@ controls.
 The [commercial packaging guide](COMMERCIAL_PACKAGING.md) separately explains
 what is usable now (the free local core) and what remains proposed or
 discovery-only (Team Proof Hub, Enterprise Assurance, and a managed runner).
-It does not activate a purchase, service, or Marketplace offer.
+It does not activate a purchase, service, or Marketplace offer. Selected
+design partners can use the local [Team Pilot readiness gate]
+(TEAM_PILOT_LAUNCH.md) to prepare owner-review evidence for a customer-managed
+reference pilot, not a managed-service launch.
 
 ## Boundaries that matter
 

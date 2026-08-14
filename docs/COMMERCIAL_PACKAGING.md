@@ -71,6 +71,12 @@ support, retention commitment, or billing needed to call Team Proof Hub a
 service. See [Control Plane](CONTROL_PLANE.md) and [Hosted control plane]
 (HOSTED_CONTROL_PLANE.md) for exact current boundaries.
 
+For a selected design partner, the shipped [Team Pilot readiness gate]
+(TEAM_PILOT_LAUNCH.md) can now hash-bind the five local operating decisions
+needed for a **customer-managed reference** review. Its only success marker is
+`TEAM_PILOT_READY_FOR_OWNER_REVIEW`; it cannot accept a partner, issue terms,
+collect payment, provision access, or activate a service.
+
 ### Design-partner entry criteria
 
 Select no more than three initial partners only when all of the following are

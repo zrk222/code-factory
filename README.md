@@ -37,6 +37,9 @@ to run the same proof-first loop with named reviewers, approved AI-change scope,
 and explicit Proof Debt—without giving Code Factory merge, release, or provider authority.
 The [commercial packaging guide](docs/COMMERCIAL_PACKAGING.md) keeps the free
 core separate from proposed Team and Enterprise services that are not purchasable yet.
+For a human-selected, customer-managed reference pilot, the local
+[Team Pilot readiness gate](docs/TEAM_PILOT_LAUNCH.md) hash-binds the operating
+evidence for owner review; it does not accept a customer or activate a paid service.
 
 **Design is part of the review.** For UI-scoped work, add the optional
 [Prestige Design Review](docs/PRESTIGE_DESIGN.md): a purpose-led design brief
@@ -66,6 +69,7 @@ developers can find it. This optional link only opens the repository.
 | Review an AI-assisted diff | [`factory change review`](docs/DIFF_TO_PROOF_REVIEW.md) | A local risk, proof-gap, and next-action packet |
 | Keep an agent diff inside approved scope | [`factory plan verify`](docs/PLAN_TO_PROOF_REVIEW.md) | Exact plan alignment and explicit Proof Debt—not another AI opinion |
 | Prove an E2E check can say no | [`factory e2e verify`](docs/E2E_PROOF_GATE.md) | A native positive/negative command-pair receipt that catches hollow E2E checks |
+| Prepare a bounded Team pilot | [`factory team-pilot readiness`](docs/TEAM_PILOT_LAUNCH.md) | Hash-bound, customer-managed readiness evidence for owner reviewâ€”not a checkout or service activation |
 | Add evidence to a GitHub PR | [`factory github proof-review`](docs/GITHUB_PROOF_REVIEW.md) | One neutral Check and stable proof walkthrough, tied to the head commit |
 | Inspect delivery state | [`factory studio`](docs/TARGET_COMPILER.md) | Graph Ops, receipts, and the next supported action |
 | Verify supplied work | [Verifier Plane](docs/VERIFIER_PLANE.md) | Independent, hash-bound evidence checks |

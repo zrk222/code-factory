@@ -1,0 +1,43 @@
+name: team-pilot-readiness-v1
+language: python
+modules:
+  - name: team_pilot
+    path: factoryline/team_pilot.py
+    imports:
+      - pathlib.Path
+    functions:
+      - name: validate_team_pilot_manifest
+        args: ["root: Path", "manifest_path: Path"]
+        returns: dict
+      - name: evaluate_team_pilot_readiness
+        args: ["root: Path", "manifest_path: Path"]
+        returns: dict
+      - name: validate_team_pilot_receipt
+        args: ["value: object"]
+        returns: dict
+      - name: write_team_pilot_artifacts
+        args: ["receipt: dict[str, Any]", "out_dir: Path"]
+        returns: dict[str, Any]
+dependencies: []
+invariants:
+  - name: team_pilot_never_opens_network_or_executes_processes
+    forbid_pattern: "(?:requests\\.|httpx\\.|urllib\\.|socket\\.|subprocess\\.|os\\.system|Popen\\()"
+    scopes:
+      - module: team_pilot
+        symbol: evaluate_team_pilot_readiness
+        max_lines: 80
+      - module: team_pilot
+        symbol: validate_team_pilot_manifest
+        max_lines: 100
+  - name: team_pilot_receipt_does_not_grant_commercial_activation
+    forbid_pattern: "commercial_activation\\s*[:=]\\s*True"
+    scopes:
+      - module: team_pilot
+        symbol: evaluate_team_pilot_readiness
+        max_lines: 80
+  - name: team_pilot_only_writes_from_explicit_artifact_function
+    forbid_pattern: "write_(?:text|bytes)\\(|replace\\("
+    scopes:
+      - module: team_pilot
+        symbol: evaluate_team_pilot_readiness
+        max_lines: 80
