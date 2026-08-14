@@ -98,6 +98,11 @@ Read the concise [Teams and Enterprise Operations Manual](ENTERPRISE_TEAMS_OPERA
 for roles, rollout order, evidence artifacts, and the explicit non-delegable
 controls.
 
+The [commercial packaging guide](COMMERCIAL_PACKAGING.md) separately explains
+what is usable now (the free local core) and what remains proposed or
+discovery-only (Team Proof Hub, Enterprise Assurance, and a managed runner).
+It does not activate a purchase, service, or Marketplace offer.
+
 ## Boundaries that matter
 
 Code Factory is local by default. It does not discover credentials, publish,

@@ -35,6 +35,8 @@ factory mvp "Build an approval tracker" --root .
 **For teams:** use the [Teams and Enterprise Operations Manual](docs/ENTERPRISE_TEAMS_OPERATIONS.md)
 to run the same proof-first loop with named reviewers, approved AI-change scope,
 and explicit Proof Debt—without giving Code Factory merge, release, or provider authority.
+The [commercial packaging guide](docs/COMMERCIAL_PACKAGING.md) keeps the free
+core separate from proposed Team and Enterprise services that are not purchasable yet.
 
 **Design is part of the review.** For UI-scoped work, add the optional
 [Prestige Design Review](docs/PRESTIGE_DESIGN.md): a purpose-led design brief

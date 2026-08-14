@@ -13,6 +13,11 @@ It is not a managed enterprise platform, a SOC 2 certification, a runtime
 sandbox, an identity provider, or a replacement for a team’s SDLC policy. It is
 a local-first proof layer that makes the policy and evidence gaps easier to see.
 
+For the availability and commercial boundary, read [Commercial packaging]
+(COMMERCIAL_PACKAGING.md). The free local core is available now; Team Proof Hub
+is design-partner only, and Enterprise Assurance is discovery-only. Neither is
+a purchasable managed service today.
+
 ## Pick the operating mode
 
 | Mode | Use it when | Start here | Human decision remains |

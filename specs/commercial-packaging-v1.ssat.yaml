@@ -1,0 +1,23 @@
+name: commercial-packaging-v1
+language: python
+modules:
+  - name: commercial_packaging_tests
+    path: tests/test_commercial_packaging.py
+    functions:
+      - name: test_commercial_packaging_marks_only_free_core_as_available
+        args: []
+        returns: unknown
+      - name: test_design_partner_intake_has_no_sales_or_source_collection_authority
+        args: []
+        returns: unknown
+dependencies: []
+invariants:
+  - name: commercial_contract_test_has_no_external_or_billing_authority
+    forbid_pattern: "(?:requests\\.|httpx\\.|urllib\\.|socket\\.|subprocess\\.|\\b(?:publish|deploy|send_message)\\s*\\()"
+    scopes:
+      - module: commercial_packaging_tests
+        symbol: test_commercial_packaging_marks_only_free_core_as_available
+        max_lines: 60
+      - module: commercial_packaging_tests
+        symbol: test_design_partner_intake_has_no_sales_or_source_collection_authority
+        max_lines: 60
