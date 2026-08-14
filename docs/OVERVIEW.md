@@ -45,6 +45,12 @@ known, what is missing, and the one fact-derived next action.
   changed paths, preserves Diff-to-Proof facts, and emits Proof Debt for scope,
   declared-test, deep-review, and existing evidence obligations. It does not
   call a test executed, interpret an AI summary as proof, or alter branch policy.
+- **Proves whether an explicit E2E check can reject a declared failure.**
+  `factory e2e verify` runs a human-approved local positive/negative argv pair,
+  records `HOLLOW_E2E_TEST` when the negative case exits zero, and emits a
+  hash-bound proof packet only to an explicit output directory. It has no hosted
+  testing-vendor, browser-grid, or external-upload dependency; the no-egress
+  field is a declaration, not an unenforceable isolation claim.
 - **Makes UI design reviewable without pretending it is proven.** The optional
   [Prestige Design Review](PRESTIGE_DESIGN.md) adds purpose-led design briefs
   and visible audit artifacts for hierarchy, responsive behavior, affordance,
@@ -91,6 +97,14 @@ diffs. In both cases, speed never replaces the evidence needed to certify work.
 Read the concise [Teams and Enterprise Operations Manual](ENTERPRISE_TEAMS_OPERATIONS.md)
 for roles, rollout order, evidence artifacts, and the explicit non-delegable
 controls.
+
+The [commercial packaging guide](COMMERCIAL_PACKAGING.md) separately explains
+what is usable now (the free local core) and what remains proposed or
+discovery-only (Team Proof Hub, Enterprise Assurance, and a managed runner).
+It does not activate a purchase, service, or Marketplace offer. Selected
+design partners can use the local [Team Pilot readiness gate]
+(TEAM_PILOT_LAUNCH.md) to prepare owner-review evidence for a customer-managed
+reference pilot, not a managed-service launch.
 
 ## Boundaries that matter
 

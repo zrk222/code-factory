@@ -1,0 +1,112 @@
+{
+  "schema": "factory.commercial-packaging.v1",
+  "governance": {
+    "classification": "human_controlled",
+    "commercial_activation_authority": [
+      "product_owner",
+      "chosen_billing_or_contracting_system"
+    ],
+    "automation_may_activate": false
+  },
+  "claim_boundary": {
+    "state_marker": "COMMERCIAL_CAPABILITY_BOUNDARY_PRESERVED",
+    "managed_service_claim": false,
+    "compliance_certification_claim": false,
+    "sso_or_scim_product_claim": false,
+    "external_kms_claim": false,
+    "sla_claim": false
+  },
+  "tiers": {
+    "free_core": {
+      "state_marker": "COMMERCIAL_FREE_CORE_AVAILABLE",
+      "availability": "available",
+      "commercial_account_required": false,
+      "includes": [
+        "local CLI and receipt workflow",
+        "local Studio, Graph Ops, and MCP inspection",
+        "PRD Grill, CDTE, proof review, and E2E proof gate",
+        "open-source source distribution"
+      ],
+      "boundary": "Local proof remains free. It does not grant managed hosting, human review, delivery authority, or a compliance certification."
+    },
+    "team_proof_hub": {
+      "state_marker": "COMMERCIAL_TEAM_NOT_SELLABLE",
+      "availability": "design_partner_only",
+      "purchasable": false,
+      "pricing": {
+        "state_marker": "COMMERCIAL_TEAM_PRICE_PROPOSED",
+        "status": "proposed",
+        "currency": "USD",
+        "range_per_active_pr_author_month": [12, 15],
+        "minimum_active_pr_authors": 5
+      },
+      "intended_outcome": "Shared proof history, team policy bundles, approval routing, and review-visible Proof Debt without replacing the team's merge authority.",
+      "existing_foundations": [
+        "tenant-scoped evidence and hash-linked audit",
+        "independent approval boundary",
+        "signed receipts and policy binding",
+        "supervised hosted reference adapter"
+      ],
+      "delivery_gaps": [
+        "managed tenant onboarding",
+        "customer-facing shared workspace",
+        "service operations, support, and data-retention commitments",
+        "commercial contracting and billing"
+      ]
+    },
+    "enterprise_assurance": {
+      "state_marker": "COMMERCIAL_ENTERPRISE_DISCOVERY_ONLY",
+      "availability": "discovery_only",
+      "purchasable": false,
+      "pricing": {
+        "status": "not_set",
+        "model": "annual_pilot_or_contract_only_after_separate_approval"
+      },
+      "intended_outcome": "A customer-specific assurance deployment with identity, evidence, approval, retention, and support boundaries agreed in writing.",
+      "not_claimed": [
+        "managed service",
+        "SOC 2 or other compliance certification",
+        "SSO or SCIM product availability",
+        "external KMS",
+        "SLA or high-availability commitment"
+      ]
+    },
+    "managed_proof_runner": {
+      "state_marker": "COMMERCIAL_MANAGED_RUNNER_NOT_OFFERED",
+      "availability": "not_offered",
+      "purchasable": false,
+      "pricing": {
+        "status": "deferred"
+      },
+      "activation_prerequisites": [
+        "isolated runner design and hostile verification",
+        "customer-approved network, credential, and data boundaries",
+        "support, incident, retention, and billing operations"
+      ]
+    }
+  },
+  "promotion_trigger": {
+    "minimum_selected_design_partners": 3,
+    "required_observations": [
+      "each partner uses proof review or evidence artifacts weekly",
+      "each partner confirms a shared-history or policy-routing need",
+      "the product owner reviews support and data-boundary evidence",
+      "no tier is promoted from a survey or one-off command count alone"
+    ]
+  },
+  "design_partner_intake": {
+    "state_marker": "COMMERCIAL_INTAKE_DISCOVERY_ONLY",
+    "path": ".github/ISSUE_TEMPLATE/design-partner.yml",
+    "acceptance_authority": false,
+    "source_collection_authority": false,
+    "contact_authority": false
+  },
+  "marketplace_reference": {
+    "state_marker": "COMMERCIAL_MARKETPLACE_SEPARATE",
+    "path": "docs/JETBRAINS_MONETIZATION_2027.json",
+    "activation_authority": false,
+    "revision_authority": false
+  },
+  "separate_marketplace_plan": "docs/JETBRAINS_MONETIZATION_2027.json",
+  "current_verdict": "COMMERCIALIZATION_STAGED_NOT_SELLABLE"
+}

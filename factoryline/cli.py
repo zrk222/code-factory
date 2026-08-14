@@ -91,6 +91,18 @@ from .github_plan_proof_review import (
     compile_github_plan_proof_review,
     write_github_plan_proof_review_artifacts,
 )
+from .e2e_proof import (
+    E2EProofError,
+    public_e2e_proof_receipt,
+    verify_e2e_proof,
+    write_e2e_proof_artifacts,
+)
+from .team_pilot import (
+    TeamPilotError,
+    evaluate_team_pilot_readiness,
+    validate_team_pilot_receipt,
+    write_team_pilot_artifacts,
+)
 from .repair_sandbox import (
     RepairSandboxError,
     create_repair_scope,
@@ -378,6 +390,25 @@ def main(argv=None) -> int:
     plan_verify.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
     plan_verify.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
     plan_verify.add_argument("--json", action="store_true")
+
+    e2e = sub.add_parser("e2e", help="run a native proof-by-sabotage E2E command pair")
+    e2e_sub = e2e.add_subparsers(required=True, dest="e2e_cmd")
+    e2e_verify = e2e_sub.add_parser("verify", help="run approved positive and negative argv commands without vendor access")
+    e2e_verify.add_argument("--root", default=".")
+    e2e_verify.add_argument("--manifest", required=True, help="workspace-contained factory.e2e_proof_manifest.v1 JSON path")
+    e2e_verify.add_argument("--out-dir", help="explicit local directory for receipt, Mermaid, and captured output artifacts")
+    e2e_verify.add_argument("--json", action="store_true")
+
+    team_pilot = sub.add_parser("team-pilot", help="validate customer-managed Team Pilot readiness without commercial activation")
+    team_pilot_sub = team_pilot.add_subparsers(required=True, dest="team_pilot_cmd")
+    team_pilot_readiness = team_pilot_sub.add_parser("readiness", help="hash-bind selected-partner and operating evidence for owner review")
+    team_pilot_readiness.add_argument("--root", default=".")
+    team_pilot_readiness.add_argument("--manifest", required=True, help="workspace-contained factory.team-pilot-launch.v1 JSON path")
+    team_pilot_readiness.add_argument("--out-dir", help="explicit local directory for public receipt, Markdown, and Mermaid artifacts")
+    team_pilot_readiness.add_argument("--json", action="store_true")
+    team_pilot_verify = team_pilot_sub.add_parser("verify", help="verify a hash-bound Team Pilot readiness receipt")
+    team_pilot_verify.add_argument("receipt")
+    team_pilot_verify.add_argument("--json", action="store_true")
 
     s = sub.add_parser("init", help="create the shared factory layout")
     s.add_argument("root", nargs="?", default=".")
@@ -1578,6 +1609,85 @@ def main(argv=None) -> int:
         except OSError as exc:
             print(f"studio failed: LISTENER_ERROR: {exc}", file=sys.stderr)
             return 1
+        return 0
+    if a.cmd == "e2e":
+        workspace = Path(a.root).resolve()
+        manifest = Path(a.manifest)
+        if not manifest.is_absolute():
+            manifest = workspace / manifest
+        try:
+            receipt = verify_e2e_proof(workspace, manifest)
+            artifacts = write_e2e_proof_artifacts(receipt, Path(a.out_dir)) if a.out_dir else None
+        except E2EProofError as exc:
+            error = {
+                "schema": "factory.e2e_proof.error.v1",
+                "marker": exc.code,
+                "code": exc.code,
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"e2e proof failed: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        public = public_e2e_proof_receipt(receipt)
+        if a.json:
+            output = {"receipt": public}
+            if artifacts:
+                output["artifacts"] = artifacts
+            print(json.dumps(output, indent=2, sort_keys=True))
+        else:
+            print("factory e2e verify")
+            print("=" * 44)
+            print(f"proof id : {public['manifest']['id']}")
+            print(f"result   : {public['marker']} ({'passing' if public['ok'] else 'non-passing'})")
+            print(f"positive : {public['commands']['positive']['status']} / exit {public['commands']['positive']['exit_code']}")
+            print(f"negative : {public['commands']['negative']['status']} / exit {public['commands']['negative']['exit_code']}")
+            print("authority: caller-approved local test execution only; no release, deployment, credential, or egress enforcement")
+            if artifacts:
+                print(f"packet   : {artifacts['paths']['markdown']}")
+        return 0 if public["ok"] else 1
+    if a.cmd == "team-pilot":
+        try:
+            if a.team_pilot_cmd == "verify":
+                receipt = json.loads(Path(a.receipt).read_text(encoding="utf-8"))
+                result = validate_team_pilot_receipt(receipt)
+                if a.json:
+                    print(json.dumps({"receipt": result}, indent=2, sort_keys=True))
+                else:
+                    print("factory team-pilot verify")
+                    print("=" * 44)
+                    print(f"pilot    : {result['manifest']['pilot_id']}")
+                    print(f"result   : {result['marker']}")
+                    print("authority: owner review only; no contract, payment, entitlement, Marketplace, deployment, or service activation")
+                return 0
+            workspace = Path(a.root).resolve()
+            manifest = Path(a.manifest)
+            if not manifest.is_absolute():
+                manifest = workspace / manifest
+            receipt = evaluate_team_pilot_readiness(workspace, manifest)
+            artifacts = write_team_pilot_artifacts(receipt, Path(a.out_dir)) if a.out_dir else None
+        except (TeamPilotError, UnicodeDecodeError, json.JSONDecodeError, OSError) as exc:
+            code = exc.code if isinstance(exc, TeamPilotError) else "E_TEAM_PILOT_RECEIPT_INVALID"
+            error = {
+                "schema": "factory.team-pilot.error.v1",
+                "marker": code,
+                "code": code,
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"team pilot failed: {code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            output = {"receipt": receipt}
+            if artifacts:
+                output["artifacts"] = artifacts
+            print(json.dumps(output, indent=2, sort_keys=True))
+        else:
+            print("factory team-pilot readiness")
+            print("=" * 44)
+            print(f"pilot    : {receipt['manifest']['pilot_id']}")
+            print(f"partners : {receipt['manifest']['partner_count']} / 3")
+            print(f"result   : {receipt['marker']}")
+            print("authority: owner review only; no contract, payment, entitlement, Marketplace, deployment, or service activation")
+            if artifacts:
+                print(f"packet   : {artifacts['paths']['markdown']}")
         return 0
     if a.cmd == "plan":
         if a.plan_cmd is None:

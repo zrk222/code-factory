@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "native_e2e_proof_gate_rejects_a_declared_negative_case",
+      "kind": "python",
+      "run": "import json, sys, tempfile\nfrom pathlib import Path\nfrom factoryline.e2e_proof import verify_e2e_proof\nwith tempfile.TemporaryDirectory() as raw:\n    root = Path(raw)\n    manifest = {\"schema\": \"factory.e2e_proof_manifest.v1\", \"id\": \"smoke-e2e\", \"approval\": {\"state\": \"approved\", \"approved_by\": \"smoke-owner\"}, \"working_directory\": \".\", \"timeout_seconds\": 10, \"network_egress\": \"not_granted\", \"positive\": {\"argv\": [sys.executable, \"-c\", \"from pathlib import Path; Path('artifact.txt').write_text('ok')\"]}, \"negative\": {\"argv\": [sys.executable, \"-c\", \"import sys; sys.exit(1)\"]}, \"artifact_paths\": [\"artifact.txt\"]}\n    path = root / \"e2e.json\"\n    path.write_text(json.dumps(manifest), encoding=\"utf-8\")\n    receipt = verify_e2e_proof(root, path)\n    assert receipt[\"marker\"] == \"E2E_PROOF_PASS\"\n    assert receipt[\"commands\"][\"negative\"][\"exit_code\"] == 1\nprint(\"E2E_PROOF_PASS\")\n",
+      "expect_exit": 0,
+      "expect_stdout": "E2E_PROOF_PASS",
+      "timeout_s": 30,
+      "covers": [
+        "REQ_E2E_EXECUTION",
+        "REQ_E2E_PROOF_PASS",
+        "HOLLOW_E2E_TEST"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}
