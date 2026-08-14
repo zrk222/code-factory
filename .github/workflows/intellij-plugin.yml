@@ -41,9 +41,6 @@ jobs:
   test-package-verify:
     needs: changes
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: editors/intellij
     steps:
       - uses: actions/checkout@v5
         if: needs.changes.outputs.intellij == 'true'
@@ -64,9 +61,11 @@ jobs:
         if: needs.changes.outputs.intellij == 'true'
       - run: chmod +x gradlew
         if: needs.changes.outputs.intellij == 'true'
+        working-directory: editors/intellij
       - name: Build, verify, and preflight plugin package
         if: needs.changes.outputs.intellij == 'true'
         shell: bash
+        working-directory: editors/intellij
         run: |
           # JetBrains-hosted dependency metadata can return transient 5xx
           # responses. Retry only at the CI boundary; a persistent build,
@@ -119,9 +118,6 @@ jobs:
           - RustRover
           - DataGrip
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: editors/intellij
     steps:
       - uses: actions/checkout@v5
         if: needs.changes.outputs.intellij == 'true'
@@ -147,6 +143,7 @@ jobs:
         if: needs.changes.outputs.intellij == 'true'
       - run: chmod +x gradlew
         if: needs.changes.outputs.intellij == 'true'
+        working-directory: editors/intellij
       - name: Resolve verified plugin archive
         if: needs.changes.outputs.intellij == 'true'
         shell: bash
@@ -175,6 +172,7 @@ jobs:
       - name: Verify plugin against selected IDE
         if: needs.changes.outputs.intellij == 'true'
         shell: bash
+        working-directory: editors/intellij
         run: |
           archive="$(cat "$RUNNER_TEMP/factoryline-plugin-archive.txt")"
           # The verifier and IDE artifacts are resolved from JetBrains-hosted

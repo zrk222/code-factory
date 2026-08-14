@@ -16,6 +16,8 @@ def test_intellij_required_checks_are_emitted_for_every_pull_request() -> None:
     assert "  compatibility:\n    needs: [changes, test-package-verify]" in workflow
     assert "Mark package verification not applicable" in workflow
     assert "Mark compatibility not applicable" in workflow
+    assert "defaults:\n      run:\n        working-directory: editors/intellij" not in workflow
+    assert workflow.count("working-directory: editors/intellij") == 4
 
 
 def test_intellij_heavy_validation_is_scoped_without_suppressing_required_statuses() -> None:

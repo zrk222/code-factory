@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.31.0 - 2026-08-14
+
+- Add `factory e2e verify`, a local proof-by-sabotage gate that requires an
+  approved positive command, negative mutation command, explicit argv, and
+  declared artifacts. A negative command that exits zero produces
+  `HOLLOW_E2E_TEST`; neither path is called proof by a green result alone.
+- Add `factory team-pilot readiness|verify`, a hash-bound owner-review packet
+  for at most three human-selected, customer-managed reference partners. It
+  requires five non-secret operating decisions and rejects sellable, managed,
+  anonymous, or widened pilot claims.
+- Document staged Team Proof Hub packaging without calling it purchasable or
+  activating a price, checkout, entitlement, onboarding, or managed service.
+- Align release, citation, Hugging Face, and installation surfaces to the new
+  version while preserving target-specific Marketplace moderation and
+  credential gates.
+
 ## 0.30.0 - 2026-08-14
 
 - Add `factory plan verify`, a deterministic Plan-to-Proof Review that compares
