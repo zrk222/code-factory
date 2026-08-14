@@ -1,13 +1,13 @@
 # Release Channels
 
-Code Factory v0.30.0 publishes one verified source state through channel-specific
+Code Factory v0.31.0 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.30.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.30.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.31.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.31.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
 | VS Code | `factoryline-vscode-0.8.6.vsix` | GitHub release bundle; protected `vscode-marketplace.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX or public Marketplace version |
@@ -46,6 +46,14 @@ the environment-scoped `VSCE_PAT` only in the protected publication job. A
 missing credential fails closed at the publish boundary. Replace this PAT path
 with the Marketplace's supported Microsoft Entra automation path before the
 December 1, 2026 global PAT retirement.
+
+### 0.31.0 E2E proof and Team Pilot readiness
+
+`factory e2e verify` proves an approved positive/negative command pair can
+reject the declared failure instead of merely turning green. `factory team-pilot
+readiness` hash-binds the five non-secret operating decisions required for a
+human-selected, customer-managed reference review. Neither command accepts a
+customer, provisions access, collects payment, or claims a managed service.
 
 ### 0.30.0 plan-to-proof and design review
 

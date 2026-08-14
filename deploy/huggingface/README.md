@@ -43,7 +43,7 @@ evidence exists.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.30.0` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.31.0` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21381405).
 
 Use the same local proof context from Cursor or OpenCode through the documented
@@ -71,7 +71,20 @@ capped, source-bound clarification sheet with recommendations and answer stubs.
 It never rewrites the PRD, invents answers, calls a model, or authorizes a
 build. Read the full [PRD Grill guide](https://github.com/zrk222/code-factory/blob/main/docs/PRD_GRILL.md).
 
-### What's new in 0.30.0
+### What's new in 0.31.0
+
+`factory e2e verify` accepts an approved positive/negative command-pair
+manifest and proves the negative path can fail. A negative command that exits
+zero is recorded as `HOLLOW_E2E_TEST`, rather than being treated as a passing
+E2E check. The native local gate uses explicit argument vectors and does not
+provision a browser grid, call a vendor, repair source, or claim readiness.
+
+`factory team-pilot readiness` writes a hash-bound owner-review receipt only
+when up to three human-selected, customer-managed reference partners have five
+complete local operating decisions. It cannot enroll a partner, issue terms,
+collect payment, provision access, or activate a service.
+
+### Plan-to-Proof Review (0.30.0)
 
 `factory plan verify` compares a strict, human-approved agent plan with exact
 changed paths, declared test paths, review tiers, and existing Diff-to-Proof

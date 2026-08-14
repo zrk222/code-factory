@@ -287,7 +287,7 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.30.0"
+    assert project["version"] == "0.31.0"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.8.6"
     assert 'version = "0.8.6"' in gradle
@@ -435,7 +435,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.30.0"
+    assert metadata["version"] == "0.31.0"
     assert metadata["publication_date"] == "2026-08-14"
     assert "Unified Graph Ops" in metadata["description"]
     assert "current FactoryLine identity asset" in metadata["description"]
@@ -534,7 +534,7 @@ def test_release_history_lives_in_the_changelog_not_the_landing_page() -> None:
     assert "[CHANGELOG.md](CHANGELOG.md)" in readme
     assert "## New in 0.25.0:" not in readme
     assert "## New in 0.24.0:" not in readme
-    for version in ("0.24.0", "0.25.0", "0.26.0", "0.27.0", "0.28.0", "0.28.2", "0.29.0", "0.30.0"):
+    for version in ("0.24.0", "0.25.0", "0.26.0", "0.27.0", "0.28.0", "0.28.2", "0.29.0", "0.30.0", "0.31.0"):
         assert version in changelog
 
 
