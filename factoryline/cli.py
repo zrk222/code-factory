@@ -91,6 +91,12 @@ from .github_plan_proof_review import (
     compile_github_plan_proof_review,
     write_github_plan_proof_review_artifacts,
 )
+from .e2e_proof import (
+    E2EProofError,
+    public_e2e_proof_receipt,
+    verify_e2e_proof,
+    write_e2e_proof_artifacts,
+)
 from .repair_sandbox import (
     RepairSandboxError,
     create_repair_scope,
@@ -378,6 +384,14 @@ def main(argv=None) -> int:
     plan_verify.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
     plan_verify.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
     plan_verify.add_argument("--json", action="store_true")
+
+    e2e = sub.add_parser("e2e", help="run a native proof-by-sabotage E2E command pair")
+    e2e_sub = e2e.add_subparsers(required=True, dest="e2e_cmd")
+    e2e_verify = e2e_sub.add_parser("verify", help="run approved positive and negative argv commands without vendor access")
+    e2e_verify.add_argument("--root", default=".")
+    e2e_verify.add_argument("--manifest", required=True, help="workspace-contained factory.e2e_proof_manifest.v1 JSON path")
+    e2e_verify.add_argument("--out-dir", help="explicit local directory for receipt, Mermaid, and captured output artifacts")
+    e2e_verify.add_argument("--json", action="store_true")
 
     s = sub.add_parser("init", help="create the shared factory layout")
     s.add_argument("root", nargs="?", default=".")
@@ -1579,6 +1593,40 @@ def main(argv=None) -> int:
             print(f"studio failed: LISTENER_ERROR: {exc}", file=sys.stderr)
             return 1
         return 0
+    if a.cmd == "e2e":
+        workspace = Path(a.root).resolve()
+        manifest = Path(a.manifest)
+        if not manifest.is_absolute():
+            manifest = workspace / manifest
+        try:
+            receipt = verify_e2e_proof(workspace, manifest)
+            artifacts = write_e2e_proof_artifacts(receipt, Path(a.out_dir)) if a.out_dir else None
+        except E2EProofError as exc:
+            error = {
+                "schema": "factory.e2e_proof.error.v1",
+                "marker": exc.code,
+                "code": exc.code,
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"e2e proof failed: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        public = public_e2e_proof_receipt(receipt)
+        if a.json:
+            output = {"receipt": public}
+            if artifacts:
+                output["artifacts"] = artifacts
+            print(json.dumps(output, indent=2, sort_keys=True))
+        else:
+            print("factory e2e verify")
+            print("=" * 44)
+            print(f"proof id : {public['manifest']['id']}")
+            print(f"result   : {public['marker']} ({'passing' if public['ok'] else 'non-passing'})")
+            print(f"positive : {public['commands']['positive']['status']} / exit {public['commands']['positive']['exit_code']}")
+            print(f"negative : {public['commands']['negative']['status']} / exit {public['commands']['negative']['exit_code']}")
+            print("authority: caller-approved local test execution only; no release, deployment, credential, or egress enforcement")
+            if artifacts:
+                print(f"packet   : {artifacts['paths']['markdown']}")
+        return 0 if public["ok"] else 1
     if a.cmd == "plan":
         if a.plan_cmd is None:
             return _plan()

@@ -45,6 +45,12 @@ known, what is missing, and the one fact-derived next action.
   changed paths, preserves Diff-to-Proof facts, and emits Proof Debt for scope,
   declared-test, deep-review, and existing evidence obligations. It does not
   call a test executed, interpret an AI summary as proof, or alter branch policy.
+- **Proves whether an explicit E2E check can reject a declared failure.**
+  `factory e2e verify` runs a human-approved local positive/negative argv pair,
+  records `HOLLOW_E2E_TEST` when the negative case exits zero, and emits a
+  hash-bound proof packet only to an explicit output directory. It has no hosted
+  testing-vendor, browser-grid, or external-upload dependency; the no-egress
+  field is a declaration, not an unenforceable isolation claim.
 - **Makes UI design reviewable without pretending it is proven.** The optional
   [Prestige Design Review](PRESTIGE_DESIGN.md) adds purpose-led design briefs
   and visible audit artifacts for hierarchy, responsive behavior, affordance,

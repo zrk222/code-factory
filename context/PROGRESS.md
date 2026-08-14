@@ -230,3 +230,15 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-14 04:41] GATE plan plan-to-proof-verifier approver=human tasks=11 sha=b8d879ad5e2e6997
 - [2026-08-14 04:48] GATE spec plan-to-proof-verifier approver=human strict=True sha=b8d879ad5e2e6997
 - [2026-08-14 04:48] GATE plan plan-to-proof-verifier approver=human tasks=11 sha=b8d879ad5e2e6997
+- [2026-08-14 05:27] GATE spec e2e-proof-gate approver=human strict=True sha=45bf4f51a2c9fcbf
+- [2026-08-14 05:27] GATE plan e2e-proof-gate approver=human tasks=4 sha=45bf4f51a2c9fcbf
+- [2026-08-14 05:28] GATE spec e2e-proof-gate approver=human strict=True sha=183d16ace1e66965
+- [2026-08-14 05:28] GATE plan e2e-proof-gate approver=human tasks=4 sha=183d16ace1e66965
+- [2026-08-14 05:29] GATE spec e2e-proof-gate approver=human strict=True sha=f13979e49cffd719
+- [2026-08-14 05:29] GATE plan e2e-proof-gate approver=human tasks=4 sha=f13979e49cffd719
+- [2026-08-14 05:35] GATE spec e2e-proof-gate approver=human strict=True sha=dcb4e08f5bb414c9
+- [2026-08-14 05:35] GATE plan e2e-proof-gate approver=human tasks=4 sha=dcb4e08f5bb414c9
+- [2026-08-14 05:40] GATE spec e2e-proof-gate approver=human strict=True sha=ea6265e61ad55933
+- [2026-08-14 05:40] GATE plan e2e-proof-gate approver=human tasks=6 sha=ea6265e61ad55933
+- [2026-08-14 05:45] GATE spec e2e-proof-gate approver=human strict=True sha=ea6265e61ad55933
+- [2026-08-14 05:45] GATE plan e2e-proof-gate approver=human tasks=6 sha=ea6265e61ad55933
