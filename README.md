@@ -74,6 +74,7 @@ developers can find it. This optional link only opens the repository.
 | Inspect delivery state | [`factory studio`](docs/TARGET_COMPILER.md) | Graph Ops, receipts, and the next supported action |
 | Debug why two graph runs diverged | [`factory graph forensics`](docs/GRAPH_FORENSICS.md) | Hash-sealed state lineage, concurrency findings, and a read-only recovery preview |
 | Choose among competing repairs | [`factory proofsearch`](docs/PROOFSEARCH.md) | Hash-bound candidate rejection, mutation-tested evidence, a deterministic winner, and locked apply authority |
+| Decide what evidence to collect next | [Evidence Frontier](docs/EVIDENCE_FRONTIER.md) | A deterministic next-test hypothesis that separates repair candidates, with execution locked |
 | Verify supplied work | [Verifier Plane](docs/VERIFIER_PLANE.md) | Independent, hash-bound evidence checks |
 
 For the short product map, read the [overview](docs/OVERVIEW.md). For a two-minute
@@ -142,7 +143,7 @@ output map make the same proof context reusable by a client you choose.
   founder story behind catching passing tests that fail in real use.
 - Start with [PRD Grill](docs/PRD_GRILL.md), [Proof Review](docs/DIFF_TO_PROOF_REVIEW.md),
   or [Verifier Plane](docs/VERIFIER_PLANE.md) when the job calls for it.
-- Browse [Graph Ops](docs/GRAPH_OPS.md), [proof reuse](docs/PROOF_REUSE.md), and
+- Browse [Graph Ops](docs/GRAPH_OPS.md), [Evidence Frontier](docs/EVIDENCE_FRONTIER.md), [proof reuse](docs/PROOF_REUSE.md), and
   [savings boundaries](docs/SAVINGS_TRACKER.md) for advanced evidence workflows.
 - For UI work, read [Prestige Design Review](docs/PRESTIGE_DESIGN.md) for the
   optional design-quality lane and its explicit review boundaries.

@@ -18,6 +18,7 @@ from .proof import verify_trace
 from .proof_reuse import verify_proof_receipt
 from .graph_forensics import graph_forensics, verify_graph_lineage
 from .proofsearch import verify_proofsearch_evaluation
+from .evidence_frontier import verify_evidence_frontier
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -482,6 +483,57 @@ def _append_proofsearch(state: dict[str, Any], root: Path) -> dict[str, int]:
     return facts
 
 
+def _append_evidence_frontiers(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project sealed, non-executing next-evidence choices into Graph Ops."""
+    facts = {"frontier_count": 0, "ready_count": 0, "halted_count": 0}
+    directory = root / ".factory" / "proofsearch"
+    for path in sorted(directory.glob("*.frontier.json")):
+        value, source = _load_json(root, path, state["errors"])
+        if value is None or source is None:
+            continue
+        verification = verify_evidence_frontier(root, path)
+        digest = _text(value.get("frontier_sha256"), path.stem)
+        next_experiment = value.get("next_experiment")
+        status = "ready" if verification["valid"] and next_experiment else "halted" if verification["valid"] else "invalid"
+        frontier_id = f"evidence-frontier:{digest[:24]}"
+        _node(
+            state, node_id=frontier_id, kind="evidence_frontier", label=f"Evidence Frontier · {next_experiment or 'no separating test'}",
+            source=source, status=status,
+            facts={
+                "next_experiment": next_experiment, "decision": value.get("decision"),
+                "eligible_candidate_ids": value.get("eligible_candidate_ids", []),
+                "max_experiments": value.get("max_experiments"), "savings": value.get("savings", {}),
+                "authority": value.get("authority", {}), "frontier_sha256": digest,
+                "valid": verification["valid"], "errors": verification["errors"],
+            },
+        )
+        evaluation_path = value.get("evaluation", {}).get("path") if isinstance(value.get("evaluation"), dict) else None
+        for node in state["nodes"].values():
+            if node.get("kind") == "proofsearch" and node.get("source") == evaluation_path:
+                _edge(state, frontier_id, node["id"], "selects_evidence_for")
+        for experiment in value.get("experiments", []):
+            if not isinstance(experiment, dict):
+                continue
+            experiment_id = _text(experiment.get("experiment_id"), "experiment")
+            node_id = f"evidence-experiment:{_sha({'frontier': digest, 'experiment': experiment_id})[:24]}"
+            _node(
+                state, node_id=node_id, kind="evidence_experiment", label=experiment_id, source=source,
+                status="next" if experiment_id == next_experiment else "ranked",
+                facts={
+                    "rank": experiment.get("rank"), "kind": experiment.get("kind"),
+                    "description": experiment.get("description"), "predictions": experiment.get("predictions", {}),
+                    "separation_count": experiment.get("separation_count"),
+                    "candidate_pair_count": experiment.get("candidate_pair_count"),
+                    "measurement": experiment.get("measurement"), "execution_allowed": False,
+                },
+            )
+            _edge(state, node_id, frontier_id, "ranked_by")
+        facts["frontier_count"] += 1
+        facts["ready_count"] += int(status == "ready")
+        facts["halted_count"] += int(status == "halted")
+    return facts
+
+
 def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
     visible = nodes[:80]
     allowed = {node["id"] for node in visible}
@@ -503,6 +555,8 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "collect_independent_verifier_evidence", "A verifier session is bound, but no Code Factory runtime isolation has been proven."
     if facts["forensic_anomaly_count"] > 0:
         return "review_graph_anomaly", "Verified lineage exposes at least one state or concurrency anomaly."
+    if facts["evidence_frontier_ready_count"] > 0:
+        return "review_evidence_frontier", "A sealed Evidence Frontier ranks the next supplied experiment that separates viable repair candidates; execution remains human-owned."
     if facts["proofsearch_evaluation_count"] > 0 and facts["proofsearch_winner_count"] == 0:
         return "repair_candidate_evidence", "ProofSearch has no eligible candidate; repair the exact rejected evidence."
     if facts["proofsearch_winner_count"] > 0:
@@ -520,27 +574,14 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
     return "review_verified_graph", "All currently represented requirements have valid completion evidence."
 
 
-def graph_ops_snapshot(root: Path) -> dict[str, Any]:
-    """Compile a bounded graph snapshot from existing local files without writes."""
-    workspace = Path(root).resolve()
-    state: dict[str, Any] = {
-        "nodes": {}, "edges": [], "edge_keys": set(), "errors": [], "truncated": False,
-    }
-    requirements, slices = _append_product_graphs(state, workspace)
-    evidenced = _append_missions(state, workspace, requirements, slices)
-    stale_proof_count = _append_proofs(state, workspace)
-    gates = _append_plans(state, workspace)
-    _append_traces(state, workspace)
-    verifier_sessions = _append_verifier_sessions(state, workspace)
-    forensics = _append_graph_forensics(state, workspace)
-    proofsearch = _append_proofsearch(state, workspace)
-
-    nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
-    edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
+def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proof_count: int,
+                    gates: Counter[str], verifier_sessions: dict[str, int],
+                    forensics: dict[str, int], proofsearch: dict[str, int],
+                    frontier: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
-    facts = {
+    return {
         "node_count": len(nodes),
-        "edge_count": len(edges),
+        "edge_count": 0,
         "stale_proof_count": stale_proof_count,
         "blocked_gate_count": gates["BLOCK"],
         "run_gate_count": gates["RUN"],
@@ -555,9 +596,15 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "proofsearch_candidate_count": proofsearch["candidate_count"],
         "proofsearch_eligible_count": proofsearch["eligible_count"],
         "proofsearch_winner_count": proofsearch["winner_count"],
+        "evidence_frontier_count": frontier["frontier_count"],
+        "evidence_frontier_ready_count": frontier["ready_count"],
+        "evidence_frontier_halted_count": frontier["halted_count"],
     }
-    action, reason = _recommendation(facts)
-    complete = not state["errors"] and not state["truncated"]
+
+
+def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
+                      verifier_sessions: dict[str, int], forensics: dict[str, int],
+                      proofsearch: dict[str, int], frontier: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -578,12 +625,40 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers.append("GRAPH_OPS_COUNTERFACTUAL_RECOVERY_PREVIEW")
     if proofsearch["evaluation_count"]:
         markers.extend(["GRAPH_OPS_PROOFSEARCH_ARENA", "GRAPH_OPS_VERIFIED_REPAIR_LOCKED"])
-    if not complete:
+    if frontier["frontier_count"]:
+        markers.append("GRAPH_OPS_EVIDENCE_FRONTIER_READ_ONLY")
+    if state["errors"] or state["truncated"]:
         markers.append("GRAPH_OPS_PARTIAL_RESULT")
+    return sorted(markers)
+
+
+def graph_ops_snapshot(root: Path) -> dict[str, Any]:
+    """Compile a bounded graph snapshot from existing local files without writes."""
+    workspace = Path(root).resolve()
+    state: dict[str, Any] = {
+        "nodes": {}, "edges": [], "edge_keys": set(), "errors": [], "truncated": False,
+    }
+    requirements, slices = _append_product_graphs(state, workspace)
+    evidenced = _append_missions(state, workspace, requirements, slices)
+    stale_proof_count = _append_proofs(state, workspace)
+    gates = _append_plans(state, workspace)
+    _append_traces(state, workspace)
+    verifier_sessions = _append_verifier_sessions(state, workspace)
+    forensics = _append_graph_forensics(state, workspace)
+    proofsearch = _append_proofsearch(state, workspace)
+    frontier = _append_evidence_frontiers(state, workspace)
+
+    nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
+    edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
+    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier)
+    facts["edge_count"] = len(edges)
+    action, reason = _recommendation(facts)
+    complete = not state["errors"] and not state["truncated"]
+    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier)
     core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
-        "markers": sorted(markers),
+        "markers": markers,
         "complete": complete,
         "authority": _AUTHORITY,
         "nodes": nodes,

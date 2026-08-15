@@ -192,6 +192,14 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "Apply verified repair" in page
     assert 'facts.apply===false' in page
     assert "Not measured" in page
+    assert "Evidence Frontier · proof-guided loop" in page
+    assert 'id="frontier-cards"' in page
+    assert 'id="copy-frontier"' in page
+    assert 'id="export-frontier"' in page
+    assert 'id="validate-frontier"' in page
+    assert 'id="run-frontier"' in page
+    assert "Run next experiment" in page
+    assert "execution_allowed===false" in page
 
 
 def test_graph_ops_exposes_verified_proofsearch_winner_and_candidate_controls(tmp_path: Path):
@@ -219,3 +227,28 @@ def test_graph_ops_exposes_verified_proofsearch_winner_and_candidate_controls(tm
     decision = next(node for node in snapshot["nodes"] if node["kind"] == "proofsearch")
     assert decision["facts"]["apply"] is False
     assert all(value is False for value in decision["facts"]["authority"].values())
+
+
+def test_graph_ops_projects_a_verified_evidence_frontier_without_execution(tmp_path: Path):
+    from test_evidence_frontier import _evaluation, _experiment, _request
+    from factoryline.evidence_frontier import plan_evidence_frontier
+
+    evaluation = _evaluation(tmp_path)
+    request = _request(tmp_path, evaluation, [
+        _experiment("targeted", {"repair-a": "pass", "repair-b": "fail", "repair-c": "fail"}, root=tmp_path),
+    ])
+    frontier = tmp_path / ".factory" / "proofsearch" / "comparison.frontier.json"
+    plan_evidence_frontier(tmp_path, request, frontier)
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    assert snapshot["facts"]["evidence_frontier_count"] == 1
+    assert snapshot["facts"]["evidence_frontier_ready_count"] == 1
+    assert snapshot["recommendation"]["action"] == "review_evidence_frontier"
+    assert "GRAPH_OPS_EVIDENCE_FRONTIER_READ_ONLY" in snapshot["markers"]
+    decision = next(node for node in snapshot["nodes"] if node["kind"] == "evidence_frontier")
+    assert decision["facts"]["next_experiment"] == "targeted"
+    assert all(value is False for value in decision["facts"]["authority"].values())
+    experiment = next(node for node in snapshot["nodes"] if node["kind"] == "evidence_experiment")
+    assert experiment["status"] == "next"
+    assert experiment["facts"]["execution_allowed"] is False

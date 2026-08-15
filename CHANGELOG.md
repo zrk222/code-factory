@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add Evidence Frontier, a deterministic Graph Ops loop-planning receipt that
+  ranks supplied next-evidence hypotheses by the repair-candidate pairs they
+  separate. It binds a current ProofSearch evaluation, labels predictions as
+  unverified, halts when no proposed experiment discriminates, and keeps command,
+  workspace, checkpoint, approval, merge, publication, deployment, signing,
+  messaging, credential, and connector authority locked.
+- Add `factory proofsearch frontier plan|verify` and a Graph Ops Evidence
+  Frontier lane with ranked experiment cards plus copy/export/guardrail controls.
+  The Run control is visibly disabled; this release does not execute tests or
+  claim time, token, cost, or productivity savings.
+
 - Add ProofSearch, a deterministic counterfactual repair selector. It seals the
   first Graph Forensics divergence and exact Graph Impact proof slice, verifies
   2 through 12 hash-bound candidates, rejects failed proofs, surviving mutants,

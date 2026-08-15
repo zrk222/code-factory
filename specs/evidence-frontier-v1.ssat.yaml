@@ -1,0 +1,36 @@
+name: evidence-frontier-v1
+language: python
+modules:
+  - name: evidence_frontier
+    path: factoryline/evidence_frontier.py
+    functions:
+      - name: plan_evidence_frontier
+        args: [root, request_path, out]
+        returns: dict[str, Any]
+      - name: verify_evidence_frontier
+        args: [root, frontier_path]
+        returns: dict[str, Any]
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_snapshot
+        args: [root]
+        returns: dict[str, Any]
+dependencies:
+  - from: evidence_frontier
+    to: proofsearch
+  - from: graph_ops
+    to: evidence_frontier
+invariants:
+  - name: frontier_never_executes_or_mutates
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:apply|commit|merge|deploy|publish|sign|send_message|grant_connector|invoke)\\s*\\("
+    scopes:
+      - module: evidence_frontier
+        symbol: plan_evidence_frontier
+        max_lines: 220
+  - name: graph_ops_frontier_projection_is_read_only
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: graph_ops
+        symbol: graph_ops_snapshot
+        max_lines: 130

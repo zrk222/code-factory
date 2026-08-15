@@ -149,6 +149,7 @@ jobs:
           docs/assets/marketplace/graph-ops-studio-1280x800.png
           docs/assets/marketplace/graph-ops-proofsearch.png
           docs/assets/marketplace/graph-ops-proofsearch-controls.png
+          docs/assets/marketplace/graph-ops-evidence-frontier.png
           docs/assets/*.svg
           docs/assets/verify-policy.gif
           --clobber

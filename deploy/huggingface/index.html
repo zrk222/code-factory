@@ -163,14 +163,16 @@
         <div>
           <div class="eyebrow">Verified counterfactual repair</div>
           <h2>Compare every plausible fix. Accept only the proven winner.</h2>
-          <p>Graph Forensics identifies the first semantic divergence. ProofSearch binds its exact proof slice to 2–12 local candidates, rejects failed proofs, surviving mutants, scope escapes, test weakening, and error suppression, then explains the minimum-risk and minimum-scope winner. Time, token, and cost savings stay unavailable until paired measurements exist.</p>
+          <p>Graph Forensics identifies the first semantic divergence. ProofSearch binds its exact proof slice to 2–12 local candidates, rejects failed proofs, surviving mutants, scope escapes, test weakening, and error suppression, then explains the minimum-risk and minimum-scope winner. Evidence Frontier ranks supplied, non-executing checks by how many viable repair pairs they separate. Predictions are hypotheses, never proof or authority. Time, token, and cost savings stay unavailable until paired measurements exist.</p>
         </div>
         <pre><code>factory proofsearch plan --root . \
   --baseline baseline.lineage.json \
   --candidate failed.lineage.json \
   --changed src/service.py --out repair.plan.json
 factory proofsearch evaluate candidates.json \
-  --root . --out repair.evaluation.json --json</code></pre>
+  --root . --out repair.evaluation.json --json
+factory proofsearch frontier plan frontier.request.json \
+  --root . --out frontier.json --json</code></pre>
       </div>
     </section>
 
@@ -183,6 +185,7 @@ factory proofsearch evaluate candidates.json \
         <div class="gallery">
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" alt="Factory Studio showing the outcome-first MVP and professional workflow tabs.">
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-proofsearch.png" alt="Graph Ops Counterfactual Arena showing candidate evidence, deterministic rejection reasons, and a verified winner.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-evidence-frontier.png" alt="Graph Ops Evidence Frontier showing ranked next-evidence hypotheses and a locked experiment control.">
           <article class="card"><span>First local run</span><h3>Run First Proof</h3><p>Install FactoryLine, confirm the local workspace, then create a contained MVP. The exact listing copy and capture brief are public in the Marketplace Acquisition Kit.</p><p><a href="https://github.com/zrk222/code-factory/blob/main/docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md">Open the kit →</a></p></article>
         </div>
       </div>
