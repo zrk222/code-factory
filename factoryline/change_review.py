@@ -13,7 +13,7 @@ from .proof import git_changed_paths, risk_for_paths
 
 
 CHANGE_REVIEW_SCHEMA = "factory.change_review.v1"
-MAX_CHANGED_PATHS = 50
+MAX_CHANGED_PATHS = 100
 AUTHORITY = {
     "execution": False,
     "approval": False,

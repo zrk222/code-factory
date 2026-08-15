@@ -19,7 +19,7 @@ message, access a credential, or call a network service.
   artifacts and existing policy rather than filename guesses or model output.
 
 ### Requirements (EARS)
-- The system shall return schema `factory.change_review.v1` and marker `DIFF_TO_PROOF_REVIEW_V1` with a sorted, de-duplicated set of 1 through 50 workspace-relative changed paths.
+- The system shall return schema `factory.change_review.v1` and marker `DIFF_TO_PROOF_REVIEW_V1` with a sorted, de-duplicated set of 1 through 100 workspace-relative changed paths.
 - When explicit changed paths are supplied, the system shall return marker `DIFF_TO_PROOF_INPUTS_EXACT` with `input_source` equal to `explicit` and `changed_paths` equal to those normalized paths; with no paths, the system shall return Git `BASE...HEAD` paths or reject an unavailable base or empty change set without an artifact.
 - The system shall return marker `DIFF_TO_PROOF_GRAPH_IMPACT_EXACT` and preserve Graph Ops matched proofs, stale rerun proofs, verified-current proofs, unmatched paths, source errors, and graph hash for the exact changed-path set.
 - The system shall return marker `DIFF_TO_PROOF_COVERAGE_GAPS_EXPLICIT`, preserve the existing `requirement_coverage` payload, and add one `coverage_incomplete` finding whenever that payload has `ok: false`.
