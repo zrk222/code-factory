@@ -1,0 +1,42 @@
+name: reality-check-v1
+language: python
+modules:
+  - name: reality_check
+    path: factoryline/reality_check.py
+    functions:
+      - name: run_reality_check
+        args: [root, manifest_path]
+        returns: dict[str, Any]
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_snapshot
+        args: [root]
+        returns: dict[str, Any]
+  - name: graph_authorization
+    path: factoryline/graph_authorization.py
+    functions:
+      - name: create_graph_authorization
+        args: [root, payload]
+        returns: dict[str, Any]
+      - name: run_authorized_reality_check
+        args: [root, authorization_path]
+        returns: dict[str, Any]
+dependencies:
+  - from: reality_check
+    to: e2e_proof
+  - from: graph_ops
+    to: reality_check
+  - from: graph_ops
+    to: graph_authorization
+  - from: graph_authorization
+    to: reality_check
+  - from: graph_authorization
+    to: graph_ops
+invariants:
+  - name: reality_check_never_repairs_or_promotes
+    forbid_pattern: "\\b(?:repair|commit|merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: reality_check
+        symbol: run_reality_check
+        max_lines: 40

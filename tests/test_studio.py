@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from http.client import HTTPConnection
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 import json
 import threading
 
@@ -247,6 +248,58 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         assert connection.getresponse().status == 413
     finally:
         connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_http_graph_ops_authorization_requires_token_and_consumes_one_reality_check(tmp_path: Path):
+    from test_reality_check import _write
+    from factoryline.graph_ops import graph_ops_snapshot
+    from factoryline.reality_check import run_reality_check, write_reality_check_artifacts
+
+    receipt = run_reality_check(tmp_path, _write(tmp_path))
+    write_reality_check_artifacts(receipt, tmp_path / ".factory" / "reality")
+    node_id = next(node["id"] for node in graph_ops_snapshot(tmp_path)["nodes"] if node["kind"] == "reality_check")
+    server, token = create_server(tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    now = datetime.now(timezone.utc)
+    authorization = {
+        "action": "reality_check_execution", "id": "http-reality", "node_id": node_id,
+        "approved_by": "reviewer", "rationale": "Run the exact declared behavior once.",
+        "expires_at": (now + timedelta(hours=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "confirmation": "AUTHORIZE http-reality",
+    }
+
+    def post(path: str, payload: dict, session_token: str) -> tuple[int, dict]:
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request("POST", path, body=json.dumps(payload), headers={
+            "Content-Type": "application/json", "X-Factory-Studio-Token": session_token,
+        })
+        response = connection.getresponse()
+        parsed = json.loads(response.read())
+        connection.close()
+        return response.status, parsed
+
+    try:
+        status, rejected = post("/api/graph-ops-authorize", authorization, "wrong-token")
+        assert status == 403
+        assert rejected["code"] == "TOKEN_REQUIRED"
+
+        status, approved = post("/api/graph-ops-authorize", authorization, token)
+        assert status == 201
+        assert approved["marker"] == "GRAPH_OPS_HUMAN_AUTHORIZATION_RECORDED"
+
+        status, executed = post("/api/graph-ops-run", {"authorization": approved["path"]}, token)
+        assert status == 201
+        assert executed["marker"] == "GRAPH_OPS_AUTHORIZED_REALITY_CHECK_EXECUTED"
+        assert executed["receipt"]["marker"] == "REALITY_CHECK_VERIFIED"
+
+        status, replayed = post("/api/graph-ops-run", {"authorization": approved["path"]}, token)
+        assert status == 409
+        assert replayed["code"] == "GRAPH_AUTHORIZATION_NOT_EXECUTABLE"
+    finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)

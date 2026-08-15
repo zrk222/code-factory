@@ -94,12 +94,19 @@ from .github_plan_proof_review import (
     compile_github_plan_proof_review,
     write_github_plan_proof_review_artifacts,
 )
+from .github_assurance_dossier import (
+    GitHubAssuranceDossierError,
+    build_assurance_dossier_from_paths,
+    validate_policy_snapshot,
+    write_assurance_dossier_artifacts,
+)
 from .e2e_proof import (
     E2EProofError,
     public_e2e_proof_receipt,
     verify_e2e_proof,
     write_e2e_proof_artifacts,
 )
+from .reality_check import RealityCheckError, inspect_reality_intent, run_reality_check, write_reality_check_artifacts
 from .team_pilot import (
     TeamPilotError,
     evaluate_team_pilot_readiness,
@@ -401,6 +408,18 @@ def main(argv=None) -> int:
     e2e_verify.add_argument("--manifest", required=True, help="workspace-contained factory.e2e_proof_manifest.v1 JSON path")
     e2e_verify.add_argument("--out-dir", help="explicit local directory for receipt, Mermaid, and captured output artifacts")
     e2e_verify.add_argument("--json", action="store_true")
+
+    reality = sub.add_parser("reality", help="run one approved behavior promise through a supervised local proof pair")
+    reality_sub = reality.add_subparsers(required=True, dest="reality_cmd")
+    reality_verify = reality_sub.add_parser("verify", help="bind an approved happy and negative check to one product behavior")
+    reality_verify.add_argument("--root", default=".")
+    reality_verify.add_argument("--manifest", required=True, help="workspace-contained factory.reality-check-manifest.v1 JSON path")
+    reality_verify.add_argument("--out-dir", help="explicit local directory for public receipt, Markdown, and Mermaid artifacts")
+    reality_verify.add_argument("--json", action="store_true")
+    reality_inspect = reality_sub.add_parser("inspect", help="validate declared positive and negative intent assertions without execution")
+    reality_inspect.add_argument("--root", default=".")
+    reality_inspect.add_argument("--manifest", required=True, help="workspace-contained factory.reality-check-manifest.v1 JSON path")
+    reality_inspect.add_argument("--json", action="store_true")
 
     team_pilot = sub.add_parser("team-pilot", help="validate customer-managed Team Pilot readiness without commercial activation")
     team_pilot_sub = team_pilot.add_subparsers(required=True, dest="team_pilot_cmd")
@@ -866,6 +885,17 @@ def main(argv=None) -> int:
     github_plan_proof.add_argument("--head-sha", required=True, help="exact 40-character lowercase pull-request head SHA")
     github_plan_proof.add_argument("--out-dir", help="explicit local directory for JSON and Markdown payload artifacts")
     github_plan_proof.add_argument("--json", action="store_true")
+    github_policy_snapshot = github_sub.add_parser("policy-snapshot", help="validate a supplied local GitHub policy snapshot without a network call")
+    github_policy_snapshot.add_argument("snapshot", help="factory.github_policy_snapshot.v1 JSON path")
+    github_policy_snapshot.add_argument("--json", action="store_true")
+    github_assurance = github_sub.add_parser("assurance-dossier", help="join local proof review and supplied policy snapshots into merge evidence")
+    github_assurance.add_argument("--proof-review", required=True, help="factory.github_proof_review.v1 JSON path")
+    github_assurance.add_argument("--policy-snapshot", required=True, help="current factory.github_policy_snapshot.v1 JSON path")
+    github_assurance.add_argument("--baseline-policy-snapshot", help="previous comparable policy snapshot JSON path")
+    github_assurance.add_argument("--exception", action="append", default=[], help="named expiring exception JSON path; repeat as needed")
+    github_assurance.add_argument("--out-dir", help="explicit local directory for dossier JSON, Markdown, and Mermaid artifacts")
+    github_assurance.add_argument("--require-aligned", action="store_true", help="exit non-zero after writing when baseline or high drift needs human action")
+    github_assurance.add_argument("--json", action="store_true")
 
     repair = sub.add_parser("repair", help="prepare a sealed Change List scope and inspect a candidate patch without applying it")
     repair_sub = repair.add_subparsers(required=True, dest="repair_cmd")
@@ -1697,6 +1727,43 @@ def main(argv=None) -> int:
             if artifacts:
                 print(f"packet   : {artifacts['paths']['markdown']}")
         return 0 if public["ok"] else 1
+    if a.cmd == "reality":
+        workspace = Path(a.root).resolve()
+        manifest = Path(a.manifest)
+        if not manifest.is_absolute():
+            manifest = workspace / manifest
+        try:
+            if a.reality_cmd == "inspect":
+                inspection = inspect_reality_intent(workspace, manifest)
+                if a.json:
+                    print(json.dumps(inspection, indent=2, sort_keys=True))
+                else:
+                    print("factory reality inspect")
+                    print("=" * 44)
+                    print(f"promise  : {inspection['manifest']['behavior']['promise']}")
+                    print(f"coverage : {len(inspection['positive_assertion_ids'])} positive / {len(inspection['negative_assertion_ids'])} negative assertions")
+                    print("execution: locked; this only validates the declared intent contract")
+                return 0
+            receipt = run_reality_check(workspace, manifest)
+            artifacts = write_reality_check_artifacts(receipt, Path(a.out_dir)) if a.out_dir else None
+        except RealityCheckError as exc:
+            error = {"schema": "factory.reality-check.error.v1", "marker": exc.code, "code": exc.code, "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"reality check failed: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            output = {"receipt": receipt}
+            if artifacts:
+                output["artifacts"] = artifacts
+            print(json.dumps(output, indent=2, sort_keys=True))
+        else:
+            print("factory reality verify")
+            print("=" * 44)
+            print(f"promise  : {receipt['manifest']['behavior']['promise']}")
+            print(f"result   : {receipt['marker']} ({'passing' if receipt['ok'] else 'non-passing'})")
+            print("authority: caller-approved local test execution only; no repair, merge, release, deployment, credential, or egress enforcement")
+            if artifacts:
+                print(f"packet   : {artifacts['markdown']}")
+        return 0 if receipt["ok"] else 1
     if a.cmd == "team-pilot":
         try:
             if a.team_pilot_cmd == "verify":
@@ -2411,7 +2478,15 @@ def main(argv=None) -> int:
         return 0
     if a.cmd == "github":
         try:
-            if a.github_cmd == "plan-proof-review":
+            if a.github_cmd == "policy-snapshot":
+                payload = validate_policy_snapshot(json.loads(Path(a.snapshot).read_text(encoding="utf-8")))
+            elif a.github_cmd == "assurance-dossier":
+                payload = build_assurance_dossier_from_paths(
+                    Path(a.proof_review), Path(a.policy_snapshot),
+                    Path(a.baseline_policy_snapshot) if a.baseline_policy_snapshot else None,
+                    [Path(path) for path in a.exception],
+                )
+            elif a.github_cmd == "plan-proof-review":
                 payload = compile_github_plan_proof_review(
                     Path(a.root), Path(a.plan), base=a.base, changed=a.changed or None, head_sha=a.head_sha,
                 )
@@ -2419,16 +2494,21 @@ def main(argv=None) -> int:
                 payload = compile_github_proof_review(
                     Path(a.root), base=a.base, changed=a.changed or None, head_sha=a.head_sha,
                 )
-            if a.out_dir:
+            if getattr(a, "out_dir", None):
                 if a.github_cmd == "plan-proof-review":
                     payload["artifacts"] = write_github_plan_proof_review_artifacts(payload, Path(a.out_dir))
+                elif a.github_cmd == "assurance-dossier":
+                    payload["artifacts"] = write_assurance_dossier_artifacts(payload, Path(a.out_dir))
+                elif a.github_cmd == "policy-snapshot":
+                    raise GitHubAssuranceDossierError("GITHUB_ASSURANCE_INPUT_INVALID", "policy-snapshot validation never writes artifacts")
                 else:
                     payload["artifacts"] = write_github_proof_review_artifacts(payload, Path(a.out_dir))
-        except (ChangeReviewError, PlanProofReviewError, GitHubProofReviewError, GitHubPlanProofReviewError) as exc:
+        except (ChangeReviewError, PlanProofReviewError, GitHubProofReviewError, GitHubPlanProofReviewError, GitHubAssuranceDossierError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            assurance = a.github_cmd in {"policy-snapshot", "assurance-dossier"}
             error = {
-                "schema": "factory.github_plan_proof_review.error.v1" if a.github_cmd == "plan-proof-review" else "factory.github_proof_review.error.v1",
-                "marker": getattr(exc, "code", "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID" if a.github_cmd == "plan-proof-review" else "GITHUB_PROOF_REVIEW_INPUT_INVALID"),
-                "code": getattr(exc, "code", "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID" if a.github_cmd == "plan-proof-review" else "GITHUB_PROOF_REVIEW_INPUT_INVALID"),
+                "schema": "factory.github_assurance_dossier.error.v1" if assurance else "factory.github_plan_proof_review.error.v1" if a.github_cmd == "plan-proof-review" else "factory.github_proof_review.error.v1",
+                "marker": getattr(exc, "code", "GITHUB_ASSURANCE_INPUT_INVALID" if assurance else "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID" if a.github_cmd == "plan-proof-review" else "GITHUB_PROOF_REVIEW_INPUT_INVALID"),
+                "code": getattr(exc, "code", "GITHUB_ASSURANCE_INPUT_INVALID" if assurance else "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID" if a.github_cmd == "plan-proof-review" else "GITHUB_PROOF_REVIEW_INPUT_INVALID"),
                 "message": str(exc),
             }
             print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"github proof review failed: {error['code']}: {exc}", file=sys.stderr)
@@ -2438,14 +2518,23 @@ def main(argv=None) -> int:
         else:
             print(f"factory github {a.github_cmd} (local, advisory only)")
             print("=" * 54)
-            print(f"head SHA     : {payload['head_sha']}")
-            print(f"review SHA   : {payload['review_sha256']}")
-            print(f"next action  : {payload['next_action']['action']}")
-            print(f"cohorts      : {len(payload['path_cohorts'])}")
+            if a.github_cmd == "policy-snapshot":
+                print(f"scope        : {payload['scope']['owner']}/{payload['scope']['repository']}")
+                print(f"rulesets     : {len(payload['rulesets'])}")
+            elif a.github_cmd == "assurance-dossier":
+                print(f"head SHA     : {payload['head_sha']}")
+                print(f"status       : {payload['status']}")
+                print(f"next action  : {payload['next_action']['action']}")
+                print(f"high drift   : {payload['drift']['unresolved_high_count']}")
+            else:
+                print(f"head SHA     : {payload['head_sha']}")
+                print(f"review SHA   : {payload['review_sha256']}")
+                print(f"next action  : {payload['next_action']['action']}")
+                print(f"cohorts      : {len(payload['path_cohorts'])}")
             if payload.get("artifacts"):
                 print(f"packet       : {payload['artifacts']['paths']['markdown']}")
             print("authority    : no network, source write, test execution, approval, merge, or credential access")
-        return 0
+        return 3 if a.github_cmd == "assurance-dossier" and a.require_aligned and payload["status"] == "review_required" else 0
     if a.cmd == "repair":
         try:
             if a.repair_cmd == "scope":

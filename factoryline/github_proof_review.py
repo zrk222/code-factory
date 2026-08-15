@@ -216,6 +216,11 @@ def _valid_payload(payload: object) -> dict[str, Any]:
     return payload
 
 
+def validate_github_proof_review_payload(payload: object) -> dict[str, Any]:
+    """Validate one rendered local proof-review payload for downstream evidence joins."""
+    return _valid_payload(payload)
+
+
 def render_github_proof_review(review: object, head_sha: str) -> dict[str, Any]:
     """Render a deterministic, advisory-only GitHub payload from trusted local facts."""
     source = _valid_review(review)

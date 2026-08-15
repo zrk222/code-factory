@@ -169,6 +169,10 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
 
     assert "GRAPH_OPS_VISUAL_ACCESSIBLE" in page
     assert "GRAPH_OPS_TEXT_NODE_RENDERING" in page
+    assert "Proof observatory" in page
+    assert "Evidence health" in page
+    assert "health-donut" in page
+    assert "renderObservatory" in page
     assert 'const endpoint="/api/graph-ops"' in page
     assert '"X-Factory-Studio-Token":sessionToken' in page
     assert "textContent" in page
@@ -200,6 +204,13 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert 'id="run-frontier"' in page
     assert "Run next experiment" in page
     assert "execution_allowed===false" in page
+    assert '"reality_check"' in page
+    assert 'id="authorization-title"' in page
+    assert 'id="authorize-selected"' in page
+    assert 'id="run-authorized-reality"' in page
+    assert '"/api/graph-ops-authorize"' in page
+    assert '"/api/graph-ops-run"' in page
+    assert "AUTHORIZE ${id}" in page
 
 
 def test_graph_ops_exposes_verified_proofsearch_winner_and_candidate_controls(tmp_path: Path):
@@ -252,3 +263,21 @@ def test_graph_ops_projects_a_verified_evidence_frontier_without_execution(tmp_p
     experiment = next(node for node in snapshot["nodes"] if node["kind"] == "evidence_experiment")
     assert experiment["status"] == "next"
     assert experiment["facts"]["execution_allowed"] is False
+
+
+def test_graph_ops_projects_a_supervised_reality_check_without_rerunning_it(tmp_path: Path):
+    from test_reality_check import _write
+    from factoryline.reality_check import run_reality_check
+
+    receipt = run_reality_check(tmp_path, _write(tmp_path))
+    directory = tmp_path / ".factory" / "reality"; directory.mkdir(parents=True)
+    (directory / "approval.reality.json").write_text(json.dumps(receipt), encoding="utf-8")
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    assert snapshot["facts"]["reality_check_count"] == 1
+    assert snapshot["facts"]["reality_check_verified_count"] == 1
+    assert "GRAPH_OPS_REALITY_CHECK_SUPERVISED" in snapshot["markers"]
+    node = next(node for node in snapshot["nodes"] if node["kind"] == "reality_check")
+    assert node["status"] == "verified"
+    assert node["facts"]["promise"] == "A manager can approve a request."

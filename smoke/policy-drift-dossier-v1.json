@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "policy_drift_dossier_reports_removed_required_check_without_network_or_merge_authority",
+      "kind": "python",
+      "run": "import json, tempfile\nfrom pathlib import Path\nfrom factoryline.change_review import review_change\nfrom factoryline.github_proof_review import render_github_proof_review\nfrom factoryline.github_assurance_dossier import build_assurance_dossier, write_assurance_dossier_artifacts\nfrom factoryline.graph_ops import graph_ops_snapshot\nhead='abcdefabcdefabcdefabcdefabcdefabcdefabcd'\ndef snapshot(checks):\n return {'schema':'factory.github_policy_snapshot.v1','captured_at':'2026-08-15T10:00:00+00:00','scope':{'owner':'factoryline','repository':'smoke'},'capture':{'source':'manual_export','captured_by':'smoke.owner','source_reference':'smoke-export'},'rulesets':[{'id':'main','name':'Main','enforcement':'active','required_checks':checks,'required_workflows':[],'require_signed_commits':True,'allow_force_pushes':False,'bypass_actors':[]}]}\nwith tempfile.TemporaryDirectory() as raw:\n root=Path(raw); proof=render_github_proof_review(review_change(root,changed=['factoryline/tool.py']),head); dossier=build_assurance_dossier(proof,snapshot([]),snapshot(['proof']))\n assert dossier['status']=='review_required' and dossier['drift']['unresolved_high_count']==1 and dossier['authority']['merge'] is False\n write_assurance_dossier_artifacts(dossier,root/'.factory'/'github-assurance'); graph=graph_ops_snapshot(root)\n assert graph['recommendation']['action']=='resolve_policy_drift'\nprint('POLICY_DRIFT_DOSSIER_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "POLICY_DRIFT_DOSSIER_SMOKE_PASS",
+      "timeout_s": 30,
+      "covers": [
+        "GITHUB_ASSURANCE_DOSSIER_V1",
+        "GITHUB_POLICY_DRIFT_DETERMINISTIC",
+        "GRAPH_OPS_GITHUB_ASSURANCE_PROJECTED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

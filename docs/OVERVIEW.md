@@ -48,6 +48,10 @@ known, what is missing, and the one fact-derived next action.
   exact commit, an advisory neutral Check, and a stable walkthrough. It can
   coexist with CodeRabbit or another AI-review surface, but never imports their
   credentials or comments as verification evidence.
+- **Makes supplied policy weakening visible before a human merge decision.**
+  `factory github assurance-dossier` compares schema-validated policy exports,
+  binds them to a Proof Review and exact commit, and projects unresolved high
+  drift into Graph Ops. It never reads or changes live GitHub policy.
 - **Makes an approved agent plan reviewable after the code exists.**
   `factory plan verify` binds a strict, named human-approved plan to the exact
   changed paths, preserves Diff-to-Proof facts, and emits Proof Debt for scope,
@@ -80,7 +84,7 @@ known, what is missing, and the one fact-derived next action.
 ## Typical path
 
 ```powershell
-pip install factoryline-code-factory==0.33.0
+pip install factoryline-code-factory==0.34.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid

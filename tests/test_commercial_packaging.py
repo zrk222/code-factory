@@ -64,6 +64,12 @@ def test_commercial_packaging_marks_only_free_core_as_available():
         "activation_authority": False,
         "revision_authority": False,
     }
+    assert packaging["github_pricing_reference"] == {
+        "state_marker": "COMMERCIAL_GITHUB_PRICE_SCHEDULED_NOT_ACTIVE",
+        "path": "docs/GITHUB_MONETIZATION_2026.json",
+        "activation_authority": False,
+        "revision_authority": False,
+    }
     assert packaging["current_verdict"] == "COMMERCIALIZATION_STAGED_NOT_SELLABLE"
 
 
@@ -80,3 +86,41 @@ def test_design_partner_intake_has_no_sales_or_source_collection_authority():
     assert "does not accept a partner, create a contract, start a trial, or grant access" in intake
     assert "Do not include source code, credentials, tokens, customer data" in intake
     assert "design-partner" in intake
+
+
+def test_github_per_seat_plan_is_scheduled_but_not_active_or_enforced():
+    plan = json.loads((ROOT / "docs" / "GITHUB_MONETIZATION_2026.json").read_text(encoding=UTF8))
+    guide = (ROOT / "docs" / "GITHUB_MONETIZATION_2026.md").read_text(encoding=UTF8)
+    readme = (ROOT / "README.md").read_text(encoding=UTF8)
+
+    assert plan["schema"] == "factory.github-monetization-plan.v1"
+    assert plan["offer"] == {
+        "free_through": "2026-12-01T23:59:59-05:00",
+        "paid_from": "2026-12-02",
+        "price_per_named_seat_usd_month": 5.95,
+        "price_status": "owner_approved_future_price_not_active",
+        "billing_status": "not_configured",
+        "checkout_status": "not_live",
+        "taxes_and_currency_conversion": "must_be_shown_by_the_chosen_billing_or_contracting_system_before_purchase",
+    }
+    assert plan["scope"]["source_license"] == "MIT OR Apache-2.0 remains unchanged"
+    assert plan["scope"]["repository_access"] == "not_restricted_by_this_plan"
+    assert plan["scope"]["automatic_license_enforcement"] is False
+    assert plan["value_contract"]["state_marker"] == "GITHUB_ASSURANCE_SEAT_VALUE_DEFINED"
+    assert plan["value_contract"]["included_when_activated"] == [
+        "commit-bound GitHub Proof Review Check and walkthrough",
+        "human-approved Plan-to-Proof scope envelope and visible Proof Debt",
+        "supplied-policy drift dossier bound to the exact commit and named expiring exceptions",
+        "organization-authored policy bundles with named, expiring exception receipts",
+        "exportable hash-bound evidence, attestations, and review packets",
+        "customer-managed local evidence and no Code Factory source upload",
+    ]
+    assert "automatic merge" in plan["value_contract"]["does_not_include"][0]
+    assert len(plan["activation_gates"]) == 6
+    assert plan["current_verdict"] == "GITHUB_PER_SEAT_PRICE_SCHEDULED_NOT_ACTIVE"
+    assert "$5.95 USD per named seat per month" in guide
+    assert "The $5.95 Assurance Seat value contract" in guide
+    assert "feature-by-feature availability matrix" in guide
+    assert "not active yet" in guide
+    assert "GitHub repository metadata cannot collect payment" in guide
+    assert "$5.95 USD per named seat per month" in readme

@@ -43,7 +43,7 @@ evidence exists.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.33.0` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.34.0` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21381405).
 
 Use the same local proof context from Cursor or OpenCode through the documented
@@ -71,14 +71,14 @@ capped, source-bound clarification sheet with recommendations and answer stubs.
 It never rewrites the PRD, invents answers, calls a model, or authorizes a
 build. Read the full [PRD Grill guide](https://github.com/zrk222/code-factory/blob/main/docs/PRD_GRILL.md).
 
-### What's new in 0.33.0
+### What's new in 0.34.0
 
-Evidence Frontier adds a deterministic next-evidence layer to Graph Ops. Given
-a current ProofSearch evaluation and user-supplied experiment hypotheses, it
-ranks the experiment that separates the largest number of viable repair pairs.
-Predictions remain unverified until a separately approved runner records
-external evidence; Graph Ops cannot run an experiment, mutate a workspace, or
-approve a result.
+Merge Evidence Dossier joins a commit-bound Proof Review with supplied,
+schema-validated policy snapshots. It makes ruleset weakening visible before a
+human merge decision, accepts only named expiring exceptions bound to the exact
+commit and policy, and never reads or alters live GitHub settings. Graph Ops
+now also exposes a Proof Observatory with direct coverage, drift, and
+blocked-gate visuals while execution remains locked.
 
 ### Graph Forensics and ProofSearch (0.32.0)
 
