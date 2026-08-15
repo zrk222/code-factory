@@ -16,6 +16,7 @@ import json
 from .product_missions import verify_mission_completion
 from .proof import verify_trace
 from .proof_reuse import verify_proof_receipt
+from .graph_forensics import graph_forensics, verify_graph_lineage
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -383,6 +384,55 @@ def _append_verifier_sessions(state: dict[str, Any], root: Path) -> dict[str, in
     return facts
 
 
+def _append_graph_forensics(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Add verified lineage and latest-pair forensic facts to the read-only map."""
+    facts = {"lineage_count": 0, "anomaly_count": 0, "divergence_count": 0}
+    verified: list[tuple[Path, dict[str, Any], str, str]] = []
+    for path in sorted((root / ".factory" / "graph-runs").glob("*.lineage.json")):
+        lineage, source = _load_json(root, path, state["errors"])
+        if lineage is None or source is None:
+            continue
+        result = verify_graph_lineage(path)
+        run_id = _text(result.get("run_id"), path.stem)
+        node_id = f"lineage:{run_id}"
+        _node(state, node_id=node_id, kind="lineage", label=run_id, source=source,
+              status="verified" if result["valid"] else "invalid",
+              facts={"graph_id": _text(result.get("graph_id"), "unknown"), "steps": len(result["steps"]), "errors": result["errors"]})
+        facts["lineage_count"] += 1
+        if result["valid"]:
+            verified.append((path, result, node_id, source))
+    by_graph: dict[str, list[tuple[Path, dict[str, Any], str, str]]] = {}
+    for item in verified:
+        by_graph.setdefault(str(item[1]["graph_id"]), []).append(item)
+    for graph_id, items in sorted(by_graph.items()):
+        if len(items) < 2:
+            continue
+        baseline, candidate = items[-2], items[-1]
+        result = graph_forensics(baseline[0], candidate[0])
+        forensic_id = f"forensics:{_sha({'graph_id': graph_id, 'sha': result['forensics_sha256']})[:24]}"
+        status = "anomaly" if result["anomalies"] else "diverged" if result["divergence"] else "verified"
+        _node(state, node_id=forensic_id, kind="forensics", label=f"{baseline[1]['run_id']} vs {candidate[1]['run_id']}",
+              source=candidate[3], status=status,
+              facts={
+                  "graph_id": graph_id,
+                  "baseline": result["baseline"],
+                  "candidate": result["candidate"],
+                  "baseline_path": baseline[3],
+                  "candidate_path": candidate[3],
+                  "first_divergence": result["divergence"],
+                  "anomaly_count": len(result["anomalies"]),
+                  "anomalies": result["anomalies"],
+                  "recovery_plan": result["recovery_plan"],
+                  "authority": result["authority"],
+                  "forensics_sha256": result["forensics_sha256"],
+              })
+        _edge(state, baseline[2], forensic_id, "baseline_for")
+        _edge(state, candidate[2], forensic_id, "candidate_for")
+        facts["anomaly_count"] += len(result["anomalies"])
+        facts["divergence_count"] += int(result["divergence"] is not None)
+    return facts
+
+
 def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
     visible = nodes[:80]
     allowed = {node["id"] for node in visible}
@@ -402,6 +452,10 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "initialize_graph", "No readable local Factory graph artifacts were found."
     if facts["runtime_unattested_session_count"] > 0:
         return "collect_independent_verifier_evidence", "A verifier session is bound, but no Code Factory runtime isolation has been proven."
+    if facts["forensic_anomaly_count"] > 0:
+        return "review_graph_anomaly", "Verified lineage exposes at least one state or concurrency anomaly."
+    if facts["forensic_divergence_count"] > 0:
+        return "review_counterfactual_fork", "Two verified graph runs diverge; review the bounded recovery preview."
     if facts["stale_proof_count"] > 0:
         return "rerun_invalid_proof", "At least one recorded proof is stale."
     if facts["blocked_gate_count"] > 0:
@@ -425,6 +479,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     gates = _append_plans(state, workspace)
     _append_traces(state, workspace)
     verifier_sessions = _append_verifier_sessions(state, workspace)
+    forensics = _append_graph_forensics(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
@@ -439,6 +494,9 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "evidenced_requirement_count": sum(node in evidenced for node in requirement_nodes),
         "verifier_session_count": verifier_sessions["session_count"],
         "runtime_unattested_session_count": verifier_sessions["runtime_unattested_count"],
+        "lineage_run_count": forensics["lineage_count"],
+        "forensic_anomaly_count": forensics["anomaly_count"],
+        "forensic_divergence_count": forensics["divergence_count"],
     }
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
@@ -456,6 +514,10 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers.append("GRAPH_OPS_DECLARED_GATE_STATE")
     if verifier_sessions["session_count"]:
         markers.append("GRAPH_OPS_VERIFIER_SESSIONS_READ_ONLY")
+    if forensics["lineage_count"]:
+        markers.append("GRAPH_OPS_SEMANTIC_LINEAGE")
+    if forensics["divergence_count"]:
+        markers.append("GRAPH_OPS_COUNTERFACTUAL_RECOVERY_PREVIEW")
     if not complete:
         markers.append("GRAPH_OPS_PARTIAL_RESULT")
     core = {

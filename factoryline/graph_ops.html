@@ -20,7 +20,7 @@
     .back:hover,.back:focus-visible { border-color:var(--blue); outline:none; }
     .notice { border:1px solid #37537c; background:#101c31; color:#d8e8ff; border-radius:var(--radius); margin:20px 0; padding:14px 16px; line-height:1.5; }
     .notice strong { color:var(--green); }
-    .summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:20px 0; }
+    .summary { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin:20px 0; }
     .stat,.card { background:color-mix(in srgb,var(--panel) 94%,transparent); border:1px solid var(--line); border-radius:var(--radius); padding:18px; }
     .stat p,.card h2 { margin:0; }
     .stat p { color:var(--muted); font-size:.82rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em; }
@@ -44,9 +44,45 @@
     .detail dt { color:var(--muted); font-weight:700; }.detail dd { margin:0; overflow-wrap:anywhere; }
     .empty { border:1px dashed #4a607f; color:var(--muted); border-radius:12px; padding:24px; margin-top:18px; line-height:1.5; }
     .errors { margin:16px 0 0; padding-left:20px; color:var(--amber); }.errors li { margin:7px 0; overflow-wrap:anywhere; }
+    .forensics { margin:0 0 var(--space); padding:0; overflow:hidden; border-color:#3d5f8d; background:linear-gradient(145deg,#111f35,#101827 58%,#17162b); }
+    .forensics-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; padding:20px; border-bottom:1px solid var(--line); }
+    .forensics-head h2 { font-size:1.15rem; margin-top:4px; }
+    .forensics-head p { margin:7px 0 0; max-width:72ch; }
+    .review-badge { display:inline-flex; align-items:center; min-height:44px; padding:8px 13px; border:1px solid #7b6ca8; border-radius:999px; color:#ddd0ff; background:#231d39; font-size:.78rem; font-weight:800; letter-spacing:.05em; text-transform:uppercase; white-space:nowrap; }
+    .forensics-grid { display:grid; grid-template-columns:minmax(0,1.05fr) minmax(0,1fr) minmax(0,1.05fr); }
+    .forensic-stage { padding:20px; min-width:0; }
+    .forensic-stage + .forensic-stage { border-left:1px solid var(--line); }
+    .stage-label { color:var(--blue); font-size:.72rem; font-weight:800; letter-spacing:.11em; text-transform:uppercase; }
+    .run-pair { display:grid; grid-template-columns:1fr auto 1fr; gap:10px; align-items:center; margin-top:14px; }
+    .run { padding:12px; border:1px solid var(--line); border-radius:12px; background:#0a1220; min-width:0; }
+    .run small { color:var(--muted); display:block; }.run strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:4px; }
+    .versus { color:var(--muted); font-size:.72rem; font-weight:900; }
+    .finding-list,.causal-list,.chip-list { list-style:none; padding:0; margin:14px 0 0; display:grid; gap:8px; }
+    .finding { padding:11px 12px; border:1px solid #8e4b58; border-left:4px solid var(--red); border-radius:10px; background:#281620; }
+    .finding strong { display:block; font-size:.82rem; }.finding span { color:#efbdc4; font-size:.78rem; overflow-wrap:anywhere; }
+    .clear-state { color:var(--green); margin-top:14px; }
+    .divergence { display:flex; gap:12px; align-items:center; margin-top:14px; padding:14px; border:1px solid #9b7431; border-radius:12px; background:#2a2112; }
+    .divergence .sequence { display:grid; place-items:center; flex:0 0 48px; height:48px; margin:0; border-radius:50%; background:var(--amber); color:#221a08; font-weight:900; }
+    .divergence strong,.divergence span { display:block; }.divergence span { color:#e8cf9e; font-size:.8rem; margin-top:3px; }
+    .chip-list { display:flex; flex-wrap:wrap; }.chip-list li { padding:6px 9px; border:1px solid #5b7093; border-radius:999px; color:#c7d8f5; background:#142139; font-size:.76rem; }
+    .causal-list li { position:relative; padding:7px 8px 7px 24px; color:#c9d7ec; overflow-wrap:anywhere; }
+    .causal-list li::before { content:""; position:absolute; left:5px; top:14px; width:7px; height:7px; border-radius:50%; background:var(--blue); box-shadow:0 0 0 4px #3a77b933; }
+    .recovery-box { margin-top:14px; padding:14px; border:1px solid #3d795e; border-radius:12px; background:#10251c; }
+    .recovery-box strong { color:var(--green); }.recovery-box p { margin:7px 0 0; }
+    .proof-hash { color:var(--muted); display:block; font: .72rem ui-monospace,SFMono-Regular,Consolas,monospace; margin-top:14px; overflow-wrap:anywhere; }
+    .action-dock { margin:0 20px 20px; padding:16px; border:1px solid #4c668b; border-radius:14px; background:#0c1422; }
+    .action-dock-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
+    .action-dock h3 { margin:0; }.action-dock p { margin:5px 0 0; }
+    .action-buttons { display:flex; flex-wrap:wrap; gap:9px; margin-top:14px; }
+    .action-button { min-height:44px; padding:10px 14px; border:1px solid #527db4; border-radius:10px; background:#173052; color:var(--ink); cursor:pointer; font-weight:750; }
+    .action-button:hover,.action-button:focus-visible { border-color:var(--blue); box-shadow:0 0 0 3px #316aa044; outline:none; }
+    .action-button.secondary { background:#172134; border-color:#53637e; }
+    .action-button:disabled { cursor:not-allowed; opacity:.62; border-color:#604f72; background:#231d2b; }
+    .guard-result { margin-top:12px; padding:10px 12px; border-radius:10px; color:#dce9ff; background:#132039; }
     .foot { color:var(--muted); font-size:.85rem; line-height:1.5; margin:20px 0 0; }
     .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
-    @media (max-width:900px) { .summary { grid-template-columns:repeat(2,minmax(0,1fr)); }.layout { grid-template-columns:1fr; } }
+    @media (max-width:1100px) { .summary { grid-template-columns:repeat(3,minmax(0,1fr)); }.forensics-grid { grid-template-columns:1fr; }.forensic-stage + .forensic-stage { border-left:0; border-top:1px solid var(--line); } }
+    @media (max-width:900px) { .layout { grid-template-columns:1fr; } }
     @media (max-width:768px) { .shell { padding:16px; }.top { flex-direction:column; }.top-actions { align-self:flex-start; justify-content:flex-start; }.summary { grid-template-columns:1fr 1fr; }.node .label { max-width:calc(100vw - 88px); }.detail dl { grid-template-columns:1fr; gap:4px; }.detail dd { margin-bottom:10px; } }
     @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; transition:none!important; } }
   </style>
@@ -57,7 +93,7 @@
       <div>
         <p class="eyebrow">Factory Studio / Graph Ops</p>
         <h1>Follow the proof path.</h1>
-        <p class="lede">A bounded visual map of local Product, Mission, Proof, Gate, and Trace artifacts. It reveals what exists; it never executes it.</p>
+        <p class="lede">A bounded visual map of Product, Mission, Proof, Gate, Trace, and semantic run-lineage artifacts. Follow the first divergence and its recovery preview without executing it.</p>
       </div>
       <nav class="top-actions" aria-label="Graph Ops navigation">
         <a class="back" href="https://github.com/zrk222/code-factory/blob/main/docs/GRAPH_OPS.md" rel="noreferrer">View Graph Ops docs</a>
@@ -70,7 +106,21 @@
       <div class="stat"><p>Nodes</p><strong id="node-count">—</strong></div>
       <div class="stat"><p>Edges</p><strong id="edge-count">—</strong></div>
       <div class="stat"><p>Evidenced</p><strong id="evidence-count">—</strong></div>
+      <div class="stat"><p>Lineage runs</p><strong id="lineage-count">—</strong></div>
+      <div class="stat"><p>Forensic findings</p><strong id="finding-count">—</strong></div>
       <div class="stat"><p>Graph status</p><strong id="complete-status">Loading</strong></div>
+    </section>
+    <section id="forensics-panel" class="card forensics" aria-labelledby="forensics-title" hidden>
+      <header class="forensics-head">
+        <div><span class="stage-label">Verified semantic time travel</span><h2 id="forensics-title">Why did this graph run change?</h2><p>Compare sealed state lineage, isolate the first semantic divergence, and preview the smallest recovery branch.</p></div>
+        <span class="review-badge">Review only · never executes</span>
+      </header>
+      <div class="forensics-grid">
+        <section class="forensic-stage" aria-labelledby="evidence-stage"><span class="stage-label" id="evidence-stage">1 · Sealed evidence</span><div id="run-pair" class="run-pair"></div><span id="forensics-hash" class="proof-hash"></span><ul id="finding-list" class="finding-list" aria-label="Detected graph anomalies"></ul><p id="findings-clear" class="clear-state" hidden>No deterministic concurrency or state anomalies detected.</p></section>
+        <section class="forensic-stage" aria-labelledby="divergence-stage"><span class="stage-label" id="divergence-stage">2 · First divergence</span><div id="divergence-detail"></div><h3>Changed state</h3><ul id="state-keys" class="chip-list"></ul><h3>Causal path</h3><ol id="causal-path" class="causal-list"></ol></section>
+        <section class="forensic-stage" aria-labelledby="recovery-stage"><span class="stage-label" id="recovery-stage">3 · Recovery preview</span><div id="recovery-detail" class="recovery-box"></div><h3>Rerun only</h3><ol id="rerun-nodes" class="causal-list"></ol><h3>Evidence to refresh</h3><ul id="invalidated-evidence" class="chip-list"></ul></section>
+      </div>
+      <section class="action-dock" aria-labelledby="action-dock-title"><div class="action-dock-head"><div><h3 id="action-dock-title">Guarded Action Dock</h3><p>Prepare and validate the recovery locally. Workspace mutation stays locked until a separate signed approval is supplied.</p></div><span class="review-badge">Fail closed</span></div><div class="action-buttons"><button id="prepare-recovery" class="action-button" type="button">Copy dry-run command</button><button id="validate-recovery" class="action-button secondary" type="button">Validate guardrails</button><button id="execute-recovery" class="action-button" type="button" disabled aria-describedby="execution-lock">Execute approved recovery</button></div><p id="execution-lock" class="guard-result">Locked: no named, expiring, signed approval is bound. Graph Ops cannot grant one.</p></section>
     </section>
     <section class="layout">
       <div class="card" aria-labelledby="graph-title">
@@ -91,12 +141,13 @@
     "use strict";
     const sessionToken=__FACTORY_STUDIO_TOKEN__;
     const endpoint="/api/graph-ops";
-    const laneOrder=["product","requirement","slice","mission","approval","completion","proof","gate","trace","receipt","artifact"];
+    const laneOrder=["product","requirement","slice","mission","approval","completion","lineage","forensics","proof","gate","trace","receipt","artifact"];
     const byId=(id)=>document.getElementById(id);
     const addText=(parent,text,tag="span")=>{const node=document.createElement(tag);node.textContent=String(text);parent.appendChild(node);return node;};
     const setText=(id,text)=>{byId(id).textContent=String(text);};
     const status=(text)=>{setText("live",text);};
     let selectedButton=null;
+    let currentForensics=null;
     function selectNode(node,button){
       if(selectedButton) selectedButton.setAttribute("aria-pressed","false");
       selectedButton=button; button.setAttribute("aria-pressed","true");
@@ -110,14 +161,34 @@
       if(!errors.length){empty.hidden=false;list.hidden=true;return;}
       empty.hidden=true;list.hidden=false; errors.forEach(item=>addText(list,`${item.code}: ${item.source}`,"li"));
     }
+    function renderRun(parent,label,run){const box=document.createElement("div");box.className="run";addText(box,label,"small");addText(box,run?.run_id||"unknown","strong");addText(box,`${run?.steps??0} steps · sealed`,"small");parent.appendChild(box);}
+    function renderForensics(nodes){
+      const panel=byId("forensics-panel");const candidates=nodes.filter(node=>node.kind==="forensics");
+      if(!candidates.length){panel.hidden=true;currentForensics=null;return;} panel.hidden=false;
+      const node=candidates[candidates.length-1];const facts=node.facts||{};const divergence=facts.first_divergence;const recovery=facts.recovery_plan||{};
+      currentForensics=facts;
+      const pair=byId("run-pair");pair.replaceChildren();renderRun(pair,"Baseline",facts.baseline);addText(pair,"VS","span").className="versus";renderRun(pair,"Candidate",facts.candidate);
+      setText("forensics-hash",`Forensic receipt · ${facts.forensics_sha256||"hash unavailable"}`);
+      const findings=byId("finding-list");findings.replaceChildren();const anomalies=Array.isArray(facts.anomalies)?facts.anomalies:[];byId("findings-clear").hidden=anomalies.length!==0;
+      anomalies.forEach(item=>{const row=document.createElement("li");row.className="finding";addText(row,`${item.severity||"finding"} · ${item.code}`,"strong");addText(row,item.state_key?`State: ${item.state_key}`:item.effect_id?`Effect: ${item.effect_id}`:`Sequence: ${item.sequence??"n/a"}`,"span");findings.appendChild(row);});
+      const detail=byId("divergence-detail");detail.replaceChildren();const keys=byId("state-keys");keys.replaceChildren();const path=byId("causal-path");path.replaceChildren();
+      if(divergence){const box=document.createElement("div");box.className="divergence";addText(box,divergence.sequence??"?","span").className="sequence";const copy=document.createElement("div");addText(copy,divergence.candidate_node||"candidate changed","strong");addText(copy,`Baseline: ${divergence.baseline_node||"none"}`,"span");box.appendChild(copy);detail.appendChild(box);(divergence.changed_state_keys||[]).forEach(key=>addText(keys,key,"li"));(divergence.causal_nodes||[]).forEach(item=>addText(path,item,"li"));}else{addText(detail,"The verified runs are semantically identical.","p");}
+      const recoveryDetail=byId("recovery-detail");recoveryDetail.replaceChildren();addText(recoveryDetail,recovery.action||"no recovery required","strong");addText(recoveryDetail,recovery.reason||"No recovery reason recorded.","p");addText(recoveryDetail,`Checkpoint: ${recovery.checkpoint_id||"start of run"}`,"p");addText(recoveryDetail,"Human approval required. Execution remains disabled.","p");
+      const rerun=byId("rerun-nodes");rerun.replaceChildren();(recovery.rerun_nodes||[]).forEach(item=>addText(rerun,item,"li"));const invalidated=byId("invalidated-evidence");invalidated.replaceChildren();(recovery.invalidated_evidence||[]).forEach(item=>addText(invalidated,item,"li"));
+    }
+    function recoveryCommand(){const baseline=currentForensics?.baseline_path||"<baseline.lineage.json>";const candidate=currentForensics?.candidate_path||"<candidate.lineage.json>";return `factory graph forensics --baseline "${baseline}" --candidate "${candidate}" --json`;}
+    byId("prepare-recovery").addEventListener("click",async()=>{if(!currentForensics)return;const command=recoveryCommand();try{await navigator.clipboard.writeText(command);setText("execution-lock","Recovery command copied. It is dry-run only and cannot mutate a checkpoint.");status("Dry-run recovery command copied.");}catch(_error){setText("execution-lock",`Copy unavailable. Dry-run command: ${command}`);status("Recovery command displayed for manual copy.");}});
+    byId("validate-recovery").addEventListener("click",()=>{const recovery=currentForensics?.recovery_plan||{};const authority=currentForensics?.authority||{};const safe=recovery.execute===false&&recovery.requires_human_approval===true&&authority.execution===false&&authority.checkpoint_mutation===false;setText("execution-lock",safe?"Guardrails valid: preview is non-executing, authority is retained, and human approval is required.":"Guardrail validation failed closed. Do not execute this recovery.");status(safe?"Recovery guardrails validated.":"Recovery guardrails failed closed.");});
     function renderGraph(payload){
       const facts=payload.facts||{}; const nodes=Array.isArray(payload.nodes)?payload.nodes:[];
+      setText("graph-description",`Authenticated local result · ${facts.lineage_run_count??0} sealed lineage run(s) · ${facts.forensic_anomaly_count??0} forensic finding(s).`);
       setText("node-count",facts.node_count??nodes.length); setText("edge-count",facts.edge_count??0);
       setText("evidence-count",`${facts.evidenced_requirement_count??0}/${(facts.evidenced_requirement_count??0)+(facts.unevidenced_requirement_count??0)}`);
+      setText("lineage-count",facts.lineage_run_count??0);setText("finding-count",facts.forensic_anomaly_count??0);
       setText("complete-status",payload.complete?"Complete":"Partial"); setText("next-action",payload.recommendation?.action||"unavailable"); setText("next-reason",payload.recommendation?.reason||"No fact-derived action is available.");
       const lanes=byId("lanes"); lanes.replaceChildren(); const empty=byId("graph-empty"); empty.hidden=nodes.length!==0;
       laneOrder.forEach(kind=>{const members=nodes.filter(node=>node.kind===kind);if(!members.length)return;const lane=document.createElement("section");lane.className="lane";const heading=addText(lane,`${kind} · ${members.length}`,"h3");heading.id=`lane-${kind}`;const list=document.createElement("div");list.className="node-list";list.setAttribute("aria-labelledby",heading.id);members.slice(0,40).forEach(node=>{const button=document.createElement("button");button.type="button";button.className="node";button.dataset.status=node.status||"unknown";button.setAttribute("aria-pressed","false");addText(button,node.kind,"span").className="kind";addText(button,node.label,"span").className="label";button.addEventListener("click",()=>selectNode(node,button));list.appendChild(button);});if(members.length>40)addText(list,`${members.length-40} more nodes remain in the signed result.`,"span");lane.appendChild(list);lanes.appendChild(lane);});
-      renderErrors(Array.isArray(payload.source_errors)?payload.source_errors:[]); status(`Graph Ops loaded ${nodes.length} nodes. Next action: ${payload.recommendation?.action||"unavailable"}.`);
+      renderForensics(nodes);renderErrors(Array.isArray(payload.source_errors)?payload.source_errors:[]); status(`Graph Ops loaded ${nodes.length} nodes. Next action: ${payload.recommendation?.action||"unavailable"}.`);
     }
     async function load(){
       try {const response=await fetch(endpoint,{headers:{"X-Factory-Studio-Token":sessionToken}});const payload=await response.json();if(!response.ok)throw new Error(payload.code||"Graph Ops request failed");renderGraph(payload);} catch(error) {setText("complete-status","Unavailable");setText("next-action","inspect_local_studio");setText("next-reason",String(error));status("Graph Ops could not load the local result.");}

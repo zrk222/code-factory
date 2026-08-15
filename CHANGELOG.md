@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Add Graph Forensics: hash-sealed semantic lineage receipts, deterministic
+  first-divergence and causal-cone analysis, stale-read/parallel-write/
+  duplicate-side-effect findings, and a non-executing recovery-fork preview.
+- Add `factory graph lineage-seal|lineage-mission|lineage-verify|forensics`
+  plus Graph Ops and Factory Studio lineage/forensics lanes. The real forensic
+  cockpit compares sealed runs, displays anomalies and causal impact, and adds
+  a guarded Action Dock for dry-run preparation and policy validation.
+  Checkpoint mutation, graph execution, side-effect replay, release authority,
+  and unmeasured savings remain outside the feature boundary.
+
 ## 0.31.0 - 2026-08-14
 
 - Add `factory e2e verify`, a local proof-by-sabotage gate that requires an

@@ -18,6 +18,10 @@ known, what is missing, and the one fact-derived next action.
 - **Makes delivery state legible.** Factory Studio, Graph Ops, and the VS Code
   and JetBrains integrations present requirements, gates, proofs, and blocked
   work in one local, read-only view.
+- **Explains why graph runs diverge.** Graph Forensics verifies hash-sealed
+  state lineage, identifies the first semantic divergence, detects stale reads,
+  unsafe parallel writes, and repeated effects, then previews the smallest
+  human-reviewed recovery fork without executing it.
 - **Separates creation from verification.** The Verifier Plane hash-binds a
   mission, candidate tree, immutable verifier bundle, independent identities,
   evidence, deterministic checks, and declared hard budgets. It validates a
@@ -76,6 +80,7 @@ pip install factoryline-code-factory==0.31.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid
+factory graph forensics --baseline good.lineage.json --candidate bad.lineage.json --json
 factory verifier progress .\attempts.json --json
 factory change review --root . --base origin/main
 factory github proof-review --root . --base origin/main --head-sha abcdefabcdefabcdefabcdefabcdefabcdefabcd --json
