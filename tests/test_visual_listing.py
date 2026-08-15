@@ -12,7 +12,8 @@ ASSETS = ROOT / "docs" / "assets"
 CURRENT_PRODUCT_CAPTURES = (
     ASSETS / "factoryline-logo-480.png",
     ASSETS / "marketplace" / "factory-studio-mvp-1280x800.png",
-    ASSETS / "marketplace" / "graph-ops-studio-1280x800.png",
+    ASSETS / "marketplace" / "graph-ops-proofsearch.png",
+    ASSETS / "marketplace" / "graph-ops-proofsearch-controls.png",
 )
 PUBLIC_VISUAL_SURFACES = (
     ROOT / "README.md",
@@ -45,12 +46,14 @@ def test_current_product_visuals_are_real_capture_shapes() -> None:
     assert _png_dimensions(CURRENT_PRODUCT_CAPTURES[0]) == (480, 480)
     assert _png_dimensions(CURRENT_PRODUCT_CAPTURES[1]) == (1280, 800)
     assert _png_dimensions(CURRENT_PRODUCT_CAPTURES[2]) == (1280, 800)
+    assert _png_dimensions(CURRENT_PRODUCT_CAPTURES[3]) == (1280, 800)
 
     visuals = (ROOT / "docs" / "PRODUCT_VISUALS.md").read_text(encoding="utf-8")
     for asset in (
         "factoryline-logo-480.png",
         "factory-studio-mvp-1280x800.png",
-        "graph-ops-studio-1280x800.png",
+        "graph-ops-proofsearch.png",
+        "graph-ops-proofsearch-controls.png",
     ):
         assert asset in visuals
     assert "incomplete proof state" in visuals
@@ -62,7 +65,8 @@ def test_public_storefronts_use_current_product_media_and_exclude_retired_visual
 
     assert "docs/PRODUCT_VISUALS.md" in public_copy
     assert "factory-studio-mvp-1280x800.png" in public_copy
-    assert "graph-ops-studio-1280x800.png" in public_copy
+    assert "graph-ops-proofsearch.png" in public_copy
+    assert "graph-ops-proofsearch-controls.png" in public_copy
     assert "factoryline-logo-480.png" in public_copy
     for retired in RETIRED_PUBLIC_VISUALS:
         assert retired not in public_copy
@@ -75,7 +79,8 @@ def test_product_hunt_gallery_is_copy_ready_and_platform_accurate() -> None:
     names = (
         "factoryline-logo-480.png",
         "factory-studio-mvp-1280x800.png",
-        "graph-ops-studio-1280x800.png",
+        "graph-ops-proofsearch.png",
+        "graph-ops-proofsearch-controls.png",
     )
     offsets = [guide.index(name) for name in names]
 
@@ -90,8 +95,8 @@ def test_zenodo_and_release_metadata_only_package_current_public_visuals() -> No
     metadata = json.loads((ROOT / ".zenodo.json").read_text(encoding="utf-8"))
     workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
 
-    assert metadata["version"] == "0.31.0"
-    assert metadata["publication_date"] == "2026-08-14"
+    assert metadata["version"] == "0.32.0"
+    assert metadata["publication_date"] == "2026-08-15"
     assert "current FactoryLine identity asset" in metadata["description"]
     assert "conceptual visual walkthrough" not in metadata["description"]
     assert "product-captures" in metadata["keywords"]
@@ -99,6 +104,8 @@ def test_zenodo_and_release_metadata_only_package_current_public_visuals() -> No
         "docs/assets/factoryline-logo-480.png",
         "docs/assets/marketplace/factory-studio-mvp-1280x800.png",
         "docs/assets/marketplace/graph-ops-studio-1280x800.png",
+        "docs/assets/marketplace/graph-ops-proofsearch.png",
+        "docs/assets/marketplace/graph-ops-proofsearch-controls.png",
     ):
         assert asset in workflow
     for retired in RETIRED_PUBLIC_VISUALS:

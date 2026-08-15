@@ -20,7 +20,7 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Build fast. Prove AI-assisted code before review.
+short_description: Trace graph failures. Compare proven repairs before review.
 ---
 
 # Code Factory
@@ -43,7 +43,7 @@ evidence exists.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.31.0` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.32.0` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21381405).
 
 Use the same local proof context from Cursor or OpenCode through the documented
@@ -71,7 +71,23 @@ capped, source-bound clarification sheet with recommendations and answer stubs.
 It never rewrites the PRD, invents answers, calls a model, or authorizes a
 build. Read the full [PRD Grill guide](https://github.com/zrk222/code-factory/blob/main/docs/PRD_GRILL.md).
 
-### What's new in 0.31.0
+### What's new in 0.32.0
+
+Graph Forensics compares sealed execution lineage, locates the first semantic
+divergence, traces its causal path, and detects stale state, conflicting writes,
+or repeated side effects without replaying them.
+
+ProofSearch then compares 2 through 12 supplied, hash-bound repair candidates.
+It rejects failed proofs, surviving mutants, scope escapes, test weakening, and
+error suppression before ranking eligible candidates. Graph Ops shows every
+candidate, exact rejection reasons, the verified winner, proof runtime, and
+measured-or-unavailable savings. Applying, merging, publishing, and deploying
+remain locked.
+
+Time, token, and cost savings appear only when an exact paired baseline exists;
+productivity remains unavailable without separate measured evidence.
+
+### Native E2E proof and Team Pilot readiness (0.31.0)
 
 `factory e2e verify` accepts an approved positive/negative command-pair
 manifest and proves the negative path can fail. A negative command that exits

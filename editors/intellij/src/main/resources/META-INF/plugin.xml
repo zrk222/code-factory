@@ -4,7 +4,7 @@
     <vendor email="rkatz22@gmail.com" url="https://github.com/zrk222/code-factory">FactoryLine</vendor>
     <description><![CDATA[
         <p>Verify AI code before you ship.</p>
-        <p><strong>Generate a local MVP, then catch hollow tests before review.</strong> Keep local receipts and a clear proof path next to the code; a starter is never called production-ready before relevant evidence exists.</p>
+        <p><strong>Generate a local MVP, then catch hollow tests before review.</strong> Trace exactly where an agent graph failed and compare verified repair candidates. Keep local receipts and a clear proof path next to the code; a starter is never called production-ready before relevant evidence exists.</p>
         <p>FactoryLine turns tests, requirements, policies, and build evidence into local proof you can inspect in your JetBrains IDE. It does not call a starter production-ready by itself.</p>
         <h3>What this solves</h3>
         <ul>
@@ -14,6 +14,7 @@
             <li><strong>Large or remote workspaces feel opaque:</strong> measure local workspace shape and path-only WSL/remote context, then review generated/dependency directory signals without FactoryLine touching indexes, heap, caches, inspections, or remote settings.</li>
             <li><strong>Lost review context:</strong> save a hash-bound local JSON, Markdown, and Mermaid handoff packet that another developer can inspect.</li>
             <li><strong>Automation without control:</strong> every command needs confirmation; FactoryLine does not edit, commit, publish, deploy, upload source, or make a release decision.</li>
+            <li><strong>Several plausible repairs:</strong> ProofSearch rejects failed proofs, surviving mutants, scope escapes, test weakening, and error suppression, then explains the smallest verified winner in the Graph Ops Counterfactual Arena.</li>
         </ul>
         <h3>Start here</h3>
         <ol>
@@ -36,6 +37,7 @@
             <li><strong>Measure real savings:</strong> compare paired time, token, and cost data without inferred values.</li>
             <li><strong>Run supervised workflows:</strong> assemble features, continue from safe boundaries, inspect durable mission graphs, and route secret-free BYOK policies.</li>
             <li><strong>Follow the exact evidence path:</strong> Unified Graph Ops visualizes local requirements, slices, missions, approvals, completions, proofs, verifier sessions, gates, traces, and artifacts without executing them.</li>
+            <li><strong>Compare repairs without trusting another opinion:</strong> inspect every hash-bound candidate, exact rejection reason, mutation result, risk, changed scope, proof runtime, and measured-or-unavailable savings. Apply, merge, publish, and deploy remain locked.</li>
             <li><strong>Keep generation and grading separate:</strong> <code>factory verifier</code> binds independent worker and verifier evidence, immutable checks, and hard budgets. It validates receipts; an external supervised runner must enforce runtime isolation.</li>
             <li><strong>Clarify a PRD before the build compounds ambiguity:</strong> run <code>factory prd grill PRD.md --root .</code> for a capped, source-bound question sheet with answer stubs. It never rewrites the PRD or authorizes implementation.</li>
         </ul>
@@ -55,6 +57,9 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
+            <li>Add Graph Forensics: sealed semantic lineage, first-divergence and causal-path analysis, deterministic stale-read/write, parallel-write, and duplicate-side-effect findings, plus a non-executing recovery preview.</li>
+            <li>Add ProofSearch and the Graph Ops Counterfactual Arena: compare 2 through 12 hash-bound repair candidates, reject hollow or unsafe candidates, show every loss reason, and select one deterministic verified winner without applying it.</li>
+            <li>Add full Graph Ops review controls for copying verification commands, exporting the displayed decision, validating winner guardrails, and visibly retaining apply, merge, publication, deployment, credential, and connector authority.</li>
             <li>Add JetBrains Proof Review: review the full local diff or active file with structured, attention-first evidence, safe changed-file navigation, and an explicit local JSON/Markdown/Mermaid handoff packet.</li>
             <li>Add Verified Repair Sandbox: select one native Change List, create a hash-bound Scope Passport, and reject textual candidate patches that cross its paths. Candidate generation, independent verification, and IDE patch application remain explicit supervised steps.</li>
             <li>Add Workspace Load Advisor + Remote/WSL Preflight: bounded local filesystem measurements, generated/dependency directory signals, path-only context, and optional local JSON/Markdown/Mermaid reports without IDE or remote mutation.</li>

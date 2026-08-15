@@ -14,7 +14,7 @@ plugins {
 }
 
 group = "app.factoryline"
-version = "0.8.6"
+version = "0.8.7"
 
 kotlin {
     jvmToolchain(21)

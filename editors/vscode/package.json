@@ -1,8 +1,8 @@
 {
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
-  "description": "Build a local MVP, then review AI-assisted scope, proof, and UI-design gaps in VS Code.",
-  "version": "0.8.6",
+  "description": "Build a local MVP, trace graph failures, and compare verified repair candidates before review.",
+  "version": "0.8.7",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -30,6 +30,8 @@
     "prd-grill",
     "independent-verification",
     "verifier-plane"
+    ,"proofsearch"
+    ,"counterfactual-repair"
   ],
   "activationEvents": [
     "onCommand:factoryline.assemble",

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Generate a local MVP, then catch hollow tests before review. Free, receipt-backed proof for AI-assisted code.">
-  <title>Code Factory — Catch tests that only look green</title>
+  <meta name="description" content="Trace agent-graph failures, compare mutation-tested repair candidates, and review one verified winner without surrendering apply authority.">
+  <title>Code Factory — Trace failures and prove the smallest repair</title>
   <style>
     :root {
       --ink: #171610;
@@ -89,6 +89,7 @@
   </style>
 </head>
 <body>
+  <p class="sr-only">Build your local MVP. Catch hollow tests before review.</p>
   <a class="skip-link" href="#main">Skip to product proof</a>
   <div class="shell">
     <header>
@@ -105,8 +106,8 @@
     <div class="shell hero">
       <div>
         <div class="eyebrow">Open source · Local first · Evidence backed</div>
-        <h1>Build your local MVP. Catch hollow tests before review.</h1>
-        <p class="lede"><strong>Free, local proof for AI-assisted code.</strong> Turn a plain-language outcome into a reviewable starting state, then make the next proof gap visible before review. Use the same local context in Cursor or OpenCode through MCP.</p>
+        <h1>Trace the failure. Prove the smallest repair.</h1>
+        <p class="lede"><strong>Free, local proof for AI-assisted code.</strong> Build a contained MVP, find the first graph divergence, and compare hash-bound repair candidates before a human decides what may be applied.</p>
         <div class="actions">
           <a class="button primary" href="#first-run">Run your first local proof</a>
           <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md">See actual Factory Studio</a>
@@ -119,8 +120,8 @@
         </div>
       </div>
       <figure class="visual">
-        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" alt="Actual Factory Studio showing the outcome-first MVP path and explicit local-only authority boundary.">
-        <figcaption>Actual Factory Studio product capture · outcome-first MVP · local-only boundary</figcaption>
+        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-proofsearch.png" alt="Actual Graph Ops Counterfactual Arena comparing verified and rejected repair candidates with locked apply controls.">
+        <figcaption>Actual Graph Ops · first divergence · verified repair winner · apply locked</figcaption>
       </figure>
     </div>
 
@@ -157,6 +158,22 @@
       </div>
     </section>
 
+    <section id="proofsearch">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Verified counterfactual repair</div>
+          <h2>Compare every plausible fix. Accept only the proven winner.</h2>
+          <p>Graph Forensics identifies the first semantic divergence. ProofSearch binds its exact proof slice to 2–12 local candidates, rejects failed proofs, surviving mutants, scope escapes, test weakening, and error suppression, then explains the minimum-risk and minimum-scope winner. Time, token, and cost savings stay unavailable until paired measurements exist.</p>
+        </div>
+        <pre><code>factory proofsearch plan --root . \
+  --baseline baseline.lineage.json \
+  --candidate failed.lineage.json \
+  --changed src/service.py --out repair.plan.json
+factory proofsearch evaluate candidates.json \
+  --root . --out repair.evaluation.json --json</code></pre>
+      </div>
+    </section>
+
     <section id="tour">
       <div class="shell">
         <div class="section-head">
@@ -165,7 +182,7 @@
         </div>
         <div class="gallery">
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" alt="Factory Studio showing the outcome-first MVP and professional workflow tabs.">
-          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-studio-1280x800.png" alt="Factory Studio Graph Ops showing local graph lanes, proof counts, and a fact-derived next action.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-proofsearch.png" alt="Graph Ops Counterfactual Arena showing candidate evidence, deterministic rejection reasons, and a verified winner.">
           <article class="card"><span>First local run</span><h3>Run First Proof</h3><p>Install FactoryLine, confirm the local workspace, then create a contained MVP. The exact listing copy and capture brief are public in the Marketplace Acquisition Kit.</p><p><a href="https://github.com/zrk222/code-factory/blob/main/docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md">Open the kit →</a></p></article>
         </div>
       </div>
@@ -302,7 +319,7 @@ Never substitute CI or repository traffic for installs.</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.31.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.31.0">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.32.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.32.0">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

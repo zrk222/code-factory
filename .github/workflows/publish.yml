@@ -147,6 +147,8 @@ jobs:
           docs/assets/factoryline-logo-480.png
           docs/assets/marketplace/factory-studio-mvp-1280x800.png
           docs/assets/marketplace/graph-ops-studio-1280x800.png
+          docs/assets/marketplace/graph-ops-proofsearch.png
+          docs/assets/marketplace/graph-ops-proofsearch-controls.png
           docs/assets/*.svg
           docs/assets/verify-policy.gif
           --clobber
