@@ -25,6 +25,18 @@
     .stat p,.card h2 { margin:0; }
     .stat p { color:var(--muted); font-size:.82rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em; }
     .stat strong { display:block; margin-top:8px; font-size:1.65rem; }
+    .observatory { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(300px,.7fr); gap:var(--space); margin:0 0 var(--space); }
+    .observatory .card { min-height:240px; overflow:hidden; }
+    .visual-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+    .visual-head p { margin:7px 0 0; max-width:60ch; }
+    .visual-badge { flex:0 0 auto; padding:6px 9px; border:1px solid #5c7fae; border-radius:999px; color:#bcd8ff; background:#122540; font-size:.72rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
+    .proof-map { position:relative; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; align-items:center; margin-top:22px; min-height:132px; }
+    .proof-map::before { content:""; position:absolute; height:2px; background:linear-gradient(90deg,#4777b3,#69d6ac,#edbf70,#6e96cc); left:12%; right:12%; top:50%; opacity:.75; }
+    .map-node { position:relative; z-index:1; min-height:90px; display:grid; place-items:center; text-align:center; border:1px solid #3e5b80; border-radius:16px; padding:12px; background:linear-gradient(145deg,#142642,#0d1728); box-shadow:0 14px 30px #0000002b; }
+    .map-node strong,.map-node span { display:block; }.map-node strong { font-size:.86rem; }.map-node span { color:var(--muted); font-size:.74rem; margin-top:5px; }.map-node[data-state="risk"] { border-color:#ab7041; background:linear-gradient(145deg,#372718,#1c1820); }.map-node[data-state="green"] { border-color:#4eaa78; background:linear-gradient(145deg,#123323,#0d1e19); }
+    .health-wrap { display:grid; grid-template-columns:132px 1fr; gap:18px; align-items:center; margin-top:14px; }
+    .donut { width:132px; height:132px; transform:rotate(-90deg); overflow:visible; }.donut circle { fill:none; stroke-width:12; }.donut .track { stroke:#22334e; }.donut .value { stroke:var(--green); stroke-linecap:round; transition:stroke-dashoffset .45s ease; }.donut-text { position:absolute; display:grid; place-items:center; width:132px; height:132px; text-align:center; pointer-events:none; }.donut-text strong { font-size:1.2rem; }.donut-text span { color:var(--muted); font-size:.7rem; margin-top:-14px; }
+    .donut-stack { position:relative; width:132px; height:132px; }.health-list { display:grid; gap:10px; }.health-row { display:grid; grid-template-columns:82px 1fr 36px; gap:9px; align-items:center; color:var(--muted); font-size:.78rem; }.health-bar { height:9px; overflow:hidden; border-radius:999px; background:#253550; }.health-bar i { display:block; height:100%; width:0%; border-radius:inherit; background:linear-gradient(90deg,#6bb0ff,#74e0ad); transition:width .45s ease; }.health-row[data-tone="amber"] .health-bar i { background:linear-gradient(90deg,#ffd071,#e99d58); }.health-row[data-tone="red"] .health-bar i { background:linear-gradient(90deg,#ff9b9b,#d55f73); }.health-row b { color:var(--ink); text-align:right; }
     .layout { display:grid; grid-template-columns:minmax(0,1.7fr) minmax(280px,.7fr); gap:var(--space); align-items:start; }
     .card h2 { font-size:1rem; letter-spacing:.01em; }
     .card p { color:var(--muted); line-height:1.55; }
@@ -42,6 +54,7 @@
     .node[data-status="verified"],.node[data-status="REUSE"] { border-color:#39795c; }
     .detail dl { display:grid; grid-template-columns:minmax(86px,.35fr) 1fr; gap:10px 14px; margin:16px 0 0; }
     .detail dt { color:var(--muted); font-weight:700; }.detail dd { margin:0; overflow-wrap:anywhere; }
+    .detail label { display:block; margin-top:12px; color:var(--muted); font-size:.78rem; font-weight:750; }.detail input,.detail textarea { width:100%; margin-top:5px; padding:9px 10px; border:1px solid #536b92; border-radius:8px; background:#0b1423; color:var(--ink); font:inherit; }.detail textarea { min-height:76px; resize:vertical; }.detail input:focus-visible,.detail textarea:focus-visible { border-color:var(--blue); box-shadow:0 0 0 3px #316aa044; outline:none; }
     .empty { border:1px dashed #4a607f; color:var(--muted); border-radius:12px; padding:24px; margin-top:18px; line-height:1.5; }
     .errors { margin:16px 0 0; padding-left:20px; color:var(--amber); }.errors li { margin:7px 0; overflow-wrap:anywhere; }
     .forensics { margin:0 0 var(--space); padding:0; overflow:hidden; border-color:#3d5f8d; background:linear-gradient(145deg,#111f35,#101827 58%,#17162b); }
@@ -97,7 +110,7 @@
     .foot { color:var(--muted); font-size:.85rem; line-height:1.5; margin:20px 0 0; }
     .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
     @media (max-width:1100px) { .summary { grid-template-columns:repeat(3,minmax(0,1fr)); }.forensics-grid,.arena-summary { grid-template-columns:1fr; }.arena-grid,.frontier-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.forensic-stage + .forensic-stage { border-left:0; border-top:1px solid var(--line); } }
-    @media (max-width:900px) { .layout { grid-template-columns:1fr; } }
+    @media (max-width:900px) { .layout,.observatory { grid-template-columns:1fr; } }
     @media (max-width:768px) { .shell { padding:16px; }.top { flex-direction:column; }.top-actions { align-self:flex-start; justify-content:flex-start; }.summary,.arena-grid,.frontier-grid,.savings-grid { grid-template-columns:1fr 1fr; }.node .label { max-width:calc(100vw - 88px); }.detail dl { grid-template-columns:1fr; gap:4px; }.detail dd { margin-bottom:10px; } }
     @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; transition:none!important; } }
   </style>
@@ -115,7 +128,7 @@
         <a class="back" href="/">Back to Studio</a>
       </nav>
     </header>
-    <section class="notice" aria-label="Read-only authority notice"><strong>Read-only inspection.</strong> Graph Ops cannot execute, approve, publish, deploy, sign, message, access credentials, or grant connectors.</section>
+    <section class="notice" aria-label="Read-only authority notice"><strong>Read-only inspection.</strong> Graph Ops cannot execute, approve, publish, deploy, sign, message, access credentials, or grant connectors until a named person creates a narrowly scoped, expiring local authorization.</section>
     <p id="live" class="visually-hidden" aria-live="polite"></p>
     <section class="summary" aria-label="Graph totals">
       <div class="stat"><p>Nodes</p><strong id="node-count">—</strong></div>
@@ -125,6 +138,10 @@
       <div class="stat"><p>Forensic findings</p><strong id="finding-count">—</strong></div>
       <div class="stat"><p>Repair candidates</p><strong id="candidate-count">—</strong></div>
       <div class="stat"><p>Graph status</p><strong id="complete-status">Loading</strong></div>
+    </section>
+    <section class="observatory" aria-label="Proof observatory">
+      <article class="card" aria-labelledby="proof-map-title"><div class="visual-head"><div><h2 id="proof-map-title">Proof path visual</h2><p>One compact visual map of the supplied requirement-to-decision flow. It explains the current state; it never executes a graph action.</p></div><span class="visual-badge">Local facts</span></div><div class="proof-map" aria-label="Requirement flows through verification and policy to a human decision"><div class="map-node"><strong>Intent</strong><span id="map-intent">0 requirements</span></div><div class="map-node"><strong>Verifier</strong><span id="map-verifier">0 receipts</span></div><div class="map-node" id="map-policy"><strong>Policy</strong><span id="map-policy-label">No dossier</span></div><div class="map-node" id="map-decision" data-state="green"><strong>Human decision</strong><span id="map-decision-label">Review required</span></div></div></article>
+      <article class="card" aria-labelledby="health-title"><div class="visual-head"><div><h2 id="health-title">Evidence health</h2><p>Deterministic ratios from this bounded graph result, not estimated productivity or a quality score.</p></div><span id="health-badge" class="visual-badge">Loading</span></div><div class="health-wrap"><div class="donut-stack"><svg class="donut" viewBox="0 0 120 120" role="img" aria-label="Evidence coverage"><circle class="track" cx="60" cy="60" r="48"></circle><circle id="health-donut" class="value" cx="60" cy="60" r="48" stroke-dasharray="301.6" stroke-dashoffset="301.6"></circle></svg><div class="donut-text"><strong id="health-percent">—</strong><span>evidenced</span></div></div><div class="health-list"><div class="health-row"><span>Requirements</span><div class="health-bar"><i id="bar-evidence"></i></div><b id="bar-evidence-value">—</b></div><div class="health-row" data-tone="amber"><span>Policy drift</span><div class="health-bar"><i id="bar-drift"></i></div><b id="bar-drift-value">—</b></div><div class="health-row" data-tone="red"><span>Blocked gates</span><div class="health-bar"><i id="bar-gates"></i></div><b id="bar-gates-value">—</b></div></div></div></article>
     </section>
     <section id="proofsearch-panel" class="card arena" aria-labelledby="proofsearch-title" hidden>
       <header class="forensics-head"><div><span class="stage-label">ProofSearch · Counterfactual Arena</span><h2 id="proofsearch-title">Which repair is smallest and actually proven?</h2><p>Every candidate is hash-bound, scope-checked, independently proven, mutation-tested, and ranked by one deterministic ordering.</p></div><span class="review-badge">Winner verified · apply locked</span></header>
@@ -161,16 +178,17 @@
       <aside class="detail" aria-label="Selected node detail">
         <section class="card recommendation" aria-labelledby="next-title"><h2 id="next-title">One next action</h2><p><code id="next-action">Loading</code></p><p id="next-reason">Graph Ops will derive this from the local result.</p></section>
         <section class="card" aria-labelledby="detail-title"><h2 id="detail-title">Selected node</h2><p id="selected-empty">Choose a node to see its verified status and local source.</p><dl id="selected-detail" hidden></dl></section>
+        <section class="card" aria-labelledby="authorization-title"><h2 id="authorization-title">Human authorization</h2><p id="authorization-target">Select a verified Reality Check or an eligible ProofSearch winner. This control creates an auditable, expiring local authorization; it never applies a patch.</p><label for="authorization-owner">Approver name</label><input id="authorization-owner" type="text" maxlength="120" autocomplete="name" placeholder="Named reviewer"><label for="authorization-rationale">Reason</label><textarea id="authorization-rationale" maxlength="600" rows="3" placeholder="Why this bounded action is approved"></textarea><div class="action-buttons"><button id="authorize-selected" class="action-button" type="button" disabled>Authorize selected action</button><button id="run-authorized-reality" class="action-button secondary" type="button" disabled>Run authorized Reality Check</button></div><p id="authorization-result" class="guard-result">No authorization is pending.</p></section>
         <section class="card" aria-labelledby="errors-title"><h2 id="errors-title">Known source errors</h2><p id="errors-empty">None reported in the current bounded result.</p><ul id="errors" class="errors" hidden></ul></section>
       </aside>
     </section>
-    <p class="foot">Only <code>/api/graph-ops</code> is requested, with the existing local Factory Studio session token. Labels are rendered as text nodes.</p>
+    <p class="foot">Graph data is read from <code>/api/graph-ops</code>. A separate token-bound local request can record one named authorization or consume one Reality Check authorization. Labels are rendered as text nodes.</p>
   </main>
   <script>
     "use strict";
     const sessionToken=__FACTORY_STUDIO_TOKEN__;
     const endpoint="/api/graph-ops";
-    const laneOrder=["product","requirement","slice","mission","approval","completion","lineage","forensics","repair_candidate","proofsearch","evidence_experiment","evidence_frontier","proof","gate","trace","receipt","artifact"];
+    const laneOrder=["product","requirement","slice","mission","approval","authorization","completion","lineage","forensics","repair_candidate","proofsearch","evidence_experiment","evidence_frontier","reality_check","assurance_dossier","policy_drift","proof","gate","trace","receipt","artifact"];
     const byId=(id)=>document.getElementById(id);
     const addText=(parent,text,tag="span")=>{const node=document.createElement(tag);node.textContent=String(text);parent.appendChild(node);return node;};
     const setText=(id,text)=>{byId(id).textContent=String(text);};
@@ -179,6 +197,8 @@
     let currentForensics=null;
     let currentProofSearch=null;
     let currentFrontier=null;
+    let selectedGraphNode=null;
+    let currentAuthorization=null;
     function selectNode(node,button){
       if(selectedButton) selectedButton.setAttribute("aria-pressed","false");
       selectedButton=button; button.setAttribute("aria-pressed","true");
@@ -186,6 +206,7 @@
       const rows=[["Kind",node.kind],["Status",node.status||"unknown"],["Source",node.source||"not recorded"],["Identifier",node.id]];
       if(node.facts) rows.push(["Facts",JSON.stringify(node.facts)]);
       rows.forEach(([name,value])=>{addText(detail,name,"dt");addText(detail,value,"dd");});
+      selectedGraphNode=node; renderAuthorizationTarget();
     }
     function renderErrors(errors){
       const list=byId("errors"); list.replaceChildren(); const empty=byId("errors-empty");
@@ -229,6 +250,13 @@
     byId("copy-frontier").addEventListener("click",async()=>{if(!currentFrontier)return;const command=frontierCommand();try{await navigator.clipboard.writeText(command);setText("frontier-lock","Verification command copied. It reads sealed local evidence only.");}catch(_error){setText("frontier-lock",`Copy unavailable. Verify command: ${command}`);}});
     byId("export-frontier").addEventListener("click",()=>{if(!currentFrontier)return;const blob=new Blob([JSON.stringify(currentFrontier,null,2)],{type:"application/json"});const link=document.createElement("a");link.href=URL.createObjectURL(blob);link.download="evidence-frontier.json";link.click();URL.revokeObjectURL(link.href);setText("frontier-lock","Frontier view exported. No source, credentials, or command logs were added.");});
     byId("validate-frontier").addEventListener("click",()=>{const facts=currentFrontier?.frontier?.facts||{};const safe=facts.valid===true&&facts.next_experiment&&Object.values(facts.authority||{}).every(value=>value===false);setText("frontier-lock",safe?"Guardrails valid: the frontier is sealed, predictions are labelled unverified, and all execution/release authority remains locked.":"Guardrail validation failed closed. Do not run this experiment.");status(safe?"Evidence Frontier guardrails validated.":"Evidence Frontier guardrails failed closed.");});
+    function selectedAuthorizationAction(){if(selectedGraphNode?.kind==="reality_check"&&selectedGraphNode.status==="verified")return "reality_check_execution";if(selectedGraphNode?.kind==="repair_candidate"&&selectedGraphNode.status==="winner"&&selectedGraphNode.facts?.eligible===true)return "repair_plan_review";return null;}
+    function renderAuthorizationTarget(){const action=selectedAuthorizationAction();const target=byId("authorization-target");byId("authorize-selected").disabled=!action;if(!action){target.textContent="Select a verified Reality Check or an eligible ProofSearch winner. This control creates an auditable, expiring local authorization; it never applies a patch.";return;}target.textContent=action==="reality_check_execution"?`Authorize exactly one re-run of ${selectedGraphNode.label}. The receipt and manifest bytes are bound before execution.`:`Authorize a review handoff for repair candidate ${selectedGraphNode.label}. It cannot apply, merge, publish, or deploy code.`;}
+    function authorizationId(){return `graph-${crypto.randomUUID()}`;}
+    async function authorizationRequest(){const action=selectedAuthorizationAction();const approvedBy=byId("authorization-owner").value.trim();const rationale=byId("authorization-rationale").value.trim();if(!action||!approvedBy||!rationale){setText("authorization-result","Choose an eligible node and enter both a named approver and a reason.");return;}const id=authorizationId();const intent=action==="reality_check_execution"?"run one sealed local Reality Check":"record a repair-plan review handoff";if(!window.confirm(`Authorize ${intent} for ${selectedGraphNode.label}? This creates a named, expiring local receipt.`))return;const payload={action,id,node_id:selectedGraphNode.id,approved_by:approvedBy,rationale,expires_at:new Date(Date.now()+60*60*1000).toISOString(),confirmation:`AUTHORIZE ${id}`};const response=await fetch("/api/graph-ops-authorize",{method:"POST",headers:{"Content-Type":"application/json","X-Factory-Studio-Token":sessionToken},body:JSON.stringify(payload)});const result=await response.json();if(!response.ok){setText("authorization-result",`${result.code||"AUTHORIZATION_FAILED"}: ${result.message||"request was rejected"}`);return;}currentAuthorization=result;const executable=action==="reality_check_execution";byId("run-authorized-reality").disabled=!executable;setText("authorization-result",executable?`Authorization recorded at ${result.path}. Confirm once more to run the exact sealed Reality Check.`:`Repair-plan review authorization recorded at ${result.path}. A separately approved repair runner is still required.`);status("Graph Ops human authorization recorded.");}
+    async function runAuthorizedReality(){const authorization=currentAuthorization?.authorization;if(!authorization||authorization.action!=="reality_check_execution")return;if(!window.confirm("Run the exact receipt-bound local Reality Check once? It cannot repair, merge, publish, deploy, or contact external services."))return;const response=await fetch("/api/graph-ops-run",{method:"POST",headers:{"Content-Type":"application/json","X-Factory-Studio-Token":sessionToken},body:JSON.stringify({authorization:currentAuthorization.path})});const result=await response.json();if(!response.ok){setText("authorization-result",`${result.code||"EXECUTION_FAILED"}: ${result.message||"execution was rejected"}`);return;}byId("run-authorized-reality").disabled=true;setText("authorization-result",`Reality Check completed: ${result.receipt.marker}. Authorization was consumed; inspect the new proof card in the graph.`);currentAuthorization=null;await load();}
+    byId("authorize-selected").addEventListener("click",()=>{authorizationRequest().catch(error=>setText("authorization-result",`AUTHORIZATION_FAILED: ${String(error)}`));});
+    byId("run-authorized-reality").addEventListener("click",()=>{runAuthorizedReality().catch(error=>setText("authorization-result",`EXECUTION_FAILED: ${String(error)}`));});
     function renderGraph(payload){
       const facts=payload.facts||{}; const nodes=Array.isArray(payload.nodes)?payload.nodes:[];
       setText("graph-description",`Authenticated local result · ${facts.lineage_run_count??0} sealed lineage run(s) · ${facts.forensic_anomaly_count??0} forensic finding(s).`);
@@ -237,9 +265,22 @@
       setText("lineage-count",facts.lineage_run_count??0);setText("finding-count",facts.forensic_anomaly_count??0);
       setText("candidate-count",facts.proofsearch_candidate_count??0);
       setText("complete-status",payload.complete?"Complete":"Partial"); setText("next-action",payload.recommendation?.action||"unavailable"); setText("next-reason",payload.recommendation?.reason||"No fact-derived action is available.");
+      renderObservatory(facts,payload);
       const lanes=byId("lanes"); lanes.replaceChildren(); const empty=byId("graph-empty"); empty.hidden=nodes.length!==0;
       laneOrder.forEach(kind=>{const members=nodes.filter(node=>node.kind===kind);if(!members.length)return;const lane=document.createElement("section");lane.className="lane";const heading=addText(lane,`${kind} · ${members.length}`,"h3");heading.id=`lane-${kind}`;const list=document.createElement("div");list.className="node-list";list.setAttribute("aria-labelledby",heading.id);members.slice(0,40).forEach(node=>{const button=document.createElement("button");button.type="button";button.className="node";button.dataset.status=node.status||"unknown";button.setAttribute("aria-pressed","false");addText(button,node.kind,"span").className="kind";addText(button,node.label,"span").className="label";button.addEventListener("click",()=>selectNode(node,button));list.appendChild(button);});if(members.length>40)addText(list,`${members.length-40} more nodes remain in the signed result.`,"span");lane.appendChild(list);lanes.appendChild(lane);});
       renderForensics(nodes);renderProofSearch(nodes);renderEvidenceFrontier(nodes);renderErrors(Array.isArray(payload.source_errors)?payload.source_errors:[]); status(`Graph Ops loaded ${nodes.length} nodes. Next action: ${payload.recommendation?.action||"unavailable"}.`);
+    }
+    function ratio(numerator,denominator){return denominator>0?Math.round((numerator/denominator)*100):0;}
+    function setBar(id,value){byId(id).style.width=`${Math.max(0,Math.min(100,value))}%`;}
+    function renderObservatory(facts,payload){
+      const evidenced=Number(facts.evidenced_requirement_count||0), unevidenced=Number(facts.unevidenced_requirement_count||0), requirements=evidenced+unevidenced, coverage=ratio(evidenced,requirements);
+      const drift=Number(facts.assurance_unresolved_high_count||0), gates=Number(facts.blocked_gate_count||0);
+      setText("map-intent",`${requirements} requirement${requirements===1?"":"s"}`);setText("map-verifier",`${facts.reality_check_verified_count||0} verified receipt${facts.reality_check_verified_count===1?"":"s"}`);
+      setText("map-policy-label",facts.assurance_dossier_count?`${drift} high drift item${drift===1?"":"s"}`:"No supplied dossier");byId("map-policy").dataset.state=drift?"risk":"green";
+      const action=payload.recommendation?.action||"review";setText("map-decision-label",action.replaceAll("_"," "));byId("map-decision").dataset.state=drift||gates?"risk":"green";
+      setText("health-percent",`${coverage}%`);setText("health-badge",payload.complete?"Bounded complete":"Partial input");setBar("bar-evidence",coverage);setText("bar-evidence-value",`${evidenced}/${requirements}`);
+      const driftPct=drift?Math.min(100,drift*25):0, gatePct=gates?Math.min(100,gates*25):0;setBar("bar-drift",driftPct);setBar("bar-gates",gatePct);setText("bar-drift-value",String(drift));setText("bar-gates-value",String(gates));
+      byId("health-donut").style.strokeDashoffset=String(301.6-(301.6*coverage/100));
     }
     async function load(){
       try {const response=await fetch(endpoint,{headers:{"X-Factory-Studio-Token":sessionToken}});const payload=await response.json();if(!response.ok)throw new Error(payload.code||"Graph Ops request failed");renderGraph(payload);} catch(error) {setText("complete-status","Unavailable");setText("next-action","inspect_local_studio");setText("next-reason",String(error));status("Graph Ops could not load the local result.");}

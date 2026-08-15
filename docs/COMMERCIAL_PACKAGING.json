@@ -107,6 +107,12 @@
     "activation_authority": false,
     "revision_authority": false
   },
+  "github_pricing_reference": {
+    "state_marker": "COMMERCIAL_GITHUB_PRICE_SCHEDULED_NOT_ACTIVE",
+    "path": "docs/GITHUB_MONETIZATION_2026.json",
+    "activation_authority": false,
+    "revision_authority": false
+  },
   "separate_marketplace_plan": "docs/JETBRAINS_MONETIZATION_2027.json",
   "current_verdict": "COMMERCIALIZATION_STAGED_NOT_SELLABLE"
 }

@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- Add the local-only GitHub Merge Evidence Dossier: schema-validated supplied
+  policy snapshots, deterministic ruleset-drift detection, exact commit and
+  policy hash bindings, named 31-day-or-less exceptions, `--require-aligned`,
+  and Graph Ops dossier/drift projection. It does not fetch or alter GitHub
+  policy, approve, merge, sign, or write source.
+- Upgrade Graph Ops with a responsive Proof Observatory: deterministic evidence
+  coverage donut, drift and blocked-gate bars, and a local fact-derived proof
+  path visual alongside existing execution locks.
+
+- Add a separate, human-controlled GitHub per-seat pricing plan: free through
+  December 1, 2026 and $5.95 USD per named seat per month scheduled from
+  December 2, 2026. The planned Assurance Seat defines commit-bound proof
+  review, visible Proof Debt, governed exceptions, and exportable evidence. It
+  does not create checkout, entitlement, automatic enforcement, a
+  repository-access restriction, or an unverified enterprise promise; the
+  existing JetBrains January 1, 2027 plan remains separate.
+
+- Add Factory Reality Check, a supervised local behavior-proof card that binds
+  one explicit promise, happy path, and failure case to separately approved E2E
+  argv checks. A zero-exit negative case is `REALITY_CHECK_HOLLOW`; Graph Ops
+  reads saved cards without rerunning them. Add Intent Contract Inspector for
+  required positive and negative assertions, plus Graph Ops human authorization:
+  named, expiring, source-byte-bound, one-time Reality Check re-runs and
+  review-only ProofSearch repair handoffs. Repair, merge, release, and provider
+  authority remain outside the feature.
+
 ## 0.33.0 - 2026-08-15
 
 - Add Evidence Frontier, a deterministic Graph Ops loop-planning receipt that

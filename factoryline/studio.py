@@ -25,6 +25,7 @@ from .continuation import ContinuationError, continue_assembly, discover_feature
 from .run_metrics import public_metrics
 from .savings import SavingsError, public_savings_report, record_savings_pair
 from .graph_ops import graph_ops_html, graph_ops_snapshot
+from .graph_authorization import GraphAuthorizationError, create_graph_authorization, run_authorized_reality_check
 
 
 STUDIO_SCHEMA = "factory.studio.v1"
@@ -61,6 +62,8 @@ def studio_status(root: Path, port: int) -> dict[str, Any]:
             "can_auto_resolve_safe_local_gaps": True,
             "can_continue_assembly_to_human_boundary": True,
             "can_record_exact_savings_pairs": True,
+            "can_record_graph_ops_human_authorization": True,
+            "can_execute_one_authorized_reality_check": True,
             "can_deploy": False,
             "can_publish": False,
             "can_sign": False,
@@ -455,6 +458,24 @@ def decide_product_mission_from_studio(root: Path, payload: dict[str, Any]) -> d
         raise StudioRequestError(exc.code, exc.message, 400) from exc
 
 
+def authorize_graph_ops_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Record a named human authorization that stays bounded to one graph node."""
+    try:
+        return create_graph_authorization(root, payload)
+    except GraphAuthorizationError as exc:
+        raise StudioRequestError(exc.code, str(exc), 409 if exc.code.endswith(("REPLAY", "STALE", "EXPIRED")) else 400) from exc
+
+
+def run_graph_ops_reality_check_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Consume one local authorization to re-run one sealed Reality Check."""
+    if set(payload) != {"authorization"} or not isinstance(payload.get("authorization"), str):
+        raise StudioRequestError("GRAPH_AUTHORIZATION_INVALID", "execution request must contain exactly authorization")
+    try:
+        return run_authorized_reality_check(root, Path(payload["authorization"]))
+    except GraphAuthorizationError as exc:
+        raise StudioRequestError(exc.code, str(exc), 409 if exc.code.endswith(("REPLAY", "STALE", "EXPIRED", "EXECUTABLE", "IN_PROGRESS")) else 400) from exc
+
+
 def _studio_html(token: str) -> str:
     target_buttons = "".join(
         f'''<label class="target"><input type="radio" name="target" value="{key}" {'checked' if key == 'web' else ''}>
@@ -618,7 +639,7 @@ class _StudioHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """Accept one token-bound target creation request within the size limit."""
-        if self.path not in {"/api/create", "/api/product", "/api/mission-decision", "/api/continue", "/api/savings"}:
+        if self.path not in {"/api/create", "/api/product", "/api/mission-decision", "/api/continue", "/api/savings", "/api/graph-ops-authorize", "/api/graph-ops-run"}:
             self._error(404, "NOT_FOUND", "route not found")
             return
         if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
@@ -642,6 +663,10 @@ class _StudioHandler(BaseHTTPRequestHandler):
                 result = continue_from_studio(self.studio_root, payload)
             elif self.path == "/api/savings":
                 result = savings_from_studio(self.studio_root, payload)
+            elif self.path == "/api/graph-ops-authorize":
+                result = authorize_graph_ops_from_studio(self.studio_root, payload)
+            elif self.path == "/api/graph-ops-run":
+                result = run_graph_ops_reality_check_from_studio(self.studio_root, payload)
             else:
                 result = create_from_studio(self.studio_root, payload)
         except StudioRequestError as exc:

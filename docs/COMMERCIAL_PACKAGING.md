@@ -21,6 +21,14 @@ The structured source of truth is
 owner-approved 2027 decision; this guide does not change its price, release
 state, or Marketplace authority.
 
+The separate [GitHub per-seat plan](GITHUB_MONETIZATION_2026.md) is free through
+December 1, 2026 and schedules a **$5.95 USD per named seat per month** offer
+from December 2, 2026. It is not a live checkout, entitlement, or repository
+access restriction; GitHub repository metadata cannot provide those functions.
+It is framed as a customer-managed **GitHub Assurance Seat**: commit-bound proof
+review, visible Proof Debt, policy and exception records, and exportable
+evidence—not a charge for source access or an unverified enterprise promise.
+
 ## The package boundary
 
 | Package | Who it helps | Availability | What it includes | What it does not promise |
@@ -29,6 +37,15 @@ state, or Marketplace authority.
 | Team Proof Hub | Teams that need one shared proof history | Design-partner only; not purchasable | Proposed shared evidence history, team policy bundles, approval routing, and review-visible Proof Debt | A customer-facing service until onboarding, support, retention, and billing are delivered |
 | Enterprise Assurance | Organizations with customer-specific assurance needs | Discovery only; not purchasable | Proposed deployment and operating boundary for identity, evidence, approvals, retention, and support | SOC 2, SSO/SCIM, external KMS, SLA, or managed-service availability |
 | Managed Proof Runner | Teams that need isolated verification execution | Not offered | Future usage-based runner only after isolation and operating controls are proven | Any current hosted execution, credential handling, or egress guarantee |
+
+The future GitHub Assurance Seat packages commit-bound Proof Review,
+Plan-to-Proof, Proof Debt, supplied-policy drift dossiers, organization policy
+bundles, named expiring exceptions, and exportable evidence. It remains subject
+to its separate public activation gates; no checkout or entitlement is live.
+
+The GitHub per-seat plan is a separate future delivery and support offer; it
+does not change the available Free Core or turn ordinary source access into a
+paid entitlement.
 
 ## 1. Free Core: the non-negotiable foundation
 

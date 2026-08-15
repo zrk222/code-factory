@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "reality_check_requires_positive_and_negative_intent_then_proves_the_sealed_pair",
+      "kind": "python",
+      "run": "import json, sys, tempfile\nfrom pathlib import Path\nfrom factoryline.reality_check import inspect_reality_intent, run_reality_check, write_reality_check_artifacts\nfrom factoryline.graph_ops import graph_ops_snapshot\nwith tempfile.TemporaryDirectory() as raw:\n    root=Path(raw)\n    e2e={\"schema\":\"factory.e2e_proof_manifest.v1\",\"id\":\"smoke-e2e\",\"approval\":{\"state\":\"approved\",\"approved_by\":\"smoke-owner\"},\"working_directory\":\".\",\"timeout_seconds\":10,\"network_egress\":\"not_granted\",\"positive\":{\"argv\":[sys.executable,\"-c\",\"from pathlib import Path; Path('artifact.txt').write_text('ok')\"]},\"negative\":{\"argv\":[sys.executable,\"-c\",\"import sys; sys.exit(1)\"]},\"artifact_paths\":[\"artifact.txt\"]}\n    (root/'e2e.json').write_text(json.dumps(e2e),encoding='utf-8')\n    reality={\"schema\":\"factory.reality-check-manifest.v1\",\"id\":\"smoke-behavior\",\"approval\":{\"state\":\"approved\",\"approved_by\":\"smoke-owner\"},\"behavior\":{\"promise\":\"A user sees a saved value.\",\"happy_path\":\"A save records the value.\",\"failure_case\":\"A denied save is not recorded.\"},\"intent_assertions\":[{\"id\":\"save-recorded\",\"statement\":\"The approved save is recorded.\",\"evidence\":\"positive\"},{\"id\":\"denied-save\",\"statement\":\"The denied save cannot succeed.\",\"evidence\":\"negative\"}],\"e2e_manifest\":\"e2e.json\"}\n    path=root/'reality.json'; path.write_text(json.dumps(reality),encoding='utf-8')\n    assert inspect_reality_intent(root,path)['marker']=='REALITY_INTENT_CONTRACT_READY'\n    receipt=run_reality_check(root,path); assert receipt['marker']=='REALITY_CHECK_VERIFIED'; assert all(item['verified'] for item in receipt['intent_verification'])\n    write_reality_check_artifacts(receipt,root/'.factory'/'reality')\n    assert any(node['kind']=='reality_check' for node in graph_ops_snapshot(root)['nodes'])\nprint('REALITY_CHECK_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "REALITY_CHECK_SMOKE_PASS",
+      "timeout_s": 30,
+      "covers": [
+        "REALITY_INTENT_CONTRACT_READY",
+        "REALITY_CHECK_VERIFIED",
+        "GRAPH_OPS_REALITY_CHECK_SUPERVISED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

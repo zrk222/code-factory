@@ -19,6 +19,8 @@ from .proof_reuse import verify_proof_receipt
 from .graph_forensics import graph_forensics, verify_graph_lineage
 from .proofsearch import verify_proofsearch_evaluation
 from .evidence_frontier import verify_evidence_frontier
+from .reality_check import RealityCheckError, validate_reality_check_receipt
+from .graph_authorization import GraphAuthorizationError, validate_graph_authorization
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -534,6 +536,102 @@ def _append_evidence_frontiers(state: dict[str, Any], root: Path) -> dict[str, i
     return facts
 
 
+def _append_reality_checks(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project sealed supervised behavior receipts without rerunning commands."""
+    facts = {"count": 0, "verified_count": 0, "blocked_count": 0}
+    directory = root / ".factory" / "reality"
+    for path in sorted(directory.glob("*.reality.json")):
+        value, source = _load_json(root, path, state["errors"])
+        if value is None or source is None:
+            continue
+        try:
+            receipt = validate_reality_check_receipt(value)
+        except RealityCheckError as exc:
+            state["errors"].append({"code": exc.code, "source": source})
+            continue
+        manifest = receipt["manifest"]
+        status = "verified" if receipt["ok"] else "hollow" if receipt["marker"] == "REALITY_CHECK_HOLLOW" else "blocked"
+        node_id = f"reality-check:{receipt['receipt_sha256'][:24]}"
+        _node(
+            state, node_id=node_id, kind="reality_check", label=manifest["id"], source=source, status=status,
+            facts={
+                "promise": manifest["behavior"]["promise"], "happy_path": manifest["behavior"]["happy_path"],
+                "failure_case": manifest["behavior"]["failure_case"], "marker": receipt["marker"],
+                "receipt_sha256": receipt["receipt_sha256"], "e2e_marker": receipt["e2e_receipt"]["marker"],
+                "authority": receipt["authority"], "verified": receipt["ok"],
+            },
+        )
+        facts["count"] += 1; facts["verified_count"] += int(receipt["ok"]); facts["blocked_count"] += int(not receipt["ok"])
+    return facts
+
+
+def _append_graph_authorizations(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project named, expiring Graph Ops authorizations without consuming them."""
+    facts = {"count": 0, "approved_count": 0, "consumed_count": 0}
+    directory = root / ".factory" / "graph-ops" / "authorizations"
+    for path in sorted(directory.glob("*.json")):
+        value, source = _load_json(root, path, state["errors"])
+        if value is None or source is None:
+            continue
+        try:
+            authorization = validate_graph_authorization(value)
+        except GraphAuthorizationError as exc:
+            _record_error(state["errors"], source, exc.code)
+            continue
+        binding = authorization["binding"]
+        node_id = f"authorization:{authorization['id']}"
+        _node(
+            state, node_id=node_id, kind="authorization", label=authorization["id"], source=source,
+            status=authorization["state"],
+            facts={
+                "action": authorization["action"], "approved_by": authorization["approved_by"],
+                "expires_at": authorization["expires_at"], "authorization_sha256": authorization["authorization_sha256"],
+                "target_node_id": binding["node_id"], "authority": authorization["authority"],
+            },
+        )
+        _edge(state, node_id, binding["node_id"], "authorizes")
+        facts["count"] += 1
+        facts["approved_count"] += int(authorization["state"] == "approved")
+        facts["consumed_count"] += int(authorization["state"] == "consumed")
+    return facts
+
+
+def _append_github_assurance_dossiers(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project local merge-evidence dossiers without treating them as GitHub policy truth."""
+    # Deferred to avoid the existing change-review -> Graph Ops import cycle.
+    from .github_assurance_dossier import GitHubAssuranceDossierError, validate_assurance_dossier
+    facts = {"count": 0, "review_required_count": 0, "unresolved_high_count": 0}
+    directory = root / ".factory" / "github-assurance"
+    for path in sorted(directory.glob("*.dossier.json")):
+        value, source = _load_json(root, path, state["errors"])
+        if value is None or source is None:
+            continue
+        try:
+            dossier = validate_assurance_dossier(value)
+        except GitHubAssuranceDossierError as exc:
+            _record_error(state["errors"], source, exc.code)
+            continue
+        node_id = f"assurance-dossier:{dossier['dossier_sha256'][:24]}"
+        _node(
+            state, node_id=node_id, kind="assurance_dossier", label=f"Merge evidence: {dossier['status']}",
+            source=source, status=dossier["status"], facts={
+                "head_sha": dossier["head_sha"], "dossier_sha256": dossier["dossier_sha256"],
+                "policy_current_sha256": dossier["policy"]["current_sha256"], "baseline_supplied": dossier["drift"]["baseline_supplied"],
+                "unresolved_high_count": dossier["drift"]["unresolved_high_count"], "authority": dossier["authority"],
+            },
+        )
+        for finding in dossier["drift"]["findings"]:
+            finding_id = f"policy-drift:{dossier['dossier_sha256'][:16]}:{finding['id']}"
+            _node(state, node_id=finding_id, kind="policy_drift", label=finding["id"], source=source,
+                  status="unresolved" if finding["id"] not in {item for exception in dossier["exceptions"] for item in exception["finding_ids"]} else "exceptioned",
+                  facts={"severity": finding["severity"], "message": finding["message"], "ruleset_id": finding["ruleset_id"]})
+            _edge(state, finding_id, node_id, "reported_by")
+        facts["count"] += 1
+        facts["review_required_count"] += int(dossier["status"] == "review_required")
+        facts["unresolved_high_count"] += dossier["drift"]["unresolved_high_count"]
+    return facts
+
+
 def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
     visible = nodes[:80]
     allowed = {node["id"] for node in visible}
@@ -551,10 +649,16 @@ def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
 def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
     if facts["node_count"] == 0:
         return "initialize_graph", "No readable local Factory graph artifacts were found."
+    if facts["assurance_unresolved_high_count"] > 0:
+        return "resolve_policy_drift", "A supplied GitHub policy snapshot has unexceptioned high-severity drift; a human must resolve it before a merge decision."
+    if facts["assurance_review_required_count"] > 0:
+        return "record_policy_baseline", "A merge-evidence dossier has no comparable baseline; record one before relying on policy alignment."
     if facts["runtime_unattested_session_count"] > 0:
         return "collect_independent_verifier_evidence", "A verifier session is bound, but no Code Factory runtime isolation has been proven."
     if facts["forensic_anomaly_count"] > 0:
         return "review_graph_anomaly", "Verified lineage exposes at least one state or concurrency anomaly."
+    if facts["reality_check_blocked_count"] > 0:
+        return "repair_reality_check", "A declared user behavior is blocked or hollow; inspect its local proof card before trusting the feature."
     if facts["evidence_frontier_ready_count"] > 0:
         return "review_evidence_frontier", "A sealed Evidence Frontier ranks the next supplied experiment that separates viable repair candidates; execution remains human-owned."
     if facts["proofsearch_evaluation_count"] > 0 and facts["proofsearch_winner_count"] == 0:
@@ -577,7 +681,7 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
 def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proof_count: int,
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
-                    frontier: dict[str, int]) -> dict[str, int]:
+                    frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -599,12 +703,21 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "evidence_frontier_count": frontier["frontier_count"],
         "evidence_frontier_ready_count": frontier["ready_count"],
         "evidence_frontier_halted_count": frontier["halted_count"],
+        "reality_check_count": reality["count"],
+        "reality_check_verified_count": reality["verified_count"],
+        "reality_check_blocked_count": reality["blocked_count"],
+        "graph_authorization_count": authorizations["count"],
+        "graph_authorization_approved_count": authorizations["approved_count"],
+        "graph_authorization_consumed_count": authorizations["consumed_count"],
+        "assurance_dossier_count": assurance["count"],
+        "assurance_review_required_count": assurance["review_required_count"],
+        "assurance_unresolved_high_count": assurance["unresolved_high_count"],
     }
 
 
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
-                      proofsearch: dict[str, int], frontier: dict[str, int]) -> list[str]:
+                      proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -627,6 +740,12 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.extend(["GRAPH_OPS_PROOFSEARCH_ARENA", "GRAPH_OPS_VERIFIED_REPAIR_LOCKED"])
     if frontier["frontier_count"]:
         markers.append("GRAPH_OPS_EVIDENCE_FRONTIER_READ_ONLY")
+    if reality["count"]:
+        markers.append("GRAPH_OPS_REALITY_CHECK_SUPERVISED")
+    if authorizations["count"]:
+        markers.append("GRAPH_OPS_HUMAN_AUTHORIZATIONS_PROJECTED")
+    if assurance["count"]:
+        markers.append("GRAPH_OPS_GITHUB_ASSURANCE_PROJECTED")
     if state["errors"] or state["truncated"]:
         markers.append("GRAPH_OPS_PARTIAL_RESULT")
     return sorted(markers)
@@ -647,14 +766,17 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     forensics = _append_graph_forensics(state, workspace)
     proofsearch = _append_proofsearch(state, workspace)
     frontier = _append_evidence_frontiers(state, workspace)
+    reality = _append_reality_checks(state, workspace)
+    authorizations = _append_graph_authorizations(state, workspace)
+    assurance = _append_github_assurance_dossiers(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
-    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier)
+    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance)
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
-    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier)
+    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance)
     core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",

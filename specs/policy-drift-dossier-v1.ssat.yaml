@@ -1,0 +1,27 @@
+name: policy-drift-dossier-v1
+language: python
+modules:
+  - name: github_assurance_dossier
+    path: factoryline/github_assurance_dossier.py
+    functions:
+      - name: build_assurance_dossier
+        args: [proof_review, current_policy, baseline_policy, exceptions, now]
+        returns: dict[str, Any]
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_snapshot
+        args: [root]
+        returns: dict[str, Any]
+dependencies:
+  - from: github_assurance_dossier
+    to: github_proof_review
+  - from: graph_ops
+    to: github_assurance_dossier
+invariants:
+  - name: dossier_has_no_live_github_or_mutation_path
+    forbid_pattern: "\\b(?:requests|urllib|subprocess|os\\.system)\\b"
+    scopes:
+      - module: github_assurance_dossier
+        symbol: build_assurance_dossier
+        max_lines: 80

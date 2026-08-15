@@ -71,10 +71,12 @@ developers can find it. This optional link only opens the repository.
 | Prove an E2E check can say no | [`factory e2e verify`](docs/E2E_PROOF_GATE.md) | A native positive/negative command-pair receipt that catches hollow E2E checks |
 | Prepare a bounded Team pilot | [`factory team-pilot readiness`](docs/TEAM_PILOT_LAUNCH.md) | Hash-bound, customer-managed readiness evidence for owner reviewâ€”not a checkout or service activation |
 | Add evidence to a GitHub PR | [`factory github proof-review`](docs/GITHUB_PROOF_REVIEW.md) | One neutral Check and stable proof walkthrough, tied to the head commit |
+| Detect policy drift before a human merge | [`factory github assurance-dossier`](docs/GITHUB_ASSURANCE_DOSSIER.md) | Deterministic supplied-policy comparison, named expiring exceptions, and a merge-evidence packet |
 | Inspect delivery state | [`factory studio`](docs/TARGET_COMPILER.md) | Graph Ops, receipts, and the next supported action |
 | Debug why two graph runs diverged | [`factory graph forensics`](docs/GRAPH_FORENSICS.md) | Hash-sealed state lineage, concurrency findings, and a read-only recovery preview |
 | Choose among competing repairs | [`factory proofsearch`](docs/PROOFSEARCH.md) | Hash-bound candidate rejection, mutation-tested evidence, a deterministic winner, and locked apply authority |
 | Decide what evidence to collect next | [Evidence Frontier](docs/EVIDENCE_FRONTIER.md) | A deterministic next-test hypothesis that separates repair candidates, with execution locked |
+| Prove one user-visible behavior | [Factory Reality Check](docs/REALITY_CHECK.md) | Deep intent assertions, a deliberate failure case, and an optional named one-time re-run authorization |
 | Verify supplied work | [Verifier Plane](docs/VERIFIER_PLANE.md) | Independent, hash-bound evidence checks |
 
 For the short product map, read the [overview](docs/OVERVIEW.md). For a two-minute
@@ -114,6 +116,14 @@ JetBrains plan is **$4.95 USD per month**; it is not active until the Marketplac
 release and pricing gates are satisfied. See the [Marketplace control-room guide](docs/JETBRAINS_CONTROL_ROOM.md)
 for compatibility, pricing, and approval boundaries.
 
+The separate GitHub-oriented offer is free through **December 1, 2026** and is
+scheduled at **$5.95 USD per named seat per month** from **December 2, 2026**.
+Its planned GitHub Assurance Seat focuses on commit-bound proof review, visible
+Proof Debt, policy-drift dossiers, governed exceptions, and exportable evidence—not source access or
+opaque AI-token resale. It is not active: no GitHub checkout, entitlement, or
+license enforcement exists, and the source license is unchanged. See the
+[GitHub per-seat plan](docs/GITHUB_MONETIZATION_2026.md).
+
 ## The proof boundary
 
 Code Factory creates and inspects local artifacts. It does **not** silently call a
@@ -143,13 +153,13 @@ output map make the same proof context reusable by a client you choose.
   founder story behind catching passing tests that fail in real use.
 - Start with [PRD Grill](docs/PRD_GRILL.md), [Proof Review](docs/DIFF_TO_PROOF_REVIEW.md),
   or [Verifier Plane](docs/VERIFIER_PLANE.md) when the job calls for it.
-- Browse [Graph Ops](docs/GRAPH_OPS.md), [Evidence Frontier](docs/EVIDENCE_FRONTIER.md), [proof reuse](docs/PROOF_REUSE.md), and
+- Browse [Graph Ops](docs/GRAPH_OPS.md), [Evidence Frontier](docs/EVIDENCE_FRONTIER.md), [Factory Reality Check](docs/REALITY_CHECK.md), [proof reuse](docs/PROOF_REUSE.md), and
   [savings boundaries](docs/SAVINGS_TRACKER.md) for advanced evidence workflows.
 - For UI work, read [Prestige Design Review](docs/PRESTIGE_DESIGN.md) for the
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.33.0.md),
+- See the [release notes](docs/RELEASE_NOTES_0.34.0.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

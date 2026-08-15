@@ -63,10 +63,18 @@ The recommendation is selected in this exact order:
 11. `collect_completion_evidence` — a requirement lacks valid completion evidence.
 12. `review_verified_graph` — all represented requirements have valid completion evidence.
 
-Graph Ops does not execute validation, change a plan disposition, approve a
-mission, publish, deploy, sign, send a message, access a credential, or grant a
-connector. The authoritative Product Mission ledger, proof receipts, and trace
-verifiers remain separate; Graph Ops only renders their current local facts.
+Graph Ops reads local evidence by default. Its human-authorization panel makes
+the exception explicit and narrow: a named user can create one expiring,
+receipt-bound authorization for a verified Reality Check re-run, then confirm
+that exact local re-run once. The authorization is consumed, rejects changed
+receipt or manifest bytes, and appears as a typed graph node. An eligible
+ProofSearch winner can receive a review-handoff authorization only; it is not
+an apply permission.
+
+Graph Ops cannot generate tests, apply source changes, change a plan
+disposition, merge, publish, deploy, sign, send a message, access a credential,
+or grant a connector. The authoritative Product Mission ledger, proof receipts,
+and trace verifiers remain separate.
 
 ## LangGraph optimization path
 
