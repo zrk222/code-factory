@@ -12,7 +12,7 @@ import com.intellij.openapi.project.Project
 object FactoryLineGitHubStarPrompt {
     // Keep this in step with build.gradle.kts. Reading the descriptor through
     // PluginManager is an internal API and fails Marketplace verification.
-    private const val RELEASE_VERSION = "0.8.6"
+    private const val RELEASE_VERSION = "0.8.7"
     private const val PROMPTED_VERSION_KEY = "factoryline.githubStarPromptedVersion"
     private const val NOTIFICATION_GROUP_ID = "FactoryLine"
     private const val REPOSITORY_URL = "https://github.com/zrk222/code-factory"

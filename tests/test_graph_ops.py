@@ -183,3 +183,39 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "Execute approved recovery" in page
     assert "disabled aria-describedby=\"execution-lock\"" in page
     assert "recovery.execute===false" in page
+    assert "ProofSearch · Counterfactual Arena" in page
+    assert 'id="candidate-arena"' in page
+    assert 'id="copy-proofsearch"' in page
+    assert 'id="export-proofsearch"' in page
+    assert 'id="validate-proofsearch"' in page
+    assert 'id="apply-proofsearch"' in page
+    assert "Apply verified repair" in page
+    assert 'facts.apply===false' in page
+    assert "Not measured" in page
+
+
+def test_graph_ops_exposes_verified_proofsearch_winner_and_candidate_controls(tmp_path: Path):
+    from test_proofsearch import _candidate, _plan, _request
+    from factoryline.proofsearch import evaluate_proofsearch
+
+    plan = _plan(tmp_path)
+    request = _request(tmp_path, plan, [
+        _candidate(tmp_path, "winner", risk=2, lines=8),
+        _candidate(tmp_path, "larger", risk=9, lines=40),
+    ])
+    evaluation = tmp_path / ".factory" / "proofsearch" / "demo.evaluation.json"
+    evaluate_proofsearch(tmp_path, request, evaluation)
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    assert snapshot["facts"]["proofsearch_evaluation_count"] == 1
+    assert snapshot["facts"]["proofsearch_candidate_count"] == 2
+    assert snapshot["facts"]["proofsearch_winner_count"] == 1
+    assert snapshot["recommendation"]["action"] == "review_verified_repair"
+    assert "GRAPH_OPS_PROOFSEARCH_ARENA" in snapshot["markers"]
+    assert "GRAPH_OPS_VERIFIED_REPAIR_LOCKED" in snapshot["markers"]
+    winner = next(node for node in snapshot["nodes"] if node["kind"] == "repair_candidate" and node["status"] == "winner")
+    assert winner["label"] == "winner"
+    decision = next(node for node in snapshot["nodes"] if node["kind"] == "proofsearch")
+    assert decision["facts"]["apply"] is False
+    assert all(value is False for value in decision["facts"]["authority"].values())

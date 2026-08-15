@@ -20,7 +20,7 @@
     .back:hover,.back:focus-visible { border-color:var(--blue); outline:none; }
     .notice { border:1px solid #37537c; background:#101c31; color:#d8e8ff; border-radius:var(--radius); margin:20px 0; padding:14px 16px; line-height:1.5; }
     .notice strong { color:var(--green); }
-    .summary { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin:20px 0; }
+    .summary { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:12px; margin:20px 0; }
     .stat,.card { background:color-mix(in srgb,var(--panel) 94%,transparent); border:1px solid var(--line); border-radius:var(--radius); padding:18px; }
     .stat p,.card h2 { margin:0; }
     .stat p { color:var(--muted); font-size:.82rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em; }
@@ -79,11 +79,25 @@
     .action-button.secondary { background:#172134; border-color:#53637e; }
     .action-button:disabled { cursor:not-allowed; opacity:.62; border-color:#604f72; background:#231d2b; }
     .guard-result { margin-top:12px; padding:10px 12px; border-radius:10px; color:#dce9ff; background:#132039; }
+    .arena { margin:0 0 var(--space); padding:0; overflow:hidden; border-color:#536da0; background:linear-gradient(145deg,#101b31,#111727 62%,#17142b); }
+    .arena-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:20px; }
+    .candidate-card { display:flex; flex-direction:column; min-width:0; padding:16px; border:1px solid var(--line); border-radius:14px; background:#0b1423; }
+    .candidate-card[data-status="winner"] { border-color:#4da675; box-shadow:0 0 0 2px #4da67522; background:#10251c; }
+    .candidate-card[data-status="rejected"] { border-color:#824954; background:#25151d; }
+    .candidate-top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+    .candidate-top h3 { margin:0; overflow-wrap:anywhere; }.candidate-state { padding:5px 8px; border-radius:999px; background:#1c2a40; color:#bdd2f1; font-size:.7rem; font-weight:850; letter-spacing:.05em; text-transform:uppercase; }
+    .candidate-card[data-status="winner"] .candidate-state { color:#bdf3d2; background:#16462e; }.candidate-card[data-status="rejected"] .candidate-state { color:#f4c3ca; background:#59222d; }
+    .candidate-metrics { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin:14px 0; }
+    .candidate-metrics div { padding:9px; border:1px solid #33445f; border-radius:9px; background:#0a111e; }.candidate-metrics small,.candidate-metrics strong { display:block; }.candidate-metrics small { color:var(--muted); }.candidate-metrics strong { margin-top:3px; }
+    .candidate-reasons { margin:auto 0 0; padding:0; list-style:none; display:grid; gap:6px; }.candidate-reasons li { color:#d7c7d4; font-size:.78rem; overflow-wrap:anywhere; }
+    .arena-summary { margin:0 20px 20px; display:grid; grid-template-columns:1.15fr .85fr; gap:12px; }
+    .arena-proof,.arena-controls { padding:16px; border:1px solid #40587d; border-radius:13px; background:#0b1423; }.arena-proof h3,.arena-controls h3 { margin-top:0; }
+    .savings-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }.savings-grid div { padding:9px; border-radius:9px; background:#121e31; }.savings-grid small,.savings-grid strong { display:block; }.savings-grid small { color:var(--muted); }.savings-grid strong { margin-top:3px; overflow-wrap:anywhere; }
     .foot { color:var(--muted); font-size:.85rem; line-height:1.5; margin:20px 0 0; }
     .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
-    @media (max-width:1100px) { .summary { grid-template-columns:repeat(3,minmax(0,1fr)); }.forensics-grid { grid-template-columns:1fr; }.forensic-stage + .forensic-stage { border-left:0; border-top:1px solid var(--line); } }
+    @media (max-width:1100px) { .summary { grid-template-columns:repeat(3,minmax(0,1fr)); }.forensics-grid,.arena-summary { grid-template-columns:1fr; }.arena-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.forensic-stage + .forensic-stage { border-left:0; border-top:1px solid var(--line); } }
     @media (max-width:900px) { .layout { grid-template-columns:1fr; } }
-    @media (max-width:768px) { .shell { padding:16px; }.top { flex-direction:column; }.top-actions { align-self:flex-start; justify-content:flex-start; }.summary { grid-template-columns:1fr 1fr; }.node .label { max-width:calc(100vw - 88px); }.detail dl { grid-template-columns:1fr; gap:4px; }.detail dd { margin-bottom:10px; } }
+    @media (max-width:768px) { .shell { padding:16px; }.top { flex-direction:column; }.top-actions { align-self:flex-start; justify-content:flex-start; }.summary,.arena-grid,.savings-grid { grid-template-columns:1fr 1fr; }.node .label { max-width:calc(100vw - 88px); }.detail dl { grid-template-columns:1fr; gap:4px; }.detail dd { margin-bottom:10px; } }
     @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; transition:none!important; } }
   </style>
 </head>
@@ -93,7 +107,7 @@
       <div>
         <p class="eyebrow">Factory Studio / Graph Ops</p>
         <h1>Follow the proof path.</h1>
-        <p class="lede">A bounded visual map of Product, Mission, Proof, Gate, Trace, and semantic run-lineage artifacts. Follow the first divergence and its recovery preview without executing it.</p>
+        <p class="lede">A bounded control plane for Product, Mission, Proof, Gate, Trace, semantic lineage, and verified counterfactual repair. Follow the failure, compare every candidate, and understand the winning proof without executing it.</p>
       </div>
       <nav class="top-actions" aria-label="Graph Ops navigation">
         <a class="back" href="https://github.com/zrk222/code-factory/blob/main/docs/GRAPH_OPS.md" rel="noreferrer">View Graph Ops docs</a>
@@ -108,7 +122,16 @@
       <div class="stat"><p>Evidenced</p><strong id="evidence-count">—</strong></div>
       <div class="stat"><p>Lineage runs</p><strong id="lineage-count">—</strong></div>
       <div class="stat"><p>Forensic findings</p><strong id="finding-count">—</strong></div>
+      <div class="stat"><p>Repair candidates</p><strong id="candidate-count">—</strong></div>
       <div class="stat"><p>Graph status</p><strong id="complete-status">Loading</strong></div>
+    </section>
+    <section id="proofsearch-panel" class="card arena" aria-labelledby="proofsearch-title" hidden>
+      <header class="forensics-head"><div><span class="stage-label">ProofSearch · Counterfactual Arena</span><h2 id="proofsearch-title">Which repair is smallest and actually proven?</h2><p>Every candidate is hash-bound, scope-checked, independently proven, mutation-tested, and ranked by one deterministic ordering.</p></div><span class="review-badge">Winner verified · apply locked</span></header>
+      <div id="candidate-arena" class="arena-grid" aria-label="Counterfactual repair candidates"></div>
+      <div class="arena-summary">
+        <section class="arena-proof" aria-labelledby="winner-title"><h3 id="winner-title">Winner rationale</h3><p id="winner-rationale">No evaluation loaded.</p><div id="savings-grid" class="savings-grid"></div><span id="evaluation-hash" class="proof-hash"></span></section>
+        <section class="arena-controls" aria-labelledby="arena-controls-title"><h3 id="arena-controls-title">Execution controls</h3><p>Inspect, export, and validate the decision here. Applying code, merging, publishing, and deploying require separate authority.</p><div class="action-buttons"><button id="copy-proofsearch" class="action-button" type="button">Copy verify command</button><button id="export-proofsearch" class="action-button secondary" type="button">Export decision JSON</button><button id="validate-proofsearch" class="action-button secondary" type="button">Validate winner guardrails</button><button id="apply-proofsearch" class="action-button" type="button" disabled aria-describedby="proofsearch-lock">Apply verified repair</button></div><p id="proofsearch-lock" class="guard-result">Locked: ProofSearch has no workspace-mutation, approval, merge, publication, or deployment authority.</p></section>
+      </div>
     </section>
     <section id="forensics-panel" class="card forensics" aria-labelledby="forensics-title" hidden>
       <header class="forensics-head">
@@ -141,13 +164,14 @@
     "use strict";
     const sessionToken=__FACTORY_STUDIO_TOKEN__;
     const endpoint="/api/graph-ops";
-    const laneOrder=["product","requirement","slice","mission","approval","completion","lineage","forensics","proof","gate","trace","receipt","artifact"];
+    const laneOrder=["product","requirement","slice","mission","approval","completion","lineage","forensics","repair_candidate","proofsearch","proof","gate","trace","receipt","artifact"];
     const byId=(id)=>document.getElementById(id);
     const addText=(parent,text,tag="span")=>{const node=document.createElement(tag);node.textContent=String(text);parent.appendChild(node);return node;};
     const setText=(id,text)=>{byId(id).textContent=String(text);};
     const status=(text)=>{setText("live",text);};
     let selectedButton=null;
     let currentForensics=null;
+    let currentProofSearch=null;
     function selectNode(node,button){
       if(selectedButton) selectedButton.setAttribute("aria-pressed","false");
       selectedButton=button; button.setAttribute("aria-pressed","true");
@@ -179,16 +203,31 @@
     function recoveryCommand(){const baseline=currentForensics?.baseline_path||"<baseline.lineage.json>";const candidate=currentForensics?.candidate_path||"<candidate.lineage.json>";return `factory graph forensics --baseline "${baseline}" --candidate "${candidate}" --json`;}
     byId("prepare-recovery").addEventListener("click",async()=>{if(!currentForensics)return;const command=recoveryCommand();try{await navigator.clipboard.writeText(command);setText("execution-lock","Recovery command copied. It is dry-run only and cannot mutate a checkpoint.");status("Dry-run recovery command copied.");}catch(_error){setText("execution-lock",`Copy unavailable. Dry-run command: ${command}`);status("Recovery command displayed for manual copy.");}});
     byId("validate-recovery").addEventListener("click",()=>{const recovery=currentForensics?.recovery_plan||{};const authority=currentForensics?.authority||{};const safe=recovery.execute===false&&recovery.requires_human_approval===true&&authority.execution===false&&authority.checkpoint_mutation===false;setText("execution-lock",safe?"Guardrails valid: preview is non-executing, authority is retained, and human approval is required.":"Guardrail validation failed closed. Do not execute this recovery.");status(safe?"Recovery guardrails validated.":"Recovery guardrails failed closed.");});
+    const metric=(value,suffix="")=>value===null||value===undefined?"Not measured":`${value}${suffix}`;
+    function renderProofSearch(nodes){
+      const panel=byId("proofsearch-panel");const evaluations=nodes.filter(node=>node.kind==="proofsearch");
+      if(!evaluations.length){panel.hidden=true;currentProofSearch=null;return;}panel.hidden=false;
+      const evaluation=evaluations[evaluations.length-1];const candidates=nodes.filter(node=>node.kind==="repair_candidate"&&node.source===evaluation.source);currentProofSearch={evaluation,candidates};
+      const arena=byId("candidate-arena");arena.replaceChildren();
+      candidates.forEach(node=>{const facts=node.facts||{};const card=document.createElement("article");card.className="candidate-card";card.dataset.status=node.status||"rejected";const top=document.createElement("div");top.className="candidate-top";addText(top,node.label,"h3");addText(top,node.status||"unknown","span").className="candidate-state";card.appendChild(top);const metrics=document.createElement("div");metrics.className="candidate-metrics";[["Risk",facts.risk_score??"?"],["Changed lines",facts.changed_lines??"?"],["Proof time",metric(facts.metrics?.proof_elapsed_ms," ms")],["Mutation",`${facts.mutation?.killed??0}/${facts.mutation?.total??0}`],["Tokens",metric(facts.metrics?.tokens)],["Cost",facts.metrics?.cost_usd==null?"Not measured":`$${facts.metrics.cost_usd}`]].forEach(([label,value])=>{const box=document.createElement("div");addText(box,label,"small");addText(box,value,"strong");metrics.appendChild(box);});card.appendChild(metrics);const reasons=document.createElement("ul");reasons.className="candidate-reasons";(facts.reasons||[]).forEach(reason=>addText(reasons,reason.replaceAll("_"," ").toLowerCase(),"li"));if(!(facts.reasons||[]).length)addText(reasons,"All declared proof and safety gates passed.","li");card.appendChild(reasons);arena.appendChild(card);});
+      const facts=evaluation.facts||{};const winner=candidates.find(node=>node.facts?.winner);setText("winner-rationale",winner?`${winner.label} is the deterministic winner: every required proof passed, all declared mutants were killed, scope stayed bounded, and its risk/size/runtime tuple outranked the other eligible candidates.`:"No candidate satisfied every required proof, mutation, and scope gate.");setText("evaluation-hash",`Evaluation receipt · ${facts.evaluation_sha256||"hash unavailable"}`);
+      const savings=byId("savings-grid");savings.replaceChildren();const values=facts.savings||{};[["Time saved",metric(values.elapsed_ms," ms")],["Tokens saved",metric(values.tokens)],["Cost saved",values.cost_usd==null?"Not measured":`$${values.cost_usd}`],["Productivity",metric(values.productivity)]].forEach(([label,value])=>{const box=document.createElement("div");addText(box,label,"small");addText(box,value,"strong");savings.appendChild(box);});
+    }
+    function proofsearchCommand(){return `factory proofsearch verify "${currentProofSearch?.evaluation?.source||"<evaluation.json>"}" --root . --json`;}
+    byId("copy-proofsearch").addEventListener("click",async()=>{if(!currentProofSearch)return;const command=proofsearchCommand();try{await navigator.clipboard.writeText(command);setText("proofsearch-lock","Verification command copied. It reads and verifies evidence only.");}catch(_error){setText("proofsearch-lock",`Copy unavailable. Verify command: ${command}`);}});
+    byId("export-proofsearch").addEventListener("click",()=>{if(!currentProofSearch)return;const blob=new Blob([JSON.stringify(currentProofSearch,null,2)],{type:"application/json"});const link=document.createElement("a");link.href=URL.createObjectURL(blob);link.download="proofsearch-decision.json";link.click();URL.revokeObjectURL(link.href);setText("proofsearch-lock","Decision view exported. Source, credentials, and raw command logs were not added.");});
+    byId("validate-proofsearch").addEventListener("click",()=>{const facts=currentProofSearch?.evaluation?.facts||{};const authority=facts.authority||{};const winner=currentProofSearch?.candidates?.find(node=>node.facts?.winner);const safe=facts.valid===true&&facts.apply===false&&Boolean(winner)&&winner.facts?.eligible===true&&Object.values(authority).every(value=>value===false);setText("proofsearch-lock",safe?"Guardrails valid: evidence is sealed, the winner is eligible, and all mutation/release authority remains locked.":"Guardrail validation failed closed. Do not apply this repair.");status(safe?"ProofSearch winner guardrails validated.":"ProofSearch guardrails failed closed.");});
     function renderGraph(payload){
       const facts=payload.facts||{}; const nodes=Array.isArray(payload.nodes)?payload.nodes:[];
       setText("graph-description",`Authenticated local result · ${facts.lineage_run_count??0} sealed lineage run(s) · ${facts.forensic_anomaly_count??0} forensic finding(s).`);
       setText("node-count",facts.node_count??nodes.length); setText("edge-count",facts.edge_count??0);
       setText("evidence-count",`${facts.evidenced_requirement_count??0}/${(facts.evidenced_requirement_count??0)+(facts.unevidenced_requirement_count??0)}`);
       setText("lineage-count",facts.lineage_run_count??0);setText("finding-count",facts.forensic_anomaly_count??0);
+      setText("candidate-count",facts.proofsearch_candidate_count??0);
       setText("complete-status",payload.complete?"Complete":"Partial"); setText("next-action",payload.recommendation?.action||"unavailable"); setText("next-reason",payload.recommendation?.reason||"No fact-derived action is available.");
       const lanes=byId("lanes"); lanes.replaceChildren(); const empty=byId("graph-empty"); empty.hidden=nodes.length!==0;
       laneOrder.forEach(kind=>{const members=nodes.filter(node=>node.kind===kind);if(!members.length)return;const lane=document.createElement("section");lane.className="lane";const heading=addText(lane,`${kind} · ${members.length}`,"h3");heading.id=`lane-${kind}`;const list=document.createElement("div");list.className="node-list";list.setAttribute("aria-labelledby",heading.id);members.slice(0,40).forEach(node=>{const button=document.createElement("button");button.type="button";button.className="node";button.dataset.status=node.status||"unknown";button.setAttribute("aria-pressed","false");addText(button,node.kind,"span").className="kind";addText(button,node.label,"span").className="label";button.addEventListener("click",()=>selectNode(node,button));list.appendChild(button);});if(members.length>40)addText(list,`${members.length-40} more nodes remain in the signed result.`,"span");lane.appendChild(list);lanes.appendChild(lane);});
-      renderForensics(nodes);renderErrors(Array.isArray(payload.source_errors)?payload.source_errors:[]); status(`Graph Ops loaded ${nodes.length} nodes. Next action: ${payload.recommendation?.action||"unavailable"}.`);
+      renderForensics(nodes);renderProofSearch(nodes);renderErrors(Array.isArray(payload.source_errors)?payload.source_errors:[]); status(`Graph Ops loaded ${nodes.length} nodes. Next action: ${payload.recommendation?.action||"unavailable"}.`);
     }
     async function load(){
       try {const response=await fetch(endpoint,{headers:{"X-Factory-Studio-Token":sessionToken}});const payload=await response.json();if(!response.ok)throw new Error(payload.code||"Graph Ops request failed");renderGraph(payload);} catch(error) {setText("complete-status","Unavailable");setText("next-action","inspect_local_studio");setText("next-reason",String(error));status("Graph Ops could not load the local result.");}

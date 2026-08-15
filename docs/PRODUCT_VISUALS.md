@@ -22,15 +22,22 @@ claim a Marketplace approval, download count, or readiness result.
 Use for the first-screen story: describe a local outcome, create a contained
 MVP, and keep the authority boundary explicit.
 
-## 3. Factory Studio: inspect the proof path
+## 3. Graph Ops: compare repair candidates
 
-![Actual Graph Ops view showing local graph lanes, proof counts, and a fact-derived next action](assets/marketplace/graph-ops-studio-1280x800.png)
+![Actual Graph Ops Counterfactual Arena showing verified and rejected repair candidates](assets/marketplace/graph-ops-proofsearch.png)
 
-Use for the second-screen story: Graph Ops reports the evidence state and the
-next supported action. The capture intentionally includes an incomplete proof state;
-it is not a simulated green result.
+Use for the second-screen story: Graph Ops reports the evidence state, compares
+supplied candidates, and shows the next supported action. It is not a simulated green result;
+rejected candidates preserve the incomplete proof state.
 
-## 4. Operational proof loop
+## 4. Graph Ops: review the winner controls
+
+![Actual Graph Ops winner rationale, evidence export, guardrail validation, and locked apply control](assets/marketplace/graph-ops-proofsearch-controls.png)
+
+Use for the authority story: evidence can be copied, exported, and validated,
+while repair application remains visibly locked for human review.
+
+## 5. Operational proof loop
 
 ![Code Factory operational proof loop: scope work, inspect proof gaps, bind evidence, then show the reviewer one next action](assets/operational-proof-loop-1600x900.png)
 
@@ -43,7 +50,7 @@ publishes, deploys, signs, or approves work.
 
 ## Placement rules
 
-- Use the logo plus both captures, in this order, for Product Hunt or other
+- Use the logo plus all three captures, in this order, for Product Hunt or other
   product galleries.
 - Use the operational proof loop for explanatory community posts, with the
   caption: "Code Factory turns a prompt, fuzzy PRD, or risky AI-assisted diff

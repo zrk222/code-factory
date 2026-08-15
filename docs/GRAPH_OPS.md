@@ -1,6 +1,8 @@
 # Unified Graph Ops
 
-![Graph Ops showing sealed runs, first divergence, causal path, recovery preview, and locked Action Dock](assets/marketplace/graph-ops-forensics.png)
+![Graph Ops showing sealed runs, first divergence, counterfactual repair candidates, verified winner, measured savings fields, and locked execution controls](assets/marketplace/graph-ops-proofsearch.png)
+
+![Graph Ops winner rationale, evidence-bounded savings fields, and review/export/validation controls with Apply locked](assets/marketplace/graph-ops-proofsearch-controls.png)
 
 `factory graph ops` is a local, deterministic inspection layer over the
 artifacts Code Factory already knows how to verify. It does not create a new
@@ -24,13 +26,14 @@ factory graph ops --root . --mermaid
 factory graph impact --root . --changed src/app.py --json
 factory graph lineage-verify .factory/graph-runs/good.lineage.json --json
 factory graph forensics --baseline good.lineage.json --candidate bad.lineage.json --json
+factory proofsearch verify .factory/proofsearch/repair.evaluation.json --root . --json
 factory studio --root .
 ```
 
 Open `http://127.0.0.1:<port>/graph-ops` from Studio, or select **Unified
 Graph Ops** from either editor integration. The page has graph totals, typed
 lanes, selected-node detail, source-error visibility, an explicit empty state,
-and exactly one fact-derived next action.
+exactly one fact-derived next action, and the ProofSearch Counterfactual Arena.
 
 The JSON schema is `factory.graph-ops.v1`. Its `graph_sha256` covers canonical
 ordering of the graph result. Results are bounded to 500 nodes, 1,000 edges,
@@ -47,11 +50,16 @@ node label, filename, or graph position never creates coverage.
 The recommendation is selected in this exact order:
 
 1. `initialize_graph` — no readable local graph nodes.
-2. `rerun_invalid_proof` — a content-addressed proof is stale.
-3. `resolve_blocked_gate` — a declared proof plan contains `BLOCK`.
-4. `run_required_validation` — a declared proof plan contains `RUN`.
-5. `collect_completion_evidence` — a requirement lacks valid completion evidence.
-6. `review_verified_graph` — all represented requirements have valid completion evidence.
+2. `collect_independent_verifier_evidence` — a verifier session lacks independently supplied runtime evidence.
+3. `review_graph_anomaly` — verified lineage exposes a state or concurrency anomaly.
+4. `repair_candidate_evidence` — a ProofSearch evaluation has no eligible candidate.
+5. `review_verified_repair` — ProofSearch selected one candidate; apply remains human-owned.
+6. `review_counterfactual_fork` — verified runs diverge without a completed candidate evaluation.
+7. `rerun_invalid_proof` — a content-addressed proof is stale.
+8. `resolve_blocked_gate` — a declared proof plan contains `BLOCK`.
+9. `run_required_validation` — a declared proof plan contains `RUN`.
+10. `collect_completion_evidence` — a requirement lacks valid completion evidence.
+11. `review_verified_graph` — all represented requirements have valid completion evidence.
 
 Graph Ops does not execute validation, change a plan disposition, approve a
 mission, publish, deploy, sign, send a message, access a credential, or grant a
@@ -83,6 +91,21 @@ This division avoids rebuilding persistence while giving LangGraph runs the
 same contradiction, proof, anomaly, authority, and signed-review semantics as
 native Code Factory missions.
 
+## ProofSearch Counterfactual Arena
+
+After Graph Forensics locates the first semantic divergence, `factory
+proofsearch plan` seals the authorized changed paths and exact Graph Impact
+slice. `factory proofsearch evaluate` then verifies 2 through 12 supplied,
+hash-bound candidates. Graph Ops shows every candidate's eligibility, risk,
+changed lines, proof runtime, mutation killed/total value, measured or
+unavailable token/cost values, and deterministic loss reasons.
+
+The Arena can copy a verification command, export the displayed decision, and
+validate the winner's guardrails. Its Apply control remains disabled because
+the evaluation explicitly carries `apply: false` and no workspace, test,
+checkpoint, approval, merge, publication, or deployment authority. See
+[ProofSearch](PROOFSEARCH.md).
+
 When two verified lineage receipts exist for the same graph, Graph Ops adds a
 semantic-forensics lane. It shows the first state divergence, deterministic
 stale-read/parallel-write/duplicate-side-effect findings, and a read-only
@@ -104,6 +127,7 @@ savings claim.
 
 ## Measurement boundary
 
-Graph Ops does not claim time, token, cost, or productivity savings. Continue
-to use paired savings receipts for those values; missing observations remain
-unknown.
+Graph Ops does not infer time, token, cost, or productivity savings. ProofSearch
+may display an exact signed delta only when its request supplied one paired
+baseline; missing observations remain `Not measured`, and productivity remains
+unknown without separate measured evidence.

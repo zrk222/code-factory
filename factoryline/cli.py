@@ -79,6 +79,7 @@ from .migration import (
 from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .graph_forensics import GraphForensicsError, graph_forensics, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
+from .proofsearch import ProofSearchError, create_proofsearch_plan, evaluate_proofsearch, verify_proofsearch_evaluation
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
 from .github_proof_review import (
@@ -807,6 +808,25 @@ def main(argv=None) -> int:
     graph_forensic.add_argument("--candidate", required=True)
     graph_forensic.add_argument("--json", action="store_true")
     graph_forensic.add_argument("--mermaid", action="store_true")
+
+    proofsearch = sub.add_parser("proofsearch", help="compare hash-bound repair candidates without applying them")
+    proofsearch_sub = proofsearch.add_subparsers(required=True, dest="proofsearch_cmd")
+    proofsearch_plan = proofsearch_sub.add_parser("plan", help="seal one graph divergence and its exact proof-impact slice")
+    proofsearch_plan.add_argument("--root", default=".")
+    proofsearch_plan.add_argument("--baseline", required=True)
+    proofsearch_plan.add_argument("--candidate", required=True)
+    proofsearch_plan.add_argument("--changed", action="append", required=True)
+    proofsearch_plan.add_argument("--out", required=True)
+    proofsearch_plan.add_argument("--json", action="store_true")
+    proofsearch_evaluate = proofsearch_sub.add_parser("evaluate", help="verify, reject, and rank supplied candidate evidence")
+    proofsearch_evaluate.add_argument("request")
+    proofsearch_evaluate.add_argument("--root", default=".")
+    proofsearch_evaluate.add_argument("--out", required=True)
+    proofsearch_evaluate.add_argument("--json", action="store_true")
+    proofsearch_verify = proofsearch_sub.add_parser("verify", help="verify one sealed ProofSearch evaluation and its evidence")
+    proofsearch_verify.add_argument("evaluation")
+    proofsearch_verify.add_argument("--root", default=".")
+    proofsearch_verify.add_argument("--json", action="store_true")
 
     change = sub.add_parser("change", help="prepare a deterministic, analysis-only diff-to-proof review")
     change_sub = change.add_subparsers(required=True, dest="change_cmd")
@@ -2236,6 +2256,31 @@ def main(argv=None) -> int:
             for command in payload["next_proof_commands"]:
                 print(f"  {command}")
             print("boundary   : deployment, publication, credentials, connectors, and messages remain unavailable")
+        return 0
+    if a.cmd == "proofsearch":
+        try:
+            if a.proofsearch_cmd == "plan":
+                payload = create_proofsearch_plan(Path(a.root), Path(a.baseline), Path(a.candidate), a.changed, Path(a.out))
+            elif a.proofsearch_cmd == "evaluate":
+                payload = evaluate_proofsearch(Path(a.root), Path(a.request), Path(a.out))
+            else:
+                payload = verify_proofsearch_evaluation(Path(a.root), Path(a.evaluation))
+        except ProofSearchError as exc:
+            print(json.dumps({"schema": "factory.proofsearch.error.v1", "code": exc.code, "message": str(exc)}, indent=2), file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("factory ProofSearch (review only)")
+            print("=" * 44)
+            print(f"marker : {payload['marker']}")
+            if "winner" in payload:
+                print(f"winner : {payload['winner'] or 'none'}")
+            if "path" in payload:
+                print(f"receipt: {payload['path']}")
+            print("apply  : locked")
+        if a.proofsearch_cmd == "verify":
+            return 0 if payload["valid"] else 1
         return 0
     if a.cmd == "graph":
         if a.graph_cmd == "lineage-mission":

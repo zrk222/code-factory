@@ -246,6 +246,7 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         )
         assert connection.getresponse().status == 413
     finally:
+        connection.close()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)

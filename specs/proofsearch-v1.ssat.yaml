@@ -1,0 +1,33 @@
+name: proofsearch-v1
+language: python
+modules:
+  - name: proofsearch
+    path: factoryline/proofsearch.py
+    functions:
+      - name: create_proofsearch_plan
+        args: [root, baseline_path, candidate_path, changed_paths, out]
+        returns: dict[str, Any]
+      - name: evaluate_proofsearch
+        args: [root, request_path, out]
+        returns: dict[str, Any]
+      - name: verify_proofsearch_evaluation
+        args: [root, evaluation_path]
+        returns: dict[str, Any]
+dependencies:
+  - from: proofsearch
+    to: graph_forensics
+  - from: proofsearch
+    to: graph_ops
+invariants:
+  - name: proofsearch_never_executes_or_mutates
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:apply|commit|merge|deploy|publish|sign|send_message|grant_connector|update_state|invoke)\\s*\\("
+    scopes:
+      - module: proofsearch
+        symbol: evaluate_proofsearch
+        max_lines: 180
+  - name: proofsearch_plan_is_bounded
+    forbid_pattern: "rglob\\(|walk\\(|subprocess\\.|requests\\.|httpx\\."
+    scopes:
+      - module: proofsearch
+        symbol: create_proofsearch_plan
+        max_lines: 100

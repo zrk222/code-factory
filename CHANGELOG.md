@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add ProofSearch, a deterministic counterfactual repair selector. It seals the
+  first Graph Forensics divergence and exact Graph Impact proof slice, verifies
+  2 through 12 hash-bound candidates, rejects failed proofs, surviving mutants,
+  scope escapes, test weakening, and error suppression, then selects one
+  minimum-risk/scope/runtime winner without applying it.
+- Add the Graph Ops Counterfactual Arena with every candidate, exact rejection
+  reasons, proof and mutation facts, winner rationale, evidence-bounded savings,
+  decision export, guardrail validation, and visibly locked apply/merge/release
+  controls.
+
 - Add Graph Forensics: hash-sealed semantic lineage receipts, deterministic
   first-divergence and causal-cone analysis, stale-read/parallel-write/
   duplicate-side-effect findings, and a non-executing recovery-fork preview.

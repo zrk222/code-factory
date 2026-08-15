@@ -17,6 +17,7 @@ from .product_missions import verify_mission_completion
 from .proof import verify_trace
 from .proof_reuse import verify_proof_receipt
 from .graph_forensics import graph_forensics, verify_graph_lineage
+from .proofsearch import verify_proofsearch_evaluation
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -433,6 +434,54 @@ def _append_graph_forensics(state: dict[str, Any], root: Path) -> dict[str, int]
     return facts
 
 
+def _append_proofsearch(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Add sealed counterfactual evaluations and their candidate decisions."""
+    facts = {"evaluation_count": 0, "candidate_count": 0, "eligible_count": 0, "winner_count": 0}
+    directory = root / ".factory" / "proofsearch"
+    for path in sorted(directory.glob("*.evaluation.json")):
+        value, source = _load_json(root, path, state["errors"])
+        if value is None or source is None:
+            continue
+        verification = verify_proofsearch_evaluation(root, path)
+        digest = _text(value.get("evaluation_sha256"), path.stem)
+        evaluation_id = f"proofsearch:{digest[:24]}"
+        winner = value.get("winner")
+        _node(
+            state, node_id=evaluation_id, kind="proofsearch", label=f"ProofSearch · {winner or 'no winner'}",
+            source=source, status="verified" if verification["valid"] and winner else "blocked" if verification["valid"] else "invalid",
+            facts={
+                "winner": winner, "decision": value.get("decision"), "apply": value.get("apply"),
+                "savings": value.get("savings", {}), "authority": value.get("authority", {}),
+                "evaluation_sha256": digest, "valid": verification["valid"], "errors": verification["errors"],
+                "candidate_count": len(value.get("candidates", [])),
+            },
+        )
+        facts["evaluation_count"] += 1
+        for candidate in value.get("candidates", []):
+            if not isinstance(candidate, dict):
+                continue
+            candidate_id = _text(candidate.get("candidate_id"), "candidate")
+            node_id = f"repair-candidate:{_sha({'evaluation': digest, 'candidate': candidate_id})[:24]}"
+            is_winner = candidate_id == winner
+            eligible = candidate.get("eligible") is True
+            status = "winner" if is_winner else "eligible" if eligible else "rejected"
+            _node(
+                state, node_id=node_id, kind="repair_candidate", label=candidate_id, source=source, status=status,
+                facts={
+                    "winner": is_winner, "eligible": eligible, "reasons": candidate.get("reasons", []),
+                    "risk_score": candidate.get("risk_score"), "changed_lines": candidate.get("changed_lines"),
+                    "changed_paths": candidate.get("changed_paths", []), "mutation": candidate.get("mutation", {}),
+                    "metrics": candidate.get("metrics", {}), "proofs": candidate.get("proofs", []),
+                    "patch": candidate.get("patch", {}), "guardrails": candidate.get("guardrails", {}),
+                },
+            )
+            _edge(state, node_id, evaluation_id, "evaluated_by")
+            facts["candidate_count"] += 1
+            facts["eligible_count"] += int(eligible)
+            facts["winner_count"] += int(is_winner)
+    return facts
+
+
 def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
     visible = nodes[:80]
     allowed = {node["id"] for node in visible}
@@ -454,6 +503,10 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "collect_independent_verifier_evidence", "A verifier session is bound, but no Code Factory runtime isolation has been proven."
     if facts["forensic_anomaly_count"] > 0:
         return "review_graph_anomaly", "Verified lineage exposes at least one state or concurrency anomaly."
+    if facts["proofsearch_evaluation_count"] > 0 and facts["proofsearch_winner_count"] == 0:
+        return "repair_candidate_evidence", "ProofSearch has no eligible candidate; repair the exact rejected evidence."
+    if facts["proofsearch_winner_count"] > 0:
+        return "review_verified_repair", "ProofSearch selected one hash-bound candidate; human approval is still required before apply."
     if facts["forensic_divergence_count"] > 0:
         return "review_counterfactual_fork", "Two verified graph runs diverge; review the bounded recovery preview."
     if facts["stale_proof_count"] > 0:
@@ -480,6 +533,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     _append_traces(state, workspace)
     verifier_sessions = _append_verifier_sessions(state, workspace)
     forensics = _append_graph_forensics(state, workspace)
+    proofsearch = _append_proofsearch(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
@@ -497,6 +551,10 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "lineage_run_count": forensics["lineage_count"],
         "forensic_anomaly_count": forensics["anomaly_count"],
         "forensic_divergence_count": forensics["divergence_count"],
+        "proofsearch_evaluation_count": proofsearch["evaluation_count"],
+        "proofsearch_candidate_count": proofsearch["candidate_count"],
+        "proofsearch_eligible_count": proofsearch["eligible_count"],
+        "proofsearch_winner_count": proofsearch["winner_count"],
     }
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
@@ -518,6 +576,8 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers.append("GRAPH_OPS_SEMANTIC_LINEAGE")
     if forensics["divergence_count"]:
         markers.append("GRAPH_OPS_COUNTERFACTUAL_RECOVERY_PREVIEW")
+    if proofsearch["evaluation_count"]:
+        markers.extend(["GRAPH_OPS_PROOFSEARCH_ARENA", "GRAPH_OPS_VERIFIED_REPAIR_LOCKED"])
     if not complete:
         markers.append("GRAPH_OPS_PARTIAL_RESULT")
     core = {

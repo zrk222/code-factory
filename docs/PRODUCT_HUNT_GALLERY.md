@@ -10,8 +10,11 @@ Use the files in this exact order:
 1. `docs/assets/factoryline-logo-480.png` — current FactoryLine identity.
 2. `docs/assets/marketplace/factory-studio-mvp-1280x800.png` — actual local,
    outcome-first MVP flow and explicit local-only boundary.
-3. `docs/assets/marketplace/graph-ops-studio-1280x800.png` — actual Graph Ops
-   proof path and fact-derived next action.
+3. `docs/assets/marketplace/graph-ops-proofsearch.png` — actual Graph Ops
+   first-divergence, repair-candidate, winner, and locked-control surface.
+4. `docs/assets/marketplace/graph-ops-proofsearch-controls.png` — actual winner
+   rationale, measured-or-unavailable savings, and review/export/validation
+   controls with Apply visibly locked.
 
 These are product captures, not a claim of measured performance, savings,
 conversion, Marketplace approval, or production readiness. Do not use the
@@ -28,33 +31,31 @@ gallery replacement.
 Use this only as an update associated with the existing **Code Factory**
 Product Hunt product.
 
-**Headline:** Turn a current diff into a review packet with verifiable local
-evidence.
+**Headline:** Trace the graph failure. Prove the smallest repair.
 
-**Tagline:** Proof Review, Verified Repair Sandbox, and Workspace Load Advisor
-for supervised local code changes.
+**Tagline:** Graph Forensics and ProofSearch for mutation-tested repair decisions.
 
 **Update copy:**
 
-Code Factory adds three developer controls for the moment between a change and
-an independent review: Proof Review makes the current diff an attention-first
-JSON, Markdown, and Mermaid handoff; Verified Repair Sandbox seals one native
-Change List and checks candidate patch scope and measured bytes; Workspace Load
-Advisor reports bounded project-shape and remote/WSL preflight facts before
-workspace changes.
+Code Factory now traces sealed agent-graph runs to the first semantic
+divergence, shows the downstream causal path, and catches stale state,
+conflicting parallel writes, or repeated side effects. ProofSearch then
+compares 2–12 supplied repair candidates, rejects failed proofs, surviving
+mutants, scope escapes, test weakening, and error suppression, and explains one
+deterministic verified winner.
 
-These controls are deliberately local and supervised. They do not edit code,
-call an AI runner, access credentials, upload source, run tests, commit,
-publish, or claim production readiness. They help a developer bring concrete,
-bounded evidence to the next review decision.
+The Graph Ops Counterfactual Arena shows every candidate, loss reason,
+mutation result, risk, changed scope, proof runtime, measured-or-unavailable
+savings, and the sealed decision hash. Verification, export, and guardrail
+controls are available in the UI; apply, merge, publication, deployment,
+credentials, and connectors remain locked.
 
-**Primary CTA:** Review a live diff, export its evidence packet, and decide
-what to verify next.
+**Primary CTA:** Inspect the live repair arena and verify the winning evidence.
 
 **Proof links:**
 
-- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.31.0`
-- PyPI: `https://pypi.org/project/factoryline-code-factory/0.31.0/`
+- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.32.0`
+- PyPI: `https://pypi.org/project/factoryline-code-factory/0.32.0/`
 - Source: `https://github.com/zrk222/code-factory`
 
 If no authenticated Code Factory post or draft exists, report

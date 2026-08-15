@@ -23,7 +23,7 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     )
     assert len(short_description) <= 60
     assert "factoryline-code-factory" in page
-    assert "github.com/zrk222/code-factory/releases/tag/v0.31.0" in page
+    assert "github.com/zrk222/code-factory/releases/tag/v0.32.0" in page
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "Actual product capture set" in page
     assert '<meta name="viewport"' in page
@@ -92,12 +92,12 @@ def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(tm
     valid_result = inspect(SPACE / "README.md")
     assert valid_result["ok"] is True
     assert valid_result["marker"] == "HUGGINGFACE_SPACE_METADATA_VALID"
-    assert valid_result["short_description_length"] == 49
+    assert valid_result["short_description_length"] == 59
 
     invalid_readme = tmp_path / "README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Build fast. Prove AI-assisted code before review.",
+            "short_description: Trace graph failures. Compare proven repairs before review.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",
@@ -122,7 +122,7 @@ def test_huggingface_metadata_preflight_cli_reports_the_local_result(tmp_path: P
     invalid_readme = tmp_path / "invalid-README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Build fast. Prove AI-assisted code before review.",
+            "short_description: Trace graph failures. Compare proven repairs before review.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",

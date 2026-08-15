@@ -22,6 +22,10 @@ known, what is missing, and the one fact-derived next action.
   state lineage, identifies the first semantic divergence, detects stale reads,
   unsafe parallel writes, and repeated effects, then previews the smallest
   human-reviewed recovery fork without executing it.
+- **Chooses the smallest repair that still carries complete proof.**
+  `factory proofsearch` verifies supplied patch and receipt hashes, required
+  gates, mutation results, scope, and safety declarations across 2 through 12
+  candidates, then explains one deterministic winner without applying it.
 - **Separates creation from verification.** The Verifier Plane hash-binds a
   mission, candidate tree, immutable verifier bundle, independent identities,
   evidence, deterministic checks, and declared hard budgets. It validates a
@@ -76,11 +80,12 @@ known, what is missing, and the one fact-derived next action.
 ## Typical path
 
 ```powershell
-pip install factoryline-code-factory==0.31.0
+pip install factoryline-code-factory==0.32.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid
 factory graph forensics --baseline good.lineage.json --candidate bad.lineage.json --json
+factory proofsearch verify .factory/proofsearch/repair.evaluation.json --root . --json
 factory verifier progress .\attempts.json --json
 factory change review --root . --base origin/main
 factory github proof-review --root . --base origin/main --head-sha abcdefabcdefabcdefabcdefabcdefabcdefabcd --json
