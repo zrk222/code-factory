@@ -175,3 +175,11 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "innerHTML" not in page
     assert "@media (max-width:768px)" in page
     assert "Read-only inspection." in page
+    assert "Verified semantic time travel" in page
+    assert 'id="forensics-panel"' in page
+    assert 'id="prepare-recovery"' in page
+    assert 'id="validate-recovery"' in page
+    assert 'id="execute-recovery"' in page
+    assert "Execute approved recovery" in page
+    assert "disabled aria-describedby=\"execution-lock\"" in page
+    assert "recovery.execute===false" in page

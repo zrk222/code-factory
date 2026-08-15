@@ -1,5 +1,7 @@
 # Unified Graph Ops
 
+![Graph Ops showing sealed runs, first divergence, causal path, recovery preview, and locked Action Dock](assets/marketplace/graph-ops-forensics.png)
+
 `factory graph ops` is a local, deterministic inspection layer over the
 artifacts Code Factory already knows how to verify. It does not create a new
 database, agent runtime, or authority source.
@@ -20,6 +22,8 @@ flowchart LR
 factory graph ops --root . --json
 factory graph ops --root . --mermaid
 factory graph impact --root . --changed src/app.py --json
+factory graph lineage-verify .factory/graph-runs/good.lineage.json --json
+factory graph forensics --baseline good.lineage.json --candidate bad.lineage.json --json
 factory studio --root .
 ```
 
@@ -53,6 +57,36 @@ Graph Ops does not execute validation, change a plan disposition, approve a
 mission, publish, deploy, sign, send a message, access a credential, or grant a
 connector. The authoritative Product Mission ledger, proof receipts, and trace
 verifiers remain separate; Graph Ops only renders their current local facts.
+
+## LangGraph optimization path
+
+LangGraph remains the durable execution engine; Graph Ops is the independent
+evidence and governance plane around it. A framework adapter should project
+LangGraph checkpoint history into `factory.graph-lineage.v1` without copying
+raw state values:
+
+- map `thread_id`, `checkpoint_id`, `parent_config`, `metadata.step`, `next`,
+  and task results into lineage identity, ordering, routing, and node facts;
+- hash state values locally and retain only keyed digests and monotonic
+  versions in the portable receipt;
+- consume checkpoint and task stream modes for live progress while sealing a
+  final lineage receipt for deterministic comparison;
+- model subgraphs as nested lineage, respecting their own checkpointer boundary
+  so a recovery preview never claims finer rewind granularity than LangGraph
+  persisted; and
+- translate a reviewed recovery into a LangGraph fork only after a separate
+  named, expiring, signed approval. Replayed downstream nodes may repeat model
+  calls, API requests, and interrupts, so side-effect idempotency remains a
+  runtime gate.
+
+This division avoids rebuilding persistence while giving LangGraph runs the
+same contradiction, proof, anomaly, authority, and signed-review semantics as
+native Code Factory missions.
+
+When two verified lineage receipts exist for the same graph, Graph Ops adds a
+semantic-forensics lane. It shows the first state divergence, deterministic
+stale-read/parallel-write/duplicate-side-effect findings, and a read-only
+counterfactual recovery preview. See [Graph Forensics](GRAPH_FORENSICS.md).
 
 ## Exact change impact
 
