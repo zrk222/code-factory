@@ -37,7 +37,15 @@ rejected candidates preserve the incomplete proof state.
 Use for the authority story: evidence can be copied, exported, and validated,
 while repair application remains visibly locked for human review.
 
-## 5. Operational proof loop
+## 5. Graph Ops: choose the next discriminating proof
+
+![Actual Graph Ops Evidence Frontier showing ranked next-evidence hypotheses and locked execution](assets/marketplace/graph-ops-evidence-frontier.png)
+
+Use for the loop story: Evidence Frontier ranks supplied, non-executing
+experiments by how many viable repair pairs they distinguish. Predictions stay
+explicitly unverified, and the UI permits copy, export, and validation only.
+
+## 6. Operational proof loop
 
 ![Code Factory operational proof loop: scope work, inspect proof gaps, bind evidence, then show the reviewer one next action](assets/operational-proof-loop-1600x900.png)
 
@@ -50,7 +58,7 @@ publishes, deploys, signs, or approves work.
 
 ## Placement rules
 
-- Use the logo plus all three captures, in this order, for Product Hunt or other
+- Use the logo plus all four captures, in this order, for Product Hunt or other
   product galleries.
 - Use the operational proof loop for explanatory community posts, with the
   caption: "Code Factory turns a prompt, fuzzy PRD, or risky AI-assisted diff

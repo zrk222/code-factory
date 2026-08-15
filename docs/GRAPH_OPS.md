@@ -27,6 +27,7 @@ factory graph impact --root . --changed src/app.py --json
 factory graph lineage-verify .factory/graph-runs/good.lineage.json --json
 factory graph forensics --baseline good.lineage.json --candidate bad.lineage.json --json
 factory proofsearch verify .factory/proofsearch/repair.evaluation.json --root . --json
+factory proofsearch frontier verify .factory/proofsearch/repair.frontier.json --root . --json
 factory studio --root .
 ```
 
@@ -52,14 +53,15 @@ The recommendation is selected in this exact order:
 1. `initialize_graph` — no readable local graph nodes.
 2. `collect_independent_verifier_evidence` — a verifier session lacks independently supplied runtime evidence.
 3. `review_graph_anomaly` — verified lineage exposes a state or concurrency anomaly.
-4. `repair_candidate_evidence` — a ProofSearch evaluation has no eligible candidate.
-5. `review_verified_repair` — ProofSearch selected one candidate; apply remains human-owned.
-6. `review_counterfactual_fork` — verified runs diverge without a completed candidate evaluation.
-7. `rerun_invalid_proof` — a content-addressed proof is stale.
-8. `resolve_blocked_gate` — a declared proof plan contains `BLOCK`.
-9. `run_required_validation` — a declared proof plan contains `RUN`.
-10. `collect_completion_evidence` — a requirement lacks valid completion evidence.
-11. `review_verified_graph` — all represented requirements have valid completion evidence.
+4. `review_evidence_frontier` — a sealed Evidence Frontier has a next supplied experiment that separates viable repair candidates; execution remains human-owned.
+5. `repair_candidate_evidence` — a ProofSearch evaluation has no eligible candidate.
+6. `review_verified_repair` — ProofSearch selected one candidate; apply remains human-owned.
+7. `review_counterfactual_fork` — verified runs diverge without a completed candidate evaluation.
+8. `rerun_invalid_proof` — a content-addressed proof is stale.
+9. `resolve_blocked_gate` — a declared proof plan contains `BLOCK`.
+10. `run_required_validation` — a declared proof plan contains `RUN`.
+11. `collect_completion_evidence` — a requirement lacks valid completion evidence.
+12. `review_verified_graph` — all represented requirements have valid completion evidence.
 
 Graph Ops does not execute validation, change a plan disposition, approve a
 mission, publish, deploy, sign, send a message, access a credential, or grant a
@@ -110,6 +112,15 @@ When two verified lineage receipts exist for the same graph, Graph Ops adds a
 semantic-forensics lane. It shows the first state divergence, deterministic
 stale-read/parallel-write/duplicate-side-effect findings, and a read-only
 counterfactual recovery preview. See [Graph Forensics](GRAPH_FORENSICS.md).
+
+## Evidence Frontier
+
+Evidence Frontier adds a bounded, deterministic loop decision to the Graph Ops
+control plane. Given a current ProofSearch evaluation and supplied experiment
+hypotheses, it selects the next experiment that separates the largest number of
+eligible repair-candidate pairs. Predictions are labelled unverified; Graph Ops
+never runs the experiment. If no supplied experiment separates a pair, the loop
+halts rather than inventing a test. See [Evidence Frontier](EVIDENCE_FRONTIER.md).
 
 ## Exact change impact
 

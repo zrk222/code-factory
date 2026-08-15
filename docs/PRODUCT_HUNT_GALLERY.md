@@ -15,6 +15,9 @@ Use the files in this exact order:
 4. `docs/assets/marketplace/graph-ops-proofsearch-controls.png` — actual winner
    rationale, measured-or-unavailable savings, and review/export/validation
    controls with Apply visibly locked.
+5. `docs/assets/marketplace/graph-ops-evidence-frontier.png` — actual Evidence
+   Frontier ranking supplied next-evidence hypotheses, with execution visibly
+   locked.
 
 These are product captures, not a claim of measured performance, savings,
 conversion, Marketplace approval, or production readiness. Do not use the
@@ -33,7 +36,7 @@ Product Hunt product.
 
 **Headline:** Trace the graph failure. Prove the smallest repair.
 
-**Tagline:** Graph Forensics and ProofSearch for mutation-tested repair decisions.
+**Tagline:** Find the proof gap, test the smallest repair, and choose the next fact to collect.
 
 **Update copy:**
 
@@ -44,10 +47,15 @@ compares 2–12 supplied repair candidates, rejects failed proofs, surviving
 mutants, scope escapes, test weakening, and error suppression, and explains one
 deterministic verified winner.
 
+Evidence Frontier then ranks the supplied, non-executing checks by how many
+viable repair pairs each can distinguish. Its predictions are displayed as
+unverified hypotheses—not a model verdict—and the next experiment remains
+locked until a separately approved runner records external evidence.
+
 The Graph Ops Counterfactual Arena shows every candidate, loss reason,
 mutation result, risk, changed scope, proof runtime, measured-or-unavailable
 savings, and the sealed decision hash. Verification, export, and guardrail
-controls are available in the UI; apply, merge, publication, deployment,
+controls are available in the UI; experiments, apply, merge, publication, deployment,
 credentials, and connectors remain locked.
 
 **Primary CTA:** Inspect the live repair arena and verify the winning evidence.

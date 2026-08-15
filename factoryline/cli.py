@@ -80,6 +80,7 @@ from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .graph_forensics import GraphForensicsError, graph_forensics, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
 from .proofsearch import ProofSearchError, create_proofsearch_plan, evaluate_proofsearch, verify_proofsearch_evaluation
+from .evidence_frontier import EvidenceFrontierError, plan_evidence_frontier, verify_evidence_frontier
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
 from .github_proof_review import (
@@ -827,6 +828,17 @@ def main(argv=None) -> int:
     proofsearch_verify.add_argument("evaluation")
     proofsearch_verify.add_argument("--root", default=".")
     proofsearch_verify.add_argument("--json", action="store_true")
+    proofsearch_frontier = proofsearch_sub.add_parser("frontier", help="rank the next evidence experiment without executing it")
+    proofsearch_frontier_sub = proofsearch_frontier.add_subparsers(required=True, dest="frontier_cmd")
+    proofsearch_frontier_plan = proofsearch_frontier_sub.add_parser("plan", help="seal a bounded Evidence Frontier from a verified evaluation")
+    proofsearch_frontier_plan.add_argument("request")
+    proofsearch_frontier_plan.add_argument("--root", default=".")
+    proofsearch_frontier_plan.add_argument("--out", required=True)
+    proofsearch_frontier_plan.add_argument("--json", action="store_true")
+    proofsearch_frontier_verify = proofsearch_frontier_sub.add_parser("verify", help="verify one sealed Evidence Frontier and its evaluation binding")
+    proofsearch_frontier_verify.add_argument("frontier")
+    proofsearch_frontier_verify.add_argument("--root", default=".")
+    proofsearch_frontier_verify.add_argument("--json", action="store_true")
 
     change = sub.add_parser("change", help="prepare a deterministic, analysis-only diff-to-proof review")
     change_sub = change.add_subparsers(required=True, dest="change_cmd")
@@ -2263,10 +2275,15 @@ def main(argv=None) -> int:
                 payload = create_proofsearch_plan(Path(a.root), Path(a.baseline), Path(a.candidate), a.changed, Path(a.out))
             elif a.proofsearch_cmd == "evaluate":
                 payload = evaluate_proofsearch(Path(a.root), Path(a.request), Path(a.out))
+            elif a.proofsearch_cmd == "frontier" and a.frontier_cmd == "plan":
+                payload = plan_evidence_frontier(Path(a.root), Path(a.request), Path(a.out))
+            elif a.proofsearch_cmd == "frontier":
+                payload = verify_evidence_frontier(Path(a.root), Path(a.frontier))
             else:
                 payload = verify_proofsearch_evaluation(Path(a.root), Path(a.evaluation))
-        except ProofSearchError as exc:
-            print(json.dumps({"schema": "factory.proofsearch.error.v1", "code": exc.code, "message": str(exc)}, indent=2), file=sys.stderr)
+        except (ProofSearchError, EvidenceFrontierError) as exc:
+            schema = "factory.evidence-frontier.error.v1" if isinstance(exc, EvidenceFrontierError) else "factory.proofsearch.error.v1"
+            print(json.dumps({"schema": schema, "code": exc.code, "message": str(exc)}, indent=2), file=sys.stderr)
             return 2
         if a.json:
             print(json.dumps(payload, indent=2, sort_keys=True))
@@ -2276,10 +2293,12 @@ def main(argv=None) -> int:
             print(f"marker : {payload['marker']}")
             if "winner" in payload:
                 print(f"winner : {payload['winner'] or 'none'}")
+            if "next_experiment" in payload:
+                print(f"next evidence : {payload['next_experiment'] or 'none'}")
             if "path" in payload:
                 print(f"receipt: {payload['path']}")
             print("apply  : locked")
-        if a.proofsearch_cmd == "verify":
+        if a.proofsearch_cmd == "verify" or (a.proofsearch_cmd == "frontier" and a.frontier_cmd == "verify"):
             return 0 if payload["valid"] else 1
         return 0
     if a.cmd == "graph":
