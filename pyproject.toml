@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.32.0"
+version = "0.33.0"
 description = "Build local MVPs and review AI-assisted scope, proof, and UI-design gaps before merge."
 authors = [
   { name = "Richard Katz" },

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.33.0 - 2026-08-15
 
 - Add Evidence Frontier, a deterministic Graph Ops loop-planning receipt that
   ranks supplied next-evidence hypotheses by the repair-candidate pairs they

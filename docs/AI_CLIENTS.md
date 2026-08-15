@@ -10,7 +10,7 @@ Install the published package in the same environment that the client can
 launch, then verify the workspace boundary:
 
 ```powershell
-python -m pip install factoryline-code-factory==0.32.0
+python -m pip install factoryline-code-factory==0.33.0
 factory mcp status --root C:\work\my-mvp --json
 ```
 

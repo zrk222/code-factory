@@ -1,13 +1,13 @@
 # Release Channels
 
-Code Factory v0.32.0 publishes one verified source state through channel-specific
+Code Factory v0.33.0 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.32.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.32.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.33.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.33.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
 | VS Code | `factoryline-vscode-0.8.7.vsix` | GitHub release bundle; protected `vscode-marketplace.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX or public Marketplace version |
@@ -46,6 +46,14 @@ the environment-scoped `VSCE_PAT` only in the protected publication job. A
 missing credential fails closed at the publish boundary. Replace this PAT path
 with the Marketplace's supported Microsoft Entra automation path before the
 December 1, 2026 global PAT retirement.
+
+### 0.33.0 Evidence Frontier
+
+`factory proofsearch frontier plan|verify` creates and validates a sealed,
+non-executing next-evidence plan. It ranks only user-supplied hypotheses by
+declared repair-pair separation. Graph Ops renders the decision and keeps
+experimentation, workspace changes, approval, merging, publishing, and
+deployment locked. No saving or productivity value is inferred.
 
 ### 0.32.0 Graph Forensics and ProofSearch
 

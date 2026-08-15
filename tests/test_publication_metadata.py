@@ -25,7 +25,7 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-14"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-15"
 
 
 def test_pypi_storefront_has_identity_and_canonical_links():
@@ -287,7 +287,7 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.32.0"
+    assert project["version"] == "0.33.0"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.8.7"
     assert 'version = "0.8.7"' in gradle
@@ -435,7 +435,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.32.0"
+    assert metadata["version"] == "0.33.0"
     assert metadata["publication_date"] == "2026-08-15"
     assert "Unified Graph Ops" in metadata["description"]
     assert "current FactoryLine identity asset" in metadata["description"]
