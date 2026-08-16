@@ -47,6 +47,12 @@ plus review artifacts for hierarchy, responsive behavior, affordances,
 consistency, and declared design tokens. It makes design quality visible; it
 does not claim a conversion result, WCAG certification, or production readiness.
 
+**Reuse a proven decision without reusing stale context.** [Factory
+Continuity](docs/FACTORY_CONTINUITY.md) keeps a local, purpose-bound record of
+the evidence behind prior work. Graph Ops can replay only redacted, current,
+independently promoted metadata; it does not store private source, prompts,
+embeddings, or transcripts, and it cannot execute a repair.
+
 ## Install
 
 ```powershell
@@ -76,6 +82,7 @@ developers can find it. This optional link only opens the repository.
 | Debug why two graph runs diverged | [`factory graph forensics`](docs/GRAPH_FORENSICS.md) | Hash-sealed state lineage, concurrency findings, and a read-only recovery preview |
 | Choose among competing repairs | [`factory proofsearch`](docs/PROOFSEARCH.md) | Hash-bound candidate rejection, mutation-tested evidence, a deterministic winner, and locked apply authority |
 | Decide what evidence to collect next | [Evidence Frontier](docs/EVIDENCE_FRONTIER.md) | A deterministic next-test hypothesis that separates repair candidates, with execution locked |
+| Reconsider verified prior work safely | [Factory Continuity](docs/FACTORY_CONTINUITY.md) | Purpose-bound, expiring Decision Replay metadata with independent promotion and no private content |
 | Prove one user-visible behavior | [Factory Reality Check](docs/REALITY_CHECK.md) | Deep intent assertions, a deliberate failure case, and an optional named one-time re-run authorization |
 | Verify supplied work | [Verifier Plane](docs/VERIFIER_PLANE.md) | Independent, hash-bound evidence checks |
 
@@ -159,7 +166,7 @@ output map make the same proof context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.34.0.md),
+- See the [release notes](docs/RELEASE_NOTES_0.35.0.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

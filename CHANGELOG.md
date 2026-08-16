@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## Unreleased
+
+## 0.35.0 - 2026-08-16
+
+- Add Factory Continuity, a local SQLite metadata ledger for governed Decision
+  Replay. Records bind purpose, repository scope, expiry, and evidence hashes;
+  private content, embeddings, vectors, and agent transcripts are rejected.
+  Recall is exact-scope and exact-purpose only, while promotion requires an
+  independent principal and valid evidence. This release does not add a hosted
+  memory service, authentication, RLS, KMS, external anchoring, or autonomous
+  action authority.
+- Extend Graph Ops with a read-only Decision Replay lane. It shows only
+  redacted hashes and governance metadata, withholds expired records, and
+  makes promotion review-only. The graph surface cannot mutate the ledger,
+  execute a repair, merge, publish, or deploy.
+
+## 0.34.0 - 2026-08-15
+
 - Add the local-only GitHub Merge Evidence Dossier: schema-validated supplied
   policy snapshots, deterministic ruleset-drift detection, exact commit and
   policy hash bindings, named 31-day-or-less exceptions, `--require-aligned`,
