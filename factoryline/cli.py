@@ -686,6 +686,37 @@ def main(argv=None) -> int:
     audit_verify = control_sub.add_parser("audit-verify", help="verify the tenant audit hash chain")
     add_control_identity(audit_verify, default_role="viewer")
 
+    continuity = sub.add_parser("continuity", help="govern local proof-carrying engineering-memory references")
+    continuity_sub = continuity.add_subparsers(required=True, dest="continuity_cmd")
+    continuity_init = continuity_sub.add_parser("init", help="create a local Factory Continuity metadata ledger")
+    continuity_init.add_argument("--db", required=True)
+
+    def add_continuity_identity(parser, *, default_role: str):
+        parser.add_argument("--db", required=True)
+        parser.add_argument("--tenant", required=True)
+        parser.add_argument("--subject", required=True)
+        parser.add_argument("--roles", default=default_role, help="comma-separated local roles; CLI values are not authenticated identity")
+        parser.add_argument("--purposes", required=True, help="comma-separated exact purpose references, e.g. delivery-review@1")
+
+    continuity_record = continuity_sub.add_parser("record", help="atomically record one draft memory reference and its audit event")
+    continuity_record.add_argument("payload", help="metadata-only continuity record JSON; memory contents are rejected")
+    continuity_record.add_argument("--idempotency-key", required=True)
+    continuity_record.add_argument("--record-id")
+    add_continuity_identity(continuity_record, default_role="writer")
+    continuity_recall = continuity_sub.add_parser("recall", help="recall only verified, current, exact-scope purpose-authorized records")
+    continuity_recall.add_argument("--purpose", required=True, help="exact purpose reference, e.g. delivery-review@1")
+    continuity_recall.add_argument("--scope", required=True, help="exact opaque repository scope reference")
+    add_continuity_identity(continuity_recall, default_role="reader")
+    continuity_promote = continuity_sub.add_parser("promote", help="independently promote one evidence-bound draft record")
+    continuity_promote.add_argument("record_id")
+    continuity_promote.add_argument("--reason", required=True)
+    add_continuity_identity(continuity_promote, default_role="promoter")
+    continuity_prove = continuity_sub.add_parser("prove", help="show local unsigned lineage for one record without mutation authority")
+    continuity_prove.add_argument("record_id")
+    add_continuity_identity(continuity_prove, default_role="reader")
+    continuity_status = continuity_sub.add_parser("status", help="show bounded local continuity ledger state")
+    continuity_status.add_argument("--db", required=True)
+
     s = sub.add_parser("assurance", help="produce deterministic assurance artifacts")
     assurance_sub = s.add_subparsers(required=True, dest="assurance_cmd")
     graph = assurance_sub.add_parser("graph", help="build a tenant-scoped evidence graph")
@@ -2759,6 +2790,41 @@ def main(argv=None) -> int:
         print(json.dumps(result, indent=2, sort_keys=True))
         if a.control_cmd == "audit-verify":
             return 0 if result["valid"] else 1
+        return 0
+    if a.cmd == "continuity":
+        from .continuity import ContinuityError, ContinuityStore, principal_from_args as continuity_principal_from_args
+        try:
+            if a.continuity_cmd == "init":
+                store = ContinuityStore(Path(a.db))
+                result = {
+                    "schema": "factory.continuity.v1",
+                    "marker": "CONTINUITY_LOCAL_REFERENCE_ONLY",
+                    "verdict": "READY",
+                    "db": str(store.path.resolve()),
+                    "authority": {"external_effects": False, "signing": False, "erasure": False},
+                }
+            else:
+                store = ContinuityStore(Path(a.db))
+                if a.continuity_cmd == "status":
+                    result = store.status()
+                else:
+                    principal = continuity_principal_from_args(
+                        a.subject, a.tenant, a.roles.split(","), a.purposes.split(",")
+                    )
+                    if a.continuity_cmd == "record":
+                        payload = json.loads(Path(a.payload).read_text(encoding="utf-8"))
+                        result = store.record(principal, payload, idempotency_key=a.idempotency_key, record_id=a.record_id)
+                    elif a.continuity_cmd == "recall":
+                        result = store.recall(principal, a.tenant, purpose_ref=a.purpose, scope_ref=a.scope)
+                    elif a.continuity_cmd == "promote":
+                        result = store.promote(principal, a.tenant, a.record_id, reason=a.reason)
+                    else:
+                        result = store.prove(principal, a.tenant, a.record_id)
+        except (ContinuityError, json.JSONDecodeError, OSError) as exc:
+            error = {"code": getattr(exc, "code", "E_INPUT"), "message": getattr(exc, "message", str(exc))}
+            print(json.dumps({"schema": "factory.continuity.result.v1", "verdict": "ERROR", "error": error}, indent=2))
+            return 1
+        print(json.dumps(result, indent=2, sort_keys=True))
         return 0
     if a.cmd == "assurance":
         from .assurance import build_cyclonedx_sbom, build_evidence_graph, build_vex, policy_mutations

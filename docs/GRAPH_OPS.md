@@ -8,6 +8,14 @@
 artifacts Code Factory already knows how to verify. It does not create a new
 database, agent runtime, or authority source.
 
+When a local [Factory Continuity](FACTORY_CONTINUITY.md) ledger exists at
+`.factory/continuity.sqlite3`, Graph Ops adds a redacted **Decision Replay**
+lane. It shows whether a prior engineering decision is independently promoted,
+evidence-bound, exact-scope, purpose-bound, current, or withheld as expired.
+It never shows the opaque memory reference or summary, writes a record, or
+promotes one. This makes historical context inspectable without turning Graph
+Ops into another memory store or an agent authority.
+
 ```mermaid
 flowchart LR
     P["Product Graph"] --> R["Requirement"] --> S["Value slice"]
@@ -51,17 +59,19 @@ node label, filename, or graph position never creates coverage.
 The recommendation is selected in this exact order:
 
 1. `initialize_graph` — no readable local graph nodes.
-2. `collect_independent_verifier_evidence` — a verifier session lacks independently supplied runtime evidence.
-3. `review_graph_anomaly` — verified lineage exposes a state or concurrency anomaly.
-4. `review_evidence_frontier` — a sealed Evidence Frontier has a next supplied experiment that separates viable repair candidates; execution remains human-owned.
-5. `repair_candidate_evidence` — a ProofSearch evaluation has no eligible candidate.
-6. `review_verified_repair` — ProofSearch selected one candidate; apply remains human-owned.
-7. `review_counterfactual_fork` — verified runs diverge without a completed candidate evaluation.
-8. `rerun_invalid_proof` — a content-addressed proof is stale.
-9. `resolve_blocked_gate` — a declared proof plan contains `BLOCK`.
-10. `run_required_validation` — a declared proof plan contains `RUN`.
-11. `collect_completion_evidence` — a requirement lacks valid completion evidence.
-12. `review_verified_graph` — all represented requirements have valid completion evidence.
+2. `refresh_expired_continuity` — a continuity record is expired and withheld from recall.
+3. `review_continuity_promotion` — an evidence-bound continuity record awaits independent review.
+4. `collect_independent_verifier_evidence` — a verifier session lacks independently supplied runtime evidence.
+5. `review_graph_anomaly` — verified lineage exposes a state or concurrency anomaly.
+6. `review_evidence_frontier` — a sealed Evidence Frontier has a next supplied experiment that separates viable repair candidates; execution remains human-owned.
+7. `repair_candidate_evidence` — a ProofSearch evaluation has no eligible candidate.
+8. `review_verified_repair` — ProofSearch selected one candidate; apply remains human-owned.
+9. `review_counterfactual_fork` — verified runs diverge without a completed candidate evaluation.
+10. `rerun_invalid_proof` — a content-addressed proof is stale.
+11. `resolve_blocked_gate` — a declared proof plan contains `BLOCK`.
+12. `run_required_validation` — a declared proof plan contains `RUN`.
+13. `collect_completion_evidence` — a requirement lacks valid completion evidence.
+14. `review_verified_graph` — all represented requirements have valid completion evidence.
 
 Graph Ops reads local evidence by default. Its human-authorization panel makes
 the exception explicit and narrow: a named user can create one expiring,
