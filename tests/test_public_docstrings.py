@@ -73,12 +73,13 @@ def test_fail_closed_public_surfaces_document_refusal_semantics() -> None:
             "verify_receipt": "SignedReceiptError",
         },
     }
-    found = {
-        path.relative_to(ROOT).as_posix(): {
-            node.name: ast.get_docstring(node) or "" for candidate, node in _public_callables() if candidate == path
-        }
-        for path in PACKAGE.glob("*.py")
-    }
+    # Parse the package once. Re-running _public_callables for every module
+    # turns this repository-wide validation into quadratic work as public
+    # modules grow, which made the deterministic gate needlessly slow.
+    found: dict[str, dict[str, str]] = {}
+    for path, node in _public_callables():
+        module = path.relative_to(ROOT).as_posix()
+        found.setdefault(module, {})[node.name] = ast.get_docstring(node) or ""
 
     failures = []
     for path, callables in required.items():

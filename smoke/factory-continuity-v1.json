@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "continuity_requires_independent_promotion_before_exact_recall",
+      "kind": "python",
+      "run": "import tempfile\nfrom datetime import datetime, timedelta, timezone\nfrom pathlib import Path\nfrom factoryline.continuity import ContinuityPrincipal, ContinuityStore\nwith tempfile.TemporaryDirectory() as raw:\n    db=Path(raw)/'continuity.sqlite3'; store=ContinuityStore(db)\n    writer=ContinuityPrincipal('writer','tenant-a',('writer',),('delivery-review@1',)); promoter=ContinuityPrincipal('reviewer','tenant-a',('promoter',),('delivery-review@1',)); reader=ContinuityPrincipal('reader','tenant-a',('reader',),('delivery-review@1',))\n    payload={'schema':'factory.continuity.record.v1','tenant_id':'tenant-a','record_type':'decision','memory_ref':'memory://adr-42','purpose':{'id':'delivery-review','version':'1'},'scope':{'repository_ref':'repo:sha256:smoke'},'evidence_refs':['receipt:proof-42'],'expires_at':(datetime.now(timezone.utc)+timedelta(days=1)).isoformat()}\n    store.record(writer,payload,idempotency_key='smoke',record_id='smoke-record')\n    assert not store.recall(reader,'tenant-a',purpose_ref='delivery-review@1',scope_ref='repo:sha256:smoke')['records']\n    store.promote(promoter,'tenant-a','smoke-record',reason='independently reviewed')\n    result=store.recall(reader,'tenant-a',purpose_ref='delivery-review@1',scope_ref='repo:sha256:smoke')\n    assert result['marker']=='CONTINUITY_RECALL_SCOPE_AND_PURPOSE_EXACT' and len(result['records'])==1\nprint('FACTORY_CONTINUITY_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "FACTORY_CONTINUITY_SMOKE_PASS",
+      "timeout_s": 30,
+      "covers": [
+        "CONTINUITY_RECALL_SCOPE_AND_PURPOSE_EXACT",
+        "independent_promotion",
+        "metadata_only_local_ledger"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

@@ -21,6 +21,7 @@ from .proofsearch import verify_proofsearch_evaluation
 from .evidence_frontier import verify_evidence_frontier
 from .reality_check import RealityCheckError, validate_reality_check_receipt
 from .graph_authorization import GraphAuthorizationError, validate_graph_authorization
+from .continuity import CONTINUITY_DB_RELATIVE_PATH, continuity_projection
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -632,6 +633,64 @@ def _append_github_assurance_dossiers(state: dict[str, Any], root: Path) -> dict
     return facts
 
 
+def _append_continuity(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project redacted local continuity metadata without recalling memory content.
+
+    Graph Ops only reads the local ledger projection.  It cannot record,
+    promote, sign, or authorize a continuity record, and it intentionally does
+    not expose a stored memory reference or its summary.
+    """
+    projection = continuity_projection(root)
+    facts = {
+        "record_count": 0,
+        "draft_count": 0,
+        "verified_current_count": 0,
+        "expired_count": 0,
+    }
+    if projection["error"]:
+        _record_error(state["errors"], CONTINUITY_DB_RELATIVE_PATH, projection["error"])
+        return facts
+    if not projection["available"]:
+        return facts
+    facts = {key: int(projection["facts"].get(key, 0)) for key in facts}
+    source = CONTINUITY_DB_RELATIVE_PATH.as_posix()
+    for record in projection["records"]:
+        record_id = str(record["record_id"])
+        record_node = f"continuity:{record_id}"
+        status = str(record["effective_status"])
+        _node(
+            state,
+            node_id=record_node,
+            kind="continuity_record",
+            label=f"{record['record_type']} memory reference",
+            source=source,
+            status=status,
+            facts={
+                "record_id": record_id,
+                "purpose_ref": record["purpose_ref"],
+                "scope_ref_sha256": record["scope_ref_sha256"],
+                "memory_ref_sha256": record["memory_ref_sha256"],
+                "evidence_sha256": record["evidence_sha256"],
+                "expires_at": record["expires_at"],
+                "promotion": "independently_promoted" if record["status"] == "verified" else "not_promoted",
+            },
+        )
+        purpose_node = f"continuity-purpose:{_sha(record['purpose_ref'])[:24]}"
+        scope_node = f"continuity-scope:{record['scope_ref_sha256'][:24]}"
+        _node(state, node_id=purpose_node, kind="continuity_purpose", label=record["purpose_ref"], source=source, status="bound")
+        _node(state, node_id=scope_node, kind="continuity_scope", label="bounded repository scope", source=source, status="bound", facts={"scope_ref_sha256": record["scope_ref_sha256"]})
+        _edge(state, purpose_node, record_node, "governs")
+        _edge(state, scope_node, record_node, "scopes")
+        for evidence_ref in record["evidence_refs"]:
+            evidence_node = f"continuity-evidence:{_sha(evidence_ref)[:24]}"
+            _node(state, node_id=evidence_node, kind="continuity_evidence", label="bound evidence reference", source=source, status="declared", facts={"reference_sha256": _sha(evidence_ref)})
+            _edge(state, record_node, evidence_node, "requires_evidence")
+    if projection.get("truncated"):
+        state["truncated"] = True
+        _record_error(state["errors"], CONTINUITY_DB_RELATIVE_PATH, "CONTINUITY_RECORD_LIMIT")
+    return facts
+
+
 def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
     visible = nodes[:80]
     allowed = {node["id"] for node in visible}
@@ -649,6 +708,10 @@ def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
 def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
     if facts["node_count"] == 0:
         return "initialize_graph", "No readable local Factory graph artifacts were found."
+    if facts["continuity_expired_count"] > 0:
+        return "refresh_expired_continuity", "At least one local continuity record is expired and is withheld from future recall."
+    if facts["continuity_draft_count"] > 0:
+        return "review_continuity_promotion", "At least one evidence-bound continuity record awaits an independent human promotion."
     if facts["assurance_unresolved_high_count"] > 0:
         return "resolve_policy_drift", "A supplied GitHub policy snapshot has unexceptioned high-severity drift; a human must resolve it before a merge decision."
     if facts["assurance_review_required_count"] > 0:
@@ -681,7 +744,7 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
 def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proof_count: int,
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
-                    frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int]) -> dict[str, int]:
+                    frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -712,12 +775,16 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "assurance_dossier_count": assurance["count"],
         "assurance_review_required_count": assurance["review_required_count"],
         "assurance_unresolved_high_count": assurance["unresolved_high_count"],
+        "continuity_record_count": continuity["record_count"],
+        "continuity_draft_count": continuity["draft_count"],
+        "continuity_verified_current_count": continuity["verified_current_count"],
+        "continuity_expired_count": continuity["expired_count"],
     }
 
 
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
-                      proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int]) -> list[str]:
+                      proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -746,6 +813,8 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_HUMAN_AUTHORIZATIONS_PROJECTED")
     if assurance["count"]:
         markers.append("GRAPH_OPS_GITHUB_ASSURANCE_PROJECTED")
+    if continuity["record_count"]:
+        markers.append("GRAPH_OPS_CONTINUITY_METADATA_READ_ONLY")
     if state["errors"] or state["truncated"]:
         markers.append("GRAPH_OPS_PARTIAL_RESULT")
     return sorted(markers)
@@ -769,14 +838,15 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     reality = _append_reality_checks(state, workspace)
     authorizations = _append_graph_authorizations(state, workspace)
     assurance = _append_github_assurance_dossiers(state, workspace)
+    continuity = _append_continuity(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
-    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance)
+    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity)
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
-    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance)
+    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity)
     core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
