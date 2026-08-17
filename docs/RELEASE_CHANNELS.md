@@ -1,13 +1,13 @@
 # Release Channels
 
-Code Factory v0.35.0 publishes one verified source state through channel-specific
+Code Factory v0.36.0 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.35.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.35.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.36.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.36.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
 | VS Code | `factoryline-vscode-0.8.8.vsix` | GitHub release bundle; protected `vscode-marketplace.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX or public Marketplace version |
@@ -47,13 +47,15 @@ missing credential fails closed at the publish boundary. Replace this PAT path
 with the Marketplace's supported Microsoft Entra automation path before the
 December 1, 2026 global PAT retirement.
 
-### 0.35.0 Factory Continuity and Decision Replay
+### 0.36.0 Graph Portfolio and Run Admission
 
-`factory continuity` provides local, purpose-bound decision metadata that can
-be recalled only after exact scope, purpose, expiry, evidence, and independent
-promotion checks. Graph Ops displays only a redacted, read-only projection; it
-cannot mutate continuity data or authorize execution. This is not a hosted
-memory service and does not create a productivity claim.
+`factory graph portfolio` derives a deterministic structural critical path,
+safe proposal-only parallel waves, shared-proof candidates, and explicit
+blocker chains from local Graph Ops evidence. `factory admission prepare|verify`
+seals and rechecks a short-lived external-run proposal against a Loop Passport,
+workspace, graph, budget, paths, approvals, and validity deadline. Graph Ops
+renders the status while execution and external-harness authorization remain
+disabled. This is not an autonomous runner and does not create a savings claim.
 
 ### 0.34.0 Merge Evidence Dossier and Proof Observatory
 

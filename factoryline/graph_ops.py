@@ -820,6 +820,25 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
     return sorted(markers)
 
 
+def _append_admission_packets(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project sealed admission metadata after calculating the stable base graph."""
+    facts = {"count": 0, "sealed_count": 0, "invalid_count": 0}
+    directory = root / ".factory" / "admissions"
+    for path in sorted(directory.glob("*.admission.json")):
+        value, source = _load_json(root, path, state["errors"])
+        if value is None or source is None:
+            continue
+        packet_id = _text(value.get("id"), path.stem) if isinstance(value, dict) else path.stem
+        valid = isinstance(value, dict) and value.get("schema") == "factory.run-admission.packet.v1" and isinstance(value.get("packet_sha256"), str)
+        status = "sealed" if valid and value.get("verdict") == "SEALED" else "invalid"
+        _node(state, node_id=f"admission:{packet_id}", kind="admission", label=f"admission {packet_id}", source=source, status=status,
+              facts={"packet_sha256": value.get("packet_sha256") if isinstance(value, dict) else None, "authority": _AUTHORITY})
+        facts["count"] += 1
+        facts["sealed_count"] += int(status == "sealed")
+        facts["invalid_count"] += int(status == "invalid")
+    return facts
+
+
 def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     """Compile a bounded graph snapshot from existing local files without writes."""
     workspace = Path(root).resolve()
@@ -847,7 +866,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
     markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity)
-    core = {
+    base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
         "markers": markers,
@@ -859,7 +878,29 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "recommendation": {"action": action, "reason": reason},
         "source_errors": sorted(state["errors"], key=lambda item: (item["source"], item["code"])),
     }
-    return {**core, "graph_sha256": _sha(core), "mermaid": _mermaid(nodes, edges)}
+    base_graph_sha256 = _sha(base_core)
+    from .graph_portfolio import graph_portfolio_plan
+    portfolio = graph_portfolio_plan({**base_core, "graph_sha256": base_graph_sha256})
+    admissions = _append_admission_packets(state, workspace)
+    projected_nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
+    projected_edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
+    projected_facts = {
+        **facts,
+        "node_count": len(projected_nodes),
+        "edge_count": len(projected_edges),
+        "admission_packet_count": admissions["count"],
+        "admission_packet_sealed_count": admissions["sealed_count"],
+    }
+    core = {
+        **base_core,
+        "markers": sorted([*markers, "GRAPH_OPS_PORTFOLIO_ADMISSION_READ_ONLY"]),
+        "nodes": projected_nodes,
+        "edges": projected_edges,
+        "facts": projected_facts,
+        "portfolio": portfolio,
+        "admissions": admissions,
+    }
+    return {**core, "base_graph_sha256": base_graph_sha256, "graph_sha256": _sha(core), "mermaid": _mermaid(projected_nodes, projected_edges)}
 
 
 def _changed_path(value: str) -> str:

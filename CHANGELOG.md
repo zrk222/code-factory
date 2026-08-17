@@ -2,7 +2,22 @@
 
 ## Unreleased
 
-## Unreleased
+- Add the read-only Graph Portfolio Planner: deterministic structural critical
+  path and slack, lexical worksets, safe proposal-only parallel waves,
+  high-fan-out shared-proof candidates, visible blocker chains, and duration
+  reporting only when a complete supplied observation set supports it. It does
+  not execute work, authorize proof reuse, or claim time, token, cost, or
+  productivity savings.
+- Add sealed Run Admission Packets. A packet binds a verified Loop Passport,
+  complete base Graph Ops result, workspace fingerprint, declared actions and
+  paths, bounded budget, required named approvals, and a validity deadline of
+  at most one hour. Revalidation yields ready, stale, or blocked; the packet
+  does not provide sandboxing, credentials, identity, network policy, or
+  execution authority.
+- Add the responsive Graph Ops Portfolio Flight Plan, which renders these
+  facts and visibly disabled external-harness controls without granting any new
+  execution, repair, merge, publication, deployment, signing, messaging,
+  credential, or connector authority.
 
 ## 0.35.0 - 2026-08-16
 

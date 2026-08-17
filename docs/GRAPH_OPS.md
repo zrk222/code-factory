@@ -32,6 +32,9 @@ flowchart LR
 factory graph ops --root . --json
 factory graph ops --root . --mermaid
 factory graph impact --root . --changed src/app.py --json
+factory graph portfolio --root . --json
+factory admission prepare .factory/loop-passports/dependency-audit.passport.json .factory/admission-request.json --root . --json
+factory admission verify .factory/admissions/dependency-audit-run-1.admission.json --root . --json
 factory graph lineage-verify .factory/graph-runs/good.lineage.json --json
 factory graph forensics --baseline good.lineage.json --candidate bad.lineage.json --json
 factory proofsearch verify .factory/proofsearch/repair.evaluation.json --root . --json
@@ -85,6 +88,23 @@ Graph Ops cannot generate tests, apply source changes, change a plan
 disposition, merge, publish, deploy, sign, send a message, access a credential,
 or grant a connector. The authoritative Product Mission ledger, proof receipts,
 and trace verifiers remain separate.
+
+## Portfolio Flight Plan and sealed admission
+
+The **Portfolio Flight Plan** makes the existing Graph Ops dependencies useful
+at team scale without turning them into an autonomous scheduler. It shows a
+deterministic structural critical path, lexical workset, safe proposal-only
+parallel waves, shared-proof candidates, and blocker chains. A blocked ancestor
+blocks downstream work visibly. Timing is `Not measured` unless a complete set
+of supplied positive duration observations supports a bound critical-path time.
+
+The same panel projects sealed **Run Admission Packets**: short-lived local
+proposals bound to a Loop Passport, workspace fingerprint, base graph digest,
+allowed actions/paths, budget, and named expiring approvals. The controls that
+would execute a wave or authorize an external harness remain disabled. An
+external harness must re-verify the packet immediately before use and still
+owns its real authentication, sandbox, network, credential, and tool policies.
+See [Graph Portfolio and Run Admission](GRAPH_PORTFOLIO_ADMISSION.md).
 
 ## LangGraph optimization path
 

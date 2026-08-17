@@ -62,8 +62,8 @@ credentials, and connectors remain locked.
 
 **Proof links:**
 
-- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.35.0`
-- PyPI: `https://pypi.org/project/factoryline-code-factory/0.35.0/`
+- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.36.0`
+- PyPI: `https://pypi.org/project/factoryline-code-factory/0.36.0/`
 - Source: `https://github.com/zrk222/code-factory`
 
 If no authenticated Code Factory post or draft exists, report
