@@ -78,6 +78,7 @@ from .migration import (
 )
 from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
+from .graph_portfolio import graph_portfolio_plan
 from .graph_forensics import GraphForensicsError, graph_forensics, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
 from .proofsearch import ProofSearchError, create_proofsearch_plan, evaluate_proofsearch, verify_proofsearch_evaluation
 from .evidence_frontier import EvidenceFrontierError, plan_evidence_frontier, verify_evidence_frontier
@@ -839,6 +840,10 @@ def main(argv=None) -> int:
     graph_impact.add_argument("--root", default=".")
     graph_impact.add_argument("--changed", action="append", required=True, help="workspace-relative changed path; repeat as needed")
     graph_impact.add_argument("--json", action="store_true")
+    graph_portfolio = graph_sub.add_parser("portfolio", help="compile a deterministic structural work proposal without execution")
+    graph_portfolio.add_argument("--root", default=".")
+    graph_portfolio.add_argument("--durations", help="JSON object mapping every dependency node id to supplied positive wall milliseconds")
+    graph_portfolio.add_argument("--json", action="store_true")
     graph_lineage = graph_sub.add_parser("lineage-verify", help="verify one hash-sealed semantic graph lineage receipt")
     graph_lineage.add_argument("lineage")
     graph_lineage.add_argument("--json", action="store_true")
@@ -859,6 +864,19 @@ def main(argv=None) -> int:
     graph_forensic.add_argument("--candidate", required=True)
     graph_forensic.add_argument("--json", action="store_true")
     graph_forensic.add_argument("--mermaid", action="store_true")
+
+    admission = sub.add_parser("admission", help="seal and revalidate a local external-run admission packet")
+    admission_sub = admission.add_subparsers(required=True, dest="admission_cmd")
+    admission_prepare = admission_sub.add_parser("prepare", help="seal one externally enforced run proposal without invoking it")
+    admission_prepare.add_argument("passport")
+    admission_prepare.add_argument("request")
+    admission_prepare.add_argument("--root", default=".")
+    admission_prepare.add_argument("--out-dir")
+    admission_prepare.add_argument("--json", action="store_true")
+    admission_verify = admission_sub.add_parser("verify", help="revalidate one sealed packet before a harness consumes it")
+    admission_verify.add_argument("packet")
+    admission_verify.add_argument("--root", default=".")
+    admission_verify.add_argument("--json", action="store_true")
 
     proofsearch = sub.add_parser("proofsearch", help="compare hash-bound repair candidates without applying them")
     proofsearch_sub = proofsearch.add_subparsers(required=True, dest="proofsearch_cmd")
@@ -1615,6 +1633,25 @@ def main(argv=None) -> int:
                 for profile in metadata["deployment_profiles"]:
                     print(f"  - {profile['id']}: {profile['label']} [approval: {profile['approval']}]")
         return 0
+    if a.cmd == "admission":
+        from .run_admission import AdmissionError, prepare_admission, verify_admission
+        try:
+            if a.admission_cmd == "prepare":
+                result = prepare_admission(Path(a.root), Path(a.passport), Path(a.request), Path(a.out_dir) if a.out_dir else None)
+                code = 0
+            else:
+                result = verify_admission(Path(a.root), Path(a.packet))
+                code = 0 if result["verdict"] == "READY" else 1
+        except AdmissionError as exc:
+            result = {"schema": "factory.run-admission.error.v1", "code": exc.code, "message": str(exc)}
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            print(f"admission: {result.get('marker', result.get('verdict'))}")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
     if a.cmd == "pack":
         try:
             if a.pack_cmd == "list":
@@ -2464,6 +2501,26 @@ def main(argv=None) -> int:
                 print(f"verified current: {len(payload['verified_current_proofs'])}")
                 if payload["unmatched_changed_paths"]:
                     print("unmatched paths : " + ", ".join(payload["unmatched_changed_paths"]))
+        elif a.graph_cmd == "portfolio":
+            durations = None
+            if a.durations:
+                try:
+                    durations = json.loads(Path(a.durations).read_text(encoding="utf-8-sig"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    print(json.dumps({"schema": "factory.graph-portfolio.error.v1", "code": "DURATION_INPUT_INVALID", "message": str(exc)}, indent=2), file=sys.stderr)
+                    return 2
+            payload = graph_portfolio_plan(graph_ops_snapshot(Path(a.root)), durations)
+            payload = {**payload, "cli_marker": "GRAPH_PORTFOLIO_CLI_READ_ONLY"}
+            if a.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print("factory graph portfolio (read-only)")
+                print("=" * 44)
+                print(f"verdict      : {payload['verdict']}")
+                print(f"critical path: {' -> '.join(payload['critical_path']) or 'none'}")
+                print(f"work items   : {len(payload['workset'])}")
+                print(f"parallel wave: {len(payload.get('parallel_waves', []))}")
+            return 0 if payload["verdict"] == "READY" else 1
         else:
             snapshot = graph_ops_snapshot(Path(a.root))
             if a.mermaid:

@@ -45,12 +45,19 @@ and a clear stateful next action:
 factory coverage --root .\my-mvp --json
 factory graph ops --root .\my-mvp --json
 factory graph ops --root .\my-mvp --mermaid
+factory graph portfolio --root .\my-mvp --json
 ```
 
 Graph Ops gives a bounded, read-only map of the facts already present. It can
 recommend the next validation or evidence step but never runs it on your
 behalf. Use `factory continue`, Product Missions, and content-addressed proof
 reuse when the project needs more structured delivery.
+
+When several proof or delivery slices exist, use `factory graph portfolio` to
+see the deterministic critical path, safe proposal-only parallel waves, and
+blocker chains. Teams that use an external harness can seal a short-lived Run
+Admission Packet from a reviewed Loop Passport; the harness must re-verify it
+before use. See [Graph Portfolio and Run Admission](GRAPH_PORTFOLIO_ADMISSION.md).
 
 ## 3. Enterprise controls — add governance, not friction
 

@@ -7,6 +7,7 @@ from factoryline.cli import main
 from factoryline.graph_ops import GRAPH_OPS_SCHEMA, graph_ops_html, graph_ops_impact, graph_ops_snapshot
 from factoryline.product_missions import close_mission
 from factoryline.proof_reuse import record_proof
+from factoryline.run_admission import prepare_admission
 
 
 def _completed_mission(tmp_path: Path):
@@ -211,6 +212,29 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert '"/api/graph-ops-authorize"' in page
     assert '"/api/graph-ops-run"' in page
     assert "AUTHORIZE ${id}" in page
+    assert "Portfolio Flight Plan" in page
+    assert "Safe parallel waves" in page
+    assert 'id="portfolio-run-wave"' in page
+    assert 'id="portfolio-authorize-harness"' in page
+    assert "GRAPH_OPS_PORTFOLIO_ADMISSION_READ_ONLY" in page
+    assert "renderPortfolio(payload)" in page
+    assert "Graph Ops cannot execute a wave" in page
+
+
+def test_graph_ops_projects_sealed_admission_without_changing_its_base_graph(tmp_path: Path):
+    from test_run_admission import _passport, _request
+
+    before = graph_ops_snapshot(tmp_path)
+    packet = prepare_admission(tmp_path, _passport(tmp_path), _request(tmp_path))
+    after = graph_ops_snapshot(tmp_path)
+
+    assert after["base_graph_sha256"] == before["base_graph_sha256"]
+    assert after["graph_sha256"] != before["graph_sha256"]
+    assert "GRAPH_OPS_PORTFOLIO_ADMISSION_READ_ONLY" in after["markers"]
+    assert after["portfolio"]["authority"]["execution"] is False
+    assert after["admissions"] == {"count": 1, "sealed_count": 1, "invalid_count": 0}
+    node = next(item for item in after["nodes"] if item["kind"] == "admission")
+    assert node["facts"]["packet_sha256"] == packet["packet_sha256"]
 
 
 def test_graph_ops_exposes_verified_proofsearch_winner_and_candidate_controls(tmp_path: Path):

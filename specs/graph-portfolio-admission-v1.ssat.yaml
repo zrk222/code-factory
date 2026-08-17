@@ -1,0 +1,55 @@
+name: graph-portfolio-admission-v1
+language: python
+modules:
+  - name: graph_portfolio
+    path: factoryline/graph_portfolio.py
+    functions:
+      - name: graph_portfolio_plan
+        args: [snapshot, duration_observations]
+        returns: dict[str, Any]
+  - name: run_admission
+    path: factoryline/run_admission.py
+    functions:
+      - name: prepare_admission
+        args: [root, passport_path, request_path, out_dir]
+        returns: dict[str, Any]
+      - name: verify_admission
+        args: [root, packet_path]
+        returns: dict[str, Any]
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_snapshot
+        args: [root]
+        returns: dict[str, Any]
+dependencies:
+  - from: run_admission
+    to: graph_ops
+  - from: run_admission
+    to: graph_portfolio
+  - from: run_admission
+    to: loop_passport
+  - from: graph_ops
+    to: graph_portfolio
+invariants:
+  - name: portfolio_never_executes_or_estimates
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:apply|commit|merge|deploy|publish|sign|send_message|grant_connector|invoke|estimate)\\s*\\("
+    scopes:
+      - module: graph_portfolio
+        symbol: graph_portfolio_plan
+        max_lines: 260
+  - name: admission_never_executes_worker
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:apply|commit|merge|deploy|publish|sign|send_message|grant_connector|invoke|execute)\\s*\\("
+    scopes:
+      - module: run_admission
+        symbol: prepare_admission
+        max_lines: 220
+      - module: run_admission
+        symbol: verify_admission
+        max_lines: 180
+  - name: graph_projection_is_read_only
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: graph_ops
+        symbol: graph_ops_snapshot
+        max_lines: 180
