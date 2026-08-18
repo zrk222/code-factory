@@ -198,6 +198,70 @@ def _authorize(principal: ContinuityPrincipal, action: str, tenant_id: str, purp
         raise ContinuityError("E_PURPOSE_DENIED", f"purpose {purpose_ref!r} is not granted to {principal.subject!r}")
 
 
+def recall_continuity_metadata_read_only(
+    path: Path,
+    principal: ContinuityPrincipal,
+    tenant_id: str,
+    *,
+    purpose_ref: str,
+    scope_ref: str,
+) -> dict[str, Any]:
+    """Recall only redacted promoted metadata through a SQLite read-only URI.
+
+    This is for planning surfaces such as guardrails that must not even run the
+    store's schema-initialization path.  The query deliberately excludes the
+    memory reference and summary columns.
+    """
+    _authorize(principal, "continuity.read", tenant_id, purpose_ref)
+    candidate = Path(path)
+    if not candidate.is_file():
+        raise ContinuityError("E_CONTINUITY_UNAVAILABLE", "continuity database must already exist for read-only recall")
+    try:
+        connection = sqlite3.connect(f"{candidate.resolve().as_uri()}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        try:
+            rows = connection.execute(
+                """SELECT record_id, record_type, memory_ref_sha256, purpose_ref, scope_ref_sha256,
+                          evidence_sha256, status, expires_at, promoted_at, promoted_by, record_sha256
+                   FROM continuity_records
+                   WHERE tenant_id = ? AND purpose_ref = ? AND scope_ref = ? AND status = 'verified'
+                   ORDER BY promoted_at DESC, record_id ASC""",
+                (tenant_id, purpose_ref, scope_ref),
+            ).fetchall()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise ContinuityError("E_CONTINUITY_UNREADABLE", "continuity metadata cannot be read through the read-only boundary") from exc
+    current = [
+        {
+            "schema": CONTINUITY_RECORD_SCHEMA,
+            "record_id": row["record_id"],
+            "record_type": row["record_type"],
+            "memory_ref_sha256": row["memory_ref_sha256"],
+            "purpose_ref": row["purpose_ref"],
+            "scope_ref_sha256": row["scope_ref_sha256"],
+            "evidence_sha256": row["evidence_sha256"],
+            "status": row["status"],
+            "expires_at": row["expires_at"],
+            "promoted_at": row["promoted_at"],
+            "promoted_by": row["promoted_by"],
+            "record_sha256": row["record_sha256"],
+        }
+        for row in rows if not _is_expired(row["expires_at"])
+    ]
+    withheld = [row["record_id"] for row in rows if _is_expired(row["expires_at"])]
+    return {
+        "schema": CONTINUITY_SCHEMA,
+        "marker": "CONTINUITY_RECALL_METADATA_READ_ONLY",
+        "authority": {"write": False, "promotion": False, "external_effects": False, "memory_content": False},
+        "tenant_id": tenant_id,
+        "purpose_ref": purpose_ref,
+        "scope_ref_sha256": _sha({"scope_ref": scope_ref}),
+        "records": current,
+        "withheld_expired_record_ids": withheld,
+    }
+
+
 class ContinuityStore:
     """Bounded local ledger for governed, reusable engineering-memory metadata."""
 

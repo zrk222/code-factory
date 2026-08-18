@@ -1,0 +1,92 @@
+name: counterexample-continuity-resilience
+language: python
+modules:
+  - name: counterexample
+    path: factoryline/counterexample.py
+    functions:
+      - name: compile_counterexample_plan
+        args: [root, source_path]
+        returns: dict[str, Any]
+      - name: verify_counterexample_plan
+        args: [root, plan_path]
+        returns: dict[str, Any]
+  - name: guardrails
+    path: factoryline/guardrails.py
+    functions:
+      - name: evaluate_guardrails
+        args: [manifest_path, db_path, principal]
+        returns: dict[str, Any]
+      - name: verify_guardrail_evaluation
+        args: [value]
+        returns: dict[str, Any]
+  - name: resilience
+    path: factoryline/resilience.py
+    functions:
+      - name: compile_temporal_resilience_plan
+        args: [root, lineage_path]
+        returns: dict[str, Any]
+      - name: verify_temporal_resilience_plan
+        args: [root, plan_path]
+        returns: dict[str, Any]
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_snapshot
+        args: [root]
+        returns: dict[str, Any]
+  - name: continuity
+    path: factoryline/continuity.py
+  - name: graph_forensics
+    path: factoryline/graph_forensics.py
+dependencies:
+  - from: guardrails
+    to: continuity
+  - from: resilience
+    to: graph_forensics
+  - from: graph_ops
+    to: counterexample
+  - from: graph_ops
+    to: guardrails
+  - from: graph_ops
+    to: resilience
+  - from: graph_ops
+    to: continuity
+  - from: graph_ops
+    to: graph_forensics
+invariants:
+  - name: counterexample_planning_cannot_execute_or_repair
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:deploy|publish|approve|repair|send_message)\\s*\\("
+    scopes:
+      - module: counterexample
+        symbol: compile_counterexample_plan
+        max_lines: 40
+      - module: counterexample
+        symbol: verify_counterexample_plan
+        max_lines: 40
+  - name: guardrail_evaluation_cannot_expose_memory_or_promote
+    forbid_pattern: "store\\.(?:record|promote)\\s*\\("
+    scopes:
+      - module: guardrails
+        symbol: evaluate_guardrails
+        max_lines: 45
+  - name: temporal_schedule_planning_cannot_replay_or_mutate
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:replay|execute|approve|repair)\\s*\\("
+    scopes:
+      - module: resilience
+        symbol: compile_temporal_resilience_plan
+        max_lines: 32
+  - name: graph_projection_cannot_run_plans
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:deploy|publish|sign|send_message)\\s*\\("
+    scopes:
+      - module: graph_ops
+        symbol: graph_ops_snapshot
+        max_lines: 180
+tests:
+  - path: tests/test_counterexample.py
+    command: python -m pytest -q tests/test_counterexample.py
+  - path: tests/test_guardrails.py
+    command: python -m pytest -q tests/test_guardrails.py
+  - path: tests/test_resilience.py
+    command: python -m pytest -q tests/test_resilience.py
+  - path: tests/test_graph_ops.py
+    command: python -m pytest -q tests/test_graph_ops.py

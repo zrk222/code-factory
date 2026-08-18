@@ -53,6 +53,13 @@ recommend the next validation or evidence step but never runs it on your
 behalf. Use `factory continue`, Product Missions, and content-addressed proof
 reuse when the project needs more structured delivery.
 
+For work where a passing happy-path test is not enough, add three small,
+deterministic planning layers: compile the negative cases your requirements must
+reject, activate only independently promoted and scope-matched memory metadata
+as a redacted guardrail, and derive stateful replay risks from sealed lineage.
+They remain plans, not execution authority. See [Counterexamples, Guardrails,
+and Temporal Resilience](COUNTEREXAMPLE_GUARDRAIL_RESILIENCE.md).
+
 When several proof or delivery slices exist, use `factory graph portfolio` to
 see the deterministic critical path, safe proposal-only parallel waves, and
 blocker chains. Teams that use an external harness can seal a short-lived Run

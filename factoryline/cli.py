@@ -107,6 +107,9 @@ from .e2e_proof import (
     verify_e2e_proof,
     write_e2e_proof_artifacts,
 )
+from .counterexample import CounterexampleError, compile_counterexample_plan, verify_counterexample_plan, write_counterexample_plan
+from .guardrails import GuardrailError, evaluate_guardrails, verify_guardrail_evaluation
+from .resilience import ResilienceError, compile_temporal_resilience_plan, verify_temporal_resilience_plan, write_temporal_resilience_plan
 from .reality_check import RealityCheckError, inspect_reality_intent, run_reality_check, write_reality_check_artifacts
 from .team_pilot import (
     TeamPilotError,
@@ -409,6 +412,45 @@ def main(argv=None) -> int:
     e2e_verify.add_argument("--manifest", required=True, help="workspace-contained factory.e2e_proof_manifest.v1 JSON path")
     e2e_verify.add_argument("--out-dir", help="explicit local directory for receipt, Mermaid, and captured output artifacts")
     e2e_verify.add_argument("--json", action="store_true")
+
+    counterexample = sub.add_parser("counterexample", help="compile and verify deterministic negative-proof obligations without execution")
+    counterexample_sub = counterexample.add_subparsers(required=True, dest="counterexample_cmd")
+    counterexample_plan = counterexample_sub.add_parser("plan", help="compile one hash-sealed negative-proof plan from bounded requirements")
+    counterexample_plan.add_argument("source", help="workspace-contained factory.counterexample-source.v1 JSON path")
+    counterexample_plan.add_argument("--root", default=".")
+    counterexample_plan.add_argument("--out", required=True, help="explicit plan output path")
+    counterexample_plan.add_argument("--json", action="store_true")
+    counterexample_verify = counterexample_sub.add_parser("verify", help="fail closed for tampered, stale, or incomplete negative-proof plans")
+    counterexample_verify.add_argument("plan", help="workspace-contained factory.counterexample-plan.v1 JSON path")
+    counterexample_verify.add_argument("--root", default=".")
+    counterexample_verify.add_argument("--json", action="store_true")
+
+    guardrail = sub.add_parser("guardrail", help="evaluate promoted continuity metadata as redacted local guardrails")
+    guardrail_sub = guardrail.add_subparsers(required=True, dest="guardrail_cmd")
+    guardrail_evaluate = guardrail_sub.add_parser("evaluate", help="read promoted exact-scope metadata without retrieving memory content")
+    guardrail_evaluate.add_argument("manifest", help="factory.guardrail-manifest.v1 JSON path")
+    guardrail_evaluate.add_argument("--db", required=True, help="existing local continuity database")
+    guardrail_evaluate.add_argument("--tenant", required=True)
+    guardrail_evaluate.add_argument("--subject", required=True)
+    guardrail_evaluate.add_argument("--roles", default="reader", help="comma-separated local roles; values are not authenticated identity")
+    guardrail_evaluate.add_argument("--purposes", required=True, help="comma-separated exact purpose references")
+    guardrail_evaluate.add_argument("--changed", action="append", required=True, help="workspace-relative changed path; repeat as needed")
+    guardrail_evaluate.add_argument("--json", action="store_true")
+    guardrail_verify = guardrail_sub.add_parser("verify", help="verify an evaluation hash and no-content redaction boundary")
+    guardrail_verify.add_argument("evaluation", help="factory.guardrail-evaluation.v1 JSON path")
+    guardrail_verify.add_argument("--json", action="store_true")
+
+    resilience = sub.add_parser("resilience", help="derive bounded temporal fault schedules from sealed graph lineage without execution")
+    resilience_sub = resilience.add_subparsers(required=True, dest="resilience_cmd")
+    resilience_plan = resilience_sub.add_parser("plan", help="compile read-only stale, replay, and concurrency fault schedules")
+    resilience_plan.add_argument("lineage", help="workspace-contained factory.graph-lineage.v1 JSON path")
+    resilience_plan.add_argument("--root", default=".")
+    resilience_plan.add_argument("--out", required=True, help="explicit plan output path")
+    resilience_plan.add_argument("--json", action="store_true")
+    resilience_verify = resilience_sub.add_parser("verify", help="fail closed for tampered, stale, or incomplete temporal schedules")
+    resilience_verify.add_argument("plan", help="workspace-contained factory.temporal-resilience-plan.v1 JSON path")
+    resilience_verify.add_argument("--root", default=".")
+    resilience_verify.add_argument("--json", action="store_true")
 
     reality = sub.add_parser("reality", help="run one approved behavior promise through a supervised local proof pair")
     reality_sub = reality.add_subparsers(required=True, dest="reality_cmd")
@@ -1799,6 +1841,99 @@ def main(argv=None) -> int:
             if artifacts:
                 print(f"packet   : {artifacts['paths']['markdown']}")
         return 0 if public["ok"] else 1
+    if a.cmd == "counterexample":
+        workspace = Path(a.root).resolve()
+        try:
+            if a.counterexample_cmd == "plan":
+                source = Path(a.source)
+                if not source.is_absolute():
+                    source = workspace / source
+                out = Path(a.out)
+                if not out.is_absolute():
+                    out = workspace / out
+                try:
+                    out.resolve().relative_to(workspace)
+                except ValueError as exc:
+                    raise CounterexampleError("COUNTEREXAMPLE_PATH_INVALID", "plan output must stay inside the workspace") from exc
+                payload = compile_counterexample_plan(workspace, source)
+                path = write_counterexample_plan(payload, out)
+                payload = {**payload, "path": str(path.resolve())}
+            else:
+                plan = Path(a.plan)
+                if not plan.is_absolute():
+                    plan = workspace / plan
+                payload = verify_counterexample_plan(workspace, plan)
+        except CounterexampleError as exc:
+            error = {"schema": "factory.counterexample.error.v1", "code": exc.code, "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"counterexample failed: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("factory counterexample")
+            print("=" * 44)
+            print(f"marker    : {payload['marker']}")
+            print(f"cases     : {payload.get('facts', {}).get('case_count', payload.get('case_count', 0))}")
+            print("authority : negative-proof planning only; execution, source writes, repair, approval, and publication are locked")
+        return 0 if a.counterexample_cmd == "plan" or payload["ok"] else 1
+    if a.cmd == "guardrail":
+        from .continuity import ContinuityError, principal_from_args as continuity_principal_from_args
+
+        try:
+            if a.guardrail_cmd == "evaluate":
+                principal = continuity_principal_from_args(a.subject, a.tenant, a.roles.split(","), a.purposes.split(","))
+                payload = evaluate_guardrails(Path(a.manifest), Path(a.db), principal, changed_paths=a.changed)
+            else:
+                payload = verify_guardrail_evaluation(json.loads(Path(a.evaluation).read_text(encoding="utf-8")))
+        except (GuardrailError, ContinuityError, OSError, json.JSONDecodeError) as exc:
+            error = {"schema": "factory.guardrail.error.v1", "code": getattr(exc, "code", "GUARDRAIL_INPUT_INVALID"), "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"guardrail failed: {error['code']}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("factory guardrail")
+            print("=" * 44)
+            print(f"marker    : {payload['marker']}")
+            print(f"active    : {payload.get('facts', {}).get('active_count', 0)}")
+            print(f"withheld  : {payload.get('facts', {}).get('withheld_count', 0)}")
+            print("boundary  : only redacted promoted metadata is evaluated; memory content, edits, execution, and promotion remain unavailable")
+        return 0
+    if a.cmd == "resilience":
+        workspace = Path(a.root).resolve()
+        try:
+            if a.resilience_cmd == "plan":
+                lineage = Path(a.lineage)
+                if not lineage.is_absolute():
+                    lineage = workspace / lineage
+                out = Path(a.out)
+                if not out.is_absolute():
+                    out = workspace / out
+                try:
+                    out.resolve().relative_to(workspace)
+                except ValueError as exc:
+                    raise ResilienceError("RESILIENCE_PATH_INVALID", "plan output must stay inside the workspace") from exc
+                payload = compile_temporal_resilience_plan(workspace, lineage)
+                path = write_temporal_resilience_plan(payload, out)
+                payload = {**payload, "path": str(path.resolve())}
+            else:
+                plan = Path(a.plan)
+                if not plan.is_absolute():
+                    plan = workspace / plan
+                payload = verify_temporal_resilience_plan(workspace, plan)
+        except ResilienceError as exc:
+            error = {"schema": "factory.temporal-resilience.error.v1", "code": exc.code, "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"resilience failed: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("factory temporal resilience")
+            print("=" * 44)
+            print(f"marker    : {payload['marker']}")
+            print(f"schedules : {payload.get('facts', {}).get('schedule_count', payload.get('schedule_count', 0))}")
+            print("authority : schedule derivation only; graph invocation, replay, checkpoint mutation, repair, and approval are locked")
+        return 0 if a.resilience_cmd == "plan" or payload["ok"] else 1
     if a.cmd == "reality":
         workspace = Path(a.root).resolve()
         manifest = Path(a.manifest)
