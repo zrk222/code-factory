@@ -71,6 +71,7 @@ def _validate_guardrail(item: object, index: int, seen: set[str]) -> dict[str, A
 
 
 def validate_guardrail_manifest(value: object) -> dict[str, Any]:
+    """Validate and normalize a bounded manifest for redacted continuity guardrails."""
     if not isinstance(value, dict) or set(value) != {"schema", "id", "tenant_id", "purpose", "scope", "guardrails"}:
         raise GuardrailError("GUARDRAIL_MANIFEST_INVALID", "manifest must contain exactly schema, id, tenant_id, purpose, scope, and guardrails")
     if value.get("schema") != GUARDRAIL_MANIFEST_SCHEMA:
@@ -125,6 +126,7 @@ def _guardrail_row(guardrail: dict[str, Any], paths: list[str], records: dict[st
 
 
 def evaluate_guardrails(manifest_path: Path, db_path: Path, principal: ContinuityPrincipal, *, changed_paths: list[str]) -> dict[str, Any]:
+    """Evaluate matching promoted metadata through a read-only, redacted continuity query."""
     manifest, manifest_sha256 = _load(manifest_path)
     paths = _changed_paths(changed_paths)
     if principal.tenant_id != manifest["tenant_id"]:
@@ -139,6 +141,7 @@ def evaluate_guardrails(manifest_path: Path, db_path: Path, principal: Continuit
 
 
 def verify_guardrail_evaluation(value: object) -> dict[str, Any]:
+    """Verify evaluation integrity and reject prohibited continuity-content disclosure."""
     if not isinstance(value, dict) or value.get("schema") != GUARDRAIL_EVALUATION_SCHEMA:
         raise GuardrailError("GUARDRAIL_EVALUATION_INVALID", f"evaluation must use {GUARDRAIL_EVALUATION_SCHEMA}")
     supplied = value.get("evaluation_sha256")

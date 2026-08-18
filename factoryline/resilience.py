@@ -74,6 +74,7 @@ def _schedules(lineage: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def compile_temporal_resilience_plan(root: Path, lineage_path: Path) -> dict[str, Any]:
+    """Derive bounded replay-risk schedules from sealed lineage without executing a graph."""
     workspace = Path(root).resolve()
     lineage, relative = _lineage(workspace, lineage_path)
     schedules = _schedules(lineage)
@@ -116,6 +117,7 @@ def _resilience_comparison(plan: dict[str, Any], expected: dict[str, Any], suppl
 
 
 def verify_temporal_resilience_plan(root: Path, plan_path: Path) -> dict[str, Any]:
+    """Verify plan integrity, lineage freshness, and complete deterministic schedule coverage."""
     workspace = Path(root).resolve()
     plan = _read_resilience_plan(workspace, plan_path)
     supplied = _resilience_plan_hash(plan)
@@ -127,6 +129,7 @@ def verify_temporal_resilience_plan(root: Path, plan_path: Path) -> dict[str, An
 
 
 def write_temporal_resilience_plan(plan: dict[str, Any], out_path: Path) -> Path:
+    """Atomically write a resilience plan to its explicit workspace output path."""
     target = Path(out_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(target.suffix + ".tmp")

@@ -88,6 +88,7 @@ def _validated_requirement(item: object, index: int, seen: set[str]) -> dict[str
 
 
 def validate_counterexample_source(value: object) -> dict[str, Any]:
+    """Validate and normalize bounded requirement input for counterexample planning."""
     if not isinstance(value, dict) or set(value) != {"schema", "id", "requirements"}:
         raise CounterexampleError("COUNTEREXAMPLE_SOURCE_INVALID", "source must contain exactly schema, id, and requirements")
     if value.get("schema") != COUNTEREXAMPLE_SOURCE_SCHEMA:
@@ -110,6 +111,7 @@ def _cases(source: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def compile_counterexample_plan(root: Path, source_path: Path) -> dict[str, Any]:
+    """Compile deterministic negative-proof obligations without running any test or repair."""
     workspace = Path(root).resolve()
     source, source_relative, source_sha256 = _load(workspace, source_path)
     normalized = validate_counterexample_source(source)
@@ -152,6 +154,7 @@ def _counterexample_comparison(plan: dict[str, Any], source: dict[str, Any], cur
 
 
 def verify_counterexample_plan(root: Path, plan_path: Path) -> dict[str, Any]:
+    """Verify a sealed plan against its current source and expected obligations."""
     workspace = Path(root).resolve()
     plan, plan_relative, _ = _load(workspace, plan_path)
     if not isinstance(plan, dict) or plan.get("schema") != COUNTEREXAMPLE_PLAN_SCHEMA:
@@ -166,6 +169,7 @@ def verify_counterexample_plan(root: Path, plan_path: Path) -> dict[str, Any]:
 
 
 def write_counterexample_plan(plan: dict[str, Any], out_path: Path) -> Path:
+    """Atomically write a previously compiled plan to an explicitly selected path."""
     target = Path(out_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(target.suffix + ".tmp")
