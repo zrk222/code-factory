@@ -1,0 +1,22 @@
+{
+  "checks": [
+    {
+      "name": "counterexample_guardrail_and_resilience_boundaries_hold_under_mutation_tests",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_counterexample.py', 'tests/test_guardrails.py', 'tests/test_resilience.py', 'tests/test_graph_ops.py']) == 0\nprint('COUNTEREXAMPLE_CONTINUITY_RESILIENCE_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "COUNTEREXAMPLE_CONTINUITY_RESILIENCE_SMOKE_PASS",
+      "timeout_s": 60,
+      "covers": [
+        "HOLLOW_COUNTEREXAMPLE",
+        "GUARDRAIL_WITHHELD",
+        "GUARDRAIL_CONTINUITY_UNAVAILABLE",
+        "TEMPORAL_RESILIENCE_PLAN_INCOMPLETE",
+        "GRAPH_OPS_COUNTEREXAMPLE_PROOFS_READ_ONLY",
+        "GRAPH_OPS_GUARDRAIL_EVALUATIONS_REDACTED",
+        "GRAPH_OPS_TEMPORAL_RESILIENCE_READ_ONLY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

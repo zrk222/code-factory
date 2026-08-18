@@ -305,3 +305,46 @@ def test_graph_ops_projects_a_supervised_reality_check_without_rerunning_it(tmp_
     node = next(node for node in snapshot["nodes"] if node["kind"] == "reality_check")
     assert node["status"] == "verified"
     assert node["facts"]["promise"] == "A manager can approve a request."
+
+
+def test_graph_ops_projects_counterexamples_guardrails_and_temporal_resilience_read_only(tmp_path: Path):
+    from test_counterexample import _source as counterexample_source
+    from test_guardrails import _manifest as guardrail_manifest, _principal as guardrail_principal, _store as guardrail_store
+    from test_resilience import _steps as resilience_steps, _write_lineage
+    from factoryline.counterexample import compile_counterexample_plan, write_counterexample_plan
+    from factoryline.guardrails import evaluate_guardrails
+    from factoryline.resilience import compile_temporal_resilience_plan, write_temporal_resilience_plan
+
+    source = tmp_path / "specs" / "checkout.counterexamples.json"
+    source.parent.mkdir()
+    source.write_text(json.dumps(counterexample_source()), encoding="utf-8")
+    counterexample_out = tmp_path / ".factory" / "counterexamples" / "checkout.json"
+    write_counterexample_plan(compile_counterexample_plan(tmp_path, source), counterexample_out)
+
+    db = tmp_path / "continuity.sqlite3"
+    guardrail_store(db)
+    manifest = guardrail_manifest(tmp_path / "guardrails.json")
+    evaluation = evaluate_guardrails(manifest, db, guardrail_principal("reader", ("reader",)), changed_paths=["src/checkout/submit.py"])
+    guardrail_out = tmp_path / ".factory" / "guardrails" / "checkout.json"
+    guardrail_out.parent.mkdir(parents=True)
+    guardrail_out.write_text(json.dumps(evaluation), encoding="utf-8")
+
+    lineage = _write_lineage(tmp_path / ".factory" / "graph-runs" / "checkout.lineage.json", resilience_steps())
+    resilience_out = tmp_path / ".factory" / "resilience" / "checkout.json"
+    write_temporal_resilience_plan(compile_temporal_resilience_plan(tmp_path, lineage), resilience_out)
+    before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+    snapshot = graph_ops_snapshot(tmp_path)
+    after = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+    assert before == after
+    assert {"counterexample_plan", "guardrail_evaluation", "temporal_resilience"} <= {node["kind"] for node in snapshot["nodes"]}
+    assert snapshot["facts"]["counterexample_verified_count"] == 1
+    assert snapshot["facts"]["guardrail_active_count"] == 1
+    assert snapshot["facts"]["guardrail_withheld_count"] == 1
+    assert snapshot["facts"]["temporal_resilience_verified_count"] == 1
+    assert {
+        "GRAPH_OPS_COUNTEREXAMPLE_PROOFS_READ_ONLY",
+        "GRAPH_OPS_GUARDRAIL_EVALUATIONS_REDACTED",
+        "GRAPH_OPS_TEMPORAL_RESILIENCE_READ_ONLY",
+    } <= set(snapshot["markers"])

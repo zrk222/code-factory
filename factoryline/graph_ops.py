@@ -22,6 +22,9 @@ from .evidence_frontier import verify_evidence_frontier
 from .reality_check import RealityCheckError, validate_reality_check_receipt
 from .graph_authorization import GraphAuthorizationError, validate_graph_authorization
 from .continuity import CONTINUITY_DB_RELATIVE_PATH, continuity_projection
+from .counterexample import CounterexampleError, verify_counterexample_plan
+from .guardrails import GuardrailError, verify_guardrail_evaluation
+from .resilience import ResilienceError, verify_temporal_resilience_plan
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -691,6 +694,105 @@ def _append_continuity(state: dict[str, Any], root: Path) -> dict[str, int]:
     return facts
 
 
+def _append_counterexamples(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project negative-proof plans as facts; never execute the derived cases."""
+    facts = {"count": 0, "verified_count": 0, "hollow_count": 0, "invalid_count": 0}
+    directory = root / ".factory" / "counterexamples"
+    for path in sorted(directory.glob("*.json")):
+        value, source = _load_json(root, path, state["errors"])
+        if value is None or source is None:
+            continue
+        try:
+            verification = verify_counterexample_plan(root, path)
+        except CounterexampleError as exc:
+            _record_error(state["errors"], source, exc.code)
+            facts["invalid_count"] += 1
+            continue
+        marker = str(verification.get("marker", "COUNTEREXAMPLE_PLAN_INVALID"))
+        status = "verified" if verification.get("ok") else "hollow" if marker == "HOLLOW_COUNTEREXAMPLE" else "stale" if marker == "COUNTEREXAMPLE_SOURCE_STALE" else "invalid"
+        digest = _text(value.get("plan_sha256"), path.stem)
+        node_id = f"counterexample:{digest[:24]}"
+        _node(
+            state, node_id=node_id, kind="counterexample_plan", label=_text(value.get("source", {}).get("id") if isinstance(value.get("source"), dict) else None, path.stem),
+            source=source, status=status,
+            facts={
+                "marker": marker, "case_count": verification.get("case_count", value.get("facts", {}).get("case_count", 0)),
+                "risk_tags": value.get("facts", {}).get("risk_tags", []), "plan_sha256": digest,
+                "authority": value.get("authority", _AUTHORITY), "execution": False,
+            },
+        )
+        facts["count"] += 1
+        facts["verified_count"] += int(status == "verified")
+        facts["hollow_count"] += int(status == "hollow")
+        facts["invalid_count"] += int(status in {"stale", "invalid"})
+    return facts
+
+
+def _append_guardrail_evaluations(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project hash-bound redacted guardrail evaluations, never query a ledger."""
+    facts = {"count": 0, "active_count": 0, "withheld_count": 0, "invalid_count": 0}
+    directory = root / ".factory" / "guardrails"
+    for path in sorted(directory.glob("*.json")):
+        value, source = _load_json(root, path, state["errors"])
+        if value is None or source is None:
+            continue
+        try:
+            evaluation = verify_guardrail_evaluation(value)
+        except GuardrailError as exc:
+            _record_error(state["errors"], source, exc.code)
+            facts["invalid_count"] += 1
+            continue
+        digest = _text(evaluation.get("evaluation_sha256"), path.stem)
+        guardrail_id = _text(evaluation.get("manifest", {}).get("id") if isinstance(evaluation.get("manifest"), dict) else None, path.stem)
+        node_id = f"guardrail-evaluation:{digest[:24]}"
+        rows = evaluation.get("guardrails", []) if isinstance(evaluation.get("guardrails"), list) else []
+        _node(
+            state, node_id=node_id, kind="guardrail_evaluation", label=guardrail_id, source=source, status="verified",
+            facts={
+                "evaluation_sha256": digest, "active_count": sum(row.get("status") == "active" for row in rows if isinstance(row, dict)),
+                "withheld_count": sum(row.get("status") == "withheld" for row in rows if isinstance(row, dict)),
+                "authority": evaluation.get("authority", _AUTHORITY), "memory_content": False,
+            },
+        )
+        facts["count"] += 1
+        facts["active_count"] += sum(row.get("status") == "active" for row in rows if isinstance(row, dict))
+        facts["withheld_count"] += sum(row.get("status") == "withheld" for row in rows if isinstance(row, dict))
+    return facts
+
+
+def _append_resilience_plans(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project sealed temporal schedules without replaying the underlying graph."""
+    facts = {"count": 0, "verified_count": 0, "invalid_count": 0}
+    directory = root / ".factory" / "resilience"
+    for path in sorted(directory.glob("*.json")):
+        value, source = _load_json(root, path, state["errors"])
+        if value is None or source is None:
+            continue
+        try:
+            verification = verify_temporal_resilience_plan(root, path)
+        except ResilienceError as exc:
+            _record_error(state["errors"], source, exc.code)
+            facts["invalid_count"] += 1
+            continue
+        marker = str(verification.get("marker", "TEMPORAL_RESILIENCE_PLAN_INVALID"))
+        status = "verified" if verification.get("ok") else "stale" if marker == "TEMPORAL_RESILIENCE_SOURCE_STALE" else "incomplete" if marker == "TEMPORAL_RESILIENCE_PLAN_INCOMPLETE" else "invalid"
+        digest = _text(value.get("plan_sha256"), path.stem)
+        node_id = f"temporal-resilience:{digest[:24]}"
+        _node(
+            state, node_id=node_id, kind="temporal_resilience", label=_text(value.get("source", {}).get("graph_id") if isinstance(value.get("source"), dict) else None, path.stem),
+            source=source, status=status,
+            facts={
+                "marker": marker, "schedule_count": verification.get("schedule_count", value.get("facts", {}).get("schedule_count", 0)),
+                "kinds": value.get("facts", {}).get("kinds", []), "plan_sha256": digest,
+                "authority": value.get("authority", _AUTHORITY), "execution": False,
+            },
+        )
+        facts["count"] += 1
+        facts["verified_count"] += int(status == "verified")
+        facts["invalid_count"] += int(status != "verified")
+    return facts
+
+
 def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
     visible = nodes[:80]
     allowed = {node["id"] for node in visible}
@@ -712,6 +814,14 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "refresh_expired_continuity", "At least one local continuity record is expired and is withheld from future recall."
     if facts["continuity_draft_count"] > 0:
         return "review_continuity_promotion", "At least one evidence-bound continuity record awaits an independent human promotion."
+    if facts["counterexample_hollow_count"] > 0:
+        return "restore_negative_proof_coverage", "A counterexample plan is missing a declared negative proof obligation; restore coverage before trusting its result."
+    if facts["counterexample_invalid_count"] > 0:
+        return "refresh_counterexample_plan", "A counterexample plan is stale or invalid; recompile it from its current bounded requirement source."
+    if facts["resilience_invalid_count"] > 0:
+        return "refresh_temporal_resilience_plan", "A temporal resilience plan is stale, incomplete, or invalid; recompile it from verified current lineage."
+    if facts["guardrail_withheld_count"] > 0:
+        return "review_guardrail_withheld", "At least one scoped guardrail lacks independently promoted current continuity evidence."
     if facts["assurance_unresolved_high_count"] > 0:
         return "resolve_policy_drift", "A supplied GitHub policy snapshot has unexceptioned high-severity drift; a human must resolve it before a merge decision."
     if facts["assurance_review_required_count"] > 0:
@@ -744,7 +854,8 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
 def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proof_count: int,
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
-                    frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int]) -> dict[str, int]:
+                    frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
+                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -779,12 +890,24 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "continuity_draft_count": continuity["draft_count"],
         "continuity_verified_current_count": continuity["verified_current_count"],
         "continuity_expired_count": continuity["expired_count"],
+        "counterexample_plan_count": counterexamples["count"],
+        "counterexample_verified_count": counterexamples["verified_count"],
+        "counterexample_hollow_count": counterexamples["hollow_count"],
+        "counterexample_invalid_count": counterexamples["invalid_count"],
+        "guardrail_evaluation_count": guardrails["count"],
+        "guardrail_active_count": guardrails["active_count"],
+        "guardrail_withheld_count": guardrails["withheld_count"],
+        "guardrail_invalid_count": guardrails["invalid_count"],
+        "temporal_resilience_plan_count": resilience["count"],
+        "temporal_resilience_verified_count": resilience["verified_count"],
+        "resilience_invalid_count": resilience["invalid_count"],
     }
 
 
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
-                      proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int]) -> list[str]:
+                      proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
+                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -815,6 +938,12 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_GITHUB_ASSURANCE_PROJECTED")
     if continuity["record_count"]:
         markers.append("GRAPH_OPS_CONTINUITY_METADATA_READ_ONLY")
+    if counterexamples["count"]:
+        markers.append("GRAPH_OPS_COUNTEREXAMPLE_PROOFS_READ_ONLY")
+    if guardrails["count"]:
+        markers.append("GRAPH_OPS_GUARDRAIL_EVALUATIONS_REDACTED")
+    if resilience["count"]:
+        markers.append("GRAPH_OPS_TEMPORAL_RESILIENCE_READ_ONLY")
     if state["errors"] or state["truncated"]:
         markers.append("GRAPH_OPS_PARTIAL_RESULT")
     return sorted(markers)
@@ -858,14 +987,17 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     authorizations = _append_graph_authorizations(state, workspace)
     assurance = _append_github_assurance_dossiers(state, workspace)
     continuity = _append_continuity(state, workspace)
+    counterexamples = _append_counterexamples(state, workspace)
+    guardrails = _append_guardrail_evaluations(state, workspace)
+    resilience = _append_resilience_plans(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
-    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity)
+    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience)
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
-    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity)
+    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience)
     base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
