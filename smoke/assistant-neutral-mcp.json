@@ -1,0 +1,21 @@
+{
+  "checks": [
+    {
+      "name": "assistant_neutral_mcp_is_copy_only_and_rejects_invalid_local_inputs",
+      "kind": "python",
+      "run": "import tempfile\nfrom pathlib import Path\nfrom factoryline.mcp_setup import McpSetupError, mcp_connection_config\nwith tempfile.TemporaryDirectory() as raw:\n    root = Path(raw)\n    generic = mcp_connection_config(root, 'generic')\n    codex = mcp_connection_config(root, 'codex')\n    assert generic['marker'] == 'FACTORY_MCP_CONFIG_READY'\n    assert set(generic['markers']) >= {'MCP_CLIENT_RENDERED', 'MCP_COMMAND_BOUND', 'MCP_COPY_ONLY', 'MCP_CLIENT_CONFIG_COPYABLE'}\n    assert generic['connection']['args'] == ['mcp', 'serve', '--root', str(root.resolve())]\n    assert all(value is False for value in generic['authority'].values()) and generic['writes'] is False\n    assert codex['command_line'].startswith('codex mcp add code-factory -- factory mcp serve --root ')\n    try:\n        mcp_connection_config(root, 'remote')\n    except McpSetupError as exc:\n        assert exc.marker == 'MCP_CLIENT_REJECTED'\n    else:\n        raise AssertionError('unsupported client was accepted')\nprint('ASSISTANT_NEUTRAL_MCP_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "ASSISTANT_NEUTRAL_MCP_SMOKE_PASS",
+      "timeout_s": 30,
+      "covers": [
+        "FACTORY_MCP_CONFIG_READY",
+        "MCP_CLIENT_RENDERED",
+        "MCP_COMMAND_BOUND",
+        "MCP_COPY_ONLY",
+        "MCP_CLIENT_CONFIG_COPYABLE",
+        "MCP_CLIENT_REJECTED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

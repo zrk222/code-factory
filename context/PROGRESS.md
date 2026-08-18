@@ -264,3 +264,4 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-15 18:09] GATE plan evidence-frontier-v1 approver=human tasks=1 sha=4431a44323866ba1
 - [2026-08-17 13:44] GATE spec graph-portfolio-admission-v1 approver=human strict=True sha=ae8e85b10529ffb2
 - [2026-08-17 13:44] GATE plan graph-portfolio-admission-v1 approver=human tasks=5 sha=ae8e85b10529ffb2
+- [2026-08-18 05:09] GATE spec assistant-neutral-mcp approver=human strict=True sha=af84e404847fc48e

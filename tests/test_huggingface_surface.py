@@ -27,8 +27,8 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "Actual product capture set" in page
     assert '<meta name="viewport"' in page
-    assert "Build your local MVP. Catch hollow tests before review." in page
-    assert "Generate a local MVP, then catch hollow tests before review." in readme
+    assert "Build the MVP. Catch hollow tests. Prove AI code before review." in page
+    assert "Build an MVP. Catch hollow tests. Prove AI code before review." in readme
     assert "Free, local proof for AI-assisted code." in page
     assert "Read or star on GitHub" in page
     assert "thumbnail: https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/github-social-preview-1280x640.png" in readme
@@ -92,12 +92,12 @@ def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(tm
     valid_result = inspect(SPACE / "README.md")
     assert valid_result["ok"] is True
     assert valid_result["marker"] == "HUGGINGFACE_SPACE_METADATA_VALID"
-    assert valid_result["short_description_length"] == 59
+    assert valid_result["short_description_length"] == 60
 
     invalid_readme = tmp_path / "README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Trace graph failures. Compare proven repairs before review.",
+            "short_description: Build MVPs. Catch hollow tests. Prove AI code before review.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",
@@ -122,7 +122,7 @@ def test_huggingface_metadata_preflight_cli_reports_the_local_result(tmp_path: P
     invalid_readme = tmp_path / "invalid-README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Trace graph failures. Compare proven repairs before review.",
+            "short_description: Build MVPs. Catch hollow tests. Prove AI code before review.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",

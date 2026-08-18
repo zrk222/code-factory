@@ -973,6 +973,10 @@ def main(argv=None) -> int:
     mcp_status = mcp_sub.add_parser("status", help="show the stdio-only MCP boundary")
     mcp_status.add_argument("--root", default=".")
     mcp_status.add_argument("--json", action="store_true")
+    mcp_config = mcp_sub.add_parser("config", help="render copy-only setup for a local stdio MCP client")
+    mcp_config.add_argument("--root", default=".")
+    mcp_config.add_argument("--client", choices=["generic", "cursor", "opencode", "codex"], default="generic")
+    mcp_config.add_argument("--json", action="store_true")
     mcp_serve = mcp_sub.add_parser("serve", help="serve newline-delimited JSON-RPC over stdio only")
     mcp_serve.add_argument("--root", default=".")
 
@@ -2666,6 +2670,7 @@ def main(argv=None) -> int:
         return 0 if result["ok"] else 1
     if a.cmd == "mcp":
         from .mcp import McpError, mcp_status, serve_stdio
+        from .mcp_setup import McpSetupError, mcp_connection_config
 
         try:
             if a.mcp_cmd == "status":
@@ -2679,8 +2684,23 @@ def main(argv=None) -> int:
                     print(f"tools     : {', '.join(payload['tools'])}")
                     print("authority : all external-effect authority is false")
                 return 0
+            if a.mcp_cmd == "config":
+                payload = mcp_connection_config(Path(a.root), a.client)
+                if a.json:
+                    print(json.dumps(payload, indent=2, sort_keys=True))
+                else:
+                    print(f"Factory MCP config ({payload['client']})")
+                    print("=" * 44)
+                    print(f"target       : {payload['target']}")
+                    print(f"workspace    : {payload['workspace_root']}")
+                    print("authority    : read-only local context; no execution, approval, publish, deploy, signing, messaging, credentials, or connectors")
+                    if "command_line" in payload:
+                        print(f"copy command : {payload['command_line']}")
+                    else:
+                        print(json.dumps(payload["config"], indent=2))
+                return 0
             return serve_stdio(Path(a.root))
-        except McpError as exc:
+        except (McpError, McpSetupError) as exc:
             print(f"mcp failed: {exc.marker}: {exc}", file=sys.stderr)
             return 2
     if a.cmd == "attest":

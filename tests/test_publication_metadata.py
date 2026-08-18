@@ -41,7 +41,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
         "Issues": "https://github.com/zrk222/code-factory/issues",
         "Changelog": "https://github.com/zrk222/code-factory/releases",
     }
-    assert project["description"] == "Build local MVPs and review AI-assisted scope, proof, and UI-design gaps before merge."
+    assert project["description"] == "Build a local MVP, catch hollow tests, and prove AI-assisted changes before review."
     assert {
         "mvp",
         "mcp",
@@ -86,13 +86,12 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     assert "star Code Factory" in readme
     assert "This optional link only opens the repository." in readme
     assert "production-ready before the relevant proof exists" in readme
-    assert vscode_package["description"] == (
-        "Build a local MVP, trace graph failures, and compare verified repair candidates before review."
-    )
+    assert vscode_package["description"] == "Build a local MVP, catch hollow tests, and prove AI-assisted changes before review."
     assert {"mvp", "mcp", "graph-ops", "proof-debt", "ai-governance", "design-review", "ui-quality"}.issubset(vscode_package["keywords"])
-    for content in (vscode_readme, intellij_plugin, intellij_readme):
+    for content in (vscode_readme, intellij_readme):
         assert value in content
         assert "Graph Ops" in content
+    assert "Catch hollow tests before review" in intellij_plugin
     assert "Star Code Factory" in vscode_readme
     assert "Star Code Factory" in intellij_readme
     for content in (readme, vscode_readme, intellij_plugin, intellij_readme):
@@ -301,7 +300,9 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
 
     assert "<id>app.factoryline</id>" in plugin_xml
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
-    assert "<p>Verify AI code before you ship.</p>" in plugin_xml
+    assert "<p><strong>Catch hollow tests before review.</strong></p>" in plugin_xml
+    assert "Catch hollow tests before review" in plugin_xml
+    assert "Tools | FactoryLine | Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
     assert "Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.openGraphOps"' in plugin_xml
@@ -335,7 +336,7 @@ def test_marketplace_acquisition_kit_uses_real_product_assets_and_observed_metri
     kit = (ROOT / "docs" / "JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md").read_text(encoding="utf-8")
     baseline = json.loads((ROOT / "docs" / "JETBRAINS_MARKETPLACE_MEASUREMENT.json").read_text(encoding="utf-8"))
 
-    assert "Verify AI code before you ship." in kit
+    assert "Catch hollow tests before review." in kit
     assert "Run First Proof" in kit
     assert "factory mvp" in kit
     assert "Graph Ops" in kit

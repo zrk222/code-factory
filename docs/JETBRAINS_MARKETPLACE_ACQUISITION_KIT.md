@@ -13,18 +13,21 @@ not been observed.
 
 **Preview (the first 40 characters matter)**
 
-`Verify AI code before you ship.`
+`Catch hollow tests before review.`
 
 **Description**
 
-> Turn one outcome into a local MVP, then see exactly what is proved before
-> you ship. FactoryLine keeps requirements, tests, policies, receipts, and
-> Graph Ops in your workspace for inspection.
+> **Catch hollow tests before review — without sending source to a provider.**
+> FactoryLine connects the current diff to local requirements, checks, receipts,
+> and one fact-derived next action in your JetBrains IDE.
 >
-> **Why pay for opaque app generators?** Create a reviewable MVP starting
-> state in minutes—with local receipts, a clear proof path, and an output you
-> can extend when you are ready. A starter is not called production-ready until
-> product-specific proof exists.
+> **Open Tools | FactoryLine | Run First Proof.** Confirm your workspace and
+> see the local proof state before you hand a change to a teammate or a release
+> process. No account, model credits, source upload, or automatic code changes.
+>
+> **Need an MVP too?** Turn a plain-language outcome into a reviewable local
+> starting state, then extend it in your normal JetBrains workflow. A starter
+> is not called production-ready until product-specific proof exists.
 >
 > **Start in two minutes**
 >
@@ -41,20 +44,20 @@ not been observed.
 >
 > **Use it when you need to:**
 >
+> - catch passing tests that have no meaningful failure path;
 > - start an inspectable MVP from a plain-language outcome;
-> - find requirements without verified completion evidence;
+> - map an AI-generated or teammate diff to requirements and verified evidence;
 > - understand which prior read-only proof may be reused or must rerun;
 > - clarify the next unresolved PRD decisions before a scaffold compounds them;
-> - record paired time, token, and cost observations without inferred savings.
+> - record paired time, token, and cost observations without inferred savings;
 > - keep AI-review suggestions separate from a neutral, commit-bound proof
 >   walkthrough in a GitHub pull request. The optional workflow can coexist
 >   with CodeRabbit or another reviewer; it does not require their account,
 >   import AI comments as proof, approve, or merge.
 >
-> **Useful for a first MVP, a careful code review, and a team workflow:**
-> start from an outcome, inspect the evidence behind a change, recover the
-> fact-derived next step after a diff, and keep supervision plus measured
-> observations explicit.
+> **For solo developers, senior reviewers, and teams:** create a bounded MVP,
+> inspect the evidence behind an AI-assisted change, recover the next step after
+> a diff, and keep supervision plus measured observations explicit.
 >
 > The plugin asks before it runs a command. It does not upload project files or
 > receipts, store API keys, sign artifacts, or decide that a release is ready.

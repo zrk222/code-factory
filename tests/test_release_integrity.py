@@ -128,7 +128,7 @@ def test_release_integrity_rejects_huggingface_metadata_that_would_fail_remotely
     readme = root / "deploy" / "huggingface" / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-                "short_description: Trace graph failures. Compare proven repairs before review.",
+                "short_description: Build MVPs. Catch hollow tests. Prove AI code before review.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",

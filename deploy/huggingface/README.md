@@ -20,7 +20,7 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Trace graph failures. Compare proven repairs before review.
+short_description: Build MVPs. Catch hollow tests. Prove AI code before review.
 ---
 
 # Code Factory
@@ -36,7 +36,7 @@ makes a merge decision. Read the [Teams and Enterprise Operations Manual](https:
 
 **For UI work:** add the optional [Prestige Design Review](https://github.com/zrk222/code-factory/blob/main/docs/PRESTIGE_DESIGN.md): a purpose-led design brief plus visible review artifacts for hierarchy, responsive behavior, affordances, consistency, and declared design tokens. It informs review; it does not claim conversion, accessibility certification, or production readiness.
 
-**Generate a local MVP, then catch hollow tests before review.** Start from a
+**Build an MVP. Catch hollow tests. Prove AI code before review.** Start from a
 plain-language outcome, a fuzzy PRD, or a risky diff. Code Factory keeps the
 proof path visible and does not call a starter production-ready before relevant
 evidence exists.

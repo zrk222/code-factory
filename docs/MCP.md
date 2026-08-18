@@ -6,6 +6,7 @@ creating a second graph model or granting any authority.
 
 ```powershell
 factory mcp status --root . --json
+factory mcp config --client generic --root .my-mvp --json
 factory mcp serve --root .my-mvp
 ```
 
@@ -31,6 +32,42 @@ agent is allowed to inspect. For example:
 ```
 
 The `--root` directory must already exist. The server will not create it.
+
+## Any coding assistant: one portable connection
+
+Code Factory is not tied to one model or IDE. Any assistant that supports a
+local stdio MCP server can use the same proof-context connection. Render a
+copy-only setup packet first:
+
+```powershell
+factory mcp config --client generic --root C:\work\my-mvp --json
+```
+
+The generic packet contains only the standard command and arguments:
+
+```json
+{
+  "command": "factory",
+  "args": ["mcp", "serve", "--root", "C:\\work\\my-mvp"]
+}
+```
+
+Paste that connection into the assistant's documented local-MCP setting and
+approve it under that assistant's own controls. Code Factory does not write a
+client config, enable automatic tool execution, or grant the assistant any
+authority beyond the read-only tools below. An assistant without MCP support
+can still use the same explicit CLI commands in a human-reviewed terminal.
+
+Built-in renderers avoid client-specific guesswork:
+
+```powershell
+factory mcp config --client cursor --root C:\work\my-mvp
+factory mcp config --client opencode --root C:\work\my-mvp
+factory mcp config --client codex --root C:\work\my-mvp
+```
+
+The Codex renderer prints one `codex mcp add` command for the user to review
+and run. It does not alter `config.toml` itself.
 
 For an IDE-managed workspace configuration, keep the root local and let the
 client substitute its current project directory:

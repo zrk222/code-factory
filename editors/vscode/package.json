@@ -1,7 +1,7 @@
 {
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
-  "description": "Build a local MVP, trace graph failures, and compare verified repair candidates before review.",
+  "description": "Build a local MVP, catch hollow tests, and prove AI-assisted changes before review.",
   "version": "0.8.8",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
