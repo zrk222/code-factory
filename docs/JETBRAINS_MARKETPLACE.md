@@ -14,7 +14,7 @@ submitting or replacing anything pending.
 ## Conversion-focused listing
 
 - **Name:** `FactoryLine AI Proof`
-- **Preview:** `Verify AI code before you ship.`
+- **Preview:** `Catch hollow tests before review.`
 - **Tags:** `AI`, `Code Quality`, `Code Tools`, `Productivity`, `Testing`
 - **Source:** <https://github.com/zrk222/code-factory>
 - **License:** repository `MIT OR Apache-2.0` terms

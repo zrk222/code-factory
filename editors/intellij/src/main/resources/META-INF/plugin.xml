@@ -3,11 +3,12 @@
     <name>FactoryLine AI Proof</name>
     <vendor email="rkatz22@gmail.com" url="https://github.com/zrk222/code-factory">FactoryLine</vendor>
     <description><![CDATA[
-        <p>Verify AI code before you ship.</p>
-        <p><strong>Generate a local MVP, then catch hollow tests before review.</strong> Trace exactly where an agent graph failed and compare verified repair candidates. Keep local receipts and a clear proof path next to the code; a starter is never called production-ready before relevant evidence exists.</p>
-        <p>FactoryLine turns tests, requirements, policies, and build evidence into local proof you can inspect in your JetBrains IDE. It does not call a starter production-ready by itself.</p>
+        <p><strong>Catch hollow tests before review.</strong></p>
+        <p><strong>Verify AI code before you ship — without sending source to a provider.</strong> FactoryLine connects the current diff to requirements, checks, receipts, and one fact-derived next action inside your JetBrains IDE.</p>
+        <p><strong>Start now:</strong> open <strong>Tools | FactoryLine | Run First Proof</strong>, confirm the workspace, then inspect the local result. Generate an MVP when you need one; a starter is never called production-ready before relevant evidence exists.</p>
         <h3>What this solves</h3>
         <ul>
+            <li><strong>Passing tests that prove nothing:</strong> expose missing or stale proof before it turns into a confident-looking review green light.</li>
             <li><strong>Unclear AI or teammate diffs:</strong> review the exact local scope, see the declared proof gap, and follow one fact-derived next action.</li>
             <li><strong>Several tasks in one working tree:</strong> review the full diff or focus only the active file, instead of mixing unrelated local changes.</li>
             <li><strong>AI repair scope can drift or overreach:</strong> seal one native Change List, validate only a candidate patch that stays inside it, and keep independent verification plus final IDE apply under human control.</li>
