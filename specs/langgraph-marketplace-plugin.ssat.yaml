@@ -1,0 +1,14 @@
+name: langgraph-marketplace-plugin
+language: python
+modules:
+  - name: plugin_contract
+    path: tests/test_langchain_plugin.py
+    functions:
+      - name: test_cross_tool_plugin_manifests_are_aligned_and_version_bound
+        args: []
+        returns: None
+      - name: test_plugin_skill_and_workflow_keep_execution_and_release_authority_human_controlled
+        args: []
+        returns: None
+dependencies: []
+invariants: []

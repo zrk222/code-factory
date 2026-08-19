@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "code-factory",
+  "owner": {
+    "name": "Code Factory",
+    "email": "rkatz22@gmail.com"
+  },
+  "description": "Proof-first coding-agent plugins for deterministic verification and review.",
+  "plugins": [
+    {
+      "name": "code-factory-langgraph",
+      "source": "./plugins/code-factory-langgraph",
+      "description": "Proof-aware LangGraph guidance and read-only resume-parity receipts for coding agents.",
+      "author": {
+        "name": "Richard Katz",
+        "email": "rkatz22@gmail.com"
+      }
+    }
+  ]
+}

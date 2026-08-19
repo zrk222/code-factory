@@ -124,6 +124,10 @@ parity evidence and a reviewable incident capsule when a run diverges; it does
 not import LangGraph, invoke a graph, or claim production resilience. The
 optional GitHub Action puts the same Proof Card in a pull-request job summary.
 
+For Codex, Claude Code, and Deep Agents, install the
+[Code Factory LangGraph plugin](docs/LANGCHAIN_MARKETPLACE.md) to add the
+proof workflow and read-only local MCP facts to the coding-agent surface.
+
 ## Use it where you work
 
 Code Factory keeps the same local, receipt-bound workflow across the command line,
