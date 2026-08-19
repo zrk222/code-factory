@@ -132,6 +132,14 @@ publication, credential, and connector authority.
 - It does not report time, token, cost, quality, or productivity savings. Those
   require a separately defined, paired measurement.
 
+## Coding-agent plugin
+
+The [Code Factory LangGraph plugin](LANGCHAIN_MARKETPLACE.md) packages the
+same bounded workflow for Codex, Claude Code, and Deep Agents. It adds
+proof-oriented instructions and a local, read-only MCP configuration; it does
+not give the coding agent graph execution, checkpoint mutation, repair, or
+release authority.
+
 ## Free core; future team service
 
 The recorder, sealed receipt format, CLI, MCP tool, and GitHub Action are open

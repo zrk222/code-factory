@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "marketplace_plugin_contract_is_installable_and_read_only",
+      "kind": "python",
+      "run": "import json\nfrom pathlib import Path\nroot = Path('.')\ncodex = json.loads((root / 'plugins/code-factory-langgraph/.codex-plugin/plugin.json').read_text(encoding='utf-8'))\nclaude = json.loads((root / 'plugins/code-factory-langgraph/.claude-plugin/plugin.json').read_text(encoding='utf-8'))\nmcp = json.loads((root / 'plugins/code-factory-langgraph/.mcp.json').read_text(encoding='utf-8'))\nworkflow = (root / 'plugins/code-factory-langgraph/assets/github-actions/langgraph-proof.yml').read_text(encoding='utf-8')\nassert codex == claude\nassert codex['name'] == 'code-factory-langgraph'\nassert codex['version'] == '0.39.0'\nassert mcp['mcpServers']['code-factory-langgraph']['args'] == ['mcp', 'serve', '--root', '.']\nassert 'contents: read' in workflow\nassert 'pull_request_target' not in workflow\nassert 'permissions: write' not in workflow\nassert 'secrets.' not in workflow\nprint('LANGGRAPH_MARKETPLACE_PLUGIN_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "LANGGRAPH_MARKETPLACE_PLUGIN_SMOKE_PASS",
+      "timeout_s": 30,
+      "covers": [
+        "LANGGRAPH_MARKETPLACE_PLUGIN",
+        "LANGGRAPH_MCP_READ_ONLY",
+        "LANGGRAPH_ACTION_READ_ONLY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}
