@@ -11,7 +11,7 @@ Install the published package in the same environment that the client can
 launch, then verify the workspace boundary:
 
 ```powershell
-python -m pip install factoryline-code-factory==0.38.0
+python -m pip install factoryline-code-factory==0.39.0
 factory mcp status --root C:\work\my-mvp --json
 factory mcp config --client generic --root C:\work\my-mvp --json
 ```
@@ -114,6 +114,8 @@ Every configured MCP client can inspect the same bounded surfaces:
 - `factory.graph_impact` and `factory.next_action` for path-scoped guidance;
 - `factory.developer_memory` for a capped, exact-diff next-proof brief with
   redacted Continuity facts and observed local Git contribution context;
+- `factory.langgraph_assurance` for a hash-only comparison of two already
+  recorded LangGraph transition receipts; it never invokes the graph;
 - receipt inventory and exact receipt lookup;
 - verifier, proof-reuse, CDTE, PRD Grill, and workspace-advisor status; and
 - `factory://status` and `factory://graph` resources.

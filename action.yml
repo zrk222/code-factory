@@ -1,0 +1,97 @@
+name: Code Factory LangGraph Proof Gate
+description: Compare recorded reference and resumed LangGraph transitions without invoking a graph.
+branding:
+  icon: shield
+  color: blue
+inputs:
+  root:
+    description: Existing workspace root containing the recorded receipts.
+    required: false
+    default: .
+  reference:
+    description: Workspace-relative sealed reference lineage JSON.
+    required: true
+  resumed:
+    description: Workspace-relative sealed resumed lineage JSON.
+    required: true
+  out:
+    description: Workspace-relative assurance receipt output JSON.
+    required: false
+    default: .factory/langgraph/assurance.json
+outputs:
+  verdict:
+    description: VERIFIED when supplied transitions have parity; otherwise REVIEW_REQUIRED.
+    value: ${{ steps.proof.outputs.verdict }}
+  marker:
+    description: Deterministic LangGraph assurance result marker.
+    value: ${{ steps.proof.outputs.marker }}
+  receipt:
+    description: Workspace-relative written assurance receipt when input was valid.
+    value: ${{ steps.proof.outputs.receipt }}
+runs:
+  using: composite
+  steps:
+    - name: Install Code Factory
+      shell: bash
+      run: python -m pip install "$GITHUB_ACTION_PATH"
+    - id: proof
+      name: Verify recorded resume parity
+      shell: bash
+      env:
+        FACTORY_ROOT: ${{ inputs.root }}
+        FACTORY_REFERENCE: ${{ inputs.reference }}
+        FACTORY_RESUMED: ${{ inputs.resumed }}
+        FACTORY_OUT: ${{ inputs.out }}
+      run: |
+        set -uo pipefail
+        report="${FACTORY_ROOT%/}/${FACTORY_OUT}"
+        set +e
+        factory langgraph replay-verify \
+          --root "$FACTORY_ROOT" \
+          --reference "$FACTORY_REFERENCE" \
+          --resumed "$FACTORY_RESUMED" \
+          --out "$FACTORY_OUT" \
+          --json > langgraph-assurance.json
+        status=$?
+        set -e
+        if [[ -f "$report" ]]; then
+          python - "$report" "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY" <<'PY'
+        import json
+        import sys
+
+        report, output, summary = sys.argv[1:]
+        payload = json.load(open(report, encoding="utf-8"))
+        with open(output, "a", encoding="utf-8") as handle:
+            handle.write(f"verdict={payload['verdict']}\n")
+            handle.write(f"marker={payload['marker']}\n")
+            handle.write(f"receipt={payload.get('path', report)}\n")
+        lines = [
+            "## Code Factory LangGraph Proof Gate",
+            "",
+            f"- **Verdict:** `{payload['verdict']}`",
+            f"- **Marker:** `{payload['marker']}`",
+            f"- **Reference receipt:** `{payload['reference']['lineage_sha256']}`",
+            f"- **Resumed receipt:** `{payload['resumed']['lineage_sha256']}`",
+            "",
+            "This check compares supplied local receipts only. It does not invoke a graph, replay an effect, approve, merge, deploy, publish, or access credentials.",
+            "",
+            "```mermaid",
+            payload["mermaid"].rstrip(),
+            "```",
+        ]
+        if payload["verdict"] != "VERIFIED":
+            lines.extend(["", "Review the incident capsule and authorize any repair separately."])
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+        PY
+        else
+          echo "marker=LANGGRAPH_INPUT_REJECTED" >> "$GITHUB_OUTPUT"
+          echo "verdict=ERROR" >> "$GITHUB_OUTPUT"
+          echo "receipt=" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Code Factory LangGraph Proof Gate"
+            echo
+            echo "The supplied receipt inputs were rejected before an assurance artifact was written."
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+        exit "$status"

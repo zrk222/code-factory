@@ -81,6 +81,7 @@ developers can find it. This optional link only opens the repository.
 | Prove an E2E check can say no | [`factory e2e verify`](docs/E2E_PROOF_GATE.md) | A native positive/negative command-pair receipt that catches hollow E2E checks |
 | Prepare a bounded Team pilot | [`factory team-pilot readiness`](docs/TEAM_PILOT_LAUNCH.md) | Hash-bound, customer-managed readiness evidence for owner reviewâ€”not a checkout or service activation |
 | Add evidence to a GitHub PR | [`factory github proof-review`](docs/GITHUB_PROOF_REVIEW.md) | One neutral Check and stable proof walkthrough, tied to the head commit |
+| Prove a LangGraph resume path | [`factory langgraph replay-verify`](docs/LANGGRAPH_ASSURANCE.md) | Hash-only parity, duplicate-effect and parallel-write safeguards, plus a shareable incident capsule |
 | Detect policy drift before a human merge | [`factory github assurance-dossier`](docs/GITHUB_ASSURANCE_DOSSIER.md) | Deterministic supplied-policy comparison, named expiring exceptions, and a merge-evidence packet |
 | Inspect delivery state | [`factory studio`](docs/TARGET_COMPILER.md) | Graph Ops, receipts, and the next supported action |
 | Debug why two graph runs diverged | [`factory graph forensics`](docs/GRAPH_FORENSICS.md) | Hash-sealed state lineage, concurrency findings, and a read-only recovery preview |
@@ -113,6 +114,15 @@ That makes Code Factory a standalone proof layer for teams that do not use an AI
 reviewer, and a complementary evidence layer for teams that do. For
 agent-created pull requests, Code Factory does not replace human review,
 auto-approve a pull request, or merge code.
+
+## Use Code Factory with LangGraph
+
+LangGraph teams can keep their own graph and checkpoint runtime, then use the
+[LangGraph Assurance Bridge](docs/LANGGRAPH_ASSURANCE.md) to compare recorded
+reference and resumed transitions. The free local adapter produces hash-only
+parity evidence and a reviewable incident capsule when a run diverges; it does
+not import LangGraph, invoke a graph, or claim production resilience. The
+optional GitHub Action puts the same Proof Card in a pull-request job summary.
 
 ## Use it where you work
 
@@ -165,12 +175,12 @@ output map make the same proof context reusable by a client you choose.
 - Start with [PRD Grill](docs/PRD_GRILL.md), [Proof Review](docs/DIFF_TO_PROOF_REVIEW.md),
   or [Verifier Plane](docs/VERIFIER_PLANE.md) when the job calls for it.
 - Browse [Graph Ops](docs/GRAPH_OPS.md), [Graph Portfolio and Run Admission](docs/GRAPH_PORTFOLIO_ADMISSION.md), [Evidence Frontier](docs/EVIDENCE_FRONTIER.md), [Factory Reality Check](docs/REALITY_CHECK.md), [proof reuse](docs/PROOF_REUSE.md), and
-  [savings boundaries](docs/SAVINGS_TRACKER.md) for advanced evidence workflows.
+  [LangGraph Assurance](docs/LANGGRAPH_ASSURANCE.md), and [savings boundaries](docs/SAVINGS_TRACKER.md) for advanced evidence workflows.
 - For UI work, read [Prestige Design Review](docs/PRESTIGE_DESIGN.md) for the
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.38.0.md),
+- See the [release notes](docs/RELEASE_NOTES_0.39.0.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

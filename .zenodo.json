@@ -1,7 +1,7 @@
 {
   "title": "Code Factory: Proof-by-Sabotage Software Factory",
-  "description": "Code Factory is a proof-first, open-source software factory for turning specifications, behavior checks, design contracts, policy verification, Mermaid diagrams, and release receipts into auditable delivery through Unified Graph Ops. Version 0.38 adds refreshable local Assembly activity and a read-only Developer Memory Brief: capped next-proof actions grounded in the exact current diff, redacted Continuity metadata, and observed local Git contribution context. Release media includes the current FactoryLine identity asset and real product captures.\n\nEvidence boundary: the Developer Memory Brief does not expose remembered content or grant execution, repair, approval, merge, publication, deployment, signing, credential, connector, or external-message authority. Git authorship is not represented as verified seats, approvers, ownership, billing, or productivity. Time, token, and cost savings require exact paired observations; productivity remains unavailable without separate measured evidence. A passing receipt proves the declared checks and supplied environment, not arbitrary production security.\n\nDual licensed under MIT or Apache-2.0.",
-  "version": "0.38.0",
+  "description": "Code Factory is a proof-first, open-source software factory for turning specifications, behavior checks, design contracts, policy verification, Mermaid diagrams, and release receipts into auditable delivery through Unified Graph Ops. Version 0.39 adds a free LangGraph Assurance Bridge: teams record hash-only transitions in their own test harness, compare sealed reference and resumed lineages, and receive deterministic resume parity or a shareable first-divergence incident capsule. The release also adds a local read-only MCP tool and an opt-in GitHub proof-gate Action for recorded receipts. It never invokes a graph or replays side effects. Release media includes the current FactoryLine identity asset and real product captures.\n\nEvidence boundary: the bridge does not establish production resilience, runtime correctness, external-system idempotency, or a complete transition capture. It does not expose raw state, prompts, or secrets; grant execution, repair, approval, merge, publication, deployment, signing, credential, connector, or external-message authority; or estimate time, token, cost, quality, or productivity savings. A passing receipt proves only the supplied sealed transitions and declared checks.\n\nDual licensed under MIT or Apache-2.0.",
+  "version": "0.39.0",
   "publication_date": "2026-08-18",
   "creators": [
     {
@@ -56,7 +56,11 @@
     "e2e-proof",
     "team-pilot",
     "developer-memory",
-    "live-activity"
+    "live-activity",
+    "langgraph-assurance",
+    "resume-parity",
+    "agent-replay",
+    "github-actions"
   ],
   "related_identifiers": [
     {

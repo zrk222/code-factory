@@ -1,0 +1,2 @@
+{"code": "A_SUBPROC", "event": "promote", "from_count": 3, "rule": "A_SUBPROC subprocess use in factoryline/cli.py", "ts": "2026-08-19T03:42:59.193810+00:00"}
+{"code": "A_SUBPROC", "event": "probation", "reason": "never fired since promotion", "ts": "2026-08-19T03:42:59.213819+00:00"}

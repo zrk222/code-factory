@@ -102,6 +102,8 @@ network transport, or mutation authority.
 | `factory.status` | Local MCP boundary, version, and tool inventory | Read only |
 | `factory.graph_ops` | Current deterministic Graph Ops snapshot | Read only |
 | `factory.graph_impact` | Impact of 1–50 explicit root-relative changed paths | Read only |
+| `factory.developer_memory` | Exact-diff next-proof guidance with redacted continuity facts and observed local Git contribution context | Read only |
+| `factory.langgraph_assurance` | Compare two existing local LangGraph transition receipts; returns parity or a hash-only incident capsule | Read only |
 | `factory.next_action` | One fact-derived next action | Read only |
 | `factory.list_receipts` | Bounded local receipt inventory; entries remain unassessed | Read only |
 | `factory.get_receipt` | One local receipt by path or exact feature identifier | Read only |

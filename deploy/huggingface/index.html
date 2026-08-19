@@ -158,6 +158,24 @@
       </div>
     </section>
 
+    <section id="langgraph">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">LangGraph resume assurance</div>
+          <h2>Compare the reference path with a resume, before review.</h2>
+          <p>Record transitions in your own LangGraph test harness, then compare sealed, hash-only reference and resumed lineages. The assurance bridge reports parity only when supplied transitions match and no deterministic stale state, duplicate completed effect, or unsafe parallel write is present. A divergence produces a Mermaid incident capsule with the first divergent node and a review-only causal cone. It never invokes a graph or replays an effect.</p>
+          <div class="actions">
+            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/LANGGRAPH_ASSURANCE.md">Read the LangGraph guide</a>
+          </div>
+        </div>
+        <pre><code>factory langgraph replay-verify \
+  --root . \
+  --reference .factory/langgraph/reference.json \
+  --resumed .factory/langgraph/resumed.json \
+  --out .factory/langgraph/assurance.json --json</code></pre>
+      </div>
+    </section>
+
     <section id="proofsearch">
       <div class="shell proof">
         <div>
@@ -322,7 +340,7 @@ Never substitute CI or repository traffic for installs.</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.38.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.38.0">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.39.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.39.0">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

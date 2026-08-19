@@ -1,13 +1,13 @@
 # Release Channels
 
-Code Factory v0.38.0 publishes one verified source state through channel-specific
+Code Factory v0.39.0 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.38.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.38.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.39.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.39.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
 | VS Code | `factoryline-vscode-0.8.10.vsix` | GitHub release bundle; protected `vscode-marketplace.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX or public Marketplace version |
@@ -17,6 +17,18 @@ listing has accepted the artifact.
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured.
+
+### 0.39.0 LangGraph Assurance Bridge
+
+`factory langgraph replay-verify` compares a supplied sealed reference lineage
+with a separately recorded resumed lineage. It returns resume parity only when
+the supplied transitions match and neither lineage exposes deterministic stale
+state, duplicate completed effects, or unsafe parallel writes. A divergence
+produces a hash-only incident capsule with Mermaid and a review-only recovery
+cone. The open-source bridge also exposes a read-only MCP tool and an opt-in
+GitHub Action that writes the same Proof Card from pre-recorded receipts. It
+does not invoke LangGraph, mutate checkpoints, replay effects, establish
+production resilience, or estimate savings.
 
 JetBrains Marketplace publication remains blocked while any submitted update is
 pending Marketplace approval. Do not dispatch the 0.8.10 candidate until the

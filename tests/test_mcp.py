@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from factoryline.graph_ops import graph_ops_impact, graph_ops_snapshot
+from factoryline.langgraph_assurance import LangGraphTransitionRecorder
 from factoryline.mcp import MCP_PROTOCOL_VERSION, dispatch, mcp_status, serve_stdio
 
 
@@ -37,6 +38,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.graph_ops",
         "factory.graph_impact",
         "factory.developer_memory",
+        "factory.langgraph_assurance",
         "factory.next_action",
         "factory.list_receipts",
         "factory.get_receipt",
@@ -61,7 +63,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {"name": "code-factory", "version": "0.38.0"},
+                "serverInfo": {"name": "code-factory", "version": "0.39.0"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }
@@ -124,6 +126,37 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     }, tmp_path)
     assert resource["result"]["marker"] == "MCP_RESOURCES_PARITY"
     assert json.loads(resource["result"]["contents"][0]["text"]) == graph_ops_snapshot(tmp_path)
+    assert _files(tmp_path) == before
+
+
+def test_mcp_langgraph_assurance_reads_existing_receipts_without_execution(tmp_path: Path):
+    def record(run_id: str, outcome: str) -> Path:
+        recorder = LangGraphTransitionRecorder("agent-graph", run_id)
+        recorder.record_transition(
+            "route", superstep=1, checkpoint_id="cp-1", before_state={"request": "secret"},
+            after_state={"request": "secret", "outcome": outcome},
+            decision={"route": outcome, "reason": "private reason"},
+        )
+        recorder.seal(tmp_path, f".factory/langgraph/{run_id}.json")
+        return tmp_path / ".factory" / "langgraph" / f"{run_id}.json"
+
+    reference = record("reference", "allow")
+    resumed = record("resumed", "deny")
+    before = _files(tmp_path)
+    result = _content(dispatch({
+        "jsonrpc": "2.0", "id": 88, "method": "tools/call", "params": {
+            "name": "factory.langgraph_assurance",
+            "arguments": {
+                "reference": reference.relative_to(tmp_path).as_posix(),
+                "resumed": resumed.relative_to(tmp_path).as_posix(),
+            },
+        },
+    }, tmp_path))
+
+    assert result["marker"] == "LANGGRAPH_MCP_READ_ONLY"
+    assert result["assurance"]["verdict"] == "REVIEW_REQUIRED"
+    assert all(value is False for value in result["assurance"]["authority"].values())
+    assert '"secret"' not in json.dumps(result)
     assert _files(tmp_path) == before
 
 
