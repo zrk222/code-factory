@@ -61,6 +61,11 @@ class LiveActivity:
         temporary.replace(self.path)
 
     def start(self) -> None:
+        """Initialize and persist the active local Assembly projection.
+
+        The new projection contains no inferred metering values and is replaced
+        atomically so a reader cannot observe a partially written activity file.
+        """
         now = _now()
         self._state = {
             "schema": ACTIVITY_SCHEMA,
@@ -82,6 +87,11 @@ class LiveActivity:
         self._write()
 
     def heartbeat(self) -> bool:
+        """Refresh liveness unless a supervised cooperative stop was requested.
+
+        A false result tells the Assembly loop to stop before launching another
+        child stage; it never terminates a process or changes a receipt itself.
+        """
         if self._state.get("status") != "active":
             return False
         if self.cancel_requested():
@@ -93,6 +103,11 @@ class LiveActivity:
         return True
 
     def stage_started(self, module: str, stage: str) -> None:
+        """Project the named stage as active for a local observer.
+
+        This ephemeral state supports Studio refresh only and does not make the
+        stage a completed measurement, verified proof, or durable receipt.
+        """
         if self._state.get("status") != "active":
             return
         now = _now()
@@ -102,6 +117,11 @@ class LiveActivity:
         self._write()
 
     def stage_finished(self, module: str, stage: str, status: str, *, wall_ms: int | None = None) -> None:
+        """Record a bounded finished-stage summary in the live projection.
+
+        Completed rows remain informational until their normal meter and proof
+        paths write evidence; absent time, token, and cost fields stay absent.
+        """
         if not self._state:
             return
         row: dict[str, Any] = {"module": module, "stage": stage, "status": status, "finished_at": _now()}
@@ -120,6 +140,11 @@ class LiveActivity:
         self.heartbeat()
 
     def finish(self, terminal: str, *, halted_at: str | None = None, paused_at: str | None = None) -> None:
+        """Mark the current local projection terminal without altering receipts.
+
+        The terminal marker helps refresh clients retire activity state while the
+        Assembly's normal result, meter, and continuation records remain intact.
+        """
         if not self._state:
             return
         now = _now()
