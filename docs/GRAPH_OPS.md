@@ -16,6 +16,14 @@ It never shows the opaque memory reference or summary, writes a record, or
 promotes one. This makes historical context inspectable without turning Graph
 Ops into another memory store or an agent authority.
 
+During a local Assembly, the same Studio-backed view also shows refreshable
+ephemeral activity: the current stage, local elapsed time, completed-stage
+status, and an explicit cooperative stop request. The read-only **Developer
+Memory Brief** turns exact changed paths into capped next-proof actions and
+projects only redacted Continuity facts plus observed local Git contribution
+context. Neither surface exposes remembered content or grants execution,
+repair, approval, identity, billing, or productivity authority.
+
 ```mermaid
 flowchart LR
     P["Product Graph"] --> R["Requirement"] --> S["Value slice"]
@@ -32,6 +40,7 @@ flowchart LR
 factory graph ops --root . --json
 factory graph ops --root . --mermaid
 factory graph impact --root . --changed src/app.py --json
+factory memory brief --root . --json
 factory graph portfolio --root . --json
 factory admission prepare .factory/loop-passports/dependency-audit.passport.json .factory/admission-request.json --root . --json
 factory admission verify .factory/admissions/dependency-audit-run-1.admission.json --root . --json

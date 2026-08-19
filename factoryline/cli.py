@@ -84,6 +84,7 @@ from .proofsearch import ProofSearchError, create_proofsearch_plan, evaluate_pro
 from .evidence_frontier import EvidenceFrontierError, plan_evidence_frontier, verify_evidence_frontier
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
+from .developer_memory import developer_memory_brief
 from .github_proof_review import (
     GitHubProofReviewError,
     compile_github_proof_review,
@@ -958,6 +959,14 @@ def main(argv=None) -> int:
     change_review.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
     change_review.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
     change_review.add_argument("--json", action="store_true")
+
+    memory = sub.add_parser("memory", help="read a compact next-proof brief with redacted continuity and observed local Git attribution")
+    memory_sub = memory.add_subparsers(required=True, dest="memory_cmd")
+    memory_brief = memory_sub.add_parser("brief", help="inspect current change evidence without running a proof or recalling memory bodies")
+    memory_brief.add_argument("--root", default=".")
+    memory_brief.add_argument("--base", default="main")
+    memory_brief.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
+    memory_brief.add_argument("--json", action="store_true")
 
     github = sub.add_parser("github", help="prepare an evidence-bound, advisory GitHub pull-request review without a network call")
     github_sub = github.add_subparsers(required=True, dest="github_cmd")
@@ -2676,6 +2685,20 @@ def main(argv=None) -> int:
                     print(f"complete    : {snapshot['complete']}")
                     print(f"next action : {snapshot['recommendation']['action']}")
                     print(f"reason      : {snapshot['recommendation']['reason']}")
+        return 0
+    if a.cmd == "memory":
+        brief = developer_memory_brief(Path(a.root), base=a.base, changed=a.changed or None)
+        if a.json:
+            print(json.dumps(brief, indent=2, sort_keys=True))
+        else:
+            next_action = brief["next_action"]
+            team = brief["team"]
+            print("factory memory brief (read-only)")
+            print("=" * 44)
+            print(f"next action : {next_action['action']}")
+            print(f"actions     : {len(brief['actions'])}")
+            print(f"team source : {team['source']['kind']} ({team['source']['roster_completeness']})")
+            print("authority   : no proof execution, approval, memory recall, publication, deployment, or credential access")
         return 0
     if a.cmd == "change":
         try:

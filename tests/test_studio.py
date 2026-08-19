@@ -11,6 +11,7 @@ import pytest
 from factoryline.studio import (
     MAX_BODY_BYTES,
     StudioRequestError,
+    developer_memory_snapshot,
     create_from_studio,
     create_product_mission_from_studio,
     decide_product_mission_from_studio,
@@ -22,6 +23,7 @@ from factoryline.studio import (
     savings_from_studio,
     studio_status,
 )
+from factoryline.meter import MeterLog, StageTiming
 
 
 def test_studio_dual_track_defaults_to_instant_mvp_and_keeps_pro_controls_visible():
@@ -35,6 +37,15 @@ def test_studio_dual_track_defaults_to_instant_mvp_and_keeps_pro_controls_visibl
     assert "GRAPH_OPS_UNIFIED_READ_ONLY" in page
     assert "else setMode('starter')" in page
     assert "Build my MVP" in page
+    assert "Prior measured runs" in page
+    assert "Request safe stop" in page
+    assert "Memory Spine: next safe proof" in page
+    assert "Refresh stats and proof brief" in page
+    assert "Refresh team attribution" in page
+    assert "renderStudioMemory(payload.developer_memory)" in page
+    assert "fetch('/api/developer-memory'" in page
+    assert "profile.approval}`])));rows('authority-list'" in page
+    assert "innerHTML" not in page
 
 
 def test_studio_assembly_uses_shared_continuation_and_preserves_authority(tmp_path, monkeypatch):
@@ -86,6 +97,33 @@ def test_dashboard_preserves_unknowns_and_exposes_control_state(tmp_path: Path):
     assert all(pack["signature_verified"] and pack["mutations_rejected"] == 10 for pack in dashboard["packs"])
     assert all(pack["deployment_profiles"] for pack in dashboard["packs"])
     assert dashboard["authority"]["can_deploy"] is False
+    assert dashboard["developer_memory"]["marker"] == "DEVELOPER_MEMORY_STUDIO_CACHED"
+    assert dashboard["developer_memory"]["brief"]["schema"] == "factory.developer-memory-brief.v1"
+    assert "STUDIO_DEVELOPER_MEMORY_VISIBLE" in dashboard["markers"]
+    repeated = developer_memory_snapshot(tmp_path)
+    assert repeated["cache"]["state"] == "reused"
+    assert repeated["cache"]["refresh_interval_ms"] == 5000
+
+
+def test_dashboard_lists_prior_measured_runs_without_inferring_success(tmp_path: Path):
+    ledger = MeterLog(tmp_path)
+    ledger.record(StageTiming(
+        module="spec", stage="validate", wall_ms=125, model_calls=0,
+        tokens_in=0, tokens_out=0, ok=True, feature="approval-tracker",
+        run_id="run-earlier", recorded_at="2026-08-18T10:00:00+00:00",
+    ))
+    ledger.record(StageTiming(
+        module="verify", stage="tests", wall_ms=250, model_calls=1,
+        tokens_in=40, tokens_out=20, ok=False, feature="approval-tracker",
+        run_id="run-latest", recorded_at="2026-08-18T11:00:00+00:00",
+    ))
+
+    runs = studio_dashboard(tmp_path)["recent_runs"]
+
+    assert [item["run_id"] for item in runs] == ["run-latest", "run-earlier"]
+    assert runs[0]["outcome"] == "failed_stage_observed"
+    assert runs[0]["tokens"] == 60
+    assert runs[0]["cost_usd"] is None
 
 
 def test_studio_contains_output_and_forbids_promotion(tmp_path: Path):
@@ -181,11 +219,24 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         assert response.status == 200
         dashboard = json.loads(response.read())
         assert dashboard["schema"] == "factory.studio.dashboard.v1"
+        assert dashboard["live_activity"]["status"] == "idle"
 
         connection.request("GET", "/api/savings")
         response = connection.getresponse()
         assert response.status == 403
         response.read()
+
+        connection.request("GET", "/api/developer-memory")
+        response = connection.getresponse()
+        assert response.status == 403
+        response.read()
+
+        connection.request("GET", "/api/developer-memory", headers={"X-Factory-Studio-Token": token})
+        response = connection.getresponse()
+        assert response.status == 200
+        developer_memory = json.loads(response.read())
+        assert developer_memory["marker"] == "DEVELOPER_MEMORY_STUDIO_CACHED"
+        assert developer_memory["brief"]["authority"]["external_effects"] is False
 
         connection.request("GET", "/api/graph-ops")
         response = connection.getresponse()
@@ -205,6 +256,9 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         graph_ops = json.loads(response.read())
         assert graph_ops["schema"] == "factory.graph-ops.v1"
         assert graph_ops["authority"]["publication"] is False
+        assert graph_ops["live_telemetry"]["activity"]["status"] == "idle"
+        assert graph_ops["live_telemetry"]["refresh_interval_ms"] == 1000
+        assert graph_ops["live_telemetry"]["recent_runs"] == []
 
         savings_body = json.dumps({
             "action": "savings-record", "pair_id": "http-pair",

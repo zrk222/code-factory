@@ -43,6 +43,11 @@ known, what is missing, and the one fact-derived next action.
 - **Turns a diff into a reviewable proof plan.** `factory change review` joins
   explicit change impact, stale proofs, coverage gaps, and existing risk policy
   into one analysis-only reviewer packet and Mermaid map.
+- **Makes the next proof easy to see without turning memory into authority.**
+  `factory memory brief` projects explicit changed-path evidence into capped,
+  explanatory next actions with redacted continuity facts and observed local Git
+  contribution context. It never runs a proof, recalls memory bodies, or treats
+  Git authors as verified project seats.
 - **Adds deterministic evidence to a GitHub PR without replacing its reviewer.**
   `factory github proof-review` binds the current Diff-to-Proof Review to one
   exact commit, an advisory neutral Check, and a stable walkthrough. It can
@@ -84,7 +89,7 @@ known, what is missing, and the one fact-derived next action.
 ## Typical path
 
 ```powershell
-pip install factoryline-code-factory==0.37.0
+pip install factoryline-code-factory==0.38.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid
@@ -92,6 +97,7 @@ factory graph forensics --baseline good.lineage.json --candidate bad.lineage.jso
 factory proofsearch verify .factory/proofsearch/repair.evaluation.json --root . --json
 factory verifier progress .\attempts.json --json
 factory change review --root . --base origin/main
+factory memory brief --root . --json
 factory github proof-review --root . --base origin/main --head-sha abcdefabcdefabcdefabcdefabcdefabcdefabcd --json
 factory release integrity --root . --json
 ```

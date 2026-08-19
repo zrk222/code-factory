@@ -34,36 +34,36 @@ gallery replacement.
 Use this only as an update associated with the existing **Code Factory**
 Product Hunt product.
 
-**Headline:** Trace the graph failure. Prove the smallest repair.
+**Headline:** Refresh the proof state. See the next safe action.
 
-**Tagline:** Find the proof gap, test the smallest repair, and choose the next fact to collect.
+**Tagline:** Follow live local delivery evidence without handing an AI release authority.
 
 **Update copy:**
 
-Code Factory now traces sealed agent-graph runs to the first semantic
-divergence, shows the downstream causal path, and catches stale state,
-conflicting parallel writes, or repeated side effects. ProofSearch then
-compares 2–12 supplied repair candidates, rejects failed proofs, surviving
-mutants, scope escapes, test weakening, and error suppression, and explains one
-deterministic verified winner.
+Code Factory now keeps Factory Studio and Unified Graph Ops current while a
+local Assembly runs. Refresh the activity state, see the current stage and
+completed work, and open a Developer Memory Brief that turns the exact diff into
+one safe next-proof action. It also shows redacted continuity facts and observed
+local Git contribution context—never a claim that Git authors are verified
+seats, owners, approvers, or a billing roster.
 
 Evidence Frontier then ranks the supplied, non-executing checks by how many
 viable repair pairs each can distinguish. Its predictions are displayed as
 unverified hypotheses—not a model verdict—and the next experiment remains
 locked until a separately approved runner records external evidence.
 
-The Graph Ops Counterfactual Arena shows every candidate, loss reason,
-mutation result, risk, changed scope, proof runtime, measured-or-unavailable
-savings, and the sealed decision hash. Verification, export, and guardrail
-controls are available in the UI; experiments, apply, merge, publication, deployment,
-credentials, and connectors remain locked.
+The same UI still makes evidence and authority visible: fresh or stale proof,
+next action, and measured-or-unavailable values are separated from approvals.
+Verification, export, and guardrail controls remain available; tests, repairs,
+apply, merge, publication, deployment, credentials, and connectors remain
+human-controlled.
 
 **Primary CTA:** Inspect the live repair arena and verify the winning evidence.
 
 **Proof links:**
 
-- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.37.0`
-- PyPI: `https://pypi.org/project/factoryline-code-factory/0.37.0/`
+- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.38.0`
+- PyPI: `https://pypi.org/project/factoryline-code-factory/0.38.0/`
 - Source: `https://github.com/zrk222/code-factory`
 
 If no authenticated Code Factory post or draft exists, report

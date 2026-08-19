@@ -10,6 +10,7 @@ import sys
 from typing import Any, TextIO
 
 from . import __version__
+from .developer_memory import developer_memory_brief
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .proof_reuse import verify_proof_receipt
 from .prd_grill import verify_prd_grill
@@ -102,6 +103,24 @@ def _tool_definitions() -> list[dict[str, object]]:
                     },
                 },
                 "required": ["changed_paths"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.developer_memory",
+            "description": "Return a read-only next-proof brief with redacted continuity facts and observed local Git contributor attribution. It never runs a proof, writes memory, or treats Git authors as verified seats.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "changed_paths": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                    },
+                    "base": {"type": "string", "minLength": 1, "maxLength": 120},
+                },
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -409,6 +428,20 @@ def _graph_ops(root: Path, arguments: object) -> dict[str, object]:
     return payload
 
 
+def _developer_memory(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"changed_paths", "base"}:
+        raise McpError("factory.developer_memory accepts only optional changed_paths and base")
+    changed = _changed_paths({"changed_paths": arguments["changed_paths"]}) if "changed_paths" in arguments else None
+    base = arguments.get("base", "main")
+    if not isinstance(base, str) or not base.strip() or len(base) > 120:
+        raise McpError("base must be a non-empty string of at most 120 characters")
+    return {
+        "marker": "MCP_DEVELOPER_MEMORY_READ_ONLY",
+        "brief": developer_memory_brief(root, base=base, changed=changed),
+        "scope": "Read-only local evidence projection; no proof, memory record, approval, or identity-directory action ran.",
+    }
+
+
 def _verifier_session_path(root: Path, arguments: object) -> tuple[Path, dict[str, Any]] | None:
     if not isinstance(arguments, dict) or set(arguments) - {"session", "mission"}:
         raise McpError("factory.verifier_status accepts only session or mission")
@@ -537,6 +570,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
             "marker": "MCP_GRAPH_IMPACT_PARITY",
             "impact": graph_ops_impact(root, _changed_paths(arguments)),
         })
+    if name == "factory.developer_memory":
+        return _content(_developer_memory(root, arguments))
     if name == "factory.next_action":
         if arguments != {}:
             raise McpError("factory.next_action accepts no arguments")
