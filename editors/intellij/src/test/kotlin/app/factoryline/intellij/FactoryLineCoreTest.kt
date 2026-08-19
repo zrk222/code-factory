@@ -212,6 +212,16 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun studioRoutesPreserveTheLiteralLoopbackBoundary() {
+        val base = "http://127.0.0.1:43117/"
+
+        assertEquals("http://127.0.0.1:43117/graph-ops", StudioUrl.graphOps(base))
+        assertEquals("http://127.0.0.1:43117/?mode=product", StudioUrl.productMissions(base))
+        assertEquals(null, StudioUrl.graphOps("https://example.com/"))
+        assertEquals(null, StudioUrl.productMissions("http://localhost:43117/"))
+    }
+
+    @Test
     fun receiptSummarySelectsKnownFieldsWithoutRenderingHtml() {
         val summary = ReceiptSummary.fromJson(
             Files.createTempFile("factoryline", ".json"),

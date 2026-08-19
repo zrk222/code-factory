@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.37.0"
+version = "0.38.0"
 description = "Build a local MVP, catch hollow tests, and prove AI-assisted changes before review."
 authors = [
   { name = "Richard Katz" },

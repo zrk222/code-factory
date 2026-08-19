@@ -29,6 +29,9 @@ factory mvp "Build an approval tracker" --root .
   CLI, worker, MCP, or agent-UI starting state.
 - **Review what AI produced.** Turn requirements, diffs, proofs, and blockers into
   receipts, Graph Ops, and one fact-derived next action.
+- **Refresh the evidence that matters.** Watch a local Assembly while it runs,
+  refresh the next-proof brief, and see privacy-bounded observed Git contribution
+  context without pretending it is a verified directory or billing roster.
 - **Keep "done" honest.** Challenge declared validators for hollow tests; a
   green-looking scaffold is never called production-ready by default.
 
@@ -73,6 +76,7 @@ developers can find it. This optional link only opens the repository.
 | Build a first slice | [`factory mvp`](docs/START_HERE.md) | A contained, app-shaped local starting state |
 | Clarify a fuzzy PRD | [`factory prd grill`](docs/PRD_GRILL.md) | Source-bound questions instead of invented requirements |
 | Review an AI-assisted diff | [`factory change review`](docs/DIFF_TO_PROOF_REVIEW.md) | A local risk, proof-gap, and next-action packet |
+| Turn a diff into the next safe proof | [`factory memory brief`](docs/DEVELOPER_MEMORY_BRIEF.md) | Refreshable actions, redacted continuity facts, and observed local Git contribution context |
 | Keep an agent diff inside approved scope | [`factory plan verify`](docs/PLAN_TO_PROOF_REVIEW.md) | Exact plan alignment and explicit Proof Debt—not another AI opinion |
 | Prove an E2E check can say no | [`factory e2e verify`](docs/E2E_PROOF_GATE.md) | A native positive/negative command-pair receipt that catches hollow E2E checks |
 | Prepare a bounded Team pilot | [`factory team-pilot readiness`](docs/TEAM_PILOT_LAUNCH.md) | Hash-bound, customer-managed readiness evidence for owner reviewâ€”not a checkout or service activation |
@@ -166,7 +170,7 @@ output map make the same proof context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.37.0.md),
+- See the [release notes](docs/RELEASE_NOTES_0.38.0.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

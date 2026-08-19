@@ -12,6 +12,7 @@ local result. The remaining explicit actions are:
 | An AI or teammate diff is hard to trust | Proof Review turns the declared local diff into its review hash, proof gaps, severity-ordered findings, and one fact-derived next action. | It reports facts; it does not call code correct or ready to ship. |
 | One workspace contains several tasks | Review Current Diff analyzes the whole local change set; Review This File isolates the active file. | The focused path is explicit and avoids unrelated Git paths. |
 | Review context vanishes across handoffs | Save Review Handoff writes local JSON, Markdown, and Mermaid evidence under `.factory/change-reviews`. | A packet is not an approval, a commit, or a repair. |
+| The current proof state is easy to lose during a long local run | Factory Studio and Graph Ops show refreshable activity, redacted next-proof context, and observed local Git contribution cards. | Git contributors are not verified seats, owners, approvers, or a billing roster. |
 | An AI repair attempt needs too much or the wrong context | Verified Repair Sandbox seals one native Change List, reports its exact bytes, and accepts only a textual candidate patch that stays inside its Scope Passport. | Bytes are not a token or credit estimate; FactoryLine never runs the agent or applies the patch. |
 | AI Chat lacks trustworthy project context | The Repair Sandbox can copy the current local proof context or a local MCP configuration for a manual paste/setup. | The plugin does not configure AI, upload source, call a provider, or spend credits. |
 | A large, generated, or WSL/UNC workspace is hard to triage | Workspace Advisor measures bounded local file/byte shape and path-only remote context, then offers manual review paths for managed directories. | It never changes heap, caches, indexes, inspections, plugins, project files, or remote settings; it is not an IDE performance diagnosis. |
@@ -132,7 +133,7 @@ candidate files.
 1. Install FactoryLine:
 
    ```powershell
-   pip install factoryline-code-factory==0.37.0
+   pip install factoryline-code-factory==0.38.0
    ```
 
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for

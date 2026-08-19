@@ -1,7 +1,7 @@
 {
   "title": "Code Factory: Proof-by-Sabotage Software Factory",
-  "description": "Code Factory is a proof-first, open-source software factory for turning specifications, behavior checks, design contracts, policy verification, Mermaid diagrams, and release receipts into auditable delivery through Unified Graph Ops. Version 0.37 adds deterministic counterexample planning, read-only redacted continuity guardrails, and temporal resilience planning so teams can make negative proof obligations, governed decision context, and replay-risk schedules visible before an external runner acts. Release media includes the current FactoryLine identity asset and real product captures.\n\nEvidence boundary: Factory Continuity is not a hosted memory service and stores no private content, embeddings, vectors, prompts, or transcripts. Counterexample, guardrail, and resilience layers do not execute commands, alter source or policy, approve, merge, publish, deploy, sign, message, access credentials, or grant connectors. Time, token, and cost savings require exact paired observations; productivity remains unavailable without separate measured evidence. A passing receipt proves the declared checks and supplied environment, not arbitrary production security.\n\nDual licensed under MIT or Apache-2.0.",
-  "version": "0.37.0",
+  "description": "Code Factory is a proof-first, open-source software factory for turning specifications, behavior checks, design contracts, policy verification, Mermaid diagrams, and release receipts into auditable delivery through Unified Graph Ops. Version 0.38 adds refreshable local Assembly activity and a read-only Developer Memory Brief: capped next-proof actions grounded in the exact current diff, redacted Continuity metadata, and observed local Git contribution context. Release media includes the current FactoryLine identity asset and real product captures.\n\nEvidence boundary: the Developer Memory Brief does not expose remembered content or grant execution, repair, approval, merge, publication, deployment, signing, credential, connector, or external-message authority. Git authorship is not represented as verified seats, approvers, ownership, billing, or productivity. Time, token, and cost savings require exact paired observations; productivity remains unavailable without separate measured evidence. A passing receipt proves the declared checks and supplied environment, not arbitrary production security.\n\nDual licensed under MIT or Apache-2.0.",
+  "version": "0.38.0",
   "publication_date": "2026-08-18",
   "creators": [
     {
@@ -54,7 +54,9 @@
     "design-review",
     "ui-quality",
     "e2e-proof",
-    "team-pilot"
+    "team-pilot",
+    "developer-memory",
+    "live-activity"
   ],
   "related_identifiers": [
     {

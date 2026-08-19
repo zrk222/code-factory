@@ -9,6 +9,7 @@ import re
 import secrets
 import threading
 import webbrowser
+from time import monotonic
 
 from .target_compiler import TARGETS, TargetCompileError, create_target_from_prompt
 from .product_missions import (
@@ -26,6 +27,8 @@ from .run_metrics import public_metrics
 from .savings import SavingsError, public_savings_report, record_savings_pair
 from .graph_ops import graph_ops_html, graph_ops_snapshot
 from .graph_authorization import GraphAuthorizationError, create_graph_authorization, run_authorized_reality_check
+from .developer_memory import developer_memory_brief
+from .live_activity import activity_snapshot, request_stop
 
 
 STUDIO_SCHEMA = "factory.studio.v1"
@@ -34,6 +37,9 @@ LOOPBACK_HOST = "127.0.0.1"
 NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}")
 FORBIDDEN_ACTIONS = {"deploy", "publish", "sign", "external-message", "credential", "connector-grant"}
 RESOLUTION_MODES = {"human_approval", "auto_resolve_safe"}
+DEVELOPER_MEMORY_REFRESH_INTERVAL_MS = 5_000
+_developer_memory_cache_lock = threading.Lock()
+_developer_memory_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 class StudioRequestError(ValueError):
@@ -43,6 +49,35 @@ class StudioRequestError(ValueError):
         self.message = message
         self.status = status
         self.guidance = explain_failure(code, message)
+
+
+def developer_memory_snapshot(root: Path) -> dict[str, Any]:
+    """Return a cache-bounded local next-proof projection for Studio surfaces."""
+    workspace = Path(root).resolve()
+    key = str(workspace)
+    now = monotonic()
+    with _developer_memory_cache_lock:
+        cached = _developer_memory_cache.get(key)
+        if cached is not None and (now - cached[0]) * 1000 < DEVELOPER_MEMORY_REFRESH_INTERVAL_MS:
+            brief = cached[1]
+            cache_state = "reused"
+            age_ms = int((now - cached[0]) * 1000)
+        else:
+            brief = developer_memory_brief(workspace)
+            _developer_memory_cache[key] = (now, brief)
+            cache_state = "fresh"
+            age_ms = 0
+    return {
+        "schema": "factory.studio.developer-memory.v1",
+        "marker": "DEVELOPER_MEMORY_STUDIO_CACHED",
+        "brief": brief,
+        "cache": {
+            "state": cache_state,
+            "age_ms": age_ms,
+            "refresh_interval_ms": DEVELOPER_MEMORY_REFRESH_INTERVAL_MS,
+            "scope": "Only one new brief calculation per local Studio root and five-second interval.",
+        },
+    }
 
 
 def studio_status(root: Path, port: int) -> dict[str, Any]:
@@ -195,6 +230,49 @@ def _receipt_comparison(root: Path) -> dict[str, Any]:
     }
 
 
+def _recent_run_stats(root: Path, *, limit: int = 8) -> list[dict[str, Any]]:
+    """Return observed, append-only run history without inferring unrecorded outcomes.
+
+    Meter rows are stage receipts, not a claim that an entire run succeeded.  The
+    UI therefore names failures and unknown usage quality directly instead of
+    turning a partial ledger into a green completion badge.
+    """
+    groups: dict[str, list[Any]] = {}
+    for stage in MeterLog(root).stages():
+        if stage.run_id:
+            groups.setdefault(stage.run_id, []).append(stage)
+
+    def summary(run_id: str, stages: list[Any]) -> dict[str, Any]:
+        ordered = sorted(stages, key=lambda item: item.recorded_at or "")
+        latest = ordered[-1]
+        token_qualities = sorted({item.token_quality or item.usage_quality for item in ordered})
+        cost_qualities = sorted({item.cost_quality for item in ordered})
+        observed_outcomes = [item.outcome_status for item in ordered if item.outcome_status]
+        failed_stages = sum(not item.ok for item in ordered)
+        return {
+            "run_id": run_id,
+            "feature": next((item.feature for item in reversed(ordered) if item.feature), None),
+            "first_recorded_at": ordered[0].recorded_at or None,
+            "last_recorded_at": latest.recorded_at or None,
+            "stages_recorded": len(ordered),
+            "failed_stages": failed_stages,
+            "wall_ms": sum(item.wall_ms for item in ordered),
+            "model_calls": sum(item.model_calls for item in ordered),
+            "tokens": sum(item.tokens_in + item.tokens_out for item in ordered),
+            "token_quality": token_qualities,
+            "cost_usd": (sum(item.cost_usd or 0 for item in ordered)
+                         if all(item.cost_usd is not None for item in ordered) else None),
+            "cost_quality": cost_qualities,
+            "outcome": (observed_outcomes[-1] if observed_outcomes
+                        else "failed_stage_observed" if failed_stages
+                        else "stages_recorded"),
+        }
+
+    rows = [summary(run_id, stages) for run_id, stages in groups.items()]
+    rows.sort(key=lambda item: item["last_recorded_at"] or "", reverse=True)
+    return rows[:limit]
+
+
 def studio_dashboard(root: Path) -> dict[str, Any]:
     """Return live local telemetry, approvals, and pack trust without side effects."""
     meter = live_snapshot(Path(root))
@@ -211,15 +289,19 @@ def studio_dashboard(root: Path) -> dict[str, Any]:
         })
     missions = _mission_rows(Path(root))
     products, slice_queue = _product_rows(Path(root))
+    developer_memory = developer_memory_snapshot(Path(root))
     return {
         "schema": "factory.studio.dashboard.v1",
         "generated_at": meter["generated_at"],
         "meter": meter,
+        "live_activity": activity_snapshot(Path(root)),
         "missions": missions,
         "products": products,
         "slice_queue": slice_queue,
         "proof_timeline": _proof_timeline(missions),
         "receipt_comparison": _receipt_comparison(Path(root)),
+        "recent_runs": _recent_run_stats(Path(root)),
+        "developer_memory": developer_memory,
         "approvals": {
             "awaiting_owner": sum(item["decision"] == "awaiting_owner" for item in missions),
             "approved_execution": sum(item["decision"] == "approved_execution" for item in missions),
@@ -238,6 +320,7 @@ def studio_dashboard(root: Path) -> dict[str, Any]:
             "STUDIO_LIVE_TELEMETRY", "STUDIO_APPROVAL_QUEUE", "STUDIO_PACK_TRUST_VISIBLE",
             "STUDIO_PRODUCT_GRAPH_VISIBLE", "STUDIO_SLICE_QUEUE_VISIBLE",
             "STUDIO_PROOF_TIMELINE_VISIBLE", "STUDIO_RECEIPT_COMPARISON_VISIBLE",
+            "STUDIO_PRIOR_RUNS_VISIBLE", "STUDIO_DEVELOPER_MEMORY_VISIBLE",
         ],
     }
 
@@ -519,9 +602,10 @@ button:disabled {{ opacity:.55; cursor:wait; }} #result {{ min-height:48px; padd
 .data-row-actions {{ align-items:center; }} .mini-actions {{ display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }} .mini-actions button {{ padding:7px 9px; font-size:12px; }}
 .empty-data {{ color:var(--muted); font-size:13px; }} .wide-panel {{ grid-column:1/-1; }}
 .live-dot {{ display:inline-block; width:8px; height:8px; margin-right:7px; border-radius:50%; background:#22c55e; }}
+.memory-studio-flow {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-top:14px; }} .memory-studio-step {{ min-height:104px; padding:12px; border:1px solid #b9cbe0; border-radius:9px; background:linear-gradient(145deg,#f8fbff,#eef5ff); }} .memory-studio-step[data-state="blocking"] {{ border-color:#fca5a5; background:#fff1f2; }} .memory-studio-step[data-state="required"],.memory-studio-step[data-state="review"] {{ border-color:#f5c46a; background:#fffbeb; }} .memory-studio-step[data-state="ready"] {{ border-color:#86d2a5; background:#ecfdf5; }} .memory-studio-step strong,.memory-studio-step span {{ display:block; }} .memory-studio-step span {{ margin-top:6px; color:var(--muted); font-size:12px; line-height:1.45; }} .memory-studio-actions {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:12px; }} .memory-studio-action {{ padding:12px; border:1px solid #bfdbfe; border-left:4px solid #3b82f6; border-radius:8px; background:#f8fbff; }} .memory-studio-action[data-severity="blocking"] {{ border-color:#fca5a5; border-left-color:#dc2626; background:#fff1f2; }} .memory-studio-action[data-severity="required"],.memory-studio-action[data-severity="review"] {{ border-color:#f5c46a; border-left-color:#d97706; background:#fffbeb; }} .memory-studio-action[data-severity="ready"] {{ border-color:#86d2a5; border-left-color:#15803d; background:#ecfdf5; }} .memory-studio-action strong,.memory-studio-action span {{ display:block; }} .memory-studio-action span {{ margin-top:5px; color:var(--muted); font-size:12px; line-height:1.45; }} .memory-studio-team {{ margin-top:12px; padding:12px; border-radius:8px; background:#f8fafc; color:var(--muted); font-size:13px; }}
 @media(max-width:900px) {{ .targets {{ grid-template-columns:1fr 1fr; }} .inputs {{ grid-template-columns:1fr; }} .intro {{ grid-template-columns:1fr; }} }}
-@media(max-width:900px) {{ .stats {{ grid-template-columns:1fr 1fr; }} .dash-grid {{ grid-template-columns:1fr; }} }}
-@media(max-width:560px) {{ .targets,.stats {{ grid-template-columns:1fr; }} h1 {{ font-size:31px; }} }}
+@media(max-width:900px) {{ .stats {{ grid-template-columns:1fr 1fr; }} .dash-grid {{ grid-template-columns:1fr; }} .memory-studio-flow,.memory-studio-actions {{ grid-template-columns:1fr 1fr; }} }}
+@media(max-width:560px) {{ .targets,.stats,.memory-studio-flow,.memory-studio-actions {{ grid-template-columns:1fr; }} h1 {{ font-size:31px; }} }}
 </style></head><body>
 <header class="topbar"><strong>Factory Studio</strong><span id="surface-label">Local target compiler</span><a href="/graph-ops" style="color:#dbeafe;font-weight:800">Graph Ops</a></header>
 <main data-marker="FACTORY_DUAL_TRACK_START GRAPH_OPS_UNIFIED_READ_ONLY"><section class="intro"><div><p class="eyebrow" id="workflow-label">INSTANT MVP TO PROFESSIONAL PROOF</p><h1 id="workflow-title">Describe the outcome. Get a local MVP.</h1></div><div class="boundary">Loopback only. No publish, deploy, signing, credentials, connectors, or external messages.</div></section>
@@ -546,8 +630,21 @@ document.querySelectorAll('input[name="target"]').forEach(input=>input.addEventL
 function textValue(value,suffix=''){{return value===null||value===undefined?'not available':`${{value}}${{suffix}}`;}}
 function rows(id,items){{const host=document.getElementById(id);host.textContent='';items.forEach(([label,value])=>{{const row=document.createElement('div');row.className='data-row';const a=document.createElement('span');a.textContent=label;const b=document.createElement('strong');b.textContent=value;row.append(a,b);host.appendChild(row);}});}}
 function approvalRows(missions){{const host=document.getElementById('approval-list');host.textContent='';const pending=missions.filter(item=>item.decision==='awaiting_owner');if(!pending.length){{const empty=document.createElement('div');empty.className='empty-data';empty.textContent='No mission is waiting for an owner decision.';host.appendChild(empty);return;}}pending.forEach(item=>{{const row=document.createElement('div');row.className='data-row data-row-actions';const label=document.createElement('span');label.textContent=`${{item.id}} | ${{item.risk}} risk | ${{item.criteria}} criteria`;const actions=document.createElement('div');actions.className='mini-actions';[['approved_execution','Approve'],['deferred','Defer'],['rejected','Reject']].forEach(([decision,title])=>{{const action=document.createElement('button');action.type='button';action.textContent=title;action.onclick=()=>decideDashboardMission(item,decision);actions.appendChild(action);}});row.append(label,actions);host.appendChild(row);}});}}
-async function refreshDashboard(){{try{{const response=await fetch('/api/dashboard',{{headers:{{'X-Factory-Studio-Token':token}}}});const payload=await response.json();if(!response.ok)return;const summary=payload.meter.summary||{{}};const activity=payload.meter.activity||{{}};const flow=summary.flow||{{}};const firstPass=flow.first_pass_gate_rate?.value;document.getElementById('stat-stages').textContent=textValue(summary.stages_measured);document.getElementById('stat-first-pass').textContent=firstPass===null||firstPass===undefined?'not available':`${{(firstPass*100).toFixed(1)}}%`;document.getElementById('stat-runs').textContent=textValue(activity.runs_observed);document.getElementById('stat-flow').textContent=flow.flow_efficiency===null||flow.flow_efficiency===undefined?'not available':`${{(flow.flow_efficiency*100).toFixed(1)}}%`;const latest=activity.latest_stage;rows('activity-list',[["Latest stage",latest?`${{latest.module}}:${{latest.stage}} (${{latest.ok?'ok':'failed'}})`:'none yet'],["Agent / tool time",`${{textValue(flow.agent_ms?.value,' ms')}} / ${{textValue(flow.deterministic_tool_ms?.value,' ms')}}`],["Queue / review time",`${{textValue(flow.queue_ms?.value,' ms')}} / ${{textValue(flow.human_review_ms?.value,' ms')}}`],["Requirements / token",textValue(flow.requirements_per_token)],["Rollback rate",flow.rollback_rate===null||flow.rollback_rate===undefined?'not available':`${{(flow.rollback_rate*100).toFixed(1)}}%`],["Token / cost quality",`${{JSON.stringify(flow.token_quality||{{}})}} / ${{JSON.stringify(flow.cost_quality||{{}})}}`]]);const paired=payload.savings||{{}};rows('savings-list',[["Exact pairs",textValue(paired.pairs)],["Time saved",textValue(paired.time?.saved_total,' ms')],["Tokens saved",textValue(paired.tokens?.saved_total)],["Productivity",paired.productivity?.gain_rate===null||paired.productivity?.gain_rate===undefined?'withheld until equivalence proof':`${{(paired.productivity.gain_rate*100).toFixed(1)}}%`]]);approvalRows(payload.missions);rows('product-list',payload.products.map(item=>[`${{item.project}} | ${{item.requirements}} requirements | ${{item.slice_count}} slices`,`${{item.status}} | journey: ${{item.journeys[0]||'missing'}} | gaps: ${{item.blocking_gaps}} blocking, ${{item.advisory_gaps}} advisory`]));rows('slice-list',payload.slice_queue.map(item=>[`${{item.id}} | priority ${{textValue(item.priority)}}`,`${{item.theme}} | ${{item.risk}} risk | dependencies ${{item.depends_on.length}}`]));rows('mission-list',payload.missions.map(item=>[`${{item.id}} | ${{item.decision}}`,`${{item.branch||'branch unavailable'}} | ${{item.completion}}`]));rows('proof-list',payload.proof_timeline.map(item=>[`${{item.requirement_id}} -> ${{item.slice_id}} -> ${{item.mission_id}}`,item.receipt?`receipt: ${{item.receipt}}`:`${{item.test_state}}; receipt pending`]));const compare=payload.receipt_comparison;rows('comparison-list',compare.status==='compared'?[["Run",`${{compare.previous.run_id}} -> ${{compare.current.run_id}}`],["Wall delta",`${{compare.delta.wall_ms}} ms`],["Token delta",String(compare.delta.tokens)],["Failed-stage delta",String(compare.delta.failed_stages)]]:[["Status","Two run IDs are required before comparison."]]);rows('pack-list',payload.packs.map(pack=>[`${{pack.target_kind}} ${{pack.version}}`,pack.valid&&pack.signature_verified?`verified; ${{pack.mutations_rejected}}/${{pack.mutations_attempted}} mutations rejected`:'invalid']));rows('deployment-list',payload.packs.flatMap(pack=>pack.deployment_profiles.map(profile=>[`${{pack.target_kind}}: ${{profile.label}}`,`${{profile.verify}} | approval: ${{profile.approval}}`]));rows('authority-list',[["Create starters",payload.authority.can_create_starters?'allowed':'denied'],["Record exact savings",payload.authority.can_record_exact_savings_pairs?'allowed':'denied'],["Approve bounded mission",payload.authority.can_record_mission_execution_decision?'allowed':'denied'],["Deploy / publish / sign",'denied until a route is selected and separately approved'],["Credentials / connectors / messages",'denied']]);}}catch(_error){{document.getElementById('stat-first-pass').textContent='telemetry unavailable';}}}}
-setInterval(()=>{{if(mode==='dashboard')refreshDashboard();}},5000);refreshDashboard();
+async function refreshDashboard(){{try{{const response=await fetch('/api/dashboard',{{headers:{{'X-Factory-Studio-Token':token}}}});const payload=await response.json();if(!response.ok)return;const summary=payload.meter.summary||{{}};const activity=payload.meter.activity||{{}};const flow=summary.flow||{{}};const firstPass=flow.first_pass_gate_rate?.value;document.getElementById('stat-stages').textContent=textValue(summary.stages_measured);document.getElementById('stat-first-pass').textContent=firstPass===null||firstPass===undefined?'not available':`${{(firstPass*100).toFixed(1)}}%`;document.getElementById('stat-runs').textContent=textValue(activity.runs_observed);document.getElementById('stat-flow').textContent=flow.flow_efficiency===null||flow.flow_efficiency===undefined?'not available':`${{(flow.flow_efficiency*100).toFixed(1)}}%`;const latest=activity.latest_stage;rows('activity-list',[["Latest stage",latest?`${{latest.module}}:${{latest.stage}} (${{latest.ok?'ok':'failed'}})`:'none yet'],["Agent / tool time",`${{textValue(flow.agent_ms?.value,' ms')}} / ${{textValue(flow.deterministic_tool_ms?.value,' ms')}}`],["Queue / review time",`${{textValue(flow.queue_ms?.value,' ms')}} / ${{textValue(flow.human_review_ms?.value,' ms')}}`],["Requirements / token",textValue(flow.requirements_per_token)],["Rollback rate",flow.rollback_rate===null||flow.rollback_rate===undefined?'not available':`${{(flow.rollback_rate*100).toFixed(1)}}%`],["Token / cost quality",`${{JSON.stringify(flow.token_quality||{{}})}} / ${{JSON.stringify(flow.cost_quality||{{}})}}`]]);const paired=payload.savings||{{}};rows('savings-list',[["Exact pairs",textValue(paired.pairs)],["Time saved",textValue(paired.time?.saved_total,' ms')],["Tokens saved",textValue(paired.tokens?.saved_total)],["Productivity",paired.productivity?.gain_rate===null||paired.productivity?.gain_rate===undefined?'withheld until equivalence proof':`${{(paired.productivity.gain_rate*100).toFixed(1)}}%`]]);approvalRows(payload.missions);rows('product-list',payload.products.map(item=>[`${{item.project}} | ${{item.requirements}} requirements | ${{item.slice_count}} slices`,`${{item.status}} | journey: ${{item.journeys[0]||'missing'}} | gaps: ${{item.blocking_gaps}} blocking, ${{item.advisory_gaps}} advisory`]));rows('slice-list',payload.slice_queue.map(item=>[`${{item.id}} | priority ${{textValue(item.priority)}}`,`${{item.theme}} | ${{item.risk}} risk | dependencies ${{item.depends_on.length}}`]));rows('mission-list',payload.missions.map(item=>[`${{item.id}} | ${{item.decision}}`,`${{item.branch||'branch unavailable'}} | ${{item.completion}}`]));rows('proof-list',payload.proof_timeline.map(item=>[`${{item.requirement_id}} -> ${{item.slice_id}} -> ${{item.mission_id}}`,item.receipt?`receipt: ${{item.receipt}}`:`${{item.test_state}}; receipt pending`]));const compare=payload.receipt_comparison;rows('comparison-list',compare.status==='compared'?[["Run",`${{compare.previous.run_id}} -> ${{compare.current.run_id}}`],["Wall delta",`${{compare.delta.wall_ms}} ms`],["Token delta",String(compare.delta.tokens)],["Failed-stage delta",String(compare.delta.failed_stages)]]:[["Status","Two run IDs are required before comparison."]]);rows('pack-list',payload.packs.map(pack=>[`${{pack.target_kind}} ${{pack.version}}`,pack.valid&&pack.signature_verified?`verified; ${{pack.mutations_rejected}}/${{pack.mutations_attempted}} mutations rejected`:'invalid']));rows('deployment-list',payload.packs.flatMap(pack=>pack.deployment_profiles.map(profile=>[`${{pack.target_kind}}: ${{profile.label}}`,`${{profile.verify}} | approval: ${{profile.approval}}`])));rows('authority-list',[["Create starters",payload.authority.can_create_starters?'allowed':'denied'],["Record exact savings",payload.authority.can_record_exact_savings_pairs?'allowed':'denied'],["Approve bounded mission",payload.authority.can_record_mission_execution_decision?'allowed':'denied'],["Deploy / publish / sign",'denied until a route is selected and separately approved'],["Credentials / connectors / messages",'denied']]);}}catch(_error){{document.getElementById('stat-first-pass').textContent='telemetry unavailable';}}}}
+let dashboardAutoRefresh=true;
+function ensureLiveControls(){{if(document.getElementById('dashboard-refresh'))return;const panel=document.getElementById('activity-list').parentElement;const controls=document.createElement('div');controls.className='mini-actions';controls.setAttribute('aria-label','Live activity controls');const refresh=document.createElement('button');refresh.id='dashboard-refresh';refresh.type='button';refresh.textContent='Refresh now';const auto=document.createElement('button');auto.id='dashboard-auto-refresh';auto.type='button';auto.setAttribute('aria-pressed','true');auto.textContent='Auto-refresh on';const stop=document.createElement('button');stop.id='dashboard-stop';stop.type='button';stop.disabled=true;stop.textContent='Request safe stop';const result=document.createElement('div');result.id='dashboard-live-result';result.setAttribute('role','status');result.textContent='Polling local telemetry every second.';refresh.onclick=()=>refreshDashboard();auto.onclick=event=>{{dashboardAutoRefresh=!dashboardAutoRefresh;event.currentTarget.setAttribute('aria-pressed',String(dashboardAutoRefresh));event.currentTarget.textContent=dashboardAutoRefresh?'Auto-refresh on':'Auto-refresh off';}};stop.onclick=async()=>{{if(!window.confirm('Request a cooperative stop for the active local assembly? It cannot publish, deploy, sign, or contact external services.'))return;const response=await fetch('/api/activity/stop',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify({{action:'request-stop'}})}});const payload=await response.json();result.textContent=response.ok?'Stop requested. The current stage will stop at its next local heartbeat.':`${{payload.code||'STOP_FAILED'}}: ${{payload.message||'request rejected'}}`;await refreshDashboard();}};controls.append(refresh,auto,stop);panel.append(controls,result);}}
+const dashboardBaseRefresh=refreshDashboard;refreshDashboard=async()=>{{await dashboardBaseRefresh();ensureLiveControls();try{{const response=await fetch('/api/dashboard',{{headers:{{'X-Factory-Studio-Token':token}}}});const payload=await response.json();if(!response.ok)throw new Error(payload.code||'dashboard unavailable');const live=payload.live_activity||{{}};const activeStage=live.current_stage?`${{live.current_stage.module}}:${{live.current_stage.stage}}`:'none';rows('activity-list',[['Operation',live.available?`${{live.status||'unknown'}} · ${{live.feature||'local workspace'}}`:'idle — no active local assembly'],['Current stage',activeStage],['Elapsed',live.elapsed_ms===null||live.elapsed_ms===undefined?'not available':`${{live.elapsed_ms}} ms`],['Completed / failed / skipped',live.available?`${{live.completed_stages||0}} / ${{live.failed_stages||0}} / ${{live.skipped_stages||0}}`:'not available'],['Latest heartbeat',live.heartbeat_at||'not available']]);document.getElementById('dashboard-stop').disabled=live.status!=='active';document.getElementById('dashboard-live-result').textContent=`Updated ${{new Date().toLocaleTimeString()}} · local telemetry only`;}}catch(error){{const result=document.getElementById('dashboard-live-result');if(result)result.textContent=`Telemetry error: ${{String(error)}}`;}}}};
+function ensurePriorRunPanel(){{if(document.getElementById('previous-run-list'))return;const grid=document.querySelector('#dashboard .dash-grid');if(!grid)return;const panel=document.createElement('section');panel.className='panel';const heading=document.createElement('h3');heading.textContent='Prior measured runs';const note=document.createElement('p');note.className='muted';note.textContent='Append-only meter receipts. A recorded stage is not inferred to be a successful release.';const list=document.createElement('div');list.id='previous-run-list';list.className='data-list';panel.append(heading,note,list);grid.appendChild(panel);}}
+let studioMemoryAutoRefresh=true;
+function ensureStudioMemoryPanel(){{if(document.getElementById('studio-memory-actions'))return;const grid=document.querySelector('#dashboard .dash-grid');if(!grid)return;const panel=document.createElement('section');panel.className='panel wide-panel';const heading=document.createElement('h2');heading.textContent='Memory Spine: next safe proof';const note=document.createElement('p');note.className='empty-data';note.textContent='A visual, read-only explanation of what changed, why the evidence state matters, and the next smallest proof. Live telemetry refreshes every second; this brief is recalculated no more than once per five seconds.';const controls=document.createElement('div');controls.className='mini-actions';const refresh=document.createElement('button');refresh.id='studio-memory-refresh';refresh.type='button';refresh.textContent='Refresh stats and proof brief';const team=document.createElement('button');team.id='studio-team-refresh';team.type='button';team.textContent='Refresh team attribution';const auto=document.createElement('button');auto.id='studio-memory-auto';auto.type='button';auto.setAttribute('aria-pressed','true');auto.textContent='Brief auto-refresh on';const flow=document.createElement('div');flow.id='studio-memory-flow';flow.className='memory-studio-flow';const actions=document.createElement('div');actions.id='studio-memory-actions';actions.className='memory-studio-actions';const teamSummary=document.createElement('div');teamSummary.id='studio-memory-team';teamSummary.className='memory-studio-team';const status=document.createElement('p');status.id='studio-memory-status';status.className='empty-data';refresh.onclick=()=>refreshDashboard();team.onclick=()=>loadStudioMemory();auto.onclick=event=>{{studioMemoryAutoRefresh=!studioMemoryAutoRefresh;event.currentTarget.setAttribute('aria-pressed',String(studioMemoryAutoRefresh));event.currentTarget.textContent=studioMemoryAutoRefresh?'Brief auto-refresh on':'Brief auto-refresh off';}};controls.append(refresh,team,auto);panel.append(heading,note,controls,flow,actions,teamSummary,status);grid.appendChild(panel);}}
+function studioMemoryStep(parent,state,title,detail){{const step=document.createElement('article');step.className='memory-studio-step';step.dataset.state=state||'review';const label=document.createElement('strong');label.textContent=title;const description=document.createElement('span');description.textContent=detail;step.append(label,description);parent.appendChild(step);}}
+function renderStudioMemory(snapshot){{ensureStudioMemoryPanel();const brief=snapshot?.brief||{{}},actions=Array.isArray(brief.actions)?brief.actions:[],next=actions[0]||{{}},review=brief.change_review||{{}},team=brief.team||{{}},seats=Array.isArray(team.seats)?team.seats:[];const flow=document.getElementById('studio-memory-flow'),list=document.getElementById('studio-memory-actions');if(!flow||!list)return;flow.textContent='';const state=next.severity||'review',changed=Array.isArray(review.changed_paths)?review.changed_paths:[];studioMemoryStep(flow,review.available===false?'blocking':state,'1 · What changed',review.available===false?'Change set unavailable; no proof is inferred.':`${{changed.length}} exact path${{changed.length===1?'':'s'}} from ${{review.input_source||'unknown'}} input.`);studioMemoryStep(flow,state,'2 · Why it matters',next.why_it_matters||'No evidence state was supplied.');studioMemoryStep(flow,state,'3 · Do this next',next.do_this_next||'Refresh local facts.');studioMemoryStep(flow,team.available?'ready':'review','4 · Team contribution',team.available?`${{seats.length}} observed Git contributor${{seats.length===1?'':'s'}}; not a verified seat roster.`:'No local Git attribution is available.');list.textContent='';actions.slice(0,4).forEach(action=>{{const card=document.createElement('article');card.className='memory-studio-action';card.dataset.severity=action.severity||'review';const title=document.createElement('strong');title.textContent=action.title||action.kind||'Evidence action';const detail=document.createElement('span');detail.textContent=`What changed: ${{action.what_changed||'not supplied'}}`;const nextStep=document.createElement('span');nextStep.textContent=`Next: ${{action.do_this_next||'not supplied'}}`;card.append(title,detail,nextStep);list.appendChild(card);}});if(!actions.length){{const empty=document.createElement('span');empty.className='empty-data';empty.textContent='No action is available; Studio will not invent one.';list.appendChild(empty);}}const teamText=document.getElementById('studio-memory-team');teamText.textContent=team.available?`Observed local Git contributors: ${{seats.map(seat=>`${{seat.display_name}} (${{seat.contribution?.selected_path_commit_count??0}} selected-path commits)`).join(', ')||'none'}}. Git authorship is not seat licensing, ownership, approval, or productivity evidence.`:'Team attribution unavailable: no contributor, identity, or approval claim is made.';const cache=snapshot?.cache||{{}};const status=document.getElementById('studio-memory-status');status.textContent=`Brief ${{cache.state||'unknown'}} · cache age ${{cache.age_ms??'unknown'}} ms · refresh interval ${{cache.refresh_interval_ms??5000}} ms · local analysis only.`;}}
+async function loadStudioMemory(){{ensureStudioMemoryPanel();try{{const response=await fetch('/api/developer-memory',{{headers:{{'X-Factory-Studio-Token':token}}}});const payload=await response.json();if(!response.ok)throw new Error(payload.code||'developer memory unavailable');renderStudioMemory(payload);}}catch(error){{const status=document.getElementById('studio-memory-status');if(status)status.textContent=`Developer Memory error: ${{String(error)}}. No next proof is inferred.`;}}}}
+async function refreshPriorRuns(){{if(mode!=='dashboard')return;ensurePriorRunPanel();try{{const response=await fetch('/api/dashboard',{{headers:{{'X-Factory-Studio-Token':token}}}});const payload=await response.json();if(!response.ok)return;const runs=Array.isArray(payload.recent_runs)?payload.recent_runs:[];rows('previous-run-list',runs.length?runs.map(run=>[`${{run.feature||'feature unavailable'}} · ${{run.outcome}}`,`${{run.stages_recorded}} stages · ${{run.wall_ms}} ms · tokens ${{run.tokens}} (${{(run.token_quality||[]).join(', ')||'unknown'}}) · failed stages ${{run.failed_stages}}`]):[['Status','No measured run IDs have been recorded yet.']]);}}catch(_error){{}}}}
+const nativeStudioFetch=window.fetch.bind(window);window.fetch=async(...args)=>{{const response=await nativeStudioFetch(...args);const url=String(args[0] instanceof Request?args[0].url:args[0]);if(url.includes('/api/dashboard'))window.__factoryDashboardPromise=response.clone().json().catch(()=>null);return response;}};
+function syncDashboardLivePanels(payload){{const live=payload.live_activity||{{}};const activeStage=live.current_stage?`${{live.current_stage.module}}:${{live.current_stage.stage}}`:'none';rows('activity-list',[['Operation',live.available?`${{live.status||'unknown'}} · ${{live.feature||'local workspace'}}`:'idle — no active local assembly'],['Current stage',activeStage],['Elapsed',live.elapsed_ms===null||live.elapsed_ms===undefined?'not available':`${{live.elapsed_ms}} ms`],['Completed / failed / skipped',live.available?`${{live.completed_stages||0}} / ${{live.failed_stages||0}} / ${{live.skipped_stages||0}}`:'not available'],['Latest heartbeat',live.heartbeat_at||'not available']]);const stop=document.getElementById('dashboard-stop');if(stop)stop.disabled=live.status!=='active';const result=document.getElementById('dashboard-live-result');if(result)result.textContent=`Updated ${{new Date().toLocaleTimeString()}} · local telemetry only`;ensurePriorRunPanel();const runs=Array.isArray(payload.recent_runs)?payload.recent_runs:[];rows('previous-run-list',runs.length?runs.map(run=>[`${{run.feature||'feature unavailable'}} · ${{run.outcome}}`,`${{run.stages_recorded}} stages · ${{run.wall_ms}} ms · tokens ${{run.tokens}} (${{(run.token_quality||[]).join(', ')||'unknown'}}) · failed stages ${{run.failed_stages}}`]):[['Status','No measured run IDs have been recorded yet.']]);if(studioMemoryAutoRefresh)renderStudioMemory(payload.developer_memory);}}
+refreshDashboard=async()=>{{ensureLiveControls();await dashboardBaseRefresh();const payload=await window.__factoryDashboardPromise;if(payload)syncDashboardLivePanels(payload);}};refreshPriorRuns=async()=>{{}};
+setInterval(()=>{{if(mode==='dashboard'&&dashboardAutoRefresh)refreshDashboard();}},1000);refreshDashboard();
 function addText(className,text){{const el=document.createElement('div');el.className=className;el.textContent=text;result.appendChild(el);return el;}}
 function renderFailure(payload){{result.className='error';result.textContent='';addText('result-title',`${{payload.code||'FAILED'}} at ${{payload.failure?.point_of_failure||'workflow'}}`);addText('result-row',payload.failure?.why||payload.message||'The workflow failed.');addText('result-row',`Next: ${{payload.failure?.next_action||'Inspect the failure evidence and retry.'}}`);}}
 async function decideDashboardMission(item,decision){{const rationale=window.prompt(`Rationale for ${{decision.replace('_',' ')}} on ${{item.id}}:`);if(!rationale)return;const response=await fetch('/api/mission-decision',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify({{action:'mission-decision',mission:item.path,owner:item.owner,decision,rationale}})}});const payload=await response.json();if(!response.ok){{window.alert(`${{payload.code||'FAILED'}}: ${{payload.failure?.why||payload.message}} Next: ${{payload.failure?.next_action||'inspect evidence'}}`);return;}}await refreshDashboard();}}
@@ -622,11 +719,25 @@ class _StudioHandler(BaseHTTPRequestHandler):
                 return
             self._json(200, public_savings_report(self.studio_root))
             return
+        if self.path == "/api/developer-memory":
+            if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
+                self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
+                return
+            self._json(200, developer_memory_snapshot(self.studio_root))
+            return
         if self.path == "/api/graph-ops":
             if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
                 self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
                 return
-            self._json(200, graph_ops_snapshot(self.studio_root))
+            payload = graph_ops_snapshot(self.studio_root)
+            payload["live_telemetry"] = {
+                "activity": activity_snapshot(self.studio_root),
+                "meter": live_snapshot(self.studio_root),
+                "recent_runs": _recent_run_stats(self.studio_root, limit=3),
+                "refresh_interval_ms": 1000,
+                "scope_limits": ["Live telemetry is local and aggregate-safe.", "Unknown usage, cost, queue, and productivity values remain unavailable."],
+            }
+            self._json(200, payload)
             return
         self._error(404, "NOT_FOUND", "route not found")
 
@@ -639,7 +750,7 @@ class _StudioHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """Accept one token-bound target creation request within the size limit."""
-        if self.path not in {"/api/create", "/api/product", "/api/mission-decision", "/api/continue", "/api/savings", "/api/graph-ops-authorize", "/api/graph-ops-run"}:
+        if self.path not in {"/api/create", "/api/product", "/api/mission-decision", "/api/continue", "/api/savings", "/api/graph-ops-authorize", "/api/graph-ops-run", "/api/activity/stop"}:
             self._error(404, "NOT_FOUND", "route not found")
             return
         if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
@@ -655,7 +766,14 @@ class _StudioHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if not isinstance(payload, dict):
                 raise StudioRequestError("JSON_OBJECT_REQUIRED", "request must be a JSON object")
-            if self.path == "/api/product":
+            if self.path == "/api/activity/stop":
+                if payload.get("action") != "request-stop":
+                    raise StudioRequestError("ACTION_UNSUPPORTED", "activity stop endpoint requires request-stop")
+                try:
+                    result = request_stop(self.studio_root)
+                except ValueError as exc:
+                    raise StudioRequestError("NO_ACTIVE_ASSEMBLY", str(exc), 409) from exc
+            elif self.path == "/api/product":
                 result = create_product_mission_from_studio(self.studio_root, payload)
             elif self.path == "/api/mission-decision":
                 result = decide_product_mission_from_studio(self.studio_root, payload)

@@ -45,6 +45,27 @@ object StudioUrl {
     private val pattern = Regex("Factory Studio:\\s+(http://127\\.0\\.0\\.1:\\d+/)")
 
     fun find(output: String): String? = pattern.find(output)?.groupValues?.get(1)
+
+    fun graphOps(base: String): String? = base.takeIf { it.matches(Regex("http://127\\.0\\.0\\.1:\\d+/")) }
+        ?.plus("graph-ops")
+
+    fun productMissions(base: String): String? = base.takeIf { it.matches(Regex("http://127\\.0\\.0\\.1:\\d+/")) }
+        ?.plus("?mode=product")
+}
+
+/** Per-project, in-memory local Studio connection. It is never persisted or remote. */
+object FactoryLineStudioSession {
+    private val urlKey: Key<String> = Key.create("app.factoryline.intellij.studioUrl")
+
+    fun connectedUrl(project: Project): String? = project.getUserData(urlKey)
+
+    fun remember(project: Project, url: String) {
+        if (StudioUrl.find("Factory Studio: $url") == url) project.putUserData(urlKey, url)
+    }
+
+    fun clear(project: Project) {
+        project.putUserData(urlKey, null)
+    }
 }
 
 object WorkspacePath {
@@ -431,7 +452,12 @@ object FactoryLineRunner {
         )
     }
 
-    fun startStudio(project: Project, onStarted: (String) -> Unit, onFailure: (String) -> Unit) {
+    fun startStudio(
+        project: Project,
+        onStarted: (String) -> Unit,
+        onFailure: (String) -> Unit,
+        onStopped: () -> Unit = {},
+    ) {
         val root = project.basePath?.let(Path::of) ?: run {
             onFailure("The project has no local workspace path.")
             return
@@ -466,6 +492,7 @@ object FactoryLineRunner {
                 }
 
                 override fun processTerminated(event: ProcessEvent) {
+                    ApplicationManager.getApplication().invokeLater(onStopped)
                     if (completed.compareAndSet(false, true)) {
                         timeout.cancel(false)
                         ApplicationManager.getApplication().invokeLater {

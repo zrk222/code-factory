@@ -41,7 +41,7 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
 }
 
 class FactoryLinePanel(private val project: Project) : JPanel(BorderLayout(0, 8)) {
-    private val status = JLabel("Start with a local proof. Your code and receipts stay on this machine.")
+    private val status = JLabel("Local Studio: not connected. Start with a local proof; code and receipts stay on this machine.")
     private val output = JBTextArea().apply {
         isEditable = false
         lineWrap = false
@@ -57,6 +57,7 @@ class FactoryLinePanel(private val project: Project) : JPanel(BorderLayout(0, 8)
             add(JButton("Analyze changed proof").apply { addActionListener { FactoryLineController.analyzeChangedProof(project) } })
             add(JButton("Analyze workspace").apply { addActionListener { FactoryLineController.analyzeWorkspaceAdvisor(project) } })
             add(JButton("Open local meter").apply { addActionListener { FactoryLineController.openMeter(project) } })
+            add(JButton("Factory Studio").apply { addActionListener { FactoryLineController.openStudio(project) } })
             add(JButton("Unified Graph Ops").apply { addActionListener { FactoryLineController.openStudio(project, graphMode = true) } })
             add(JButton("Product missions").apply { addActionListener { FactoryLineController.openStudio(project, productMode = true) } })
             add(JButton("Mission operations").apply { addActionListener { FactoryLineController.missionOperations(project) } })
@@ -94,6 +95,14 @@ class FactoryLinePanel(private val project: Project) : JPanel(BorderLayout(0, 8)
         output.text = meter.display + "\n" + meter.rawJson
         output.caretPosition = 0
     }
+
+    fun showStudioConnection(target: String, reused: Boolean) {
+        status.text = if (reused) {
+            "Local Studio connected — opened $target"
+        } else {
+            "Local Studio started on loopback — opened $target"
+        }
+    }
 }
 
 object FactoryLinePanels {
@@ -120,6 +129,15 @@ object FactoryLinePanels {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
         toolWindow?.show {
             ApplicationManager.getApplication().invokeLater { project.getUserData(key)?.show(meter) }
+        }
+    }
+
+    fun showStudioConnection(project: Project, target: String, reused: Boolean) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater {
+                project.getUserData(key)?.showStudioConnection(target, reused)
+            }
         }
     }
 

@@ -176,6 +176,21 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "renderObservatory" in page
     assert 'const endpoint="/api/graph-ops"' in page
     assert '"X-Factory-Studio-Token":sessionToken' in page
+    assert 'id="graph-refresh"' in page
+    assert 'id="graph-stop"' in page
+    assert "setInterval(()=>{if(graphAutoRefresh)load();},1000)" in page
+    assert "Memory Spine · proof-aware briefing" in page
+    assert "Turn the diff into the next safe proof." in page
+    assert 'id="memory-refresh"' in page
+    assert 'id="team-refresh"' in page
+    assert 'id="memory-auto-refresh"' in page
+    assert 'id="memory-actions"' in page
+    assert 'id="team-seats"' in page
+    assert 'fetch("/api/developer-memory"' in page
+    assert "renderDeveloperMemory(payload)" in page
+    assert "Observed project contributors" in page
+    assert "not a verified identity-provider or billing-seat roster" in page
+    assert "setInterval(()=>{if(memoryAutoRefresh)loadDeveloperMemory();},5000)" in page
     assert "textContent" in page
     assert "innerHTML" not in page
     assert "@media (max-width:768px)" in page

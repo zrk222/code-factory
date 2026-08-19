@@ -2,19 +2,19 @@
 
 ## Unreleased
 
-- Add counterexample planning: deterministic negative proof obligations derived
-  from declared requirements, plus a hash-bound verifier that rejects tampered,
-  stale, or hollow plans before they can be treated as evidence.
-- Add read-only continuity guardrails: independently promoted, exact-scope,
-  exact-purpose metadata can inform a redacted evaluation without exposing
-  remembered content or granting memory, repair, or execution authority.
-- Add temporal resilience planning: sealed Graph Ops lineage produces bounded
-  replay-risk schedules for stale reads, parallel writes, duplicate effects,
-  retries, and checkpoint replays. The schedules remain locked until an
-  external supervised runner independently authorizes execution.
-- Project all three evidence layers into Unified Graph Ops so users can see
-  blocked, stale, verified, and withheld states in the same local control
-  surface without a hidden agent loop.
+## 0.38.0 - 2026-08-18
+
+- Add local live-activity state for Factory Assembly, including current stage,
+  local elapsed time, finished-stage status, and an explicit cooperative stop
+  request. It is an ephemeral local projection, not a receipt or a source of
+  inferred token, cost, or productivity values.
+- Add the read-only Developer Memory Brief through CLI, MCP, Factory Studio,
+  and Unified Graph Ops. It turns exact change-review facts into explanatory
+  next-proof actions, redacted Continuity metadata, and observed local Git
+  contributor context without granting execution or memory authority.
+- Add manual and five-second auto-refresh controls to the Studio and Graph Ops
+  evidence surfaces. Observed Git authors remain explicitly distinct from
+  verified project seats, ownership, approvals, or billing.
 
 ## 0.37.0 - 2026-08-18
 

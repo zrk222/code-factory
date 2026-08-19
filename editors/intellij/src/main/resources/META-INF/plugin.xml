@@ -58,6 +58,7 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
+            <li>Add refreshable local Assembly activity and a read-only Developer Memory Brief in the shared Studio and Graph Ops view: exact-diff next-proof actions, redacted Continuity facts, and observed local Git contribution context, without execution, repair, approval, identity, billing, or productivity authority.</li>
             <li>Add Graph Forensics: sealed semantic lineage, first-divergence and causal-path analysis, deterministic stale-read/write, parallel-write, and duplicate-side-effect findings, plus a non-executing recovery preview.</li>
             <li>Add ProofSearch and the Graph Ops Counterfactual Arena: compare 2 through 12 hash-bound repair candidates, reject hollow or unsafe candidates, show every loss reason, and select one deterministic verified winner without applying it.</li>
             <li>Add full Graph Ops review controls for copying verification commands, exporting the displayed decision, validating winner guardrails, and visibly retaining apply, merge, publication, deployment, credential, and connector authority.</li>

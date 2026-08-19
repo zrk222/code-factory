@@ -388,6 +388,17 @@ object FactoryLineController {
             Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
             return
         }
+        fun targetUrl(base: String): String = when {
+            graphMode -> StudioUrl.graphOps(base) ?: base
+            productMode -> StudioUrl.productMissions(base) ?: base
+            else -> base
+        }
+        FactoryLineStudioSession.connectedUrl(project)?.let { connected ->
+            val target = targetUrl(connected)
+            BrowserUtil.browse(target)
+            FactoryLinePanels.showStudioConnection(project, target, reused = true)
+            return
+        }
         val confirmed = Messages.showYesNoDialog(
             project,
             "Open ${if (graphMode) "Unified Graph Ops" else if (productMode) "Product Missions" else "Factory Studio"} on loopback for:\n$root\n\nGraph Ops only inspects local artifacts. Studio grants no execute, merge, deploy, publish, credential, connector, or external-message authority.",
@@ -400,12 +411,15 @@ object FactoryLineController {
         FactoryLineRunner.startStudio(
             project,
             onStarted = { url ->
-                val targetUrl = if (graphMode) "${url}graph-ops" else if (productMode) "$url?mode=product" else url
-                BrowserUtil.browse(targetUrl)
+                FactoryLineStudioSession.remember(project, url)
+                val target = targetUrl(url)
+                BrowserUtil.browse(target)
                 val marker = if (graphMode) "EDITOR_GRAPH_OPS_CONFIRMED" else if (productMode) "EDITOR_PRODUCT_MISSION_CONFIRMED" else "EDITOR_TRUST_CONFIRMED"
-                Messages.showInfoMessage(project, "Factory Studio is running at $targetUrl\n\nmarker: $marker", "FactoryLine")
+                FactoryLinePanels.showStudioConnection(project, target, reused = false)
+                Messages.showInfoMessage(project, "Factory Studio is running at $target\n\nmarker: $marker", "FactoryLine")
             },
-            onFailure = { message -> Messages.showErrorDialog(project, message, "FactoryLine") }
+            onFailure = { message -> Messages.showErrorDialog(project, message, "FactoryLine") },
+            onStopped = { FactoryLineStudioSession.clear(project) },
         )
     }
 }
