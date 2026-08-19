@@ -12,6 +12,7 @@ from typing import Any, TextIO
 from . import __version__
 from .developer_memory import developer_memory_brief
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
+from .langgraph_assurance import MCP_MARKER, LangGraphAssuranceError, verify_langgraph_resume_parity
 from .proof_reuse import verify_proof_receipt
 from .prd_grill import verify_prd_grill
 from .workspace_advisor import inspect_workspace
@@ -121,6 +122,20 @@ def _tool_definitions() -> list[dict[str, object]]:
                     },
                     "base": {"type": "string", "minLength": 1, "maxLength": 120},
                 },
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.langgraph_assurance",
+            "description": "Compare two existing workspace-relative LangGraph transition receipts. It never invokes a graph, mutates checkpoints, replays effects, or writes a receipt.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "reference": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "resumed": {"type": "string", "minLength": 1, "maxLength": 512},
+                },
+                "required": ["reference", "resumed"],
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -442,6 +457,22 @@ def _developer_memory(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _langgraph_assurance(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) != {"reference", "resumed"}:
+        raise McpError("factory.langgraph_assurance requires only reference and resumed")
+    reference, _ = _relative_path(root, arguments["reference"], "reference", must_exist=True)
+    resumed, _ = _relative_path(root, arguments["resumed"], "resumed", must_exist=True)
+    try:
+        assurance = verify_langgraph_resume_parity(root, reference, resumed)
+    except LangGraphAssuranceError as exc:
+        raise McpError(exc.message, "MCP_LANGGRAPH_ASSURANCE_REJECTED") from exc
+    return {
+        "marker": MCP_MARKER,
+        "assurance": assurance,
+        "scope": "Read-only local comparison of supplied receipts; no graph, checkpoint, effect, approval, deployment, publication, credential, or connector action ran.",
+    }
+
+
 def _verifier_session_path(root: Path, arguments: object) -> tuple[Path, dict[str, Any]] | None:
     if not isinstance(arguments, dict) or set(arguments) - {"session", "mission"}:
         raise McpError("factory.verifier_status accepts only session or mission")
@@ -572,6 +603,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         })
     if name == "factory.developer_memory":
         return _content(_developer_memory(root, arguments))
+    if name == "factory.langgraph_assurance":
+        return _content(_langgraph_assurance(root, arguments))
     if name == "factory.next_action":
         if arguments != {}:
             raise McpError("factory.next_action accepts no arguments")

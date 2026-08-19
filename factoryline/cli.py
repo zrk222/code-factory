@@ -80,6 +80,7 @@ from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .graph_portfolio import graph_portfolio_plan
 from .graph_forensics import GraphForensicsError, graph_forensics, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
+from .langgraph_assurance import LangGraphAssuranceError, verify_langgraph_resume_parity
 from .proofsearch import ProofSearchError, create_proofsearch_plan, evaluate_proofsearch, verify_proofsearch_evaluation
 from .evidence_frontier import EvidenceFrontierError, plan_evidence_frontier, verify_evidence_frontier
 from .coverage import requirement_coverage
@@ -1278,6 +1279,13 @@ def main(argv=None) -> int:
     langgraph_event.add_argument("--receipt", required=True)
     langgraph_event.add_argument("--payload", help="path to a secret-free JSON object")
     langgraph_event.add_argument("--json", action="store_true")
+    langgraph_replay = langgraph_sub.add_parser("replay-verify", help="compare recorded reference and resumed transitions without invoking a graph")
+    langgraph_replay.add_argument("--root", default=".")
+    langgraph_replay.add_argument("--reference", required=True, help="workspace-relative sealed reference lineage JSON")
+    langgraph_replay.add_argument("--resumed", required=True, help="workspace-relative sealed resumed lineage JSON")
+    langgraph_replay.add_argument("--out", help="optional workspace-relative assurance receipt JSON")
+    langgraph_replay.add_argument("--mermaid", action="store_true", help="print only the parity or incident Mermaid map")
+    langgraph_replay.add_argument("--json", action="store_true")
 
     provider = sub.add_parser("provider", help="configure secret-free BYOK references and deterministic routing rails")
     provider_sub = provider.add_subparsers(dest="provider_cmd", required=True)
@@ -1527,6 +1535,10 @@ def main(argv=None) -> int:
                 result = verify_mission_graph(Path(a.mission), Path(a.root))
             elif a.cmd == "langgraph" and a.langgraph_cmd == "export":
                 result = export_mission_graph(Path(a.mission), Path(a.root))
+            elif a.cmd == "langgraph" and a.langgraph_cmd == "replay-verify":
+                result = verify_langgraph_resume_parity(
+                    Path(a.root), a.reference, a.resumed, out=a.out,
+                )
             elif a.cmd == "langgraph":
                 payload = json.loads(Path(a.payload).read_text(encoding="utf-8")) if a.payload else {}
                 if not isinstance(payload, dict):
@@ -1650,7 +1662,7 @@ def main(argv=None) -> int:
                 )
             else:
                 result = outcome_summary(Path(a.root), a.mission_id)
-        except (ProductMissionError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProviderRouterError, AgentContractError, VerifierPlaneError) as exc:
+        except (ProductMissionError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProviderRouterError, AgentContractError, VerifierPlaneError, LangGraphAssuranceError) as exc:
             print(json.dumps({
                 "schema": "factory.workflow_error.v1", "status": "failed",
                 "code": exc.code, "message": exc.message,
@@ -1665,17 +1677,21 @@ def main(argv=None) -> int:
                 "failure": explain_failure("E_INPUT", str(exc)),
             }, indent=2), file=sys.stderr)
             return 1
-        print(json.dumps(result, indent=2, sort_keys=True))
+        if a.cmd == "langgraph" and a.langgraph_cmd == "replay-verify" and a.mermaid:
+            print(result["mermaid"])
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True))
         if (
             (a.cmd == "product" and a.product_cmd == "verify")
             or (a.cmd == "mission" and a.mission_cmd in {"verify", "verify-completion"})
             or (a.cmd == "opinion" and a.opinion_cmd == "verify")
             or (a.cmd == "langgraph" and a.langgraph_cmd == "verify")
+            or (a.cmd == "langgraph" and a.langgraph_cmd == "replay-verify")
             or (a.cmd == "provider" and a.provider_cmd == "verify")
             or (a.cmd == "agent" and a.agent_cmd in {"contract", "attestation"})
             or (a.cmd == "verifier" and a.verifier_cmd == "verify")
         ):
-            return 0 if result.get("valid", True) else 1
+            return 0 if result.get("valid", result.get("verdict") == "VERIFIED") else 1
         return 0
     if a.cmd == "targets":
         payload = {"schema": "factory.targets.v1", "targets": TARGETS}

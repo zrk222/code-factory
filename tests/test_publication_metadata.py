@@ -41,7 +41,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
         "Issues": "https://github.com/zrk222/code-factory/issues",
         "Changelog": "https://github.com/zrk222/code-factory/releases",
     }
-    assert project["description"] == "Build a local MVP, catch hollow tests, and prove AI-assisted changes before review."
+    assert project["description"] == "Build a local MVP, catch hollow tests, and prove AI-assisted and LangGraph resume paths before review."
     assert {
         "mvp",
         "mcp",
@@ -286,7 +286,7 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.38.0"
+    assert project["version"] == "0.39.0"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.8.10"
     assert 'version = "0.8.10"' in gradle
@@ -436,7 +436,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.38.0"
+    assert metadata["version"] == "0.39.0"
     assert metadata["publication_date"] == "2026-08-18"
     assert "Unified Graph Ops" in metadata["description"]
     assert "current FactoryLine identity asset" in metadata["description"]
@@ -447,6 +447,8 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert "proof-review" in metadata["keywords"]
     assert "plan-to-proof-review" in metadata["keywords"]
     assert "design-review" in metadata["keywords"]
+    assert "langgraph-assurance" in metadata["keywords"]
+    assert "resume parity" in metadata["description"]
 
     assets = ROOT / "docs" / "assets"
     for name in (

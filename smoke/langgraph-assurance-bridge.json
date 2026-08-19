@@ -1,0 +1,19 @@
+{
+  "checks": [
+    {
+      "name": "recorded_resume_divergence_emits_hash_only_incident_capsule",
+      "kind": "python",
+      "run": "import json, tempfile\nfrom pathlib import Path\nfrom factoryline.langgraph_assurance import LangGraphTransitionRecorder, verify_langgraph_resume_parity\nwith tempfile.TemporaryDirectory() as raw:\n    root = Path(raw)\n    def record(run_id, outcome):\n        recorder = LangGraphTransitionRecorder('agent-graph', run_id)\n        recorder.record_transition('route', superstep=1, checkpoint_id='cp-1', before_state={'request':'private'}, after_state={'request':'private','outcome':outcome}, decision={'route':outcome,'reason':'private prompt'})\n        recorder.seal(root, f'.factory/langgraph/{run_id}.json')\n    record('reference', 'allow')\n    record('resumed', 'deny')\n    result = verify_langgraph_resume_parity(root, '.factory/langgraph/reference.json', '.factory/langgraph/resumed.json')\n    assert result['marker'] == 'LANGGRAPH_REPLAY_DIVERGENCE'\n    assert result['incident_capsule']['marker'] == 'LANGGRAPH_INCIDENT_CAPSULE'\n    assert 'private' not in json.dumps(result).replace('prompts, or secrets', '')\n    assert result['authority']['graph_invocation'] is False\nprint('LANGGRAPH_ASSURANCE_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "LANGGRAPH_ASSURANCE_SMOKE_PASS",
+      "timeout_s": 30,
+      "covers": [
+        "LANGGRAPH_TRANSITION_HASH_ONLY",
+        "LANGGRAPH_REPLAY_DIVERGENCE",
+        "LANGGRAPH_INCIDENT_CAPSULE",
+        "LANGGRAPH_MCP_READ_ONLY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

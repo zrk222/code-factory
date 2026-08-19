@@ -43,13 +43,23 @@ evidence exists.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.38.0` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.39.0` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21381405).
 
 Use the same local proof context from Cursor or OpenCode through the documented
 [MCP connection](https://github.com/zrk222/code-factory/blob/main/docs/AI_CLIENTS.md).
 The client connection is local and read-only; it does not upload source or
 grant provider, credential, deployment, or publishing authority.
+
+### LangGraph resume assurance
+
+For a LangGraph agent flow, use the free local
+[LangGraph Assurance Bridge](https://github.com/zrk222/code-factory/blob/main/docs/LANGGRAPH_ASSURANCE.md)
+after your own test harness records a normal path and a forced-resume path. It
+compares sealed, hash-only lineages and emits either resume parity or a
+shareable first-divergence incident capsule. The local MCP tool and opt-in
+GitHub Action consume recorded receipts; neither invokes a graph, mutates a
+checkpoint, or replays a side effect.
 
 Use Code Factory alongside CodeRabbit or another AI reviewer when a pull
 request needs explicit evidence as well as suggestions. The opt-in

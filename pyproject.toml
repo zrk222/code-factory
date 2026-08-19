@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.38.0"
-description = "Build a local MVP, catch hollow tests, and prove AI-assisted changes before review."
+version = "0.39.0"
+description = "Build a local MVP, catch hollow tests, and prove AI-assisted and LangGraph resume paths before review."
 authors = [
   { name = "Richard Katz" },
   { email = "rkatz22@gmail.com" },
@@ -39,6 +39,9 @@ keywords = [
   "ai-governance",
   "design-review",
   "ui-quality",
+  "langgraph",
+  "agent-replay",
+  "resume-parity",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",

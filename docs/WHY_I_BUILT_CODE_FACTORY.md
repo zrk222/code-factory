@@ -116,7 +116,7 @@ mean, I made this for that feeling.
 Start with the source and a local command:
 
 ```powershell
-pip install factoryline-code-factory==0.38.0
+pip install factoryline-code-factory==0.39.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```

@@ -1,5 +1,15 @@
 {
-  "constraints": {},
-  "version": 54,
-  "updated": "2026-08-18T19:51:49.883009+00:00"
+  "constraints": {
+    "A_SUBPROC": {
+      "code": "A_SUBPROC",
+      "rule": "A_SUBPROC subprocess use in factoryline/cli.py",
+      "promoted_from_count": 3,
+      "promoted_at": "2026-08-19T03:42:59.193810+00:00",
+      "times_enforced": 0,
+      "prevented_recurrence": 0,
+      "status": "probation"
+    }
+  },
+  "version": 58,
+  "updated": "2026-08-19T03:56:13.127461+00:00"
 }

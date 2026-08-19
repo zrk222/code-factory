@@ -87,6 +87,16 @@ The Check is deliberately `neutral`: its facts help a human and the repository's
 existing policy decide what happens next. It is not an assertion that the diff
 is correct, production-ready, or safe to merge.
 
+## LangGraph resume Proof Card
+
+For a repository that records a normal and a separately resumed LangGraph test
+run, add the free [`Code Factory LangGraph Proof Gate`](../action.yml) to a
+workflow. It writes a `VERIFIED` or `REVIEW_REQUIRED` proof card and Mermaid
+map to the job summary without invoking the graph itself. A divergence exits
+non-zero after creating the requested receipt; a team, not this action, decides
+whether that check is required for a merge. See [LangGraph Assurance](LANGGRAPH_ASSURANCE.md)
+for the recorder contract and safe incident capsule.
+
 ## Free, shareable review artifact
 
 The Markdown walkthrough is designed to be useful in a PR even when a reviewer

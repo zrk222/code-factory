@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.39.0 - 2026-08-18
+
+- Add the free, local LangGraph Assurance Bridge. A team-owned harness can
+  record hash-only transitions, seal a reference and resumed lineage, and run
+  `factory langgraph replay-verify` for deterministic resume parity.
+- Add a privacy-safe incident capsule for a replay divergence, duplicate
+  completed effect, stale read/write, or unsafe parallel write. It contains
+  hashes, node/state-key identifiers, Mermaid, and a review-only causal cone;
+  it contains no raw state, prompts, or source secrets.
+- Add the read-only `factory.langgraph_assurance` MCP tool and the opt-in
+  `zrk222/code-factory` GitHub Action that renders a LangGraph Proof Card from
+  pre-recorded receipts. Neither surface invokes a graph, replays effects,
+  writes a pull-request comment, or gains merge/release authority.
+
 ## 0.38.0 - 2026-08-18
 
 - Add local live-activity state for Factory Assembly, including current stage,
