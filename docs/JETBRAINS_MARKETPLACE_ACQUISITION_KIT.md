@@ -13,11 +13,12 @@ not been observed.
 
 **Preview (the first 40 characters matter)**
 
-`Catch hollow tests before review.`
+`Catch AI-generated tests that could never fail — before review.`
 
 **Description**
 
-> **Catch hollow tests before review — without sending source to a provider.**
+> **Catch AI-generated tests that could never fail — before review.**
+> Free, local proof without sending source to a provider.
 > FactoryLine connects the current diff to local requirements, checks, receipts,
 > and one fact-derived next action in your JetBrains IDE.
 >
@@ -54,6 +55,11 @@ not been observed.
 >   walkthrough in a GitHub pull request. The optional workflow can coexist
 >   with CodeRabbit or another reviewer; it does not require their account,
 >   import AI comments as proof, approve, or merge.
+> - give JetBrains AI Assistant grounded local proof context where its custom
+>   MCP-server setting is available: copy the FactoryLine stdio configuration
+>   into JetBrains' own MCP controls. The connection is read-only, optional,
+>   and does not enable AI, select a model, consume credits, or change Project
+>   Rules or `.aiignore`.
 >
 > **For solo developers, senior reviewers, and teams:** create a bounded MVP,
 > inspect the evidence behind an AI-assisted change, recover the next step after
@@ -129,6 +135,6 @@ savings receipts as a proxy for Marketplace conversion.
 4. Publish the observed baseline/approval/day-7/day-30 report with unknowns
    intact; do not claim that a particular asset caused any change.
 
-All features remain free through December 31, 2026. The $4.95 USD monthly price
+The local proof core remains free. The future $5.95 USD per named seat monthly or $60 USD annual optional-entitlement price
 is planned for January 1, 2027, subject to JetBrains paid-plugin approval. See
 the [2027 monetization runbook](JETBRAINS_MONETIZATION_2027.md).

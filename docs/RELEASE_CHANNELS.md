@@ -1,22 +1,43 @@
 # Release Channels
 
-Code Factory v0.39.0 publishes one verified source state through channel-specific
+Code Factory v0.40.0 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.39.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.39.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.40.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.40.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
 | VS Code | `factoryline-vscode-0.8.10.vsix` | GitHub release bundle; protected `vscode-marketplace.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX or public Marketplace version |
-| JetBrains | `factoryline-intellij-0.8.10.zip` | Scoped workflow update to public plugin 33009 after the existing pending metadata review clears | Installable ZIP or public plugin/version page after moderation |
+| JetBrains | `factoryline-intellij-0.8.11.zip` | Scoped workflow update to public plugin 33009 after the existing pending metadata review clears | Installable ZIP or public plugin/version page after moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured.
+
+### 0.40.0 Intake Grill, Proof-Delta Loop, and Gauntlet
+
+The current release adds source-bound framework, intent, acceptance-evidence,
+and external-effects decisions before an optionally intake-required Product
+Mission can start. It also blocks a mission retry unless the packet binds a
+changed candidate diff and new hash-checked evidence to the latest failed
+criterion. Finally, Gauntlet turns a human-written, named set of local E2E
+sabotage cases into an expiry-bound, one-run supervised batch and an
+offline-verifiable Survival Card. The local MCP and Graph Ops surfaces inspect
+these receipts; neither can make decisions or execute work. A Survival Card is
+not a production-readiness, security, coverage, performance, cost, token,
+quality, or release claim.
+
+### 0.39.1 Official MCP Registry
+
+The Official MCP Registry descriptor makes the existing local, read-only
+MCP server discoverable using the public PyPI/`uvx` package entry. It publishes
+only after the exact package version and ownership marker are visible from
+PyPI. It neither hosts the server nor grants write authority.
 
 ### 0.39.0 LangGraph Assurance Bridge
 
@@ -31,7 +52,7 @@ does not invoke LangGraph, mutate checkpoints, replay effects, establish
 production resilience, or estimate savings.
 
 JetBrains Marketplace publication remains blocked while any submitted update is
-pending Marketplace approval. Do not dispatch the 0.8.10 candidate until the
+pending Marketplace approval. Do not dispatch the 0.8.11 candidate until the
 Marketplace status gate reports clear.
 
 ### Visual Studio Marketplace publisher setup

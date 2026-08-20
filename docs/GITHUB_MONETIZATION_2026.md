@@ -2,12 +2,13 @@
 
 ## Decision record
 
-The GitHub-oriented Code Factory offer is free through **December 1, 2026**
-(11:59:59 PM Eastern time). A **$5.95 USD per named seat per month** offer is
-scheduled to begin on **December 2, 2026**.
+The GitHub-oriented Code Factory offer is free through **December 31, 2026**
+(11:59:59 PM Eastern time). An optional **$5.95 USD per named seat per month**
+or **$60 USD per named seat per year** offer is scheduled to begin on
+**January 1, 2027**.
 
-This is separate from the JetBrains Marketplace plan, which remains **$4.95 USD
-per month from January 1, 2027**, subject to its own Marketplace approval and
+This matches the JetBrains Marketplace Freemium plan, which remains optional
+from January 1, 2027, subject to its own Marketplace approval and
 activation gates. See [JetBrains monetization](JETBRAINS_MONETIZATION_2027.md).
 
 The source of truth is
@@ -53,8 +54,9 @@ future roadmap as an entitlement.
 
 ## Customer-facing notice
 
-> **Free through December 1, 2026.** A $5.95 USD per named seat per month
-> GitHub Assurance Seat is scheduled for December 2, 2026. It is not active
+> **Free through December 31, 2026.** A $5.95 USD per named seat per month or
+> $60 USD per named seat per year GitHub Assurance Seat is scheduled for
+> January 1, 2027. It is not active
 > yet: no checkout, entitlement, or license enforcement is live.
 > The open-source repository remains available under its existing license.
 

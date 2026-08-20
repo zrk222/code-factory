@@ -10,6 +10,7 @@ from typing import Any
 
 from .graph_ops import graph_ops_snapshot
 from .loop_passport import verify_loop_passport
+from .agent_license import AgentLicenseError, admission_license_decision, normalize_agent_identity
 
 
 ADMISSION_REQUEST_SCHEMA = "factory.run-admission.request.v1"
@@ -155,7 +156,7 @@ def _validate_request(root: Path, request: dict[str, Any], passport: dict[str, A
             raise AdmissionError("ADMISSION_VALIDITY_EXCEEDS_APPROVAL", "valid_until may not outlive a required approval")
         seen_actions.add(action)
         normalized_approvals.append({"action": action, "approved_by": approver.strip(), "expires_at": item["expires_at"]})
-    return {
+    normalized = {
         "schema": ADMISSION_REQUEST_SCHEMA,
         "id": request_id,
         "valid_until": request["valid_until"],
@@ -165,6 +166,9 @@ def _validate_request(root: Path, request: dict[str, Any], passport: dict[str, A
         "budget": budget,
         "approvals": sorted(normalized_approvals, key=lambda item: item["action"]),
     }
+    if "agent" in request:
+        normalized["agent"] = normalize_agent_identity(request.get("agent"), "agent")
+    return normalized
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -192,6 +196,10 @@ def prepare_admission(root: Path, passport_path: Path, request_path: Path, out_d
     if not snapshot.get("complete"):
         raise AdmissionError("ADMISSION_GRAPH_INCOMPLETE", "Graph Ops snapshot is incomplete")
     request = _validate_request(workspace, _load(request_path), passport)
+    try:
+        license_value = admission_license_decision(workspace, passport, request)
+    except AgentLicenseError as exc:
+        raise AdmissionError(exc.code, str(exc)) from exc
     target_dir = _inside(workspace, Path(out_dir) if out_dir is not None else workspace / ".factory" / "admissions")
     workspace_sha256 = _fingerprint(workspace)
     core = {
@@ -210,6 +218,14 @@ def prepare_admission(root: Path, passport_path: Path, request_path: Path, out_d
             "The selected harness must enforce identity, sandboxing, network policy, credentials, and execution.",
         ],
     }
+    if license_value is not None:
+        core["agent_license"] = {
+            "license_sha256": license_value["license_sha256"],
+            "tier": license_value["tier"],
+            "allowed_paths": license_value["allowed_paths"],
+            "expires_at": license_value["expires_at"],
+            "identity_provenance": license_value["identity_provenance"],
+        }
     packet = {**core, "packet_sha256": _sha(core)}
     path = target_dir / f"{request['id']}.admission.json"
     if path.exists():

@@ -1,0 +1,11 @@
+{
+  "provider": "deepgram",
+  "model": "aura-2-thalia-en",
+  "encoding": "mp3",
+  "script_sha256": "8f621584266332f3705b6871ac91928d993bf68b0cbd999cde6e0b745abae6b0",
+  "characters": 1426,
+  "words": 231,
+  "segments": 9,
+  "postprocess": "ffmpeg atempo=1.022 to fit the 90-second master",
+  "output": "assets/audio/narration-deepgram.mp3"
+}

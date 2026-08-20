@@ -1,0 +1,69 @@
+name: proof-delta-intake-v1
+language: python
+modules:
+  - name: intake_grill
+    path: factoryline/intake_grill.py
+    functions:
+      - name: grill_intake
+        args: [prd_path, root, project, out_path, force]
+        returns: dict[str, Any]
+      - name: confirm_intake
+        args: [root, intake_path, framework, intent, acceptance, external_effects, approved_by, rationale, re_evaluate_when, out_path, force]
+        returns: dict[str, Any]
+      - name: verify_intake_confirmation
+        args: [root, receipt_path]
+        returns: dict[str, Any]
+  - name: proof_delta
+    path: factoryline/proof_delta.py
+    functions:
+      - name: create_proof_delta
+        args: [root, mission_path, prior_candidate_path, repair_candidate_path, failure_path, criterion_id, out]
+        returns: dict[str, Any]
+      - name: verify_proof_delta
+        args: [root, receipt_path]
+        returns: dict[str, Any]
+  - name: mission_graph
+    path: factoryline/mission_graph.py
+    functions:
+      - name: apply_mission_event
+        args: [mission_path, root, event, actor, role, idempotency_key, receipt_path, payload]
+        returns: dict[str, Any]
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_snapshot
+        args: [root]
+        returns: dict[str, Any]
+dependencies:
+  - from: intake_grill
+    to: product_missions
+  - from: proof_delta
+    to: product_missions
+  - from: mission_graph
+    to: proof_delta
+  - from: graph_ops
+    to: intake_grill
+  - from: graph_ops
+    to: proof_delta
+invariants:
+  - name: intake_never_executes_or_selects
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:create_mission|apply|commit|merge|deploy|publish|sign|send_message|grant_connector|invoke)\\s*\\("
+    scopes:
+      - module: intake_grill
+        symbol: grill_intake
+        max_lines: 100
+      - module: intake_grill
+        symbol: confirm_intake
+        max_lines: 100
+  - name: proof_delta_never_executes_or_repairs
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:apply|commit|merge|deploy|publish|sign|send_message|grant_connector|invoke)\\s*\\("
+    scopes:
+      - module: proof_delta
+        symbol: create_proof_delta
+        max_lines: 100
+  - name: graph_projection_is_read_only
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:apply|commit|merge|deploy|publish|sign|send_message|grant_connector|invoke)\\s*\\("
+    scopes:
+      - module: graph_ops
+        symbol: graph_ops_snapshot
+        max_lines: 130

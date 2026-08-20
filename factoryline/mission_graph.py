@@ -19,6 +19,7 @@ import sqlite3
 from .failure_guidance import explain_failure
 from .migration import verify_repository_context
 from .product_missions import verify_mission, verify_mission_completion
+from .proof_delta import ProofDeltaError, verify_proof_delta
 
 
 GRAPH_SCHEMA = "factory.mission.graph.v1"
@@ -494,9 +495,43 @@ def _guard_validation(row: sqlite3.Row, receipt_file: Path, receipt: dict[str, A
         raise MissionGraphError("MISSION_GRAPH_VALIDATION_INVALID", "criterion_id is not a mission milestone")
 
 
-def _guard_retry_review(receipt: dict[str, Any], event: str, payload: dict[str, Any]) -> None:
+def _latest_correction_binding(connection: sqlite3.Connection, mission_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return the candidate and failure events that bind the current correction."""
+    events = [json.loads(item["event_json"]) for item in connection.execute(
+        "SELECT event_json FROM graph_events WHERE thread_id=? ORDER BY version", (mission_id,),
+    ).fetchall()]
+    failure_index = next((index for index in range(len(events) - 1, -1, -1) if events[index].get("event") == "validation_failed"), None)
+    if failure_index is None:
+        raise MissionGraphError("MISSION_GRAPH_PROOF_DELTA_INVALID", "retry has no preceding validation failure")
+    candidate = next((item for item in reversed(events[:failure_index]) if item.get("event") == "candidate_ready"), None)
+    if candidate is None:
+        raise MissionGraphError("MISSION_GRAPH_PROOF_DELTA_INVALID", "retry has no candidate bound before the validation failure")
+    return candidate, events[failure_index]
+
+
+def _guard_retry_review(connection: sqlite3.Connection, row: sqlite3.Row, root: Path,
+                        receipt_file: Path, receipt: dict[str, Any], event: str,
+                        payload: dict[str, Any]) -> None:
     if event == "retry" and payload.get("fresh_context") is not True:
         raise MissionGraphError("MISSION_GRAPH_FRESH_CONTEXT_REQUIRED", "retry must attest fresh_context=true")
+    if event == "retry":
+        if receipt.get("schema") != "factory.mission.proof-delta.v1":
+            raise MissionGraphError("MISSION_GRAPH_PROOF_DELTA_REQUIRED", "retry requires a factory.mission.proof-delta.v1 receipt")
+        try:
+            proof_delta = verify_proof_delta(root, receipt_file)
+        except ProofDeltaError as exc:
+            raise MissionGraphError("MISSION_GRAPH_PROOF_DELTA_INVALID", exc.message) from exc
+        if not proof_delta["eligible"]:
+            raise MissionGraphError("MISSION_GRAPH_NO_EVIDENCE_GAIN", "retry is blocked because the repair packet adds no new hash-bound evidence")
+        candidate_event, failure_event = _latest_correction_binding(connection, row["thread_id"])
+        candidate_ref = candidate_event.get("receipt", {})
+        failure_ref = failure_event.get("receipt", {})
+        if (
+            proof_delta["prior_candidate"]["sha256"] != candidate_ref.get("sha256")
+            or proof_delta["failure"]["sha256"] != failure_ref.get("sha256")
+            or proof_delta["criterion_id"] != failure_event.get("payload", {}).get("criterion_id")
+        ):
+            raise MissionGraphError("MISSION_GRAPH_PROOF_DELTA_INVALID", "proof delta must bind the current candidate, failed criterion, and validation failure")
     if event == "pause" and receipt.get("schema") != "factory.mission.human-interrupt.v1":
         raise MissionGraphError("MISSION_GRAPH_INTERRUPT_INVALID", "pause requires factory.mission.human-interrupt.v1")
     if event in {"plan_revised", "resume"} and receipt.get("schema") != "factory.mission.plan-revision.v1":
@@ -574,7 +609,7 @@ def _reduce_thread(row: sqlite3.Row, event: str, actor: str, target: str,
     if event in {"validation_failed", "validation_passed"}:
         state["verifier_id"] = actor
     if event == "retry":
-        state.update(marker="MISSION_GRAPH_BUDGET_ENFORCED" if target == "budget_exhausted" else "MISSION_GRAPH_FRESH_CONTEXT_BOUND")
+        state.update(marker="MISSION_GRAPH_BUDGET_ENFORCED" if target == "budget_exhausted" else "MISSION_GRAPH_PROOF_DELTA_BOUND")
         if target != "budget_exhausted":
             state.update(attempts=state["attempts"] + 1, creator_id=None, verifier_id=None)
     if event == "pause":
@@ -629,7 +664,7 @@ def apply_mission_event(mission_path: Path, root: Path, event: str, actor: str, 
         _guard_actor(row, mission, event, actor, role, roles)
         _guard_decision_candidate(receipt, mission, event, actor)
         _guard_validation(row, receipt_file, receipt, mission, event, actor, payload)
-        _guard_retry_review(receipt, event, payload)
+        _guard_retry_review(connection, row, root, receipt_file, receipt, event, payload)
         _guard_context(receipt_file, event)
         if event == "retry" and row["attempts"] + 1 > mission["budgets"]["max_iterations"]:
             target = "budget_exhausted"

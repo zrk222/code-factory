@@ -42,7 +42,7 @@ def test_plugin_skill_and_workflow_keep_execution_and_release_authority_human_co
     assert "Do not authorize or execute repairs" in skill
     assert "pull_request_target" not in workflow
     assert "contents: read" in workflow
-    assert "zrk222/code-factory@v0.39.0" in workflow
+    assert "zrk222/code-factory@v0.40.0" in workflow
     assert "write" not in workflow
 
 
@@ -53,7 +53,7 @@ def test_marketplace_entry_and_docs_expose_all_supported_coding_agent_installs()
     assert plugins == [{
         "name": "code-factory-langgraph",
         "source": "./plugins/code-factory-langgraph",
-        "description": "Proof-aware LangGraph guidance and read-only resume-parity receipts for coding agents.",
+        "description": "Proof-aware LangGraph guidance and read-only resume-parity receipts before review.",
         "author": {"name": "Richard Katz", "email": "rkatz22@gmail.com"},
     }]
 
@@ -61,4 +61,4 @@ def test_marketplace_entry_and_docs_expose_all_supported_coding_agent_installs()
     assert "codex plugin add code-factory-langgraph@code-factory" in docs
     assert "/plugin install code-factory-langgraph@code-factory" in docs
     assert "dcode plugin install code-factory-langgraph@code-factory" in docs
-    assert "factoryline-code-factory>=0.39.0" in docs
+    assert "factoryline-code-factory>=0.40.0" in docs

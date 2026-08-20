@@ -4,7 +4,7 @@
     "marketplace_id": 33009,
     "xml_id": "app.factoryline",
     "name": "FactoryLine AI Proof",
-    "current_free_version": "0.8.10",
+    "current_free_version": "0.8.11",
     "paid_launch_version": "2027.1.0"
   },
   "governance": {
@@ -18,11 +18,11 @@
   "offer": {
     "free_through": "2026-12-31T23:59:59-05:00",
     "paid_from": "2027-01-01",
-    "model": "paid",
-    "monthly_price_usd": 4.95,
+    "model": "freemium",
+    "monthly_price_usd": 5.95,
     "monthly_price_status": "owner_approved",
-    "annual_price_usd": null,
-    "annual_price_status": "not_selected",
+    "annual_price_usd": 60.0,
+    "annual_price_status": "owner_approved",
     "trial_days": 30,
     "trial_status": "planned",
     "taxes_and_currency_conversion": "calculated_by_JetBrains_at_checkout"
@@ -32,13 +32,13 @@
     "product_code_status": "proposed_not_registered",
     "release_date": "20270101",
     "release_version": "20271",
-    "optional": false,
+    "optional": true,
     "active_descriptor_contains_product_descriptor": false,
     "staging_template": "editors/intellij/monetization/plugin-product-descriptor-2027.xml"
   },
   "feature_boundary": {
-    "through_2026_12_31": "all_0_8_0_features_free",
-    "from_2027_01_01": "2027_1_0_requires_paid_license_or_active_trial",
+    "through_2026_12_31": "all_0_8_11_features_free",
+    "from_2027_01_01": "free_core_remains_available; licensed_entitlements_are_limited_to_optional_memory_and_enterprise_assurance_features",
     "source_license": "MIT OR Apache-2.0 remains unchanged",
     "privacy": "no new telemetry, source upload, credential storage, signing, or release authority"
   },

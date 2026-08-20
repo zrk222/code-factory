@@ -1,0 +1,15 @@
+{
+  "name": "code-factory-remotion-engine",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "render:engine": "remotion render src/index.ts CodeFactoryFactoryEngine ../assets/video/remotion-factory-engine.mp4 --codec=h264 --crf=20"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.513",
+    "@remotion/renderer": "4.0.513",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "remotion": "4.0.513"
+  }
+}

@@ -1,4 +1,4 @@
-# WizeMe Mesh demand gate
+# Memory Platform demand gate
 
 **Status:** pre-committed discovery benchmark  
 **Evidence convention:** `[F]` founder-supplied hypothesis; `[D]` data-verified only after a recorded conversation or audit receipt; `[U]` unknown until tested.

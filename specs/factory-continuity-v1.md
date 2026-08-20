@@ -61,7 +61,7 @@ Scenario: Graph Ops exposes metadata without becoming a memory authority
   `factory.continuity.proof.v1`, and `factory.continuity.v1`.
 - Graph Ops shall make `expired` and `draft` records visible as withheld or
   awaiting independent review, not as reusable facts.
-- Documentation shall retain the WizeMe Mesh claim boundary: local hash chaining
+- Documentation shall retain the Memory Platform claim boundary: local hash chaining
   is unsigned and is not hosted identity, KMS, erasure, external anchoring, or
   compliance proof.
 

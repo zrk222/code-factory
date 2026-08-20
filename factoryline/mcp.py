@@ -13,8 +13,13 @@ from . import __version__
 from .developer_memory import developer_memory_brief
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .langgraph_assurance import MCP_MARKER, LangGraphAssuranceError, verify_langgraph_resume_parity
+from .proof_delta import proof_delta_status
 from .proof_reuse import verify_proof_receipt
 from .prd_grill import verify_prd_grill
+from .intake_grill import intake_status
+from .gauntlet import gauntlet_status
+from .agent_license import AgentLicenseError, derive_license, license_projection, normalize_agent_identity
+from .combine import combine_projection
 from .workspace_advisor import inspect_workspace
 
 
@@ -49,6 +54,12 @@ _RECEIPT_ROOTS = (
     Path(".factory/cdte"),
     Path(".factory/verifier-sessions"),
     Path(".factory/proof-plans"),
+    Path(".factory/proof-deltas"),
+    Path(".factory/intake-grills"),
+    Path(".factory/intake-confirmations"),
+    Path(".factory/gauntlets"),
+    Path(".factory/agent-licenses"),
+    Path(".factory/combines"),
 )
 
 
@@ -202,6 +213,16 @@ def _tool_definitions() -> list[dict[str, object]]:
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
+            "name": "factory.proof_delta_status",
+            "description": "Read the newest local Proof-Delta retry-admission receipt. It never starts an agent, applies a repair, or admits a retry.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"mission": {"type": "string", "minLength": 1, "maxLength": 64}},
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
             "name": "factory.cdte_status",
             "description": "Read the latest existing deterministic CDTE scan for an optional feature. It never synthesizes constraints or writes a scan receipt.",
             "inputSchema": {
@@ -220,6 +241,54 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["prd_path"],
                 "additionalProperties": False,
             },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.intake_status",
+            "description": "Read source-bound framework, intent, acceptance, and external-effects intake status. It never selects a framework, creates a mission, or authorizes implementation.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"prd_path": {"type": "string", "description": "Optional root-relative PRD path to scope the status."}},
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.gauntlet_status",
+            "description": "Read local Survival Card facts, including whether only redacted verified continuity metadata was bound, for an optional Gauntlet source id. It never compiles a proposal, admits or runs a batch, signs a card, or promotes a result.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"source_id": {"type": "string", "minLength": 1, "maxLength": 96}},
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.agent_license_status",
+            "description": "Read the local, expiry-bound Earned Autonomy tier for all governed declared agents or one supplied declared identity. It never authenticates identity, records evidence, issues a license, raises autonomy, or starts an agent.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "agent": {
+                        "type": "object",
+                        "properties": {
+                            "schema": {"type": "string", "const": "factory.agent-identity.v1"},
+                            "subject": {"type": "string"},
+                            "provider": {"type": "string"},
+                            "model": {"type": "string"},
+                        },
+                        "required": ["schema", "subject", "provider", "model"],
+                        "additionalProperties": False,
+                    },
+                },
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.combine_status",
+            "description": "Read locally verified Combine scoreboards that compare completed governed run evidence. It never launches agents, estimates quality, or creates a vendor ranking.",
+            "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
@@ -530,6 +599,17 @@ def _proof_reuse(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _proof_delta_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"mission"}:
+        raise McpError("factory.proof_delta_status accepts only optional mission")
+    mission = _feature(arguments["mission"], "mission") if "mission" in arguments else None
+    return {
+        "marker": "MCP_PROOF_DELTA_READ_ONLY",
+        "status": proof_delta_status(root, mission),
+        "scope": "Read-only local evidence projection; no retry, worker, repair, approval, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
 def _cdte_status(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) - {"feature"}:
         raise McpError("factory.cdte_status accepts only optional feature")
@@ -583,6 +663,61 @@ def _workspace_advisor(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _intake_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"prd_path"}:
+        raise McpError("factory.intake_status accepts only optional prd_path")
+    prd: Path | None = None
+    if "prd_path" in arguments:
+        relative, source = _relative_path(root, arguments["prd_path"], "prd_path", must_exist=True)
+        if source.stat().st_size > _MAX_RECEIPT_BYTES:
+            raise McpError("prd_path must be at most 262144 bytes")
+        prd = Path(relative)
+    return {
+        "marker": "MCP_INTAKE_READ_ONLY",
+        "status": intake_status(root, prd),
+        "scope": "Read-only local intake projection; it does not infer intent, select a framework, create a mission, execute work, or authorize release actions.",
+    }
+
+
+def _gauntlet_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"source_id"}:
+        raise McpError("factory.gauntlet_status accepts only optional source_id")
+    source_id = _feature(arguments["source_id"], "source_id") if "source_id" in arguments else None
+    return {
+        "marker": "MCP_GAUNTLET_READ_ONLY",
+        "status": gauntlet_status(root, source_id),
+        "scope": "Read-only local Survival Card projection; no proposal, admission, E2E run, repair, approval, signing, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _agent_license_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"agent"}:
+        raise McpError("factory.agent_license_status accepts only optional agent")
+    try:
+        if "agent" in arguments:
+            identity = normalize_agent_identity(arguments["agent"])
+            status: object = {"licenses": [derive_license(root, identity)]}
+        else:
+            status = license_projection(root)
+    except AgentLicenseError as exc:
+        raise McpError(str(exc), exc.code) from exc
+    return {
+        "marker": "MCP_AGENT_LICENSE_READ_ONLY",
+        "status": status,
+        "scope": "Read-only local evidence projection. Subjects are declared identities; this tool does not authenticate, record, issue, promote, execute, approve, repair, merge, publish, deploy, sign, or grant credentials.",
+    }
+
+
+def _combine_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.combine_status accepts no arguments")
+    return {
+        "marker": "MCP_COMBINE_READ_ONLY",
+        "status": combine_projection(root),
+        "scope": "Read-only local comparison of verified governed events; no agent command, score estimation, repair, approval, publication, deployment, or credential action ran.",
+    }
+
+
 def _tool_call(root: Path, params: object) -> dict[str, object]:
     if not isinstance(params, dict) or set(params) - {"name", "arguments"}:
         raise McpError("tools/call requires name and optional arguments")
@@ -623,10 +758,20 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_verifier_status(root, arguments))
     if name == "factory.proof_reuse":
         return _content(_proof_reuse(root, arguments))
+    if name == "factory.proof_delta_status":
+        return _content(_proof_delta_status(root, arguments))
     if name == "factory.cdte_status":
         return _content(_cdte_status(root, arguments))
     if name == "factory.prd_grill_status":
         return _content(_prd_grill_status(root, arguments))
+    if name == "factory.intake_status":
+        return _content(_intake_status(root, arguments))
+    if name == "factory.gauntlet_status":
+        return _content(_gauntlet_status(root, arguments))
+    if name == "factory.agent_license_status":
+        return _content(_agent_license_status(root, arguments))
+    if name == "factory.combine_status":
+        return _content(_combine_status(root, arguments))
     if name == "factory.workspace_advisor":
         return _content(_workspace_advisor(root, arguments))
     raise McpError("unknown MCP tool")

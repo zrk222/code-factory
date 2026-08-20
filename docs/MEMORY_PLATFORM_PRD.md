@@ -1,4 +1,4 @@
-# WizeMe Mesh — Product Requirements Document
+# Memory Platform — Product Requirements Document
 ## Premium governance, provenance, and proof control plane for AI agent memory
 
 **Document status:** build specification for Codex
@@ -14,7 +14,7 @@
 
 ## 0. What this product is and is not
 
-WizeMe Mesh is **not a memory store.** It does not compete with Mem0, Zep, or Letta on retrieval quality. That capability is commoditizing.
+The Memory Platform is **not a memory store.** It does not compete with Mem0, Zep, or Letta on retrieval quality. That capability is commoditizing.
 
 Mesh is the **control plane above whatever store an agent uses**, doing three things no store-that-is-also-a-vendor can neutrally do:
 
@@ -42,8 +42,8 @@ Reproduce unchanged in `CLAIMS.md`, at module boundaries, in generated docs, in 
 | Hosted PostgreSQL tenant isolation (forced RLS) | **BUILT-PROVEN for PR assurance / UNPROVEN for memory** |
 | Atomic decision + outbox transaction | **BUILT-PROVEN for PR assurance / UNPROVEN at memory hot path** |
 | Hosted OIDC/JWKS authentication | **BUILT-PROVEN for PR assurance / UNPROVEN for Mesh identity lifecycle** |
-| Single-account memory governance (WizeMe) | **BUILT-UNPROVEN** |
-| Retrieval / evaluation harness (WizeMe) | **BUILT-UNPROVEN** |
+| Single-account memory governance (reference application) | **BUILT-UNPROVEN** |
+| Retrieval / evaluation harness (reference application) | **BUILT-UNPROVEN** |
 | Memory record authority | **CLAIMED-UNBUILT** |
 | Purpose binding | **CLAIMED-UNBUILT** |
 | Crypto-shredding / erasure | **CLAIMED-UNBUILT** |
@@ -72,7 +72,7 @@ Reproduce unchanged in `CLAIMS.md`, at module boundaries, in generated docs, in 
 
 ---
 
-## 3. Existing WizeMe architecture
+## 3. Existing reference architecture
 
 Codex must verify against the actual repository and report discrepancies.
 
@@ -233,9 +233,9 @@ Merkle commitment and inclusion-proof primitives already exist (`privacy.py:31-8
 
 ### Downstream milestones (gated on the units above)
 
-**Memory CI — the customer wedge, ships first.** Tests a team's own configuration for cross-tenant leakage, unauthorized recall, missing provenance, stale recall, revocation/deletion cascade failures, purpose mismatch, unsafe derived memory, memory→action lineage, store-version compatibility. **Port `verify-validators` mutation testing** (`assurance.py:348-390`) so a check no validator proves reports `hollow_validator`. *Exit:* an external team installs it, runs it against their own store, gets reproducible receipts with zero WizeMe-specific assumptions.
+**Memory CI — the customer wedge, ships first.** Tests a team's own configuration for cross-tenant leakage, unauthorized recall, missing provenance, stale recall, revocation/deletion cascade failures, purpose mismatch, unsafe derived memory, memory→action lineage, store-version compatibility. **Port `verify-validators` mutation testing** (`assurance.py:348-390`) so a check no validator proves reports `hollow_validator`. *Exit:* an external team installs it, runs it against their own store, gets reproducible receipts with zero product-specific assumptions.
 
-**Gateway slice.** WizeMe's store, **one** external store, **one** canonical adapter contract: `authorize(...) → {decision, receipt, reasons[]}`, `execute(decision_receipt, operation) → {result, receipt}`, `describe() → {adapter_version, store_version, capabilities[], limitations[]}`. Certification fixtures run in CI against the live vendor so API drift fails as a compatibility test. `describe()` declares what it cannot support; the gateway **denies rather than silently degrades**. *Exit:* an operation returns a signed receipt verifying independently and naming the exact policy, principal, and store version. Only then add a second store.
+**Gateway slice.** One reference store, **one** external store, **one** canonical adapter contract: `authorize(...) → {decision, receipt, reasons[]}`, `execute(decision_receipt, operation) → {result, receipt}`, `describe() → {adapter_version, store_version, capabilities[], limitations[]}`. Certification fixtures run in CI against the live vendor so API drift fails as a compatibility test. `describe()` declares what it cannot support; the gateway **denies rather than silently degrades**. *Exit:* an operation returns a signed receipt verifying independently and naming the exact policy, principal, and store version. Only then add a second store.
 
 **Full grants model.** Organizations, workspaces, principals, memberships, roles, subjects/authors/owners/custodians, resource grants, delegation and impersonation boundaries, purpose- and time-bound access, approvals, derived-memory inheritance, revocation cascades, separation of duty (`E_SELF_APPROVAL` semantics are PORTABLE). *Exit:* revoking a grant makes every dependent derived memory inaccessible with a receipt trail proving the cascade.
 
@@ -293,7 +293,7 @@ Dual-write and backfill; never a big-bang cutover. Every migrated record gets a 
 
 ## 17. Product boundaries
 
-The WizeMe consumer app is the **reference implementation** — proof the primitives work under real multi-lane load — not a second product. Do not expand its surface.
+The reference application is the **reference implementation** — proof the primitives work under real multi-lane load — not a second product. Do not expand its surface.
 
 **code-factory stays a separate product.** Shared primitives, separate products, separate buyers. Merging them is the diffusion problem in a new costume.
 
@@ -344,7 +344,7 @@ The WizeMe consumer app is the **reference implementation** — proof the primit
 1. **Commit this PRD into the repository.**
 2. Confirm §4 against the current code-factory checkout; report drift from commit `4b8b19c0`.
 3. `CLAIMS.md` reproducing §1 verbatim, plus the runtime decision (Python kernel as a service behind the gateway, or port to TypeScript) with rationale.
-4. Verification pass against §3 — confirm or correct the WizeMe inventory; **report discrepancies rather than trusting this document.**
+4. Verification pass against §3 — confirm or correct the reference inventory; **report discrepancies rather than trusting this document.**
 5. Threat-model review (§18) against the real codebase; report which threats current architecture cannot address.
 6. Implement units in §12, NEW first — memory record authority and purpose binding gate everything downstream.
 7. **Measure the hot-path latency envelope early** (§14). It is the highest-uncertainty item and could reshape the design.

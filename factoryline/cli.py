@@ -113,6 +113,20 @@ from .counterexample import CounterexampleError, compile_counterexample_plan, ve
 from .guardrails import GuardrailError, evaluate_guardrails, verify_guardrail_evaluation
 from .resilience import ResilienceError, compile_temporal_resilience_plan, verify_temporal_resilience_plan, write_temporal_resilience_plan
 from .reality_check import RealityCheckError, inspect_reality_intent, run_reality_check, write_reality_check_artifacts
+from .gauntlet import (
+    GauntletError,
+    admit_gauntlet,
+    challenge_survival_card,
+    compile_gauntlet_proposal,
+    gauntlet_status,
+    run_gauntlet,
+    seal_survival_card,
+    verify_gauntlet_proposal,
+    verify_survival_card,
+    write_gauntlet_proposal,
+)
+from .agent_license import AgentLicenseError, derive_license, issue_license, record_governed_run, seal_license, verify_license
+from .combine import CombineError, combine_projection, score_combine, seal_combine_scoreboard, seal_combine_task, verify_combine_scoreboard
 from .team_pilot import (
     TeamPilotError,
     evaluate_team_pilot_readiness,
@@ -153,6 +167,8 @@ from .product_missions import (
     verify_product_graph,
 )
 from .prd_grill import grill_prd, verify_prd_grill
+from .proof_delta import ProofDeltaError, create_proof_delta, proof_delta_status, verify_proof_delta
+from .intake_grill import confirm_intake, grill_intake, intake_status, verify_intake_confirmation, verify_intake_grill
 from .mission_graph import (
     MissionGraphError,
     apply_mission_event,
@@ -465,6 +481,110 @@ def main(argv=None) -> int:
     reality_inspect.add_argument("--root", default=".")
     reality_inspect.add_argument("--manifest", required=True, help="workspace-contained factory.reality-check-manifest.v1 JSON path")
     reality_inspect.add_argument("--json", action="store_true")
+
+    gauntlet = sub.add_parser("gauntlet", help="compile, admit, run, and verify a supervised proof-of-survival batch")
+    gauntlet_sub = gauntlet.add_subparsers(required=True, dest="gauntlet_cmd")
+    gauntlet_plan = gauntlet_sub.add_parser("plan", help="compile declared promise sabotages from human-written E2E manifests without execution")
+    gauntlet_plan.add_argument("--root", default=".")
+    gauntlet_plan.add_argument("--source", required=True, help="workspace-contained factory.gauntlet-source.v1 JSON path")
+    gauntlet_plan.add_argument("--out", help="optional workspace-contained proposal output path")
+    gauntlet_plan.add_argument("--json", action="store_true")
+    gauntlet_admit = gauntlet_sub.add_parser("admit", help="seal one named, expiring admission for an exact current proposal")
+    gauntlet_admit.add_argument("proposal", help="workspace-contained factory.gauntlet-proposal.v1 JSON path")
+    gauntlet_admit.add_argument("--root", default=".")
+    gauntlet_admit.add_argument("--approved-by", required=True)
+    gauntlet_admit.add_argument("--rationale", required=True)
+    gauntlet_admit.add_argument("--confirmation", required=True, help="exact confirmation phrase shown by the proposal source id")
+    gauntlet_admit.add_argument("--valid-for-minutes", type=int, default=30)
+    gauntlet_admit.add_argument("--out", help="optional workspace-contained admission output path")
+    gauntlet_admit.add_argument("--json", action="store_true")
+    gauntlet_run = gauntlet_sub.add_parser("run", help="run only one current, named-admitted local E2E sabotage batch")
+    gauntlet_run.add_argument("proposal", help="workspace-contained factory.gauntlet-proposal.v1 JSON path")
+    gauntlet_run.add_argument("--root", default=".")
+    gauntlet_run.add_argument("--admission", help="workspace-contained factory.gauntlet-admission.v1 JSON path")
+    gauntlet_run.add_argument("--out", help="optional workspace-contained Survival Card output path")
+    gauntlet_run.add_argument("--json", action="store_true")
+    gauntlet_card = gauntlet_sub.add_parser("card", help="verify, challenge, or optionally DSSE-seal an existing Survival Card")
+    gauntlet_card_sub = gauntlet_card.add_subparsers(required=True, dest="gauntlet_card_cmd")
+    gauntlet_card_verify = gauntlet_card_sub.add_parser("verify", help="verify one card offline and optionally its exact DSSE binding")
+    gauntlet_card_verify.add_argument("card")
+    gauntlet_card_verify.add_argument("--envelope")
+    gauntlet_card_verify.add_argument("--trust-root")
+    gauntlet_card_verify.add_argument("--json", action="store_true")
+    gauntlet_card_challenge = gauntlet_card_sub.add_parser("challenge", help="prove the card verifier rejects a changed summary without editing the card")
+    gauntlet_card_challenge.add_argument("card")
+    gauntlet_card_challenge.add_argument("--json", action="store_true")
+    gauntlet_card_seal = gauntlet_card_sub.add_parser("seal", help="optionally bind one card to a Receipt v2 DSSE envelope")
+    gauntlet_card_seal.add_argument("card")
+    gauntlet_card_seal.add_argument("--private-key", required=True)
+    gauntlet_card_seal.add_argument("--keyid", required=True)
+    gauntlet_card_seal.add_argument("--identity", required=True)
+    gauntlet_card_seal.add_argument("--issuer", required=True)
+    gauntlet_card_seal.add_argument("--tenant", default="local")
+    gauntlet_card_seal.add_argument("--out", required=True)
+    gauntlet_card_seal.add_argument("--json", action="store_true")
+    gauntlet_status_parser = gauntlet_sub.add_parser("status", help="read local Survival Card facts without execution")
+    gauntlet_status_parser.add_argument("--root", default=".")
+    gauntlet_status_parser.add_argument("--source-id")
+    gauntlet_status_parser.add_argument("--json", action="store_true")
+
+    license_parser = sub.add_parser("license", help="derive and verify expiring, evidence-governed local agent autonomy tiers")
+    license_sub = license_parser.add_subparsers(required=True, dest="license_cmd")
+    license_record = license_sub.add_parser("record", help="record one already-admitted, independently verified governed run")
+    license_record.add_argument("event", help="workspace-contained factory.agent-run.v1 JSON path")
+    license_record.add_argument("--root", default=".")
+    license_record.add_argument("--out-dir", help="optional workspace-contained immutable event directory")
+    license_record.add_argument("--json", action="store_true")
+    license_status = license_sub.add_parser("status", help="derive read-only current license facts for one declared agent identity")
+    license_status.add_argument("--agent", required=True, help="workspace-contained factory.agent-identity.v1 JSON path")
+    license_status.add_argument("--root", default=".")
+    license_status.add_argument("--json", action="store_true")
+    license_issue = license_sub.add_parser("issue", help="write one locally hash-bound license derived from current governed evidence")
+    license_issue.add_argument("--agent", required=True, help="workspace-contained factory.agent-identity.v1 JSON path")
+    license_issue.add_argument("--root", default=".")
+    license_issue.add_argument("--out", help="optional workspace-contained license JSON path")
+    license_issue.add_argument("--json", action="store_true")
+    license_verify = license_sub.add_parser("verify", help="verify one existing local license hash offline")
+    license_verify.add_argument("license")
+    license_verify.add_argument("--json", action="store_true")
+    license_seal = license_sub.add_parser("seal", help="optionally bind one verified license to a Receipt v2 DSSE envelope")
+    license_seal.add_argument("license")
+    license_seal.add_argument("--private-key", required=True)
+    license_seal.add_argument("--keyid", required=True)
+    license_seal.add_argument("--identity", required=True)
+    license_seal.add_argument("--issuer", required=True)
+    license_seal.add_argument("--tenant", default="local")
+    license_seal.add_argument("--out", required=True)
+    license_seal.add_argument("--json", action="store_true")
+
+    combine = sub.add_parser("combine", help="seal and compare completed governed agent evidence without launching an agent")
+    combine_sub = combine.add_subparsers(required=True, dest="combine_cmd")
+    combine_task = combine_sub.add_parser("task", help="seal a human-written task declaration; the description stays hashed")
+    combine_task.add_argument("source", help="workspace-contained factory.combine-task.v1 JSON path")
+    combine_task.add_argument("--root", default=".")
+    combine_task.add_argument("--out", help="optional workspace-contained sealed task JSON path")
+    combine_task.add_argument("--json", action="store_true")
+    combine_score = combine_sub.add_parser("score", help="rank existing exact governed run events for one sealed task")
+    combine_score.add_argument("task", help="workspace-contained sealed Combine task JSON path")
+    combine_score.add_argument("--event", action="append", default=[], help="optional exact immutable governed event path; repeat for each candidate")
+    combine_score.add_argument("--root", default=".")
+    combine_score.add_argument("--out", help="optional workspace-contained scoreboard JSON path")
+    combine_score.add_argument("--json", action="store_true")
+    combine_status = combine_sub.add_parser("status", help="read locally verified Combine scoreboards without execution")
+    combine_status.add_argument("--root", default=".")
+    combine_status.add_argument("--json", action="store_true")
+    combine_verify = combine_sub.add_parser("verify", help="verify one Combine scoreboard hash offline")
+    combine_verify.add_argument("scoreboard")
+    combine_verify.add_argument("--json", action="store_true")
+    combine_seal = combine_sub.add_parser("seal", help="optionally bind one verified Combine scoreboard to a Receipt v2 DSSE envelope")
+    combine_seal.add_argument("scoreboard")
+    combine_seal.add_argument("--private-key", required=True)
+    combine_seal.add_argument("--keyid", required=True)
+    combine_seal.add_argument("--identity", required=True)
+    combine_seal.add_argument("--issuer", required=True)
+    combine_seal.add_argument("--tenant", default="local")
+    combine_seal.add_argument("--out", required=True)
+    combine_seal.add_argument("--json", action="store_true")
 
     team_pilot = sub.add_parser("team-pilot", help="validate customer-managed Team Pilot readiness without commercial activation")
     team_pilot_sub = team_pilot.add_subparsers(required=True, dest="team_pilot_cmd")
@@ -1191,6 +1311,7 @@ def main(argv=None) -> int:
     product_compile.add_argument("prd")
     product_compile.add_argument("--root", default=".")
     product_compile.add_argument("--project")
+    product_compile.add_argument("--intake", help="verified source-bound intake confirmation to bind")
     product_compile.add_argument("--force", action="store_true")
     product_compile.add_argument("--json", action="store_true")
     product_verify = product_sub.add_parser("verify", help="verify Product Graph and captured PRD hashes")
@@ -1218,6 +1339,38 @@ def main(argv=None) -> int:
     prd_verify.add_argument("receipt")
     prd_verify.add_argument("--json", action="store_true")
 
+    intake = sub.add_parser("intake", help="resolve framework, intent, and acceptance evidence before mission creation")
+    intake_sub = intake.add_subparsers(dest="intake_cmd", required=True)
+    intake_grill = intake_sub.add_parser("grill", help="write a source-bound framework and intent decision worksheet")
+    intake_grill.add_argument("prd")
+    intake_grill.add_argument("--root", default=".")
+    intake_grill.add_argument("--project")
+    intake_grill.add_argument("--out")
+    intake_grill.add_argument("--force", action="store_true")
+    intake_grill.add_argument("--json", action="store_true")
+    intake_confirm = intake_sub.add_parser("confirm", help="bind named human framework, intent, and acceptance decisions")
+    intake_confirm.add_argument("intake")
+    intake_confirm.add_argument("--root", default=".")
+    intake_confirm.add_argument("--framework", required=True)
+    intake_confirm.add_argument("--intent", required=True)
+    intake_confirm.add_argument("--acceptance", required=True)
+    intake_confirm.add_argument("--external-effects", required=True, choices=("local_only", "human_controlled"))
+    intake_confirm.add_argument("--approved-by", required=True)
+    intake_confirm.add_argument("--rationale", required=True)
+    intake_confirm.add_argument("--re-evaluate-when")
+    intake_confirm.add_argument("--out")
+    intake_confirm.add_argument("--force", action="store_true")
+    intake_confirm.add_argument("--json", action="store_true")
+    intake_verify = intake_sub.add_parser("verify", help="verify an intake worksheet or confirmation")
+    intake_verify.add_argument("receipt")
+    intake_verify.add_argument("--root", default=".")
+    intake_verify.add_argument("--confirmation", action="store_true")
+    intake_verify.add_argument("--json", action="store_true")
+    intake_read = intake_sub.add_parser("status", help="read local intake confirmation status")
+    intake_read.add_argument("--root", default=".")
+    intake_read.add_argument("--prd")
+    intake_read.add_argument("--json", action="store_true")
+
     mission = sub.add_parser("mission", help="create or verify a supervised, passport-bound value mission")
     mission_sub = mission.add_subparsers(dest="mission_cmd", required=True)
     mission_create = mission_sub.add_parser("create", help="bind one value slice to a bounded mission")
@@ -1231,6 +1384,7 @@ def main(argv=None) -> int:
     mission_create.add_argument("--max-tokens", type=int)
     mission_create.add_argument("--max-cost-usd", type=float)
     mission_create.add_argument("--readiness", help="verified migration readiness receipt to bind")
+    mission_create.add_argument("--require-intake", action="store_true", help="require a verified intake confirmation bound to the Product Graph")
     mission_create.add_argument("--force", action="store_true")
     mission_create.add_argument("--json", action="store_true")
     mission_verify = mission_sub.add_parser("verify", help="verify mission, source, budget, and Loop Passport bindings")
@@ -1253,6 +1407,25 @@ def main(argv=None) -> int:
     mission_decide.add_argument("--rationale", required=True)
     mission_decide.add_argument("--force", action="store_true")
     mission_decide.add_argument("--json", action="store_true")
+    mission_delta = mission_sub.add_parser("proof-delta", help="bind new evidence before a supervised mission retry")
+    mission_delta_sub = mission_delta.add_subparsers(dest="mission_delta_cmd", required=True)
+    mission_delta_create = mission_delta_sub.add_parser("create", help="write one hash-bound retry admission or no-progress halt receipt")
+    mission_delta_create.add_argument("mission")
+    mission_delta_create.add_argument("--root", default=".")
+    mission_delta_create.add_argument("--prior-candidate", required=True)
+    mission_delta_create.add_argument("--repair-candidate", required=True)
+    mission_delta_create.add_argument("--failure", required=True)
+    mission_delta_create.add_argument("--criterion", required=True)
+    mission_delta_create.add_argument("--out", required=True)
+    mission_delta_create.add_argument("--json", action="store_true")
+    mission_delta_verify = mission_delta_sub.add_parser("verify", help="verify one Proof-Delta receipt without admitting or running work")
+    mission_delta_verify.add_argument("receipt")
+    mission_delta_verify.add_argument("--root", default=".")
+    mission_delta_verify.add_argument("--json", action="store_true")
+    mission_delta_status = mission_delta_sub.add_parser("status", help="read the newest local Proof-Delta receipt")
+    mission_delta_status.add_argument("--root", default=".")
+    mission_delta_status.add_argument("--mission-id")
+    mission_delta_status.add_argument("--json", action="store_true")
 
     langgraph = sub.add_parser("langgraph", help="operate receipt-governed durable mission graphs")
     langgraph_sub = langgraph.add_subparsers(dest="langgraph_cmd", required=True)
@@ -1492,7 +1665,7 @@ def main(argv=None) -> int:
         return _home(Path(a.root), a.json)
     if a.cmd == "doctor":
         return _doctor(a.strict, a.json)
-    if a.cmd in {"prd", "product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider", "agent", "telemetry", "verifier"}:
+    if a.cmd in {"prd", "intake", "product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider", "agent", "telemetry", "verifier"}:
         try:
             if a.cmd == "prd" and a.prd_cmd == "grill":
                 result = grill_prd(
@@ -1501,6 +1674,18 @@ def main(argv=None) -> int:
                 )
             elif a.cmd == "prd" and a.prd_cmd == "verify":
                 result = verify_prd_grill(Path(a.receipt))
+            elif a.cmd == "intake" and a.intake_cmd == "grill":
+                result = grill_intake(Path(a.prd), Path(a.root), a.project, Path(a.out) if a.out else None, a.force)
+            elif a.cmd == "intake" and a.intake_cmd == "confirm":
+                result = confirm_intake(
+                    Path(a.root), Path(a.intake), a.framework, a.intent, a.acceptance,
+                    a.external_effects, a.approved_by, a.rationale, a.re_evaluate_when,
+                    Path(a.out) if a.out else None, a.force,
+                )
+            elif a.cmd == "intake" and a.intake_cmd == "verify":
+                result = verify_intake_confirmation(Path(a.root), Path(a.receipt)) if a.confirmation else verify_intake_grill(Path(a.root), Path(a.receipt))
+            elif a.cmd == "intake":
+                result = intake_status(Path(a.root), Path(a.prd) if a.prd else None)
             elif a.cmd == "agent" and a.agent_cmd == "contract":
                 result = validate_agent_contract(Path(a.manifest))
             elif a.cmd == "agent" and a.agent_cmd == "attestation":
@@ -1576,16 +1761,25 @@ def main(argv=None) -> int:
             elif a.cmd == "context":
                 result = verify_repository_context(Path(a.receipt))
             elif a.cmd == "product" and a.product_cmd == "compile":
-                result = compile_product_prd(Path(a.prd), Path(a.root), a.project, a.force)
+                result = compile_product_prd(Path(a.prd), Path(a.root), a.project, a.force, Path(a.intake) if a.intake else None)
             elif a.cmd == "product" and a.product_cmd == "verify":
                 result = verify_product_graph(Path(a.graph))
             elif a.cmd == "product":
                 result = plan_value_slices(Path(a.graph), Path(a.root), a.max_requirements, a.force)
+            elif a.cmd == "mission" and a.mission_cmd == "proof-delta" and a.mission_delta_cmd == "create":
+                result = create_proof_delta(
+                    Path(a.root), Path(a.mission), Path(a.prior_candidate), Path(a.repair_candidate),
+                    Path(a.failure), a.criterion, Path(a.out),
+                )
+            elif a.cmd == "mission" and a.mission_cmd == "proof-delta" and a.mission_delta_cmd == "verify":
+                result = verify_proof_delta(Path(a.root), Path(a.receipt))
+            elif a.cmd == "mission" and a.mission_cmd == "proof-delta":
+                result = proof_delta_status(Path(a.root), a.mission_id)
             elif a.cmd == "mission" and a.mission_cmd == "create":
                 result = create_mission(
                     Path(a.slices), a.slice_id, Path(a.root), a.owner, a.executor, a.force,
                     a.max_iterations, a.max_wall_seconds, a.max_tokens, a.max_cost_usd,
-                    Path(a.readiness) if a.readiness else None,
+                    Path(a.readiness) if a.readiness else None, a.require_intake,
                 )
             elif a.cmd == "mission" and a.mission_cmd == "verify":
                 result = verify_mission(Path(a.mission))
@@ -1662,7 +1856,7 @@ def main(argv=None) -> int:
                 )
             else:
                 result = outcome_summary(Path(a.root), a.mission_id)
-        except (ProductMissionError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProviderRouterError, AgentContractError, VerifierPlaneError, LangGraphAssuranceError) as exc:
+        except (ProductMissionError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProofDeltaError, ProviderRouterError, AgentContractError, VerifierPlaneError, LangGraphAssuranceError) as exc:
             print(json.dumps({
                 "schema": "factory.workflow_error.v1", "status": "failed",
                 "code": exc.code, "message": exc.message,
@@ -1684,6 +1878,7 @@ def main(argv=None) -> int:
         if (
             (a.cmd == "product" and a.product_cmd == "verify")
             or (a.cmd == "mission" and a.mission_cmd in {"verify", "verify-completion"})
+            or (a.cmd == "mission" and a.mission_cmd == "proof-delta" and a.mission_delta_cmd == "verify")
             or (a.cmd == "opinion" and a.opinion_cmd == "verify")
             or (a.cmd == "langgraph" and a.langgraph_cmd == "verify")
             or (a.cmd == "langgraph" and a.langgraph_cmd == "replay-verify")
@@ -1996,6 +2191,181 @@ def main(argv=None) -> int:
             if artifacts:
                 print(f"packet   : {artifacts['markdown']}")
         return 0 if receipt["ok"] else 1
+    if a.cmd == "license":
+        def local_path(workspace: Path, value: str) -> Path:
+            candidate = Path(value)
+            resolved = candidate.resolve() if candidate.is_absolute() else (workspace / candidate).resolve()
+            try:
+                resolved.relative_to(workspace)
+            except ValueError as exc:
+                raise AgentLicenseError("E_LICENSE_PATH_OUT_OF_SCOPE", "path must remain inside the workspace") from exc
+            return resolved
+
+        try:
+            if a.license_cmd == "verify":
+                payload = verify_license(Path(a.license))
+                code = 0 if payload["ok"] else 1
+            elif a.license_cmd == "seal":
+                payload = seal_license(
+                    Path(a.license), private_key_path=Path(a.private_key), keyid=a.keyid,
+                    identity=a.identity, issuer=a.issuer, tenant_id=a.tenant, out=Path(a.out),
+                )
+                code = 0
+            else:
+                workspace = Path(a.root).resolve()
+                if not workspace.is_dir():
+                    raise AgentLicenseError("E_LICENSE_PATH_OUT_OF_SCOPE", "root must be an existing workspace directory")
+                if a.license_cmd == "record":
+                    payload = record_governed_run(workspace, local_path(workspace, a.event), out_dir=local_path(workspace, a.out_dir) if a.out_dir else None)
+                else:
+                    identity = json.loads(local_path(workspace, a.agent).read_text(encoding="utf-8-sig"))
+                    if a.license_cmd == "status":
+                        payload = {"marker": "AGENT_LICENSE_STATUS_READ_ONLY", "license": derive_license(workspace, identity), "authority": {"execution": False, "approval": False, "repair": False, "merge": False, "publication": False, "deployment": False, "signing": False, "messaging": False, "credential": False, "connector": False}}
+                    else:
+                        payload = issue_license(workspace, identity, out=local_path(workspace, a.out) if a.out else None)
+                code = 0
+        except (AgentLicenseError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            error = {"schema": "factory.agent-license.error.v1", "marker": getattr(exc, "code", "E_LICENSE_INPUT_UNREADABLE"), "code": getattr(exc, "code", "E_LICENSE_INPUT_UNREADABLE"), "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"agent license failed: {error['code']}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("factory license")
+            print("=" * 44)
+            if a.license_cmd == "status":
+                license_value = payload["license"]
+                print(f"tier      : {license_value['tier']}")
+                print(f"reason    : {license_value['reason']}")
+                print(f"evidence  : {license_value['evidence']['current_governed_event_count']} current governed event(s)")
+                print(f"expires   : {license_value['expires_at'] or 'no evidence'}")
+            else:
+                print(f"marker    : {payload['marker']}")
+            print("authority : local evidence only; no agent execution, approval, repair, merge, publication, deployment, or credential authority")
+        return code
+    if a.cmd == "combine":
+        def local_path(workspace: Path, value: str) -> Path:
+            candidate = Path(value)
+            resolved = candidate.resolve() if candidate.is_absolute() else (workspace / candidate).resolve()
+            try:
+                resolved.relative_to(workspace)
+            except ValueError as exc:
+                raise CombineError("COMBINE_PATH_OUT_OF_SCOPE", "path must remain inside the workspace") from exc
+            return resolved
+
+        try:
+            if a.combine_cmd == "verify":
+                payload = verify_combine_scoreboard(Path(a.scoreboard))
+                code = 0 if payload["ok"] else 1
+            elif a.combine_cmd == "seal":
+                payload = seal_combine_scoreboard(
+                    Path(a.scoreboard), private_key_path=Path(a.private_key), keyid=a.keyid,
+                    identity=a.identity, issuer=a.issuer, tenant_id=a.tenant, out=Path(a.out),
+                )
+                code = 0
+            else:
+                workspace = Path(a.root).resolve()
+                if not workspace.is_dir():
+                    raise CombineError("COMBINE_PATH_OUT_OF_SCOPE", "root must be an existing workspace directory")
+                if a.combine_cmd == "task":
+                    payload = seal_combine_task(workspace, local_path(workspace, a.source), out=local_path(workspace, a.out) if a.out else None)
+                elif a.combine_cmd == "score":
+                    payload = score_combine(workspace, local_path(workspace, a.task), event_paths=[local_path(workspace, event) for event in a.event] or None, out=local_path(workspace, a.out) if a.out else None)
+                else:
+                    payload = combine_projection(workspace)
+                code = 0
+        except (CombineError, AgentLicenseError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            error = {"schema": "factory.combine.error.v1", "marker": getattr(exc, "code", "COMBINE_INPUT_UNREADABLE"), "code": getattr(exc, "code", "COMBINE_INPUT_UNREADABLE"), "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"combine failed: {error['code']}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("factory combine")
+            print("=" * 44)
+            if a.combine_cmd == "status":
+                print(f"scoreboards: {len(payload['scoreboards'])}")
+            elif a.combine_cmd == "score":
+                print(f"passed    : {payload['scoreboard']['summary']['passed_count']}/{payload['scoreboard']['summary']['candidate_count']}")
+                print(f"scoreboard: {payload['path']}")
+            else:
+                print(f"marker    : {payload['marker']}")
+            print("authority : completed governed evidence only; no agent execution, vendor ranking, repair, approval, merge, publication, or deployment")
+        return code
+    if a.cmd == "gauntlet":
+        workspace = Path(getattr(a, "root", ".")).resolve()
+
+        def workspace_path(value: str | None) -> Path | None:
+            if value is None:
+                return None
+            candidate = Path(value)
+            return candidate if candidate.is_absolute() else workspace / candidate
+
+        try:
+            if a.gauntlet_cmd == "plan":
+                proposal = compile_gauntlet_proposal(workspace, workspace_path(a.source))
+                path = write_gauntlet_proposal(workspace, proposal, workspace_path(a.out))
+                payload: dict[str, object] = {"proposal": proposal, "path": str(path)}
+                code = 0
+            elif a.gauntlet_cmd == "admit":
+                payload = admit_gauntlet(
+                    workspace,
+                    workspace_path(a.proposal),
+                    approved_by=a.approved_by,
+                    rationale=a.rationale,
+                    confirmation=a.confirmation,
+                    valid_for_minutes=a.valid_for_minutes,
+                    out=workspace_path(a.out),
+                )
+                code = 0
+            elif a.gauntlet_cmd == "run":
+                payload = run_gauntlet(workspace, workspace_path(a.proposal), workspace_path(a.admission), workspace_path(a.out))
+                code = 0 if payload["card"]["ok"] else 1
+            elif a.gauntlet_cmd == "status":
+                payload = gauntlet_status(workspace, a.source_id)
+                code = 0
+            elif a.gauntlet_card_cmd == "verify":
+                payload = verify_survival_card(Path(a.card), envelope_path=Path(a.envelope) if a.envelope else None, trust_root_path=Path(a.trust_root) if a.trust_root else None)
+                code = 0
+            elif a.gauntlet_card_cmd == "challenge":
+                payload = challenge_survival_card(Path(a.card))
+                code = 0 if payload["ok"] else 1
+            else:
+                payload = seal_survival_card(
+                    Path(a.card), private_key_path=Path(a.private_key), keyid=a.keyid,
+                    identity=a.identity, issuer=a.issuer, tenant_id=a.tenant, out=Path(a.out),
+                )
+                code = 0
+        except GauntletError as exc:
+            error = {"schema": "factory.gauntlet.error.v1", "marker": exc.code, "code": exc.code, "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if getattr(a, "json", False) else f"gauntlet failed: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        if getattr(a, "json", False):
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("factory gauntlet")
+            print("=" * 44)
+            if a.gauntlet_cmd == "run":
+                card = payload["card"]
+                print(f"result   : {card['marker']}")
+                print(f"survived : {card['summary']['survived_count']}/{card['summary']['case_count']}")
+                print(f"unproven : {card['summary']['unproven_promise_count']}")
+                print("authority: exact admitted local E2E execution only; no repair, merge, release, deployment, signing, credentials, or connectors")
+                print(f"card     : {payload['path']}")
+            elif a.gauntlet_cmd == "plan":
+                print(f"proposal : {payload['path']}")
+                print("authority: planning only; no command execution or admission")
+            elif a.gauntlet_cmd == "admit":
+                print(f"admission: {payload['path']}")
+                print(f"expires  : {payload['expires_at']}")
+                print("authority: named one-batch admission only; no command executed")
+            elif a.gauntlet_cmd == "status":
+                print(f"cards    : {len(payload['entries'])}")
+                print("authority: local read-only status")
+            else:
+                print(f"marker   : {payload['marker']}")
+                print("authority: offline card validation or explicit optional signing only")
+        return code
     if a.cmd == "team-pilot":
         try:
             if a.team_pilot_cmd == "verify":

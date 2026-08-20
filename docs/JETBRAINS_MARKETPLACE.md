@@ -14,7 +14,7 @@ submitting or replacing anything pending.
 ## Conversion-focused listing
 
 - **Name:** `FactoryLine AI Proof`
-- **Preview:** `Catch hollow tests before review.`
+- **Preview:** `Catch AI-generated tests that could never fail — before review.`
 - **Tags:** `AI`, `Code Quality`, `Code Tools`, `Productivity`, `Testing`
 - **Source:** <https://github.com/zrk222/code-factory>
 - **License:** repository `MIT OR Apache-2.0` terms
@@ -33,11 +33,11 @@ and the distinction between those web assets and required IDE-native Marketplace
 screenshots.
 
 All shipped features remain free through December 31, 2026. The owner-approved
-future price is **USD 4.95 per month**, planned for January 1, 2027 with a 30-day
+future Freemium price is **USD 5.95 per named seat per month or USD 60 per named seat per year**, planned for January 1, 2027 with a 30-day
 trial, subject to JetBrains approval. The payment-model change requires paid-plugin
 onboarding, a registered Product Code, license checks, advance user notice, and
-verified Sales Info. The price is about 12.54% below the recorded USD 5.66 sample
-average; that comparison may drift, but the $4.95 owner decision does not. See the
+verified Sales Info. The monthly price is about 5.12% above the recorded USD 5.66 sample
+average; that comparison may drift, but the $5.95 / $60 owner decision does not. See the
 [pricing benchmark](JETBRAINS_PRICING_BENCHMARK.json) and the complete
 [2027 monetization runbook](JETBRAINS_MONETIZATION_2027.md).
 
@@ -69,7 +69,7 @@ baseline forward.
    must return `MARKETPLACE_UPDATE_CLEAR`.
 2. Merge the tested release commit to `main`.
 3. Create the immutable tag matching the plugin version, currently
-   `jetbrains-v0.8.10` after the remaining Marketplace metadata review is clear.
+   `jetbrains-v0.8.11` after the remaining Marketplace metadata review is clear.
 4. Run **Publish JetBrains Marketplace plugin** with that tag and the intended
    channel. The `JETBRAINS_MARKETPLACE_TOKEN` remains scoped to the protected
    `jetbrains-marketplace` environment.

@@ -44,8 +44,13 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.get_receipt",
         "factory.verifier_status",
         "factory.proof_reuse",
+        "factory.proof_delta_status",
         "factory.cdte_status",
         "factory.prd_grill_status",
+        "factory.intake_status",
+        "factory.gauntlet_status",
+        "factory.agent_license_status",
+        "factory.combine_status",
         "factory.workspace_advisor",
     ]
     assert status["resources"] == ["factory://status", "factory://graph"]
@@ -63,7 +68,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {"name": "code-factory", "version": "0.39.0"},
+                "serverInfo": {"name": "code-factory", "version": "0.40.0"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }
@@ -216,6 +221,32 @@ def test_mcp_read_only_receipt_and_gate_status_tools(tmp_path: Path):
     assert grill["marker"] == "MCP_PRD_GRILL_REQUIRED"
     assert _files(tmp_path) == before
 
+    intake = _content(dispatch({
+        "jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "factory.intake_status", "arguments": {"prd_path": "PRD.md"}},
+    }, tmp_path))
+    assert intake["marker"] == "MCP_INTAKE_READ_ONLY"
+    assert intake["status"]["marker"] == "INTAKE_CONFIRMATION_REQUIRED"
+    assert _files(tmp_path) == before
+
+    gauntlet = _content(dispatch({
+        "jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "factory.gauntlet_status", "arguments": {}},
+    }, tmp_path))
+    assert gauntlet["marker"] == "MCP_GAUNTLET_READ_ONLY"
+    assert gauntlet["status"]["entries"] == []
+
+    licenses = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "factory.agent_license_status", "arguments": {}},
+    }, tmp_path))
+    assert licenses["marker"] == "MCP_AGENT_LICENSE_READ_ONLY"
+    assert licenses["status"]["licenses"] == []
+
+    combine = _content(dispatch({
+        "jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "factory.combine_status", "arguments": {}},
+    }, tmp_path))
+    assert combine["marker"] == "MCP_COMBINE_READ_ONLY"
+    assert combine["status"]["scoreboards"] == []
+    assert _files(tmp_path) == before
+
 
 def test_mcp_rejects_malformed_and_unsafe_requests_without_writing(tmp_path: Path):
     before = _files(tmp_path)
@@ -233,6 +264,9 @@ def test_mcp_rejects_malformed_and_unsafe_requests_without_writing(tmp_path: Pat
         }},
         {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {
             "name": "factory.prd_grill_status", "arguments": {"prd_path": "../outside.md"},
+        }},
+        {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {
+            "name": "factory.intake_status", "arguments": {"prd_path": "../outside.md"},
         }},
     ]
     for request in requests:

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1920, height=1080">
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; margin: 0; overflow: hidden; background: #07111B; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; container-type: size; }
+      .ground { position: absolute; inset: 0; background: #07111B; }
+      .engine { position: absolute; inset: 0; width: 1920px; height: 1080px; object-fit: cover; }
+      .caption-band { position: absolute; left: 0; right: 0; bottom: 0; height: 182px; display: flex; align-items: center; justify-content: center; padding: 26px 190px 36px; background: linear-gradient(transparent, rgba(7,17,27,0.92) 54%); }
+      .caption-shell { max-width: 1320px; padding: 15px 24px 16px; border: 1px solid rgba(243,248,252,0.28); border-radius: 8px; color: #F3F8FC; background: rgba(7,17,27,0.72); box-shadow: 0 8px 24px rgba(0,0,0,0.16); font-family: "Inter", sans-serif; font-size: 34px; line-height: 1.23; letter-spacing: -0.02em; text-align: center; }
+      .caption-shell::before { content: "✱"; margin-right: 14px; color: #35D7B8; font-family: "JetBrains Mono", monospace; font-size: 24px; vertical-align: 3px; }
+    </style>
+  </head>
+  <body>
+    <div data-hf-id="hf-eexm" id="root" data-composition-id="code-factory-proof-of-survival" data-start="0" data-duration="90" data-width="1920" data-height="1080">
+      <div data-hf-id="hf-a2x6" id="factory-ground" class="clip ground" data-start="0" data-duration="90" data-track-index="0"></div>
+      <video data-hf-id="hf-al9s" id="remotion-engine" class="clip engine" src="assets/video/remotion-factory-engine.mp4" data-start="0" data-duration="89.984" data-track-index="1" muted playsinline preload="auto">
+        <source data-hf-id="hf-8ars" src="assets/video/remotion-factory-engine.mp4" type="video/mp4">
+      </video>
+      <audio data-hf-id="hf-9yos" id="deepgram-narration" class="clip" src="assets/audio/narration-deepgram.mp3" data-start="0" data-duration="89.984" data-track-index="2" preload="auto">
+        <source data-hf-id="hf-u04s" src="assets/audio/narration-deepgram.mp3" type="audio/mpeg">
+      </audio>
+      <div data-hf-id="hf-ntfu" id="caption-band-1" class="clip caption-band" data-start="0" data-duration="9" data-track-index="5"><div data-hf-id="hf-pgfn" id="caption-1" class="caption-shell">AI coding is fast. The expensive part is whether a passing test could ever have failed.</div></div>
+      <div data-hf-id="hf-u055" id="caption-band-2" class="clip caption-band" data-start="9" data-duration="9" data-track-index="6"><div data-hf-id="hf-qecz" id="caption-2" class="caption-shell">A local-first proof lane turns fast ideas into work a human can actually inspect.</div></div>
+      <div data-hf-id="hf-ktez" id="caption-band-3" class="clip caption-band" data-start="18" data-duration="10" data-track-index="7"><div data-hf-id="hf-e857" id="caption-3" class="caption-shell">Start with an outcome. Lock intent. Build an MVP. See what the tests really prove.</div></div>
+      <div data-hf-id="hf-w313" id="caption-band-4" class="clip caption-band" data-start="28" data-duration="11" data-track-index="8"><div data-hf-id="hf-24c9" id="caption-4" class="caption-shell">Declared scenarios. Your real command. A harder question for generated code.</div></div>
+      <div data-hf-id="hf-vsbl" id="caption-band-5" class="clip caption-band" data-start="39" data-duration="11" data-track-index="9"><div data-hf-id="hf-4k1b" id="caption-5" class="caption-shell">Not a vague AI grade: survived, hollow, or blocked—with evidence and next action.</div></div>
+      <div data-hf-id="hf-2m0b" id="caption-band-6" class="clip caption-band" data-start="50" data-duration="11" data-track-index="10"><div data-hf-id="hf-cogt" id="caption-6" class="caption-shell">Deterministic checks, named approvals, proof deltas, and bounded repair authority.</div></div>
+      <div data-hf-id="hf-6scb" id="caption-band-7" class="clip caption-band" data-start="61" data-duration="11" data-track-index="11"><div data-hf-id="hf-4hxb" id="caption-7" class="caption-shell">Graph Ops shows current proof, stale work, blocked gates, ownership, and the next safe action.</div></div>
+      <div data-hf-id="hf-ltog" id="caption-band-8" class="clip caption-band" data-start="72" data-duration="9" data-track-index="12"><div data-hf-id="hf-1mjn" id="caption-8" class="caption-shell">Optional continuity carries verified references forward. Context is never proof.</div></div>
+      <div data-hf-id="hf-as96" id="caption-band-9" class="clip caption-band" data-start="81" data-duration="9" data-track-index="13"><div data-hf-id="hf-4093" id="caption-9" class="caption-shell">Build quickly. Verify honestly. Keep control. Open source and local first.</div></div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      for (const [index, start] of [0, 9, 18, 28, 39, 50, 61, 72, 81].entries()) {
+        const target = `#caption-${index + 1}`;
+        tl.fromTo(target, { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.42, ease: 'power3.out' }, start + 0.16);
+      }
+      window.__timelines['code-factory-proof-of-survival'] = tl;
+    </script>
+  </body>
+</html>

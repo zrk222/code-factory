@@ -25,7 +25,7 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-18"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-19"
 
 
 def test_pypi_storefront_has_identity_and_canonical_links():
@@ -41,7 +41,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
         "Issues": "https://github.com/zrk222/code-factory/issues",
         "Changelog": "https://github.com/zrk222/code-factory/releases",
     }
-    assert project["description"] == "Build a local MVP, catch hollow tests, and prove AI-assisted and LangGraph resume paths before review."
+    assert project["description"] == "Catch AI-generated tests that could never fail and review AI code with local proof."
     assert {
         "mvp",
         "mcp",
@@ -55,6 +55,9 @@ def test_pypi_storefront_has_identity_and_canonical_links():
         "ai-governance",
         "design-review",
         "ui-quality",
+        "gauntlet",
+        "e2e-testing",
+        "survival-card",
     }.issubset(project["keywords"])
 
 
@@ -72,9 +75,9 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     intellij_plugin = (ROOT / "editors" / "intellij" / "src" / "main" / "resources" / "META-INF" / "plugin.xml").read_text(encoding="utf-8")
     intellij_readme = (ROOT / "editors" / "intellij" / "README.md").read_text(encoding="utf-8")
 
-    value = "Generate a local MVP, then catch hollow tests before review."
+    value = "Catch AI-generated tests that could never fail — before review."
     assert value in readme
-    assert "Tests that only look green are not" in readme
+    assert "challenges whether a test can actually reject" in readme
     assert readme.index(value) < readme.index("## What it does")
     assert "factory mvp \"Build an approval tracker\" --root ." in readme
     assert "See actual Factory Studio" in readme
@@ -85,13 +88,15 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     assert "deterministic proof" in readme
     assert "star Code Factory" in readme
     assert "This optional link only opens the repository." in readme
-    assert "production-ready before the relevant proof exists" in readme
-    assert vscode_package["description"] == "Build a local MVP, catch hollow tests, and prove AI-assisted changes before review."
+    assert "starter is never called production-ready" in readme
+    assert "offline-verifiable Survival Card" in readme
+    assert "factory gauntlet" in readme
+    assert vscode_package["description"] == "Catch AI-generated tests that could never fail. Review code with local proof."
     assert {"mvp", "mcp", "graph-ops", "proof-debt", "ai-governance", "design-review", "ui-quality"}.issubset(vscode_package["keywords"])
     for content in (vscode_readme, intellij_readme):
         assert value in content
         assert "Graph Ops" in content
-    assert "Catch hollow tests before review" in intellij_plugin
+    assert value in intellij_plugin
     assert "Star Code Factory" in vscode_readme
     assert "Star Code Factory" in intellij_readme
     for content in (readme, vscode_readme, intellij_plugin, intellij_readme):
@@ -120,7 +125,8 @@ def test_github_discovery_assets_and_community_drafts_are_reviewable_only():
     assert "not proof that a live Open Graph image is configured" in guide
     assert "Show HN" in guide
     assert "Indie Hackers" in guide
-    assert "Generate a local MVP, then catch hollow tests before review." in guide
+    assert "Catch AI-generated tests that could never fail and review AI code with local" in guide
+    assert "proof." in guide
     assert "code-generation" in guide
     assert "r/devops" in guide
     assert "r/platformengineering" in guide
@@ -286,10 +292,10 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.39.0"
+    assert project["version"] == "0.40.0"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.8.10"
-    assert 'version = "0.8.10"' in gradle
+    assert 'version = "0.8.11"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -300,8 +306,8 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
 
     assert "<id>app.factoryline</id>" in plugin_xml
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
-    assert "<p><strong>Catch hollow tests before review.</strong></p>" in plugin_xml
-    assert "Catch hollow tests before review" in plugin_xml
+    assert "<p><strong>Catch AI-generated tests that could never fail — before review.</strong></p>" in plugin_xml
+    assert "Free, local proof for code built with AI." in plugin_xml
     assert "Tools | FactoryLine | Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
     assert "Run First Proof" in plugin_xml
@@ -336,7 +342,7 @@ def test_marketplace_acquisition_kit_uses_real_product_assets_and_observed_metri
     kit = (ROOT / "docs" / "JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md").read_text(encoding="utf-8")
     baseline = json.loads((ROOT / "docs" / "JETBRAINS_MARKETPLACE_MEASUREMENT.json").read_text(encoding="utf-8"))
 
-    assert "Catch hollow tests before review." in kit
+    assert "Catch AI-generated tests that could never fail — before review." in kit
     assert "Run First Proof" in kit
     assert "factory mvp" in kit
     assert "Graph Ops" in kit
@@ -369,8 +375,9 @@ def test_jetbrains_price_is_owner_locked_reproducible_and_not_claimed_live():
 
     average = sum(prices) / len(prices)
     assert round(average, 2) == sample["sample_average"]
-    assert sample["owner_approved_monthly_price"] == 4.95
-    assert round((average - 4.95) / average, 10) == sample["discount_from_sample_average"]
+    assert sample["owner_approved_monthly_price"] == 5.95
+    assert sample["owner_approved_annual_price"] == 60.0
+    assert round((average - 5.95) / average, 10) == sample["discount_from_sample_average"]
     assert sample["status"] == "owner_approved_future_price_not_active_on_marketplace"
     assert sample["free_through"] == "2026-12-31"
 
@@ -382,26 +389,27 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     active_xml = (ROOT / "editors" / "intellij" / "src" / "main" / "resources" / "META-INF" / "plugin.xml").read_text(encoding="utf-8")
     staged_xml = (ROOT / "editors" / "intellij" / "monetization" / "plugin-product-descriptor-2027.xml").read_text(encoding="utf-8")
 
-    assert plan["offer"]["monthly_price_usd"] == 4.95
+    assert plan["offer"]["monthly_price_usd"] == 5.95
+    assert plan["offer"]["annual_price_usd"] == 60.0
     assert plan["offer"]["monthly_price_status"] == "owner_approved"
     assert plan["offer"]["paid_from"] == "2027-01-01"
-    assert plan["plugin"]["current_free_version"] == "0.8.10"
+    assert plan["plugin"]["current_free_version"] == "0.8.11"
     assert plan["paid_descriptor"] == {
         "product_code": "PFACTORYLINE",
         "product_code_status": "proposed_not_registered",
         "release_date": "20270101",
         "release_version": "20271",
-        "optional": False,
+        "optional": True,
         "active_descriptor_contains_product_descriptor": False,
         "staging_template": "editors/intellij/monetization/plugin-product-descriptor-2027.xml",
     }
     assert "<product-descriptor" not in active_xml
-    assert "$4.95 USD per month" in active_xml
-    assert "$4.95 USD per month" in readme
+    assert "$5.95 USD per named seat/month or $60 USD per named seat/year" in active_xml
+    assert "$5.95 USD per named seat/month" in readme
     assert 'code="PFACTORYLINE"' in staged_xml
     assert 'release-date="20270101"' in staged_xml
     assert 'release-version="20271"' in staged_xml
-    assert 'optional="false"' in staged_xml
+    assert 'optional="true"' in staged_xml
     assert len(plan["activation_gates"]) == 9
     assert plan["current_verdict"] == "MONETIZATION_GATE_BLOCKED"
     for phrase in ("licensed", "active-trial", "expired-trial", "unlicensed", "offline", "uninitialized-facade"):
@@ -436,8 +444,8 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.39.0"
-    assert metadata["publication_date"] == "2026-08-18"
+    assert metadata["version"] == "0.40.0"
+    assert metadata["publication_date"] == "2026-08-19"
     assert "Unified Graph Ops" in metadata["description"]
     assert "current FactoryLine identity asset" in metadata["description"]
     assert "conceptual visual walkthrough" not in metadata["description"]
@@ -449,6 +457,9 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert "design-review" in metadata["keywords"]
     assert "langgraph-assurance" in metadata["keywords"]
     assert "resume parity" in metadata["description"]
+    assert "Survival Card" in metadata["description"]
+    assert "gauntlet" in metadata["keywords"]
+    assert "survival-card" in metadata["keywords"]
 
     assets = ROOT / "docs" / "assets"
     for name in (

@@ -11,7 +11,7 @@ Install the published package in the same environment that the client can
 launch, then verify the workspace boundary:
 
 ```powershell
-python -m pip install factoryline-code-factory==0.39.0
+python -m pip install factoryline-code-factory==0.40.0
 factory mcp status --root C:\work\my-mvp --json
 factory mcp config --client generic --root C:\work\my-mvp --json
 ```
@@ -35,6 +35,54 @@ The setup command only prints configuration; it never modifies the assistant,
 starts a server, or writes into the workspace. If an assistant has no MCP
 client, keep the same workspace boundary and ask it to propose explicit
 `factory` CLI commands for a human to run and review.
+
+The same local entry is discoverable as
+[`io.github.zrk222/code-factory`](MCP_REGISTRY.md) in the Official MCP Registry.
+Registry discovery resolves the public PyPI package and local stdio command; it
+does not create a hosted endpoint, configure a client, or expand authority.
+
+## JetBrains AI Assistant
+
+JetBrains documents custom MCP-server integration for AI Assistant in supported
+versions, alongside team Project Rules and `.aiignore` controls. FactoryLine
+can supply the MCP portion as a **local stdio, read-only** proof-context server:
+
+```powershell
+factory mcp config --client generic --root C:\work\my-mvp --json
+```
+
+Copy the rendered `connection` object into the AI Assistant MCP setting that
+your installed JetBrains version exposes, then approve it under JetBrains'
+own controls. The available tools project receipts, Graph Ops, proof impact,
+and next-action facts; they cannot run a worker, apply a repair, approve,
+merge, publish, deploy, sign, message, access credentials, or upload source.
+
+FactoryLine does **not** detect, configure, or enable JetBrains AI Assistant;
+create Project Rules; edit `.aiignore`; select a model; consume AI credits; or
+claim that a client has actually invoked a tool. Use Project Rules and
+`.aiignore` for their intended JetBrains-side policy role, then use the local
+FactoryLine receipts as grounded review context.
+
+See JetBrains' [AI Assistant update details](https://plugins.jetbrains.com/plugin/22282-jetbrains-ai-assistant/versions/stable/977950)
+and [MCP documentation](https://www.jetbrains.com/help/ai-assistant/mcp.html)
+for availability in your IDE and subscription; those controls remain
+JetBrains-managed.
+
+## DeepSeek Harness
+
+DeepSeek Harness can load the included opt-in Cordis overlay through its
+official MCP client bridge:
+
+```sh
+dsh web --patch /absolute/path/to/plugins/code-factory-deepseek-harness/code-factory.cordis.yml
+```
+
+Launch Harness from the workspace to inspect. The adapter starts
+`factory mcp serve --root .` locally and exposes the same read-only evidence
+tools after Harness completes discovery. It does not configure a model,
+credential, remote endpoint, automatic execution, or an identity provider.
+Read [the adapter guide](DEEPSEEK_HARNESS.md) before enabling it; Harness is in
+developer preview and may change this configuration contract.
 
 ## Cursor
 
@@ -114,10 +162,16 @@ Every configured MCP client can inspect the same bounded surfaces:
 - `factory.graph_impact` and `factory.next_action` for path-scoped guidance;
 - `factory.developer_memory` for a capped, exact-diff next-proof brief with
   redacted Continuity facts and observed local Git contribution context;
+- `factory.gauntlet_status` for read-only Survival Card facts, including
+  whether a card bound only redacted verified Continuity metadata; and
 - `factory.langgraph_assurance` for a hash-only comparison of two already
   recorded LangGraph transition receipts; it never invokes the graph;
+- `factory.agent_license_status` and `factory.combine_status` for current local
+  Earned Autonomy evidence and verified scoreboards; they do not authenticate
+  an agent, issue a license, start a candidate, or rank a vendor; and
 - receipt inventory and exact receipt lookup;
-- verifier, proof-reuse, CDTE, PRD Grill, and workspace-advisor status; and
+- verifier, proof-reuse, Proof-Delta, Gauntlet Survival Card, CDTE, PRD Grill,
+  Intake Grill, and workspace-advisor status; and
 - `factory://status` and `factory://graph` resources.
 
 The tools are read-only, idempotent, and closed-world. They do not start
@@ -125,6 +179,11 @@ workers, modify files, execute shell commands, access provider keys, call
 connectors, approve missions, publish releases, deploy services, sign
 artifacts, or send messages. A client can propose or explain the next step,
 but the existing human-controlled CLI and release gates remain authoritative.
+
+`factory.gauntlet_status` reads existing local Survival Cards only. An MCP
+client cannot use it to compile a command from prose, admit or rerun a batch,
+apply a repair, or turn a card into a release decision. See
+[Gauntlet](GAUNTLET.md) for the separate human-controlled CLI path.
 
 ## AI code-review tools
 

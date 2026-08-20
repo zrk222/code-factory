@@ -5,11 +5,11 @@
       "rule": "A_SUBPROC subprocess use in factoryline/cli.py",
       "promoted_from_count": 3,
       "promoted_at": "2026-08-19T03:42:59.193810+00:00",
-      "times_enforced": 0,
-      "prevented_recurrence": 0,
-      "status": "probation"
+      "times_enforced": 2,
+      "prevented_recurrence": 2,
+      "status": "active"
     }
   },
-  "version": 58,
-  "updated": "2026-08-19T03:56:13.127461+00:00"
+  "version": 65,
+  "updated": "2026-08-19T07:16:38.294835+00:00"
 }

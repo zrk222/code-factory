@@ -25,11 +25,12 @@ The existing action controls and authority locks remain explicit.
 
 ## Commercial boundary
 
-The new local dossier is free. The future GitHub Assurance Seat remains free
-through December 1, 2026, with a scheduled $5.95 USD per named seat per month
-offer from December 2, 2026. Checkout, entitlement, and enforcement are not
-live. The separate JetBrains pricing plan remains subject to its own approval
-and activation gates.
+The new local dossier is free. At the time of this release, the future GitHub
+Assurance Seat was described as free through December 1, 2026. **That schedule
+is superseded:** the current future plan starts January 1, 2027 at $5.95 USD per
+named seat per month or $60 USD per named seat per year. Checkout, entitlement,
+and enforcement are not live. The separate JetBrains Freemium plan remains
+subject to its own approval and activation gates.
 
 ## Install
 

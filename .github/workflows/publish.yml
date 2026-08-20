@@ -159,3 +159,112 @@ jobs:
         with:
           packages-dir: release-bundle/python/
           attestations: true
+
+  publish_mcp_registry:
+    name: publish Official MCP Registry metadata
+    needs: [publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate release tag and MCP Registry metadata
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          def reject(message: str) -> None:
+              print("MCP_REGISTRY_METADATA_REJECTED")
+              raise SystemExit(message)
+
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+              reject(f"invalid release tag: {tag}")
+          version = tag[1:]
+          descriptor = json.loads(Path("mcp/server.json").read_text(encoding="utf-8"))
+          project = Path("pyproject.toml").read_text(encoding="utf-8")
+          readme = Path("README.md").read_text(encoding="utf-8")
+          package = descriptor["packages"][0]
+
+          expected_name = "io.github.zrk222/code-factory"
+          marker = f"<!-- mcp-name: {expected_name} -->"
+          if descriptor["name"] != expected_name or descriptor["version"] != version:
+              reject("registry descriptor name or version does not match release tag")
+          if package["identifier"] != "factoryline-code-factory" or package["version"] != version:
+              reject("registry package does not match release tag")
+          if package["transport"] != {"type": "stdio"}:
+              reject("registry package must use stdio transport only")
+          if package.get("environmentVariables"):
+              reject("registry package must not declare environment variables")
+          if package.get("runtimeHint") != "uvx" or package.get("runtimeArguments") != [
+              {"type": "named", "name": "--from", "value": f"factoryline-code-factory=={version}"}
+          ]:
+              reject("registry uvx launch does not match release package")
+          if [item.get("value") for item in package.get("packageArguments", [])] != ["factory", "mcp", "serve"]:
+              reject("registry package arguments must invoke factory mcp serve")
+          if f'version = "{version}"' not in project or marker not in readme:
+              reject("release package metadata or MCP ownership marker is missing")
+          print("MCP_REGISTRY_RELEASE_METADATA_VALID")
+          PY
+
+      - name: Wait for PyPI package and ownership marker
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          for attempt in $(seq 1 20); do
+            if python - "$version" <<'PY'
+          import json
+          import sys
+          from urllib.error import HTTPError, URLError
+          from urllib.request import urlopen
+
+          version = sys.argv[1]
+          url = f"https://pypi.org/pypi/factoryline-code-factory/{version}/json"
+          try:
+              with urlopen(url, timeout=15) as response:
+                  payload = json.load(response)
+          except (HTTPError, URLError, TimeoutError) as error:
+              print(f"PyPI version not visible yet: {error}")
+              raise SystemExit(1)
+          marker = "<!-- mcp-name: io.github.zrk222/code-factory -->"
+          if payload["info"]["version"] != version or marker not in payload["info"].get("description", ""):
+              print("PyPI version or MCP ownership marker is not visible yet")
+              raise SystemExit(1)
+          print("PYPI_MCP_OWNERSHIP_MARKER_VERIFIED")
+          PY
+            then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "matching PyPI package and MCP ownership marker did not become visible within five minutes" >&2
+          exit 1
+
+      - name: Install and validate pinned MCP Registry publisher
+        env:
+          MCP_PUBLISHER_VERSION: "1.8.1"
+        run: |
+          set -euo pipefail
+          base="https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --retry 5 --retry-all-errors --output mcp-publisher.tar.gz "$base/mcp-publisher_linux_amd64.tar.gz"
+          curl --fail --location --retry 5 --retry-all-errors --output checksums.txt "$base/registry_${MCP_PUBLISHER_VERSION}_checksums.txt"
+          grep -E ' [*]?mcp-publisher_linux_amd64.tar.gz$' checksums.txt | sha256sum --check --strict --status -
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+          chmod +x mcp-publisher
+          ./mcp-publisher validate mcp/server.json
+
+      - name: Authenticate MCP Registry publisher through GitHub OIDC
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish MCP Registry descriptor
+        run: ./mcp-publisher publish mcp/server.json

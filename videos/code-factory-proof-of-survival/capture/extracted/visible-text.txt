@@ -1,0 +1,7 @@
+Code Factory
+
+AI can write fast. Code Factory makes the result reviewable by asking whether
+the proof could actually fail. A quick idea becomes an MVP, an intent record,
+tests that can say no, and visible proof status. Teams get deterministic
+verification, named approvals, proof deltas, and clear next actions without
+pretending that a scaffold is production ready.

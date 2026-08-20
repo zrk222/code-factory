@@ -13,7 +13,10 @@ from .proof import git_changed_paths, risk_for_paths
 
 
 CHANGE_REVIEW_SCHEMA = "factory.change_review.v1"
-MAX_CHANGED_PATHS = 100
+# The PR delivery workflow analyzes release-sized source, docs, and media changes
+# in one exact packet. Keep a firm cap so review rendering remains bounded, while
+# accepting an ordinary multi-surface release without silently dropping paths.
+MAX_CHANGED_PATHS = 200
 AUTHORITY = {
     "execution": False,
     "approval": False,

@@ -95,7 +95,7 @@ def test_change_review_writes_only_explicit_local_artifacts(tmp_path: Path) -> N
     assert "review_markdown" not in packet
 
 
-@pytest.mark.parametrize("changed", [["../secret.txt"], ["C:/secret.txt"], [""], [f"path-{index}.py" for index in range(101)]])
+@pytest.mark.parametrize("changed", [["../secret.txt"], ["C:/secret.txt"], [""], [f"path-{index}.py" for index in range(201)]])
 def test_change_review_rejects_unsafe_or_oversized_paths(tmp_path: Path, changed: list[str]) -> None:
     with pytest.raises(ChangeReviewError) as exc:
         review_change(tmp_path, changed=changed)

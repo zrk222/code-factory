@@ -1,8 +1,8 @@
 {
   "title": "Code Factory: Proof-by-Sabotage Software Factory",
-  "description": "Code Factory is a proof-first, open-source software factory for turning specifications, behavior checks, design contracts, policy verification, Mermaid diagrams, and release receipts into auditable delivery through Unified Graph Ops. Version 0.39 adds a free LangGraph Assurance Bridge: teams record hash-only transitions in their own test harness, compare sealed reference and resumed lineages, and receive deterministic resume parity or a shareable first-divergence incident capsule. The release also adds a local read-only MCP tool and an opt-in GitHub proof-gate Action for recorded receipts. It never invokes a graph or replays side effects. Release media includes the current FactoryLine identity asset and real product captures.\n\nEvidence boundary: the bridge does not establish production resilience, runtime correctness, external-system idempotency, or a complete transition capture. It does not expose raw state, prompts, or secrets; grant execution, repair, approval, merge, publication, deployment, signing, credential, connector, or external-message authority; or estimate time, token, cost, quality, or productivity savings. A passing receipt proves only the supplied sealed transitions and declared checks.\n\nDual licensed under MIT or Apache-2.0.",
-  "version": "0.39.0",
-  "publication_date": "2026-08-18",
+  "description": "Code Factory is a proof-first, open-source software factory for turning specifications, behavior checks, design contracts, policy verification, Mermaid diagrams, and release receipts into auditable delivery through Unified Graph Ops. Version 0.40.0 adds source-bound Intake Grill decisions for framework, exact intent, observable acceptance evidence, and external-effects posture before a Product Mission can begin, plus a deterministic Proof-Delta gate that halts a retry unless a changed candidate adds new hash-checked evidence for the latest failed criterion. It also adds Gauntlet: a human-authored set of local E2E sabotage cases, a named expiry-bound one-run admission, and an offline-verifiable Survival Card that exposes survived, hollow, blocked, and unproven declared cases. The local MCP surface and Graph Ops inspect these receipts without gaining write or execution authority. It retains hash-only LangGraph resume parity assurance for already recorded transition receipts. Release media includes the current FactoryLine identity asset and real product captures.\n\nEvidence boundary: Intake Grill does not establish framework correctness, complete intent, runtime correctness, production resilience, external-system idempotency, a passing acceptance check, or a complete transition capture. Gauntlet does not generate commands from prose, repair source, or certify production readiness, security, coverage, performance, cost, token savings, quality, or a release decision. The project does not expose raw state, prompts, or secrets; grant execution outside the named admitted local E2E batch, repair, approval, merge, publication, deployment, signing, credential, connector, or external-message authority; or estimate time, token, cost, quality, or productivity savings. A passing receipt proves only the supplied sealed transitions and declared checks.\n\nDual licensed under MIT or Apache-2.0.",
+  "version": "0.40.0",
+  "publication_date": "2026-08-19",
   "creators": [
     {
       "name": "Katz, Richard"
@@ -43,6 +43,10 @@
     "product-captures",
     "content-addressed-proof",
     "proof-reuse",
+    "intake-grill",
+    "proof-delta-loop",
+    "gauntlet",
+    "survival-card",
     "graph-ops",
     "unified-graph",
     "prd-grill",
@@ -60,7 +64,9 @@
     "langgraph-assurance",
     "resume-parity",
     "agent-replay",
-    "github-actions"
+    "github-actions",
+    "mcp-registry",
+    "local-stdio"
   ],
   "related_identifiers": [
     {

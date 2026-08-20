@@ -1,7 +1,7 @@
 {
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
-  "description": "Build a local MVP, catch hollow tests, and prove AI-assisted changes before review.",
+  "description": "Catch AI-generated tests that could never fail. Review code with local proof.",
   "version": "0.8.10",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
