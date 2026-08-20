@@ -29,6 +29,7 @@ def test_registry_descriptor_is_bound_to_the_released_local_stdio_package() -> N
 
     assert server["$schema"] == "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
     assert server["name"] == SERVER_NAME
+    assert len(server["description"]) <= 100
     assert server["version"] == __version__
     assert server["repository"] == {
         "url": "https://github.com/zrk222/code-factory",
@@ -81,6 +82,7 @@ def test_registry_publication_is_post_pypi_oidc_and_fails_closed_on_drift() -> N
     assert "Wait for PyPI package and ownership marker" in workflow
     assert "MCP_REGISTRY_RELEASE_METADATA_VALID" in workflow
     assert "MCP_REGISTRY_METADATA_REJECTED" in workflow
+    assert "registry description exceeds 100 characters" in workflow
     assert "PYPI_MCP_OWNERSHIP_MARKER_VERIFIED" in workflow
     assert "mcp-publisher login github-oidc" in workflow
     assert "mcp-publisher publish mcp/server.json" in workflow

@@ -198,6 +198,8 @@ jobs:
           marker = f"<!-- mcp-name: {expected_name} -->"
           if descriptor["name"] != expected_name or descriptor["version"] != version:
               reject("registry descriptor name or version does not match release tag")
+          if len(descriptor.get("description", "")) > 100:
+              reject("registry description exceeds 100 characters")
           if package["identifier"] != "factoryline-code-factory" or package["version"] != version:
               reject("registry package does not match release tag")
           if package["transport"] != {"type": "stdio"}:
