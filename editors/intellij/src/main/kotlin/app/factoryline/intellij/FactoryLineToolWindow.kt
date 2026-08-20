@@ -21,10 +21,14 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         val proofReview = FactoryLineProofReviewPanel(project)
         val repairSandbox = FactoryLineRepairSandboxPanel(project)
         val workspaceAdvisor = FactoryLineWorkspaceAdvisorPanel(project)
+        val ideHealth = FactoryLineIdeHealthPanel(project)
+        val indexContinuity = FactoryLineIndexContinuityPanel(project)
         project.putUserData(FactoryLinePanels.key, panel)
         project.putUserData(FactoryLinePanels.proofReviewKey, proofReview)
         project.putUserData(FactoryLinePanels.repairSandboxKey, repairSandbox)
         project.putUserData(FactoryLinePanels.workspaceAdvisorKey, workspaceAdvisor)
+        project.putUserData(FactoryLinePanels.ideHealthKey, ideHealth)
+        project.putUserData(FactoryLinePanels.indexContinuityKey, indexContinuity)
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(panel, "Receipts", false)
         )
@@ -36,6 +40,12 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         )
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(workspaceAdvisor, "Workspace Advisor", false)
+        )
+        toolWindow.contentManager.addContent(
+            ContentFactory.getInstance().createContent(ideHealth, "IDE Health", false)
+        )
+        toolWindow.contentManager.addContent(
+            ContentFactory.getInstance().createContent(indexContinuity, "Index Continuity", false)
         )
     }
 }
@@ -110,6 +120,8 @@ object FactoryLinePanels {
     val proofReviewKey: Key<FactoryLineProofReviewPanel> = Key.create("app.factoryline.intellij.proofReview")
     val repairSandboxKey: Key<FactoryLineRepairSandboxPanel> = Key.create("app.factoryline.intellij.repairSandbox")
     val workspaceAdvisorKey: Key<FactoryLineWorkspaceAdvisorPanel> = Key.create("app.factoryline.intellij.workspaceAdvisor")
+    val ideHealthKey: Key<FactoryLineIdeHealthPanel> = Key.create("app.factoryline.intellij.ideHealth")
+    val indexContinuityKey: Key<FactoryLineIndexContinuityPanel> = Key.create("app.factoryline.intellij.indexContinuity")
 
     fun show(project: Project, result: CommandResult) {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
@@ -165,6 +177,16 @@ object FactoryLinePanels {
             ApplicationManager.getApplication().invokeLater {
                 toolWindow.contentManager.findContent("Workspace Advisor")?.let { toolWindow.contentManager.setSelectedContent(it) }
                 project.getUserData(workspaceAdvisorKey)?.show(result)
+            }
+        }
+    }
+
+    fun showIndexContinuity(project: Project, result: CommandResult) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater {
+                toolWindow.contentManager.findContent("Index Continuity")?.let { toolWindow.contentManager.setSelectedContent(it) }
+                project.getUserData(indexContinuityKey)?.show(result)
             }
         }
     }

@@ -28,7 +28,7 @@ vendor-quality claim.
 1. Install Code Factory in the Python environment that will serve MCP:
 
    ```sh
-   pip install "factoryline-code-factory>=0.40.0"
+   pip install "factoryline-code-factory>=0.40.1"
    ```
 
 2. From the repository you want to inspect, start Harness with this opt-in

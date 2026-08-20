@@ -17,6 +17,7 @@
             <li><strong>Several tasks in one working tree:</strong> review the full diff or focus only the active file, instead of mixing unrelated local changes.</li>
             <li><strong>AI repair scope can drift or overreach:</strong> seal one native Change List, validate only a candidate patch that stays inside it, and keep independent verification plus final IDE apply under human control.</li>
             <li><strong>Large or remote workspaces feel opaque:</strong> measure local workspace shape and path-only WSL/remote context, then review generated/dependency directory signals without FactoryLine touching indexes, heap, caches, inspections, or remote settings.</li>
+            <li><strong>The IDE slows down and guesses start replacing facts:</strong> record a short local window of aggregate heap, process CPU when available, indexing state, and EDT dispatch delay; compare a structural continuity baseline before deciding whether a project-model change deserves re-analysis.</li>
             <li><strong>Lost review context:</strong> save a hash-bound local JSON, Markdown, and Mermaid handoff packet that another developer can inspect.</li>
             <li><strong>Automation without control:</strong> every command needs confirmation; FactoryLine does not edit, commit, publish, deploy, upload source, or make a release decision.</li>
             <li><strong>Several plausible repairs:</strong> ProofSearch rejects failed proofs, surviving mutants, scope escapes, test weakening, and error suppression, then explains the smallest verified winner in the Graph Ops Counterfactual Arena.</li>
@@ -62,6 +63,7 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
+            <li>Add IDE Health Flight Recorder and Index Continuity Guard: bounded in-memory aggregate runtime samples plus explicit local structural baseline/compare evidence. Both are observation-only; neither changes IDE settings, caches, indexes, plugins, project files, or remote state, and neither claims a causal diagnosis or duration prediction.</li>
             <li>Add Intake Grill, Proof-Delta, Gauntlet Survival Cards, and Earned Autonomy: bind intent before a mission, prevent evidence-free retry loops, make declared negative checks visible, and keep agent trust expiry-bound. These remain local supervision artifacts; they do not run an agent, authorize a repair, or certify production readiness.</li>
             <li>Add refreshable local Assembly activity and a read-only Developer Memory Brief in the shared Studio and Graph Ops view: exact-diff next-proof actions, redacted Continuity facts, and observed local Git contribution context, without execution, repair, approval, identity, billing, or productivity authority.</li>
             <li>Add Graph Forensics: sealed semantic lineage, first-divergence and causal-path analysis, deterministic stale-read/write, parallel-write, and duplicate-side-effect findings, plus a non-executing recovery preview.</li>
@@ -153,6 +155,18 @@
                     class="app.factoryline.intellij.AnalyzeWorkspaceAdvisorAction"
                     text="Analyze Workspace Load and Remote/WSL Preflight"
                     description="Measure bounded local workspace shape without changing IDE, cache, index, or remote settings"/>
+            <action id="app.factoryline.intellij.openIdeHealth"
+                    class="app.factoryline.intellij.OpenIdeHealthAction"
+                    text="Open IDE Health Flight Recorder"
+                    description="Record bounded local aggregate runtime observations without changing IDE configuration"/>
+            <action id="app.factoryline.intellij.captureIndexContinuityBaseline"
+                    class="app.factoryline.intellij.CaptureIndexContinuityBaselineAction"
+                    text="Capture Index Continuity Baseline"
+                    description="Save an explicit local structural baseline without changing IDE state"/>
+            <action id="app.factoryline.intellij.compareIndexContinuityBaseline"
+                    class="app.factoryline.intellij.CompareIndexContinuityBaselineAction"
+                    text="Compare Index Continuity Baseline"
+                    description="Compare current local structure with the saved baseline without changing IDE state"/>
             <action id="app.factoryline.intellij.reviewCurrentDiff"
                     class="app.factoryline.intellij.ReviewCurrentDiffAction"
                     text="Review Current Diff"

@@ -145,6 +145,12 @@ from .workspace_advisor import (
     inspect_workspace,
     write_workspace_advisor_artifacts,
 )
+from .index_continuity import (
+    IndexContinuityError,
+    capture_continuity_baseline,
+    compare_continuity,
+    write_continuity_baseline,
+)
 from .release_integrity import release_integrity, render_release_integrity
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
@@ -993,6 +999,16 @@ def main(argv=None) -> int:
     workspace_inspect.add_argument("--root", default=".")
     workspace_inspect.add_argument("--out-dir", help="explicit workspace-contained directory for local JSON, Markdown, and Mermaid advice artifacts")
     workspace_inspect.add_argument("--json", action="store_true")
+    workspace_continuity = workspace_sub.add_parser("continuity", help="capture or compare a local structural index-continuity baseline")
+    workspace_continuity_sub = workspace_continuity.add_subparsers(required=True, dest="continuity_cmd")
+    workspace_continuity_baseline = workspace_continuity_sub.add_parser("baseline", help="capture and explicitly save a workspace-contained structural baseline")
+    workspace_continuity_baseline.add_argument("--root", default=".")
+    workspace_continuity_baseline.add_argument("--out", required=True, help="workspace-contained .json baseline path")
+    workspace_continuity_baseline.add_argument("--json", action="store_true")
+    workspace_continuity_compare = workspace_continuity_sub.add_parser("compare", help="compare a verified structural baseline with the current workspace")
+    workspace_continuity_compare.add_argument("--root", default=".")
+    workspace_continuity_compare.add_argument("--baseline", required=True, help="workspace-contained baseline .json path")
+    workspace_continuity_compare.add_argument("--json", action="store_true")
 
     s = sub.add_parser("graph", help="inspect bounded, read-only Factory graph views")
     graph_sub = s.add_subparsers(required=True, dest="graph_cmd")
@@ -2487,27 +2503,45 @@ def main(argv=None) -> int:
             print(f"public Assembly metrics written to {Path(a.out).resolve()}")
         return 0
     if a.cmd == "workspace":
-        root = Path(a.root)
         try:
-            payload = inspect_workspace(root)
-            payload = dict(payload)
-            payload["artifacts"] = {}
-            if a.out_dir:
-                artifacts = write_workspace_advisor_artifacts(payload, root, Path(a.out_dir))
-                payload["artifacts"] = {"paths": artifacts, "write_mode": "explicit_local"}
-                payload["markers"] = [*payload["markers"], "WORKSPACE_ADVISOR_ARTIFACTS_EXPLICIT"]
-        except WorkspaceAdvisorError as exc:
+            if a.workspace_cmd == "inspect":
+                root = Path(a.root)
+                payload = inspect_workspace(root)
+                payload = dict(payload)
+                payload["artifacts"] = {}
+                if a.out_dir:
+                    artifacts = write_workspace_advisor_artifacts(payload, root, Path(a.out_dir))
+                    payload["artifacts"] = {"paths": artifacts, "write_mode": "explicit_local"}
+                    payload["markers"] = [*payload["markers"], "WORKSPACE_ADVISOR_ARTIFACTS_EXPLICIT"]
+            elif a.continuity_cmd == "baseline":
+                root = Path(a.root)
+                payload = capture_continuity_baseline(root)
+                payload = dict(payload)
+                payload["baseline_path"] = write_continuity_baseline(payload, root, Path(a.out))
+                payload["markers"] = [*payload["markers"], "INDEX_CONTINUITY_ARTIFACT_EXPLICIT"]
+            else:
+                payload = compare_continuity(Path(a.root), Path(a.baseline))
+        except (WorkspaceAdvisorError, IndexContinuityError) as exc:
+            is_continuity = isinstance(exc, IndexContinuityError)
             error = {
-                "schema": "factory.workspace_advisor.error.v1",
+                "schema": "factory.index_continuity.error.v1" if is_continuity else "factory.workspace_advisor.error.v1",
                 "status": "failed",
                 "code": exc.code,
-                "marker": "WORKSPACE_ADVISOR_REFUSED",
+                "marker": "INDEX_CONTINUITY_REFUSED" if is_continuity else "WORKSPACE_ADVISOR_REFUSED",
                 "message": str(exc),
             }
-            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"workspace advisor refused: {exc.code}: {exc}", file=sys.stderr)
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"workspace command refused: {exc.code}: {exc}", file=sys.stderr)
             return 2
         if a.json:
             print(json.dumps(payload, indent=2, sort_keys=True))
+        elif a.workspace_cmd == "continuity":
+            print("FactoryLine Index Continuity Guard")
+            print(f"scope     : {payload.get('review_scope', 'baseline captured')}")
+            print(f"boundary  : local structure only; no IDE, cache, index, or remote changes.")
+            if payload.get("baseline_path"):
+                print(f"baseline  : {payload['baseline_path']}")
+            if payload.get("recommendation"):
+                print(f"next step : {payload['recommendation']}")
         else:
             scan = payload["scan"]
             workspace = payload["workspace"]

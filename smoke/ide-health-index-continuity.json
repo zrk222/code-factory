@@ -1,0 +1,17 @@
+{
+  "checks": [
+    {
+      "name": "index_continuity_baseline_compare_and_refusal_contract",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_index_continuity.py']) == 0\n",
+      "covers": [
+        "INDEX_CONTINUITY_LOCAL_STRUCTURAL_ONLY",
+        "INDEX_CONTINUITY_BASELINE_CAPTURED",
+        "INDEX_CONTINUITY_BASELINE_VERIFIED",
+        "INDEX_CONTINUITY_NO_IDE_MUTATION",
+        "INDEX_CONTINUITY_NO_DURATION_PREDICTION"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

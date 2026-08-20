@@ -5,6 +5,10 @@ filesystem measurement before they manually change JetBrains project settings
 or troubleshoot a remote workspace. It is deliberately a **diagnostic brief**,
 not an automatic performance tuner.
 
+For live aggregate IDE observations, use the separate [IDE Health Flight
+Recorder and Index Continuity Guard](IDE_HEALTH.md). Workspace Advisor remains
+filesystem-only and does not silently become a runtime performance diagnosis.
+
 ```powershell
 # Observe only: writes nothing.
 factory workspace inspect --root . --json

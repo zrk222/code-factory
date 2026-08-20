@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.40.1 - 2026-08-20
+
+- Add IDE Health Flight Recorder to the JetBrains adapter: bounded, in-memory
+  local aggregate heap, process-CPU-when-available, indexing, and EDT dispatch
+  observations. It does not alter configuration, reach a network, attribute a
+  symptom to a plugin, or claim a root cause.
+- Add Index Continuity Guard: explicit workspace-contained structural baseline
+  capture and hash-checked comparison for manifest, source-root,
+  managed-directory, and path-classification drift. It returns a human review
+  scope, never a cache/index repair, duration prediction, or performance claim.
+
 ## 0.40.0 - 2026-08-19
 
 - Add Intake Grill: source-bound framework shortlist, decision tree, named
