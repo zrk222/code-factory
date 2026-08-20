@@ -22,6 +22,23 @@ no-gain packet halts rather than consuming another retry. Graph Ops projects
 the admission facts in a read-only lane, and MCP exposes a read-only status
 tool for clients that need to inspect it.
 
+## Earned autonomy, not a permission toggle
+
+**Earned Autonomy** adds a local, expiry-bound Agent License derived only from
+admitted, independently verified governed events. Current policy values are
+explicit: three clean current events can reach supervised; autonomous requires
+20 clean events, 15 independent verifications, and a stable common workspace
+scope. A hollow test, hollow validator, or scope escape immediately demotes the
+affected declared agent to human controlled. A license caps a Loop Passport at
+admission; it does not authenticate the agent, start a model, or grant merge,
+repair, release, deployment, signing, or credential authority.
+
+`factory combine` complements that record with a deterministic, offline-
+verifiable scoreboard for already-completed governed events on one human-written,
+sealed task. It ranks passing result and declared failure classes—not elapsed
+time, token usage, cost, unmeasured quality, or vendor capability. Graph Ops and
+local MCP show these supervision facts without gaining mutation authority.
+
 ## Proof of survival
 
 The new **Gauntlet** turns explicitly human-written promise sabotages into a
@@ -59,6 +76,12 @@ merge, publish, deploy, sign, message, access credentials, or call a connector.
 Graph Ops projects source-bound intake confirmations and proof-delta receipts
 beside the existing Product Graph and Mission Graph facts. These are visual
 inspection aids only; execution authority remains outside Graph Ops.
+
+**Graph Forensics** adds a read-only semantic debugger for two hash-sealed graph
+lineages. It identifies a first divergence and its causal cone, plus deterministic
+stale-read, stale-write, parallel-write-conflict, and duplicate-side-effect
+findings. Its recovery preview does not fork a checkpoint or execute a graph;
+a human and the target runtime retain that authority.
 
 ## Boundary
 
