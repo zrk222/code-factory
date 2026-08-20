@@ -56,6 +56,60 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun indexContinuityCommandsRemainExplicitAndWorkspaceBound() {
+        val root = Files.createTempDirectory("factoryline-index-continuity")
+        val baseline = root.resolve(".factory/index-continuity/baseline.json")
+
+        assertEquals(
+            listOf("workspace", "continuity", "baseline", "--root", root.toString(), "--out", baseline.toString(), "--json"),
+            FactoryLineCommands.indexContinuityBaseline(root, baseline),
+        )
+        assertEquals(
+            listOf("workspace", "continuity", "compare", "--root", root.toString(), "--baseline", baseline.toString(), "--json"),
+            FactoryLineCommands.indexContinuityCompare(root, baseline),
+        )
+    }
+
+    @Test
+    fun indexContinuityParserAcceptsOnlyVersionedLocalSchemas() {
+        val summary = IndexContinuitySummary.fromJson(
+            """
+                {
+                  "schema":"factory.index_continuity.v1",
+                  "review_scope":"broad_reanalysis",
+                  "recommendation":"Review changed manifests.",
+                  "baseline":{"path":".factory/index-continuity/baseline.json"},
+                  "changes":[{"kind":"structural_files","files":[{"path":"package.json"}]}]
+                }
+            """.trimIndent(),
+        )
+
+        assertNotNull(summary)
+        assertEquals("broad_reanalysis", summary.reviewScope)
+        assertEquals(listOf("structural_files"), summary.changes)
+        assertTrue(summary.brief().contains("does not inspect or repair an IDE index"))
+        assertEquals(null, IndexContinuitySummary.fromJson("{\"schema\":\"untrusted\"}"))
+    }
+
+    @Test
+    fun ideHealthKeepsUnavailableSignalsHonestAndDoesNotAssignCause() {
+        val sample = IdeHealthSample(
+            capturedAtMs = 1L,
+            heapUsedBytes = 128L * 1024L * 1024L,
+            heapMaxBytes = 512L * 1024L * 1024L,
+            processCpuPercent = null,
+            systemCpuPercent = null,
+            indexingActive = false,
+            edtDelayMs = 10L,
+        )
+
+        assertEquals("unavailable", IdeHealthAssessment.cpu(null))
+        assertEquals("128 MB / 512 MB", IdeHealthAssessment.heap(sample.heapUsedBytes, sample.heapMaxBytes))
+        assertTrue(IdeHealthAssessment.reviewNote(sample).contains("unavailable"))
+        assertTrue(IdeHealthMarkers.CORRELATION_NOT_CAUSATION.startsWith("IDE_HEALTH"))
+    }
+
+    @Test
     fun proofReviewCommandsAreDirectAndCanFocusOneWorkspacePath() {
         val root = Files.createTempDirectory("factoryline-proof-review")
 

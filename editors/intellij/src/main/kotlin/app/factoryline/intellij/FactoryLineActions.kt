@@ -94,6 +94,44 @@ object FactoryLineController {
         }
     }
 
+    fun captureIndexContinuityBaseline(project: Project) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val out = root.resolve(".factory").resolve("index-continuity").resolve("baseline.json")
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Capture Index Continuity Baseline")) return
+        runBackground(project, "Capture Index Continuity Baseline", onCompleted = { FactoryLinePanels.showIndexContinuity(project, it) }) {
+            FactoryLineRunner.indexContinuityBaseline(project, out)
+        }
+    }
+
+    fun compareIndexContinuityBaseline(project: Project) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val baseline = root.resolve(".factory").resolve("index-continuity").resolve("baseline.json")
+        if (!Files.isRegularFile(baseline)) {
+            Messages.showInfoMessage(project, "Capture the local baseline first. FactoryLine will not infer one from an old workspace state.", "FactoryLine Index Continuity Guard")
+            return
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Compare Index Continuity Baseline")) return
+        runBackground(project, "Compare Index Continuity Baseline", onCompleted = { FactoryLinePanels.showIndexContinuity(project, it) }) {
+            FactoryLineRunner.indexContinuityCompare(project, baseline)
+        }
+    }
+
+    fun openIdeHealth(project: Project) {
+        val toolWindow = com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater {
+                toolWindow.contentManager.findContent("IDE Health")?.let { toolWindow.contentManager.setSelectedContent(it) }
+                project.getUserData(FactoryLinePanels.ideHealthKey)?.showCurrent()
+            }
+        }
+    }
+
     fun missionOperations(project: Project) {
         val options = MissionGraphOperation.entries.map { it.label }.toTypedArray()
         val selected = Messages.showDialog(
@@ -471,6 +509,24 @@ class AnalyzeChangedProofAction : FactoryLineAction() {
 class AnalyzeWorkspaceAdvisorAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.analyzeWorkspaceAdvisor(it) }
+    }
+}
+
+class CaptureIndexContinuityBaselineAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.captureIndexContinuityBaseline(it) }
+    }
+}
+
+class CompareIndexContinuityBaselineAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.compareIndexContinuityBaseline(it) }
+    }
+}
+
+class OpenIdeHealthAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.openIdeHealth(it) }
     }
 }
 

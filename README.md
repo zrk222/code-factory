@@ -236,11 +236,12 @@ context reusable by a client you choose.
   or [Verifier Plane](docs/VERIFIER_PLANE.md) when the job calls for it.
 - Browse [Graph Ops](docs/GRAPH_OPS.md), [Gauntlet](docs/GAUNTLET.md), [Proof-Delta Loop](docs/PROOF_DELTA_LOOP.md), [Graph Portfolio and Run Admission](docs/GRAPH_PORTFOLIO_ADMISSION.md), [Evidence Frontier](docs/EVIDENCE_FRONTIER.md), [Factory Reality Check](docs/REALITY_CHECK.md), [proof reuse](docs/PROOF_REUSE.md), and
   [LangGraph Assurance](docs/LANGGRAPH_ASSURANCE.md), and [savings boundaries](docs/SAVINGS_TRACKER.md) for advanced evidence workflows.
+- Use [IDE Health and Index Continuity](docs/IDE_HEALTH.md) when a JetBrains IDE slows down and you need locally observed signals before deciding what to review.
 - For UI work, read [Prestige Design Review](docs/PRESTIGE_DESIGN.md) for the
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.40.0.md),
+- See the [release notes](docs/RELEASE_NOTES_0.40.1.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

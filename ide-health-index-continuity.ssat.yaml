@@ -1,0 +1,30 @@
+name: ide-health-index-continuity
+language: python
+modules:
+  - name: index_continuity
+    path: factoryline/index_continuity.py
+    language: python
+    functions:
+      - name: capture_continuity_baseline
+        args: ["root: Path | str"]
+        returns: "dict[str, object]"
+      - name: write_continuity_baseline
+        args: ["baseline: Mapping[str, object]", "root: Path | str", "out: Path | str"]
+        returns: str
+      - name: compare_continuity
+        args: ["root: Path | str", "baseline_path: Path | str"]
+        returns: "dict[str, object]"
+dependencies: []
+invariants:
+  - name: continuity_capture_has_no_remote_execution
+    forbid_pattern: "\\b(?:subprocess|requests|httpx|urllib|socket|Popen)\\s*\\("
+    scopes:
+      - module: index_continuity
+        symbol: capture_continuity_baseline
+        max_lines: 80
+  - name: continuity_compare_has_no_ide_mutation
+    forbid_pattern: "\\b(?:invalidate|reindex|cache|plugin|settings)\\s*\\("
+    scopes:
+      - module: index_continuity
+        symbol: compare_continuity
+        max_lines: 100

@@ -110,6 +110,14 @@ object FactoryLineCommands {
         add("--json")
     }
 
+    fun indexContinuityBaseline(root: Path, out: Path): List<String> = listOf(
+        "workspace", "continuity", "baseline", "--root", root.toString(), "--out", out.toString(), "--json",
+    )
+
+    fun indexContinuityCompare(root: Path, baseline: Path): List<String> = listOf(
+        "workspace", "continuity", "compare", "--root", root.toString(), "--baseline", baseline.toString(), "--json",
+    )
+
     fun proofReview(root: Path, changedPath: String? = null, outDir: Path? = null): List<String> = buildList {
         addAll(listOf("change", "review", "--root", root.toString()))
         changedPath?.let { addAll(listOf("--changed", it)) }
@@ -352,6 +360,22 @@ object FactoryLineRunner {
         }
         val title = if (boundedOutDir == null) "Workspace Load Advisor" else "Save Workspace Advisor Report"
         return execute(project, title, FactoryLineCommands.workspaceAdvisor(root, boundedOutDir))
+    }
+
+    fun indexContinuityBaseline(project: Project, out: Path): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Capture Index Continuity Baseline", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        val boundedOut = WorkspacePath.resolve(root, out.toString())
+            ?: return CommandResult("Capture Index Continuity Baseline", emptyList(), null, false, "Blocked: the baseline must stay inside the project.")
+        return execute(project, "Capture Index Continuity Baseline", FactoryLineCommands.indexContinuityBaseline(root, boundedOut))
+    }
+
+    fun indexContinuityCompare(project: Project, baseline: Path): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Compare Index Continuity Baseline", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        val boundedBaseline = WorkspacePath.resolve(root, baseline.toString())
+            ?: return CommandResult("Compare Index Continuity Baseline", emptyList(), null, false, "Blocked: the baseline must stay inside the project.")
+        return execute(project, "Compare Index Continuity Baseline", FactoryLineCommands.indexContinuityCompare(root, boundedBaseline))
     }
 
     fun proofReview(project: Project, changedPath: String? = null, outDir: Path? = null): CommandResult {

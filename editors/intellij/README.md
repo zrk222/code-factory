@@ -19,6 +19,8 @@ starting state until product-specific proof exists.
 - `FactoryLine: Open Local Meter` runs `factory meter --root <project> --json` after workspace confirmation.
 - `FactoryLine: Analyze Changed Proof` runs `factory risk-diff --root <project> --json`.
 - `FactoryLine: Analyze Workspace Load and Remote/WSL Preflight` runs `factory workspace inspect --root <project> --json`, measures only bounded local filesystem/path facts, and offers manual review paths. It never changes heap, caches, indexes, inspections, plugins, project files, credentials, or remote settings, and it is not an IDE performance diagnosis.
+- `FactoryLine: Open IDE Health Flight Recorder` records up to 20 in-memory aggregate local runtime samples: heap, process CPU when the bundled JVM exposes it, indexing state, and EDT dispatch delay. It does not persist samples, upload project data, identify a plugin cause, or change IDE settings.
+- `FactoryLine: Capture/Compare Index Continuity Baseline` saves an explicit `.factory/index-continuity/baseline.json` structural baseline, then names manifest, source-root, managed-directory, or path-classification drift. It does not inspect or repair a JetBrains index, invalidate caches, or predict duration.
 - `Workspace Advisor: Save local report` explicitly writes JSON, Markdown, and Mermaid under `.factory/workspace-advice`; MCP inspection never writes those artifacts.
 - `FactoryLine: Review Current Diff` runs `factory change review --root <project> --json` and shows an attention-first, structured local review of the branch delta, staged changes, unstaged changes, and non-ignored untracked files.
 - `FactoryLine: Review This File` runs the same analysis with an explicit active-editor path, so a developer can exclude unrelated local work from the review scope.
@@ -94,6 +96,11 @@ surface. It makes project shape visible before a developer manually changes
 JetBrains project exclusions or evaluates a remote/WSL path setup. It measures
 neither IDE runtime behavior nor performance improvement and cannot apply a
 configuration change. See [`docs/WORKSPACE_ADVISOR.md`](../../docs/WORKSPACE_ADVISOR.md).
+
+IDE Health Flight Recorder and Index Continuity Guard add a separate runtime
+observation and structural-drift path. Their recordings are bounded local
+facts, and their review scope is never a root-cause or repair claim. See
+[`docs/IDE_HEALTH.md`](../../docs/IDE_HEALTH.md).
 
 ## Install
 

@@ -279,3 +279,9 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-18 19:32] GATE plan developer-memory-brief approver=human tasks=4 sha=013e25747d42d2cd
 - [2026-08-18 19:32] GATE spec developer-memory-brief approver=human strict=True sha=d9a8f67e46f9f5cf
 - [2026-08-18 19:32] GATE plan developer-memory-brief approver=human tasks=4 sha=d9a8f67e46f9f5cf
+- [2026-08-20 16:27] GATE plan ide-health-index-continuity approver=human tasks=4 sha=d5853579d49c5912
+- [2026-08-20 16:37] GATE spec ide-health-index-continuity approver=human strict=True sha=d5853579d49c5912
+- [2026-08-20 16:39] GATE spec ide-health-index-continuity approver=human strict=True sha=7c84c920d45300bb
+- [2026-08-20 16:39] GATE plan ide-health-index-continuity approver=human tasks=4 sha=7c84c920d45300bb
+- [2026-08-20 16:40] GATE spec ide-health-index-continuity approver=human strict=True sha=0c5388d866bc2c2d
+- [2026-08-20 16:40] GATE plan ide-health-index-continuity approver=human tasks=4 sha=0c5388d866bc2c2d
