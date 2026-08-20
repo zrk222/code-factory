@@ -97,8 +97,12 @@ configuration change. See [`docs/WORKSPACE_ADVISOR.md`](../../docs/WORKSPACE_ADV
 
 ## Install
 
-1. Install `factoryline-code-factory==0.30.0` into the Python environment that
-   IntelliJ inherits.
+1. Install or update `factoryline-code-factory` in the Python environment that
+   IntelliJ inherits:
+
+   ```powershell
+   python -m pip install --upgrade factoryline-code-factory
+   ```
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the
    [official listing](https://plugins.jetbrains.com/plugin/33009-factoryline).

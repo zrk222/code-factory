@@ -1,5 +1,17 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.11 - 2026-08-20
+
+- Add Intake Grill, Proof-Delta, Gauntlet Survival Cards, and Earned Autonomy
+  as local, review-first proof surfaces. They bind supplied evidence and make
+  unsafe or no-gain states visible; they do not run an agent, apply a repair,
+  grant permission, or certify a release.
+- Add Graph Forensics, ProofSearch, and refreshable local Assembly activity to
+  Graph Ops, including read-only evidence and recovery views with execution
+  authority retained by the developer.
+- Refresh Marketplace copy, compatibility validation, icons, vendor metadata,
+  and ZIP preflight checks for the current supported JetBrains IDE baseline.
+
 ## 0.8.6 - 2026-08-14
 
 - Explain the Plan-to-Proof Review workflow for professional and team use:
