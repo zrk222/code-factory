@@ -80,8 +80,8 @@ gh release create <tag> --generate-notes
 
 The workflow is the all-platform bundle for this repository: Python package,
 VS Code extension, IntelliJ plugin, and retained proof artifacts. It does not
-deploy WizeMe web/mobile services or submit an app-store build; those remain
-separate, credentialed product pipelines and approval-bound.
+deploy unrelated web/mobile services or submit an app-store build; those
+remain separate, credentialed product pipelines and approval-bound.
 
 ## Provider and IDE routing
 

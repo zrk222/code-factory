@@ -1,0 +1,19 @@
+{
+  "checks": [
+    {
+      "name": "proof_delta_binds_a_changed_candidate_and_new_hash_checked_evidence_without_executing_a_worker",
+      "kind": "python",
+      "run": "import json, tempfile\nfrom hashlib import sha256\nfrom pathlib import Path\nfrom factoryline.product_missions import compile_product_prd, create_mission, plan_value_slices\nfrom factoryline.proof_delta import create_proof_delta, verify_proof_delta\nwith tempfile.TemporaryDirectory() as raw:\n    root = Path(raw)\n    prd = root / \"PRD.md\"\n    prd.write_text(\"# Approval\\n## Actors\\n- Owner: owns approval.\\n## Requirements\\n- REQ-APPROVE: The system must reject a non-manager approval.\\n## Acceptance\\nScenario: Reject a non-manager\\n  Given a non-manager actor\\n  When the actor approves\\n  Then the system rejects the action\\n\", encoding=\"utf-8\")\n    graph = compile_product_prd(prd, root)\n    slices = plan_value_slices(Path(graph[\"path\"]), root)\n    mission = create_mission(Path(slices[\"path\"]), slices[\"slices\"][0][\"id\"], root, \"smoke-owner\")\n    def candidate(name, digest, evidence_name):\n        evidence = root / evidence_name\n        evidence.write_text(name, encoding=\"utf-8\")\n        path = root / f\"{name}.json\"\n        path.write_text(json.dumps({\"schema\": \"factory.mission.candidate.v1\", \"mission_id\": mission[\"id\"], \"candidate\": {\"diff_sha256\": digest, \"changed_paths\": [\"src/approval.py\"]}, \"evidence\": [{\"path\": evidence_name, \"sha256\": sha256(evidence.read_bytes()).hexdigest(), \"kind\": \"counterexample\"}]}), encoding=\"utf-8\")\n        return path\n    before = candidate(\"before\", \"a\" * 64, \"before.txt\")\n    after = candidate(\"after\", \"b\" * 64, \"after.txt\")\n    failure = root / \"failure.json\"\n    failure.write_text(json.dumps({\"schema\": \"factory.mission.validation-failure.v1\", \"mission_id\": mission[\"id\"]}), encoding=\"utf-8\")\n    out = root / \".factory\" / \"proof-deltas\" / \"smoke.json\"\n    result = create_proof_delta(root, Path(mission[\"path\"]), before, after, failure, mission[\"completion_contract\"][\"criteria\"][0][\"id\"], out)\n    assert result[\"marker\"] == \"PROOF_DELTA_ADVANCE\"\n    assert verify_proof_delta(root, out)[\"eligible\"] is True\nprint(\"PROOF_DELTA_ADVANCE\")\n",
+      "expect_exit": 0,
+      "expect_stdout": "PROOF_DELTA_ADVANCE",
+      "timeout_s": 30,
+      "covers": [
+        "INTAKE_SOURCE_BOUND",
+        "PRODUCT_INTAKE_CONFIRMATION_BOUND",
+        "MISSION_GRAPH_PROOF_DELTA_BOUND",
+        "PROOF_DELTA_ADVANCE"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

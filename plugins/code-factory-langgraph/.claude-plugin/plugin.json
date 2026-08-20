@@ -1,7 +1,7 @@
 {
   "name": "code-factory-langgraph",
-  "version": "0.39.0",
-  "description": "Proof-aware LangGraph guidance and read-only resume-parity receipts for coding agents.",
+  "version": "0.40.0",
+  "description": "Proof-aware LangGraph guidance and read-only resume-parity receipts before review.",
   "author": {
     "name": "Richard Katz",
     "email": "rkatz22@gmail.com"
@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Code Factory for LangGraph",
     "shortDescription": "Prove a resumed LangGraph path before review.",
-    "longDescription": "Proof-aware LangGraph guidance and read-only local resume-parity receipts for coding agents.",
+    "longDescription": "Proof-aware LangGraph guidance and read-only local resume-parity receipts before review.",
     "developerName": "Code Factory",
     "category": "Productivity",
     "capabilities": [],

@@ -3,7 +3,7 @@
 Run a bounded FactoryLine command and inspect the local JSON receipt without
 leaving VS Code. The extension never uploads your workspace, code, or receipts.
 
-**Generate a local MVP, then catch hollow tests before review.** Keep the
+**Catch AI-generated tests that could never fail — before review.** Keep the
 receipts and proof path next to the code, then open **Graph Ops** to see what is
 evidenced, blocked, or next. Start with **FactoryLine: Open Local Factory
 Studio** or run `factory mvp "Build an approval tracker" --root .`. The

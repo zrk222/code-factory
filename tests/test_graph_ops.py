@@ -322,6 +322,27 @@ def test_graph_ops_projects_a_supervised_reality_check_without_rerunning_it(tmp_
     assert node["facts"]["promise"] == "A manager can approve a request."
 
 
+def test_graph_ops_projects_survival_cards_without_running_or_signing_them(tmp_path: Path):
+    from test_gauntlet import _admission, _proposal
+    from factoryline.gauntlet import run_gauntlet
+
+    proposal = _proposal(tmp_path)
+    run_gauntlet(tmp_path, proposal, _admission(tmp_path, proposal))
+    before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+    snapshot = graph_ops_snapshot(tmp_path)
+    after = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+    assert before == after
+    assert snapshot["facts"]["gauntlet_card_count"] == 1
+    assert snapshot["facts"]["gauntlet_survived_count"] == 1
+    assert "GRAPH_OPS_GAUNTLET_SURVIVAL_CARDS_READ_ONLY" in snapshot["markers"]
+    card = next(node for node in snapshot["nodes"] if node["kind"] == "gauntlet")
+    assert card["status"] == "survived"
+    assert card["facts"]["continuity"] == {"bound": False, "record_count": 0, "binding_sha256": None}
+    assert all(value is False for key, value in card["facts"]["authority"].items() if key not in {"execution", "test_execution"})
+
+
 def test_graph_ops_projects_counterexamples_guardrails_and_temporal_resilience_read_only(tmp_path: Path):
     from test_counterexample import _source as counterexample_source
     from test_guardrails import _manifest as guardrail_manifest, _principal as guardrail_principal, _store as guardrail_store

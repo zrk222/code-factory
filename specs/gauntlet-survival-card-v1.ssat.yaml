@@ -1,0 +1,82 @@
+name: gauntlet-survival-card-v1
+language: python
+modules:
+  - name: gauntlet
+    path: factoryline/gauntlet.py
+    functions:
+      - name: compile_gauntlet_proposal
+        args: [root, source_path]
+        returns: dict[str, Any]
+      - name: _continuity_binding
+        args: [root, value]
+        returns: dict[str, Any] | None
+      - name: verify_gauntlet_proposal
+        args: [root, proposal_path]
+        returns: dict[str, Any]
+      - name: admit_gauntlet
+        args: [root, proposal_path]
+        returns: dict[str, Any]
+      - name: run_gauntlet
+        args: [root, proposal_path, admission_path, out]
+        returns: dict[str, Any]
+      - name: verify_survival_card
+        args: [card_path]
+        returns: dict[str, Any]
+      - name: gauntlet_status
+        args: [root, source_id]
+        returns: dict[str, Any]
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_snapshot
+        args: [root]
+        returns: dict[str, Any]
+  - name: mcp
+    path: factoryline/mcp.py
+    functions:
+      - name: _gauntlet_status
+        args: [root, arguments]
+        returns: dict[str, object]
+dependencies:
+  - from: gauntlet
+    to: e2e_proof
+  - from: gauntlet
+    to: reality_check
+  - from: gauntlet
+    to: enterprise_receipts
+  - from: gauntlet
+    to: continuity
+  - from: graph_ops
+    to: gauntlet
+  - from: mcp
+    to: gauntlet
+  - from: mcp
+    to: graph_ops
+invariants:
+  - name: planning_and_admission_never_execute_a_declared_e2e_pair
+    forbid_pattern: "subprocess\\.|verify_e2e_proof\\s*\\("
+    scopes:
+      - module: gauntlet
+        symbol: compile_gauntlet_proposal
+        max_lines: 24
+      - module: gauntlet
+        symbol: verify_gauntlet_proposal
+        max_lines: 24
+      - module: gauntlet
+        symbol: admit_gauntlet
+        max_lines: 40
+  - name: read_paths_never_execute_or_promote
+    forbid_pattern: "subprocess\\.|verify_e2e_proof\\s*\\(|\\b(?:apply|commit|merge|publish|deploy|send_message|grant_connector|invoke)\\s*\\("
+    scopes:
+      - module: gauntlet
+        symbol: verify_survival_card
+        max_lines: 40
+      - module: gauntlet
+        symbol: gauntlet_status
+        max_lines: 40
+      - module: graph_ops
+        symbol: graph_ops_snapshot
+        max_lines: 150
+      - module: mcp
+        symbol: _gauntlet_status
+        max_lines: 30

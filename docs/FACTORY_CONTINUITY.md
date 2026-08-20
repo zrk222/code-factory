@@ -95,12 +95,21 @@ The UI can copy a recall command template and validate the redaction boundary.
 Its promotion button is disabled. Graph Ops cannot write content, promote a
 record, sign, merge, publish, deploy, or grant an agent access.
 
+## Gauntlet precision binding
+
+A Gauntlet source can optionally select already verified, unexpired records for
+its exact tenant, purpose, and repository scope. `factory gauntlet plan` reads
+only the redacted metadata through the read-only recall boundary and embeds
+hashes, record types, and evidence digests in the plan. It does not recall a
+memory body or give the selected record authority to generate tests, run them,
+or approve work. See [Gauntlet](GAUNTLET.md) for the source contract.
+
 ## Boundary and next service milestone
 
-This is the local Continuity Core, not the WizeMe Mesh service. Before a hosted
+This is the local Continuity Core, not a hosted memory service. Before a hosted
 or enterprise claim, the remaining independent units include authenticated
 identity lifecycle, tenant isolation under the hosted store, purpose policy
 mutation testing, encrypted record authority and erasure, external anchoring,
 and a separate cross-language verifier. The governing plan is
-[WizeMe Mesh](WIZEME_MESH_PRD.md); its labels must not be advanced without the
+[Memory Platform plan](MEMORY_PLATFORM_PRD.md); its labels must not be advanced without the
 specified exit evidence.

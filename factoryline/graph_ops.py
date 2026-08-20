@@ -24,7 +24,12 @@ from .graph_authorization import GraphAuthorizationError, validate_graph_authori
 from .continuity import CONTINUITY_DB_RELATIVE_PATH, continuity_projection
 from .counterexample import CounterexampleError, verify_counterexample_plan
 from .guardrails import GuardrailError, verify_guardrail_evaluation
+from .proof_delta import ProofDeltaError, verify_proof_delta
+from .intake_grill import verify_intake_confirmation
+from .gauntlet import GauntletError, validate_survival_card
 from .resilience import ResilienceError, verify_temporal_resilience_plan
+from .agent_license import license_projection
+from .combine import combine_projection
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -261,6 +266,51 @@ def _append_missions(state: dict[str, Any], root: Path, requirements: dict[tuple
                             _edge(state, completion_id, req_node, "verifies")
                             evidenced.add(req_node)
     return evidenced
+
+
+def _append_intake_confirmations(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project only source-bound human intake decisions already present in graphs."""
+    facts = {"count": 0, "confirmed_count": 0, "invalid_count": 0}
+    for graph_path in sorted((root / ".factory" / "products").glob("*/product_graph.json")):
+        graph, source = _load_json(root, graph_path, state["errors"])
+        if graph is None or source is None:
+            continue
+        binding = graph.get("intake")
+        if binding is None:
+            continue
+        project = _text(graph.get("project"), graph_path.parent.name)
+        if not isinstance(binding, dict) or not isinstance(binding.get("path"), str):
+            _record_error(state["errors"], source, "INTAKE_CONFIRMATION_INVALID")
+            facts["invalid_count"] += 1
+            continue
+        try:
+            confirmation = verify_intake_confirmation(root, Path(binding["path"]))
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            confirmation = {"valid": False, "errors": ["intake confirmation verification failed"]}
+        value = confirmation.get("confirmation") if isinstance(confirmation.get("confirmation"), dict) else None
+        valid = bool(confirmation.get("valid")) and value is not None
+        digest = _text(binding.get("confirmation_sha256"), _sha(binding)[:24])
+        node_id = f"intake:{digest[:24]}"
+        decision = value.get("decision", {}) if value else {}
+        _node(
+            state, node_id=node_id, kind="intake", label=f"intake · {_text(decision.get('framework'), 'unconfirmed')}",
+            source=source, status="confirmed" if valid else "invalid",
+            facts={
+                "framework": _text(decision.get("framework"), "unconfirmed"),
+                "source_sha256": binding.get("source_sha256"),
+                "acceptance_evidence": "bound" if valid else "unverified",
+                "external_effects": _text(decision.get("external_effects"), "unknown"),
+                "re_evaluation_declared": bool(decision.get("re_evaluate_when")) if isinstance(decision, dict) else False,
+                "authority": _AUTHORITY,
+            },
+        )
+        product_id = f"product:{project}"
+        if product_id in state["nodes"]:
+            _edge(state, node_id, product_id, "sets_intent_for")
+        facts["count"] += 1
+        facts["confirmed_count"] += int(valid)
+        facts["invalid_count"] += int(not valid)
+    return facts
 
 
 def _append_proofs(state: dict[str, Any], root: Path) -> int:
@@ -694,6 +744,203 @@ def _append_continuity(state: dict[str, Any], root: Path) -> dict[str, int]:
     return facts
 
 
+def _append_proof_deltas(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project retry-admission evidence without starting a retry or a worker."""
+    facts = {"count": 0, "advance_count": 0, "halted_count": 0, "invalid_count": 0}
+    directory = root / ".factory" / "proof-deltas"
+    for path in sorted(directory.glob("*.json")):
+        value, source = _load_json(root, path, state["errors"])
+        if value is None or source is None:
+            facts["invalid_count"] += 1
+            continue
+        try:
+            verification = verify_proof_delta(root, path)
+        except ProofDeltaError as exc:
+            _record_error(state["errors"], source, exc.code)
+            facts["invalid_count"] += 1
+            continue
+        status = "admitted" if verification["eligible"] else "halted"
+        digest = _text(verification.get("proof_delta_sha256"), path.stem)
+        node_id = f"proof-delta:{digest[:24]}"
+        _node(
+            state, node_id=node_id, kind="proof_delta", label=f"retry · {verification['criterion_id']}",
+            source=source, status=status,
+            facts={
+                "marker": verification["marker"], "mission_id": verification["mission_id"],
+                "criterion_id": verification["criterion_id"], "new_evidence_count": len(verification["new_evidence"]),
+                "reason": verification["reason"], "proof_delta_sha256": digest,
+                "authority": verification["authority"], "execution": False,
+            },
+        )
+        mission_id = f"mission:{verification['mission_id']}"
+        if mission_id in state["nodes"]:
+            _edge(state, node_id, mission_id, "admits_retry_for")
+        facts["count"] += 1
+        facts["advance_count"] += int(verification["eligible"])
+        facts["halted_count"] += int(not verification["eligible"])
+    return facts
+
+
+def _append_survival_cards(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project existing Gauntlet cards without compiling, admitting, or rerunning a case."""
+    facts = {"count": 0, "survived_count": 0, "hollow_count": 0, "blocked_count": 0, "invalid_count": 0}
+    directory = root / ".factory" / "gauntlets"
+    for path in sorted(directory.glob("*/*.card.json")):
+        value, source = _load_json(root, path, state["errors"])
+        if value is None or source is None:
+            facts["invalid_count"] += 1
+            continue
+        try:
+            card = validate_survival_card(value)
+        except GauntletError as exc:
+            _record_error(state["errors"], source, exc.code)
+            facts["invalid_count"] += 1
+            continue
+        status = "survived" if card["ok"] else "hollow" if card["marker"] == "GAUNTLET_HOLLOW" else "blocked"
+        node_id = f"gauntlet:{card['card_sha256'][:24]}"
+        _node(
+            state, node_id=node_id, kind="gauntlet", label=f"Survival Card · {card['source']['id']}", source=source, status=status,
+            facts={
+                "marker": card["marker"], "card_sha256": card["card_sha256"], "source_id": card["source"]["id"],
+                "summary": card["summary"], "unproven_promises": card["unproven_promises"],
+                "continuity": {"bound": card["continuity"] is not None, "record_count": len(card["continuity"]["records"]) if card["continuity"] else 0, "binding_sha256": card["continuity"]["binding_sha256"] if card["continuity"] else None},
+                "commit": card["commit"], "authority": card["authority"], "execution": False,
+            },
+        )
+        for outcome in card["outcomes"]:
+            promise_id = outcome["promise"]["id"]
+            for reality_node in state["nodes"].values():
+                if reality_node.get("kind") == "reality_check" and reality_node.get("facts", {}).get("promise") == outcome["reality"]["promise"]:
+                    _edge(state, reality_node["id"], node_id, "sabotage_evidence_for")
+            _node(
+                state, node_id=f"gauntlet-case:{card['card_sha256'][:16]}:{_sha(outcome['proposal_id'])[:8]}", kind="gauntlet_case",
+                label=f"{promise_id} · {outcome['sabotage']['risk_tag']}", source=source, status=outcome["status"],
+                facts={"risk_tag": outcome["sabotage"]["risk_tag"], "mutation": outcome["sabotage"]["mutation"], "e2e_marker": outcome["e2e_receipt"]["marker"]},
+            )
+            _edge(state, f"gauntlet-case:{card['card_sha256'][:16]}:{_sha(outcome['proposal_id'])[:8]}", node_id, "reported_by")
+        facts["count"] += 1
+        facts["survived_count"] += int(status == "survived")
+        facts["hollow_count"] += int(status == "hollow")
+        facts["blocked_count"] += int(status == "blocked")
+    return facts
+
+
+def _append_agent_supervision(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project license and Combine evidence without granting agent authority.
+
+    The view is deliberately derived from the immutable local ledgers.  It does
+    not issue a license, invoke a candidate, make an approval decision, or turn
+    declared identity into an authenticated one.
+    """
+    facts = {
+        "license_count": 0,
+        "human_controlled_count": 0,
+        "supervised_count": 0,
+        "autonomous_count": 0,
+        "incident_count": 0,
+        "combine_scoreboard_count": 0,
+        "combine_passing_candidate_count": 0,
+    }
+    licenses = license_projection(root)
+    for license_value in licenses.get("licenses", []):
+        if not isinstance(license_value, dict):
+            continue
+        agent = license_value.get("agent")
+        evidence = license_value.get("evidence")
+        incidents = license_value.get("incidents")
+        if not isinstance(agent, dict) or not isinstance(evidence, dict) or not isinstance(incidents, list):
+            continue
+        identity = _text(agent.get("identity_sha256"), "unknown")
+        tier = _text(license_value.get("tier"), "human_controlled")
+        node_id = f"agent-license:{identity[:24]}"
+        _node(
+            state,
+            node_id=node_id,
+            kind="agent_license",
+            label=f"{_text(agent.get('subject'), 'declared agent')} · {tier.replace('_', ' ')}",
+            source=".factory/agent-licenses/events",
+            status=tier,
+            facts={
+                "identity_sha256": identity,
+                "identity_provenance": license_value.get("identity_provenance"),
+                "tier": tier,
+                "reason": license_value.get("reason"),
+                "expires_at": license_value.get("expires_at"),
+                "allowed_paths": license_value.get("allowed_paths", []),
+                "evidence": evidence,
+                "latest_event_sha256": evidence.get("latest_event_sha256"),
+                "derivation": "live_read_only_not_a_sealed_license_artifact",
+                "incident_count": len(incidents),
+                "authority": license_value.get("authority", _AUTHORITY),
+                "execution": False,
+            },
+        )
+        facts["license_count"] += 1
+        if tier in {"human_controlled", "supervised", "autonomous"}:
+            facts[f"{tier}_count"] += 1
+        for incident in incidents:
+            if not isinstance(incident, dict):
+                continue
+            event_id = _text(incident.get("event_id"), "incident")
+            incident_id = f"agent-incident:{identity[:12]}:{event_id}"
+            _node(
+                state,
+                node_id=incident_id,
+                kind="agent_incident",
+                label=f"automatic demotion · {event_id}",
+                source=".factory/agent-licenses/incidents",
+                status="demoted",
+                facts={
+                    "recorded_at": incident.get("recorded_at"),
+                    "failure_classes": incident.get("failure_classes", []),
+                    "event_sha256": incident.get("event_sha256"),
+                    "effect": "human_controlled_pending_requalification",
+                },
+            )
+            _edge(state, incident_id, node_id, "demotes")
+            facts["incident_count"] += 1
+
+    scoreboards = combine_projection(root)
+    for scoreboard in scoreboards.get("scoreboards", []):
+        if not isinstance(scoreboard, dict):
+            continue
+        digest = _text(scoreboard.get("scoreboard_sha256"), "scoreboard")
+        task_id = _text(scoreboard.get("task_id"), "sealed task")
+        candidates = scoreboard.get("candidates")
+        if not isinstance(candidates, list):
+            continue
+        node_id = f"combine-scoreboard:{digest[:24]}"
+        _node(
+            state,
+            node_id=node_id,
+            kind="combine_scoreboard",
+            label=f"Combine · {task_id}",
+            source=".factory/combines/scoreboards",
+            status="verified",
+            facts={
+                "scoreboard_sha256": digest,
+                "task_id": task_id,
+                "scored_at": scoreboard.get("scored_at"),
+                "summary": scoreboard.get("summary", {}),
+                "candidate_count": len(candidates),
+                "authority": scoreboards.get("authority", _AUTHORITY),
+                "execution": False,
+            },
+        )
+        facts["combine_scoreboard_count"] += 1
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or not isinstance(candidate.get("agent"), dict):
+                continue
+            candidate_agent = candidate["agent"]
+            candidate_identity = candidate_agent.get("identity_sha256")
+            if isinstance(candidate_identity, str):
+                license_node = f"agent-license:{candidate_identity[:24]}"
+                if license_node in state["nodes"]:
+                    _edge(state, license_node, node_id, "compared_in")
+            facts["combine_passing_candidate_count"] += int(candidate.get("passed") is True)
+    return facts
+
+
 def _append_counterexamples(state: dict[str, Any], root: Path) -> dict[str, int]:
     """Project negative-proof plans as facts; never execute the derived cases."""
     facts = {"count": 0, "verified_count": 0, "hollow_count": 0, "invalid_count": 0}
@@ -810,6 +1057,14 @@ def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
 def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
     if facts["node_count"] == 0:
         return "initialize_graph", "No readable local Factory graph artifacts were found."
+    if facts["agent_incident_count"] > 0:
+        return "review_agent_demotion", "A governed agent result triggered automatic demotion. Inspect the bound incident capsule and collect fresh independent evidence before expanding autonomy."
+    if facts["agent_license_human_controlled_count"] > 0:
+        return "collect_governed_agent_evidence", "At least one declared agent is human-controlled because its current governed evidence is insufficient or was demoted. Keep approval explicit."
+    if facts["proof_delta_halted_count"] > 0:
+        return "review_no_evidence_gain", "A proposed retry adds no new hash-bound evidence. Keep the mission paused or revise its evidence packet."
+    if facts["intake_invalid_count"] > 0:
+        return "refresh_intake_confirmation", "A Product Graph points at an invalid or drifted intake confirmation. Reconfirm framework, intent, acceptance evidence, and external-effects scope before mission work."
     if facts["continuity_expired_count"] > 0:
         return "refresh_expired_continuity", "At least one local continuity record is expired and is withheld from future recall."
     if facts["continuity_draft_count"] > 0:
@@ -832,6 +1087,12 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "review_graph_anomaly", "Verified lineage exposes at least one state or concurrency anomaly."
     if facts["reality_check_blocked_count"] > 0:
         return "repair_reality_check", "A declared user behavior is blocked or hollow; inspect its local proof card before trusting the feature."
+    if facts["gauntlet_hollow_count"] > 0:
+        return "repair_hollow_sabotage", "At least one declared sabotage still exits zero. Treat its promise as unproven and repair the negative proof before trusting the feature."
+    if facts["gauntlet_blocked_count"] > 0:
+        return "resolve_blocked_gauntlet", "At least one admitted sabotage batch was blocked. Inspect its public Survival Card and the bound local E2E receipt."
+    if facts["proof_delta_advance_count"] > 0:
+        return "review_proof_delta_retry", "A retry packet has a new candidate diff and new hash-bound evidence. A named owner must still admit the retry, then an independent validator must check the outcome."
     if facts["evidence_frontier_ready_count"] > 0:
         return "review_evidence_frontier", "A sealed Evidence Frontier ranks the next supplied experiment that separates viable repair candidates; execution remains human-owned."
     if facts["proofsearch_evaluation_count"] > 0 and facts["proofsearch_winner_count"] == 0:
@@ -855,7 +1116,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
                     frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int]) -> dict[str, int]:
+                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -901,13 +1162,32 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "temporal_resilience_plan_count": resilience["count"],
         "temporal_resilience_verified_count": resilience["verified_count"],
         "resilience_invalid_count": resilience["invalid_count"],
+        "proof_delta_count": proof_deltas["count"],
+        "proof_delta_advance_count": proof_deltas["advance_count"],
+        "proof_delta_halted_count": proof_deltas["halted_count"],
+        "proof_delta_invalid_count": proof_deltas["invalid_count"],
+        "gauntlet_card_count": survival_cards["count"],
+        "gauntlet_survived_count": survival_cards["survived_count"],
+        "gauntlet_hollow_count": survival_cards["hollow_count"],
+        "gauntlet_blocked_count": survival_cards["blocked_count"],
+        "gauntlet_invalid_count": survival_cards["invalid_count"],
+        "agent_license_count": agent_supervision["license_count"],
+        "agent_license_human_controlled_count": agent_supervision["human_controlled_count"],
+        "agent_license_supervised_count": agent_supervision["supervised_count"],
+        "agent_license_autonomous_count": agent_supervision["autonomous_count"],
+        "agent_incident_count": agent_supervision["incident_count"],
+        "combine_scoreboard_count": agent_supervision["combine_scoreboard_count"],
+        "combine_passing_candidate_count": agent_supervision["combine_passing_candidate_count"],
+        "intake_confirmation_count": sum(node["kind"] == "intake" for node in nodes),
+        "intake_confirmed_count": sum(node["kind"] == "intake" and node.get("status") == "confirmed" for node in nodes),
+        "intake_invalid_count": sum(node["kind"] == "intake" and node.get("status") == "invalid" for node in nodes),
     }
 
 
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
                       proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int]) -> list[str]:
+                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -944,6 +1224,16 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_GUARDRAIL_EVALUATIONS_REDACTED")
     if resilience["count"]:
         markers.append("GRAPH_OPS_TEMPORAL_RESILIENCE_READ_ONLY")
+    if proof_deltas["count"]:
+        markers.append("GRAPH_OPS_PROOF_DELTA_ADMISSION_READ_ONLY")
+    if survival_cards["count"]:
+        markers.append("GRAPH_OPS_GAUNTLET_SURVIVAL_CARDS_READ_ONLY")
+    if agent_supervision["license_count"]:
+        markers.append("GRAPH_OPS_AGENT_LICENSES_READ_ONLY")
+    if agent_supervision["combine_scoreboard_count"]:
+        markers.append("GRAPH_OPS_COMBINE_SCOREBOARDS_READ_ONLY")
+    if any(node["kind"] == "intake" for node in nodes):
+        markers.append("GRAPH_OPS_INTAKE_DECISIONS_READ_ONLY")
     if state["errors"] or state["truncated"]:
         markers.append("GRAPH_OPS_PARTIAL_RESULT")
     return sorted(markers)
@@ -975,6 +1265,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "nodes": {}, "edges": [], "edge_keys": set(), "errors": [], "truncated": False,
     }
     requirements, slices = _append_product_graphs(state, workspace)
+    _append_intake_confirmations(state, workspace)
     evidenced = _append_missions(state, workspace, requirements, slices)
     stale_proof_count = _append_proofs(state, workspace)
     gates = _append_plans(state, workspace)
@@ -990,14 +1281,17 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     counterexamples = _append_counterexamples(state, workspace)
     guardrails = _append_guardrail_evaluations(state, workspace)
     resilience = _append_resilience_plans(state, workspace)
+    proof_deltas = _append_proof_deltas(state, workspace)
+    survival_cards = _append_survival_cards(state, workspace)
+    agent_supervision = _append_agent_supervision(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
-    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience)
+    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision)
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
-    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience)
+    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision)
     base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
@@ -1031,6 +1325,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "facts": projected_facts,
         "portfolio": portfolio,
         "admissions": admissions,
+        "agent_supervision": agent_supervision,
     }
     return {**core, "base_graph_sha256": base_graph_sha256, "graph_sha256": _sha(core), "mermaid": _mermaid(projected_nodes, projected_edges)}
 

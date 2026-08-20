@@ -360,9 +360,13 @@ def analyze_product_text(text: str, source_name: str, project: str | None = None
 
 
 def compile_product_text(text: str, *, root: Path, source_name: str, project: str | None = None,
-                         force: bool = False, bindings: dict[str, str] | None = None) -> dict[str, Any]:
+                         force: bool = False, bindings: dict[str, str] | None = None,
+                         intake_binding: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compile UTF-8 PRD text into a local Product Graph and gap inventory."""
     core = analyze_product_text(text, source_name=source_name, project=project, bindings=bindings)
+    if intake_binding is not None:
+        core["intake"] = intake_binding
+        core["markers"] = [*core["markers"], "PRODUCT_INTAKE_CONFIRMATION_BOUND"]
     project_id = core["project"]
     graph = {**core, "graph_sha256": _sha_bytes(_canonical(core)), "generated_at": _now()}
     directory = Path(root).resolve() / ".factory" / "products" / project_id
@@ -378,7 +382,8 @@ def compile_product_text(text: str, *, root: Path, source_name: str, project: st
     return {**graph, "path": str(graph_path), "mermaid": str(directory / "product_graph.mmd"), "idempotent": False}
 
 
-def compile_product_prd(prd_path: Path, root: Path, project: str | None = None, force: bool = False) -> dict:
+def compile_product_prd(prd_path: Path, root: Path, project: str | None = None, force: bool = False,
+                        intake_path: Path | None = None) -> dict:
     """Compile one UTF-8 PRD file into a traceable Product Graph."""
     path = Path(prd_path)
     try:
@@ -391,7 +396,37 @@ def compile_product_prd(prd_path: Path, root: Path, project: str | None = None, 
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ProductMissionError("PRD_ENCODING_INVALID", "PRD must be valid UTF-8") from exc
-    return compile_product_text(text, root=root, source_name=str(path), project=project, force=force)
+    intake_binding: dict[str, Any] | None = None
+    if intake_path is not None:
+        # Keep the intake subsystem optional for legacy graphs, but fail closed
+        # whenever a caller explicitly asks to bind an intake confirmation.
+        from .intake_grill import verify_intake_confirmation
+
+        workspace = Path(root).resolve()
+        confirmation_path = Path(intake_path)
+        confirmation_path = confirmation_path.resolve() if confirmation_path.is_absolute() else (workspace / confirmation_path).resolve()
+        confirmation = verify_intake_confirmation(workspace, confirmation_path)
+        if not confirmation["valid"] or not isinstance(confirmation.get("confirmation"), dict):
+            raise ProductMissionError("INTAKE_CONFIRMATION_INVALID", "; ".join(confirmation["errors"]) or "intake confirmation is invalid")
+        value = confirmation["confirmation"]
+        source_sha = _sha_bytes(data)
+        if value.get("source", {}).get("sha256") != source_sha:
+            raise ProductMissionError("INTAKE_SOURCE_MISMATCH", "intake confirmation is bound to different PRD bytes")
+        decision = value["decision"]
+        intake_binding = {
+            "path": str(confirmation_path),
+            "file_sha256": _sha_path(confirmation_path),
+            "confirmation_sha256": value["confirmation_sha256"],
+            "source_sha256": source_sha,
+            "framework": decision["framework"],
+            "intent_sha256": _sha_bytes(decision["intent"].encode("utf-8")),
+            "acceptance_sha256": _sha_bytes(decision["acceptance"].encode("utf-8")),
+            "external_effects": decision["external_effects"],
+        }
+    return compile_product_text(
+        text, root=root, source_name=str(path), project=project, force=force,
+        intake_binding=intake_binding,
+    )
 
 
 def verify_product_graph(graph_path: Path) -> dict[str, Any]:
@@ -752,7 +787,8 @@ def _existing_mission(path: Path, force: bool) -> dict[str, Any] | None:
     raise ProductMissionError("MISSION_EXISTS", f"mission exists but is invalid: {path}; use --force")
 
 
-def _optional_mission_inputs(root: Path, readiness_path: Path | None) -> tuple[dict[str, Any], list[str]]:
+def _optional_mission_inputs(root: Path, readiness_path: Path | None, graph: dict[str, Any],
+                             require_intake: bool) -> tuple[dict[str, Any], list[str]]:
     inputs: dict[str, Any] = {}
     markers: list[str] = []
     if readiness_path is not None:
@@ -765,6 +801,28 @@ def _optional_mission_inputs(root: Path, readiness_path: Path | None) -> tuple[d
     if context.is_file() and verify_repository_context(context)["valid"]:
         inputs["repository_context"] = {"path": str(context), "sha256": _sha_path(context)}
         markers.append("REPOSITORY_CONTEXT_BOUND")
+    intake = graph.get("intake")
+    if intake is None:
+        if require_intake:
+            raise ProductMissionError("INTAKE_CONFIRMATION_REQUIRED", "compile the Product Graph with a verified intake confirmation before creating this mission")
+        return inputs, markers
+    if not isinstance(intake, dict) or set(intake) != {
+        "path", "file_sha256", "confirmation_sha256", "source_sha256", "framework",
+        "intent_sha256", "acceptance_sha256", "external_effects",
+    }:
+        raise ProductMissionError("INTAKE_CONFIRMATION_INVALID", "Product Graph intake binding is malformed")
+    from .intake_grill import verify_intake_confirmation
+
+    confirmation = verify_intake_confirmation(root, Path(intake["path"]))
+    if not confirmation["valid"] or not isinstance(confirmation.get("confirmation"), dict):
+        raise ProductMissionError("INTAKE_CONFIRMATION_INVALID", "; ".join(confirmation["errors"]) or "intake confirmation is invalid")
+    value = confirmation["confirmation"]
+    if _sha_path(Path(intake["path"])) != intake["file_sha256"] or value.get("confirmation_sha256") != intake["confirmation_sha256"]:
+        raise ProductMissionError("INTAKE_CONFIRMATION_DRIFT", "intake confirmation file or hash changed")
+    if value.get("source", {}).get("sha256") != graph.get("source", {}).get("sha256") or intake["source_sha256"] != graph.get("source", {}).get("sha256"):
+        raise ProductMissionError("INTAKE_SOURCE_MISMATCH", "Product Graph and intake confirmation are bound to different PRD bytes")
+    inputs["intake_confirmation"] = {"path": intake["path"], "sha256": intake["file_sha256"]}
+    markers.append("INTAKE_CONFIRMATION_BOUND")
     return inputs, markers
 
 
@@ -783,7 +841,8 @@ def _mission_markers(criteria: list[dict[str, Any]], extra: list[str]) -> list[s
 def create_mission(slices_path: Path, slice_id: str, root: Path, owner: str, executor: str = "manual",
                    force: bool = False, max_iterations: int | None = None,
                    max_wall_seconds: int | None = None, max_tokens: int | None = None,
-                   max_cost_usd: float | None = None, readiness_path: Path | None = None) -> dict:
+                   max_cost_usd: float | None = None, readiness_path: Path | None = None,
+                   require_intake: bool = False) -> dict:
     """Bind one approved slice into a supervised, budgeted mission contract."""
     if executor not in EXECUTORS:
         raise ProductMissionError("EXECUTOR_UNSUPPORTED", f"executor must be one of {', '.join(sorted(EXECUTORS))}")
@@ -845,7 +904,7 @@ def create_mission(slices_path: Path, slice_id: str, root: Path, owner: str, exe
         "slices_file_sha256": _sha_path(slices_path),
         "slices_sha256": slices["slices_sha256"],
     }
-    optional_inputs, optional_markers = _optional_mission_inputs(Path(root), readiness_path)
+    optional_inputs, optional_markers = _optional_mission_inputs(Path(root), readiness_path, graph, require_intake)
     inputs.update(optional_inputs)
     markers = _mission_markers(criteria, optional_markers)
     core = {
@@ -949,6 +1008,12 @@ def _verify_optional_input(mission: dict[str, Any], name: str) -> list[str]:
     if name == "migration_readiness":
         check = verify_migration_readiness(path)
         return [] if check["valid"] and check["ready"] else ["migration readiness is no longer verified and ready"]
+    if name == "intake_confirmation":
+        from .intake_grill import verify_intake_confirmation
+        graph_path = Path(mission["inputs"]["graph_path"]).resolve()
+        workspace = graph_path.parents[3]
+        check = verify_intake_confirmation(workspace, path)
+        return [] if check["valid"] else ["intake confirmation is no longer verified"]
     return [] if verify_repository_context(path)["valid"] else ["repository context is no longer verified"]
 
 
@@ -969,7 +1034,7 @@ def verify_mission(mission_path: Path) -> dict:
     errors = [] if _sha_bytes(_canonical(core)) == mission.get("mission_sha256") else ["mission hash mismatch"]
     for name in ("graph", "slices"):
         errors.extend(_verify_primary_input(mission, name))
-    for name in ("migration_readiness", "repository_context"):
+    for name in ("migration_readiness", "repository_context", "intake_confirmation"):
         errors.extend(_verify_optional_input(mission, name))
     errors.extend(_verify_mission_passport(mission))
     return {

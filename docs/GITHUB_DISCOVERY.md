@@ -9,9 +9,9 @@ covered by source/tests or as an explicitly labelled draft.
 
 Lead with the concrete value that a developer can verify:
 
-> **Generate a local MVP, then catch hollow tests before review.** Free, local
-> proof for AI-assisted code makes the next proof gap visible before a starter
-> is called production-ready.
+> **Catch AI-generated tests that could never fail — before review.** Free,
+> local proof for code built with AI makes the next proof gap visible before a
+> starter is called production-ready.
 
 The intended next action is one local command:
 
@@ -29,8 +29,8 @@ conversion, productivity, or causal growth claim.
 
 Keep the repository About description aligned with the PyPI summary:
 
-> Generate a local MVP, then catch hollow tests before review. Free,
-> receipt-backed proof for AI-assisted code.
+> Catch AI-generated tests that could never fail and review AI code with local
+> proof.
 
 Use the repository homepage for the live Hugging Face Space. Keep the topic set
 focused on real discovery terms: `ai-agents`, `ai-coding-assistant`,
@@ -125,7 +125,7 @@ whether to submit a reviewed draft from their own account.
 **Title**
 
 ```text
-Show HN: Code Factory – Catch hollow tests before review
+Show HN: Code Factory – Catch AI-generated tests that could never fail
 ```
 
 **Draft body**

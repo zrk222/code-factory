@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+## 0.40.0 - 2026-08-19
+
+- Add Intake Grill: source-bound framework shortlist, decision tree, named
+  confirmation of exact intent and acceptance evidence, external-effects
+  posture, explicit re-evaluation condition, Product Graph binding, and an
+  optional fail-closed `--require-intake` Mission gate. It never selects a
+  framework, creates a mission, writes source, or authorizes implementation.
+- Add the deterministic Proof-Delta retry gate. A Mission Graph correction retry
+  now requires the latest failed criterion, a changed candidate diff, and new
+  hash-checked evidence; no-evidence-gain receipts halt rather than spend a
+  retry. Graph Ops and local MCP project the facts read-only.
+- Add local read-only MCP `factory.intake_status` and `factory.proof_delta_status`
+  tools and Graph Ops intake/proof-delta lanes. No new execution, repair,
+  approval, merge, publication, deployment, signing, messaging, credential, or
+  connector authority is introduced.
+- Add Gauntlet: human-written promise sabotage sources compile into an exact,
+  non-executing E2E proposal; a named reviewer creates an expiry-bound,
+  single-use admission; the admitted local run emits an integrity-verifiable
+  Survival Card. Cards make every declared case survived, hollow, or blocked
+  and list unproven promises. Graph Ops and local MCP expose existing cards
+  read-only. Gauntlet never invents a command from prose, applies a repair, or
+  turns a card into a production, security, coverage, performance, cost, token,
+  quality, or release claim.
+
+## 0.39.1 - 2026-08-19
+
+- Add an Official MCP Registry descriptor for Code Factory's existing local,
+  read-only MCP proof surface. It declares a pinned PyPI/`uvx` launch for
+  Graph Ops, receipts, bounded Developer Memory, and hash-only LangGraph
+  assurance facts; it adds no hosted endpoint or execution authority.
+- Publish that descriptor only after the release's verified PyPI job completes,
+  the exact PyPI version exposes the official ownership marker, and a pinned,
+  checksum-verified Registry publisher authenticates through GitHub OIDC.
+- Add a source-distribution copy of the registry descriptor and documented
+  local-only installation and authority boundary.
+
 ## 0.39.0 - 2026-08-18
 
 - Add the free, local LangGraph Assurance Bridge. A team-owned harness can

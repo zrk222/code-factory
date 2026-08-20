@@ -20,7 +20,7 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Build MVPs. Catch hollow tests. Prove AI code before review.
+short_description: Catch tests that could never fail. Prove AI code locally.
 ---
 
 # Code Factory
@@ -29,21 +29,51 @@ This is the browser preview for
 [Code Factory](https://github.com/zrk222/code-factory), an open-source,
 local-first proof layer for AI-assisted code.
 
-**For solo builders:** generate a local MVP, then make the next proof gap
-visible. **For teams:** keep AI-created diffs within an approved scope, route
-deep changes to named reviewers, and surface explicit Proof Debt before a human
-makes a merge decision. Read the [Teams and Enterprise Operations Manual](https://github.com/zrk222/code-factory/blob/main/docs/ENTERPRISE_TEAMS_OPERATIONS.md).
+> **Catch AI-generated tests that could never fail — before review.**
 
-**For UI work:** add the optional [Prestige Design Review](https://github.com/zrk222/code-factory/blob/main/docs/PRESTIGE_DESIGN.md): a purpose-led design brief plus visible review artifacts for hierarchy, responsive behavior, affordances, consistency, and declared design tokens. It informs review; it does not claim conversion, accessibility certification, or production readiness.
+**Free, local proof for code built with AI.** Start from a plain-language
+outcome, a fuzzy PRD, or a risky diff. Code Factory binds the declared intent,
+challenges whether a test can actually reject the failure it claims to cover,
+and shows the current proof gap plus the next human decision.
 
-**Build an MVP. Catch hollow tests. Prove AI code before review.** Start from a
-plain-language outcome, a fuzzy PRD, or a risky diff. Code Factory keeps the
-proof path visible and does not call a starter production-ready before relevant
-evidence exists.
+- **Vibe coding:** make a contained MVP, then see what remains unproven before
+  calling it done.
+- **Senior review:** challenge a passing test, inspect the exact changed scope,
+  and leave a local receipt another reviewer can check.
+- **Teams:** keep AI-created diffs within approved scope, preserve named human
+  decisions, and surface Proof Debt before a human makes a merge decision.
+
+### Common pain points, addressed without hidden authority
+
+- **"The test passed, but the app still broke."** Reality Check and Gauntlet
+  retain declared negative cases and label hollow or blocked proof rather than
+  converting a green result into a release claim.
+- **"The agent picked a direction before anyone agreed on the intent."** Intake
+  Grill binds a named framework, exact intent, observable acceptance evidence,
+  and effects boundary before a mission can require it.
+- **"We keep retrying the same failed repair."** Proof-Delta requires a changed
+  candidate and fresh evidence or deliberately stops as no-gain.
+- **"Trust in our coding agent keeps increasing by habit."** Earned Autonomy
+  uses governed evidence and automatic severe-failure demotion; it does not
+  identify an agent or grant it execution permissions.
+- **"A review has comments but no common proof picture."** Graph Ops and the
+  local MCP surface project receipts, Proof Debt, and one next action without
+  enabling merge, release, deployment, source upload, or credential access.
+
+Read the [Teams and Enterprise Operations Manual](https://github.com/zrk222/code-factory/blob/main/docs/ENTERPRISE_TEAMS_OPERATIONS.md)
+for role boundaries and the optional [Prestige Design Review](https://github.com/zrk222/code-factory/blob/main/docs/PRESTIGE_DESIGN.md)
+for a purpose-led UI review lane. Neither feature certifies conversion,
+accessibility, or production readiness.
+
+**For a specific risky behavior:** use the supervised
+[Gauntlet](https://github.com/zrk222/code-factory/blob/main/docs/GAUNTLET.md)
+to run only human-written, named-admitted local E2E sabotage cases and save an
+offline-verifiable Survival Card. A card shows survived, hollow, and blocked
+declared cases; it is not a production-readiness or release certificate.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.39.0` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.40.0` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21381405).
 
 Use the same local proof context from Cursor or OpenCode through the documented

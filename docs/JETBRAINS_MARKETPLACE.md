@@ -14,7 +14,7 @@ submitting or replacing anything pending.
 ## Conversion-focused listing
 
 - **Name:** `FactoryLine AI Proof`
-- **Preview:** `Catch hollow tests before review.`
+- **Preview:** `Catch AI-generated tests that could never fail — before review.`
 - **Tags:** `AI`, `Code Quality`, `Code Tools`, `Productivity`, `Testing`
 - **Source:** <https://github.com/zrk222/code-factory>
 - **License:** repository `MIT OR Apache-2.0` terms
@@ -69,7 +69,7 @@ baseline forward.
    must return `MARKETPLACE_UPDATE_CLEAR`.
 2. Merge the tested release commit to `main`.
 3. Create the immutable tag matching the plugin version, currently
-   `jetbrains-v0.8.10` after the remaining Marketplace metadata review is clear.
+   `jetbrains-v0.8.11` after the remaining Marketplace metadata review is clear.
 4. Run **Publish JetBrains Marketplace plugin** with that tag and the intended
    channel. The `JETBRAINS_MARKETPLACE_TOKEN` remains scoped to the protected
    `jetbrains-marketplace` environment.

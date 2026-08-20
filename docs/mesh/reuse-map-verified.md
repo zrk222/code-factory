@@ -6,7 +6,7 @@
 
 ## Scope and boundary
 
-[R] This review read the implementation rather than treating README or product-plan language as proof. The source PRD is now committed at [`docs/WIZEME_MESH_PRD.md`](../WIZEME_MESH_PRD.md), including its §4 table and the receipts-authoritative constraint. The corrected map below is the source-backed redline baseline for that document.
+[R] This review read the implementation rather than treating README or product-plan language as proof. The source PRD is now committed at [`docs/MEMORY_PLATFORM_PRD.md`](../MEMORY_PLATFORM_PRD.md), including its §4 table and the receipts-authoritative constraint. The corrected map below is the source-backed redline baseline for that document.
 
 [R] The current repository has a clean full-suite result at the reviewed commit:
 

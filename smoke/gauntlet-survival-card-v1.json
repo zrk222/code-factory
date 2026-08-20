@@ -1,0 +1,19 @@
+{
+  "checks": [
+    {
+      "name": "admitted_gauntlet_runs_only_declared_local_e2e_pairs_and_emits_a_verifiable_card",
+      "kind": "python",
+      "run": "import json, sys, tempfile\nfrom pathlib import Path\nfrom factoryline.gauntlet import admit_gauntlet, compile_gauntlet_proposal, run_gauntlet, verify_survival_card, write_gauntlet_proposal\nwith tempfile.TemporaryDirectory() as raw:\n    root = Path(raw)\n    e2e = {\"schema\": \"factory.e2e_proof_manifest.v1\", \"id\": \"smoke-case\", \"approval\": {\"state\": \"approved\", \"approved_by\": \"smoke-owner\"}, \"working_directory\": \".\", \"timeout_seconds\": 10, \"network_egress\": \"not_granted\", \"positive\": {\"argv\": [sys.executable, \"-c\", \"from pathlib import Path; Path('proof.txt').write_text('ok')\"]}, \"negative\": {\"argv\": [sys.executable, \"-c\", \"import sys; sys.exit(1)\"]}, \"artifact_paths\": [\"proof.txt\"]}\n    reality = {\"schema\": \"factory.reality-check-manifest.v1\", \"id\": \"smoke-promise\", \"approval\": {\"state\": \"approved\", \"approved_by\": \"smoke-owner\"}, \"behavior\": {\"promise\": \"Only a manager can approve.\", \"happy_path\": \"A manager approval is recorded.\", \"failure_case\": \"A non-manager approval is rejected.\"}, \"intent_assertions\": [{\"id\": \"manager-approved\", \"statement\": \"Manager approval is recorded.\", \"evidence\": \"positive\"}, {\"id\": \"non-manager-blocked\", \"statement\": \"Non-manager approval is rejected.\", \"evidence\": \"negative\"}], \"e2e_manifest\": \"case.e2e.json\"}\n    source = {\"schema\": \"factory.gauntlet-source.v1\", \"id\": \"smoke-gauntlet\", \"promises\": [{\"id\": \"approval\", \"statement\": \"Only a manager can approve.\", \"reality_manifest\": \"promise.reality.json\", \"sabotage_cases\": [{\"id\": \"wrong-role\", \"risk_tag\": \"authorization\", \"summary\": \"A non-manager must be rejected.\", \"e2e_manifest\": \"case.e2e.json\"}]}]}\n    (root / \"case.e2e.json\").write_text(json.dumps(e2e), encoding=\"utf-8\")\n    (root / \"promise.reality.json\").write_text(json.dumps(reality), encoding=\"utf-8\")\n    source_path = root / \"gauntlet.json\"\n    source_path.write_text(json.dumps(source), encoding=\"utf-8\")\n    proposal = write_gauntlet_proposal(root, compile_gauntlet_proposal(root, source_path))\n    admission = Path(admit_gauntlet(root, proposal, approved_by=\"smoke-owner\", rationale=\"Run declared local proof.\", confirmation=\"ADMIT smoke-gauntlet\")[\"path\"])\n    result = run_gauntlet(root, proposal, admission)\n    assert result[\"card\"][\"marker\"] == \"GAUNTLET_SURVIVED\"\n    assert verify_survival_card(Path(result[\"path\"]))[\"ok\"] is True\nprint(\"GAUNTLET_SURVIVED\")\n",
+      "expect_exit": 0,
+      "expect_stdout": "GAUNTLET_SURVIVED",
+      "timeout_s": 30,
+      "covers": [
+        "GAUNTLET_ADMISSION_REQUIRED",
+        "GAUNTLET_ADMISSION_SEALED",
+        "GAUNTLET_SURVIVED",
+        "SURVIVAL_CARD_VERIFIED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

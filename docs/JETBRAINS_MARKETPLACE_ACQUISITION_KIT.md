@@ -13,11 +13,12 @@ not been observed.
 
 **Preview (the first 40 characters matter)**
 
-`Catch hollow tests before review.`
+`Catch AI-generated tests that could never fail — before review.`
 
 **Description**
 
-> **Catch hollow tests before review — without sending source to a provider.**
+> **Catch AI-generated tests that could never fail — before review.**
+> Free, local proof without sending source to a provider.
 > FactoryLine connects the current diff to local requirements, checks, receipts,
 > and one fact-derived next action in your JetBrains IDE.
 >
@@ -54,6 +55,11 @@ not been observed.
 >   walkthrough in a GitHub pull request. The optional workflow can coexist
 >   with CodeRabbit or another reviewer; it does not require their account,
 >   import AI comments as proof, approve, or merge.
+> - give JetBrains AI Assistant grounded local proof context where its custom
+>   MCP-server setting is available: copy the FactoryLine stdio configuration
+>   into JetBrains' own MCP controls. The connection is read-only, optional,
+>   and does not enable AI, select a model, consume credits, or change Project
+>   Rules or `.aiignore`.
 >
 > **For solo developers, senior reviewers, and teams:** create a bounded MVP,
 > inspect the evidence behind an AI-assisted change, recover the next step after

@@ -1,0 +1,5 @@
+# Generated launch-film dependencies and renders stay local; the source project is versioned.
+node_modules/
+renders/
+snapshots/
+.hyperframes/cache/

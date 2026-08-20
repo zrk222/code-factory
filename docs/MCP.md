@@ -109,8 +109,13 @@ network transport, or mutation authority.
 | `factory.get_receipt` | One local receipt by path or exact feature identifier | Read only |
 | `factory.verifier_status` | A verifier-session boundary with unknown worker/verifier evidence left explicit | Read only |
 | `factory.proof_reuse` | Fails closed until a complete explicit proof request can establish a disposition | Read only |
+| `factory.proof_delta_status` | Existing retry-admission evidence; never admits, starts, or repairs a retry | Read only |
 | `factory.cdte_status` | Latest existing deterministic CDTE scan; never creates a scan record | Read only |
 | `factory.prd_grill_status` | Existing source-bound PRD Grill state for the supplied PRD | Read only |
+| `factory.intake_status` | Existing source-bound framework, intent, acceptance, and external-effects intake state | Read only |
+| `factory.gauntlet_status` | Existing local Survival Card facts, including whether only redacted verified Continuity metadata was bound; never compiles, admits, runs, signs, or promotes a batch | Read only |
+| `factory.agent_license_status` | Current expiry-bound, local Earned Autonomy evidence for declared agents; never authenticates identity, records a run, issues a license, raises autonomy, or starts an agent | Read only |
+| `factory.combine_status` | Existing locally verified Combine scoreboards for completed governed runs; never launches a candidate or creates a vendor-quality claim | Read only |
 | `factory.workspace_advisor` | Bounded local workspace shape and path-only Remote/WSL preflight; no report artifacts are written through MCP | Read only |
 | `factory://status` | The same status payload | Read only |
 | `factory://graph` | The same Graph Ops payload | Read only |
@@ -123,6 +128,11 @@ traversal fail with JSON-RPC `-32602`.
 
 `factory.prd_grill_status` helps an agent see the current bounded clarification
 frontier. It does not answer questions, edit a PRD, or approve implementation.
+`factory.gauntlet_status` helps an agent read whether an already recorded,
+human-admitted batch survived, went hollow, or was blocked, and whether the
+card bound redacted verified Continuity metadata. It does not create an E2E
+command from prose, execute a Gauntlet, retrieve memory contents, or turn a
+card into a release decision.
 `factory.cdte_status` reads an existing deterministic Conflict Detection and
 Trade-off Engine record. A fresh CDTE scan creates a receipt and can fail a CI
 gate, so the agent must request that command explicitly instead of causing it

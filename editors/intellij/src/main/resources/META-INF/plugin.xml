@@ -3,12 +3,16 @@
     <name>FactoryLine AI Proof</name>
     <vendor email="rkatz22@gmail.com" url="https://github.com/zrk222/code-factory">FactoryLine</vendor>
     <description><![CDATA[
-        <p><strong>Catch hollow tests before review.</strong></p>
-        <p><strong>Verify AI code before you ship — without sending source to a provider.</strong> FactoryLine connects the current diff to requirements, checks, receipts, and one fact-derived next action inside your JetBrains IDE.</p>
+        <p><strong>Catch AI-generated tests that could never fail — before review.</strong></p>
+        <p><strong>Free, local proof for code built with AI.</strong> FactoryLine connects the current diff to requirements, checks, receipts, and one fact-derived next action inside your JetBrains IDE—without sending source to a provider.</p>
+        <p><strong>In 60 seconds:</strong> inspect an outcome, fuzzy PRD, or risky diff; challenge whether a test can actually reject the failure it claims to cover; then see the current proof gap before a human decides what may be applied.</p>
         <p><strong>Start now:</strong> open <strong>Tools | FactoryLine | Run First Proof</strong>, confirm the workspace, then inspect the local result. Generate an MVP when you need one; a starter is never called production-ready before relevant evidence exists.</p>
         <h3>What this solves</h3>
         <ul>
             <li><strong>Passing tests that prove nothing:</strong> expose missing or stale proof before it turns into a confident-looking review green light.</li>
+            <li><strong>A clear PRD heading toward the wrong build:</strong> Intake Grill records a named, byte-bound intent, framework choice, acceptance evidence, and external-effects posture before a mission can require it.</li>
+            <li><strong>AI retries that repeat a failed idea:</strong> Proof-Delta requires a changed candidate and fresh hash-bound evidence, or makes the no-gain halt visible instead of consuming another retry.</li>
+            <li><strong>Agent trust that quietly ratchets upward:</strong> Earned Autonomy derives an expiry-bound local evidence tier and automatically demotes severe hollow-test or scope-escape findings; it never authenticates an agent or grants permission.</li>
             <li><strong>Unclear AI or teammate diffs:</strong> review the exact local scope, see the declared proof gap, and follow one fact-derived next action.</li>
             <li><strong>Several tasks in one working tree:</strong> review the full diff or focus only the active file, instead of mixing unrelated local changes.</li>
             <li><strong>AI repair scope can drift or overreach:</strong> seal one native Change List, validate only a candidate patch that stays inside it, and keep independent verification plus final IDE apply under human control.</li>
@@ -58,6 +62,7 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
+            <li>Add Intake Grill, Proof-Delta, Gauntlet Survival Cards, and Earned Autonomy: bind intent before a mission, prevent evidence-free retry loops, make declared negative checks visible, and keep agent trust expiry-bound. These remain local supervision artifacts; they do not run an agent, authorize a repair, or certify production readiness.</li>
             <li>Add refreshable local Assembly activity and a read-only Developer Memory Brief in the shared Studio and Graph Ops view: exact-diff next-proof actions, redacted Continuity facts, and observed local Git contribution context, without execution, repair, approval, identity, billing, or productivity authority.</li>
             <li>Add Graph Forensics: sealed semantic lineage, first-divergence and causal-path analysis, deterministic stale-read/write, parallel-write, and duplicate-side-effect findings, plus a non-executing recovery preview.</li>
             <li>Add ProofSearch and the Graph Ops Counterfactual Arena: compare 2 through 12 hash-bound repair candidates, reject hollow or unsafe candidates, show every loss reason, and select one deterministic verified winner without applying it.</li>

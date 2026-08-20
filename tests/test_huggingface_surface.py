@@ -23,13 +23,13 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     )
     assert len(short_description) <= 60
     assert "factoryline-code-factory" in page
-    assert "github.com/zrk222/code-factory/releases/tag/v0.39.0" in page
+    assert "github.com/zrk222/code-factory/releases/tag/v0.40.0" in page
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "Actual product capture set" in page
     assert '<meta name="viewport"' in page
-    assert "Build the MVP. Catch hollow tests. Prove AI code before review." in page
-    assert "Build an MVP. Catch hollow tests. Prove AI code before review." in readme
-    assert "Free, local proof for AI-assisted code." in page
+    assert "Catch the test that could never fail." in page
+    assert "Catch AI-generated tests that could never fail — before review." in readme
+    assert "Free, local proof for code built with AI." in page
     assert "Read or star on GitHub" in page
     assert "thumbnail: https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/github-social-preview-1280x640.png" in readme
     assert "developer-tools" in readme
@@ -48,8 +48,9 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "See actual Factory Studio" in page
     assert "Explore FactoryLine for JetBrains" in page
     assert "JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md" in page
-    assert "Release test suite passed" in page
-    assert "Verified release checks" in page
+    assert "Local by default" in page
+    assert "No source upload" in page
+    assert "Human decides what may be applied" in page
     assert "Unified Graph Ops" in page
     assert "factory graph ops --root . --json" in page
     assert "PRD Grill" in readme
@@ -72,6 +73,9 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "Prestige Design Review" in readme
     assert "Design is part of the review" in page
     assert "See the design review lane" in page
+    assert "Supervised proof of survival" in page
+    assert "Gauntlet" in page
+    assert "Survival Card" in page
 
 
 def test_huggingface_workflow_uses_secret_and_scoped_source_directory() -> None:
@@ -94,12 +98,12 @@ def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(tm
     valid_result = inspect(SPACE / "README.md")
     assert valid_result["ok"] is True
     assert valid_result["marker"] == "HUGGINGFACE_SPACE_METADATA_VALID"
-    assert valid_result["short_description_length"] == 60
+    assert valid_result["short_description_length"] == 57
 
     invalid_readme = tmp_path / "README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Build MVPs. Catch hollow tests. Prove AI code before review.",
+            "short_description: Catch tests that could never fail. Prove AI code locally.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",
@@ -124,7 +128,7 @@ def test_huggingface_metadata_preflight_cli_reports_the_local_result(tmp_path: P
     invalid_readme = tmp_path / "invalid-README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Build MVPs. Catch hollow tests. Prove AI code before review.",
+            "short_description: Catch tests that could never fail. Prove AI code locally.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",

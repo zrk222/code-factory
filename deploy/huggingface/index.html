@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Build a local MVP, catch hollow tests, and prove AI-assisted changes before review — without source upload or automatic apply authority.">
-  <title>Code Factory — Build the MVP. Prove the change.</title>
+  <meta name="description" content="Catch AI-generated tests that could never fail before review. Free, local proof for code built with AI.">
+  <title>Code Factory — Catch the test that could never fail.</title>
   <style>
     :root {
       --ink: #171610;
@@ -89,7 +89,7 @@
   </style>
 </head>
 <body>
-  <p class="sr-only">Build the MVP. Catch hollow tests. Prove AI code before review.</p>
+  <p class="sr-only">Catch AI-generated tests that could never fail before review. Free, local proof for code built with AI.</p>
   <a class="skip-link" href="#main">Skip to product proof</a>
   <div class="shell">
     <header>
@@ -106,17 +106,17 @@
     <div class="shell hero">
       <div>
         <div class="eyebrow">Open source · Local first · Evidence backed</div>
-        <h1>Build the MVP. Prove the change.</h1>
-        <p class="lede"><strong>Free, local proof for AI-assisted code.</strong> Catch hollow tests, map the current diff to evidence, and inspect the next fact-derived action before a human decides what may be applied.</p>
+        <h1>Catch the test that could never fail.</h1>
+        <p class="lede"><strong>Free, local proof for code built with AI.</strong> Start with an outcome, a fuzzy PRD, or a risky diff. Bind declared intent, challenge whether a test can actually reject its claimed failure, and inspect the current proof gap before a human decides what may be applied.</p>
         <div class="actions">
           <a class="button primary" href="#first-run">Run your first local proof</a>
           <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md">See actual Factory Studio</a>
         </div>
-        <div class="trust" id="release-proof" aria-label="Verified release facts">
-          <span>✓ Verified release checks</span>
-          <span>✓ Release test suite passed</span>
-          <span>✓ 8-IDE compatibility matrix</span>
+        <div class="trust" id="release-proof" aria-label="Local proof boundaries">
+          <span>✓ Local by default</span>
           <span>✓ No source upload</span>
+          <span>✓ No model account required</span>
+          <span>✓ Human decides what may be applied</span>
         </div>
       </div>
       <figure class="visual">
@@ -132,11 +132,29 @@
           <p>Choose the smallest proof surface that answers the question in front of you. A fresh starter stays blocked until product-specific checks replace hollow coverage.</p>
         </div>
         <div class="grid">
-          <article class="card"><span>01 · Start</span><h3>Shape the outcome</h3><p>Turn an idea into a contained starting state instead of another blank project.</p></article>
+          <article class="card"><span>01 · Decide</span><h3>Pin down intent</h3><p>Bind the human-chosen framework, outcome, acceptance evidence, and external-effects boundary to exact PRD bytes.</p></article>
           <article class="card"><span>02 · Clarify</span><h3>Grill the PRD</h3><p>Surface source-bound questions and incompatible requirements before code exists.</p></article>
           <article class="card"><span>03 · Review</span><h3>Challenge the green check</h3><p>Delete, invert, and corrupt declared controls. A surviving mutation blocks the claim.</p></article>
-          <article class="card"><span>04 · Decide</span><h3>See the next proof gap</h3><p>Use receipts and Graph Ops to give a reviewer one fact-derived next action.</p></article>
+          <article class="card"><span>04 · Retry only with evidence</span><h3>Stop repeated failures</h3><p>Require a changed candidate and fresh evidence for a supervised retry, or deliberately halt.</p></article>
         </div>
+      </div>
+    </section>
+
+    <section id="gauntlet">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Supervised proof of survival</div>
+          <h2>Can this behavior survive the exact failure you are worried about?</h2>
+          <p>Gauntlet turns human-written E2E sabotage cases into one inspectable batch. A named reviewer admits one current local run; the resulting Survival Card shows every declared case as survived, hollow, or blocked. A green card is not a production, security, coverage, performance, quality, or release certificate.</p>
+          <div class="actions">
+            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/GAUNTLET.md">Read the Gauntlet guide</a>
+          </div>
+        </div>
+        <pre><code>factory gauntlet plan --root . --source gauntlet.json --json
+# Review the exact local E2E pairs, then make a named one-run admission.
+factory gauntlet run .factory/gauntlets/&lt;source&gt;/&lt;proposal&gt;.proposal.json \
+  --root . --admission .factory/gauntlets/&lt;source&gt;/&lt;admission&gt;.admission.json --json
+factory gauntlet card verify .factory/gauntlets/&lt;source&gt;/&lt;card&gt;.card.json --json</code></pre>
       </div>
     </section>
 
@@ -340,7 +358,7 @@ Never substitute CI or repository traffic for installs.</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.39.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.39.0">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.40.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.40.0">Verified release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>
