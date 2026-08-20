@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import tomllib
+
+try:  # pragma: no cover - each branch is selected by the test runtime.
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 uses the declared test dependency.
+    import tomli as tomllib
 
 from factoryline import __version__
 
