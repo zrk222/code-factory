@@ -295,7 +295,7 @@ def test_hosted_release_and_editor_versions_are_declared():
     assert project["version"] == "0.40.1"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.8.10"
-    assert 'version = "0.8.12"' in gradle
+    assert 'version = "0.8.13"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -393,7 +393,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     assert plan["offer"]["annual_price_usd"] == 60.0
     assert plan["offer"]["monthly_price_status"] == "owner_approved"
     assert plan["offer"]["paid_from"] == "2027-01-01"
-    assert plan["plugin"]["current_free_version"] == "0.8.12"
+    assert plan["plugin"]["current_free_version"] == "0.8.13"
     assert plan["paid_descriptor"] == {
         "product_code": "PFACTORYLINE",
         "product_code_status": "proposed_not_registered",

@@ -12,7 +12,7 @@ listing has accepted the artifact.
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
 | VS Code | `factoryline-vscode-0.8.10.vsix` | GitHub release bundle; protected `vscode-marketplace.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX or public Marketplace version |
-| JetBrains | `factoryline-intellij-0.8.12.zip` | Scoped workflow update to public plugin 33009 after the existing pending metadata review clears | Installable ZIP or public plugin/version page after moderation |
+| JetBrains | `factoryline-intellij-0.8.13.zip` | Scoped workflow update to public plugin 33009 after the existing pending metadata review clears | Installable ZIP or public plugin/version page after moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
 The release pipeline never treats a queued review, draft listing, uploaded
@@ -60,7 +60,7 @@ does not invoke LangGraph, mutate checkpoints, replay effects, establish
 production resilience, or estimate savings.
 
 JetBrains Marketplace publication remains blocked while any submitted update is
-pending Marketplace approval. Do not dispatch the 0.8.12 candidate until the
+pending Marketplace approval. Do not dispatch the 0.8.13 candidate until the
 Marketplace status gate reports clear.
 
 ### Visual Studio Marketplace publisher setup
