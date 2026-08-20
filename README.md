@@ -186,18 +186,19 @@ The same local proof surface is discoverable in the [Official MCP Registry](docs
 as `io.github.zrk222/code-factory`; registry setup starts the public PyPI
 package over local stdio and never creates a hosted service or write authority.
 
-FactoryLine is free through December 31, 2026. The owner-approved January 1, 2027
-JetBrains plan is **$4.95 USD per month**; it is not active until the Marketplace
-release and pricing gates are satisfied. See the [Marketplace control-room guide](docs/JETBRAINS_CONTROL_ROOM.md)
-for compatibility, pricing, and approval boundaries.
+FactoryLine's core local proof workflow remains free. The owner-approved future
+JetBrains Freemium plan starts **January 1, 2027**, subject to Marketplace and
+activation gates: **$5.95 USD per named seat/month** or **$60 USD per named seat/year**
+for optional Memory and Enterprise Assurance entitlements. It is not
+active today; no checkout, entitlement, or license enforcement exists. See the
+[Marketplace control-room guide](docs/JETBRAINS_CONTROL_ROOM.md) for the exact
+feature boundary and approval gates.
 
-The separate GitHub-oriented offer is free through **December 1, 2026** and is
-scheduled at **$5.95 USD per named seat per month** from **December 2, 2026**.
-Its planned GitHub Assurance Seat focuses on commit-bound proof review, visible
-Proof Debt, policy-drift dossiers, governed exceptions, and exportable evidence—not source access or
-opaque AI-token resale. It is not active: no GitHub checkout, entitlement, or
-license enforcement exists, and the source license is unchanged. See the
-[GitHub per-seat plan](docs/GITHUB_MONETIZATION_2026.md).
+The matching GitHub Assurance Seat is also planned for **January 1, 2027** at
+the same future price. It is for maintained, customer-managed proof operations
+(commit-bound review, Proof Debt, policy drift, governed exceptions, and evidence
+packets)—not source access or opaque AI-token resale. The source license and free
+core are unchanged. See the [GitHub per-seat plan](docs/GITHUB_MONETIZATION_2026.md).
 
 ## The proof boundary
 

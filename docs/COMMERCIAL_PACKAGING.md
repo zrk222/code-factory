@@ -22,8 +22,8 @@ owner-approved 2027 decision; this guide does not change its price, release
 state, or Marketplace authority.
 
 The separate [GitHub per-seat plan](GITHUB_MONETIZATION_2026.md) is free through
-December 1, 2026 and schedules a **$5.95 USD per named seat per month** offer
-from December 2, 2026. It is not a live checkout, entitlement, or repository
+December 31, 2026 and schedules a **$5.95 USD per named seat per month or $60 USD per named seat per year** offer
+from January 1, 2027. It is not a live checkout, entitlement, or repository
 access restriction; GitHub repository metadata cannot provide those functions.
 It is framed as a customer-managed **GitHub Assurance Seat**: commit-bound proof
 review, visible Proof Debt, policy and exception records, and exportable

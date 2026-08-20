@@ -135,6 +135,6 @@ savings receipts as a proxy for Marketplace conversion.
 4. Publish the observed baseline/approval/day-7/day-30 report with unknowns
    intact; do not claim that a particular asset caused any change.
 
-All features remain free through December 31, 2026. The $4.95 USD monthly price
+The local proof core remains free. The future $5.95 USD per named seat monthly or $60 USD annual optional-entitlement price
 is planned for January 1, 2027, subject to JetBrains paid-plugin approval. See
 the [2027 monetization runbook](JETBRAINS_MONETIZATION_2027.md).

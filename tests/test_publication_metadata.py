@@ -375,8 +375,9 @@ def test_jetbrains_price_is_owner_locked_reproducible_and_not_claimed_live():
 
     average = sum(prices) / len(prices)
     assert round(average, 2) == sample["sample_average"]
-    assert sample["owner_approved_monthly_price"] == 4.95
-    assert round((average - 4.95) / average, 10) == sample["discount_from_sample_average"]
+    assert sample["owner_approved_monthly_price"] == 5.95
+    assert sample["owner_approved_annual_price"] == 60.0
+    assert round((average - 5.95) / average, 10) == sample["discount_from_sample_average"]
     assert sample["status"] == "owner_approved_future_price_not_active_on_marketplace"
     assert sample["free_through"] == "2026-12-31"
 
@@ -388,7 +389,8 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     active_xml = (ROOT / "editors" / "intellij" / "src" / "main" / "resources" / "META-INF" / "plugin.xml").read_text(encoding="utf-8")
     staged_xml = (ROOT / "editors" / "intellij" / "monetization" / "plugin-product-descriptor-2027.xml").read_text(encoding="utf-8")
 
-    assert plan["offer"]["monthly_price_usd"] == 4.95
+    assert plan["offer"]["monthly_price_usd"] == 5.95
+    assert plan["offer"]["annual_price_usd"] == 60.0
     assert plan["offer"]["monthly_price_status"] == "owner_approved"
     assert plan["offer"]["paid_from"] == "2027-01-01"
     assert plan["plugin"]["current_free_version"] == "0.8.11"
@@ -397,17 +399,17 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
         "product_code_status": "proposed_not_registered",
         "release_date": "20270101",
         "release_version": "20271",
-        "optional": False,
+        "optional": True,
         "active_descriptor_contains_product_descriptor": False,
         "staging_template": "editors/intellij/monetization/plugin-product-descriptor-2027.xml",
     }
     assert "<product-descriptor" not in active_xml
-    assert "$4.95 USD per month" in active_xml
-    assert "$4.95 USD per month" in readme
+    assert "$5.95 USD per named seat/month or $60 USD per named seat/year" in active_xml
+    assert "$5.95 USD per named seat/month" in readme
     assert 'code="PFACTORYLINE"' in staged_xml
     assert 'release-date="20270101"' in staged_xml
     assert 'release-version="20271"' in staged_xml
-    assert 'optional="false"' in staged_xml
+    assert 'optional="true"' in staged_xml
     assert len(plan["activation_gates"]) == 9
     assert plan["current_verdict"] == "MONETIZATION_GATE_BLOCKED"
     for phrase in ("licensed", "active-trial", "expired-trial", "unlicensed", "offline", "uninitialized-facade"):

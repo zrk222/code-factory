@@ -95,9 +95,10 @@ def test_github_per_seat_plan_is_scheduled_but_not_active_or_enforced():
 
     assert plan["schema"] == "factory.github-monetization-plan.v1"
     assert plan["offer"] == {
-        "free_through": "2026-12-01T23:59:59-05:00",
-        "paid_from": "2026-12-02",
+        "free_through": "2026-12-31T23:59:59-05:00",
+        "paid_from": "2027-01-01",
         "price_per_named_seat_usd_month": 5.95,
+        "price_per_named_seat_usd_year": 60.0,
         "price_status": "owner_approved_future_price_not_active",
         "billing_status": "not_configured",
         "checkout_status": "not_live",
@@ -123,4 +124,5 @@ def test_github_per_seat_plan_is_scheduled_but_not_active_or_enforced():
     assert "feature-by-feature availability matrix" in guide
     assert "not active yet" in guide
     assert "GitHub repository metadata cannot collect payment" in guide
-    assert "$5.95 USD per named seat per month" in readme
+    assert "$5.95 USD per named seat/month" in readme
+    assert "$60 USD per named seat/year" in readme

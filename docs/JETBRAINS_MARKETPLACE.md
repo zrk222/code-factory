@@ -33,7 +33,7 @@ and the distinction between those web assets and required IDE-native Marketplace
 screenshots.
 
 All shipped features remain free through December 31, 2026. The owner-approved
-future price is **USD 4.95 per month**, planned for January 1, 2027 with a 30-day
+future Freemium price is **USD 5.95 per named seat per month or USD 60 per named seat per year**, planned for January 1, 2027 with a 30-day
 trial, subject to JetBrains approval. The payment-model change requires paid-plugin
 onboarding, a registered Product Code, license checks, advance user notice, and
 verified Sales Info. The price is about 12.54% below the recorded USD 5.66 sample

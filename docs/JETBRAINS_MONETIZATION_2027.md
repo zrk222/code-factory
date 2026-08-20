@@ -2,18 +2,19 @@
 
 ## Decision record
 
-FactoryLine AI Proof remains free through **December 31, 2026**. The paid
-Marketplace release is planned for **January 1, 2027** at exactly **USD 4.95 per
-month**. The monthly price is owner-approved. It is not the current Marketplace
-price and must not be shown as active before JetBrains approves the paid release.
+FactoryLine's local proof core remains free. An optional **Freemium** Marketplace
+entitlement is planned for **January 1, 2027** at exactly **USD 5.95 per named
+seat per month** or **USD 60 per named seat per year**. These owner-approved
+prices are not current Marketplace prices and must not be shown as active before
+JetBrains approves the Freemium release.
 
-The launch model is **paid**, not freemium. Version `0.8.1` remains the current
-planned free Marketplace release. Paid version `2027.1.0` requires either an
-active 30-day trial or a valid Marketplace license. The repository continues
-under `MIT OR Apache-2.0`; users may inspect and build the source themselves.
+The free core remains available after launch. Only optional Memory and Enterprise
+Assurance features in the planned `2027.1.0` Marketplace build require either an
+active 30-day trial or a valid Marketplace license. The repository continues under
+`MIT OR Apache-2.0`; users may inspect and build the source themselves.
 
 The machine-readable source of truth is
-[`JETBRAINS_MONETIZATION_2027.json`](JETBRAINS_MONETIZATION_2027.json). Paid mode
+[`JETBRAINS_MONETIZATION_2027.json`](JETBRAINS_MONETIZATION_2027.json). Freemium mode
 is `human_controlled`: automation may validate and package it but may not activate
 sales, banking, Product Code registration, or Marketplace approval.
 
@@ -21,11 +22,12 @@ sales, banking, Product Code registration, or Marketplace approval.
 
 Use this text on the Marketplace listing, README, release notes, and upgrade FAQ:
 
-> **Free through December 31, 2026.** FactoryLine AI Proof becomes a paid
-> JetBrains Marketplace plugin on January 1, 2027 at **$4.95 USD per month**,
-> subject to Marketplace approval. New users will receive a planned 30-day trial.
-> Version 0.8.1 and the open-source repository remain available; the 2027.1.0
-> Marketplace update requires a valid trial or paid license. This change adds no
+> **The local proof core stays free.** Subject to Marketplace approval,
+> FactoryLine AI Proof adds optional Memory and Enterprise Assurance entitlements
+> on January 1, 2027 at **$5.95 USD per named seat per month** or **$60 USD per
+> named seat per year**. New users will receive a planned 30-day trial. The
+> open-source repository remains available; only the optional 2027.1.0
+> entitlement requires a valid trial or paid license. This change adds no
 > telemetry, source upload, credential storage, signing authority, or automatic
 > release authority.
 
@@ -38,16 +40,16 @@ actually approves.
 
 | Field | Launch value | State |
 |---|---:|---|
-| Monthly price | USD 4.95 | owner-approved |
+| Monthly price | USD 5.95 per named seat | owner-approved |
+| Annual price | USD 60 per named seat | owner-approved |
 | Effective date | 2027-01-01 | owner-approved |
 | Trial | 30 days | planned; confirm in Sales Info |
-| Annual price | not selected | leave disabled unless separately approved |
-| Community programs | not selected | annual billing is required before enabling |
+| Community programs | not selected | annual billing is available; eligibility remains a separate decision |
 | Product Code | `PFACTORYLINE` | proposed; confirm availability and registration |
 | Paid release | `2027.1.0` | staged |
 | Release date | `20270101` | staged |
 | Release version | `20271` | staged |
-| Paid descriptor `optional` | `false` | staged paid model |
+| Paid descriptor `optional` | `true` | staged Freemium model |
 
 The Product Code is difficult to change after sales begin. Confirm
 `PFACTORYLINE` with JetBrains before it enters the active descriptor.
@@ -121,14 +123,14 @@ two-business-day review window, send the prepared evidence below to
 - Clear the current unapproved listing update.
 - Publish 0.8.1 as the current free activation release only after clearance.
 - Replace concept art with real IDE screenshots and record the new baseline.
-- Keep the $4.95 notice visible.
+- Keep the $5.95 monthly / $60 annual notice visibly marked as future-only.
 
 ### October 1-31, 2026
 
 - Select trader status and complete vendor/trader/banking information.
-- Confirm the paid model and `PFACTORYLINE` Product Code with JetBrains.
-- Decide whether to add annual billing and community programs; monthly pricing
-  stays $4.95 regardless.
+- Confirm the Freemium model and `PFACTORYLINE` Product Code with JetBrains.
+- Keep the owner-approved annual price at USD 60 per named seat; community
+  programs require their own approval.
 
 ### November 1-30, 2026
 
@@ -152,9 +154,9 @@ two-business-day review window, send the prepared evidence below to
 
 ### January 1, 2027
 
-- Owner verifies the exact paid artifact, tag, Product Code, price, and Sales
+- Owner verifies the exact Freemium artifact, tag, Product Code, price, and Sales
   Info, then approves activation.
-- Confirm public API/page show `2027.1.0`, Paid, approved, and listed before any
+- Confirm public API/page show `2027.1.0`, Freemium, approved, and listed before any
   announcement.
 - Record downloads, trials, purchases, refunds, ratings, and support volume as
   observed values. Do not claim conversion lift without impressions and a valid
@@ -169,7 +171,7 @@ Set-Location editors/intellij
 .\gradlew.bat check buildPlugin verifyPlugin marketplacePreflight
 ```
 
-The paid release also requires the eight-product compatibility workflow and the
+The Freemium release also requires the eight-product compatibility workflow and the
 protected immutable-tag publication workflow. Upload success is not approval;
 only the public plugin and version APIs showing approved/listed establish release.
 
@@ -182,9 +184,9 @@ dated evidence reference:
 2. trader and banking details verified;
 3. Product Code registered;
 4. license implementation and state tests green;
-5. paid ZIP sealed and independently verified;
-6. Sales Info submitted with $4.95 monthly price and trial;
-7. paid binary and model approved by JetBrains;
+5. Freemium ZIP sealed and independently verified;
+6. Sales Info submitted with $5.95 monthly / $60 annual per-seat pricing and trial;
+7. Freemium binary and model approved by JetBrains;
 8. public price notice, FAQ, and terms live;
 9. named support and rollback owner ready.
 
