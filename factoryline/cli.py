@@ -86,6 +86,7 @@ from .evidence_frontier import EvidenceFrontierError, plan_evidence_frontier, ve
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
 from .developer_memory import developer_memory_brief
+from .intent_ledger import IntentLedgerError, capture_intent_ledger, inspect_intent_ledger
 from .github_proof_review import (
     GitHubProofReviewError,
     compile_github_proof_review,
@@ -1096,6 +1097,25 @@ def main(argv=None) -> int:
     change_review.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
     change_review.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
     change_review.add_argument("--json", action="store_true")
+
+    intent = sub.add_parser("intent", help="capture or inspect a human-confirmed, local Change List behavioral contract")
+    intent_sub = intent.add_subparsers(required=True, dest="intent_cmd")
+    intent_capture = intent_sub.add_parser("capture", help="write one explicitly confirmed local Intent Ledger record; no source or Change List change")
+    intent_capture.add_argument("--root", default=".")
+    intent_capture.add_argument("--change-list", required=True, help="native Change List label supplied by the IDE")
+    intent_capture.add_argument("--changed", action="append", required=True, help="explicit workspace-relative Change List path; repeat as needed")
+    intent_capture.add_argument("--confirmed-by", required=True, help="named human confirming the behavioral contract")
+    intent_capture.add_argument("--promise", required=True, help="observable behavior this Change List must provide")
+    intent_capture.add_argument("--non-goal", required=True, help="explicit behavior excluded from this Change List")
+    intent_capture.add_argument("--failure-case", required=True, help="negative behavior the eventual proof must be able to detect")
+    intent_capture.add_argument("--confirmation", required=True, help="must exactly equal CAPTURE <change-list>")
+    intent_capture.add_argument("--json", action="store_true")
+    intent_inspect = intent_sub.add_parser("inspect", help="read the current scope, stale-proof, and coverage state without writing or executing")
+    intent_inspect.add_argument("--root", default=".")
+    intent_inspect.add_argument("--change-list", required=True, help="native Change List label supplied by the IDE")
+    intent_inspect.add_argument("--changed", action="append", default=[], help="explicit workspace-relative Change List path; repeat as needed")
+    intent_inspect.add_argument("--base", default="main")
+    intent_inspect.add_argument("--json", action="store_true")
 
     memory = sub.add_parser("memory", help="read a compact next-proof brief with redacted continuity and observed local Git attribution")
     memory_sub = memory.add_subparsers(required=True, dest="memory_cmd")
@@ -3146,6 +3166,50 @@ def main(argv=None) -> int:
                 print(f"packet      : {review['artifacts']['paths']['markdown']}")
             print("authority   : no execution, merge, publication, deployment, or credential access")
         return 0
+    if a.cmd == "intent":
+        root = Path(a.root)
+        try:
+            if a.intent_cmd == "capture":
+                payload = capture_intent_ledger(
+                    root,
+                    change_list=a.change_list,
+                    changed=a.changed,
+                    confirmed_by=a.confirmed_by,
+                    promise=a.promise,
+                    non_goal=a.non_goal,
+                    failure_case=a.failure_case,
+                    confirmation=a.confirmation,
+                )
+            else:
+                payload = inspect_intent_ledger(
+                    root,
+                    change_list=a.change_list,
+                    changed=a.changed or None,
+                    base=a.base,
+                )
+        except (IntentLedgerError, ChangeReviewError, OSError) as exc:
+            code = getattr(exc, "code", "INTENT_LEDGER_INPUT_UNAVAILABLE")
+            error = {
+                "schema": "factory.intent-ledger.error.v1",
+                "marker": "INTENT_LEDGER_REFUSED",
+                "code": code,
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"intent {a.intent_cmd} refused: {code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        elif a.intent_cmd == "capture":
+            print(f"INTENT_LEDGER_CAPTURED {payload['path']}")
+            print("authority : local record only; no source, test, agent, approval, repair, merge, publication, deployment, signing, messaging, credential, connector, or memory-recall action ran")
+        else:
+            print("factory intent inspect (local, read-only)")
+            print("=" * 44)
+            print(f"change list : {payload['change_list']}")
+            print(f"state       : {payload['state']}")
+            print(f"next action : {payload['next_action']['action']}")
+            print("authority   : no record write, source write, execution, agent start, approval, repair, merge, publication, deployment, signing, messaging, credential, connector, or memory recall")
+        return 2 if a.intent_cmd == "inspect" and payload["state"] in {"intent_ledger_invalid", "change_review_unavailable"} else 0
     if a.cmd == "github":
         try:
             if a.github_cmd == "policy-snapshot":

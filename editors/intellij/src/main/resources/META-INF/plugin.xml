@@ -5,6 +5,7 @@
     <description><![CDATA[
         <p><strong>Catch AI-generated tests that could never fail — before review.</strong></p>
         <p><strong>Free, local proof for code built with AI.</strong> FactoryLine connects the current diff to requirements, checks, receipts, and one fact-derived next action inside your JetBrains IDE—without sending source to a provider.</p>
+        <p><strong>New in 0.8.12 — Intent Ledger:</strong> capture a named behavioral promise, explicit non-goal, and negative case for one native Change List, then see scope escape, stale proof, or coverage gaps before review. Capture writes only a local record after an exact typed confirmation; inspection is read-only and never starts an agent or changes source.</p>
         <p><strong>In 60 seconds:</strong> inspect an outcome, fuzzy PRD, or risky diff; challenge whether a test can actually reject the failure it claims to cover; then see the current proof gap before a human decides what may be applied.</p>
         <p><strong>Start now:</strong> open <strong>Tools | FactoryLine | Run First Proof</strong>, confirm the workspace, then inspect the local result. Generate an MVP when you need one; a starter is never called production-ready before relevant evidence exists.</p>
         <h3>What this solves</h3>
@@ -64,6 +65,7 @@
     <change-notes><![CDATA[
         <ul>
             <li>Add IDE Health Flight Recorder and Index Continuity Guard: bounded in-memory aggregate runtime samples plus explicit local structural baseline/compare evidence. Both are observation-only; neither changes IDE settings, caches, indexes, plugins, project files, or remote state, and neither claims a causal diagnosis or duration prediction.</li>
+            <li>Add Intent Ledger: make the selected native Change List's behavioral promise, non-goal, and negative case visible before code review; surface scope escape, stale proof, and coverage gaps using existing local evidence. Capture is named, exact-confirmed local metadata only; inspection never edits source, changes VCS state, runs a test, starts an agent, or declares production readiness.</li>
             <li>Add Intake Grill, Proof-Delta, Gauntlet Survival Cards, and Earned Autonomy: bind intent before a mission, prevent evidence-free retry loops, make declared negative checks visible, and keep agent trust expiry-bound. These remain local supervision artifacts; they do not run an agent, authorize a repair, or certify production readiness.</li>
             <li>Add refreshable local Assembly activity and a read-only Developer Memory Brief in the shared Studio and Graph Ops view: exact-diff next-proof actions, redacted Continuity facts, and observed local Git contribution context, without execution, repair, approval, identity, billing, or productivity authority.</li>
             <li>Add Graph Forensics: sealed semantic lineage, first-divergence and causal-path analysis, deterministic stale-read/write, parallel-write, and duplicate-side-effect findings, plus a non-executing recovery preview.</li>
@@ -175,6 +177,14 @@
                     class="app.factoryline.intellij.PrepareRepairScopeAction"
                     text="Prepare Verified Repair Sandbox"
                     description="Seal one native Change List and create a local repair scope without applying changes"/>
+            <action id="app.factoryline.intellij.inspectIntentLedger"
+                    class="app.factoryline.intellij.InspectIntentLedgerAction"
+                    text="Inspect Change List Intent"
+                    description="Read one native Change List's local behavioral contract and proof state without executing work"/>
+            <action id="app.factoryline.intellij.captureIntentLedger"
+                    class="app.factoryline.intellij.CaptureIntentLedgerAction"
+                    text="Capture Change List Intent"
+                    description="Save a named, explicit local behavioral contract for one native Change List"/>
             <action id="app.factoryline.intellij.reviewCurrentFile"
                     class="app.factoryline.intellij.ReviewCurrentFileAction"
                     text="Review This File"
