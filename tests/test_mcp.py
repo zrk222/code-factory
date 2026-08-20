@@ -38,6 +38,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.graph_ops",
         "factory.graph_impact",
         "factory.developer_memory",
+        "factory.intent_ledger",
         "factory.langgraph_assurance",
         "factory.next_action",
         "factory.list_receipts",
@@ -111,6 +112,16 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     assert memory["marker"] == "MCP_DEVELOPER_MEMORY_READ_ONLY"
     assert memory["brief"]["schema"] == "factory.developer-memory-brief.v1"
     assert memory["brief"]["authority"]["external_effects"] is False
+
+    intent_ledger = _content(dispatch({
+        "jsonrpc": "2.0", "id": 42, "method": "tools/call",
+        "params": {"name": "factory.intent_ledger", "arguments": {
+            "change_list": "Billing cancellation", "changed_paths": ["input.txt"],
+        }},
+    }, tmp_path))
+    assert intent_ledger["marker"] == "MCP_INTENT_LEDGER_READ_ONLY"
+    assert intent_ledger["ledger"]["state"] == "uncontracted"
+    assert all(value is False for value in intent_ledger["ledger"]["authority"].values())
 
     next_action = _content(dispatch({
         "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "factory.next_action"},

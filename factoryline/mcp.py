@@ -11,6 +11,7 @@ from typing import Any, TextIO
 
 from . import __version__
 from .developer_memory import developer_memory_brief
+from .intent_ledger import IntentLedgerError, inspect_intent_ledger
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .langgraph_assurance import MCP_MARKER, LangGraphAssuranceError, verify_langgraph_resume_parity
 from .proof_delta import proof_delta_status
@@ -60,6 +61,7 @@ _RECEIPT_ROOTS = (
     Path(".factory/gauntlets"),
     Path(".factory/agent-licenses"),
     Path(".factory/combines"),
+    Path(".factory/intent-ledgers"),
 )
 
 
@@ -133,6 +135,26 @@ def _tool_definitions() -> list[dict[str, object]]:
                     },
                     "base": {"type": "string", "minLength": 1, "maxLength": 120},
                 },
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.intent_ledger",
+            "description": "Read a named local Change List's human-confirmed behavioral contract, scope escape, stale-proof, coverage state, and one fact-derived next action. It never captures or amends intent, starts an agent, runs a proof, or changes source.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "change_list": {"type": "string", "minLength": 1, "maxLength": 160},
+                    "changed_paths": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 200,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                    },
+                    "base": {"type": "string", "minLength": 1, "maxLength": 120},
+                },
+                "required": ["change_list"],
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -526,6 +548,27 @@ def _developer_memory(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _intent_ledger(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"change_list", "changed_paths", "base"} or "change_list" not in arguments:
+        raise McpError("factory.intent_ledger requires change_list and accepts only optional changed_paths and base")
+    change_list = arguments["change_list"]
+    if not isinstance(change_list, str) or not change_list.strip() or len(change_list) > 160:
+        raise McpError("change_list must be a non-empty string of at most 160 characters")
+    changed = _changed_paths({"changed_paths": arguments["changed_paths"]}) if "changed_paths" in arguments else None
+    base = arguments.get("base", "main")
+    if not isinstance(base, str) or not base.strip() or len(base) > 120:
+        raise McpError("base must be a non-empty string of at most 120 characters")
+    try:
+        ledger = inspect_intent_ledger(root, change_list=change_list, changed=changed, base=base)
+    except IntentLedgerError as exc:
+        raise McpError(str(exc), exc.code) from exc
+    return {
+        "marker": "MCP_INTENT_LEDGER_READ_ONLY",
+        "ledger": ledger,
+        "scope": "Read-only local Intent Ledger projection; no record capture, source write, Change List edit, proof, agent, memory recall, approval, repair, merge, publication, deployment, signing, messaging, credential, or connector action ran.",
+    }
+
+
 def _langgraph_assurance(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) != {"reference", "resumed"}:
         raise McpError("factory.langgraph_assurance requires only reference and resumed")
@@ -738,6 +781,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         })
     if name == "factory.developer_memory":
         return _content(_developer_memory(root, arguments))
+    if name == "factory.intent_ledger":
+        return _content(_intent_ledger(root, arguments))
     if name == "factory.langgraph_assurance":
         return _content(_langgraph_assurance(root, arguments))
     if name == "factory.next_action":

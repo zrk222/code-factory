@@ -98,6 +98,57 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun intentLedgerCommandsBindOnlyOneSelectedChangeListAndCarryTheConfirmationPhrase() {
+        val root = Files.createTempDirectory("factoryline-intent-ledger")
+
+        assertEquals(
+            listOf(
+                "intent", "capture", "--root", root.toString(), "--change-list", "Checkout",
+                "--changed", "src/service.py", "--changed", "src/ui.kt",
+                "--confirmed-by", "Ada", "--promise", "Cancel safely", "--non-goal", "No migration",
+                "--failure-case", "Invoice after cancellation", "--confirmation", "CAPTURE Checkout", "--json",
+            ),
+            FactoryLineCommands.intentCapture(
+                root, "Checkout", listOf("src/service.py", "src/ui.kt"), "Ada", "Cancel safely",
+                "No migration", "Invoice after cancellation", "CAPTURE Checkout",
+            ),
+        )
+        assertEquals(
+            listOf(
+                "intent", "inspect", "--root", root.toString(), "--change-list", "Checkout",
+                "--changed", "src/service.py", "--changed", "src/ui.kt", "--json",
+            ),
+            FactoryLineCommands.intentInspect(root, "Checkout", listOf("src/service.py", "src/ui.kt")),
+        )
+    }
+
+    @Test
+    fun intentLedgerParserRendersOnlyTheSchemaBoundSupervisionFacts() {
+        val ledger = IntentLedgerSummary.fromJson(
+            """
+                {
+                  "schema":"factory.intent-ledger-inspection.v1",
+                  "change_list":"Checkout",
+                  "state":"stale_proof",
+                  "current_changed_paths":["src/service.py"],
+                  "record_path":".factory/intent-ledgers/intent.json",
+                  "record":{"intent":{"promise":"Cancel safely","non_goal":"No migration","failure_case":"Invoice after cancellation"}},
+                  "next_action":{"action":"rerun_stale_proof","reason":"A declared proof input changed."},
+                  "untrusted":"ignored"
+                }
+            """.trimIndent(),
+        )
+
+        assertNotNull(ledger)
+        assertEquals("stale_proof", ledger.state)
+        assertEquals("Cancel safely", ledger.promise)
+        assertEquals(listOf("src/service.py"), ledger.paths)
+        assertEquals("rerun_stale_proof", ledger.nextAction)
+        assertTrue(ledger.brief().contains("never edits source"))
+        assertEquals(null, IntentLedgerSummary.fromJson("{\"schema\":\"untrusted\"}"))
+    }
+
+    @Test
     fun repairSandboxParsersAcceptOnlyStableScopeAndCandidateSchemas() {
         val scope = RepairScopeSummary.fromJson(
             """

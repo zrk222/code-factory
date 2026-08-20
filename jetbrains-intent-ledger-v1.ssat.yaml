@@ -1,0 +1,44 @@
+name: jetbrains-intent-ledger-v1
+language: python
+modules:
+  - name: intent_ledger
+    path: factoryline/intent_ledger.py
+    language: python
+    functions:
+      - name: capture_intent_ledger
+        # The remaining arguments are intentionally keyword-only, so a caller
+        # cannot silently swap the behavioral contract fields.
+        args: [root]
+        returns: dict
+      - name: inspect_intent_ledger
+        # Change-list scope is keyword-only for the same reason.
+        args: [root]
+        returns: dict
+  - name: cli
+    path: factoryline/cli.py
+    language: python
+    functions:
+      - name: main
+        args: [argv]
+        returns: int
+  - name: mcp
+    path: factoryline/mcp.py
+    language: python
+    functions:
+      - name: _tool_call
+        args: [root, params]
+        returns: dict
+dependencies:
+  - from: cli
+    to: intent_ledger
+  - from: mcp
+    to: intent_ledger
+  - from: cli
+    to: mcp
+invariants:
+  - name: inspection_is_local_read_only
+    forbid_pattern: "write_(?:text|bytes)\\(|mkdir\\(|replace\\(|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:execute|merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: intent_ledger
+        symbol: inspect_intent_ledger
+        max_lines: 240

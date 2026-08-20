@@ -1,5 +1,15 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.12 - 2026-08-20
+
+- Add the Intent Ledger: capture a named behavioral promise, non-goal, and
+  negative case for one selected native Change List after exact typed
+  confirmation. The local record is hash-bound; it is not source, VCS, agent,
+  or release authority.
+- Add a visual Intent Ledger tab that makes uncontracted work, scope escape,
+  stale proof, requirement-coverage gaps, and ready-for-human-review states
+  legible before review. Inspection is local and read-only.
+
 ## 0.8.11 - 2026-08-20
 
 - Add Intake Grill, Proof-Delta, Gauntlet Survival Cards, and Earned Autonomy
