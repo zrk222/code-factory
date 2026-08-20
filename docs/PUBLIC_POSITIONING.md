@@ -38,7 +38,7 @@ security, performance, cost, token, productivity, or release claim.
 | Hugging Face short description | Catch tests that could never fail. Prove AI code locally. |
 | VS Code Marketplace | Catch AI-generated tests that could never fail. Review code with local proof. |
 | JetBrains Marketplace preview | Catch AI-generated tests that could never fail—before review. |
-| MCP registry | Read-only local proof facts for AI coding clients: intent, test challenges, Graph Ops, and review evidence. |
+| MCP registry | Local proof facts for AI coding clients: intent, tests, Graph Ops, and review evidence. |
 | LangGraph plugin | Proof-aware LangGraph guidance and read-only resume-parity receipts before review. |
 
 ## Visual rule
