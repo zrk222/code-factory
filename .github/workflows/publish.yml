@@ -256,10 +256,10 @@ jobs:
         run: |
           set -euo pipefail
           base="https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}"
-          curl --fail --location --retry 5 --retry-all-errors --output mcp-publisher.tar.gz "$base/mcp-publisher_linux_amd64.tar.gz"
+          curl --fail --location --retry 5 --retry-all-errors --output mcp-publisher_linux_amd64.tar.gz "$base/mcp-publisher_linux_amd64.tar.gz"
           curl --fail --location --retry 5 --retry-all-errors --output checksums.txt "$base/registry_${MCP_PUBLISHER_VERSION}_checksums.txt"
           grep -E ' [*]?mcp-publisher_linux_amd64.tar.gz$' checksums.txt | sha256sum --check --strict --status -
-          tar -xzf mcp-publisher.tar.gz mcp-publisher
+          tar -xzf mcp-publisher_linux_amd64.tar.gz mcp-publisher
           chmod +x mcp-publisher
           ./mcp-publisher validate mcp/server.json
 
