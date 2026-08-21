@@ -43,7 +43,7 @@ judgment-store
   Decision input fact `unclassified_changed_paths` is array.
   Decision output facts are `route` and `review_reasons`.
 - API contract: `factory judgment propose|promote|reconsider|status|safety-case`.
-  `safety-case` is analysis-only and 
+  `safety-case` is analysis-only and
 
 ## CONSTITUTION DIGEST: one task only; read ONLY listed files; tests ship with code; never touch skeleton/; never add deps without ADR; never leave stubs; decision logic goes to the factory, not inline; stop and ask on ambiguity.
 

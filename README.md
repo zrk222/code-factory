@@ -121,7 +121,7 @@ developers can find it. This optional link only opens the repository.
 | Ask whether a behavior survives declared sabotages | [`factory gauntlet`](docs/GAUNTLET.md) | A named, one-run admission, optional redacted verified-context binding, and offline-verifiable Survival Card—never generated commands or automatic repair |
 | Keep agent autonomy evidence-bound | [`factory license`](docs/AGENT_LICENSE.md) | A local, expiring tier derived from governed evidence, automatic severe-failure demotion, and no silent authority grant |
 | Compare completed agent evidence fairly | [`factory combine`](docs/AGENT_LICENSE.md) | A sealed-task, offline-verifiable scoreboard—never an agent launcher or vendor leaderboard |
-| Prepare a bounded Team pilot | [`factory team-pilot readiness`](docs/TEAM_PILOT_LAUNCH.md) | Hash-bound, customer-managed readiness evidence for owner reviewâ€”not a checkout or service activation |
+| Prepare a bounded Team pilot | [`factory team-pilot readiness`](docs/TEAM_PILOT_LAUNCH.md) | Hash-bound, customer-managed readiness evidence for owner review—not a checkout or service activation |
 | Add evidence to a GitHub PR | [`factory github proof-review`](docs/GITHUB_PROOF_REVIEW.md) | One neutral Check and stable proof walkthrough, tied to the head commit |
 | Prove a LangGraph resume path | [`factory langgraph replay-verify`](docs/LANGGRAPH_ASSURANCE.md) | Hash-only parity, duplicate-effect and parallel-write safeguards, plus a shareable incident capsule |
 | Detect policy drift before a human merge | [`factory github assurance-dossier`](docs/GITHUB_ASSURANCE_DOSSIER.md) | Deterministic supplied-policy comparison, named expiring exceptions, and a merge-evidence packet |
