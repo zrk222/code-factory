@@ -1,6 +1,6 @@
 {
   "name": "code-factory-langgraph",
-  "version": "0.42.0",
+  "version": "0.43.0",
   "description": "Proof-aware LangGraph guidance and read-only resume-parity receipts before review.",
   "author": {
     "name": "Richard Katz",

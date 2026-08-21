@@ -13,6 +13,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import re
+import time
 from typing import Any
 
 from .change_review import ChangeReviewError, review_change
@@ -216,7 +217,16 @@ def capture_intent_ledger(
     )
     record = {**core, "ledger_sha256": _sha(core)}
     directory = _directory(root, create=True)
-    filename = f"intent-{_change_list_token(selected_change_list)}-{record['ledger_sha256'][:12]}.json"
+    # The record digest alone is not a unique capture identifier: two captures
+    # can legitimately contain identical facts and Windows may return the same
+    # wall-clock tick for both.  Keep the content hash in the name, but prefix
+    # it with a nanosecond sequence so a later capture never overwrites an
+    # earlier receipt and remains the lexicographic tie-breaker for equal mtimes.
+    capture_sequence = time.time_ns()
+    filename = f"intent-{_change_list_token(selected_change_list)}-{capture_sequence:020d}-{record['ledger_sha256'][:12]}.json"
+    while (directory / filename).exists():
+        capture_sequence += 1
+        filename = f"intent-{_change_list_token(selected_change_list)}-{capture_sequence:020d}-{record['ledger_sha256'][:12]}.json"
     path = _atomic_json(directory / filename, record)
     workspace = Path(root).resolve()
     return {

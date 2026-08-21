@@ -125,6 +125,18 @@ def test_latest_tampered_record_fails_closed_without_fallback(tmp_path: Path) ->
     assert inspection["record_path"] == second["path"]
 
 
+def test_identical_clock_tick_captures_never_overwrite_each_other(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("factoryline.intent_ledger.time.time_ns", lambda: 42)
+
+    first = _capture(tmp_path)
+    second = _capture(tmp_path)
+
+    assert first["path"] != second["path"]
+    assert (tmp_path / first["path"]).is_file()
+    assert (tmp_path / second["path"]).is_file()
+    assert len(list((tmp_path / ".factory" / "intent-ledgers").glob("*.json"))) == 2
+
+
 def test_cli_capture_and_read_only_inspection_are_machine_readable(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     capture_args = [
         "intent", "capture", "--root", str(tmp_path), "--change-list", "Billing cancellation", "--changed", "app/billing.py",

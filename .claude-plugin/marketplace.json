@@ -15,6 +15,15 @@
         "name": "Richard Katz",
         "email": "rkatz22@gmail.com"
       }
+    },
+    {
+      "name": "code-factory-session-recorder",
+      "source": "./plugins/code-factory-session-recorder",
+      "description": "Hash-chain Claude Code tool boundaries and connect admitted sessions to Code Factory governed evidence.",
+      "author": {
+        "name": "Richard Katz",
+        "email": "rkatz22@gmail.com"
+      }
     }
   ]
 }

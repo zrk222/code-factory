@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.42.0"
+version = "0.43.0"
 description = "Catch AI-generated tests that could never fail and review AI code with local proof."
 authors = [
   { name = "Richard Katz" },
@@ -57,7 +57,10 @@ classifiers = [
   "Topic :: Software Development :: Build Tools",
   "Topic :: Software Development :: Quality Assurance",
 ]
-dependencies = ["cryptography>=42,<50"]
+dependencies = [
+  "cryptography>=42,<50",
+  "tomli>=2.0; python_version < '3.11'",
+]
 
 [project.urls]
 Homepage = "https://github.com/zrk222/code-factory"
@@ -83,6 +86,9 @@ langgraph = [
   "langgraph>=1.1,<2",
   "langgraph-checkpoint-sqlite>=3,<4",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["tests", "."]
 
 [project.scripts]
 factory = "factoryline.cli:main"

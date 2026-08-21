@@ -322,12 +322,8 @@ def _incident(event: dict[str, Any]) -> dict[str, Any] | None:
     return {**core, "incident_sha256": _sha(core)}
 
 
-def record_governed_run(root: Path, event_path: Path, *, out_dir: Path | None = None) -> dict[str, Any]:
-    """Record one immutable, already-admitted run and any automatic incident."""
-    workspace = Path(root).resolve()
-    source, _ = _relative(workspace, event_path, "event")
-    input_value = _load_json(source)
-    event = _event_from_input(workspace, input_value)
+def _store_governed_event(workspace: Path, event: dict[str, Any], out_dir: Path | None) -> dict[str, Any]:
+    """Persist one validated immutable event and any automatic incident."""
     target = Path(out_dir) if out_dir is not None else workspace / EVENT_DIR
     target = target if target.is_absolute() else workspace / target
     try:
@@ -348,6 +344,35 @@ def record_governed_run(root: Path, event_path: Path, *, out_dir: Path | None = 
         incident_path = workspace / INCIDENT_DIR / f"{event['event_id']}.json"
         _atomic_json(incident_path, incident)
     return {"marker": "AGENT_LICENSE_EVENT_RECORDED", "event": final, "path": str(output.resolve()), "incident_path": str(incident_path.resolve()) if incident_path else None}
+
+
+def record_bound_governed_event(root: Path, event: dict[str, Any], *, out_dir: Path | None = None) -> dict[str, Any]:
+    """Record a completed event whose READY admission was bound before execution.
+
+    This path exists for the session recorder: an admitted coding run is expected
+    to change the workspace, so the pre-run packet cannot truthfully verify as
+    current after execution.  The event and its bound result receipt are still
+    validated here, including the exact admission packet digest and both evidence
+    file digests.  Callers must have obtained READY immediately before execution.
+    """
+    workspace = Path(root).resolve()
+    if not isinstance(event, dict):
+        raise AgentLicenseError("E_LICENSE_EVENT_INVALID", "event must be an object")
+    validated = _validate_ledger_event(workspace, event, require_evidence_files=True)
+    admission_path, _ = _relative(workspace, validated["admission"]["path"], "admission")
+    packet = _load_json(admission_path) if admission_path.is_file() else {}
+    if packet.get("packet_sha256") != validated["admission"]["packet_sha256"]:
+        raise AgentLicenseError("E_LICENSE_ADMISSION_INVALID", "admission packet digest does not match the pre-run binding")
+    return _store_governed_event(workspace, validated, out_dir)
+
+
+def record_governed_run(root: Path, event_path: Path, *, out_dir: Path | None = None) -> dict[str, Any]:
+    """Record one immutable, already-admitted run and any automatic incident."""
+    workspace = Path(root).resolve()
+    source, _ = _relative(workspace, event_path, "event")
+    input_value = _load_json(source)
+    event = _event_from_input(workspace, input_value)
+    return _store_governed_event(workspace, event, out_dir)
 
 
 def load_governed_runs(root: Path, *, agent: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -390,10 +415,7 @@ def _policy() -> dict[str, Any]:
     }
 
 
-def derive_license(root: Path, agent: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
-    """Derive a current tier from immutable, locally valid governed evidence."""
-    instant = (now or _now()).astimezone(timezone.utc)
-    identity = normalize_agent_identity(agent)
+def _license_evidence(root: Path, identity: dict[str, Any], instant: datetime) -> dict[str, Any]:
     evidence = load_governed_runs(root, agent=identity)
     expiry_cutoff = instant - timedelta(days=EVIDENCE_TTL_DAYS)
     current = [event for event in evidence if _timestamp(event["recorded_at"], "recorded_at") >= expiry_cutoff]
@@ -405,22 +427,29 @@ def derive_license(root: Path, agent: dict[str, Any], *, now: datetime | None = 
     clean_after_incident = [event for event in after_incident if event["passed"] and not event["failure_classes"]]
     independent = [event for event in clean_after_incident if event["verification"]["subject"] != identity["subject"]]
     scopes = _common_paths(clean_after_incident)
+    return {"all": evidence, "current": current, "stale": stale, "incidents": incidents, "latest_incident": latest_incident, "clean": clean_after_incident, "independent": independent, "scopes": scopes}
+
+
+def _license_tier(evidence: dict[str, Any]) -> tuple[str, str]:
+    current, all_events = evidence["current"], evidence["all"]
     if not current:
-        tier = "supervised" if evidence else "human_controlled"
-        reason = "EVIDENCE_EXPIRED" if evidence else "INSUFFICIENT_GOVERNED_EVIDENCE"
-    elif latest_incident is not None and len(clean_after_incident) < POST_INCIDENT_REQUALIFICATION_RUNS:
-        tier = "human_controlled"
-        reason = "SEVERE_FAILURE_DEMOTION"
-    elif len(clean_after_incident) >= AUTONOMOUS_MIN_CLEAN_RUNS and len(independent) >= AUTONOMOUS_MIN_INDEPENDENT_VERIFICATIONS and scopes:
-        tier = "autonomous"
-        reason = "CURRENT_GOVERNED_EVIDENCE_SATISFIES_POLICY"
-    elif len(clean_after_incident) >= SUPERVISED_MIN_CLEAN_RUNS:
-        tier = "supervised"
-        reason = "CURRENT_GOVERNED_EVIDENCE_REQUIRES_SUPERVISION"
-    else:
-        tier = "human_controlled"
-        reason = "INSUFFICIENT_CLEAN_GOVERNED_EVIDENCE"
-    latest = evidence[-1] if evidence else None
+        return ("supervised", "EVIDENCE_EXPIRED") if all_events else ("human_controlled", "INSUFFICIENT_GOVERNED_EVIDENCE")
+    if evidence["latest_incident"] is not None and len(evidence["clean"]) < POST_INCIDENT_REQUALIFICATION_RUNS:
+        return "human_controlled", "SEVERE_FAILURE_DEMOTION"
+    if len(evidence["clean"]) >= AUTONOMOUS_MIN_CLEAN_RUNS and len(evidence["independent"]) >= AUTONOMOUS_MIN_INDEPENDENT_VERIFICATIONS and evidence["scopes"]:
+        return "autonomous", "CURRENT_GOVERNED_EVIDENCE_SATISFIES_POLICY"
+    if len(evidence["clean"]) >= SUPERVISED_MIN_CLEAN_RUNS:
+        return "supervised", "CURRENT_GOVERNED_EVIDENCE_REQUIRES_SUPERVISION"
+    return "human_controlled", "INSUFFICIENT_CLEAN_GOVERNED_EVIDENCE"
+
+
+def derive_license(root: Path, agent: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    """Derive a current tier from immutable, locally valid governed evidence."""
+    instant = (now or _now()).astimezone(timezone.utc)
+    identity = normalize_agent_identity(agent)
+    evidence = _license_evidence(root, identity, instant)
+    tier, reason = _license_tier(evidence)
+    latest = evidence["all"][-1] if evidence["all"] else None
     expires_at = _iso(_timestamp(latest["recorded_at"], "recorded_at") + timedelta(days=EVIDENCE_TTL_DAYS)) if latest else None
     core = {
         "schema": AGENT_LICENSE_SCHEMA,
@@ -430,19 +459,19 @@ def derive_license(root: Path, agent: dict[str, Any], *, now: datetime | None = 
         "identity_provenance": "declared_in_admission_packet",
         "tier": tier,
         "reason": reason,
-        "allowed_paths": scopes if tier == "autonomous" else [],
+        "allowed_paths": evidence["scopes"] if tier == "autonomous" else [],
         "expires_at": expires_at,
         "evidence": {
-            "valid_governed_event_count": len(evidence),
-            "current_governed_event_count": len(current),
-            "stale_governed_event_count": len(stale),
-            "clean_events_since_latest_incident": len(clean_after_incident),
-            "independent_verification_count_since_latest_incident": len(independent),
+            "valid_governed_event_count": len(evidence["all"]),
+            "current_governed_event_count": len(evidence["current"]),
+            "stale_governed_event_count": len(evidence["stale"]),
+            "clean_events_since_latest_incident": len(evidence["clean"]),
+            "independent_verification_count_since_latest_incident": len(evidence["independent"]),
             "latest_event_sha256": latest["event_sha256"] if latest else None,
         },
         "incidents": [
             {"event_id": event["event_id"], "recorded_at": event["recorded_at"], "failure_classes": sorted(set(event["failure_classes"]) & SEVERE_FAILURES), "event_sha256": event["event_sha256"]}
-            for event in incidents
+            for event in evidence["incidents"]
         ],
         "policy": _policy(),
         "authority": dict(_AUTHORITY),

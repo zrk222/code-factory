@@ -1,13 +1,13 @@
 # Release Channels
 
-Code Factory v0.42.0 publishes one verified source state through channel-specific
+Code Factory v0.43.0 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.42.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.42.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.43.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.43.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
@@ -18,6 +18,15 @@ listing has accepted the artifact.
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured.
+
+### 0.43.0 Evidence Supply Line
+
+This release adds an admitted wrapper for any local agent CLI, explicit
+independent-validator execution, exact workspace-delta receipts, and immutable
+Agent License ingestion. It also adds inert Gauntlet drafts derived from real
+repository structure and bounded Claude Code hook traces. The wrapper observes
+but does not sandbox the process; drafts cannot execute before human-reviewed
+promotion and a separate named admission.
 
 ### 0.40.2 MCP Registry metadata hotfix
 

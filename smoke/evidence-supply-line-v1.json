@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "inert_gauntlet_draft_uses_declared_cli_structure_without_execution",
+      "kind": "python",
+      "run": "import json, tempfile\nfrom pathlib import Path\nfrom factoryline.gauntlet_draft import draft_gauntlet\nwith tempfile.TemporaryDirectory() as raw:\n    root=Path(raw)\n    (root/'pyproject.toml').write_text('[project]\\nname=\"demo\"\\nversion=\"1\"\\n[project.scripts]\\ndemo=\"demo:main\"\\n', encoding='utf-8')\n    (root/'api.py').write_text('from fastapi import FastAPI\\napp=FastAPI()\\n@app.get(\"/health\")\\ndef health(): return {}\\n', encoding='utf-8')\n    result=draft_gauntlet(root, 'smoke-draft')\n    assert result['draft']['marker']=='GAUNTLET_DRAFT_CREATED'\n    assert result['draft']['facts']['runnable_manifest_count']==0\n    source=json.loads(Path(result['source_path']).read_text(encoding='utf-8'))\n    assert source['promises'][0]['status']=='DRAFT'\n    assert source['unresolved_http_routes'][0]['route']=='/health'\nprint('EVIDENCE_SUPPLY_DRAFT_INERT')\n",
+      "expect_exit": 0,
+      "expect_stdout": "EVIDENCE_SUPPLY_DRAFT_INERT",
+      "timeout_s": 30,
+      "covers": [
+        "GAUNTLET_DRAFT_CREATED",
+        "GAUNTLET_DRAFT_INERT",
+        "HTTP_COMMAND_WITHHELD"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

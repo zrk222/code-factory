@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.43.0 - 2026-08-21
+
+- Add the Evidence Supply Line: `factory wrap` verifies a current run-admission
+  packet before launching any local agent CLI, observes the exact workspace
+  delta, runs explicit independent validators, classifies failures using the
+  frozen attribution taxonomy, and records an immutable Agent License event.
+  Receipts retain hashes and bounded execution facts, not prompts or raw output.
+- Add `factory gauntlet draft`, a deterministic, non-executing repository scan
+  that proposes DRAFT CLI promises from real `pyproject.toml` entrypoints,
+  inventories literal Python HTTP routes and existing tests, and withholds HTTP
+  execution when an exact command pair cannot be derived. DRAFT artifacts are
+  inert until human-reviewed promotion and a separate named admission.
+- Add day-one DRAFT promise templates to every built-in target pack and an
+  optional Claude Code plugin that hash-chains bounded `PreToolUse` and `Stop`
+  envelopes. Hook traces are observational only; they are not sandboxes or
+  governed run receipts.
+
 ## 0.42.0 - 2026-08-21
 
 - Add a hash-bound, human-declared Change Profile to the Engineering Judgment

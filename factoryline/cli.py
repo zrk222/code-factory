@@ -127,7 +127,9 @@ from .gauntlet import (
     verify_survival_card,
     write_gauntlet_proposal,
 )
+from .gauntlet_draft import GauntletDraftError, draft_gauntlet
 from .agent_license import AgentLicenseError, derive_license, issue_license, record_governed_run, seal_license, verify_license
+from .session_recorder import SessionRecorderError, run_observed_session
 from .combine import CombineError, combine_projection, score_combine, seal_combine_scoreboard, seal_combine_task, verify_combine_scoreboard
 from .team_pilot import (
     TeamPilotError,
@@ -490,8 +492,20 @@ def main(argv=None) -> int:
     reality_inspect.add_argument("--manifest", required=True, help="workspace-contained factory.reality-check-manifest.v1 JSON path")
     reality_inspect.add_argument("--json", action="store_true")
 
-    gauntlet = sub.add_parser("gauntlet", help="compile, admit, run, and verify a supervised proof-of-survival batch")
+    wrap = sub.add_parser("wrap", help="run any admitted local agent CLI as an observed, validated evidence session")
+    wrap.add_argument("--root", default=".")
+    wrap.add_argument("--admission", required=True, help="READY factory.run-admission.packet.v1 path")
+    wrap.add_argument("--validators", required=True, help="factory.session-recorder.validators.v1 path")
+    wrap.add_argument("--run-id", required=True, help="unique lowercase immutable event id")
+    wrap.add_argument("--json", action="store_true")
+    wrap.add_argument("command", nargs=argparse.REMAINDER, help="agent command argv after --")
+
+    gauntlet = sub.add_parser("gauntlet", help="draft, compile, admit, run, and verify a supervised proof-of-survival batch")
     gauntlet_sub = gauntlet.add_subparsers(required=True, dest="gauntlet_cmd")
+    gauntlet_draft = gauntlet_sub.add_parser("draft", help="statically propose inert promise and E2E drafts from repository structure")
+    gauntlet_draft.add_argument("--root", default=".")
+    gauntlet_draft.add_argument("--source-id", required=True)
+    gauntlet_draft.add_argument("--json", action="store_true")
     gauntlet_plan = gauntlet_sub.add_parser("plan", help="compile declared promise sabotages from human-written E2E manifests without execution")
     gauntlet_plan.add_argument("--root", default=".")
     gauntlet_plan.add_argument("--source", required=True, help="workspace-contained factory.gauntlet-source.v1 JSON path")
@@ -2359,6 +2373,33 @@ def main(argv=None) -> int:
                 print(f"marker    : {payload['marker']}")
             print("authority : completed governed evidence only; no agent execution, vendor ranking, repair, approval, merge, publication, or deployment")
         return code
+    if a.cmd == "wrap":
+        workspace = Path(a.root).resolve()
+        command = list(a.command)
+        if command and command[0] == "--":
+            command = command[1:]
+        try:
+            payload = run_observed_session(
+                workspace,
+                workspace / a.admission,
+                workspace / a.validators,
+                command,
+                a.run_id,
+            )
+        except (SessionRecorderError, AgentLicenseError) as exc:
+            code = getattr(exc, "code", "SESSION_FAILED")
+            error = {"schema": "factory.observed-session.error.v1", "marker": code, "code": code, "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"wrap failed: {code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("factory wrap")
+            print("=" * 44)
+            print(f"result   : {'PASSED' if payload['session']['passed'] else 'FAILED'}")
+            print(f"receipt  : {payload['path']}")
+            print("authority: observed local execution and declared validators; not a sandbox, approval, repair, merge, publication, or deployment")
+        return 0 if payload["session"]["passed"] else 1
     if a.cmd == "gauntlet":
         workspace = Path(getattr(a, "root", ".")).resolve()
 
@@ -2369,7 +2410,10 @@ def main(argv=None) -> int:
             return candidate if candidate.is_absolute() else workspace / candidate
 
         try:
-            if a.gauntlet_cmd == "plan":
+            if a.gauntlet_cmd == "draft":
+                payload = draft_gauntlet(workspace, a.source_id)
+                code = 0
+            elif a.gauntlet_cmd == "plan":
                 proposal = compile_gauntlet_proposal(workspace, workspace_path(a.source))
                 path = write_gauntlet_proposal(workspace, proposal, workspace_path(a.out))
                 payload: dict[str, object] = {"proposal": proposal, "path": str(path)}
@@ -2403,7 +2447,7 @@ def main(argv=None) -> int:
                     identity=a.identity, issuer=a.issuer, tenant_id=a.tenant, out=Path(a.out),
                 )
                 code = 0
-        except GauntletError as exc:
+        except (GauntletError, GauntletDraftError) as exc:
             error = {"schema": "factory.gauntlet.error.v1", "marker": exc.code, "code": exc.code, "message": str(exc)}
             print(json.dumps(error, indent=2, sort_keys=True) if getattr(a, "json", False) else f"gauntlet failed: {exc.code}: {exc}", file=sys.stderr)
             return 2
@@ -2412,7 +2456,11 @@ def main(argv=None) -> int:
         else:
             print("factory gauntlet")
             print("=" * 44)
-            if a.gauntlet_cmd == "run":
+            if a.gauntlet_cmd == "draft":
+                print(f"draft    : {payload['path']}")
+                print(f"promises : {payload['draft']['facts']['cli_entrypoint_count']}")
+                print("authority: static DRAFT only; no command execution, approval, admission, repair, or release")
+            elif a.gauntlet_cmd == "run":
                 card = payload["card"]
                 print(f"result   : {card['marker']}")
                 print(f"survived : {card['summary']['survived_count']}/{card['summary']['case_count']}")
