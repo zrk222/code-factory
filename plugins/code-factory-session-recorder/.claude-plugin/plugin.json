@@ -1,0 +1,9 @@
+{
+  "name": "code-factory-session-recorder",
+  "version": "0.43.0",
+  "description": "Hash-chain Claude Code tool boundaries and connect sessions to Code Factory governed evidence.",
+  "author": {
+    "name": "Richard Katz",
+    "email": "rkatz22@gmail.com"
+  }
+}

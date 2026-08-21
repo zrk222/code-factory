@@ -12,7 +12,7 @@ It ships two deliberately bounded surfaces:
 
 The plugin does not install Python packages, invoke LangGraph, mutate a
 checkpoint, replay an effect, repair code, or authorize a release. Install
-`factoryline-code-factory>=0.42.0` in the environment that runs the local MCP
+`factoryline-code-factory>=0.43.0` in the environment that runs the local MCP
 server before enabling it.
 
 See [the installation and workflow guide](../../docs/LANGCHAIN_MARKETPLACE.md).

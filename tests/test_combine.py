@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from factoryline.combine import score_combine, seal_combine_task, verify_combine_scoreboard
-from tests.test_agent_license import AGENT, _passport, _record
+from test_agent_license import AGENT, _passport, _record
 
 
 SECOND_AGENT = {"schema": "factory.agent-identity.v1", "subject": "agent-bravo", "provider": "deepseek", "model": "flash"}

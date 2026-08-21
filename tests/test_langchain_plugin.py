@@ -42,7 +42,7 @@ def test_plugin_skill_and_workflow_keep_execution_and_release_authority_human_co
     assert "Do not authorize or execute repairs" in skill
     assert "pull_request_target" not in workflow
     assert "contents: read" in workflow
-    assert "zrk222/code-factory@v0.42.0" in workflow
+    assert "zrk222/code-factory@v0.43.0" in workflow
     assert "write" not in workflow
 
 
@@ -50,15 +50,17 @@ def test_marketplace_entry_and_docs_expose_all_supported_coding_agent_installs()
     marketplace = _json(ROOT / ".claude-plugin" / "marketplace.json")
     plugins = marketplace["plugins"]
     assert isinstance(plugins, list)
-    assert plugins == [{
+    assert plugins[0] == {
         "name": "code-factory-langgraph",
         "source": "./plugins/code-factory-langgraph",
         "description": "Proof-aware LangGraph guidance and read-only resume-parity receipts before review.",
         "author": {"name": "Richard Katz", "email": "rkatz22@gmail.com"},
-    }]
+    }
+    assert plugins[1]["name"] == "code-factory-session-recorder"
+    assert plugins[1]["source"] == "./plugins/code-factory-session-recorder"
 
     docs = (ROOT / "docs" / "LANGCHAIN_MARKETPLACE.md").read_text(encoding="utf-8")
     assert "codex plugin add code-factory-langgraph@code-factory" in docs
     assert "/plugin install code-factory-langgraph@code-factory" in docs
     assert "dcode plugin install code-factory-langgraph@code-factory" in docs
-    assert "factoryline-code-factory>=0.42.0" in docs
+    assert "factoryline-code-factory>=0.43.0" in docs

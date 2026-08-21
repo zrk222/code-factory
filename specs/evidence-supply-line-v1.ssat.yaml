@@ -1,0 +1,52 @@
+name: evidence-supply-line-v1
+language: python
+modules:
+  - name: session_recorder
+    path: factoryline/session_recorder.py
+    functions:
+      - name: run_observed_session
+        args: [root, admission_path, validator_manifest_path, command, run_id]
+        returns: dict[str, Any]
+      - name: verify_session_receipt
+        args: [root, receipt_path]
+        returns: dict[str, Any]
+  - name: gauntlet_draft
+    path: factoryline/gauntlet_draft.py
+    functions:
+      - name: draft_gauntlet
+        args: [root, source_id]
+        returns: dict
+  - name: agent_license
+    path: factoryline/agent_license.py
+    functions:
+      - name: record_bound_governed_event
+        args: [root, event]
+        returns: dict[str, Any]
+dependencies:
+  - from: session_recorder
+    to: run_admission
+  - from: session_recorder
+    to: attribution
+  - from: session_recorder
+    to: agent_license
+  - from: gauntlet_draft
+    to: e2e_proof
+invariants:
+  - name: recorder_is_observational_not_a_sandbox
+    forbid_pattern: "requests\\.|httpx\\.|urllib\\.|socket\\.|shell\\s*=\\s*True|os\\.system"
+    scopes:
+      - module: session_recorder
+        symbol: run_observed_session
+        max_lines: 180
+  - name: draft_never_executes
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system"
+    scopes:
+      - module: gauntlet_draft
+        symbol: draft_gauntlet
+        max_lines: 160
+  - name: draft_cannot_approve_itself
+    forbid_pattern: "['\"]approved['\"]|approved_by"
+    scopes:
+      - module: gauntlet_draft
+        symbol: draft_gauntlet
+        max_lines: 160

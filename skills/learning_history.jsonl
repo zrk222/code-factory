@@ -2,3 +2,5 @@
 {"code": "A_SUBPROC", "event": "probation", "reason": "never fired since promotion", "ts": "2026-08-19T03:42:59.213819+00:00"}
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-08-19T07:11:08.697305+00:00"}
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-08-19T07:13:50.897983+00:00"}
+{"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-08-21T11:09:36.311228+00:00"}
+{"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-08-21T11:12:02.529090+00:00"}
