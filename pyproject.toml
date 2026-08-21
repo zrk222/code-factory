@@ -57,7 +57,10 @@ classifiers = [
   "Topic :: Software Development :: Build Tools",
   "Topic :: Software Development :: Quality Assurance",
 ]
-dependencies = ["cryptography>=42,<50"]
+dependencies = [
+  "cryptography>=42,<50",
+  "tomli>=2.0; python_version < '3.11'",
+]
 
 [project.urls]
 Homepage = "https://github.com/zrk222/code-factory"

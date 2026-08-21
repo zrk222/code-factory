@@ -7,8 +7,12 @@ import json
 import os
 from pathlib import Path
 import re
-import tomllib
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 
 GAUNTLET_DRAFT_SCHEMA = "factory.gauntlet-draft.v1"
