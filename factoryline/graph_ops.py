@@ -30,6 +30,7 @@ from .gauntlet import GauntletError, validate_survival_card
 from .resilience import ResilienceError, verify_temporal_resilience_plan
 from .agent_license import license_projection
 from .combine import combine_projection
+from .judgment import judgment_projection
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -941,6 +942,48 @@ def _append_agent_supervision(state: dict[str, Any], root: Path) -> dict[str, in
     return facts
 
 
+def _append_judgment_capsules(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project tracked human decision contracts without changing their authority."""
+    facts = {"count": 0, "active_count": 0, "proposed_count": 0, "superseded_count": 0, "review_due_count": 0, "invalid_count": 0}
+    projection = judgment_projection(root)
+    if projection["errors"]:
+        facts["invalid_count"] = 1
+        for error in projection["errors"]:
+            _record_error(state["errors"], projection["path"], str(error["code"]))
+        return facts
+    source = projection["path"]
+    for capsule in projection["capsules"]:
+        capsule_id = str(capsule["id"])
+        node_id = f"judgment-capsule:{capsule_id}"
+        _node(
+            state,
+            node_id=node_id,
+            kind="judgment_capsule",
+            label=f"Judgment · {capsule['title']}",
+            source=source,
+            status=str(capsule["state"]),
+            facts={
+                "capsule_id": capsule_id,
+                "owner": capsule["owner"],
+                "review_by": capsule["review_by"],
+                "review_due": capsule["review_due"],
+                "capsule_sha256": capsule["capsule_sha256"],
+                "successor_proposal_id": capsule["successor_proposal_id"],
+                "projection": "human_tracked_read_only",
+                "authority": _AUTHORITY,
+                "execution": False,
+            },
+        )
+        for scope in capsule["scope_paths"]:
+            scope_id = f"judgment-scope:{_sha({'capsule_id': capsule_id, 'scope': scope})[:24]}"
+            _node(state, node_id=scope_id, kind="judgment_scope", label=str(scope), source=source, status="declared")
+            _edge(state, scope_id, node_id, "scopes")
+        facts["count"] += 1
+        facts[f"{capsule['state']}_count"] += 1
+        facts["review_due_count"] += int(capsule["review_due"])
+    return facts
+
+
 def _append_counterexamples(state: dict[str, Any], root: Path) -> dict[str, int]:
     """Project negative-proof plans as facts; never execute the derived cases."""
     facts = {"count": 0, "verified_count": 0, "hollow_count": 0, "invalid_count": 0}
@@ -1059,6 +1102,12 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "initialize_graph", "No readable local Factory graph artifacts were found."
     if facts["agent_incident_count"] > 0:
         return "review_agent_demotion", "A governed agent result triggered automatic demotion. Inspect the bound incident capsule and collect fresh independent evidence before expanding autonomy."
+    if facts["judgment_invalid_count"] > 0:
+        return "repair_judgment_store", "A tracked engineering-decision store is malformed. Do not infer or replace a decision; repair the reviewed store before relying on its contracts."
+    if facts["judgment_review_due_count"] > 0:
+        return "review_judgment_capsule", "At least one active engineering decision reached its stated review date. Reconsider it with a named successor proposal or independently renew its evidence."
+    if facts["judgment_proposed_count"] > 0:
+        return "review_judgment_promotion", "At least one proposed engineering decision awaits an independent human promotion before it can govern a Change Safety Case."
     if facts["agent_license_human_controlled_count"] > 0:
         return "collect_governed_agent_evidence", "At least one declared agent is human-controlled because its current governed evidence is insufficient or was demoted. Keep approval explicit."
     if facts["proof_delta_halted_count"] > 0:
@@ -1116,7 +1165,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
                     frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int]) -> dict[str, int]:
+                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -1178,6 +1227,11 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "agent_incident_count": agent_supervision["incident_count"],
         "combine_scoreboard_count": agent_supervision["combine_scoreboard_count"],
         "combine_passing_candidate_count": agent_supervision["combine_passing_candidate_count"],
+        "judgment_capsule_count": judgment["count"],
+        "judgment_active_count": judgment["active_count"],
+        "judgment_proposed_count": judgment["proposed_count"],
+        "judgment_review_due_count": judgment["review_due_count"],
+        "judgment_invalid_count": judgment["invalid_count"],
         "intake_confirmation_count": sum(node["kind"] == "intake" for node in nodes),
         "intake_confirmed_count": sum(node["kind"] == "intake" and node.get("status") == "confirmed" for node in nodes),
         "intake_invalid_count": sum(node["kind"] == "intake" and node.get("status") == "invalid" for node in nodes),
@@ -1187,7 +1241,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
                       proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int]) -> list[str]:
+                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -1232,6 +1286,8 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_AGENT_LICENSES_READ_ONLY")
     if agent_supervision["combine_scoreboard_count"]:
         markers.append("GRAPH_OPS_COMBINE_SCOREBOARDS_READ_ONLY")
+    if judgment["count"]:
+        markers.append("GRAPH_OPS_JUDGMENT_CAPSULES_READ_ONLY")
     if any(node["kind"] == "intake" for node in nodes):
         markers.append("GRAPH_OPS_INTAKE_DECISIONS_READ_ONLY")
     if state["errors"] or state["truncated"]:
@@ -1284,14 +1340,15 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     proof_deltas = _append_proof_deltas(state, workspace)
     survival_cards = _append_survival_cards(state, workspace)
     agent_supervision = _append_agent_supervision(state, workspace)
+    judgment = _append_judgment_capsules(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
-    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision)
+    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment)
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
-    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision)
+    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment)
     base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
@@ -1326,6 +1383,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "portfolio": portfolio,
         "admissions": admissions,
         "agent_supervision": agent_supervision,
+        "judgment": judgment,
     }
     return {**core, "base_graph_sha256": base_graph_sha256, "graph_sha256": _sha(core), "mermaid": _mermaid(projected_nodes, projected_edges)}
 

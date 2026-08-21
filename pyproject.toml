@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.40.2"
+version = "0.41.0"
 description = "Catch AI-generated tests that could never fail and review AI code with local proof."
 authors = [
   { name = "Richard Katz" },

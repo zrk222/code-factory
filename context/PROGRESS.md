@@ -289,3 +289,6 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-21 04:04] GATE plan jetbrains-guardian-core approver=human tasks=3 sha=0d3326f0b797e3ae
 - [2026-08-21 04:52] GATE spec jetbrains-guardian-core approver=human strict=True sha=087af37da5ed9b5b
 - [2026-08-21 04:52] GATE plan jetbrains-guardian-core approver=human tasks=2 sha=087af37da5ed9b5b
+- [2026-08-21 05:18] GATE spec judgment-graph-safety-case approver=human strict=True sha=fdd1fb01df974b43
+- [2026-08-21 05:18] GATE plan judgment-graph-safety-case approver=human tasks=5 sha=fdd1fb01df974b43
+- [2026-08-21 05:18] PACKET judgment-graph-safety-case T1 tokens=849 sha=ad1855e278ff50c4

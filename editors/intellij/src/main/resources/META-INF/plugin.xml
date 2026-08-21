@@ -5,7 +5,7 @@
     <description><![CDATA[
         <p><strong>Your IDE feels slow. Your AI code looks fine. Check both with evidence before you spend another hour guessing.</strong></p>
         <p><strong>FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains.</strong> Record a short local health window, review what was observed, inspect an AI or teammate diff, and choose the next safe human review step—without uploading source or changing IDE settings.</p>
-        <p><strong>New in 0.8.14 — Guardian Core:</strong> one clear first tab for local runtime observations, an incident timeline, Index Continuity, AI Change Review, Intent Ledger, and Workspace Advisor routes. It is deliberately not a health score, plugin blame engine, or automatic fix button.</p>
+        <p><strong>New in 0.8.15 — Engineering Judgment Safety Case:</strong> inspect repository-tracked decisions or route one selected Change List to its named owner when hash-bound proof obligations apply. It is local, read-only, confirmation-gated, and never infers intent, promotes a decision, executes a repair, or approves a release.</p>
         <p><strong>In 60 seconds:</strong> inspect an outcome, fuzzy PRD, or risky diff; challenge whether a test can actually reject the failure it claims to cover; then see the current proof gap before a human decides what may be applied.</p>
         <p><strong>Start now:</strong> open <strong>Tools | FactoryLine | Run First Proof</strong>, confirm the workspace, then inspect the local result. Generate an MVP when you need one; a starter is never called production-ready before relevant evidence exists.</p>
         <h3>What this solves</h3>

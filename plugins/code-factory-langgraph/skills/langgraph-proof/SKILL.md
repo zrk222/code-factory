@@ -20,7 +20,7 @@ factory mcp status --root .
 ```
 
 If the CLI is missing, explain that the user must install
-`factoryline-code-factory>=0.40.2` in the environment that will host the local
+`factoryline-code-factory>=0.41.0` in the environment that will host the local
 MCP process. Do not install Python packages, change a client configuration, or
 start a server without the user's approval.
 

@@ -79,6 +79,7 @@ object GuardianReviewRoutes {
     const val INDEX_CONTINUITY = "Index Continuity"
     const val PROOF_REVIEW = "Proof Review"
     const val INTENT_LEDGER = "Intent Ledger"
+    const val ENGINEERING_JUDGMENT = "Engineering Judgment"
     const val WORKSPACE_ADVISOR = "Workspace Advisor"
 
     val all: List<String> = listOf(
@@ -86,6 +87,7 @@ object GuardianReviewRoutes {
         INDEX_CONTINUITY,
         PROOF_REVIEW,
         INTENT_LEDGER,
+        ENGINEERING_JUDGMENT,
         WORKSPACE_ADVISOR,
     )
 }
@@ -206,6 +208,7 @@ class FactoryLineGuardianPanel(private val project: Project) : JPanel(BorderLayo
             add(JButton("Index Continuity").apply { addActionListener { FactoryLinePanels.selectTab(project, GuardianReviewRoutes.INDEX_CONTINUITY) } })
             add(JButton("AI Changes").apply { addActionListener { FactoryLinePanels.selectTab(project, GuardianReviewRoutes.PROOF_REVIEW) } })
             add(JButton("Intent Ledger").apply { addActionListener { FactoryLinePanels.selectTab(project, GuardianReviewRoutes.INTENT_LEDGER) } })
+            add(JButton("Engineering Judgment").apply { addActionListener { FactoryLinePanels.selectTab(project, GuardianReviewRoutes.ENGINEERING_JUDGMENT) } })
             add(JButton("Workspace Advisor").apply { addActionListener { FactoryLinePanels.selectTab(project, GuardianReviewRoutes.WORKSPACE_ADVISOR) } })
         }
         add(controls, BorderLayout.NORTH)

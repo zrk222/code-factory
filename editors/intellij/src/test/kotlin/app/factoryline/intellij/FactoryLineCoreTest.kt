@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FactoryLineCoreTest {
@@ -164,7 +165,7 @@ class FactoryLineCoreTest {
     @Test
     fun guardianKeepsOnlyExplicitNavigationRoutes() {
         assertEquals(
-            listOf("IDE Health", "Index Continuity", "Proof Review", "Intent Ledger", "Workspace Advisor"),
+            listOf("IDE Health", "Index Continuity", "Proof Review", "Intent Ledger", "Engineering Judgment", "Workspace Advisor"),
             GuardianReviewRoutes.all,
         )
     }
@@ -248,6 +249,41 @@ class FactoryLineCoreTest {
             ),
             FactoryLineCommands.intentInspect(root, "Checkout", listOf("src/service.py", "src/ui.kt")),
         )
+    }
+
+    @Test
+    fun judgmentCommandsAreReadOnlyAndBindOnlyExplicitChangedPaths() {
+        val root = Files.createTempDirectory("factoryline-judgment")
+
+        assertEquals(
+            listOf("judgment", "status", "--root", root.toString(), "--json"),
+            FactoryLineCommands.judgmentStatus(root),
+        )
+        assertEquals(
+            listOf(
+                "judgment", "safety-case", "--root", root.toString(),
+                "--changed", "src/service.py", "--changed", "src/ui.kt", "--json",
+            ),
+            FactoryLineCommands.judgmentSafetyCase(root, listOf("src/service.py", "src/ui.kt")),
+        )
+    }
+
+    @Test
+    fun judgmentParserAcceptsOnlyBoundedStatusOrSafetyCaseSchemas() {
+        val status = JudgmentSummary.fromJson(
+            """{"schema":"factory.judgment.status.v1","marker":"JUDGMENT_CAPSULE_STATUS_READ_ONLY","state":"valid","counts":{"active":1,"proposed":2,"review_due":0}}""",
+        )
+        val safetyCase = JudgmentSummary.fromJson(
+            """{"schema":"factory.judgment.safety-case.v1","marker":"JUDGMENT_SAFETY_CASE_READ_ONLY","route":"AMBER","changed_paths":["src/service.py"],"required_reviewers":["Ada"],"missing_obligations":[]}""",
+        )
+
+        assertNotNull(status)
+        assertEquals("1", status.active)
+        assertEquals("2", status.proposed)
+        assertNotNull(safetyCase)
+        assertEquals("AMBER", safetyCase.route)
+        assertEquals(listOf("Ada"), safetyCase.requiredReviewers)
+        assertNull(JudgmentSummary.fromJson("""{"schema":"untrusted","state":"valid"}"""))
     }
 
     @Test

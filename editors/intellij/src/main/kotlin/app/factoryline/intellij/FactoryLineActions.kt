@@ -347,6 +347,21 @@ object FactoryLineController {
         }
     }
 
+    fun inspectJudgment(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect Engineering Judgment")) return
+        runBackground(project, "Inspect Engineering Judgment", onCompleted = { FactoryLinePanels.showJudgment(project, it) }) {
+            FactoryLineRunner.judgmentStatus(project)
+        }
+    }
+
+    fun inspectJudgmentSafetyCase(project: Project) {
+        val selected = selectIntentScope(project, "FactoryLine Engineering Judgment") ?: return
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect Judgment Safety Case")) return
+        runBackground(project, "Inspect Judgment Safety Case", onCompleted = { FactoryLinePanels.showJudgment(project, it) }) {
+            FactoryLineRunner.judgmentSafetyCase(project, selected.paths)
+        }
+    }
+
     fun captureIntentLedger(project: Project) {
         val selected = selectIntentScope(project) ?: return
         val confirmedBy = Messages.showInputDialog(project, "Named human confirming this behavioral contract:", "FactoryLine: Capture Intent Ledger", null)
@@ -378,7 +393,7 @@ object FactoryLineController {
         }
     }
 
-    private fun selectIntentScope(project: Project): NativeChangeListScope? {
+    private fun selectIntentScope(project: Project, title: String = "FactoryLine Intent Ledger"): NativeChangeListScope? {
         val root = project.basePath?.let(Path::of) ?: run {
             Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
             return null
@@ -388,13 +403,13 @@ object FactoryLineController {
             return null
         }.filter { it.paths.isNotEmpty() || it.unavailableChanges > 0 }
         if (scopes.isEmpty()) {
-            Messages.showInfoMessage(project, "No local Change List contains a project change. Make or select a local change first.", "FactoryLine Intent Ledger")
+            Messages.showInfoMessage(project, "No local Change List contains a project change. Make or select a local change first.", title)
             return null
         }
         val selectedIndex = Messages.showDialog(
             project,
             "Select one native Change List. FactoryLine will use only its explicit project paths; it will not change VCS state.",
-            "FactoryLine: Intent Ledger",
+            title,
             scopes.map { it.displayName() }.toTypedArray(),
             0,
             Messages.getQuestionIcon(),
@@ -405,12 +420,12 @@ object FactoryLineController {
             Messages.showErrorDialog(
                 project,
                 "'${selected.name}' includes ${selected.unavailableChanges} change(s) outside the project or without a resolvable file path. FactoryLine will not silently drop them.",
-                "FactoryLine Intent Ledger",
+                title,
             )
             return null
         }
         if (selected.paths.isEmpty()) {
-            Messages.showErrorDialog(project, "The selected Change List contains no project files to inspect.", "FactoryLine Intent Ledger")
+            Messages.showErrorDialog(project, "The selected Change List contains no project files to inspect.", title)
             return null
         }
         return selected

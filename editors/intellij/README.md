@@ -104,7 +104,7 @@ facts, and their review scope is never a root-cause or repair claim. See
 
 ## Install
 
-1. Install `factoryline-code-factory==0.40.2` into the Python environment that
+1. Install `factoryline-code-factory==0.41.0` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the

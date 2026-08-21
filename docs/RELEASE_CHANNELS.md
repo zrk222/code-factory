@@ -1,18 +1,18 @@
 # Release Channels
 
-Code Factory v0.40.2 publishes one verified source state through channel-specific
+Code Factory v0.41.0 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.40.2`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.40.2` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.41.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.41.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
 | VS Code | `factoryline-vscode-0.8.10.vsix` | GitHub release bundle; protected `vscode-marketplace.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX or public Marketplace version |
-| JetBrains | `factoryline-intellij-0.8.14.zip` | Scoped workflow update to public plugin 33009 after the existing pending metadata review clears | Installable ZIP or public plugin/version page after moderation |
+| JetBrains | `factoryline-intellij-0.8.15.zip` | Scoped workflow update to public plugin 33009 after the existing pending metadata review clears | Installable ZIP or public plugin/version page after moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
 The release pipeline never treats a queued review, draft listing, uploaded
@@ -66,14 +66,23 @@ does not invoke LangGraph, mutate checkpoints, replay effects, establish
 production resilience, or estimate savings.
 
 JetBrains Marketplace publication remains blocked while any submitted update is
-pending Marketplace approval. Do not dispatch the 0.8.14 candidate until the
+pending Marketplace approval. Do not dispatch the 0.8.15 candidate until the
 Marketplace status gate reports clear.
 
-### 0.8.14 Guardian Core candidate
+### 0.41.0 Engineering Judgment Safety Case
+
+This release adds repository-tracked, independently human-promoted Judgment
+Capsules plus a deterministic, read-only Change Safety Case for explicit changed
+paths and hash-bound proof receipts. The route is review context only; it cannot
+infer intent, promote/waive a decision, run evidence, repair code, approve,
+merge, publish, deploy, sign, message, or access credentials.
+
+### 0.8.15 Guardian Core + Engineering Judgment candidate
 
 The JetBrains-only candidate adds Guardian Core as the first tool-window tab:
 a bounded local observation timeline with explicit routes to existing IDE
-Health, Index Continuity, Proof Review, Intent Ledger, and Workspace Advisor
+Health, Index Continuity, Proof Review, Intent Ledger, Engineering Judgment,
+and Workspace Advisor
 surfaces. It does not diagnose a cause, score plugins, collect source content,
 alter IDE configuration, run a CLI command, or apply a repair. The candidate's
 release gate validates its actual ZIP descriptor and Guardian action, then the

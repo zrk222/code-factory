@@ -25,6 +25,7 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         val ideHealth = FactoryLineIdeHealthPanel(project)
         val indexContinuity = FactoryLineIndexContinuityPanel(project)
         val intentLedger = FactoryLineIntentLedgerPanel(project)
+        val judgment = FactoryLineJudgmentPanel(project)
         project.putUserData(FactoryLinePanels.guardianKey, guardian)
         project.putUserData(FactoryLinePanels.key, panel)
         project.putUserData(FactoryLinePanels.proofReviewKey, proofReview)
@@ -33,6 +34,7 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         project.putUserData(FactoryLinePanels.ideHealthKey, ideHealth)
         project.putUserData(FactoryLinePanels.indexContinuityKey, indexContinuity)
         project.putUserData(FactoryLinePanels.intentLedgerKey, intentLedger)
+        project.putUserData(FactoryLinePanels.judgmentKey, judgment)
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(guardian, "Guardian", false)
         )
@@ -56,6 +58,9 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         )
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(intentLedger, "Intent Ledger", false)
+        )
+        toolWindow.contentManager.addContent(
+            ContentFactory.getInstance().createContent(judgment, "Engineering Judgment", false)
         )
     }
 }
@@ -134,6 +139,7 @@ object FactoryLinePanels {
     val ideHealthKey: Key<FactoryLineIdeHealthPanel> = Key.create("app.factoryline.intellij.ideHealth")
     val indexContinuityKey: Key<FactoryLineIndexContinuityPanel> = Key.create("app.factoryline.intellij.indexContinuity")
     val intentLedgerKey: Key<FactoryLineIntentLedgerPanel> = Key.create("app.factoryline.intellij.intentLedger")
+    val judgmentKey: Key<FactoryLineJudgmentPanel> = Key.create("app.factoryline.intellij.judgment")
 
     fun show(project: Project, result: CommandResult) {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
@@ -228,6 +234,16 @@ object FactoryLinePanels {
             ApplicationManager.getApplication().invokeLater {
                 toolWindow.contentManager.findContent("Intent Ledger")?.let { toolWindow.contentManager.setSelectedContent(it) }
                 project.getUserData(intentLedgerKey)?.show(result)
+            }
+        }
+    }
+
+    fun showJudgment(project: Project, result: CommandResult) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater {
+                toolWindow.contentManager.findContent("Engineering Judgment")?.let { toolWindow.contentManager.setSelectedContent(it) }
+                project.getUserData(judgmentKey)?.show(result)
             }
         }
     }

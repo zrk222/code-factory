@@ -39,6 +39,8 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.graph_impact",
         "factory.developer_memory",
         "factory.intent_ledger",
+        "factory.judgment_status",
+        "factory.judgment_safety_case",
         "factory.langgraph_assurance",
         "factory.next_action",
         "factory.list_receipts",
@@ -69,7 +71,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {"name": "code-factory", "version": "0.40.2"},
+                "serverInfo": {"name": "code-factory", "version": "0.41.0"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }
@@ -122,6 +124,19 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     assert intent_ledger["marker"] == "MCP_INTENT_LEDGER_READ_ONLY"
     assert intent_ledger["ledger"]["state"] == "uncontracted"
     assert all(value is False for value in intent_ledger["ledger"]["authority"].values())
+
+    judgment = _content(dispatch({
+        "jsonrpc": "2.0", "id": 43, "method": "tools/call", "params": {"name": "factory.judgment_status"},
+    }, tmp_path))
+    assert judgment["marker"] == "MCP_JUDGMENT_STATUS_READ_ONLY"
+    assert judgment["status"]["state"] == "empty"
+
+    safety_case = _content(dispatch({
+        "jsonrpc": "2.0", "id": 44, "method": "tools/call", "params": {"name": "factory.judgment_safety_case", "arguments": {"changed_paths": ["input.txt"]}},
+    }, tmp_path))
+    assert safety_case["marker"] == "MCP_JUDGMENT_SAFETY_CASE_READ_ONLY"
+    assert safety_case["safety_case"]["route"] == "GREEN"
+    assert all(value is False for value in safety_case["safety_case"]["authority"].values())
 
     next_action = _content(dispatch({
         "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "factory.next_action"},

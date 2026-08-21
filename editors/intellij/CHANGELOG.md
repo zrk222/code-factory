@@ -1,5 +1,13 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.15 - 2026-08-21
+
+- Add the Engineering Judgment tab: a local, schema-bound view of tracked
+  decision Capsules and a confirmation-gated Change List Safety Case. It shows
+  only deterministic routing and named-review requirements; it cannot infer
+  intent, promote or waive a decision, run a test or repair, approve code,
+  merge, publish, deploy, sign, message, or access credentials.
+
 ## 0.8.14 - 2026-08-21
 
 - Add Guardian Core as the first tool-window tab: a bounded, local-only view of

@@ -295,10 +295,10 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.40.2"
+    assert project["version"] == "0.41.0"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.8.10"
-    assert 'version = "0.8.14"' in gradle
+    assert 'version = "0.8.15"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -311,7 +311,7 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
     assert "Your IDE feels slow. Your AI code looks fine." in plugin_xml
     assert "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains." in plugin_xml
-    assert "New in 0.8.14 — Guardian Core" in plugin_xml
+    assert "New in 0.8.15 — Engineering Judgment Safety Case" in plugin_xml
     assert "Tools | FactoryLine | Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
     assert "Run First Proof" in plugin_xml
@@ -399,7 +399,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     assert plan["offer"]["annual_price_usd"] == 60.0
     assert plan["offer"]["monthly_price_status"] == "owner_approved"
     assert plan["offer"]["paid_from"] == "2027-01-01"
-    assert plan["plugin"]["current_free_version"] == "0.8.14"
+    assert plan["plugin"]["current_free_version"] == "0.8.15"
     assert plan["paid_descriptor"] == {
         "product_code": "PFACTORYLINE",
         "product_code_status": "proposed_not_registered",
@@ -471,8 +471,8 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.40.2"
-    assert metadata["publication_date"] == "2026-08-20"
+    assert metadata["version"] == "0.41.0"
+    assert metadata["publication_date"] == "2026-08-21"
     assert "Unified Graph Ops" in metadata["description"]
     assert "current FactoryLine identity asset" in metadata["description"]
     assert "conceptual visual walkthrough" not in metadata["description"]

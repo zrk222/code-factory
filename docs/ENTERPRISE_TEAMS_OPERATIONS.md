@@ -96,6 +96,24 @@ for the workflow and boundaries.
 6. **Make the team’s own decision.** Humans retain source changes, review
    disposition, merge, release, deployment, access, and rollback decisions.
 
+## Preserve engineering judgment across people and agents
+
+Use an **Engineering Judgment Capsule** when a design trade-off must survive a
+handoff, an agent rerun, or a later change. A proposing human records exact
+scope, owner, review date, rationale references, and proof obligations; a
+different named human promotes it. Before review, compile a deterministic
+Safety Case from the explicit changed paths and hash-bound proof receipts.
+
+- `RED` means a matching decision is missing declared proof evidence.
+- `AMBER` means the named owner must review an exact bound decision.
+- `GREEN` means no active tracked Capsule matched; it is never approval.
+- `BLACK` means the decision store is invalid and was not replaced by an
+  inferred or historical substitute.
+
+The Capsule is a review-routing artifact, not a policy engine. It cannot infer
+intent, run a test, apply a repair, merge, publish, deploy, or grant access.
+See [Engineering Judgment Safety Case](ENGINEERING_JUDGMENT.md).
+
 ## Role map
 
 | Role | Does | Does not delegate to Code Factory |

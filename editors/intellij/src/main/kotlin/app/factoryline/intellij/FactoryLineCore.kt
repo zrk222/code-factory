@@ -175,6 +175,18 @@ object FactoryLineCommands {
         }
     }
 
+    fun judgmentStatus(root: Path): List<String> =
+        listOf("judgment", "status", "--root", root.toString(), "--json")
+
+    fun judgmentSafetyCase(root: Path, changedPaths: List<String>): List<String> {
+        require(changedPaths.isNotEmpty())
+        return buildList {
+            addAll(listOf("judgment", "safety-case", "--root", root.toString()))
+            changedPaths.forEach { addAll(listOf("--changed", it)) }
+            add("--json")
+        }
+    }
+
     fun savings(root: Path): List<String> =
         listOf("savings", "report", "--root", root.toString(), "--json")
 
@@ -471,6 +483,21 @@ object FactoryLineRunner {
         val root = project.basePath?.let(Path::of)
             ?: return CommandResult("Inspect Intent Ledger", emptyList(), null, false, "Blocked: the project has no local workspace path.")
         return execute(project, "Inspect Intent Ledger", FactoryLineCommands.intentInspect(root, changeList, changedPaths))
+    }
+
+    fun judgmentStatus(project: Project): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Inspect Engineering Judgment", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        return execute(project, "Inspect Engineering Judgment", FactoryLineCommands.judgmentStatus(root))
+    }
+
+    fun judgmentSafetyCase(project: Project, changedPaths: List<String>): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Inspect Judgment Safety Case", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        if (changedPaths.isEmpty()) {
+            return CommandResult("Inspect Judgment Safety Case", emptyList(), null, false, "Blocked: a Change List must contain at least one project file.")
+        }
+        return execute(project, "Inspect Judgment Safety Case", FactoryLineCommands.judgmentSafetyCase(root, changedPaths))
     }
 
     fun run(project: Project, operation: FactoryLineOperation, feature: String): CommandResult {

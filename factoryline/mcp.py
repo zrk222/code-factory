@@ -12,6 +12,7 @@ from typing import Any, TextIO
 from . import __version__
 from .developer_memory import developer_memory_brief
 from .intent_ledger import IntentLedgerError, inspect_intent_ledger
+from .judgment import JudgmentError, judgment_status, safety_case
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .langgraph_assurance import MCP_MARKER, LangGraphAssuranceError, verify_langgraph_resume_parity
 from .proof_delta import proof_delta_status
@@ -155,6 +156,26 @@ def _tool_definitions() -> list[dict[str, object]]:
                     "base": {"type": "string", "minLength": 1, "maxLength": 120},
                 },
                 "required": ["change_list"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.judgment_status",
+            "description": "Return the tracked human-proposed and human-promoted engineering-decision Capsules. Read only; it never promotes, waives, or infers a decision.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.judgment_safety_case",
+            "description": "Map explicit changed paths to active Judgment Capsules and supplied hash-bound proof receipts. It returns a deterministic review route and never executes a proof or change.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "changed_paths": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                    "proof_receipts": {"type": "array", "maxItems": 50, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                },
+                "required": ["changed_paths"],
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -569,6 +590,33 @@ def _intent_ledger(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _judgment_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.judgment_status accepts no arguments")
+    return {
+        "marker": "MCP_JUDGMENT_STATUS_READ_ONLY",
+        "status": judgment_status(root),
+        "scope": "Read-only local human-decision projection; no model, policy inference, promotion, source write, proof execution, approval, repair, merge, publication, deployment, signing, messaging, credential, or connector action ran.",
+    }
+
+
+def _judgment_safety_case(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"changed_paths", "proof_receipts"} or "changed_paths" not in arguments:
+        raise McpError("factory.judgment_safety_case requires changed_paths and accepts only optional proof_receipts")
+    changed = _changed_paths({"changed_paths": arguments["changed_paths"]})
+    proof_values = arguments.get("proof_receipts", [])
+    receipt_paths = _changed_paths({"changed_paths": proof_values}) if proof_values else []
+    try:
+        value = safety_case(root, changed=changed, proof_receipts=[Path(item) for item in receipt_paths])
+    except JudgmentError as exc:
+        raise McpError(str(exc), exc.code) from exc
+    return {
+        "marker": "MCP_JUDGMENT_SAFETY_CASE_READ_ONLY",
+        "safety_case": value,
+        "scope": "Read-only deterministic route over explicit paths and supplied receipt hashes. No model, test execution, policy promotion, source write, approval, repair, merge, publication, deployment, signing, messaging, credential, or connector action ran.",
+    }
+
+
 def _langgraph_assurance(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) != {"reference", "resumed"}:
         raise McpError("factory.langgraph_assurance requires only reference and resumed")
@@ -783,6 +831,10 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_developer_memory(root, arguments))
     if name == "factory.intent_ledger":
         return _content(_intent_ledger(root, arguments))
+    if name == "factory.judgment_status":
+        return _content(_judgment_status(root, arguments))
+    if name == "factory.judgment_safety_case":
+        return _content(_judgment_safety_case(root, arguments))
     if name == "factory.langgraph_assurance":
         return _content(_langgraph_assurance(root, arguments))
     if name == "factory.next_action":

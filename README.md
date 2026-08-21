@@ -52,6 +52,11 @@ factory mvp "Build an approval tracker" --root .
 - **Compare agents with receipts, not vibes.** Use `factory combine` to rank
   completed, sealed, independently verified runs on the same task. It never
   starts an agent or turns a local scoreboard into a vendor-quality claim.
+- **Keep decisions from becoming tribal knowledge.** Use `factory judgment` to
+  track a human-promoted design decision with exact paths, a named owner,
+  review date, and hash-bound proof obligations. A Change Safety Case routes
+  one explicit diff to its owner; it never infers intent, promotes a decision,
+  runs a test, or approves a release.
 
 ## What the latest upgrade resolves
 
@@ -61,6 +66,7 @@ factory mvp "Build an approval tracker" --root .
 | A vague PRD becomes the wrong scaffold or framework | Intake Grill records a named, byte-bound intent, framework decision, observable acceptance evidence, and external-effects posture before a mission begins | The answers, architecture choice, and decision to start work |
 | An agent retries the same failed approach and burns review time | Proof-Delta requires a changed candidate plus fresh, hash-bound evidence for a retry; no-gain attempts halt | Any repair, retry admission, and final apply |
 | Teams gradually trust an agent because it has been successful recently | Earned Autonomy derives an expiring local tier from governed evidence and demotes severe hollow-test or scope-escape results | Identity, permissions, execution, approval, and release authority |
+| A hard-won design decision is forgotten, then a later diff silently breaks its assumptions | Engineering Judgment Capsules bind one named owner, explicit path scope, review date, and declared proof obligations; the deterministic Safety Case routes only an explicit matching diff | Proposal, independent promotion, decision reconsideration, proof execution, acceptance, merge, and release |
 | A reviewer has suggestions but no shared evidence picture | Graph Ops, local receipts, and read-only MCP facts show current scope, proof debt, and the next fact-derived action | Merge, release, deployment, and provider access |
 | A large/remote workspace feels opaque or sluggish | Workspace Advisor measures bounded local project shape and path-only WSL/remote signals without changing indexes, heap, caches, inspections, or remote settings | Every IDE performance change and environment setting |
 
@@ -241,7 +247,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.40.2.md),
+- See the [release notes](docs/RELEASE_NOTES_0.41.0.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 
