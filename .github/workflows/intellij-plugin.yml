@@ -71,7 +71,7 @@ jobs:
           # responses. Retry only at the CI boundary; a persistent build,
           # package, verifier, or preflight defect still fails the job.
           for attempt in 1 2 3; do
-            if ./gradlew check buildPlugin verifyPlugin marketplacePreflight; then
+            if ./gradlew check guardianReleaseGate; then
               exit 0
             fi
             if [ "$attempt" -lt 3 ]; then

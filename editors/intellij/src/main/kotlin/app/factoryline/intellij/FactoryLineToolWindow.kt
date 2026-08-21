@@ -17,6 +17,7 @@ import javax.swing.JPanel
 
 class FactoryLineToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
+        val guardian = FactoryLineGuardianPanel(project)
         val panel = FactoryLinePanel(project)
         val proofReview = FactoryLineProofReviewPanel(project)
         val repairSandbox = FactoryLineRepairSandboxPanel(project)
@@ -24,6 +25,7 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         val ideHealth = FactoryLineIdeHealthPanel(project)
         val indexContinuity = FactoryLineIndexContinuityPanel(project)
         val intentLedger = FactoryLineIntentLedgerPanel(project)
+        project.putUserData(FactoryLinePanels.guardianKey, guardian)
         project.putUserData(FactoryLinePanels.key, panel)
         project.putUserData(FactoryLinePanels.proofReviewKey, proofReview)
         project.putUserData(FactoryLinePanels.repairSandboxKey, repairSandbox)
@@ -31,6 +33,9 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         project.putUserData(FactoryLinePanels.ideHealthKey, ideHealth)
         project.putUserData(FactoryLinePanels.indexContinuityKey, indexContinuity)
         project.putUserData(FactoryLinePanels.intentLedgerKey, intentLedger)
+        toolWindow.contentManager.addContent(
+            ContentFactory.getInstance().createContent(guardian, "Guardian", false)
+        )
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(panel, "Receipts", false)
         )
@@ -121,6 +126,7 @@ class FactoryLinePanel(private val project: Project) : JPanel(BorderLayout(0, 8)
 }
 
 object FactoryLinePanels {
+    val guardianKey: Key<FactoryLineGuardianPanel> = Key.create("app.factoryline.intellij.guardian")
     val key: Key<FactoryLinePanel> = Key.create("app.factoryline.intellij.panel")
     val proofReviewKey: Key<FactoryLineProofReviewPanel> = Key.create("app.factoryline.intellij.proofReview")
     val repairSandboxKey: Key<FactoryLineRepairSandboxPanel> = Key.create("app.factoryline.intellij.repairSandbox")
@@ -193,6 +199,25 @@ object FactoryLinePanels {
             ApplicationManager.getApplication().invokeLater {
                 toolWindow.contentManager.findContent("Index Continuity")?.let { toolWindow.contentManager.setSelectedContent(it) }
                 project.getUserData(indexContinuityKey)?.show(result)
+            }
+        }
+    }
+
+    fun showGuardian(project: Project) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater {
+                toolWindow.contentManager.findContent("Guardian")?.let { toolWindow.contentManager.setSelectedContent(it) }
+                project.getUserData(guardianKey)?.showCurrent()
+            }
+        }
+    }
+
+    fun selectTab(project: Project, title: String) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater {
+                toolWindow.contentManager.findContent(title)?.let { toolWindow.contentManager.setSelectedContent(it) }
             }
         }
     }

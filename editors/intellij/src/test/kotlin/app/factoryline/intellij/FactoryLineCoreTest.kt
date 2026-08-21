@@ -9,6 +9,12 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class FactoryLineCoreTest {
+    private fun pluginDescriptor(): String = requireNotNull(
+        FactoryLineCoreTest::class.java.classLoader.getResourceAsStream("META-INF/plugin.xml")
+    ) { "The packaged plugin descriptor must be available to plugin tests." }
+        .bufferedReader()
+        .use { it.readText() }
+
     @Test
     fun firstProofIsZeroConfigurationAndMachineReadable() {
         assertEquals(listOf("doctor", "--json"), FactoryLineCommands.firstProof())
@@ -107,6 +113,74 @@ class FactoryLineCoreTest {
         assertEquals("128 MB / 512 MB", IdeHealthAssessment.heap(sample.heapUsedBytes, sample.heapMaxBytes))
         assertTrue(IdeHealthAssessment.reviewNote(sample).contains("unavailable"))
         assertTrue(IdeHealthMarkers.CORRELATION_NOT_CAUSATION.startsWith("IDE_HEALTH"))
+    }
+
+    @Test
+    fun guardianRequiresLocalSamplesBeforeItReportsAnyState() {
+        val assessment = FactoryLineGuardian.assess(emptyList())
+
+        assertEquals(GuardianState.NO_DATA, assessment.state)
+        assertEquals(0, assessment.sampleCount)
+        assertEquals(listOf("no_data"), assessment.signals.map { it.id })
+        assertTrue(assessment.overview().contains("does not infer an IDE state"))
+    }
+
+    @Test
+    fun guardianReportsExactElevatedObservationsWithoutPluginOrCauseClaims() {
+        val samples = listOf(
+            IdeHealthSample(1L, 100L, 1_000L, 20.0, null, false, 20L),
+            IdeHealthSample(2L, 900L, 1_000L, 90.0, null, true, 300L),
+        )
+
+        val assessment = FactoryLineGuardian.assess(samples)
+
+        assertEquals(GuardianState.ATTENTION, assessment.state)
+        assertEquals(3, assessment.elevatedSignalCount)
+        assertEquals(1, assessment.indexingActiveCount)
+        assertEquals(listOf("edt_delay", "process_cpu", "heap", "indexing"), assessment.signals.map { it.id })
+        assertTrue(assessment.timeline.any { it.detail.contains("EDT dispatch delay reached 300 ms") })
+        assertTrue(assessment.timeline.any { it.detail.contains("Indexing became active") })
+        assertTrue(assessment.overview().contains("does not identify a root cause"))
+        assertFalse(assessment.overview().contains("plugin caused", ignoreCase = true))
+    }
+
+    @Test
+    fun guardianTreatsIndexingAndUnavailableCpuAsObservationsOnly() {
+        val samples = listOf(
+            IdeHealthSample(1L, 100L, 1_000L, null, null, false, 10L),
+            IdeHealthSample(2L, 100L, 1_000L, null, null, true, 10L),
+        )
+
+        val assessment = FactoryLineGuardian.assess(samples)
+
+        assertEquals(GuardianState.OBSERVE, assessment.state)
+        assertEquals(0, assessment.elevatedSignalCount)
+        assertEquals(1, assessment.indexingActiveCount)
+        assertEquals(listOf("indexing"), assessment.signals.map { it.id })
+        assertFalse(assessment.signals.any { it.id == "process_cpu" })
+        assertTrue(assessment.timelineBrief().contains("Indexing became active"))
+    }
+
+    @Test
+    fun guardianKeepsOnlyExplicitNavigationRoutes() {
+        assertEquals(
+            listOf("IDE Health", "Index Continuity", "Proof Review", "Intent Ledger", "Workspace Advisor"),
+            GuardianReviewRoutes.all,
+        )
+    }
+
+    @Test
+    fun pluginDescriptorRegistersGuardianAndCoreCompatibilityWithoutAnUpperBound() {
+        val descriptor = pluginDescriptor()
+
+        assertTrue(descriptor.contains("<id>app.factoryline</id>"))
+        assertTrue(descriptor.contains("<name>FactoryLine AI Proof</name>"))
+        assertTrue(descriptor.contains("<idea-version since-build=\"252\""))
+        assertFalse(descriptor.contains("until-build="))
+        assertTrue(descriptor.contains("<depends>com.intellij.modules.platform</depends>"))
+        assertTrue(descriptor.contains("<depends>com.intellij.modules.vcs</depends>"))
+        assertTrue(descriptor.contains("id=\"app.factoryline.intellij.openGuardian\""))
+        assertTrue(descriptor.contains("class=\"app.factoryline.intellij.OpenGuardianAction\""))
     }
 
     @Test
@@ -287,15 +361,6 @@ class FactoryLineCoreTest {
         )
         assertTrue(ProofReviewMarkers.UNAVAILABLE in unavailable.markers)
         assertTrue(unavailable.message.contains("DIFF_BASE_UNAVAILABLE"))
-    }
-
-    @Test
-    fun githubStarPromptRequiresACompletedCommandAndANewPluginVersion() {
-        assertTrue(FactoryLineGitHubStarPrompt.shouldOffer(0, false, null, "0.8.2"))
-        assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(1, false, null, "0.8.2"))
-        assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(0, true, null, "0.8.2"))
-        assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(0, false, "0.8.2", "0.8.2"))
-        assertTrue(FactoryLineGitHubStarPrompt.shouldOffer(0, false, "0.8.1", "0.8.2"))
     }
 
     @Test

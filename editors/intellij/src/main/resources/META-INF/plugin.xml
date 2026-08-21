@@ -3,9 +3,9 @@
     <name>FactoryLine AI Proof</name>
     <vendor email="rkatz22@gmail.com" url="https://github.com/zrk222/code-factory">FactoryLine</vendor>
     <description><![CDATA[
-        <p><strong>Catch AI-generated tests that could never fail — before review.</strong></p>
-        <p><strong>Free, local proof for code built with AI.</strong> FactoryLine connects the current diff to requirements, checks, receipts, and one fact-derived next action inside your JetBrains IDE—without sending source to a provider.</p>
-        <p><strong>New in 0.8.12 — Intent Ledger:</strong> capture a named behavioral promise, explicit non-goal, and negative case for one native Change List, then see scope escape, stale proof, or coverage gaps before review. Capture writes only a local record after an exact typed confirmation; inspection is read-only and never starts an agent or changes source.</p>
+        <p><strong>Your IDE feels slow. Your AI code looks fine. Check both with evidence before you spend another hour guessing.</strong></p>
+        <p><strong>FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains.</strong> Record a short local health window, review what was observed, inspect an AI or teammate diff, and choose the next safe human review step—without uploading source or changing IDE settings.</p>
+        <p><strong>New in 0.8.14 — Guardian Core:</strong> one clear first tab for local runtime observations, an incident timeline, Index Continuity, AI Change Review, Intent Ledger, and Workspace Advisor routes. It is deliberately not a health score, plugin blame engine, or automatic fix button.</p>
         <p><strong>In 60 seconds:</strong> inspect an outcome, fuzzy PRD, or risky diff; challenge whether a test can actually reject the failure it claims to cover; then see the current proof gap before a human decides what may be applied.</p>
         <p><strong>Start now:</strong> open <strong>Tools | FactoryLine | Run First Proof</strong>, confirm the workspace, then inspect the local result. Generate an MVP when you need one; a starter is never called production-ready before relevant evidence exists.</p>
         <h3>What this solves</h3>
@@ -58,12 +58,13 @@
         <h3>Local by design</h3>
         <p>The plugin asks before running a command. It does not upload project files or receipts, store API keys, sign artifacts, or decide whether a release is ready.</p>
         <p>Works with IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip from the 2025.2 platform baseline.</p>
-        <h3>Launch offer</h3>
-        <p>FactoryLine's local proof core remains free. Subject to JetBrains approval, an optional Freemium entitlement is planned for January 1, 2027: $5.95 USD per named seat/month or $60 USD per named seat/year for optional Memory and Enterprise Assurance features, with a planned 30-day trial. The open-source repository remains available. The future entitlement adds no telemetry, source upload, credential storage, signing authority, or automatic release authority.</p>
-        <p>Free and open source. <a href="https://github.com/zrk222/code-factory">Read the documentation, inspect the source, or optionally star Code Factory after it has helped</a>.</p>
+        <h3>Availability</h3>
+        <p>FactoryLine's local proof core is free and open source. Optional paid features are not active in this Marketplace build: there is no checkout, entitlement, source upload, credential storage, signing authority, or automatic release authority.</p>
+        <p><a href="https://github.com/zrk222/code-factory">Read the documentation, inspect the source, and review the license terms</a>.</p>
     ]]></description>
     <change-notes><![CDATA[
         <ul>
+            <li>Add Guardian Core as the first tool-window tab: it summarizes a bounded, local, in-memory IDE-health sample window and exposes navigation-only review routes. Guardian does not diagnose a cause, rank plugins, change IDE settings, or apply a repair.</li>
             <li>Add IDE Health Flight Recorder and Index Continuity Guard: bounded in-memory aggregate runtime samples plus explicit local structural baseline/compare evidence. Both are observation-only; neither changes IDE settings, caches, indexes, plugins, project files, or remote state, and neither claims a causal diagnosis or duration prediction.</li>
             <li>Add Intent Ledger: make the selected native Change List's behavioral promise, non-goal, and negative case visible before code review; surface scope escape, stale proof, and coverage gaps using existing local evidence. Capture is named, exact-confirmed local metadata only; inspection never edits source, changes VCS state, runs a test, starts an agent, or declares production readiness.</li>
             <li>Add Intake Grill, Proof-Delta, Gauntlet Survival Cards, and Earned Autonomy: bind intent before a mission, prevent evidence-free retry loops, make declared negative checks visible, and keep agent trust expiry-bound. These remain local supervision artifacts; they do not run an agent, authorize a repair, or certify production readiness.</li>
@@ -161,6 +162,10 @@
                     class="app.factoryline.intellij.OpenIdeHealthAction"
                     text="Open IDE Health Flight Recorder"
                     description="Record bounded local aggregate runtime observations without changing IDE configuration"/>
+            <action id="app.factoryline.intellij.openGuardian"
+                    class="app.factoryline.intellij.OpenGuardianAction"
+                    text="Open Guardian Core"
+                    description="Review local IDE observations and open safe proof routes without executing a command"/>
             <action id="app.factoryline.intellij.captureIndexContinuityBaseline"
                     class="app.factoryline.intellij.CaptureIndexContinuityBaselineAction"
                     text="Capture Index Continuity Baseline"

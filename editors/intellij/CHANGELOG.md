@@ -1,5 +1,15 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.14 - 2026-08-21
+
+- Add Guardian Core as the first tool-window tab: a bounded, local-only view of
+  existing IDE Health signals with explicit no-data, observed, and attention
+  states, plus a small timeline of threshold crossings and indexing transitions.
+- Add navigation-only review routes to IDE Health, Index Continuity, Workspace
+  Advisor, Proof Review, and Intent Ledger. Guardian never runs a FactoryLine
+  CLI command, changes IDE settings, invalidates caches, disables plugins, or
+  assigns a root cause.
+
 ## 0.8.12 - 2026-08-20
 
 - Add the Intent Ledger: capture a named behavioral promise, non-goal, and

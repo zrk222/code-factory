@@ -54,7 +54,6 @@ object FactoryLineController {
     private fun runBackground(
         project: Project,
         title: String,
-        offerGitHubStar: Boolean = false,
         onCompleted: (CommandResult) -> Unit = { FactoryLinePanels.show(project, it) },
         operation: () -> CommandResult,
     ) {
@@ -66,14 +65,13 @@ object FactoryLineController {
             }
             override fun onSuccess() {
                 onCompleted(result)
-                if (offerGitHubStar) FactoryLineGitHubStarPrompt.afterSuccessfulLocalWork(project, result)
             }
         })
     }
 
     fun runFirstProof(project: Project) {
         if (!FactoryLineExecutionConfirmation.confirm(project, "Run First Proof")) return
-        runBackground(project, "Run First Proof", offerGitHubStar = true) { FactoryLineRunner.firstProof(project) }
+        runBackground(project, "Run First Proof") { FactoryLineRunner.firstProof(project) }
     }
 
     fun analyzeWorkspaceAdvisor(project: Project) {
@@ -131,6 +129,8 @@ object FactoryLineController {
             }
         }
     }
+
+    fun openGuardian(project: Project) = FactoryLinePanels.showGuardian(project)
 
     fun missionOperations(project: Project) {
         val options = MissionGraphOperation.entries.map { it.label }.toTypedArray()
@@ -217,7 +217,6 @@ object FactoryLineController {
 
             override fun onSuccess() {
                 FactoryLinePanels.show(project, result)
-                FactoryLineGitHubStarPrompt.afterSuccessfulLocalWork(project, result)
             }
         })
     }
@@ -604,6 +603,12 @@ class CompareIndexContinuityBaselineAction : FactoryLineAction() {
 class OpenIdeHealthAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.openIdeHealth(it) }
+    }
+}
+
+class OpenGuardianAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.openGuardian(it) }
     }
 }
 

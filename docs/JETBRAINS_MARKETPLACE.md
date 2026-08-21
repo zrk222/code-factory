@@ -53,13 +53,23 @@ Run this before any upload:
 
 ```powershell
 Set-Location editors/intellij
-.\gradlew.bat check buildPlugin verifyPlugin marketplacePreflight
+.\gradlew.bat check guardianReleaseGate
 ```
 
-`marketplacePreflight` inspects the generated ZIP, including Marketplace metadata,
-icons, and change notes. Compatibility is verified across IntelliJ IDEA, PyCharm,
+`guardianReleaseGate` requires the unit suite, generated ZIP, Marketplace preflight,
+and a compatible Plugin Verifier verdict. `marketplacePreflight` inspects the
+generated ZIP, including Marketplace metadata, icons, and change notes. Compatibility is verified across IntelliJ IDEA, PyCharm,
 WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip from the 2025.2 platform
 baseline forward.
+
+The release candidate also carries a concise [JetBrains reviewer summary](JETBRAINS_REVIEWER_SUMMARY.md)
+that maps each local claim to its guardrail and source-level or package-level
+evidence. Marketplace account-side requirements and manual moderation remain
+external gates, never local claims.
+
+Use the strict [0.8.14 compliance checklist](JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_14.md)
+before a dispatch, and keep post-approval discovery/review work inside the
+prepared, policy-compliant [growth plan](JETBRAINS_POST_RELEASE_GROWTH.md).
 
 ## Protected publication
 
@@ -69,7 +79,7 @@ baseline forward.
    must return `MARKETPLACE_UPDATE_CLEAR`.
 2. Merge the tested release commit to `main`.
 3. Create the immutable tag matching the plugin version, currently
-   `jetbrains-v0.8.13` after the remaining Marketplace metadata review is clear.
+   `jetbrains-v0.8.14` after the remaining Marketplace metadata review is clear.
 4. Run **Publish JetBrains Marketplace plugin** with that tag and the intended
    channel. The `JETBRAINS_MARKETPLACE_TOKEN` remains scoped to the protected
    `jetbrains-marketplace` environment.
