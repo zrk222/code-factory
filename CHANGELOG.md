@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## 0.42.0 - 2026-08-21
+
+- Add a hash-bound, human-declared Change Profile to the Engineering Judgment
+  Safety Case. It labels declared change kinds without source inspection,
+  reports novel kinds against active Capsules, and routes `routine`, `domain`,
+  `specialist`, or `architecture` attention deterministically.
+- Add descriptive decision drift and minimum human questions for missing proof,
+  review-due Capsules, pending successors, and novel architecture boundaries.
+  Drift is not compliance, approval, or production readiness.
+- Surface the same declared routing facts in the local CLI, MCP, Graph Ops, and
+  JetBrains Engineering Judgment tab. All remain read-only and retain human
+  authority for decisions, tests, repairs, approval, merge, and release.
+
+## 0.41.0 - 2026-08-21
+
+- Add Engineering Judgment: a repository-tracked, independently human-promoted
+  Capsule with explicit path scope, named owner, review date, rationale
+  references, and declared proof obligations. Reconsideration records a
+  successor proposal without weakening an active decision.
+- Add the deterministic, read-only Change Safety Case. Explicit changed paths
+  route `BLACK` for an invalid Capsule store, `RED` for missing or invalid
+  hash-bound declared evidence, `AMBER` for named-owner review, and `GREEN`
+  only when no active Capsule matches. Green is explicitly not approval or a
+  safety claim.
+- Surface bounded Judgment facts through CLI, MCP, Graph Ops, Factory Studio,
+  the Teams and Enterprise manual, and the JetBrains Engineering Judgment tab.
+  No surface infers a decision, promotes a Capsule, executes a test or repair,
+  changes VCS, approves code, merges, publishes, deploys, signs, sends
+  messages, or accesses credentials.
+
 ## 0.40.1 - 2026-08-20
 
 - Add IDE Health Flight Recorder to the JetBrains adapter: bounded, in-memory

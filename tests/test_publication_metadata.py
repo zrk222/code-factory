@@ -25,7 +25,7 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-20"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-21"
 
 
 def test_pypi_storefront_has_identity_and_canonical_links():
@@ -96,7 +96,10 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     for content in (vscode_readme, intellij_readme):
         assert value in content
         assert "Graph Ops" in content
-    assert value in intellij_plugin
+    assert "Your IDE feels slow. Your AI code looks fine." in intellij_plugin
+    assert "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains." in intellij_plugin
+    assert 'width="40"' in (ROOT / "editors" / "intellij" / "src" / "main" / "resources" / "META-INF" / "pluginIcon.svg").read_text(encoding="utf-8")
+    assert 'height="40"' in (ROOT / "editors" / "intellij" / "src" / "main" / "resources" / "META-INF" / "pluginIcon_dark.svg").read_text(encoding="utf-8")
     assert "Star Code Factory" in vscode_readme
     assert "Star Code Factory" in intellij_readme
     for content in (readme, vscode_readme, intellij_plugin, intellij_readme):
@@ -292,10 +295,10 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.40.2"
+    assert project["version"] == "0.42.0"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.8.10"
-    assert 'version = "0.8.13"' in gradle
+    assert 'version = "0.8.16"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -306,13 +309,16 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
 
     assert "<id>app.factoryline</id>" in plugin_xml
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
-    assert "<p><strong>Catch AI-generated tests that could never fail — before review.</strong></p>" in plugin_xml
-    assert "Free, local proof for code built with AI." in plugin_xml
+    assert "Your IDE feels slow. Your AI code looks fine." in plugin_xml
+    assert "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains." in plugin_xml
+    assert "New in 0.8.16 — Senior Attention, not another vague warning" in plugin_xml
     assert "Tools | FactoryLine | Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
     assert "Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.openGraphOps"' in plugin_xml
     assert "Unified Graph Ops" in plugin_xml
+    assert 'id="app.factoryline.intellij.openGuardian"' in plugin_xml
+    assert "Open Guardian Core" in plugin_xml
     assert "Use FactoryLine when you want to" in plugin_xml
     assert "Turn an outcome into a buildable starting point" in plugin_xml
     assert "Review AI or teammate changes with evidence" in plugin_xml
@@ -393,7 +399,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     assert plan["offer"]["annual_price_usd"] == 60.0
     assert plan["offer"]["monthly_price_status"] == "owner_approved"
     assert plan["offer"]["paid_from"] == "2027-01-01"
-    assert plan["plugin"]["current_free_version"] == "0.8.13"
+    assert plan["plugin"]["current_free_version"] == "0.8.16"
     assert plan["paid_descriptor"] == {
         "product_code": "PFACTORYLINE",
         "product_code_status": "proposed_not_registered",
@@ -404,7 +410,10 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
         "staging_template": "editors/intellij/monetization/plugin-product-descriptor-2027.xml",
     }
     assert "<product-descriptor" not in active_xml
-    assert "$5.95 USD per named seat/month or $60 USD per named seat/year" in active_xml
+    assert "$5.95 USD per named seat/month or $60 USD per named seat/year" not in active_xml
+    assert "Optional paid features are not active in this Marketplace build" in active_xml
+    assert "star Code Factory" not in active_xml
+    assert not (ROOT / "editors" / "intellij" / "src" / "main" / "kotlin" / "app" / "factoryline" / "intellij" / "FactoryLineGitHubStarPrompt.kt").exists()
     assert "$5.95 USD per named seat/month" in readme
     assert 'code="PFACTORYLINE"' in staged_xml
     assert 'release-date="20270101"' in staged_xml
@@ -422,6 +431,24 @@ def test_jetbrains_publication_workflow_blocks_a_pending_listing_update():
     assert "Require the previous Marketplace update to be clear" in workflow
     assert "scripts/jetbrains_marketplace_status.py" in workflow
     assert "--plugin-id 33009 --require-clear --json" in workflow
+    assert "guardianReleaseGate" in workflow
+    assert "verify sealed candidate" in workflow
+    assert "needs: [validate, compatibility]" in workflow
+
+
+def test_jetbrains_reviewer_and_growth_docs_keep_external_approval_and_reviews_honest():
+    reviewer = (ROOT / "docs" / "JETBRAINS_REVIEWER_SUMMARY.md").read_text(encoding="utf-8")
+    compliance = (ROOT / "docs" / "JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_16.md").read_text(encoding="utf-8")
+    growth = (ROOT / "docs" / "JETBRAINS_POST_RELEASE_GROWTH.md").read_text(encoding="utf-8")
+
+    assert "Guardian Core" in reviewer
+    assert "manual review" in reviewer
+    assert "external" in compliance
+    assert "guardianReleaseGate" in compliance
+    assert "prepared, not executed" in growth
+    assert "honest Marketplace review" in growth
+    assert "no Marketplace-review prompt" in growth
+    assert "fabricated" in growth
 
 
 def test_ci_builds_checks_and_smokes_the_installable_package():
@@ -444,8 +471,8 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.40.2"
-    assert metadata["publication_date"] == "2026-08-20"
+    assert metadata["version"] == "0.42.0"
+    assert metadata["publication_date"] == "2026-08-21"
     assert "Unified Graph Ops" in metadata["description"]
     assert "current FactoryLine identity asset" in metadata["description"]
     assert "conceptual visual walkthrough" not in metadata["description"]

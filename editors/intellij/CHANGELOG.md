@@ -1,5 +1,53 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.16 - 2026-08-21
+
+- Make the Engineering Judgment Safety Case actionable for a selected Change
+  List: a human-declared, hash-bound Change Profile can label a new boundary,
+  route the required senior attention, and expose review-due or successor drift.
+  The plugin never guesses change meaning from source, runs a proof, repairs
+  code, promotes a decision, or approves a release.
+
+## 0.8.15 - 2026-08-21
+
+- Add the Engineering Judgment tab: a local, schema-bound view of tracked
+  decision Capsules and a confirmation-gated Change List Safety Case. It shows
+  only deterministic routing and named-review requirements; it cannot infer
+  intent, promote or waive a decision, run a test or repair, approve code,
+  merge, publish, deploy, sign, message, or access credentials.
+
+## 0.8.14 - 2026-08-21
+
+- Add Guardian Core as the first tool-window tab: a bounded, local-only view of
+  existing IDE Health signals with explicit no-data, observed, and attention
+  states, plus a small timeline of threshold crossings and indexing transitions.
+- Add navigation-only review routes to IDE Health, Index Continuity, Workspace
+  Advisor, Proof Review, and Intent Ledger. Guardian never runs a FactoryLine
+  CLI command, changes IDE settings, invalidates caches, disables plugins, or
+  assigns a root cause.
+
+## 0.8.12 - 2026-08-20
+
+- Add the Intent Ledger: capture a named behavioral promise, non-goal, and
+  negative case for one selected native Change List after exact typed
+  confirmation. The local record is hash-bound; it is not source, VCS, agent,
+  or release authority.
+- Add a visual Intent Ledger tab that makes uncontracted work, scope escape,
+  stale proof, requirement-coverage gaps, and ready-for-human-review states
+  legible before review. Inspection is local and read-only.
+
+## 0.8.11 - 2026-08-20
+
+- Add Intake Grill, Proof-Delta, Gauntlet Survival Cards, and Earned Autonomy
+  as local, review-first proof surfaces. They bind supplied evidence and make
+  unsafe or no-gain states visible; they do not run an agent, apply a repair,
+  grant permission, or certify a release.
+- Add Graph Forensics, ProofSearch, and refreshable local Assembly activity to
+  Graph Ops, including read-only evidence and recovery views with execution
+  authority retained by the developer.
+- Refresh Marketplace copy, compatibility validation, icons, vendor metadata,
+  and ZIP preflight checks for the current supported JetBrains IDE baseline.
+
 ## 0.8.6 - 2026-08-14
 
 - Explain the Plan-to-Proof Review workflow for professional and team use:

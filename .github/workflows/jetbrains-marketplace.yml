@@ -59,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          ./gradlew check buildPlugin verifyPlugin marketplacePreflight
+          ./gradlew check guardianReleaseGate
       - name: Seal the verified Marketplace candidate
         shell: bash
         env:
@@ -96,9 +96,97 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  compatibility:
+    name: verify sealed candidate (${{ matrix.product }})
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        product:
+          - IntellijIdea
+          - PyCharm
+          - WebStorm
+          - Rider
+          - CLion
+          - GoLand
+          - RustRover
+          - DataGrip
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/intellij
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_ref }}
+          fetch-depth: 0
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6.2.0
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: jetbrains-marketplace-${{ inputs.release_ref }}
+          path: marketplace-candidate
+      - name: Resolve sealed plugin archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$GITHUB_WORKSPACE/marketplace-candidate/factoryline-intellij.zip"
+      - name: Resolve current DataGrip archive
+        if: matrix.product == 'DataGrip'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > "$RUNNER_TEMP/datagrip-url.txt"
+          import json
+          from urllib.request import urlopen
+
+          with urlopen("https://data.services.jetbrains.com/products/releases?code=DG&latest=true&type=release") as response:
+              release = json.load(response)["DG"][0]
+          print(release["downloads"]["linux"]["link"])
+          PY
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/datagrip.tar.gz" "$(cat "$RUNNER_TEMP/datagrip-url.txt")"
+          mkdir -p "$RUNNER_TEMP/datagrip"
+          tar -xzf "$RUNNER_TEMP/datagrip.tar.gz" -C "$RUNNER_TEMP/datagrip" --strip-components=1
+          test -f "$RUNNER_TEMP/datagrip/product-info.json"
+      - name: Verify sealed plugin against selected IDE
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$GITHUB_WORKSPACE/marketplace-candidate/factoryline-intellij.zip"
+          for attempt in 1 2 3; do
+            if [ "${{ matrix.product }}" = "DataGrip" ]; then
+              if ./gradlew verifyPlugin \
+                -PfactorylineVerificationArchive="$archive" \
+                -PfactorylineVerificationProduct=DataGrip \
+                -PfactorylineLocalVerificationIde="$RUNNER_TEMP/datagrip"; then
+                exit 0
+              fi
+            elif ./gradlew verifyPlugin \
+              -PfactorylineVerificationArchive="$archive" \
+              -PfactorylineVerificationProduct=${{ matrix.product }}; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Verifier attempt $attempt failed; retrying only for a transient JetBrains artifact failure."
+              sleep 20
+            fi
+          done
+          exit 1
+      - name: Preserve compatibility report
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: jetbrains-compatibility-${{ inputs.release_ref }}-${{ matrix.product }}
+          path: editors/intellij/build/reports/pluginVerifier/
+          if-no-files-found: ignore
+          retention-days: 14
+
   publish:
     name: publish verified Marketplace candidate
-    needs: validate
+    needs: [validate, compatibility]
     runs-on: ubuntu-latest
     environment: jetbrains-marketplace
     defaults:

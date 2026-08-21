@@ -54,7 +54,6 @@ object FactoryLineController {
     private fun runBackground(
         project: Project,
         title: String,
-        offerGitHubStar: Boolean = false,
         onCompleted: (CommandResult) -> Unit = { FactoryLinePanels.show(project, it) },
         operation: () -> CommandResult,
     ) {
@@ -66,14 +65,13 @@ object FactoryLineController {
             }
             override fun onSuccess() {
                 onCompleted(result)
-                if (offerGitHubStar) FactoryLineGitHubStarPrompt.afterSuccessfulLocalWork(project, result)
             }
         })
     }
 
     fun runFirstProof(project: Project) {
         if (!FactoryLineExecutionConfirmation.confirm(project, "Run First Proof")) return
-        runBackground(project, "Run First Proof", offerGitHubStar = true) { FactoryLineRunner.firstProof(project) }
+        runBackground(project, "Run First Proof") { FactoryLineRunner.firstProof(project) }
     }
 
     fun analyzeWorkspaceAdvisor(project: Project) {
@@ -131,6 +129,8 @@ object FactoryLineController {
             }
         }
     }
+
+    fun openGuardian(project: Project) = FactoryLinePanels.showGuardian(project)
 
     fun missionOperations(project: Project) {
         val options = MissionGraphOperation.entries.map { it.label }.toTypedArray()
@@ -217,7 +217,6 @@ object FactoryLineController {
 
             override fun onSuccess() {
                 FactoryLinePanels.show(project, result)
-                FactoryLineGitHubStarPrompt.afterSuccessfulLocalWork(project, result)
             }
         })
     }
@@ -338,6 +337,98 @@ object FactoryLineController {
         runBackground(project, "Prepare Repair Scope", onCompleted = { FactoryLinePanels.showRepairSandbox(project, it) }) {
             FactoryLineRunner.repairScope(project, selected.name, selected.paths, outDir)
         }
+    }
+
+    fun inspectIntentLedger(project: Project) {
+        val selected = selectIntentScope(project) ?: return
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect Intent Ledger")) return
+        runBackground(project, "Inspect Intent Ledger", onCompleted = { FactoryLinePanels.showIntentLedger(project, it) }) {
+            FactoryLineRunner.inspectIntentLedger(project, selected.name, selected.paths)
+        }
+    }
+
+    fun inspectJudgment(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect Engineering Judgment")) return
+        runBackground(project, "Inspect Engineering Judgment", onCompleted = { FactoryLinePanels.showJudgment(project, it) }) {
+            FactoryLineRunner.judgmentStatus(project)
+        }
+    }
+
+    fun inspectJudgmentSafetyCase(project: Project) {
+        val selected = selectIntentScope(project, "FactoryLine Engineering Judgment") ?: return
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect Judgment Safety Case")) return
+        runBackground(project, "Inspect Judgment Safety Case", onCompleted = { FactoryLinePanels.showJudgment(project, it) }) {
+            FactoryLineRunner.judgmentSafetyCase(project, selected.paths)
+        }
+    }
+
+    fun captureIntentLedger(project: Project) {
+        val selected = selectIntentScope(project) ?: return
+        val confirmedBy = Messages.showInputDialog(project, "Named human confirming this behavioral contract:", "FactoryLine: Capture Intent Ledger", null)
+            ?.trim().orEmpty()
+        if (confirmedBy.isBlank()) return
+        val promise = Messages.showInputDialog(project, "Observable promise for this Change List:", "FactoryLine: Capture Intent Ledger", null)
+            ?.trim().orEmpty()
+        if (promise.isBlank()) return
+        val nonGoal = Messages.showInputDialog(project, "Explicit non-goal for this Change List:", "FactoryLine: Capture Intent Ledger", null)
+            ?.trim().orEmpty()
+        if (nonGoal.isBlank()) return
+        val failureCase = Messages.showInputDialog(project, "Negative behavior the later proof must be able to catch:", "FactoryLine: Capture Intent Ledger", null)
+            ?.trim().orEmpty()
+        if (failureCase.isBlank()) return
+        val phrase = "CAPTURE ${selected.name}"
+        val confirmation = Messages.showInputDialog(
+            project,
+            "FactoryLine will save only a local intent record for ${selected.paths.size} selected Change List path(s).\n\nIt will not edit source, modify the Change List, run a test, or start an agent.\n\nType exactly: $phrase",
+            "FactoryLine: Confirm Intent Ledger Capture",
+            null,
+        )?.trim().orEmpty()
+        if (confirmation != phrase) {
+            Messages.showErrorDialog(project, "Capture was not confirmed. The required phrase is: $phrase", "FactoryLine Intent Ledger")
+            return
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Capture Intent Ledger")) return
+        runBackground(project, "Capture Intent Ledger", onCompleted = { FactoryLinePanels.showIntentLedger(project, it) }) {
+            FactoryLineRunner.captureIntentLedger(project, selected.name, selected.paths, confirmedBy, promise, nonGoal, failureCase, confirmation)
+        }
+    }
+
+    private fun selectIntentScope(project: Project, title: String = "FactoryLine Intent Ledger"): NativeChangeListScope? {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return null
+        }
+        val scopes = runCatching { NativeChangeListScopes.collect(project, root) }.getOrElse { failure ->
+            Messages.showErrorDialog(project, "Could not read local Change Lists: ${failure.message}", "FactoryLine")
+            return null
+        }.filter { it.paths.isNotEmpty() || it.unavailableChanges > 0 }
+        if (scopes.isEmpty()) {
+            Messages.showInfoMessage(project, "No local Change List contains a project change. Make or select a local change first.", title)
+            return null
+        }
+        val selectedIndex = Messages.showDialog(
+            project,
+            "Select one native Change List. FactoryLine will use only its explicit project paths; it will not change VCS state.",
+            title,
+            scopes.map { it.displayName() }.toTypedArray(),
+            0,
+            Messages.getQuestionIcon(),
+        )
+        if (selectedIndex < 0) return null
+        val selected = scopes[selectedIndex]
+        if (selected.unavailableChanges > 0) {
+            Messages.showErrorDialog(
+                project,
+                "'${selected.name}' includes ${selected.unavailableChanges} change(s) outside the project or without a resolvable file path. FactoryLine will not silently drop them.",
+                title,
+            )
+            return null
+        }
+        if (selected.paths.isEmpty()) {
+            Messages.showErrorDialog(project, "The selected Change List contains no project files to inspect.", title)
+            return null
+        }
+        return selected
     }
 
     fun validateRepairCandidate(project: Project, scope: RepairScopeSummary?) {
@@ -530,6 +621,12 @@ class OpenIdeHealthAction : FactoryLineAction() {
     }
 }
 
+class OpenGuardianAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.openGuardian(it) }
+    }
+}
+
 data class NativeChangeListScope(
     val name: String,
     val paths: List<String>,
@@ -576,6 +673,18 @@ class ReviewCurrentDiffAction : FactoryLineAction() {
 class PrepareRepairScopeAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.prepareRepairScope(it) }
+    }
+}
+
+class InspectIntentLedgerAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.inspectIntentLedger(it) }
+    }
+}
+
+class CaptureIntentLedgerAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.captureIntentLedger(it) }
     }
 }
 

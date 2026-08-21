@@ -6,9 +6,16 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FactoryLineCoreTest {
+    private fun pluginDescriptor(): String = requireNotNull(
+        FactoryLineCoreTest::class.java.classLoader.getResourceAsStream("META-INF/plugin.xml")
+    ) { "The packaged plugin descriptor must be available to plugin tests." }
+        .bufferedReader()
+        .use { it.readText() }
+
     @Test
     fun firstProofIsZeroConfigurationAndMachineReadable() {
         assertEquals(listOf("doctor", "--json"), FactoryLineCommands.firstProof())
@@ -110,6 +117,74 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun guardianRequiresLocalSamplesBeforeItReportsAnyState() {
+        val assessment = FactoryLineGuardian.assess(emptyList())
+
+        assertEquals(GuardianState.NO_DATA, assessment.state)
+        assertEquals(0, assessment.sampleCount)
+        assertEquals(listOf("no_data"), assessment.signals.map { it.id })
+        assertTrue(assessment.overview().contains("does not infer an IDE state"))
+    }
+
+    @Test
+    fun guardianReportsExactElevatedObservationsWithoutPluginOrCauseClaims() {
+        val samples = listOf(
+            IdeHealthSample(1L, 100L, 1_000L, 20.0, null, false, 20L),
+            IdeHealthSample(2L, 900L, 1_000L, 90.0, null, true, 300L),
+        )
+
+        val assessment = FactoryLineGuardian.assess(samples)
+
+        assertEquals(GuardianState.ATTENTION, assessment.state)
+        assertEquals(3, assessment.elevatedSignalCount)
+        assertEquals(1, assessment.indexingActiveCount)
+        assertEquals(listOf("edt_delay", "process_cpu", "heap", "indexing"), assessment.signals.map { it.id })
+        assertTrue(assessment.timeline.any { it.detail.contains("EDT dispatch delay reached 300 ms") })
+        assertTrue(assessment.timeline.any { it.detail.contains("Indexing became active") })
+        assertTrue(assessment.overview().contains("does not identify a root cause"))
+        assertFalse(assessment.overview().contains("plugin caused", ignoreCase = true))
+    }
+
+    @Test
+    fun guardianTreatsIndexingAndUnavailableCpuAsObservationsOnly() {
+        val samples = listOf(
+            IdeHealthSample(1L, 100L, 1_000L, null, null, false, 10L),
+            IdeHealthSample(2L, 100L, 1_000L, null, null, true, 10L),
+        )
+
+        val assessment = FactoryLineGuardian.assess(samples)
+
+        assertEquals(GuardianState.OBSERVE, assessment.state)
+        assertEquals(0, assessment.elevatedSignalCount)
+        assertEquals(1, assessment.indexingActiveCount)
+        assertEquals(listOf("indexing"), assessment.signals.map { it.id })
+        assertFalse(assessment.signals.any { it.id == "process_cpu" })
+        assertTrue(assessment.timelineBrief().contains("Indexing became active"))
+    }
+
+    @Test
+    fun guardianKeepsOnlyExplicitNavigationRoutes() {
+        assertEquals(
+            listOf("IDE Health", "Index Continuity", "Proof Review", "Intent Ledger", "Engineering Judgment", "Workspace Advisor"),
+            GuardianReviewRoutes.all,
+        )
+    }
+
+    @Test
+    fun pluginDescriptorRegistersGuardianAndCoreCompatibilityWithoutAnUpperBound() {
+        val descriptor = pluginDescriptor()
+
+        assertTrue(descriptor.contains("<id>app.factoryline</id>"))
+        assertTrue(descriptor.contains("<name>FactoryLine AI Proof</name>"))
+        assertTrue(descriptor.contains("<idea-version since-build=\"252\""))
+        assertFalse(descriptor.contains("until-build="))
+        assertTrue(descriptor.contains("<depends>com.intellij.modules.platform</depends>"))
+        assertTrue(descriptor.contains("<depends>com.intellij.modules.vcs</depends>"))
+        assertTrue(descriptor.contains("id=\"app.factoryline.intellij.openGuardian\""))
+        assertTrue(descriptor.contains("class=\"app.factoryline.intellij.OpenGuardianAction\""))
+    }
+
+    @Test
     fun proofReviewCommandsAreDirectAndCanFocusOneWorkspacePath() {
         val root = Files.createTempDirectory("factoryline-proof-review")
 
@@ -149,6 +224,107 @@ class FactoryLineCoreTest {
             ),
             FactoryLineCommands.repairCandidate(root, scope, patch, outDir),
         )
+    }
+
+    @Test
+    fun intentLedgerCommandsBindOnlyOneSelectedChangeListAndCarryTheConfirmationPhrase() {
+        val root = Files.createTempDirectory("factoryline-intent-ledger")
+
+        assertEquals(
+            listOf(
+                "intent", "capture", "--root", root.toString(), "--change-list", "Checkout",
+                "--changed", "src/service.py", "--changed", "src/ui.kt",
+                "--confirmed-by", "Ada", "--promise", "Cancel safely", "--non-goal", "No migration",
+                "--failure-case", "Invoice after cancellation", "--confirmation", "CAPTURE Checkout", "--json",
+            ),
+            FactoryLineCommands.intentCapture(
+                root, "Checkout", listOf("src/service.py", "src/ui.kt"), "Ada", "Cancel safely",
+                "No migration", "Invoice after cancellation", "CAPTURE Checkout",
+            ),
+        )
+        assertEquals(
+            listOf(
+                "intent", "inspect", "--root", root.toString(), "--change-list", "Checkout",
+                "--changed", "src/service.py", "--changed", "src/ui.kt", "--json",
+            ),
+            FactoryLineCommands.intentInspect(root, "Checkout", listOf("src/service.py", "src/ui.kt")),
+        )
+    }
+
+    @Test
+    fun judgmentCommandsAreReadOnlyAndBindOnlyExplicitChangedPaths() {
+        val root = Files.createTempDirectory("factoryline-judgment")
+
+        assertEquals(
+            listOf("judgment", "status", "--root", root.toString(), "--json"),
+            FactoryLineCommands.judgmentStatus(root),
+        )
+        assertEquals(
+            listOf(
+                "judgment", "safety-case", "--root", root.toString(),
+                "--changed", "src/service.py", "--changed", "src/ui.kt", "--json",
+            ),
+            FactoryLineCommands.judgmentSafetyCase(root, listOf("src/service.py", "src/ui.kt")),
+        )
+        assertEquals(
+            listOf(
+                "judgment", "safety-case", "--root", root.toString(),
+                "--changed", "src/service.py", "--change-profile", root.resolve(".factory/judgment/change-profile.json").toString(), "--json",
+            ),
+            FactoryLineCommands.judgmentSafetyCase(
+                root,
+                listOf("src/service.py"),
+                root.resolve(".factory/judgment/change-profile.json"),
+            ),
+        )
+    }
+
+    @Test
+    fun judgmentParserAcceptsOnlyBoundedStatusOrSafetyCaseSchemas() {
+        val status = JudgmentSummary.fromJson(
+            """{"schema":"factory.judgment.status.v1","marker":"JUDGMENT_CAPSULE_STATUS_READ_ONLY","state":"valid","counts":{"active":1,"proposed":2,"review_due":0}}""",
+        )
+        val safetyCase = JudgmentSummary.fromJson(
+            """{"schema":"factory.judgment.safety-case.v1","marker":"JUDGMENT_SAFETY_CASE_READ_ONLY","route":"AMBER","attention":"architecture","profile":{"state":"valid"},"novelty":{"novel_change_kinds":["architecture-boundary"]},"human_questions":[{"id":"confirm-novel-architecture-boundary"}],"changed_paths":["src/service.py"],"required_reviewers":["Ada"],"missing_obligations":[]}""",
+        )
+
+        assertNotNull(status)
+        assertEquals("1", status.active)
+        assertEquals("2", status.proposed)
+        assertNotNull(safetyCase)
+        assertEquals("AMBER", safetyCase.route)
+        assertEquals(listOf("Ada"), safetyCase.requiredReviewers)
+        assertEquals("architecture", safetyCase.attention)
+        assertEquals("valid", safetyCase.profileState)
+        assertEquals(listOf("architecture-boundary"), safetyCase.novelChangeKinds)
+        assertEquals(1, safetyCase.humanQuestionCount)
+        assertNull(JudgmentSummary.fromJson("""{"schema":"untrusted","state":"valid"}"""))
+    }
+
+    @Test
+    fun intentLedgerParserRendersOnlyTheSchemaBoundSupervisionFacts() {
+        val ledger = IntentLedgerSummary.fromJson(
+            """
+                {
+                  "schema":"factory.intent-ledger-inspection.v1",
+                  "change_list":"Checkout",
+                  "state":"stale_proof",
+                  "current_changed_paths":["src/service.py"],
+                  "record_path":".factory/intent-ledgers/intent.json",
+                  "record":{"intent":{"promise":"Cancel safely","non_goal":"No migration","failure_case":"Invoice after cancellation"}},
+                  "next_action":{"action":"rerun_stale_proof","reason":"A declared proof input changed."},
+                  "untrusted":"ignored"
+                }
+            """.trimIndent(),
+        )
+
+        assertNotNull(ledger)
+        assertEquals("stale_proof", ledger.state)
+        assertEquals("Cancel safely", ledger.promise)
+        assertEquals(listOf("src/service.py"), ledger.paths)
+        assertEquals("rerun_stale_proof", ledger.nextAction)
+        assertTrue(ledger.brief().contains("never edits source"))
+        assertEquals(null, IntentLedgerSummary.fromJson("{\"schema\":\"untrusted\"}"))
     }
 
     @Test
@@ -236,15 +412,6 @@ class FactoryLineCoreTest {
         )
         assertTrue(ProofReviewMarkers.UNAVAILABLE in unavailable.markers)
         assertTrue(unavailable.message.contains("DIFF_BASE_UNAVAILABLE"))
-    }
-
-    @Test
-    fun githubStarPromptRequiresACompletedCommandAndANewPluginVersion() {
-        assertTrue(FactoryLineGitHubStarPrompt.shouldOffer(0, false, null, "0.8.2"))
-        assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(1, false, null, "0.8.2"))
-        assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(0, true, null, "0.8.2"))
-        assertFalse(FactoryLineGitHubStarPrompt.shouldOffer(0, false, "0.8.2", "0.8.2"))
-        assertTrue(FactoryLineGitHubStarPrompt.shouldOffer(0, false, "0.8.1", "0.8.2"))
     }
 
     @Test

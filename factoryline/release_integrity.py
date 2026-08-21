@@ -74,7 +74,7 @@ def _partition_check(workflow: str) -> dict[str, Any]:
     passed = (
         all(value in python_job for value in ("python -m pytest -q", "python -m build", "python -m twine check dist/*", "Clean wheel smoke"))
         and all(value in vscode_job for value in ("npm ci", "npm run audit", "npm test", "vsce package"))
-        and all(value in intellij_job for value in ("./gradlew check buildPlugin verifyPlugin marketplacePreflight", "setup-java", "setup-gradle"))
+        and all(value in intellij_job for value in ("./gradlew check guardianReleaseGate", "setup-java", "setup-gradle"))
         and "npm ci" not in python_job + intellij_job
         and "./gradlew" not in python_job + vscode_job
     )

@@ -104,7 +104,7 @@ facts, and their review scope is never a root-cause or repair claim. See
 
 ## Install
 
-1. Install `factoryline-code-factory==0.30.0` into the Python environment that
+1. Install `factoryline-code-factory==0.42.0` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the
@@ -129,7 +129,7 @@ opens the repository when you select it and shares no workspace data.
 ## Local Development
 
 ```powershell
-.\gradlew.bat check buildPlugin verifyPlugin
+.\gradlew.bat guardianReleaseGate
 ```
 
 The output ZIP is written to `build/distributions/`. `runIde` opens a sandboxed
@@ -149,12 +149,18 @@ a durable mission graph, and a secret-free multi-provider route selector.
 It is deployed separately from this local IDE plugin; see
 [Hosted PR assurance](../../docs/HOSTED_PR_ASSURANCE.md).
 
-`marketplacePreflight` inspects the actual ZIP and fails when its descriptor,
-light/dark plugin logos, vendor contact, project URL, or release notes are
-missing. GitHub releases remain the current installation channel. The initial
+`guardianReleaseGate` runs the deterministic Guardian behavior tests, packages
+the actual ZIP, verifies current-platform binary compatibility, and rejects
+missing descriptor/action metadata, light/dark icons, vendor contact, project
+URL, release notes, unsafe archive paths, and credential-shaped bundled entries.
+The protected release workflow additionally verifies the immutable ZIP across
+IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip.
+GitHub releases remain the current installation channel. The initial
 Marketplace upload requires a human Vendor profile and review; after that
 bootstrap, the scoped GitHub workflow publishes verified updates using a
 Marketplace publisher token. See [the Marketplace runbook](../../docs/JETBRAINS_MARKETPLACE.md).
+For a concise candidate-by-candidate map of user impact, guardrails, and
+verifiable references, see the [JetBrains reviewer summary](../../docs/JETBRAINS_REVIEWER_SUMMARY.md).
 
 ### 0.28.0 control surfaces
 

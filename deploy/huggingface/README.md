@@ -73,8 +73,17 @@ declared cases; it is not a production-readiness or release certificate.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.40.2` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.41.0` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21381405).
+
+### New: declared Senior Attention before review
+
+When the change is harder than a green check can explain, a team can add a
+human-declared, hash-bound Change Profile. Engineering Judgment compares those
+facts with named active decisions and shows the smallest required attention:
+routine, domain, specialist, or architecture. It exposes novel declared
+boundaries and decision drift; it does not inspect source code to guess intent,
+run proof, approve a change, or release anything.
 
 Use the same local proof context from Cursor or OpenCode through the documented
 [MCP connection](https://github.com/zrk222/code-factory/blob/main/docs/AI_CLIENTS.md).

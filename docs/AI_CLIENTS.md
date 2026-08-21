@@ -11,7 +11,7 @@ Install the published package in the same environment that the client can
 launch, then verify the workspace boundary:
 
 ```powershell
-python -m pip install factoryline-code-factory==0.40.2
+python -m pip install factoryline-code-factory==0.42.0
 factory mcp status --root C:\work\my-mvp --json
 factory mcp config --client generic --root C:\work\my-mvp --json
 ```
@@ -169,6 +169,9 @@ Every configured MCP client can inspect the same bounded surfaces:
 - `factory.agent_license_status` and `factory.combine_status` for current local
   Earned Autonomy evidence and verified scoreboards; they do not authenticate
   an agent, issue a license, start a candidate, or rank a vendor; and
+- `factory.judgment_status` and `factory.judgment_safety_case` for human-tracked
+  decision Capsules and optional declared Change Profile routing; no tool infers
+  source meaning, promotes a decision, executes proof, or grants approval; and
 - receipt inventory and exact receipt lookup;
 - verifier, proof-reuse, Proof-Delta, Gauntlet Survival Card, CDTE, PRD Grill,
   Intake Grill, and workspace-advisor status; and

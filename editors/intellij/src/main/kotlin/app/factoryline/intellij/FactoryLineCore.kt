@@ -140,6 +140,54 @@ object FactoryLineCommands {
         "--patch", patch.toString(), "--out-dir", outDir.toString(), "--json",
     )
 
+    fun intentCapture(
+        root: Path,
+        changeList: String,
+        changedPaths: List<String>,
+        confirmedBy: String,
+        promise: String,
+        nonGoal: String,
+        failureCase: String,
+        confirmation: String,
+    ): List<String> {
+        require(changeList.isNotBlank())
+        require(changedPaths.isNotEmpty())
+        return buildList {
+            addAll(listOf("intent", "capture", "--root", root.toString(), "--change-list", changeList))
+            changedPaths.forEach { addAll(listOf("--changed", it)) }
+            addAll(listOf(
+                "--confirmed-by", confirmedBy,
+                "--promise", promise,
+                "--non-goal", nonGoal,
+                "--failure-case", failureCase,
+                "--confirmation", confirmation,
+                "--json",
+            ))
+        }
+    }
+
+    fun intentInspect(root: Path, changeList: String, changedPaths: List<String>): List<String> {
+        require(changeList.isNotBlank())
+        return buildList {
+            addAll(listOf("intent", "inspect", "--root", root.toString(), "--change-list", changeList))
+            changedPaths.forEach { addAll(listOf("--changed", it)) }
+            add("--json")
+        }
+    }
+
+    fun judgmentStatus(root: Path): List<String> =
+        listOf("judgment", "status", "--root", root.toString(), "--json")
+
+    fun judgmentSafetyCase(root: Path, changedPaths: List<String>, changeProfile: Path? = null): List<String> {
+        require(changedPaths.isNotEmpty())
+        return buildList {
+            addAll(listOf("judgment", "safety-case", "--root", root.toString()))
+            changedPaths.forEach { addAll(listOf("--changed", it)) }
+            changeProfile?.let { addAll(listOf("--change-profile", it.toString())) }
+            add("--json")
+        }
+    }
+
     fun savings(root: Path): List<String> =
         listOf("savings", "report", "--root", root.toString(), "--json")
 
@@ -410,6 +458,48 @@ object FactoryLineRunner {
         val boundedOutDir = WorkspacePath.resolve(root, outDir.toString())
             ?: return CommandResult("Validate Repair Candidate", emptyList(), null, false, "Blocked: the repair artifact directory must stay inside the project.")
         return execute(project, "Validate Repair Candidate", FactoryLineCommands.repairCandidate(root, boundedScope, boundedPatch, boundedOutDir))
+    }
+
+    fun captureIntentLedger(
+        project: Project,
+        changeList: String,
+        changedPaths: List<String>,
+        confirmedBy: String,
+        promise: String,
+        nonGoal: String,
+        failureCase: String,
+        confirmation: String,
+    ): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Capture Intent Ledger", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        if (changedPaths.isEmpty()) {
+            return CommandResult("Capture Intent Ledger", emptyList(), null, false, "Blocked: a Change List must contain at least one project file.")
+        }
+        return execute(project, "Capture Intent Ledger", FactoryLineCommands.intentCapture(
+            root, changeList, changedPaths, confirmedBy, promise, nonGoal, failureCase, confirmation,
+        ))
+    }
+
+    fun inspectIntentLedger(project: Project, changeList: String, changedPaths: List<String>): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Inspect Intent Ledger", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        return execute(project, "Inspect Intent Ledger", FactoryLineCommands.intentInspect(root, changeList, changedPaths))
+    }
+
+    fun judgmentStatus(project: Project): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Inspect Engineering Judgment", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        return execute(project, "Inspect Engineering Judgment", FactoryLineCommands.judgmentStatus(root))
+    }
+
+    fun judgmentSafetyCase(project: Project, changedPaths: List<String>): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Inspect Judgment Safety Case", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        if (changedPaths.isEmpty()) {
+            return CommandResult("Inspect Judgment Safety Case", emptyList(), null, false, "Blocked: a Change List must contain at least one project file.")
+        }
+        val profile = root.resolve(".factory/judgment/change-profile.json").takeIf { Files.isRegularFile(it) }
+        return execute(project, "Inspect Judgment Safety Case", FactoryLineCommands.judgmentSafetyCase(root, changedPaths, profile))
     }
 
     fun run(project: Project, operation: FactoryLineOperation, feature: String): CommandResult {
