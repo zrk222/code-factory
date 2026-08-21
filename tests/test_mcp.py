@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import StringIO
+import hashlib
 import json
 from pathlib import Path
 
@@ -71,7 +72,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {"name": "code-factory", "version": "0.41.0"},
+                "serverInfo": {"name": "code-factory", "version": "0.42.0"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }
@@ -157,6 +158,35 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     }, tmp_path)
     assert resource["result"]["marker"] == "MCP_RESOURCES_PARITY"
     assert json.loads(resource["result"]["contents"][0]["text"]) == graph_ops_snapshot(tmp_path)
+    assert _files(tmp_path) == before
+
+
+def test_mcp_judgment_safety_case_accepts_only_a_hash_bound_declared_change_profile(tmp_path: Path):
+    core = {
+        "schema": "factory.judgment.change-profile.v1",
+        "changed": [{"path": "src/service.py", "change_kinds": ["public-api"]}],
+    }
+    profile = {
+        **core,
+        "profile_sha256": hashlib.sha256(
+            json.dumps(core, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        ).hexdigest(),
+    }
+    (tmp_path / "change-profile.json").write_text(json.dumps(profile), encoding="utf-8")
+    before = _files(tmp_path)
+
+    result = _content(dispatch({
+        "jsonrpc": "2.0", "id": 45, "method": "tools/call", "params": {
+            "name": "factory.judgment_safety_case",
+            "arguments": {"changed_paths": ["src/service.py"], "change_profile": "change-profile.json"},
+        },
+    }, tmp_path))
+
+    safety_case = result["safety_case"]
+    assert result["marker"] == "MCP_JUDGMENT_SAFETY_CASE_READ_ONLY"
+    assert safety_case["route"] == "GREEN"
+    assert safety_case["profile"]["state"] == "valid"
+    assert safety_case["facts"]["source_semantics_inferred"] is False
     assert _files(tmp_path) == before
 
 

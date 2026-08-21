@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.42.0 - 2026-08-21
+
+- Add a hash-bound, human-declared Change Profile to the Engineering Judgment
+  Safety Case. It labels declared change kinds without source inspection,
+  reports novel kinds against active Capsules, and routes `routine`, `domain`,
+  `specialist`, or `architecture` attention deterministically.
+- Add descriptive decision drift and minimum human questions for missing proof,
+  review-due Capsules, pending successors, and novel architecture boundaries.
+  Drift is not compliance, approval, or production readiness.
+- Surface the same declared routing facts in the local CLI, MCP, Graph Ops, and
+  JetBrains Engineering Judgment tab. All remain read-only and retain human
+  authority for decisions, tests, repairs, approval, merge, and release.
+
 ## 0.41.0 - 2026-08-21
 
 - Add Engineering Judgment: a repository-tracked, independently human-promoted

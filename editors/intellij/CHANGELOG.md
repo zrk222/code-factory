@@ -1,5 +1,13 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.16 - 2026-08-21
+
+- Make the Engineering Judgment Safety Case actionable for a selected Change
+  List: a human-declared, hash-bound Change Profile can label a new boundary,
+  route the required senior attention, and expose review-due or successor drift.
+  The plugin never guesses change meaning from source, runs a proof, repairs
+  code, promotes a decision, or approves a release.
+
 ## 0.8.15 - 2026-08-21
 
 - Add the Engineering Judgment tab: a local, schema-bound view of tracked

@@ -25,7 +25,7 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-20"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-21"
 
 
 def test_pypi_storefront_has_identity_and_canonical_links():
@@ -295,10 +295,10 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.41.0"
+    assert project["version"] == "0.42.0"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.8.10"
-    assert 'version = "0.8.15"' in gradle
+    assert 'version = "0.8.16"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -311,7 +311,7 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
     assert "Your IDE feels slow. Your AI code looks fine." in plugin_xml
     assert "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains." in plugin_xml
-    assert "New in 0.8.15 — Engineering Judgment Safety Case" in plugin_xml
+    assert "New in 0.8.16 — Senior Attention, not another vague warning" in plugin_xml
     assert "Tools | FactoryLine | Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
     assert "Run First Proof" in plugin_xml
@@ -399,7 +399,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     assert plan["offer"]["annual_price_usd"] == 60.0
     assert plan["offer"]["monthly_price_status"] == "owner_approved"
     assert plan["offer"]["paid_from"] == "2027-01-01"
-    assert plan["plugin"]["current_free_version"] == "0.8.15"
+    assert plan["plugin"]["current_free_version"] == "0.8.16"
     assert plan["paid_descriptor"] == {
         "product_code": "PFACTORYLINE",
         "product_code_status": "proposed_not_registered",
@@ -438,7 +438,7 @@ def test_jetbrains_publication_workflow_blocks_a_pending_listing_update():
 
 def test_jetbrains_reviewer_and_growth_docs_keep_external_approval_and_reviews_honest():
     reviewer = (ROOT / "docs" / "JETBRAINS_REVIEWER_SUMMARY.md").read_text(encoding="utf-8")
-    compliance = (ROOT / "docs" / "JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_14.md").read_text(encoding="utf-8")
+    compliance = (ROOT / "docs" / "JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_16.md").read_text(encoding="utf-8")
     growth = (ROOT / "docs" / "JETBRAINS_POST_RELEASE_GROWTH.md").read_text(encoding="utf-8")
 
     assert "Guardian Core" in reviewer
@@ -471,7 +471,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.41.0"
+    assert metadata["version"] == "0.42.0"
     assert metadata["publication_date"] == "2026-08-21"
     assert "Unified Graph Ops" in metadata["description"]
     assert "current FactoryLine identity asset" in metadata["description"]

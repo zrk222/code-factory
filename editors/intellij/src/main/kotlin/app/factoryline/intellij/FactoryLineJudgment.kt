@@ -33,6 +33,10 @@ data class JudgmentSummary(
     val active: String?,
     val proposed: String?,
     val reviewDue: String?,
+    val attention: String?,
+    val profileState: String?,
+    val novelChangeKinds: List<String>,
+    val humanQuestionCount: Int,
     val requiredReviewers: List<String>,
     val changedPaths: List<String>,
     val missingObligations: List<String>,
@@ -42,11 +46,15 @@ data class JudgmentSummary(
         appendLine("FactoryLine Engineering Judgment")
         appendLine("State: $state")
         route?.let { appendLine("Safety-case route: $it") }
+        attention?.let { appendLine("Senior attention: ${it.replaceFirstChar { character -> character.uppercase() }}") }
+        profileState?.let { appendLine("Declared change profile: $it") }
         active?.let { appendLine("Active capsules: $it") }
         proposed?.let { appendLine("Proposed capsules: $it") }
         reviewDue?.let { appendLine("Review due: $it") }
         if (changedPaths.isNotEmpty()) appendLine("Explicit changed paths: ${changedPaths.size}")
         if (requiredReviewers.isNotEmpty()) appendLine("Named reviewers: ${requiredReviewers.joinToString()}")
+        if (novelChangeKinds.isNotEmpty()) appendLine("New declared change kinds: ${novelChangeKinds.joinToString()}")
+        if (humanQuestionCount > 0) appendLine("Human questions: $humanQuestionCount")
         if (missingObligations.isNotEmpty()) appendLine("Missing proof obligations: ${missingObligations.size}")
         append("Boundary: the panel reads local Capsule metadata and deterministic routing only. It cannot infer intent, promote or waive a decision, execute a repair, approve code, merge, publish, deploy, sign, message, or access credentials.")
     }
@@ -56,6 +64,8 @@ data class JudgmentSummary(
             val schema = JsonFields.string(rawJson, "schema") ?: return null
             if (schema !in setOf("factory.judgment.status.v1", "factory.judgment.safety-case.v1")) return null
             val counts = JsonFields.container(rawJson, "counts", '{', '}')
+            val profile = JsonFields.container(rawJson, "profile", '{', '}')
+            val novelty = JsonFields.container(rawJson, "novelty", '{', '}')
             return JudgmentSummary(
                 schema = schema,
                 state = JsonFields.string(rawJson, "state") ?: JsonFields.string(rawJson, "route") ?: return null,
@@ -64,6 +74,13 @@ data class JudgmentSummary(
                 active = counts?.let { JsonFields.number(it, "active") },
                 proposed = counts?.let { JsonFields.number(it, "proposed") },
                 reviewDue = counts?.let { JsonFields.number(it, "review_due") },
+                attention = JsonFields.string(rawJson, "attention"),
+                profileState = profile?.let { JsonFields.string(it, "state") },
+                novelChangeKinds = novelty?.let { content ->
+                    JsonFields.objects(content, "novel_change_kinds").mapNotNull { JsonFields.string(it, "kind") }
+                        .ifEmpty { JsonFields.strings(content, "novel_change_kinds") }
+                } ?: emptyList(),
+                humanQuestionCount = JsonFields.objects(rawJson, "human_questions").size,
                 requiredReviewers = JsonFields.strings(rawJson, "required_reviewers"),
                 changedPaths = JsonFields.strings(rawJson, "changed_paths"),
                 missingObligations = JsonFields.strings(rawJson, "missing_obligations"),
@@ -119,8 +136,8 @@ class FactoryLineJudgmentPanel(private val project: Project) : JPanel(BorderLayo
         }
         status.text = when (value.route) {
             "RED" -> "Safety Case: declared proof is missing or invalid. A named owner must resolve it."
-            "AMBER" -> "Safety Case: exact declared proof is bound; named owner review remains required."
-            "GREEN" -> "Safety Case: no active tracked Capsule matched. This is not approval or production readiness."
+            "AMBER" -> "Safety Case: exact declared proof is bound; ${value.attention ?: "named owner"} review remains required."
+            "GREEN" -> "Safety Case: no active tracked Capsule matched. This is not approval or production readiness; unclassified changes are still visible."
             else -> "Engineering Judgment status is local and read-only. Human promotion and review remain required."
         }
         summary.text = value.brief()

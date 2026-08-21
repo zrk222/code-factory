@@ -12,6 +12,7 @@ import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.Copy
 import java.nio.charset.StandardCharsets
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
@@ -35,6 +36,9 @@ abstract class MarketplacePreflightTask : DefaultTask() {
             "META-INF/plugin.xml",
             "META-INF/pluginIcon.svg",
             "META-INF/pluginIcon_dark.svg",
+            "META-INF/licenses/LICENSE-MIT.txt",
+            "META-INF/licenses/LICENSE-APACHE.txt",
+            "META-INF/licenses/NOTICE.txt",
         )
         val packagedEntries = linkedMapOf<String, ByteArray>()
         val packagedJarEntries = linkedSetOf<String>()
@@ -132,7 +136,7 @@ plugins {
 }
 
 group = "app.factoryline"
-version = "0.8.15"
+version = "0.8.16"
 
 // Keep release task inputs configuration-cache safe. Do not resolve the
 // Project from a task action: Gradle 9.5 treats that as a release-gate error.
@@ -200,6 +204,25 @@ intellijPlatform {
 // the IntelliJ runtime, so only the production plugin classes need instrumentation.
 tasks.named("instrumentTestCode") {
     enabled = false
+}
+
+// Ship the repository's existing dual-license terms and notice inside the
+// distributable so the local artifact carries the same legal context as its
+// Marketplace/source listing. Vendor-console EULA and trader declarations
+// remain Marketplace-owner responsibilities.
+tasks.named<Copy>("processResources") {
+    from(project.file("../../LICENSE-MIT")) {
+        into("META-INF/licenses")
+        rename { "LICENSE-MIT.txt" }
+    }
+    from(project.file("../../LICENSE-APACHE")) {
+        into("META-INF/licenses")
+        rename { "LICENSE-APACHE.txt" }
+    }
+    from(project.file("../../NOTICE")) {
+        into("META-INF/licenses")
+        rename { "NOTICE.txt" }
+    }
 }
 
 // Compatibility jobs verify the immutable ZIP already built and checked by the

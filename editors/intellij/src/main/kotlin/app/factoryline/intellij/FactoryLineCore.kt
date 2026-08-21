@@ -178,11 +178,12 @@ object FactoryLineCommands {
     fun judgmentStatus(root: Path): List<String> =
         listOf("judgment", "status", "--root", root.toString(), "--json")
 
-    fun judgmentSafetyCase(root: Path, changedPaths: List<String>): List<String> {
+    fun judgmentSafetyCase(root: Path, changedPaths: List<String>, changeProfile: Path? = null): List<String> {
         require(changedPaths.isNotEmpty())
         return buildList {
             addAll(listOf("judgment", "safety-case", "--root", root.toString()))
             changedPaths.forEach { addAll(listOf("--changed", it)) }
+            changeProfile?.let { addAll(listOf("--change-profile", it.toString())) }
             add("--json")
         }
     }
@@ -497,7 +498,8 @@ object FactoryLineRunner {
         if (changedPaths.isEmpty()) {
             return CommandResult("Inspect Judgment Safety Case", emptyList(), null, false, "Blocked: a Change List must contain at least one project file.")
         }
-        return execute(project, "Inspect Judgment Safety Case", FactoryLineCommands.judgmentSafetyCase(root, changedPaths))
+        val profile = root.resolve(".factory/judgment/change-profile.json").takeIf { Files.isRegularFile(it) }
+        return execute(project, "Inspect Judgment Safety Case", FactoryLineCommands.judgmentSafetyCase(root, changedPaths, profile))
     }
 
     fun run(project: Project, operation: FactoryLineOperation, feature: String): CommandResult {

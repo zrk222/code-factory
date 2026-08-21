@@ -27,12 +27,15 @@ implicit conversion from an existing receipt into a decision.
 
 ## Change Safety Case
 
-Pass explicit changed paths and optional, independently produced proof receipts:
+Pass explicit changed paths, optional independently produced proof receipts,
+and, when the human reviewer wants explicit attention routing, a hash-bound
+Change Profile:
 
 ```powershell
 factory judgment safety-case --root . `
   --changed src/payments/checkout.py `
-  --proof-receipt .factory/proofs/checkout-contract.json --json
+  --proof-receipt .factory/proofs/checkout-contract.json `
+  --change-profile .factory/judgment/change-profile.json --json
 ```
 
 The compiler returns a read-only route:
@@ -48,17 +51,34 @@ Each accepted receipt carries `factory.judgment.proof-receipt.v1`, a Capsule ID,
 obligation ID, `verified` verdict, and SHA-256 bindings for the exact evidence
 files. Changing a bound file makes that receipt unusable for the Safety Case.
 
+## Declared change kinds and Senior Attention
+
+A Change Profile is optional canonical JSON with schema
+`factory.judgment.change-profile.v1`, an exact changed-path list, supported
+human-declared `change_kinds`, and a SHA-256 over that canonical core. It can
+label `architecture-boundary`, `schema-change`, `public-api`, `concurrency`,
+`authentication`, `data-deletion`, `external-dependency`, `migration`,
+`shared-state`, `rollback`, or `incident-recurrence`.
+
+FactoryLine compares only these declared facts against matching active Capsule
+metadata. It returns `routine`, `domain`, `specialist`, or `architecture`
+attention plus known/novel kinds, descriptive decision drift, and the smallest
+deterministic human questions. Missing or invalid profiles remain explicit. No
+source code, VCS, ticket, chat, or model response is read to infer a kind.
+
 ## Surfaces
 
 - CLI: `factory judgment propose`, `promote`, `reconsider`, `status`, and
   `safety-case`.
 - MCP: read-only `factory.judgment_status` and
   `factory.judgment_safety_case` tools.
-- Graph Ops: Capsule/scope nodes, review-due counts, decision-specific next
-  actions, and a locked visual supervision panel.
+- Graph Ops: Capsule/scope nodes, declared category, change kinds, attention
+  floor, enforcement level, proof-obligation count, review-due counts, and a
+  locked visual supervision panel.
 - JetBrains: **Engineering Judgment** tab with separate, workspace-confirmed
   local actions to inspect decision status or compile a Safety Case from one
-  selected native Change List.
+  selected native Change List; a conventional workspace Change Profile is
+  included only when it already exists.
 
 ## Authority boundary
 

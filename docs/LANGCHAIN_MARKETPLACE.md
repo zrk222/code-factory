@@ -17,7 +17,7 @@ Install the Python package into the environment that will host the local MCP
 server:
 
 ```bash
- python -m pip install -U "factoryline-code-factory>=0.41.0"
+ python -m pip install -U "factoryline-code-factory>=0.42.0"
 factory mcp status --root .
 ```
 

@@ -1145,6 +1145,7 @@ def main(argv=None) -> int:
     judgment_safety.add_argument("--root", default=".")
     judgment_safety.add_argument("--changed", action="append", required=True, help="explicit workspace-relative changed path; repeat as needed")
     judgment_safety.add_argument("--proof-receipt", action="append", default=[], help="workspace-contained hash-bound obligation receipt; repeat as needed")
+    judgment_safety.add_argument("--change-profile", help="optional workspace-contained, hash-bound declared change profile JSON")
     judgment_safety.add_argument("--json", action="store_true")
 
     memory = sub.add_parser("memory", help="read a compact next-proof brief with redacted continuity and observed local Git attribution")
@@ -3250,7 +3251,12 @@ def main(argv=None) -> int:
             elif a.judgment_cmd == "reconsider":
                 payload = reconsider_capsule(Path(a.root), a.capsule_id, a.successor, requested_by=a.requested_by, reason=a.reason)
             elif a.judgment_cmd == "safety-case":
-                payload = safety_case(Path(a.root), changed=a.changed, proof_receipts=[Path(item) for item in a.proof_receipt])
+                payload = safety_case(
+                    Path(a.root),
+                    changed=a.changed,
+                    proof_receipts=[Path(item) for item in a.proof_receipt],
+                    change_profile=Path(a.change_profile) if a.change_profile else None,
+                )
             else:
                 payload = judgment_status(Path(a.root))
         except (JudgmentError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:

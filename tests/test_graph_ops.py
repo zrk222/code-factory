@@ -196,7 +196,7 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert 'id="promote-judgment"' in page
     assert "Promote or waive decision" in page
     assert 'disabled aria-describedby="judgment-lock"' in page
-    assert "factory judgment status --root . --json" in page
+    assert "factory judgment safety-case --root . --changed <path> --change-profile .factory/judgment/change-profile.json --json" in page
     assert "renderJudgment(nodes)" in page
     assert "cannot infer intent, promote or waive a decision, execute a repair, approve code, merge, publish, deploy, sign, message, or access credentials" in page
     assert "Observed project contributors" in page

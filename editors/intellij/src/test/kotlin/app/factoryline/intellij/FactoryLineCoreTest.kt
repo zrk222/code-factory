@@ -266,6 +266,17 @@ class FactoryLineCoreTest {
             ),
             FactoryLineCommands.judgmentSafetyCase(root, listOf("src/service.py", "src/ui.kt")),
         )
+        assertEquals(
+            listOf(
+                "judgment", "safety-case", "--root", root.toString(),
+                "--changed", "src/service.py", "--change-profile", root.resolve(".factory/judgment/change-profile.json").toString(), "--json",
+            ),
+            FactoryLineCommands.judgmentSafetyCase(
+                root,
+                listOf("src/service.py"),
+                root.resolve(".factory/judgment/change-profile.json"),
+            ),
+        )
     }
 
     @Test
@@ -274,7 +285,7 @@ class FactoryLineCoreTest {
             """{"schema":"factory.judgment.status.v1","marker":"JUDGMENT_CAPSULE_STATUS_READ_ONLY","state":"valid","counts":{"active":1,"proposed":2,"review_due":0}}""",
         )
         val safetyCase = JudgmentSummary.fromJson(
-            """{"schema":"factory.judgment.safety-case.v1","marker":"JUDGMENT_SAFETY_CASE_READ_ONLY","route":"AMBER","changed_paths":["src/service.py"],"required_reviewers":["Ada"],"missing_obligations":[]}""",
+            """{"schema":"factory.judgment.safety-case.v1","marker":"JUDGMENT_SAFETY_CASE_READ_ONLY","route":"AMBER","attention":"architecture","profile":{"state":"valid"},"novelty":{"novel_change_kinds":["architecture-boundary"]},"human_questions":[{"id":"confirm-novel-architecture-boundary"}],"changed_paths":["src/service.py"],"required_reviewers":["Ada"],"missing_obligations":[]}""",
         )
 
         assertNotNull(status)
@@ -283,6 +294,10 @@ class FactoryLineCoreTest {
         assertNotNull(safetyCase)
         assertEquals("AMBER", safetyCase.route)
         assertEquals(listOf("Ada"), safetyCase.requiredReviewers)
+        assertEquals("architecture", safetyCase.attention)
+        assertEquals("valid", safetyCase.profileState)
+        assertEquals(listOf("architecture-boundary"), safetyCase.novelChangeKinds)
+        assertEquals(1, safetyCase.humanQuestionCount)
         assertNull(JudgmentSummary.fromJson("""{"schema":"untrusted","state":"valid"}"""))
     }
 

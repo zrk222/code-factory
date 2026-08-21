@@ -102,13 +102,19 @@ Use an **Engineering Judgment Capsule** when a design trade-off must survive a
 handoff, an agent rerun, or a later change. A proposing human records exact
 scope, owner, review date, rationale references, and proof obligations; a
 different named human promotes it. Before review, compile a deterministic
-Safety Case from the explicit changed paths and hash-bound proof receipts.
+Safety Case from explicit changed paths and hash-bound proof receipts. Add the
+optional, human-declared Change Profile when the team needs to identify a novel
+boundary and route the senior attention it requires without pretending a tool
+can infer change meaning from code.
 
 - `RED` means a matching decision is missing declared proof evidence.
 - `AMBER` means the named owner must review an exact bound decision.
 - `GREEN` means no active tracked Capsule matched; it is never approval.
 - `BLACK` means the decision store is invalid and was not replaced by an
   inferred or historical substitute.
+- `routine`, `domain`, `specialist`, and `architecture` are attention routes,
+  not approval states; a novel declared architecture boundary routes the last
+  of these, while invalid or absent profiles remain explicit.
 
 The Capsule is a review-routing artifact, not a policy engine. It cannot infer
 intent, run a test, apply a repair, merge, publish, deploy, or grant access.

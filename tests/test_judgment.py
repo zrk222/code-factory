@@ -11,6 +11,8 @@ from factoryline.cli import main
 from factoryline.graph_ops import graph_ops_snapshot
 from factoryline.judgment import (
     CAPSULE_SCHEMA,
+    CAPSULE_V2_SCHEMA,
+    CHANGE_PROFILE_SCHEMA,
     PROOF_RECEIPT_SCHEMA,
     JudgmentError,
     judgment_status,
@@ -34,6 +36,19 @@ def _candidate(capsule_id: str = "billing-negative-proof", supersedes: str | Non
         "owner": "Lin",
         "review_by": "2027-01-01",
         "supersedes": supersedes,
+    }
+
+
+def _v2_candidate(capsule_id: str = "billing-concurrency-contract", *, review_by: str = "2027-01-01") -> dict:
+    return {
+        **_candidate(capsule_id),
+        "schema": CAPSULE_V2_SCHEMA,
+        "category": "architecture",
+        "change_kinds": ["concurrency"],
+        "attention_floor": "domain",
+        "enforcement_level": "proof",
+        "incident_refs": ["incidents/billing-race.md"],
+        "review_by": review_by,
     }
 
 
@@ -62,6 +77,23 @@ def _receipt(root: Path, *, capsule_id: str = "billing-negative-proof", obligati
     result.parent.mkdir(parents=True, exist_ok=True)
     result.write_text(json.dumps(payload), encoding="utf-8")
     return result
+
+
+def _change_profile(root: Path, changed: list[dict[str, object]], name: str = "change-profile.json") -> Path:
+    normalized = sorted(
+        [{"path": str(item["path"]), "change_kinds": sorted(str(kind) for kind in item["change_kinds"])} for item in changed],
+        key=lambda item: item["path"],
+    )
+    core = {"schema": CHANGE_PROFILE_SCHEMA, "changed": normalized}
+    payload = {
+        **core,
+        "profile_sha256": hashlib.sha256(
+            json.dumps(core, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        ).hexdigest(),
+    }
+    path = root / name
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
 
 
 def test_proposal_requires_independent_promotion_and_is_tracked(tmp_path: Path) -> None:
@@ -154,6 +186,66 @@ def test_graph_ops_projects_human_tracked_judgment_without_granting_execution(tm
     assert "GRAPH_OPS_JUDGMENT_CAPSULES_READ_ONLY" in graph["markers"]
     capsule = next(node for node in graph["nodes"] if node["kind"] == "judgment_capsule")
     assert capsule["facts"]["owner"] == "Lin"
+    assert capsule["facts"]["proof_obligation_count"] == 1
     assert capsule["facts"]["execution"] is False
     assert all(value is False for value in capsule["facts"]["authority"].values())
     assert before == after
+
+
+def test_declared_change_profile_routes_attention_and_novelty_without_source_inference(tmp_path: Path) -> None:
+    candidate = _v2_candidate()
+    propose_capsule(tmp_path, candidate, proposed_by="Ada", at="2026-08-21T12:00:00Z")
+    promote_capsule(tmp_path, candidate["id"], promoted_by="Lin", reason="Independent review.", at="2026-08-21T12:01:00Z")
+    receipt = _receipt(tmp_path, capsule_id=candidate["id"])
+    profile = _change_profile(tmp_path, [{"path": "app/billing.py", "change_kinds": ["concurrency", "architecture-boundary"]}])
+
+    result = safety_case(
+        tmp_path,
+        changed=["app/billing.py"],
+        proof_receipts=[receipt],
+        change_profile=profile,
+        as_of=date(2026, 8, 21),
+    )
+
+    assert result["route"] == "AMBER"
+    assert result["attention"] == "architecture"
+    assert result["profile"]["state"] == "valid"
+    assert result["novelty"] == {
+        "known_change_kinds": [{"path": "app/billing.py", "kind": "concurrency", "capsule_ids": [candidate["id"]]}],
+        "novel_change_kinds": [{"path": "app/billing.py", "kind": "architecture-boundary", "reason": "no_matching_active_capsule_declares_kind"}],
+        "unclassified_changed_paths": [],
+    }
+    assert result["drift"] == [{"capsule_id": candidate["id"], "state": "declared_proof_bound"}]
+    assert result["facts"]["source_semantics_inferred"] is False
+    assert any(question["id"] == "decision-app-billing.py-architecture-boundary" for question in result["human_questions"])
+
+
+def test_invalid_change_profile_is_explicit_and_never_replaced_by_inference(tmp_path: Path) -> None:
+    candidate = _v2_candidate()
+    propose_capsule(tmp_path, candidate, proposed_by="Ada", at="2026-08-21T12:00:00Z")
+    promote_capsule(tmp_path, candidate["id"], promoted_by="Lin", reason="Independent review.", at="2026-08-21T12:01:00Z")
+    receipt = _receipt(tmp_path, capsule_id=candidate["id"])
+    profile = _change_profile(tmp_path, [{"path": "app/billing.py", "change_kinds": ["concurrency"]}])
+    payload = json.loads(profile.read_text(encoding="utf-8"))
+    payload["profile_sha256"] = "0" * 64
+    profile.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = safety_case(tmp_path, changed=["app/billing.py"], proof_receipts=[receipt], change_profile=profile, as_of=date(2026, 8, 21))
+
+    assert result["route"] == "AMBER"
+    assert result["profile"]["state"] == "invalid"
+    assert result["profile"]["error"]["code"] == "JUDGMENT_CHANGE_PROFILE_INVALID"
+    assert result["facts"]["source_semantics_inferred"] is False
+
+
+def test_review_due_v2_capsule_exposes_drift_and_named_human_question(tmp_path: Path) -> None:
+    candidate = _v2_candidate(review_by="2026-08-01")
+    propose_capsule(tmp_path, candidate, proposed_by="Ada", at="2026-08-21T12:00:00Z")
+    promote_capsule(tmp_path, candidate["id"], promoted_by="Lin", reason="Independent review.", at="2026-08-21T12:01:00Z")
+    receipt = _receipt(tmp_path, capsule_id=candidate["id"])
+
+    result = safety_case(tmp_path, changed=["app/billing.py"], proof_receipts=[receipt], as_of=date(2026, 8, 21))
+
+    assert result["attention"] == "specialist"
+    assert result["drift"] == [{"capsule_id": candidate["id"], "state": "review_due"}]
+    assert any(question["id"] == f"review-{candidate['id']}" for question in result["human_questions"])

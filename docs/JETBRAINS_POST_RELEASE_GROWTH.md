@@ -35,7 +35,7 @@ an opportunity to inspect its result. It must be:
 - opened only after the user chooses it; no browser launch or data transfer
   occurs by default.
 
-**Current implementation state:** 0.8.15 has no post-success browser prompt
+**Current implementation state:** 0.8.16 has no post-success browser prompt
 and no Marketplace-review prompt. A Marketplace-review invitation has **not**
 been shipped; it requires separate policy review, UX copy, and a tested
 implementation before activation.
@@ -61,7 +61,7 @@ it unavailable; do not substitute GitHub traffic or CI runs.
   boundary, and a release receipt—not a promise of automatic repair.
 - Keep Marketplace copy factual: Guardian observes a bounded local window; it
   does not diagnose root cause, improve performance, or fix the IDE.
-- Use the [0.8.15 compliance checklist](JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_15.md)
+- Use the [0.8.16 compliance checklist](JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_16.md)
   before each update so adoption work never becomes a way to bypass review.
 
 ## Non-goals

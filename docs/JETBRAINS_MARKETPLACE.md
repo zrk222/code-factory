@@ -67,7 +67,7 @@ that maps each local claim to its guardrail and source-level or package-level
 evidence. Marketplace account-side requirements and manual moderation remain
 external gates, never local claims.
 
-Use the strict [0.8.15 compliance checklist](JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_15.md)
+Use the strict [0.8.16 compliance checklist](JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_16.md)
 before a dispatch, and keep post-approval discovery/review work inside the
 prepared, policy-compliant [growth plan](JETBRAINS_POST_RELEASE_GROWTH.md).
 
@@ -79,7 +79,7 @@ prepared, policy-compliant [growth plan](JETBRAINS_POST_RELEASE_GROWTH.md).
    must return `MARKETPLACE_UPDATE_CLEAR`.
 2. Merge the tested release commit to `main`.
 3. Create the immutable tag matching the plugin version, currently
-   `jetbrains-v0.8.15` after the remaining Marketplace metadata review is clear.
+   `jetbrains-v0.8.16` after the remaining Marketplace metadata review is clear.
 4. Run **Publish JetBrains Marketplace plugin** with that tag and the intended
    channel. The `JETBRAINS_MARKETPLACE_TOKEN` remains scoped to the protected
    `jetbrains-marketplace` environment.
