@@ -313,7 +313,10 @@ def export_adoption_status(root: Path, out: Path) -> dict[str, Any]:
     path = _workspace_path(workspace, out)
     payload = adoption_status(workspace)
     _atomic_json(path, payload)
-    return {"status": payload, "path": str(path)}
+    # The export is intentionally safe to paste into an issue or dashboard.
+    # Return the workspace-relative artifact reference rather than disclosing
+    # the caller's absolute checkout path on POSIX or Windows.
+    return {"status": payload, "path": path.relative_to(workspace).as_posix()}
 
 
 def run_first_proof(root: Path, *, out_dir: Path | None = None, observed_at: datetime | None = None) -> dict[str, Any]:
