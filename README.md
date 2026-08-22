@@ -19,8 +19,16 @@
 > the relevant proof exists.
 
 ```powershell
-factory mvp "Build an approval tracker" --root .
+pip install factoryline-code-factory
+factory first-proof --root .
 ```
+
+That one local command creates a disposable sandbox, proves the healthy check
+can pass, then proves the hollow check is caught as `HOLLOW_E2E_TEST`. It writes
+a receipt and a privacy-safe Proof Card; it never uploads your code. When you
+are ready to build, run `factory mvp "Build an approval tracker" --root .`.
+
+![Actual privacy-safe First Proof Card: the hollow test was detected](docs/assets/first-proof-card.svg)
 
 [See actual Factory Studio](docs/PRODUCT_VISUALS.md) or open the
 [live Hugging Face Space](https://zrk222-code-factory.static.hf.space).
@@ -106,6 +114,7 @@ embeddings, or transcripts, and it cannot execute a repair.
 ```powershell
 # No account, model key, or cloud connection is required for this local run.
 pip install factoryline-code-factory
+factory first-proof --root .
 factory mvp "Build an approval tracker" --root .
 factory studio --root .\my-mvp
 ```
@@ -256,7 +265,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.43.0.md),
+- See the [release notes](docs/RELEASE_NOTES_0.44.0.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 
