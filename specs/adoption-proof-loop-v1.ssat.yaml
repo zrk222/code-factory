@@ -1,0 +1,33 @@
+schema: factory.ssat.v1
+system: adoption-proof-loop-v1
+boundary:
+  in_scope:
+    - sealed first-proof demonstration
+    - privacy-safe proof cards
+    - local opt-in activation milestones
+    - adoption sprint and voluntary proof clinic
+    - outcome-led public onboarding
+    - Open VSX namespace verification receipt
+  out_of_scope:
+    - remote telemetry
+    - inferred active users
+    - paid acquisition
+    - fabricated testimonials or enrollment
+trust_boundaries:
+  - name: local_workspace
+    rule: raw commands, paths, prompts, logs, and identity never enter public proof cards
+  - name: provider_metrics
+    rule: unavailable provider facts remain null and download counts are never equated with people
+  - name: open_vsx_verification
+    rule: namespace is externally pending until an Eclipse administrator grants the claim
+invariants:
+  - first-proof runs only inside a generated sandbox
+  - proof cards are derived only from verified receipts
+  - activation events use an allowlist and contain no user identity
+  - release claims require deterministic validation and provider read-back
+governance:
+  autonomy: supervised
+  human_controls:
+    - public release authorization
+    - Proof Clinic repository owner consent
+    - optional sharing of Proof Cards

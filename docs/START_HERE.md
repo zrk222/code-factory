@@ -3,6 +3,28 @@
 Code Factory uses one local evidence model at every level. You can begin with
 an outcome instead of a framework, then add rigor only when the work needs it.
 
+## 0. See the difference in under two minutes
+
+```powershell
+pip install factoryline-code-factory
+factory first-proof --root .
+```
+
+This runs a sealed demonstration in a disposable local sandbox. The positive
+control must pass; the negative control is intentionally hollow and must be
+caught as `HOLLOW_E2E_TEST`. A successful demo writes verified JSON/Markdown
+evidence plus an optional, privacy-safe Proof Card under `.factory/`. It does
+not inspect, modify, or upload your project source.
+
+To share a card from another verified E2E receipt, opt in explicitly:
+
+```powershell
+factory proof-card .factory/e2e-proof/<receipt>.json --root .
+```
+
+The card contains only the bounded result and source-receipt hash. Commands,
+paths, repository names, prompts, logs, and user identity are excluded.
+
 ```mermaid
 flowchart LR
     I["Describe an outcome"] --> M["Instant local MVP"]

@@ -5,8 +5,10 @@ leaving VS Code. The extension never uploads your workspace, code, or receipts.
 
 **Catch AI-generated tests that could never fail — before review.** Keep the
 receipts and proof path next to the code, then open **Graph Ops** to see what is
-evidenced, blocked, or next. Start with **FactoryLine: Open Local Factory
-Studio** or run `factory mvp "Build an approval tracker" --root .`. The
+evidenced, blocked, or next. First run `factory first-proof --root .` to see a
+hollow negative control caught in a disposable sandbox, then open
+**FactoryLine: Open Local Factory Studio** or run
+`factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
 ## Commands
@@ -60,6 +62,7 @@ Install the Code Factory CLI first:
 
 ```powershell
 pip install factoryline-code-factory
+factory first-proof --root .
 ```
 
 Build a local VSIX from this directory, then install it in VS Code:

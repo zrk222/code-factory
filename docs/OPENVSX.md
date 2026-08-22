@@ -7,10 +7,18 @@ surfaces. This repository contains a guarded, manual release workflow at
 
 ## Current status
 
-The release lane is prepared but **not published**. It intentionally has no
-stored token in source control, and publication needs a scoped
-`OPENVSX_TOKEN` in GitHub’s protected `openvsx` environment. A VSIX package or
-workflow is not evidence of an available marketplace listing.
+FactoryLine is published in Open VSX under the `zrk222` namespace. The registry
+showed 144 downloads on 2026-08-21, but also displayed **publisher not verified
+for namespace**. That warning is a provider trust gap, not a package-test result.
+
+The official ownership request is now open as
+[EclipseFdn/open-vsx.org #12688](https://github.com/EclipseFdn/open-vsx.org/issues/12688).
+The claim supplies the Open VSX listing, matching Visual Studio Marketplace
+publisher, repository metadata, and public identity history. Per the official
+[Namespace Access](https://github.com/eclipse-openvsx/openvsx/wiki/Namespace-Access)
+process, the warning remains externally pending until an Eclipse administrator
+grants namespace ownership. Code Factory must not describe the namespace as
+verified before that provider action occurs.
 
 ## Publish a verified extension
 

@@ -117,11 +117,12 @@
           <span>✓ No source upload</span>
           <span>✓ No model account required</span>
           <span>✓ Human decides what may be applied</span>
+          <span>✓ 3,445 PyPI downloads in the last 30 days (provider counter)</span>
         </div>
       </div>
       <figure class="visual">
-        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-proofsearch.png" alt="Actual Graph Ops Counterfactual Arena comparing verified and rejected repair candidates with locked apply controls.">
-        <figcaption>Actual Graph Ops · first divergence · verified repair winner · apply locked</figcaption>
+        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/first-proof-card.svg" alt="Actual privacy-safe Code Factory Proof Card showing that a hollow test was detected.">
+        <figcaption>Actual First Proof Card · healthy control passed · hollow test caught · no source uploaded</figcaption>
       </figure>
     </div>
 
@@ -222,7 +223,7 @@ factory proofsearch frontier plan frontier.request.json \
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" alt="Factory Studio showing the outcome-first MVP and professional workflow tabs.">
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-proofsearch.png" alt="Graph Ops Counterfactual Arena showing candidate evidence, deterministic rejection reasons, and a verified winner.">
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-evidence-frontier.png" alt="Graph Ops Evidence Frontier showing ranked next-evidence hypotheses and a locked experiment control.">
-          <article class="card"><span>First local run</span><h3>Run First Proof</h3><p>Install FactoryLine, confirm the local workspace, then create a contained MVP. The exact listing copy and capture brief are public in the Marketplace Acquisition Kit.</p><p><a href="https://github.com/zrk222/code-factory/blob/main/docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md">Open the kit →</a></p></article>
+          <article class="card"><span>First local run</span><h3>Run First Proof</h3><p>Run one local command in a disposable sandbox. The healthy control passes; the hollow negative control is caught and bound to a privacy-safe Proof Card.</p><p><a href="#first-run">Run the demo →</a> · <a href="https://github.com/zrk222/code-factory/blob/main/docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md">Marketplace kit</a></p></article>
         </div>
       </div>
     </section>
@@ -230,11 +231,15 @@ factory proofsearch frontier plan frontier.request.json \
     <section id="first-run">
       <div class="shell proof">
         <div>
-          <div class="eyebrow">Start with an outcome</div>
-          <h2>Start a local proof path. Add rigor only when it earns its keep.</h2>
-          <p>Use one outcome-first command for a contained local web MVP, then keep the same artifact path as you add review, policy, assurance, and team controls. The factory never switches into an autonomous publisher.</p>
+          <div class="eyebrow">Your first proof</div>
+          <h2>See Code Factory catch a hollow test in under two minutes.</h2>
+          <p>The demo runs only in a generated local sandbox. It proves the positive control can pass, catches the hollow negative control as <code>HOLLOW_E2E_TEST</code>, and writes a privacy-safe Proof Card. No account, model key, or source upload is required.</p>
         </div>
-        <pre><code>factory mvp "Build an approval tracker" --root .
+        <pre><code>pip install factoryline-code-factory
+factory first-proof --root .
+
+# Then use it on real work:
+factory mvp "Build an approval tracker" --root .
 factory coverage --root .\my-mvp --json
 factory graph ops --root .\my-mvp --json</code></pre>
       </div>
@@ -358,7 +363,7 @@ Never substitute CI or repository traffic for installs.</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.43.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.43.0">Release candidate</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.44.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.44.0">Release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

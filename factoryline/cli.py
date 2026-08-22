@@ -111,6 +111,15 @@ from .e2e_proof import (
     verify_e2e_proof,
     write_e2e_proof_artifacts,
 )
+from .adoption import (
+    AdoptionError,
+    MILESTONES,
+    adoption_status,
+    export_adoption_status,
+    proof_card_from_receipt,
+    record_adoption_event,
+    run_first_proof,
+)
 from .counterexample import CounterexampleError, compile_counterexample_plan, verify_counterexample_plan, write_counterexample_plan
 from .guardrails import GuardrailError, evaluate_guardrails, verify_guardrail_evaluation
 from .resilience import ResilienceError, compile_temporal_resilience_plan, verify_temporal_resilience_plan, write_temporal_resilience_plan
@@ -440,6 +449,32 @@ def main(argv=None) -> int:
     e2e_verify.add_argument("--manifest", required=True, help="workspace-contained factory.e2e_proof_manifest.v1 JSON path")
     e2e_verify.add_argument("--out-dir", help="explicit local directory for receipt, Mermaid, and captured output artifacts")
     e2e_verify.add_argument("--json", action="store_true")
+
+    first_proof = sub.add_parser("first-proof", help="run a local sandbox demonstration that catches an intentionally hollow check")
+    first_proof.add_argument("--root", default=".")
+    first_proof.add_argument("--out-dir", help="optional workspace-contained output directory")
+    first_proof.add_argument("--json", action="store_true")
+
+    proof_card = sub.add_parser("proof-card", help="create a privacy-safe share card from one verified local E2E receipt")
+    proof_card.add_argument("receipt", help="workspace-contained factory.e2e_proof_receipt.v1 JSON path")
+    proof_card.add_argument("--root", default=".")
+    proof_card.add_argument("--out-dir", default=".factory/share", help="workspace-contained Proof Card output directory")
+    proof_card.add_argument("--json", action="store_true")
+
+    adoption = sub.add_parser("adoption", help="record and inspect local opt-in activation milestones without central telemetry")
+    adoption_sub = adoption.add_subparsers(required=True, dest="adoption_cmd")
+    adoption_status_parser = adoption_sub.add_parser("status", help="read local aggregate activation milestones")
+    adoption_status_parser.add_argument("--root", default=".")
+    adoption_status_parser.add_argument("--json", action="store_true")
+    adoption_record = adoption_sub.add_parser("record", help="record one explicit local activation milestone")
+    adoption_record.add_argument("milestone", choices=sorted(MILESTONES))
+    adoption_record.add_argument("--root", default=".")
+    adoption_record.add_argument("--evidence-sha256")
+    adoption_record.add_argument("--json", action="store_true")
+    adoption_export = adoption_sub.add_parser("export", help="write an aggregate, identity-free activation status receipt")
+    adoption_export.add_argument("--root", default=".")
+    adoption_export.add_argument("--out", required=True)
+    adoption_export.add_argument("--json", action="store_true")
 
     counterexample = sub.add_parser("counterexample", help="compile and verify deterministic negative-proof obligations without execution")
     counterexample_sub = counterexample.add_subparsers(required=True, dest="counterexample_cmd")
@@ -2107,6 +2142,75 @@ def main(argv=None) -> int:
         except OSError as exc:
             print(f"studio failed: LISTENER_ERROR: {exc}", file=sys.stderr)
             return 1
+        return 0
+    if a.cmd == "first-proof":
+        workspace = Path(a.root).resolve()
+        out_dir = Path(a.out_dir) if a.out_dir else None
+        try:
+            result = run_first_proof(workspace, out_dir=out_dir)
+        except (AdoptionError, E2EProofError, OSError) as exc:
+            code = getattr(exc, "code", "E_FIRST_PROOF_FAILED")
+            error = {"schema": "factory.first-proof.error.v1", "code": code, "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"first proof failed: {code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print("factory first-proof")
+            print("=" * 44)
+            print("result   : HOLLOW_TEST_DETECTED")
+            print("meaning  : the sandbox negative check also passed, so the test could not say no")
+            print(f"receipt  : {result['activation_path']}")
+            print(f"share    : {result['proof_card']['paths']['svg']}")
+            print("boundary : demo only; your project was not assessed and nothing was uploaded")
+        return 0
+    if a.cmd == "proof-card":
+        workspace = Path(a.root).resolve()
+        try:
+            result = proof_card_from_receipt(workspace, Path(a.receipt), Path(a.out_dir))
+            record_adoption_event(workspace, "proof_card_saved", evidence_sha256=result["card"]["card_sha256"])
+        except (AdoptionError, OSError) as exc:
+            code = getattr(exc, "code", "E_PROOF_CARD_FAILED")
+            error = {"schema": "factory.proof-card.error.v1", "code": code, "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"proof card failed: {code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print("factory proof-card")
+            print("=" * 44)
+            print(f"outcome  : {result['card']['outcome']}")
+            print(f"card     : {result['paths']['svg']}")
+            print("privacy  : no commands, paths, repository name, prompts, logs, or user identity")
+        return 0
+    if a.cmd == "adoption":
+        workspace = Path(a.root).resolve()
+        try:
+            if a.adoption_cmd == "record":
+                result = record_adoption_event(workspace, a.milestone, evidence_sha256=a.evidence_sha256)
+            elif a.adoption_cmd == "export":
+                result = export_adoption_status(workspace, Path(a.out))
+            else:
+                result = adoption_status(workspace)
+        except (AdoptionError, OSError) as exc:
+            code = getattr(exc, "code", "E_ADOPTION_FAILED")
+            error = {"schema": "factory.adoption.error.v1", "code": code, "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"adoption failed: {code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print("factory adoption")
+            print("=" * 44)
+            if a.adoption_cmd == "record":
+                print(f"milestone: {result['event']['milestone']}")
+                print(f"receipt  : {result['path']}")
+            else:
+                status = result.get("status", result)
+                print(f"events   : {status['events']}")
+                print(f"first    : {status['milestones']['first_proof_completed']}")
+                print(f"returns  : {status['milestones']['seven_day_return']}")
+                print("boundary : local opt-in counts only; not users, conversion, or attribution")
         return 0
     if a.cmd == "e2e":
         workspace = Path(a.root).resolve()
