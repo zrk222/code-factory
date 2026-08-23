@@ -48,8 +48,8 @@ jobs:
             echo "$RELEASE_REF is not an immutable tag pointing at HEAD." >&2
             exit 1
           }
-      - name: Require the previous Marketplace update to be clear
-        run: python3 "$GITHUB_WORKSPACE/scripts/jetbrains_marketplace_status.py" --plugin-id 33009 --require-clear --json
+      - name: Require an open Marketplace binary-update slot
+        run: python3 "$GITHUB_WORKSPACE/scripts/jetbrains_marketplace_status.py" --plugin-id 33009 --require-upload-slot --json
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -125,6 +125,9 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v6.2.0
+      - name: Restore Gradle wrapper execute permission
+        shell: bash
+        run: chmod +x gradlew
       - uses: actions/download-artifact@v8.0.1
         with:
           name: jetbrains-marketplace-${{ inputs.release_ref }}

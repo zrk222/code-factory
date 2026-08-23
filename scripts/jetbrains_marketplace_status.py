@@ -41,7 +41,8 @@ def classify_status(
     plugin: dict[str, Any], updates: list[dict[str, Any]], *, expected_version: str | None = None
 ) -> dict[str, Any]:
     latest = next(iter(updates), None)
-    pending_metadata = plugin.get("approve") is not True or plugin.get("hasUnapprovedUpdate") is True
+    pending_binary_update = plugin.get("hasUnapprovedUpdate") is True
+    pending_metadata = plugin.get("approve") is not True or pending_binary_update
     expected = _find_expected(updates, expected_version)
     expected_clear = _approved_and_listed(expected)
     clear = not pending_metadata and (expected_version is None or expected_clear)
@@ -55,6 +56,11 @@ def classify_status(
         "pricing_model": plugin.get("pricingModel"),
         "plugin_approve": plugin.get("approve"),
         "has_unapproved_update": plugin.get("hasUnapprovedUpdate"),
+        # A pending listing/metadata review and a queued binary update are
+        # separate Marketplace states.  Only the latter occupies the update
+        # submission slot.  Keep ``clear`` strict for status/read-back checks,
+        # while exposing the narrower pre-upload decision explicitly.
+        "upload_slot_clear": not pending_binary_update,
         "latest_version": _value(latest, "version"),
         "latest_approved": _value(latest, "approve"),
         "latest_listed": _value(latest, "listed"),
@@ -77,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--plugin-id", type=int, default=33009)
     parser.add_argument("--expected-version")
     parser.add_argument("--require-clear", action="store_true")
+    parser.add_argument("--require-upload-slot", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -90,7 +97,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(json.dumps(result, sort_keys=True) if args.json else f"{result['marker']}: {result['reason']}")
-    return 3 if args.require_clear and not result["clear"] else 0
+    if args.require_clear and not result["clear"]:
+        return 3
+    if args.require_upload_slot and not result["upload_slot_clear"]:
+        return 4
+    return 0
 
 
 if __name__ == "__main__":

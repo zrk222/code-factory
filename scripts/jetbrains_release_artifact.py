@@ -76,7 +76,11 @@ def create_manifest(
         raise ArtifactError("channel must be non-empty and contain no whitespace.")
     plugin = _plugin_metadata(archive)
     tagged_version = release_ref.removeprefix("jetbrains-v")
-    if plugin["version"] != tagged_version:
+    # SemVer build metadata identifies an immutable CI retry without changing
+    # the Marketplace plugin version.  Pre-release identifiers still remain
+    # part of the plugin version and must match exactly.
+    plugin_tagged_version = tagged_version.split("+", maxsplit=1)[0]
+    if plugin["version"] != plugin_tagged_version:
         raise ArtifactError(
             f"Release tag version {tagged_version!r} does not match plugin version "
             f"{plugin['version']!r}."
