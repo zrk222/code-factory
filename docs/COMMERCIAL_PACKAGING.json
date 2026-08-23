@@ -113,6 +113,12 @@
     "activation_authority": false,
     "revision_authority": false
   },
+  "open_vsx_pricing_reference": {
+    "state_marker": "COMMERCIAL_OPEN_VSX_SERVICES_SCHEDULED_NOT_ACTIVE",
+    "path": "docs/OPEN_VSX_MONETIZATION_2026.json",
+    "activation_authority": false,
+    "revision_authority": false
+  },
   "separate_marketplace_plan": "docs/JETBRAINS_MONETIZATION_2027.json",
   "current_verdict": "COMMERCIALIZATION_STAGED_NOT_SELLABLE"
 }
