@@ -16,7 +16,7 @@ and [build-number rules](https://plugins.jetbrains.com/docs/intellij/build-numbe
 | No covert data handling or privileged background repair. | Guardian retains bounded aggregate observations in memory. Engineering Judgment reads local CLI JSON only after explicit workspace confirmation. Change Profile routing uses only user-supplied canonical JSON; it does not infer source semantics. | **Static and unit-test evidence; JetBrains may independently assess runtime behavior.** |
 | Archive has valid structure and no credential-shaped material. | `marketplacePreflight` checks size, path shape, descriptor, icons, and prohibited credential/source-control-shaped entries in the generated ZIP. | **Local pass requires `guardianReleaseGate`.** |
 | License, EULA, vendor, trader, and pricing facts are not misrepresented. | The generated plugin JAR contains the repository's `LICENSE-MIT`, `LICENSE-APACHE`, and `NOTICE` under `META-INF/licenses`; the active descriptor is free and does not advertise future pricing. | **Artifact license notice is locally verified. Vendor-console EULA, Developer Agreement, trader declaration, and any Sales Info remain owner-only external gates.** |
-| An earlier pending update must not be bypassed. | `scripts/jetbrains_marketplace_status.py --require-clear` fails closed. The protected workflow seals tag, commit, channel, ZIP SHA-256, and size before the privileged publish job. | **External gate. Do not dispatch while it returns a pending update.** |
+| An earlier binary update must not be bypassed. | `scripts/jetbrains_marketplace_status.py --require-upload-slot` fails closed when `hasUnapprovedUpdate` reports an occupied binary queue. Listing-metadata review remains visible separately and is never presented as approved. The protected workflow seals tag, commit, channel, ZIP SHA-256, and size before the privileged publish job. | **External gate. Do not dispatch while the binary upload slot is occupied.** |
 
 ## Approval-guideline evidence map
 
@@ -39,8 +39,8 @@ Before submitting `jetbrains-v0.8.16`, retain:
 
 1. `./gradlew guardianReleaseGate` success on the final commit;
 2. sealed ZIP tag/commit/SHA evidence and a green compatibility CI matrix;
-3. `python scripts/jetbrains_marketplace_status.py --plugin-id 33009 --require-clear --json`
-   returning `MARKETPLACE_UPDATE_CLEAR`;
+3. `python scripts/jetbrains_marketplace_status.py --plugin-id 33009 --require-upload-slot --json`
+   returning `upload_slot_clear: true`, while separately recording any pending listing metadata;
 4. owner confirmation for Vendor profile, EULA, Agreement, trader, and any
    applicable Sales Info; and
 5. authenticated Marketplace read-back after upload and after approval.

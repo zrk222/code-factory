@@ -62,6 +62,21 @@ def test_manifest_round_trip_binds_archive_and_release_inputs(tmp_path: Path) ->
     }
 
 
+def test_manifest_accepts_immutable_ci_retry_build_metadata(tmp_path: Path) -> None:
+    archive = tmp_path / "factoryline-intellij.zip"
+    _write_plugin_archive(archive, version="0.8.16")
+
+    manifest = create_manifest(
+        archive,
+        release_ref="jetbrains-v0.8.16+ci.2",
+        commit=COMMIT,
+        channel="default",
+    )
+
+    assert manifest["plugin"]["version"] == "0.8.16"
+    assert manifest["release"]["ref"] == "jetbrains-v0.8.16+ci.2"
+
+
 def test_manifest_rejects_tampered_archive(tmp_path: Path) -> None:
     archive = tmp_path / "factoryline-intellij.zip"
     manifest_path = tmp_path / "manifest.json"
