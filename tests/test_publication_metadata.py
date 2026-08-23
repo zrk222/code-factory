@@ -239,7 +239,7 @@ def test_marketplace_workflow_uses_current_gradle_action_and_scoped_secret():
     assert "actions/download-artifact@v8.0.1" in workflow
     assert "factorylineMarketplaceArchive" in workflow
     assert "Publish verified plugin update" in workflow
-    assert workflow.count("chmod +x gradlew") == 2
+    assert workflow.count("chmod +x gradlew") == 3
 
 
 def test_intellij_workflow_avoids_duplicate_feature_branch_runs():
@@ -433,6 +433,7 @@ def test_jetbrains_publication_workflow_blocks_an_occupied_binary_update_slot():
     assert "--plugin-id 33009 --require-upload-slot --json" in workflow
     assert "guardianReleaseGate" in workflow
     assert "verify sealed candidate" in workflow
+    assert "Restore Gradle wrapper execute permission" in workflow
     assert "needs: [validate, compatibility]" in workflow
 
 
