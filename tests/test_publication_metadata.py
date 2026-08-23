@@ -425,12 +425,12 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
         assert phrase in runbook
 
 
-def test_jetbrains_publication_workflow_blocks_a_pending_listing_update():
+def test_jetbrains_publication_workflow_blocks_an_occupied_binary_update_slot():
     workflow = (ROOT / ".github" / "workflows" / "jetbrains-marketplace.yml").read_text(encoding="utf-8")
 
-    assert "Require the previous Marketplace update to be clear" in workflow
+    assert "Require an open Marketplace binary-update slot" in workflow
     assert "scripts/jetbrains_marketplace_status.py" in workflow
-    assert "--plugin-id 33009 --require-clear --json" in workflow
+    assert "--plugin-id 33009 --require-upload-slot --json" in workflow
     assert "guardianReleaseGate" in workflow
     assert "verify sealed candidate" in workflow
     assert "needs: [validate, compatibility]" in workflow
