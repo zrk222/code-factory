@@ -105,14 +105,14 @@ def _pypi_check(workflow: str) -> dict[str, Any]:
 
 
 def _jetbrains_check(workflow: str) -> dict[str, Any]:
-    guard = "Require the previous Marketplace update to be clear"
+    guard = "Require an open Marketplace binary-update slot"
     passed = (
         guard in workflow
-        and "--require-clear" in workflow
+        and "--require-upload-slot" in workflow
         and workflow.index(guard) < workflow.index("actions/setup-java@v5")
         and workflow.index(guard) < workflow.index("gradle/actions/setup-gradle@v6.2.0")
     )
-    return _check("JETBRAINS_APPROVAL_GUARD", passed, "pending Marketplace approval blocks before Java or Gradle setup")
+    return _check("JETBRAINS_APPROVAL_GUARD", passed, "an occupied Marketplace binary-update slot blocks before Java or Gradle setup")
 
 
 def _intellij_compatibility_check(root: Path) -> dict[str, Any]:
