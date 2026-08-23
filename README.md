@@ -224,6 +224,13 @@ the same future price. It is for maintained, customer-managed proof operations
 packets)—not source access or opaque AI-token resale. The source license and free
 core are unchanged. See the [GitHub per-seat plan](docs/GITHUB_MONETIZATION_2026.md).
 
+For Open VSX, the extension and local proof core remain free. All capabilities
+shipped before the transition are free through **December 14, 2026**. From
+**December 15, 2026**, optional hosted Personal Memory is scheduled at **$4.95
+USD/month**, and Team Assurance at **$5.95 USD per named seat/month** or **$60
+USD per named seat/year**, subject to explicit activation gates. See the
+[Open VSX service plan](docs/OPEN_VSX_MONETIZATION_2026.md).
+
 ## The proof boundary
 
 Code Factory creates and inspects local artifacts. It does **not** silently call a

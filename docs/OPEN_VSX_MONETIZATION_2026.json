@@ -1,0 +1,57 @@
+{
+  "schema": "factory.open-vsx-monetization-plan.v1",
+  "channel": "open-vsx",
+  "registry_distribution": {
+    "extension_price": 0,
+    "extension_remains_free": true,
+    "local_core_remains_free": true,
+    "registry_account_required_for_local_core": false
+  },
+  "schedule": {
+    "all_shipped_capabilities_free_through": "2026-12-14T23:59:59-05:00",
+    "optional_service_offers_may_start": "2026-12-15T00:00:00-05:00",
+    "timezone": "America/Toronto"
+  },
+  "offers": {
+    "personal_memory": {
+      "price_usd_month": 4.95,
+      "billing_basis": "one individual account",
+      "scope": [
+        "optional hosted proof-aware memory continuity",
+        "cross-workspace evidence recall within the user's authorized scope",
+        "retention and export controls"
+      ]
+    },
+    "team_assurance": {
+      "price_usd_named_seat_month": 5.95,
+      "price_usd_named_seat_year": 60.0,
+      "billing_basis": "named team seat",
+      "scope": [
+        "shared proof history",
+        "team policy and approval routing",
+        "governed exceptions and evidence export"
+      ]
+    }
+  },
+  "never_paywalled": [
+    "Open VSX extension installation and local IDE commands",
+    "local CLI and MCP server",
+    "local Studio and Graph Ops",
+    "local receipts, PRD Grill, CDTE, proof review, and E2E proof gate"
+  ],
+  "activation_gates": [
+    {"id": "OVSX1_TERMS_PRIVACY_REFUNDS", "status": "pending_human", "evidence": null},
+    {"id": "OVSX2_CHECKOUT_TAX_DISCLOSURE", "status": "pending_human", "evidence": null},
+    {"id": "OVSX3_ENTITLEMENT_AND_OFFLINE_FAILURE", "status": "pending_human", "evidence": null},
+    {"id": "OVSX4_RETENTION_EXPORT_DELETION", "status": "pending_human", "evidence": null},
+    {"id": "OVSX5_SUPPORT_INCIDENT_OWNER", "status": "pending_human", "evidence": null},
+    {"id": "OVSX6_PRODUCT_OWNER_ACTIVATION", "status": "pending_human", "evidence": null}
+  ],
+  "authority": {
+    "classification": "human_controlled",
+    "automation_may_collect_payment": false,
+    "automation_may_issue_entitlements": false,
+    "automation_may_change_registry_access": false
+  },
+  "current_verdict": "OPEN_VSX_OPTIONAL_SERVICES_SCHEDULED_NOT_ACTIVE"
+}

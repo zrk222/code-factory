@@ -70,6 +70,12 @@ def test_commercial_packaging_marks_only_free_core_as_available():
         "activation_authority": False,
         "revision_authority": False,
     }
+    assert packaging["open_vsx_pricing_reference"] == {
+        "state_marker": "COMMERCIAL_OPEN_VSX_SERVICES_SCHEDULED_NOT_ACTIVE",
+        "path": "docs/OPEN_VSX_MONETIZATION_2026.json",
+        "activation_authority": False,
+        "revision_authority": False,
+    }
     assert packaging["current_verdict"] == "COMMERCIALIZATION_STAGED_NOT_SELLABLE"
 
 
@@ -126,3 +132,36 @@ def test_github_per_seat_plan_is_scheduled_but_not_active_or_enforced():
     assert "GitHub repository metadata cannot collect payment" in guide
     assert "$5.95 USD per named seat/month" in readme
     assert "$60 USD per named seat/year" in readme
+
+
+def test_open_vsx_services_are_scheduled_without_paywalling_the_extension():
+    plan = json.loads((ROOT / "docs" / "OPEN_VSX_MONETIZATION_2026.json").read_text(encoding=UTF8))
+    guide = (ROOT / "docs" / "OPEN_VSX_MONETIZATION_2026.md").read_text(encoding=UTF8)
+    adapter = (ROOT / "editors" / "vscode" / "README.md").read_text(encoding=UTF8)
+
+    assert plan["schema"] == "factory.open-vsx-monetization-plan.v1"
+    assert plan["registry_distribution"] == {
+        "extension_price": 0,
+        "extension_remains_free": True,
+        "local_core_remains_free": True,
+        "registry_account_required_for_local_core": False,
+    }
+    assert plan["schedule"] == {
+        "all_shipped_capabilities_free_through": "2026-12-14T23:59:59-05:00",
+        "optional_service_offers_may_start": "2026-12-15T00:00:00-05:00",
+        "timezone": "America/Toronto",
+    }
+    assert plan["offers"]["personal_memory"]["price_usd_month"] == 4.95
+    assert plan["offers"]["team_assurance"]["price_usd_named_seat_month"] == 5.95
+    assert plan["offers"]["team_assurance"]["price_usd_named_seat_year"] == 60.0
+    assert len(plan["activation_gates"]) == 6
+    assert all(gate["status"] == "pending_human" and gate["evidence"] is None for gate in plan["activation_gates"])
+    assert plan["authority"] == {
+        "classification": "human_controlled",
+        "automation_may_collect_payment": False,
+        "automation_may_issue_entitlements": False,
+        "automation_may_change_registry_access": False,
+    }
+    assert plan["current_verdict"] == "OPEN_VSX_OPTIONAL_SERVICES_SCHEDULED_NOT_ACTIVE"
+    assert "extension and local proof core remain free" in guide
+    assert "December 15" in adapter

@@ -29,6 +29,12 @@ It is framed as a customer-managed **GitHub Assurance Seat**: commit-bound proof
 review, visible Proof Debt, policy and exception records, and exportable
 evidence—not a charge for source access or an unverified enterprise promise.
 
+The separate [Open VSX service plan](OPEN_VSX_MONETIZATION_2026.md) keeps the
+registry extension and local proof core free. All shipped capabilities remain
+free through December 14, 2026; optional Personal Memory ($4.95/month) and Team
+Assurance ($5.95 per named seat/month or $60/year) may start December 15 only
+after six explicit commercial activation gates are evidenced.
+
 ## The package boundary
 
 | Package | Who it helps | Availability | What it includes | What it does not promise |
