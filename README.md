@@ -30,10 +30,14 @@ are ready to build, run `factory mvp "Build an approval tracker" --root .`.
 
 ![Actual privacy-safe First Proof Card: the hollow test was detected](docs/assets/first-proof-card.svg)
 
-[See actual Factory Studio](docs/PRODUCT_VISUALS.md) or open the
+[See the current FactoryLine visual set](docs/PRODUCT_VISUALS.md) or open the
 [live Hugging Face Space](https://zrk222-code-factory.static.hf.space).
 
-![Actual Factory Studio: the outcome-first local MVP path](docs/assets/marketplace/factory-studio-mvp-1280x800.png)
+![Actual FactoryLine 0.44 Graph Ops dashboard showing a waiting-for-human assembly, live telemetry, and evidence-backed next actions](docs/assets/marketplace/factoryline-0.44-live-dashboard.png)
+
+![FactoryLine AI Proof controls in IntelliJ IDEA for first proof, assemblies, receipts, changed-proof analysis, Change Lists, workspace analysis, and the local meter](docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg)
+
+![FactoryLine AI Proof running a successful local First Proof on FactoryLine 0.44 inside IntelliJ IDEA](docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg)
 
 ## What it does
 
@@ -87,6 +91,35 @@ are ready to build, run `factory mvp "Build an approval tracker" --root .`.
 
 These are local evidence and supervision tools, not guarantees of performance,
 security, productivity, production readiness, or an automatic repair service.
+
+## FactoryLine by role
+
+| Who is using it | Start here | Highest-value uses | The result they can inspect |
+| --- | --- | --- | --- |
+| **Novice / first-time builder** | `factory first-proof`, then `factory mvp` | Catch a test that only looks green; turn one outcome into a contained starter; learn the difference between generated code and proven behavior | A privacy-safe Proof Card, a local MVP, and a visible next step instead of an unexplained pass/fail |
+| **Junior developer** | `factory prd grill`, `factory plan verify`, `factory change review` | Clarify acceptance evidence before coding; keep an AI-assisted diff inside the approved plan; surface missing tests and Proof Debt before review | Source-bound questions, exact changed paths, severity-ordered findings, and a review handoff |
+| **Senior / staff engineer** | `factory judgment`, `factory graph forensics`, `factory proofsearch`, `factory gauntlet` | Protect architecture decisions; diagnose resumed or parallel workflow drift; compare candidate repairs; challenge whether critical E2E checks can actually reject declared failures | Hash-bound decision context, first-divergence facts, rejected candidates, a deterministic winner, and Survival Cards |
+| **Engineering team** | `factory wrap`, GitHub Proof Review, Graph Ops, Agent License and Combine | Put agent work into one evidence ledger; add a neutral PR Check beside AI review; hand off proof state; compare sealed runs without turning scores into vendor claims | Commit-bound Checks, local receipts, explicit owners and blockers, proof reuse decisions, and comparable governed-run records |
+| **Enterprise / platform team** | Intake Grill, Verifier Plane, policy challenge, assurance dossier, admission controls | Standardize approval boundaries; test whether policy rules matter; keep signers, exceptions, tenants, budgets, and release evidence explicit; integrate with existing SDLC controls | Independently verifiable packets and read-only operational views; identity, credentials, merge, release, and deployment remain in enterprise-owned systems |
+
+## Works with your existing AI development stack
+
+FactoryLine is the proof and control layer around generation, orchestration, and
+review tools. The status column distinguishes implemented adapters from clean
+workflow fits; it does not imply a vendor partnership.
+
+| Product or stack | What it does well | Where FactoryLine adds value | Current connection status |
+| --- | --- | --- | --- |
+| **Blitzy** | Large codebase understanding, reviewed action plans, autonomous generation, validation, and PR creation | Seal the approved plan, compare it with the exact resulting diff, challenge declared tests, and attach a neutral proof walkthrough before human merge | **Workflow fit.** Use repository artifacts and PR Checks; no bundled Blitzy API adapter or claimed partnership |
+| **CodeRabbit** | AI review comments and remediation suggestions across the pull request | Supply deterministic FactoryLine Check results, proof gaps, and Proof Debt beside the AI review without treating suggestions as evidence | **Documented interoperability.** GitHub Checks are the boundary; no CodeRabbit credential or API is required |
+| **Mastra** | TypeScript agents, tools, memory, workflows, and MCP clients/servers | Expose read-only local proof context through MCP, then verify the resulting repository diff and declared tests independently | **Protocol-level fit.** Mastra supports MCP; a dedicated FactoryLine-Mastra adapter is not bundled or claimed tested |
+| **LangGraph** | Durable, stateful agent orchestration with checkpoints and human-in-the-loop control | Compare sealed reference and resumed transition lineages, detect duplicate effects or unsafe parallel writes, and keep receipts authoritative over checkpoints | **Native optional support.** LangGraph Assurance Bridge, optional adapter, GitHub Action, and cross-agent plugin are included |
+| **Codex, Claude Code, and Deep Agents** | Interactive or autonomous repository implementation | Admit scoped work, wrap the local CLI process, hash the file delta, run independent validators, and feed Agent License / Combine | **Included paths.** Local wrapper, read-only MCP, LangGraph plugin, and optional Claude session trace |
+| **Cursor and OpenCode** | IDE- or terminal-based AI coding with MCP clients | Read bounded FactoryLine receipt, verifier, PRD, memory-brief, and Graph Ops facts without granting write or release authority | **Documented local MCP setup.** Stdio-only and read-only |
+| **DeepSeek Harness** | Model session and tool lifecycle | Add FactoryLine’s local proof facts while keeping the harness responsible for the agent lifecycle | **Opt-in adapter.** Developer-preview upstream boundary is explicit |
+
+See the [complete compatibility and handoff guide](docs/WORKS_WITH.md) for the
+recommended flow and the exact authority boundary for each stack.
 
 **For teams:** use the [Teams and Enterprise Operations Manual](docs/ENTERPRISE_TEAMS_OPERATIONS.md)
 to run the same proof-first loop with named reviewers, approved AI-change scope,

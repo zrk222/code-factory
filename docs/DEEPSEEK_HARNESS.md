@@ -33,7 +33,7 @@ Install the published Code Factory CLI and copy the versioned overlay from
 [`plugins/code-factory-deepseek-harness`](../plugins/code-factory-deepseek-harness):
 
 ```sh
-pip install "factoryline-code-factory>=0.40.2"
+pip install "factoryline-code-factory>=0.44.0"
 dsh web --patch /absolute/path/to/code-factory.cordis.yml
 ```
 

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_ref:
-        description: "Immutable repository tag to package (for example v0.28.0)"
+        description: "Immutable repository tag to package (for example v0.44.0)"
         required: true
         type: string
       publish:
@@ -58,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$RELEASE_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || {
-            echo "release_ref must be an immutable tag such as v0.28.0." >&2
+            echo "release_ref must be an immutable tag such as v0.44.0." >&2
             exit 1
           }
           test "$(git rev-list -n 1 "$RELEASE_REF")" = "$(git rev-parse HEAD)" || {
