@@ -63,4 +63,4 @@ def test_marketplace_entry_and_docs_expose_all_supported_coding_agent_installs()
     assert "codex plugin add code-factory-langgraph@code-factory" in docs
     assert "/plugin install code-factory-langgraph@code-factory" in docs
     assert "dcode plugin install code-factory-langgraph@code-factory" in docs
-    assert "factoryline-code-factory>=0.43.0" in docs
+    assert "factoryline-code-factory>=0.44.0" in docs

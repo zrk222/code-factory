@@ -2,7 +2,7 @@
 
 **Run LangGraph your way. Prove the resume path before review.**
 
-Code Factory v0.40.1 adds a local, deterministic assurance layer for a
+FactoryLine 0.44 includes a local, deterministic assurance layer for a
 LangGraph test harness. It compares a sealed reference lineage with a
 separately captured resumed lineage, returns parity only for matching supplied
 evidence, and produces a hash-only incident capsule when they diverge.
@@ -17,7 +17,7 @@ Install the Python package into the environment that will host the local MCP
 server:
 
 ```bash
- python -m pip install -U "factoryline-code-factory>=0.43.0"
+ python -m pip install -U "factoryline-code-factory>=0.44.0"
 factory mcp status --root .
 ```
 

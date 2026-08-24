@@ -1,6 +1,7 @@
 # Current product visuals
 
-This is the approved public visual set for the current Code Factory listing,
+This is the approved public visual set for FactoryLine 0.44 and FactoryLine AI
+Proof 0.8.17 across the current Code Factory listing,
 GitHub social preview handoff, Hugging Face product page, and explanatory
 community posts. Product surfaces use actual local product captures and the
 current FactoryLine identity asset—never
@@ -15,14 +16,43 @@ product interface.
 Use as the listing logo or product icon. It establishes identity; it does not
 claim a Marketplace approval, download count, or readiness result.
 
-## 2. Factory Studio: start an MVP
+## 2. FactoryLine 0.44: live operations dashboard
+
+![Actual FactoryLine 0.44 Graph Ops dashboard showing a waiting-for-human assembly, live telemetry, and evidence-backed next actions](assets/marketplace/factoryline-0.44-live-dashboard.png)
+
+Use for the current operations story: follow a local Assembly, see its exact
+waiting boundary, and turn changed work into evidence-backed next actions.
+
+## 3. Personal 60-day case study
+
+![FactoryLine 60-day personal case study: observed local Codex metadata and a clearly separated modeled capacity range](assets/marketplace/factoryline-60-day-personal-case-study.png)
+
+Use only as a one-user case study. The observed metadata and modeled capacity
+range are visually separated; neither is a universal benchmark or guaranteed
+ROI claim.
+
+## 4. FactoryLine AI Proof 0.8.17: complete IDE controls
+
+![FactoryLine AI Proof controls in IntelliJ IDEA for first proof, assemblies, receipts, changed-proof analysis, Change Lists, workspace analysis, and the local meter](assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg)
+
+Use for the JetBrains capability story: the current control surface shows the
+complete local workflow without implying that every action has already run.
+
+## 5. FactoryLine AI Proof 0.8.17: local IDE proof
+
+![FactoryLine AI Proof running a successful local First Proof on FactoryLine 0.44 inside IntelliJ IDEA](assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg)
+
+Use for the JetBrains story: the real IDE tool window, explicit controls, local
+JSON result, and successful First Proof status are visible together.
+
+## 6. Factory Studio: start an MVP
 
 ![Actual Factory Studio showing the outcome-first MVP path and a local-only boundary](assets/marketplace/factory-studio-mvp-1280x800.png)
 
 Use for the first-screen story: describe a local outcome, create a contained
 MVP, and keep the authority boundary explicit.
 
-## 3. Graph Ops: compare repair candidates
+## 7. Graph Ops: compare repair candidates
 
 ![Actual Graph Ops Counterfactual Arena showing verified and rejected repair candidates](assets/marketplace/graph-ops-proofsearch.png)
 
@@ -30,14 +60,14 @@ Use for the second-screen story: Graph Ops reports the evidence state, compares
 supplied candidates, and shows the next supported action. It is not a simulated green result;
 rejected candidates preserve the incomplete proof state.
 
-## 4. Graph Ops: review the winner controls
+## 8. Graph Ops: review the winner controls
 
 ![Actual Graph Ops winner rationale, evidence export, guardrail validation, and locked apply control](assets/marketplace/graph-ops-proofsearch-controls.png)
 
 Use for the authority story: evidence can be copied, exported, and validated,
 while repair application remains visibly locked for human review.
 
-## 5. Graph Ops: choose the next discriminating proof
+## 9. Graph Ops: choose the next discriminating proof
 
 ![Actual Graph Ops Evidence Frontier showing ranked next-evidence hypotheses and locked execution](assets/marketplace/graph-ops-evidence-frontier.png)
 
@@ -45,7 +75,7 @@ Use for the loop story: Evidence Frontier ranks supplied, non-executing
 experiments by how many viable repair pairs they distinguish. Predictions stay
 explicitly unverified, and the UI permits copy, export, and validation only.
 
-## 6. Operational proof loop
+## 10. Operational proof loop
 
 ![Code Factory operational proof loop: scope work, inspect proof gaps, bind evidence, then show the reviewer one next action](assets/operational-proof-loop-1600x900.png)
 
@@ -66,8 +96,9 @@ publishes, deploys, signs, or approves work.
   reviewer."
 - Use the first Factory Studio capture on a landing page. Use the Graph Ops
   capture only where the proof boundary is explained.
-- Use native IDE captures—not these Studio captures—for JetBrains Marketplace
-  screenshots. See [the Marketplace screenshot brief](JETBRAINS_MARKETPLACE_SCREENSHOTS.md).
+- Lead the JetBrains Marketplace gallery with the current IDE capture, then use
+  the current 0.44 live dashboard to show the broader local operations surface.
+  See [the Marketplace screenshot brief](JETBRAINS_MARKETPLACE_SCREENSHOTS.md).
 - Do not attach the retired v0.17 walkthrough, blank-dashboard captures, or
   conceptual artwork to a current release or public listing.
 

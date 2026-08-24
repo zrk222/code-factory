@@ -8,14 +8,25 @@ It is not a duplicate-launch kit.
 Use the files in this exact order:
 
 1. `docs/assets/factoryline-logo-480.png` — current FactoryLine identity.
-2. `docs/assets/marketplace/factory-studio-mvp-1280x800.png` — actual local,
+2. `docs/assets/marketplace/factoryline-0.44-live-dashboard.png` — actual
+   FactoryLine 0.44 live telemetry, waiting-for-human boundary, and
+   evidence-backed next actions.
+3. `docs/assets/marketplace/factoryline-60-day-personal-case-study.png` — one
+   creator-use case with observed local metadata and a separately labeled,
+   assumption-based capacity range.
+4. `docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg` — actual
+   IntelliJ controls for proof, assemblies, receipts, Change Lists, workspace
+   analysis, and the local meter.
+5. `docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg` — actual
+   FactoryLine AI Proof running a successful local First Proof in IntelliJ IDEA.
+6. `docs/assets/marketplace/factory-studio-mvp-1280x800.png` — actual local,
    outcome-first MVP flow and explicit local-only boundary.
-3. `docs/assets/marketplace/graph-ops-proofsearch.png` — actual Graph Ops
+7. `docs/assets/marketplace/graph-ops-proofsearch.png` — actual Graph Ops
    first-divergence, repair-candidate, winner, and locked-control surface.
-4. `docs/assets/marketplace/graph-ops-proofsearch-controls.png` — actual winner
+8. `docs/assets/marketplace/graph-ops-proofsearch-controls.png` — actual winner
    rationale, measured-or-unavailable savings, and review/export/validation
    controls with Apply visibly locked.
-5. `docs/assets/marketplace/graph-ops-evidence-frontier.png` — actual Evidence
+9. `docs/assets/marketplace/graph-ops-evidence-frontier.png` — actual Evidence
    Frontier ranking supplied next-evidence hypotheses, with execution visibly
    locked.
 
@@ -62,8 +73,8 @@ human-controlled.
 
 **Proof links:**
 
-- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.39.0`
-- PyPI: `https://pypi.org/project/factoryline-code-factory/0.39.0/`
+- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.44.0`
+- PyPI: `https://pypi.org/project/factoryline-code-factory/0.44.0/`
 - Source: `https://github.com/zrk222/code-factory`
 
 If no authenticated Code Factory post or draft exists, report

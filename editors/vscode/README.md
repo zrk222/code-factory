@@ -101,7 +101,7 @@ It is deployed separately from this local editor extension; see
 This is the VS Code adapter. The separate JetBrains Platform adapter and its
 compatibility boundary are documented in [docs/INTELLIJ.md](../../docs/INTELLIJ.md).
 
-### Verifier Plane (0.28.0)
+### Verifier Plane
 
 `factory verifier` separates a worker's candidate receipt from a distinct
 verifier's evidence. It rejects self-verification, drift, path escape, false
@@ -109,7 +109,7 @@ passing checks, and declared budget overrun. Graph Ops renders a bound session
 as `runtime-unattested` until independently supplied evidence is verified;
 this adapter does not claim to execute or enforce a sandbox.
 
-### Contradiction gate (0.26.0)
+### Contradiction gate
 
 `factory cdte scan` detects architecturally incompatible NFR pairs before any
 code is generated, by deterministic lookup over a decision table. No model is
@@ -118,7 +118,7 @@ analysis whose inputs are absent is withheld rather than estimated. Critical and
 high severity conflicts engage the fail-closed boundary and pause the line at
 `nfr_conflict`.
 
-### Habituation gate (0.26.0)
+### Habituation gate
 
 `factory habituation status` calibrates the human approval signal against each
 reviewer's own baseline and escalates: surface, second approver, fail closed.

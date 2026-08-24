@@ -17,4 +17,5 @@ receipts/
 *.adoption.ssat.yaml
 *.zip
 .DS_Store
+.idea/
 editors/intellij/.kotlin/
