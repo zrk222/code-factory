@@ -1,0 +1,191 @@
+# Unified Graph Ops
+
+![Graph Ops showing sealed runs, first divergence, counterfactual repair candidates, verified winner, measured savings fields, and locked execution controls](assets/marketplace/graph-ops-proofsearch.png)
+
+![Graph Ops winner rationale, evidence-bounded savings fields, and review/export/validation controls with Apply locked](assets/marketplace/graph-ops-proofsearch-controls.png)
+
+`factory graph ops` is a local, deterministic inspection layer over the
+artifacts Code Factory already knows how to verify. It does not create a new
+database, agent runtime, or authority source.
+
+When a local [Factory Continuity](FACTORY_CONTINUITY.md) ledger exists at
+`.factory/continuity.sqlite3`, Graph Ops adds a redacted **Decision Replay**
+lane. It shows whether a prior engineering decision is independently promoted,
+evidence-bound, exact-scope, purpose-bound, current, or withheld as expired.
+It never shows the opaque memory reference or summary, writes a record, or
+promotes one. This makes historical context inspectable without turning Graph
+Ops into another memory store or an agent authority.
+
+During a local Assembly, the same Studio-backed view also shows refreshable
+ephemeral activity: the current stage, local elapsed time, completed-stage
+status, and an explicit cooperative stop request. The read-only **Developer
+Memory Brief** turns exact changed paths into capped next-proof actions and
+projects only redacted Continuity facts plus observed local Git contribution
+context. Neither surface exposes remembered content or grants execution,
+repair, approval, identity, billing, or productivity authority.
+
+```mermaid
+flowchart LR
+    P["Product Graph"] --> R["Requirement"] --> S["Value slice"]
+    S --> M["Mission"] --> A["Approval"]
+    M --> C["Valid completion"] --> R
+    P2["Read-only proof"] --> G["Declared gate state"]
+    T["Proof trace"] --> X["Stage receipt"] --> F["Bound artifact"]
+    R -. "only valid completion evidence" .-> C
+```
+
+## Use it
+
+```powershell
+factory graph ops --root . --json
+factory graph ops --root . --mermaid
+factory graph impact --root . --changed src/app.py --json
+factory memory brief --root . --json
+factory graph portfolio --root . --json
+factory admission prepare .factory/loop-passports/dependency-audit.passport.json .factory/admission-request.json --root . --json
+factory admission verify .factory/admissions/dependency-audit-run-1.admission.json --root . --json
+factory graph lineage-verify .factory/graph-runs/good.lineage.json --json
+factory graph forensics --baseline good.lineage.json --candidate bad.lineage.json --json
+factory proofsearch verify .factory/proofsearch/repair.evaluation.json --root . --json
+factory proofsearch frontier verify .factory/proofsearch/repair.frontier.json --root . --json
+factory studio --root .
+```
+
+Open `http://127.0.0.1:<port>/graph-ops` from Studio, or select **Unified
+Graph Ops** from either editor integration. The page has graph totals, typed
+lanes, selected-node detail, source-error visibility, an explicit empty state,
+exactly one fact-derived next action, and the ProofSearch Counterfactual Arena.
+
+The JSON schema is `factory.graph-ops.v1`. Its `graph_sha256` covers canonical
+ordering of the graph result. Results are bounded to 500 nodes, 1,000 edges,
+and 1,048,576 bytes per source. Malformed, oversized, missing, or path-escaping
+inputs yield a partial result with compact source errors rather than invented
+links.
+
+## Evidence and priority
+
+Requirements are evidenced only when a mission completion receipt verifies
+against its mission, validation manifest, and evidence hashes. A green build,
+node label, filename, or graph position never creates coverage.
+
+The recommendation is selected in this exact order:
+
+1. `initialize_graph` — no readable local graph nodes.
+2. `refresh_expired_continuity` — a continuity record is expired and withheld from recall.
+3. `review_continuity_promotion` — an evidence-bound continuity record awaits independent review.
+4. `collect_independent_verifier_evidence` — a verifier session lacks independently supplied runtime evidence.
+5. `review_graph_anomaly` — verified lineage exposes a state or concurrency anomaly.
+6. `review_evidence_frontier` — a sealed Evidence Frontier has a next supplied experiment that separates viable repair candidates; execution remains human-owned.
+7. `repair_candidate_evidence` — a ProofSearch evaluation has no eligible candidate.
+8. `review_verified_repair` — ProofSearch selected one candidate; apply remains human-owned.
+9. `review_counterfactual_fork` — verified runs diverge without a completed candidate evaluation.
+10. `rerun_invalid_proof` — a content-addressed proof is stale.
+11. `resolve_blocked_gate` — a declared proof plan contains `BLOCK`.
+12. `run_required_validation` — a declared proof plan contains `RUN`.
+13. `collect_completion_evidence` — a requirement lacks valid completion evidence.
+14. `review_verified_graph` — all represented requirements have valid completion evidence.
+
+Graph Ops reads local evidence by default. Its human-authorization panel makes
+the exception explicit and narrow: a named user can create one expiring,
+receipt-bound authorization for a verified Reality Check re-run, then confirm
+that exact local re-run once. The authorization is consumed, rejects changed
+receipt or manifest bytes, and appears as a typed graph node. An eligible
+ProofSearch winner can receive a review-handoff authorization only; it is not
+an apply permission.
+
+Graph Ops cannot generate tests, apply source changes, change a plan
+disposition, merge, publish, deploy, sign, send a message, access a credential,
+or grant a connector. The authoritative Product Mission ledger, proof receipts,
+and trace verifiers remain separate.
+
+## Portfolio Flight Plan and sealed admission
+
+The **Portfolio Flight Plan** makes the existing Graph Ops dependencies useful
+at team scale without turning them into an autonomous scheduler. It shows a
+deterministic structural critical path, lexical workset, safe proposal-only
+parallel waves, shared-proof candidates, and blocker chains. A blocked ancestor
+blocks downstream work visibly. Timing is `Not measured` unless a complete set
+of supplied positive duration observations supports a bound critical-path time.
+
+The same panel projects sealed **Run Admission Packets**: short-lived local
+proposals bound to a Loop Passport, workspace fingerprint, base graph digest,
+allowed actions/paths, budget, and named expiring approvals. The controls that
+would execute a wave or authorize an external harness remain disabled. An
+external harness must re-verify the packet immediately before use and still
+owns its real authentication, sandbox, network, credential, and tool policies.
+See [Graph Portfolio and Run Admission](GRAPH_PORTFOLIO_ADMISSION.md).
+
+## LangGraph optimization path
+
+LangGraph remains the durable execution engine; Graph Ops is the independent
+evidence and governance plane around it. A framework adapter should project
+LangGraph checkpoint history into `factory.graph-lineage.v1` without copying
+raw state values:
+
+- map `thread_id`, `checkpoint_id`, `parent_config`, `metadata.step`, `next`,
+  and task results into lineage identity, ordering, routing, and node facts;
+- hash state values locally and retain only keyed digests and monotonic
+  versions in the portable receipt;
+- consume checkpoint and task stream modes for live progress while sealing a
+  final lineage receipt for deterministic comparison;
+- model subgraphs as nested lineage, respecting their own checkpointer boundary
+  so a recovery preview never claims finer rewind granularity than LangGraph
+  persisted; and
+- translate a reviewed recovery into a LangGraph fork only after a separate
+  named, expiring, signed approval. Replayed downstream nodes may repeat model
+  calls, API requests, and interrupts, so side-effect idempotency remains a
+  runtime gate.
+
+This division avoids rebuilding persistence while giving LangGraph runs the
+same contradiction, proof, anomaly, authority, and signed-review semantics as
+native Code Factory missions.
+
+## ProofSearch Counterfactual Arena
+
+After Graph Forensics locates the first semantic divergence, `factory
+proofsearch plan` seals the authorized changed paths and exact Graph Impact
+slice. `factory proofsearch evaluate` then verifies 2 through 12 supplied,
+hash-bound candidates. Graph Ops shows every candidate's eligibility, risk,
+changed lines, proof runtime, mutation killed/total value, measured or
+unavailable token/cost values, and deterministic loss reasons.
+
+The Arena can copy a verification command, export the displayed decision, and
+validate the winner's guardrails. Its Apply control remains disabled because
+the evaluation explicitly carries `apply: false` and no workspace, test,
+checkpoint, approval, merge, publication, or deployment authority. See
+[ProofSearch](PROOFSEARCH.md).
+
+When two verified lineage receipts exist for the same graph, Graph Ops adds a
+semantic-forensics lane. It shows the first state divergence, deterministic
+stale-read/parallel-write/duplicate-side-effect findings, and a read-only
+counterfactual recovery preview. See [Graph Forensics](GRAPH_FORENSICS.md).
+
+## Evidence Frontier
+
+Evidence Frontier adds a bounded, deterministic loop decision to the Graph Ops
+control plane. Given a current ProofSearch evaluation and supplied experiment
+hypotheses, it selects the next experiment that separates the largest number of
+eligible repair-candidate pairs. Predictions are labelled unverified; Graph Ops
+never runs the experiment. If no supplied experiment separates a pair, the loop
+halts rather than inventing a test. See [Evidence Frontier](EVIDENCE_FRONTIER.md).
+
+## Exact change impact
+
+`factory graph impact --changed <path>` is the fast professional path after a
+change. It follows only explicit `input_to` artifact edges from the supplied
+workspace-relative paths to recorded proof receipts, then shows three distinct
+sets: matched proofs, verified-current matches, and stale matched proofs that
+belong in the rerun set. It also names declared gates already linked to those
+proofs.
+
+It does not use filename heuristics to declare a proof irrelevant, run a gate,
+or silently skip validation. An unmatched path is reported as unmatched rather
+than being claimed safe. This is an impact map, not a measured time or token
+savings claim.
+
+## Measurement boundary
+
+Graph Ops does not infer time, token, cost, or productivity savings. ProofSearch
+may display an exact signed delta only when its request supplied one paired
+baseline; missing observations remain `Not measured`, and productivity remains
+unknown without separate measured evidence.

@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       release_ref:
-        description: "Immutable release tag to publish after the one-time Marketplace upload"
+        description: "Immutable JetBrains release tag to publish (for example jetbrains-v0.7.2)"
         required: true
-        default: "v0.20.0"
       channel:
         description: "JetBrains Marketplace release channel"
         required: true
@@ -20,8 +19,177 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    name: validate Marketplace candidate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/intellij
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_ref }}
+          fetch-depth: 0
+      - name: Require an immutable release tag
+        shell: bash
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_REF" =~ ^jetbrains-v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || {
+            echo "release_ref must be a dedicated tag such as jetbrains-v0.7.2." >&2
+            exit 1
+          }
+          test "$(git rev-list -n 1 "$RELEASE_REF")" = "$(git rev-parse HEAD)" || {
+            echo "Checked-out commit does not match $RELEASE_REF." >&2
+            exit 1
+          }
+          git tag --points-at HEAD --format='%(refname:short)' | grep -Fx "$RELEASE_REF" >/dev/null || {
+            echo "$RELEASE_REF is not an immutable tag pointing at HEAD." >&2
+            exit 1
+          }
+      - name: Require an open Marketplace binary-update slot
+        run: python3 "$GITHUB_WORKSPACE/scripts/jetbrains_marketplace_status.py" --plugin-id 33009 --require-upload-slot --json
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6.2.0
+      - name: Test, verify, and check Marketplace package metadata
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew check guardianReleaseGate
+      - name: Seal the verified Marketplace candidate
+        shell: bash
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          MARKETPLACE_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find build/distributions -maxdepth 1 -type f -name '*.zip' -print)
+          test "${#archives[@]}" -eq 1 || {
+            echo "Expected exactly one plugin ZIP, found ${#archives[@]}." >&2
+            exit 1
+          }
+          candidate="$GITHUB_WORKSPACE/marketplace-candidate"
+          mkdir -p "$candidate"
+          cp "${archives[0]}" "$candidate/factoryline-intellij.zip"
+          python "$GITHUB_WORKSPACE/scripts/jetbrains_release_artifact.py" create \
+            --archive "$candidate/factoryline-intellij.zip" \
+            --manifest "$candidate/manifest.json" \
+            --release-ref "$RELEASE_REF" \
+            --commit "$(git rev-parse HEAD)" \
+            --channel "$MARKETPLACE_CHANNEL"
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: jetbrains-marketplace-${{ inputs.release_ref }}
+          path: marketplace-candidate/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve verifier and test reports
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: jetbrains-validation-reports-${{ inputs.release_ref }}
+          path: editors/intellij/build/reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  compatibility:
+    name: verify sealed candidate (${{ matrix.product }})
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        product:
+          - IntellijIdea
+          - PyCharm
+          - WebStorm
+          - Rider
+          - CLion
+          - GoLand
+          - RustRover
+          - DataGrip
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/intellij
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_ref }}
+          fetch-depth: 0
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6.2.0
+      - name: Restore Gradle wrapper execute permission
+        shell: bash
+        run: chmod +x gradlew
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: jetbrains-marketplace-${{ inputs.release_ref }}
+          path: marketplace-candidate
+      - name: Resolve sealed plugin archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$GITHUB_WORKSPACE/marketplace-candidate/factoryline-intellij.zip"
+      - name: Resolve current DataGrip archive
+        if: matrix.product == 'DataGrip'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > "$RUNNER_TEMP/datagrip-url.txt"
+          import json
+          from urllib.request import urlopen
+
+          with urlopen("https://data.services.jetbrains.com/products/releases?code=DG&latest=true&type=release") as response:
+              release = json.load(response)["DG"][0]
+          print(release["downloads"]["linux"]["link"])
+          PY
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/datagrip.tar.gz" "$(cat "$RUNNER_TEMP/datagrip-url.txt")"
+          mkdir -p "$RUNNER_TEMP/datagrip"
+          tar -xzf "$RUNNER_TEMP/datagrip.tar.gz" -C "$RUNNER_TEMP/datagrip" --strip-components=1
+          test -f "$RUNNER_TEMP/datagrip/product-info.json"
+      - name: Verify sealed plugin against selected IDE
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$GITHUB_WORKSPACE/marketplace-candidate/factoryline-intellij.zip"
+          for attempt in 1 2 3; do
+            if [ "${{ matrix.product }}" = "DataGrip" ]; then
+              if ./gradlew verifyPlugin \
+                -PfactorylineVerificationArchive="$archive" \
+                -PfactorylineVerificationProduct=DataGrip \
+                -PfactorylineLocalVerificationIde="$RUNNER_TEMP/datagrip"; then
+                exit 0
+              fi
+            elif ./gradlew verifyPlugin \
+              -PfactorylineVerificationArchive="$archive" \
+              -PfactorylineVerificationProduct=${{ matrix.product }}; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Verifier attempt $attempt failed; retrying only for a transient JetBrains artifact failure."
+              sleep 20
+            fi
+          done
+          exit 1
+      - name: Preserve compatibility report
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: jetbrains-compatibility-${{ inputs.release_ref }}-${{ matrix.product }}
+          path: editors/intellij/build/reports/pluginVerifier/
+          if-no-files-found: ignore
+          retention-days: 14
+
   publish:
-    name: validate and publish Marketplace update
+    name: publish verified Marketplace candidate
+    needs: [validate, compatibility]
     runs-on: ubuntu-latest
     environment: jetbrains-marketplace
     defaults:
@@ -31,11 +199,16 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.release_ref }}
+          fetch-depth: 0
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v6.2.0
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: jetbrains-marketplace-${{ inputs.release_ref }}
+          path: marketplace-candidate
       - name: Require the scoped Marketplace publisher token
         env:
           PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
@@ -44,11 +217,25 @@ jobs:
             echo "JETBRAINS_MARKETPLACE_TOKEN is required in the jetbrains-marketplace environment." >&2
             exit 1
           }
-      - name: Test, verify, and check Marketplace package metadata
+      - name: Verify the promoted candidate
+        shell: bash
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          MARKETPLACE_CHANNEL: ${{ inputs.channel }}
         run: |
-          chmod +x gradlew
-          ./gradlew check buildPlugin verifyPlugin marketplacePreflight
+          set -euo pipefail
+          python "$GITHUB_WORKSPACE/scripts/jetbrains_release_artifact.py" verify \
+            --archive "$GITHUB_WORKSPACE/marketplace-candidate/factoryline-intellij.zip" \
+            --manifest "$GITHUB_WORKSPACE/marketplace-candidate/manifest.json" \
+            --release-ref "$RELEASE_REF" \
+            --commit "$(git rev-parse HEAD)" \
+            --channel "$MARKETPLACE_CHANNEL"
       - name: Publish verified plugin update
         env:
           PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
-        run: ./gradlew publishPlugin -PfactorylineMarketplaceChannel="${{ inputs.channel }}"
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew publishPlugin --stacktrace \
+            -PfactorylineMarketplaceChannel="${{ inputs.channel }}" \
+            -PfactorylineMarketplaceArchive="$GITHUB_WORKSPACE/marketplace-candidate/factoryline-intellij.zip"

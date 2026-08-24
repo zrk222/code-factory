@@ -1,70 +1,111 @@
-# JetBrains Marketplace Release
+# JetBrains Marketplace Growth and Release Guide
 
-## Current Distribution Status
+## Public listing
 
-FactoryLine for JetBrains is installable today from the matching GitHub release
-ZIP. The ZIP is binary-verified across IntelliJ IDEA, PyCharm, WebStorm, Rider,
-CLion, GoLand, RustRover, and DataGrip from the 2025.2 baseline forward.
+FactoryLine is public as Marketplace plugin `33009`:
+<https://plugins.jetbrains.com/plugin/33009-factoryline>.
 
-JetBrains Marketplace is a separate moderated distribution channel. Do not say
-the plugin is on Marketplace until its public Marketplace URL exists. The first
-upload needs a human JetBrains account, Vendor profile, Developer Agreement,
-license selection, and review. This is a platform-owned approval boundary, not
-a missing FactoryLine gate.
+The public [measurement baseline](JETBRAINS_MARKETPLACE_MEASUREMENT.json) is
+46 downloads on 2026-08-04. Treat later totals as observed growth, not proof that
+a particular copy or screenshot change caused it. The Marketplace API also showed
+an unapproved update at that snapshot, so inspect the vendor dashboard before
+submitting or replacing anything pending.
 
-## Artifact Gate
+## Conversion-focused listing
+
+- **Name:** `FactoryLine AI Proof`
+- **Preview:** `Catch AI-generated tests that could never fail — before review.`
+- **Tags:** `AI`, `Code Quality`, `Code Tools`, `Productivity`, `Testing`
+- **Source:** <https://github.com/zrk222/code-factory>
+- **License:** repository `MIT OR Apache-2.0` terms
+- **Getting started:** `Tools | FactoryLine | Run First Proof`
+
+The name stays distinct from the existing Marketplace product named Code Factory.
+The first sentence is short enough to carry the full preview outcome. The packaged
+descriptor is the source of truth for the full description and change notes.
+
+Use only tags offered by the Marketplace vendor UI that accurately match shipped
+behavior. Do not repeat keywords or select unrelated languages and frameworks.
+
+The paste-ready [Marketplace Acquisition Kit](JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md)
+contains the two-minute first-use path, approved copy, public product-tour assets,
+and the distinction between those web assets and required IDE-native Marketplace
+screenshots.
+
+All shipped features remain free through December 31, 2026. The owner-approved
+future Freemium price is **USD 5.95 per named seat per month or USD 60 per named seat per year**, planned for January 1, 2027 with a 30-day
+trial, subject to JetBrains approval. The payment-model change requires paid-plugin
+onboarding, a registered Product Code, license checks, advance user notice, and
+verified Sales Info. The monthly price is about 5.12% above the recorded USD 5.66 sample
+average; that comparison may drift, but the $5.95 / $60 owner decision does not. See the
+[pricing benchmark](JETBRAINS_PRICING_BENCHMARK.json) and the complete
+[2027 monetization runbook](JETBRAINS_MONETIZATION_2027.md).
+
+Use the actual Factory Studio product-tour assets on GitHub, PyPI, and the public
+landing page. For Marketplace media, replace concept art with the IDE-native
+sequence in [JetBrains Marketplace Screenshot Brief](JETBRAINS_MARKETPLACE_SCREENSHOTS.md).
+Keep the strongest first-use screenshot first. Add a short product video only
+after it shows the same real workflow without stale metrics.
+
+## Artifact gate
 
 Run this before any upload:
 
 ```powershell
 Set-Location editors/intellij
-.\gradlew.bat check buildPlugin verifyPlugin marketplacePreflight
+.\gradlew.bat check guardianReleaseGate
 ```
 
-`marketplacePreflight` reads the generated ZIP, not just source files. It
-requires the packaged main JAR to contain:
+`guardianReleaseGate` requires the unit suite, generated ZIP, Marketplace preflight,
+and a compatible Plugin Verifier verdict. `marketplacePreflight` inspects the
+generated ZIP, including Marketplace metadata, icons, and change notes. Compatibility is verified across IntelliJ IDEA, PyCharm,
+WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip from the 2025.2 platform
+baseline forward.
 
-- `META-INF/plugin.xml` with the FactoryLine project and vendor contact URLs.
-- `META-INF/pluginIcon.svg` and `META-INF/pluginIcon_dark.svg`.
-- Marketplace-visible change notes.
+The release candidate also carries a concise [JetBrains reviewer summary](JETBRAINS_REVIEWER_SUMMARY.md)
+that maps each local claim to its guardrail and source-level or package-level
+evidence. Marketplace account-side requirements and manual moderation remain
+external gates, never local claims.
 
-It does not certify JetBrains review, Vendor identity, license selection, tags,
-or a public listing. Those remain visible approval steps in Marketplace.
+Use the strict [0.8.16 compliance checklist](JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_16.md)
+before a dispatch, and keep post-approval discovery/review work inside the
+prepared, policy-compliant [growth plan](JETBRAINS_POST_RELEASE_GROWTH.md).
 
-## One-Time Initial Upload
+## Protected publication
 
-1. Sign in at <https://plugins.jetbrains.com> and choose **Upload plugin**.
-2. Select or create the FactoryLine Vendor profile and accept the Developer
-   Agreement when prompted.
-3. Upload the release ZIP:
-   <https://github.com/zrk222/code-factory/releases/download/v0.20.0/factoryline-intellij-0.5.0.zip>.
-4. Set the license to the repository's `MIT OR Apache-2.0` terms and link
-   the public source: <https://github.com/zrk222/code-factory>.
-5. Choose only Marketplace tags that accurately describe local developer
-   workflow and code-quality tooling. Add the public documentation URL and a
-   concise getting-started instruction from [FactoryLine for JetBrains IDEs](INTELLIJ.md).
-6. Submit the listing for JetBrains review. Save the resulting public plugin URL
-   in this document and the root README only after it is visible.
+1. Confirm the vendor dashboard has no update that would be unintentionally
+   replaced. Resolve any pending JetBrains feedback first.
+   `python scripts/jetbrains_marketplace_status.py --plugin-id 33009 --require-clear --json`
+   must return `MARKETPLACE_UPDATE_CLEAR`.
+2. Merge the tested release commit to `main`.
+3. Create the immutable tag matching the plugin version, currently
+   `jetbrains-v0.8.16` after the remaining Marketplace metadata review is clear.
+4. Run **Publish JetBrains Marketplace plugin** with that tag and the intended
+   channel. The `JETBRAINS_MARKETPLACE_TOKEN` remains scoped to the protected
+   `jetbrains-marketplace` environment.
+5. The workflow binds the tested ZIP to its SHA-256, size, plugin identity,
+   version, tag, commit, and channel before the privileged publish job.
+6. Wait for JetBrains approval, then verify the public version, description,
+   compatibility, screenshots, pricing, and download total before announcing it.
 
-The descriptor's first sentence is the Marketplace preview-card summary:
-"Run local FactoryLine gates and inspect receipts without leaving your IDE."
-It deliberately does not claim autonomous releases, source upload, signing, or
-Marketplace approval.
+Upload, workflow success, and public approval are separate states. Do not report a
+new version as live until the public Marketplace API and page both show it.
 
-## Automated Updates After Bootstrap
+## Growth measurement
 
-After JetBrains accepts the first upload:
+Record the following at submission, approval, day 7, and day 30:
 
-1. Create a scoped `JETBRAINS_MARKETPLACE_TOKEN` secret in the GitHub
-   `jetbrains-marketplace` environment. It must belong only to the FactoryLine
-   Marketplace plugin.
-2. Run **Publish JetBrains Marketplace plugin** from GitHub Actions against an
-   immutable release tag and the intended Marketplace channel.
-3. The workflow runs Kotlin tests, builds the ZIP, performs binary verification,
-   and runs `marketplacePreflight` before `publishPlugin` receives the token.
-4. Confirm the new Marketplace version and public compatibility display before
-   announcing it.
+```powershell
+python scripts/jetbrains_marketplace_status.py --plugin-id 33009 --json
+python scripts/jetbrains_marketplace_measurement.py --json
+```
 
-The workflow does not perform the first upload automatically. JetBrains requires
-a human Vendor profile and initial listing choices before token-based updates can
-be associated with a plugin.
+- public downloads and absolute delta from 46;
+- ratings count and average rating, if present;
+- approved public version and approval latency;
+- listing page views, installs, and conversion rate when vendor analytics expose them;
+- support issues attributable to install or first-proof friction.
+
+Without Marketplace impressions or page views, download conversion and causal
+uplift remain unavailable. Never substitute repository traffic or CI runs for
+Marketplace acquisition data.

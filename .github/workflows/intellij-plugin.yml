@@ -2,24 +2,50 @@ name: IntelliJ plugin
 
 on:
   push:
-    paths:
-      - "editors/intellij/**"
-      - ".github/workflows/intellij-plugin.yml"
+    branches: [main]
   pull_request:
-    paths:
-      - "editors/intellij/**"
-      - ".github/workflows/intellij-plugin.yml"
   workflow_dispatch:
 
+concurrency:
+  group: intellij-plugin-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
 jobs:
-  test-package-verify:
+  # Main protection requires these checks on every PR. The workflow therefore
+  # always emits each job status; expensive IDE work runs only when its inputs
+  # changed, and the no-change path says so explicitly rather than faking it.
+  changes:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: editors/intellij
+    outputs:
+      intellij: ${{ steps.scope.outputs.intellij }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "intellij=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -Eq '^(editors/intellij/|\.github/workflows/intellij-plugin\.yml$)'; then
+            echo "intellij=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "intellij=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  test-package-verify:
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        if: needs.changes.outputs.intellij == 'true'
       - name: Free runner disk for IDE verification
+        if: needs.changes.outputs.intellij == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -27,18 +53,58 @@ jobs:
           sudo docker image prune --all --force
           df -h
       - uses: actions/setup-java@v5
+        if: needs.changes.outputs.intellij == 'true'
         with:
           distribution: temurin
           java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6.2.0
+        if: needs.changes.outputs.intellij == 'true'
       - run: chmod +x gradlew
-      - run: ./gradlew check buildPlugin verifyPlugin marketplacePreflight
+        if: needs.changes.outputs.intellij == 'true'
+        working-directory: editors/intellij
+      - name: Build, verify, and preflight plugin package
+        if: needs.changes.outputs.intellij == 'true'
+        shell: bash
+        working-directory: editors/intellij
+        run: |
+          # JetBrains-hosted dependency metadata can return transient 5xx
+          # responses. Retry only at the CI boundary; a persistent build,
+          # package, verifier, or preflight defect still fails the job.
+          for attempt in 1 2 3; do
+            if ./gradlew check guardianReleaseGate; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Package verification attempt $attempt failed; retrying once the upstream repository recovers."
+              sleep 20
+            fi
+          done
+          exit 1
       - uses: actions/upload-artifact@v7.0.1
+        if: needs.changes.outputs.intellij == 'true'
         with:
           name: factoryline-intellij-plugin
           path: editors/intellij/build/distributions/*.zip
+      - name: Mark package verification not applicable
+        if: needs.changes.outputs.intellij != 'true'
+        run: echo "No IntelliJ plugin or workflow change; package verification is not applicable to this commit."
+
+  test-package:
+    needs: [changes, test-package-verify]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report exact package verification applicability
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.changes.outputs.intellij }}" = "true" ]; then
+            echo "IntelliJ package verification completed in test-package-verify."
+          else
+            echo "No IntelliJ plugin or workflow change; package verification is not applicable to this commit."
+          fi
 
   compatibility:
-    needs: test-package-verify
+    needs: [changes, test-package-verify]
     strategy:
       fail-fast: false
       matrix:
@@ -52,12 +118,16 @@ jobs:
           - RustRover
           - DataGrip
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: editors/intellij
     steps:
       - uses: actions/checkout@v5
+        if: needs.changes.outputs.intellij == 'true'
+      - uses: actions/download-artifact@v8.0.1
+        if: needs.changes.outputs.intellij == 'true'
+        with:
+          name: factoryline-intellij-plugin
+          path: ${{ runner.temp }}/factoryline-intellij-plugin
       - name: Free runner disk for IDE verification
+        if: needs.changes.outputs.intellij == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -65,12 +135,25 @@ jobs:
           sudo docker image prune --all --force
           df -h
       - uses: actions/setup-java@v5
+        if: needs.changes.outputs.intellij == 'true'
         with:
           distribution: temurin
           java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6.2.0
+        if: needs.changes.outputs.intellij == 'true'
       - run: chmod +x gradlew
+        if: needs.changes.outputs.intellij == 'true'
+        working-directory: editors/intellij
+      - name: Resolve verified plugin archive
+        if: needs.changes.outputs.intellij == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find "$RUNNER_TEMP/factoryline-intellij-plugin" -type f -name "*.zip" -print)
+          test "${#archives[@]}" -eq 1
+          printf '%s\n' "${archives[0]}" > "$RUNNER_TEMP/factoryline-plugin-archive.txt"
       - name: Resolve current DataGrip archive
-        if: matrix.product == 'DataGrip'
+        if: needs.changes.outputs.intellij == 'true' && matrix.product == 'DataGrip'
         shell: bash
         run: |
           set -euo pipefail
@@ -87,10 +170,28 @@ jobs:
           tar -xzf "$RUNNER_TEMP/datagrip.tar.gz" -C "$RUNNER_TEMP/datagrip" --strip-components=1
           test -f "$RUNNER_TEMP/datagrip/product-info.json"
       - name: Verify plugin against selected IDE
+        if: needs.changes.outputs.intellij == 'true'
         shell: bash
+        working-directory: editors/intellij
         run: |
-          if [ "${{ matrix.product }}" = "DataGrip" ]; then
-            ./gradlew buildPlugin verifyPlugin -PfactorylineVerificationProduct=DataGrip -PfactorylineLocalVerificationIde="$RUNNER_TEMP/datagrip"
-          else
-            ./gradlew buildPlugin verifyPlugin -PfactorylineVerificationProduct=${{ matrix.product }}
-          fi
+          archive="$(cat "$RUNNER_TEMP/factoryline-plugin-archive.txt")"
+          # The verifier and IDE artifacts are resolved from JetBrains-hosted
+          # repositories. Retry only at the CI boundary for transient 5xx
+          # responses; a persistent compatibility defect still fails the job.
+          for attempt in 1 2 3; do
+            if [ "${{ matrix.product }}" = "DataGrip" ]; then
+              if ./gradlew verifyPlugin -PfactorylineVerificationArchive="$archive" -PfactorylineVerificationProduct=DataGrip -PfactorylineLocalVerificationIde="$RUNNER_TEMP/datagrip"; then
+                exit 0
+              fi
+            elif ./gradlew verifyPlugin -PfactorylineVerificationArchive="$archive" -PfactorylineVerificationProduct=${{ matrix.product }}; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Verifier attempt $attempt failed; retrying once the upstream repository recovers."
+              sleep 20
+            fi
+          done
+          exit 1
+      - name: Mark compatibility not applicable
+        if: needs.changes.outputs.intellij != 'true'
+        run: echo "No IntelliJ plugin or workflow change; compatibility verification is not applicable to this commit."

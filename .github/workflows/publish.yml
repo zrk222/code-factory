@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  validate:
-    name: validate release artifacts
+  validate_python:
+    name: validate Python release artifacts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -21,19 +21,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
-      - uses: actions/setup-node@v7.0.0
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: editors/vscode/package-lock.json
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - uses: gradle/actions/setup-gradle@v6.2.0
+          cache: pip
 
       - name: Install release test and build tools
         run: |
@@ -49,19 +37,6 @@ jobs:
       - name: Check distributions
         run: python -m twine check dist/*
 
-      - name: Test and package VS Code extension
-        working-directory: editors/vscode
-        run: |
-          npm ci
-          npm test
-          npx vsce package --no-dependencies --out factoryline-vscode-${{ github.event.release.tag_name }}.vsix
-
-      - name: Test and package JetBrains plugin
-        working-directory: editors/intellij
-        run: |
-          chmod +x gradlew
-          ./gradlew check buildPlugin verifyPlugin marketplacePreflight
-
       - name: Clean wheel smoke
         run: |
           python -m venv /tmp/factory-wheel
@@ -72,23 +47,73 @@ jobs:
             exit 1
           fi
 
-      - name: Stage immutable release bundle
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-python-${{ github.event.release.tag_name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  validate_vscode:
+    name: validate VS Code release artifact
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Test and package VS Code extension
         run: |
-          mkdir -p release-bundle/python release-bundle/editors
-          cp dist/* release-bundle/python/
-          cp editors/vscode/*.vsix release-bundle/editors/
-          cp editors/intellij/build/distributions/*.zip release-bundle/editors/
+          npm ci
+          npm run audit
+          npm test
+          npx vsce package --no-dependencies --out factoryline-vscode-${{ github.event.release.tag_name }}.vsix
 
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: release-bundle-${{ github.event.release.tag_name }}
-          path: release-bundle/
+          name: release-vscode-${{ github.event.release.tag_name }}
+          path: editors/vscode/factoryline-vscode-${{ github.event.release.tag_name }}.vsix
+          if-no-files-found: error
+          retention-days: 30
+
+  validate_intellij:
+    name: validate JetBrains release artifact
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/intellij
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v6.2.0
+
+      - name: Test and package JetBrains plugin
+        run: |
+          chmod +x gradlew
+          ./gradlew check guardianReleaseGate
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-intellij-${{ github.event.release.tag_name }}
+          path: editors/intellij/build/distributions/*.zip
           if-no-files-found: error
           retention-days: 30
 
   publish:
     name: publish verified release
-    needs: validate
+    needs: [validate_python, validate_vscode, validate_intellij]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -99,8 +124,18 @@ jobs:
 
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: release-bundle-${{ github.event.release.tag_name }}
-          path: release-bundle
+          name: release-python-${{ github.event.release.tag_name }}
+          path: release-bundle/python
+
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-vscode-${{ github.event.release.tag_name }}
+          path: release-bundle/editors
+
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-intellij-${{ github.event.release.tag_name }}
+          path: release-bundle/editors
 
       - name: Attach distributions to GitHub release
         env:
@@ -109,9 +144,17 @@ jobs:
           gh release upload "${{ github.event.release.tag_name }}"
           release-bundle/python/*
           release-bundle/editors/*
-          docs/assets/code-factory-quickstart-v0171.mp4
-          docs/assets/code-factory-quickstart-cover-v0171.png
-          docs/assets/how-it-works/*.png
+          docs/assets/factoryline-logo-480.png
+          docs/assets/marketplace/factoryline-0.44-live-dashboard.png
+          docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg
+          docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg
+          docs/assets/marketplace/factoryline-60-day-personal-case-study.png
+          docs/assets/marketplace/code-factory-60-day-personal-case-study.png
+          docs/assets/marketplace/factory-studio-mvp-1280x800.png
+          docs/assets/marketplace/graph-ops-studio-1280x800.png
+          docs/assets/marketplace/graph-ops-proofsearch.png
+          docs/assets/marketplace/graph-ops-proofsearch-controls.png
+          docs/assets/marketplace/graph-ops-evidence-frontier.png
           docs/assets/*.svg
           docs/assets/verify-policy.gif
           --clobber
@@ -121,3 +164,114 @@ jobs:
         with:
           packages-dir: release-bundle/python/
           attestations: true
+
+  publish_mcp_registry:
+    name: publish Official MCP Registry metadata
+    needs: [publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate release tag and MCP Registry metadata
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          def reject(message: str) -> None:
+              print("MCP_REGISTRY_METADATA_REJECTED")
+              raise SystemExit(message)
+
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+              reject(f"invalid release tag: {tag}")
+          version = tag[1:]
+          descriptor = json.loads(Path("mcp/server.json").read_text(encoding="utf-8"))
+          project = Path("pyproject.toml").read_text(encoding="utf-8")
+          readme = Path("README.md").read_text(encoding="utf-8")
+          package = descriptor["packages"][0]
+
+          expected_name = "io.github.zrk222/code-factory"
+          marker = f"<!-- mcp-name: {expected_name} -->"
+          if descriptor["name"] != expected_name or descriptor["version"] != version:
+              reject("registry descriptor name or version does not match release tag")
+          if len(descriptor.get("description", "")) > 100:
+              reject("registry description exceeds 100 characters")
+          if package["identifier"] != "factoryline-code-factory" or package["version"] != version:
+              reject("registry package does not match release tag")
+          if package["transport"] != {"type": "stdio"}:
+              reject("registry package must use stdio transport only")
+          if package.get("environmentVariables"):
+              reject("registry package must not declare environment variables")
+          if package.get("runtimeHint") != "uvx" or package.get("runtimeArguments") != [
+              {"type": "named", "name": "--from", "value": f"factoryline-code-factory=={version}"}
+          ]:
+              reject("registry uvx launch does not match release package")
+          if [item.get("value") for item in package.get("packageArguments", [])] != ["factory", "mcp", "serve"]:
+              reject("registry package arguments must invoke factory mcp serve")
+          if f'version = "{version}"' not in project or marker not in readme:
+              reject("release package metadata or MCP ownership marker is missing")
+          print("MCP_REGISTRY_RELEASE_METADATA_VALID")
+          PY
+
+      - name: Wait for PyPI package and ownership marker
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          for attempt in $(seq 1 20); do
+            if python - "$version" <<'PY'
+          import json
+          import sys
+          from urllib.error import HTTPError, URLError
+          from urllib.request import urlopen
+
+          version = sys.argv[1]
+          url = f"https://pypi.org/pypi/factoryline-code-factory/{version}/json"
+          try:
+              with urlopen(url, timeout=15) as response:
+                  payload = json.load(response)
+          except (HTTPError, URLError, TimeoutError) as error:
+              print(f"PyPI version not visible yet: {error}")
+              raise SystemExit(1)
+          marker = "<!-- mcp-name: io.github.zrk222/code-factory -->"
+          if payload["info"]["version"] != version or marker not in payload["info"].get("description", ""):
+              print("PyPI version or MCP ownership marker is not visible yet")
+              raise SystemExit(1)
+          print("PYPI_MCP_OWNERSHIP_MARKER_VERIFIED")
+          PY
+            then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "matching PyPI package and MCP ownership marker did not become visible within five minutes" >&2
+          exit 1
+
+      - name: Install and validate pinned MCP Registry publisher
+        env:
+          MCP_PUBLISHER_VERSION: "1.8.1"
+        run: |
+          set -euo pipefail
+          base="https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --retry 5 --retry-all-errors --output mcp-publisher_linux_amd64.tar.gz "$base/mcp-publisher_linux_amd64.tar.gz"
+          curl --fail --location --retry 5 --retry-all-errors --output checksums.txt "$base/registry_${MCP_PUBLISHER_VERSION}_checksums.txt"
+          grep -E ' [*]?mcp-publisher_linux_amd64.tar.gz$' checksums.txt | sha256sum --check --strict --status -
+          tar -xzf mcp-publisher_linux_amd64.tar.gz mcp-publisher
+          chmod +x mcp-publisher
+          ./mcp-publisher validate mcp/server.json
+
+      - name: Authenticate MCP Registry publisher through GitHub OIDC
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish MCP Registry descriptor
+        run: ./mcp-publisher publish mcp/server.json

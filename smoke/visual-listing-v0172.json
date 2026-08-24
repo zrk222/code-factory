@@ -1,15 +1,16 @@
 {
   "checks": [
     {
-      "name": "visual_story_is_packaged_and_truthfully_bounded",
+      "name": "current_product_visuals_are_packaged_and_retired_media_is_absent",
       "kind": "python",
-      "run": "from pathlib import Path\nimport hashlib,json,struct\nroot=Path.cwd(); asset_root=root/'docs'/'assets'/'how-it-works'; manifest=json.loads((asset_root/'manifest.json').read_text(encoding='utf-8')); entries=manifest['illustrations']; assert len(entries)==9; assert [e['order'] for e in entries]==list(range(1,10))\nfor entry in entries:\n data=(asset_root/entry['filename']).read_bytes(); assert hashlib.sha256(data).hexdigest()==entry['sha256']; assert data[:8]==b'\\x89PNG\\r\\n\\x1a\\n'; assert struct.unpack('>II',data[16:24])==(1122,1402)\nreadme=(root/'README.md').read_text(encoding='utf-8'); assert readme.count('Concept illustrations')==1; assert readme.count('Exact shipped UI')==1; assert readme.count('https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/')==3\npublic='\\n'.join((root/p).read_text(encoding='utf-8') for p in ['README.md','LAUNCH_KIT.md','PUBLICATION_GUIDE.md','docs/HOW_IT_WORKS_VISUAL.md','docs/PRODUCT_HUNT_GALLERY.md','.zenodo.json']); assert all(term not in public for term in ['2.6 hrs','$14.37','82%','github.com/code-factory']); assert 'docs/assets/how-it-works/*.png' in (root/'.github'/'workflows'/'publish.yml').read_text(encoding='utf-8'); assert '*.json' in (root/'MANIFEST.in').read_text(encoding='utf-8')\n",
+      "run": "from pathlib import Path\nimport struct\nroot=Path.cwd(); assets=root/'docs'/'assets'\ndef dims(path):\n data=path.read_bytes(); assert data[:8]==b'\\x89PNG\\r\\n\\x1a\\n'; return struct.unpack('>II', data[16:24])\nassert dims(assets/'factoryline-logo-480.png')==(480,480)\nassert dims(assets/'marketplace'/'factory-studio-mvp-1280x800.png')==(1280,800)\nassert dims(assets/'marketplace'/'graph-ops-studio-1280x800.png')==(1280,800)\npublic='\\n'.join((root/p).read_text(encoding='utf-8') for p in ['README.md','LAUNCH_KIT.md','PUBLICATION_GUIDE.md','docs/PRODUCT_VISUALS.md','docs/PRODUCT_HUNT_GALLERY.md','deploy/huggingface/index.html'])\nfor retired in ['code-factory-quickstart-v0171.mp4','code-factory-quickstart-cover-v0171.png','factory-studio-control-room-1080.png','factory-studio-control-room.png','how-it-works/','HOW_IT_WORKS_VISUAL.md']:\n assert retired not in public\nassert all(term not in public for term in ['2.6 hrs','$14.37','82%','github.com/code-factory'])\n",
       "covers": [
-        "ASSET_DRIFT",
-        "VISUAL_STORY_ORDERED",
-        "CONCEPT_BOUNDARY_MISSING",
-        "GITHUB_VISUAL_PREVIEW",
-        "RELEASE_GATE_FAILED"
+        "REQ-VIS-CURRENT-ASSETS",
+        "REQ-VIS-POLICY",
+        "REQ-VIS-RETIREMENT",
+        "REQ-VIS-CLAIMS",
+        "REQ-VIS-PH",
+        "REQ-VIS-RELEASE"
       ],
       "must_fail_on_stub": true
     }

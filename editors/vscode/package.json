@@ -1,8 +1,8 @@
 {
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
-  "description": "Run bounded Code Factory gates and inspect local receipts without leaving VS Code.",
-  "version": "0.5.0",
+  "description": "Catch AI-generated tests that could never fail. Review code with local proof.",
+  "version": "0.8.11",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -13,22 +13,36 @@
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Developer Tools",
     "Testing"
   ],
   "keywords": [
     "code-factory",
     "receipts",
     "verification",
-    "testing"
+    "testing",
+    "mvp",
+    "mcp",
+    "graph-ops",
+    "proof-debt",
+    "ai-governance",
+    "design-review",
+    "ui-quality",
+    "prd-grill",
+    "independent-verification",
+    "verifier-plane",
+    "proofsearch",
+    "counterfactual-repair"
   ],
   "activationEvents": [
     "onCommand:factoryline.assemble",
+    "onCommand:factoryline.continue",
     "onCommand:factoryline.verify",
     "onCommand:factoryline.openMeter",
+    "onCommand:factoryline.openSavings",
     "onCommand:factoryline.openLatestReceipt",
     "onCommand:factoryline.openStudio",
     "onCommand:factoryline.openProductMissions",
+    "onCommand:factoryline.openGraphOps",
     "onCommand:factoryline.openRequirementEvidence"
   ],
   "main": "./dist/extension.js",
@@ -39,12 +53,20 @@
         "title": "FactoryLine: Run Spec-to-Ship Assembly"
       },
       {
+        "command": "factoryline.continue",
+        "title": "FactoryLine: Continue Assembly to Next Boundary"
+      },
+      {
         "command": "factoryline.verify",
         "title": "FactoryLine: Verify Feature Receipts"
       },
       {
         "command": "factoryline.openMeter",
         "title": "FactoryLine: Open Local Meter"
+      },
+      {
+        "command": "factoryline.openSavings",
+        "title": "FactoryLine: Open Paired Savings Report"
       },
       {
         "command": "factoryline.openLatestReceipt",
@@ -57,6 +79,10 @@
       {
         "command": "factoryline.openProductMissions",
         "title": "FactoryLine: Open Product Missions"
+      },
+      {
+        "command": "factoryline.openGraphOps",
+        "title": "FactoryLine: Open Unified Graph Ops"
       },
       {
         "command": "factoryline.openRequirementEvidence",
@@ -77,7 +103,13 @@
   "scripts": {
     "compile": "tsc -p .",
     "test": "npm run compile && node ./dist/test/receipt.test.js",
+    "audit": "npm audit --audit-level=high",
     "package": "npm run test && vsce package --no-dependencies"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.9",
+    "fast-uri": "3.1.5",
+    "js-yaml": "^4.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.17.30",

@@ -1,0 +1,71 @@
+name: diff-to-proof-review
+language: python
+modules:
+  - name: change_review
+    path: factoryline/change_review.py
+    functions:
+      - name: review_change
+        args: ["root: Path", "base: str = 'main'", "changed: list[str] | None = None"]
+        returns: dict
+      - name: write_review_artifacts
+        args: ["review: dict", "out_dir: Path"]
+        returns: dict
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_impact
+        args: ["root: Path", "changed_paths: list[str]"]
+        returns: dict[str, Any]
+  - name: coverage
+    path: factoryline/coverage.py
+    functions:
+      - name: requirement_coverage
+        args: ["root: Path"]
+        returns: dict
+  - name: proof
+    path: factoryline/proof.py
+    functions:
+      - name: risk_for_paths
+        args: ["paths: Iterable[str]"]
+        returns: dict
+      - name: verify_trace
+        args: ["trace_path: Path"]
+        returns: dict
+  - name: proof_reuse
+    path: factoryline/proof_reuse.py
+    functions:
+      - name: verify_proof_receipt
+        args: ["root: Path", "receipt_path: Path"]
+        returns: dict
+  - name: product_missions
+    path: factoryline/product_missions.py
+    functions:
+      - name: verify_mission_completion
+        args: ["completion_path: Path"]
+        returns: dict
+dependencies:
+  - from: change_review
+    to: graph_ops
+  - from: change_review
+    to: coverage
+  - from: change_review
+    to: proof
+  - from: graph_ops
+    to: proof
+  - from: graph_ops
+    to: proof_reuse
+  - from: graph_ops
+    to: product_missions
+invariants:
+  - name: analysis_never_executes_or_calls_remote_services
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:execute|merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: change_review
+        symbol: review_change
+        max_lines: 150
+  - name: default_analysis_does_not_write_artifacts
+    forbid_pattern: "write_(?:text|bytes)\\(|replace\\("
+    scopes:
+      - module: change_review
+        symbol: review_change
+        max_lines: 150

@@ -57,7 +57,7 @@ can contribute workflow examples.
 ## Install And Use
 
 ```bash
-pip install factoryline-code-factory==0.20.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
+pip install factoryline-code-factory==0.24.2 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
 
 factory doctor
 factory pack list
@@ -115,36 +115,23 @@ factory --help
 
 Current release media:
 
-- `docs/assets/code-factory-quickstart-v0171.mp4`: 60-second narrated quick start
-  built from the exact Factory Studio capture.
-- `docs/assets/code-factory-quickstart-cover-v0171.png`: video cover.
-- `docs/assets/factory-studio-control-room-1080.png`: exact 1920x1080 Studio
-  source frame used by the Remotion composition.
-- `media/code-factory-quickstart/`: reproducible Remotion source and narration
-  input. Re-render with `npm install` followed by `npm run render`.
-- `docs/assets/how-it-works/`: nine owner-supplied concept illustrations with
-  an ordered SHA-256 manifest. They explain the workflow; they are not UI
-  screenshots or measured outcome evidence.
-- `docs/HOW_IT_WORKS_VISUAL.md`: the accessible nine-stage visual walkthrough
-  used by GitHub, the PyPI long description, Product Hunt preparation, and the
-  Zenodo source archive.
+- `docs/assets/factoryline-logo-480.png`: the current FactoryLine identity
+  asset for a product icon or logo.
+- `docs/assets/marketplace/factory-studio-mvp-1280x800.png`: an actual local
+  Factory Studio capture of the outcome-first MVP path.
+- `docs/assets/marketplace/graph-ops-studio-1280x800.png`: an actual local
+  Graph Ops capture, including its incomplete proof state.
+- `docs/PRODUCT_VISUALS.md`: the visual policy, placement rules, and evidence
+  boundary for every current public surface.
 
-Verify the MP4 before attaching it to a release:
-
-The publish workflow attaches the MP4, cover, and nine concept illustrations to
-every GitHub release.
-The README uses an absolute raw cover URL and the versioned release-asset URL
-so the same video entry renders correctly on GitHub and PyPI.
+The publish workflow attaches this product-only set to future GitHub releases.
+Do not attach the retired v0.17 video, blank-dashboard captures, or concept art
+to a current release.
 
 For Product Hunt, use `docs/PRODUCT_HUNT_GALLERY.md`. Product Hunt currently
-requires at least two gallery images, recommends 1270 x 760, and accepts a full
-YouTube URL for video entries. The supplied concepts are 1122 x 1402 portrait
-PNGs, so preview them without destructive cropping before publishing.
-
-```powershell
-ffprobe -v error -show_entries format=duration -show_streams `
-  docs/assets/code-factory-quickstart-v0171.mp4
-```
+requires at least two gallery images and recommends 1270 x 760. Upload the two
+1280 x 800 product captures at their native aspect ratio; do not crop away the
+authority or proof-status text.
 
 ## Claude Code And Codex
 

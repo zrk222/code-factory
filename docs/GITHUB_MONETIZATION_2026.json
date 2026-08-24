@@ -1,0 +1,61 @@
+{
+  "schema": "factory.github-monetization-plan.v1",
+  "surface": {
+    "repository": "zrk222/code-factory",
+    "offer_name": "Code Factory GitHub per-seat offer"
+  },
+  "governance": {
+    "classification": "human_controlled",
+    "activation_authority": [
+      "product_owner",
+      "chosen_billing_or_contracting_system"
+    ],
+    "automation_may_activate": false
+  },
+  "offer": {
+    "free_through": "2026-12-31T23:59:59-05:00",
+    "paid_from": "2027-01-01",
+    "price_per_named_seat_usd_month": 5.95,
+    "price_per_named_seat_usd_year": 60.0,
+    "price_status": "owner_approved_future_price_not_active",
+    "billing_status": "not_configured",
+    "checkout_status": "not_live",
+    "taxes_and_currency_conversion": "must_be_shown_by_the_chosen_billing_or_contracting_system_before_purchase"
+  },
+  "scope": {
+    "scheduled_paid_offer": "GitHub Assurance Seat: a customer-managed per-seat operating package for GitHub pull-request proof",
+    "source_license": "MIT OR Apache-2.0 remains unchanged",
+    "repository_access": "not_restricted_by_this_plan",
+    "github_payment_or_entitlement": "not_provided_by_GitHub_repository_metadata",
+    "automatic_license_enforcement": false
+  },
+  "value_contract": {
+    "state_marker": "GITHUB_ASSURANCE_SEAT_VALUE_DEFINED",
+    "buyer_outcome": "A named contributor can attach deterministic, commit-bound proof context to a GitHub pull request without making Code Factory a merge authority or a source-code host.",
+    "included_when_activated": [
+      "commit-bound GitHub Proof Review Check and walkthrough",
+      "human-approved Plan-to-Proof scope envelope and visible Proof Debt",
+      "supplied-policy drift dossier bound to the exact commit and named expiring exceptions",
+      "organization-authored policy bundles with named, expiring exception receipts",
+      "exportable hash-bound evidence, attestations, and review packets",
+      "customer-managed local evidence and no Code Factory source upload"
+    ],
+    "commercial_rationale": "The seat pays for a maintained, governed assurance operating package, not for access to the open-source repository or for opaque AI-token resale.",
+    "does_not_include": [
+      "automatic merge, release, deploy, approval, or policy bypass authority",
+      "hosted evidence retention, managed execution, or source-code hosting",
+      "SOC 2 or other compliance certification, SSO/SCIM, external KMS, or SLA",
+      "AI model quota, token credits, or a claim that a test has run when no receipt exists"
+    ]
+  },
+  "activation_gates": [
+    {"id": "G1_OFFER_SCOPE_AND_TERMS", "status": "prepared", "evidence": "docs/GITHUB_MONETIZATION_2026.md"},
+    {"id": "G2_BILLING_AND_TAX_DISCLOSURE", "status": "pending_human", "evidence": null},
+    {"id": "G3_SEAT_AND_ENTITLEMENT_POLICY", "status": "pending_human", "evidence": null},
+    {"id": "G4_SUPPORT_REFUND_AND_PRIVACY_BOUNDARY", "status": "pending_human", "evidence": null},
+    {"id": "G5_PUBLIC_TERMS_AND_CHECKOUT_READBACK", "status": "pending_human", "evidence": null},
+    {"id": "G6_OWNER_ACTIVATION_APPROVAL", "status": "pending_human", "evidence": null}
+  ],
+  "activation_rule": "All G1-G6 gates require dated evidence, a feature-by-feature availability matrix, and product-owner approval before any paid offer, checkout, entitlement, or access claim is activated.",
+  "current_verdict": "GITHUB_PER_SEAT_PRICE_SCHEDULED_NOT_ACTIVE"
+}

@@ -20,4 +20,5 @@ receipts/
 .env.render.local
 .tools/
 .netlify/
+.idea/
 editors/intellij/.kotlin/

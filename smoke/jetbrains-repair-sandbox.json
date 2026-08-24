@@ -1,0 +1,27 @@
+{
+  "checks": [
+    {
+      "name": "repair_sandbox_seals_the_change_list_and_measures_context_bytes",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_repair_sandbox.py']) == 0\n",
+      "covers": [
+        "REPAIR_SCOPE_EXPLICIT",
+        "REPAIR_SCOPE_HASH_BOUND",
+        "REPAIR_CONTEXT_BYTES_EXACT",
+        "REPAIR_SCOPE_ARTIFACTS_WRITTEN",
+        "REPAIR_CANDIDATE_PATCH_SCOPED",
+        "REPAIR_SANDBOX_HUMAN_APPLY_REQUIRED"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "repair_sandbox_rejects_scope_escape_and_byte_drift",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_repair_sandbox.py::test_candidate_rejects_outside_scope_before_any_apply', 'tests/test_repair_sandbox.py::test_candidate_rejects_scope_drift']) == 0\n",
+      "covers": [
+        "REPAIR_SANDBOX_UNAVAILABLE"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

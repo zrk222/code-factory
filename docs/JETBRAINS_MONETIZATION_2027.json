@@ -1,0 +1,58 @@
+{
+  "schema": "factory.jetbrains-monetization-plan.v1",
+  "plugin": {
+    "marketplace_id": 33009,
+    "xml_id": "app.factoryline",
+    "name": "FactoryLine AI Proof",
+    "current_free_version": "0.8.16",
+    "paid_launch_version": "2027.1.0"
+  },
+  "governance": {
+    "classification": "human_controlled",
+    "activation_authority": [
+      "plugin_owner",
+      "JetBrains Marketplace"
+    ],
+    "automation_may_activate": false
+  },
+  "offer": {
+    "free_through": "2026-12-31T23:59:59-05:00",
+    "paid_from": "2027-01-01",
+    "model": "freemium",
+    "monthly_price_usd": 5.95,
+    "monthly_price_status": "owner_approved",
+    "annual_price_usd": 60.0,
+    "annual_price_status": "owner_approved",
+    "trial_days": 30,
+    "trial_status": "planned",
+    "taxes_and_currency_conversion": "calculated_by_JetBrains_at_checkout"
+  },
+  "paid_descriptor": {
+    "product_code": "PFACTORYLINE",
+    "product_code_status": "proposed_not_registered",
+    "release_date": "20270101",
+    "release_version": "20271",
+    "optional": true,
+    "active_descriptor_contains_product_descriptor": false,
+    "staging_template": "editors/intellij/monetization/plugin-product-descriptor-2027.xml"
+  },
+  "feature_boundary": {
+    "through_2026_12_31": "all_0_8_16_features_free",
+    "from_2027_01_01": "free_core_remains_available; licensed_entitlements_are_limited_to_optional_memory_and_enterprise_assurance_features",
+    "source_license": "MIT OR Apache-2.0 remains unchanged",
+    "privacy": "no new telemetry, source upload, credential storage, signing, or release authority"
+  },
+  "activation_gates": [
+    {"id": "G1_PENDING_UPDATE_CLEAR", "status": "blocked", "evidence": null},
+    {"id": "G2_TRADER_AND_BANKING_VERIFIED", "status": "pending_human", "evidence": null},
+    {"id": "G3_PRODUCT_CODE_REGISTERED", "status": "pending_human", "evidence": null},
+    {"id": "G4_LICENSE_IMPLEMENTED_AND_TESTED", "status": "not_started", "evidence": null},
+    {"id": "G5_PAID_BINARY_VERIFIED", "status": "not_started", "evidence": null},
+    {"id": "G6_SALES_INFO_SUBMITTED", "status": "pending_human", "evidence": null},
+    {"id": "G7_MARKETPLACE_PAID_APPROVAL", "status": "pending_human", "evidence": null},
+    {"id": "G8_PUBLIC_PRICE_AND_FAQ_LIVE", "status": "prepared", "evidence": null},
+    {"id": "G9_SUPPORT_AND_ROLLBACK_OWNER_READY", "status": "prepared", "evidence": null}
+  ],
+  "activation_rule": "Every G1-G9 gate must be verified with a dated receipt before paid activation.",
+  "current_verdict": "MONETIZATION_GATE_BLOCKED"
+}

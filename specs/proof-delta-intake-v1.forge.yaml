@@ -1,0 +1,6539 @@
+name: proof-delta-intake-v1
+language: python,typescript
+modules:
+- name: setup
+  path: setup.py
+  language: python
+  functions:
+  - name: source_commit
+    args: []
+    returns: str | None
+  - name: write_provenance
+    args:
+    - 'path: Path'
+    - 'commit: str | None'
+    returns: None
+- name: examples_verify_policy_python_check_policy
+  path: examples/verify-policy/python/check_policy.py
+  language: python
+  functions:
+  - name: main
+    args:
+    - 'policy_path: str'
+    returns: int
+- name: factoryline_agent_contract
+  path: factoryline/agent_contract.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _text
+    args:
+    - 'value: Any'
+    - 'label: str'
+    - '*'
+    - 'max_len: int = 200'
+    returns: str
+  - name: _digest
+    args:
+    - 'value: Any'
+    - 'label: str'
+    returns: str
+  - name: _bounded_int
+    args:
+    - 'value: Any'
+    - 'label: str'
+    - 'minimum: int'
+    - 'maximum: int'
+    returns: int
+  - name: _bounded_cost
+    args:
+    - 'value: Any'
+    returns: float
+  - name: _strings
+    args:
+    - 'value: Any'
+    - 'label: str'
+    - '*'
+    - 'allow_empty: bool = True'
+    returns: list[str]
+  - name: _object
+    args:
+    - 'value: Any'
+    - 'label: str'
+    returns: dict[str, Any]
+  - name: _exact_keys
+    args:
+    - 'value: dict[str'
+    - Any]
+    - 'allowed: set[str]'
+    - 'label: str'
+    returns: None
+  - name: _core5
+    args:
+    - 'value: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: validate_agent_contract
+    args:
+    - 'value: Path | dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: validate_verifier_attestation
+    args:
+    - 'value: Path | dict[str'
+    - Any]
+    - '*'
+    - 'mission_digest: str | None = None'
+    - 'contract_digest: str | None = None'
+    returns: dict[str, Any]
+- name: factoryline_app_builder
+  path: factoryline/app_builder.py
+  language: python
+  functions:
+  - name: _slug
+    args:
+    - 'value: str'
+    returns: str
+  - name: _extract_name
+    args:
+    - 'text: str'
+    - 'fallback: str | None = None'
+    returns: str
+  - name: _purpose_from_text
+    args:
+    - 'text: str'
+    - 'explicit: str'
+    returns: str
+  - name: build_blueprint
+    args:
+    - 'text: str'
+    - '*'
+    - 'source: str'
+    - 'name: str | None = None'
+    - 'stack: str = "nextjs-fastapi-postgres"'
+    - 'purpose: str = "auto"'
+    returns: AppBlueprint
+  - name: _write
+    args:
+    - 'path: Path'
+    - 'content: str'
+    returns: None
+  - name: _frontend_page
+    args:
+    - 'blueprint: AppBlueprint'
+    returns: str
+  - name: _frontend_css
+    args: []
+    returns: str
+  - name: _backend_main
+    args:
+    - 'blueprint: AppBlueprint'
+    returns: str
+  - name: healthz
+    args: []
+    returns: unknown
+  - name: _pytest_health
+    args: []
+    returns: str
+  - name: test_healthz
+    args: []
+    returns: unknown
+  - name: _schema_sql
+    args:
+    - 'blueprint: AppBlueprint'
+    returns: str
+  - name: _workflow_doc
+    args:
+    - 'blueprint: AppBlueprint'
+    returns: str
+  - name: _readme
+    args:
+    - 'blueprint: AppBlueprint'
+    returns: str
+  - name: _ssat_yaml
+    args:
+    - 'blueprint: AppBlueprint'
+    returns: str
+  - name: _coverage_manifest
+    args:
+    - 'blueprint: AppBlueprint'
+    returns: str
+  - name: _forge_state
+    args:
+    - 'blueprint: AppBlueprint'
+    returns: str
+  - name: scaffold_app
+    args:
+    - 'blueprint: AppBlueprint'
+    - '*'
+    - 'out_dir: Path'
+    - 'prd_text: str'
+    returns: dict
+  - name: app_from_prd
+    args:
+    - 'prd_path: Path'
+    - '*'
+    - 'out_dir: Path | None = None'
+    - 'name: str | None = None'
+    - 'stack: str = "nextjs-fastapi-postgres"'
+    - 'purpose: str = "auto"'
+    returns: dict
+  - name: app_from_prompt
+    args:
+    - 'prompt: str'
+    - '*'
+    - 'out_dir: Path | None = None'
+    - 'name: str | None = None'
+    - 'stack: str = "nextjs-fastapi-postgres"'
+    - 'purpose: str = "auto"'
+    returns: dict
+- name: factoryline_assembly
+  path: factoryline/assembly.py
+  language: python
+  functions:
+  - name: detect
+    args: []
+    returns: list[ModuleStatus]
+  - name: _run_cli
+    args:
+    - 'cli: str'
+    - 'args: list[str]'
+    - 'cwd: Path'
+    - '*'
+    - 'heartbeat: Callable[[]'
+    - bool] | None = None
+    returns: tuple[bool, str]
+  - name: _attribution_from_output
+    args:
+    - 'output: str'
+    returns: dict | None
+  - name: _meter_from_output
+    args:
+    - 'output: str'
+    returns: tuple[Meter, bool]
+  - name: _stage_order
+    args:
+    - 'module: str'
+    - 'stage: str'
+    returns: tuple[int, str, str]
+  - name: _ssat_contract
+    args:
+    - 'root: Path'
+    - 'feature: str'
+    returns: Path
+  - name: assemble
+    args:
+    - 'root: Path'
+    - 'feature: str'
+    - chain=None
+    - 'dry_run: bool = False'
+    returns: dict
+  - name: rollup_receipts
+    args:
+    - 'root: Path'
+    - 'feature: str'
+    returns: dict
+  - name: rollup_attributions
+    args:
+    - 'stages: list[dict]'
+    returns: dict
+  - name: _cdte_gate
+    args:
+    - 'root: Path'
+    - 'feature: str'
+    returns: dict[str, Any] | None
+- name: factoryline_assurance
+  path: factoryline/assurance.py
+  language: python
+  functions:
+  - name: _required
+    args:
+    - 'value: Any'
+    - 'name: str'
+    returns: str
+  - name: build_evidence_graph
+    args:
+    - 'records: Iterable[dict[str'
+    - Any]]
+    - '*'
+    - 'tenant_id: str'
+    returns: dict[str, Any]
+  - name: build_cyclonedx_sbom
+    args:
+    - 'components: Iterable[dict[str'
+    - Any]]
+    returns: dict[str, Any]
+  - name: build_vex
+    args:
+    - 'entries: Iterable[dict[str'
+    - Any]]
+    returns: dict[str, Any]
+  - name: policy_mutations
+    args:
+    - 'policy: dict[str'
+    - Any]
+    returns: list[dict[str, Any]]
+  - name: verify_policy_mutations
+    args:
+    - 'policy: dict[str'
+    - Any]
+    - 'evaluator: Callable[[dict[str'
+    - Any]]
+    - bool]
+    returns: dict[str, Any]
+  - name: verify_policy_command
+    args:
+    - 'policy: dict[str'
+    - Any]
+    - 'command: list[str]'
+    - '*'
+    - 'root: Path'
+    - 'cwd: str = "."'
+    - 'timeout: int = 60'
+    returns: dict[str, Any]
+  - name: private_challenge_manifest
+    args:
+    - 'name: str'
+    - 'challenges: Iterable[dict[str'
+    - Any]]
+    - '*'
+    - 'tenant_id: str'
+    returns: dict[str, Any]
+- name: factoryline_attribution
+  path: factoryline/attribution.py
+  language: python
+  functions:
+  - name: attribution
+    args:
+    - 'stage: str'
+    - 'units: Iterable[UnitResult]'
+    returns: Attribution
+- name: factoryline_boundary
+  path: factoryline/boundary.py
+  language: python
+  functions:
+  - name: assert_no_attribution_in_artifact
+    args:
+    - 'artifact_path: Path'
+    returns: None
+  - name: assert_build_metadata_locations
+    args:
+    - 'root: Path'
+    returns: None
+- name: factoryline_capability_packs
+  path: factoryline/capability_packs.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _load_json
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _files
+    args:
+    - 'pack_root: Path'
+    returns: dict[str, str]
+  - name: pack_payload
+    args:
+    - 'pack_root: Path'
+    returns: dict[str, Any]
+  - name: sign_pack
+    args:
+    - 'pack_root: Path'
+    - 'private_key: Path'
+    - '*'
+    - 'keyid: str'
+    - 'identity: str'
+    - 'issuer: str'
+    returns: dict[str, Any]
+  - name: _manifest_errors
+    args:
+    - 'manifest: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: list[str]
+  - name: _compatibility_errors
+    args:
+    - 'value: object'
+    returns: list[str]
+  - name: _deployment_errors
+    args:
+    - 'profiles: object'
+    returns: list[str]
+  - name: _mutation_results
+    args:
+    - 'manifest: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: list[dict[str, Any]]
+  - name: _verified_signature
+    args:
+    - 'root: Path'
+    returns: dict[str, Any]
+  - name: validate_pack
+    args:
+    - 'pack_root: Path'
+    - '*'
+    - 'verify_signature: bool = True'
+    - 'mutate: bool = True'
+    returns: dict[str, Any]
+  - name: builtin_packs
+    args: []
+    returns: list[dict[str, Any]]
+  - name: target_inventory
+    args: []
+    returns: dict[str, dict[str, Any]]
+  - name: _destination
+    args:
+    - 'workspace: Path'
+    - 'pack_id: str'
+    returns: tuple[Path, Path]
+  - name: _copy_pack
+    args:
+    - 'source: Path'
+    - 'staging: Path'
+    returns: None
+  - name: _atomic_swap
+    args:
+    - 'staging: Path'
+    - 'destination: Path'
+    - 'backup: Path'
+    returns: None
+  - name: install_pack
+    args:
+    - 'pack_root: Path'
+    - 'workspace: Path'
+    - '*'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: compose_packs
+    args:
+    - 'pack_roots: list[Path]'
+    - 'workspace: Path'
+    - '*'
+    - 'name: str = "default"'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+- name: factoryline_cdte
+  path: factoryline/cdte.py
+  language: python
+  functions:
+  - name: _exact
+    args:
+    - 'value: Any'
+    returns: Any
+  - name: _plain
+    args:
+    - 'value: Any'
+    returns: Any
+  - name: normalize_constraint
+    args:
+    - 'value: dict[str'
+    - Any]
+    - 'index: int'
+    returns: dict[str, Any]
+  - name: normalize_constraints
+    args:
+    - 'values: Iterable[dict[str'
+    - Any]]
+    returns: list[dict[str, Any]]
+  - name: load_registry
+    args:
+    - 'path: Path | None = None'
+    returns: dict[str, Any]
+  - name: _validate_side
+    args:
+    - 'side: Any'
+    - 'pair_id: str'
+    - 'which: str'
+    returns: None
+  - name: _validate_pair
+    args:
+    - 'pair: Any'
+    - 'seen: set[str]'
+    returns: None
+  - name: _compare
+    args:
+    - 'value: Any'
+    - 'operator: str'
+    - 'threshold: Any'
+    returns: bool
+  - name: _side_matches
+    args:
+    - 'constraint: dict[str'
+    - Any]
+    - 'side: dict[str'
+    - Any]
+    returns: bool
+  - name: detect_conflicts
+    args:
+    - 'constraints: list[dict[str'
+    - Any]]
+    - 'registry: dict[str'
+    - Any] | None = None
+    returns: list[dict[str, Any]]
+  - name: _build_proof
+    args:
+    - 'pair: dict[str'
+    - Any]
+    - 'left_hits: list[dict[str'
+    - Any]]
+    - 'right_hits: list[dict[str'
+    - Any]]
+    returns: dict[str, Any]
+  - name: _formula_inputs
+    args:
+    - 'formula: str'
+    returns: set[str]
+  - name: bind_evidence
+    args:
+    - 'proof: dict[str'
+    - Any]
+    - 'evidence: Path | None'
+    returns: dict[str, Any]
+  - name: _cdte_dir
+    args:
+    - 'root: Path'
+    - '*'
+    - 'create: bool = True'
+    returns: Path
+  - name: _scan_markers
+    args:
+    - 'conflicts: list[dict[str'
+    - Any]]
+    - 'blocking: bool'
+    returns: list[str]
+  - name: record_scan
+    args:
+    - 'root: Path'
+    - 'run_id: str'
+    - 'constraints: list[dict[str'
+    - Any]]
+    - '*'
+    - 'registry: dict[str'
+    - Any] | None = None
+    - 'evidence: Path | None = None'
+    - 'replace: bool = False'
+    returns: dict[str, Any]
+  - name: load_scans
+    args:
+    - 'root: Path'
+    returns: list[dict[str, Any]]
+  - name: _render_analysis
+    args:
+    - 'analysis: dict[str'
+    - Any]
+    returns: str
+  - name: draft_adr
+    args:
+    - 'root: Path'
+    - 'scan: dict[str'
+    - Any]
+    - 'conflict_id: str'
+    - '*'
+    - 'number: int = 1'
+    returns: Path
+  - name: resolve_conflict
+    args:
+    - 'root: Path'
+    - 'run_id: str'
+    - 'conflict_id: str'
+    - '*'
+    - 'decision: str'
+    - 'approved_by: str'
+    - 'adr_path: Path | None = None'
+    - 'override: bool = False'
+    - 'expires: str | None = None'
+    returns: dict[str, Any]
+  - name: public_cdte_report
+    args:
+    - 'root: Path'
+    returns: dict[str, Any]
+  - name: export_public_cdte_report
+    args:
+    - 'root: Path'
+    - 'destination: Path'
+    returns: Path
+- name: factoryline_challenge
+  path: factoryline/challenge.py
+  language: python
+  functions:
+  - name: challenge_trace
+    args:
+    - 'trace_path: Path'
+    - 'root: Path | None = None'
+    returns: dict
+- name: factoryline_change_review
+  path: factoryline/change_review.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _changed_path
+    args:
+    - 'value: str'
+    returns: str
+  - name: _resolve_changed_paths
+    args:
+    - 'root: Path'
+    - 'base: str'
+    - 'changed: list[str] | None'
+    returns: tuple[str, list[str]]
+  - name: _finding
+    args:
+    - 'kind: str'
+    - 'severity: str'
+    - 'message: str'
+    - '**facts: Any'
+    returns: dict[str, Any]
+  - name: _findings
+    args:
+    - 'impact: dict[str'
+    - Any]
+    - 'coverage: dict[str'
+    - Any]
+    - 'risk: dict[str'
+    - Any]
+    returns: tuple[list[dict[str, Any]], dict[str, Any]]
+  - name: _unproven_claims
+    args:
+    - 'impact: dict[str'
+    - Any]
+    - 'coverage: dict[str'
+    - Any]
+    returns: list[str]
+  - name: _mermaid_label
+    args:
+    - 'value: object'
+    returns: str
+  - name: _review_mermaid
+    args:
+    - 'changed_paths: list[str]'
+    - 'impact: dict[str'
+    - Any]
+    - 'findings: list[dict[str'
+    - Any]]
+    returns: str
+  - name: _review_markdown
+    args:
+    - 'review: dict[str'
+    - Any]
+    returns: str
+  - name: review_change
+    args:
+    - 'root: Path'
+    - 'base: str = "main"'
+    - 'changed: list[str] | None = None'
+    returns: dict
+  - name: _atomic_text
+    args:
+    - 'path: Path'
+    - 'content: str'
+    returns: str
+  - name: write_review_artifacts
+    args:
+    - 'review: dict'
+    - 'out_dir: Path'
+    returns: dict
+- name: factoryline_cli
+  path: factoryline/cli.py
+  language: python
+  functions:
+  - name: _cli_command
+    args:
+    - 'name: str'
+    returns: str
+  - name: _emit_version
+    args:
+    - 'as_json: bool'
+    returns: int
+  - name: _workflow_canary
+    args:
+    - module
+    returns: dict
+  - name: _doctor
+    args:
+    - 'strict: bool = False'
+    - 'as_json: bool = False'
+    returns: int
+  - name: _plan
+    args: []
+    returns: int
+  - name: main
+    args:
+    - argv=None
+    returns: int
+- name: factoryline_compliance
+  path: factoryline/compliance.py
+  language: python
+  functions:
+  - name: _control_pack
+    args:
+    - 'name: str'
+    - 'controls: Iterable[dict[str'
+    - Any]] | None = None
+    returns: dict[str, Any]
+  - name: build_oscal_assessment
+    args:
+    - 'pack_name: str'
+    - '*'
+    - 'tenant_id: str'
+    - 'evidence: Iterable[dict[str'
+    - Any]]
+    - 'custom_controls: Iterable[dict[str'
+    - Any]] | None = None
+    returns: dict[str, Any]
+- name: factoryline_continuation
+  path: factoryline/continuation.py
+  language: python
+  functions:
+  - name: discover_features
+    args:
+    - 'root: Path'
+    returns: list[str]
+  - name: resolve_feature
+    args:
+    - 'root: Path'
+    - 'feature: str | None'
+    returns: tuple[str, bool]
+  - name: resolve_ssat
+    args:
+    - 'root: Path'
+    - 'feature: str'
+    returns: Path | None
+  - name: _next_action
+    args:
+    - 'paused_at: str'
+    - 'feature: str'
+    returns: dict[str, Any]
+  - name: continue_assembly
+    args:
+    - 'root: Path'
+    - 'feature: str | None = None'
+    - '*'
+    - 'dry_run: bool = False'
+    - 'usage: dict[str'
+    - Any] | None = None
+    returns: dict[str, Any]
+- name: factoryline_continuity
+  path: factoryline/continuity.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: Any'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: Any'
+    returns: str
+  - name: _now
+    args: []
+    returns: str
+  - name: _parse_future_utc
+    args:
+    - 'value: object'
+    returns: str
+  - name: _is_expired
+    args:
+    - 'value: str'
+    returns: bool
+  - name: _required_string
+    args:
+    - 'payload: dict[str'
+    - Any]
+    - 'key: str'
+    - '*'
+    - 'maximum: int = 240'
+    returns: str
+  - name: _purpose_ref
+    args:
+    - 'payload: dict[str'
+    - Any]
+    returns: str
+  - name: _scope_ref
+    args:
+    - 'payload: dict[str'
+    - Any]
+    returns: str
+  - name: _evidence_refs
+    args:
+    - 'payload: dict[str'
+    - Any]
+    returns: list[str]
+  - name: _ensure_metadata_only
+    args:
+    - 'payload: dict[str'
+    - Any]
+    returns: None
+  - name: _validate_record
+    args:
+    - 'payload: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _authorize
+    args:
+    - 'principal: ContinuityPrincipal'
+    - 'action: str'
+    - 'tenant_id: str'
+    - 'purpose_ref: str'
+    returns: None
+  - name: recall_continuity_metadata_read_only
+    args:
+    - 'path: Path'
+    - 'principal: ContinuityPrincipal'
+    - 'tenant_id: str'
+    - '*'
+    - 'purpose_ref: str'
+    - 'scope_ref: str'
+    returns: dict[str, Any]
+  - name: continuity_projection
+    args:
+    - 'root: Path'
+    - '*'
+    - 'limit: int = 100'
+    returns: dict[str, Any]
+  - name: principal_from_args
+    args:
+    - 'subject: str'
+    - 'tenant_id: str'
+    - 'roles: Iterable[str]'
+    - 'purposes: Iterable[str]'
+    returns: ContinuityPrincipal
+  - name: record_continuity
+    args:
+    - 'store: ContinuityStore'
+    - 'principal: ContinuityPrincipal'
+    - 'payload: dict[str'
+    - Any]
+    - 'idempotency_key: str'
+    returns: dict[str, Any]
+  - name: recall_continuity
+    args:
+    - 'store: ContinuityStore'
+    - 'principal: ContinuityPrincipal'
+    - 'tenant_id: str'
+    - 'purpose_ref: str'
+    - 'scope_ref: str'
+    returns: dict[str, Any]
+  - name: promote_continuity
+    args:
+    - 'store: ContinuityStore'
+    - 'principal: ContinuityPrincipal'
+    - 'tenant_id: str'
+    - 'record_id: str'
+    - 'reason: str'
+    returns: dict[str, Any]
+- name: factoryline_contract
+  path: factoryline/contract.py
+  language: python
+  functions:
+  - name: ensure_layout
+    args:
+    - 'root: Path'
+    returns: None
+  - name: sha_of
+    args:
+    - 'path: Path'
+    returns: str
+- name: factoryline_control_api
+  path: factoryline/control_api.py
+  language: python
+  functions:
+  - name: _json_bytes
+    args:
+    - 'value: Any'
+    returns: bytes
+  - name: _finish
+    args:
+    - 'start_response: Callable'
+    - 'status: str'
+    - 'value: Any'
+    returns: list[bytes]
+  - name: _principal
+    args:
+    - 'environ: dict[str'
+    - Any]
+    returns: Principal
+  - name: _body
+    args:
+    - 'environ: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: create_app
+    args:
+    - 'db_path: Path'
+    returns: ControlPlaneAPI
+- name: factoryline_control_plane
+  path: factoryline/control_plane.py
+  language: python
+  functions:
+  - name: canonical_json
+    args:
+    - 'value: Any'
+    returns: bytes
+  - name: sha256
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _now
+    args: []
+    returns: str
+  - name: authorize
+    args:
+    - 'principal: Principal'
+    - 'action: str'
+    - 'tenant_id: str'
+    returns: None
+  - name: principal_from_args
+    args:
+    - 'subject: str'
+    - 'tenant_id: str'
+    - 'roles: Iterable[str]'
+    returns: Principal
+- name: factoryline_counterexample
+  path: factoryline/counterexample.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _relative
+    args:
+    - 'root: Path'
+    - 'path: Path'
+    returns: str
+  - name: _load
+    args:
+    - 'root: Path'
+    - 'path: Path'
+    returns: tuple[dict[str, Any], str, str]
+  - name: _text
+    args:
+    - 'value: object'
+    - 'field: str'
+    - '*'
+    - 'limit: int = 480'
+    - 'identifier: bool = False'
+    returns: str
+  - name: _validated_requirement
+    args:
+    - 'item: object'
+    - 'index: int'
+    - 'seen: set[str]'
+    returns: dict[str, Any]
+  - name: validate_counterexample_source
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+  - name: _cases
+    args:
+    - 'source: dict[str'
+    - Any]
+    returns: list[dict[str, str]]
+  - name: compile_counterexample_plan
+    args:
+    - 'root: Path'
+    - 'source_path: Path'
+    returns: dict[str, Any]
+  - name: _counterexample_plan_core
+    args:
+    - 'plan: dict[str'
+    - Any]
+    - 'relative: str'
+    returns: tuple[dict[str, Any], str] | dict[str, Any]
+  - name: _counterexample_source
+    args:
+    - 'plan: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _counterexample_comparison
+    args:
+    - 'plan: dict[str'
+    - Any]
+    - 'source: dict[str'
+    - Any]
+    - 'current_sha: str'
+    - 'normalized: dict[str'
+    - Any]
+    - 'relative: str'
+    returns: dict[str, Any]
+  - name: verify_counterexample_plan
+    args:
+    - 'root: Path'
+    - 'plan_path: Path'
+    returns: dict[str, Any]
+  - name: write_counterexample_plan
+    args:
+    - 'plan: dict[str'
+    - Any]
+    - 'out_path: Path'
+    returns: Path
+- name: factoryline_coverage
+  path: factoryline/coverage.py
+  language: python
+  functions:
+  - name: _load_json
+    args:
+    - 'path: Path'
+    returns: dict
+  - name: _covered_requirement_ids
+    args:
+    - 'root: Path'
+    returns: set[str]
+  - name: requirement_coverage
+    args:
+    - 'root: Path'
+    returns: dict
+- name: factoryline_developer_memory
+  path: factoryline/developer_memory.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _safe_text
+    args:
+    - 'value: object'
+    - '*'
+    - 'limit: int = 240'
+    returns: str
+  - name: _git_author_rows
+    args:
+    - 'root: Path'
+    - 'paths: list[str] | None = None'
+    returns: tuple[list[tuple[str, str, str]], str | None]
+  - name: _seat_id
+    args:
+    - 'name: str'
+    - 'email: str'
+    returns: str
+  - name: _seat_counts
+    args:
+    - 'rows: list[tuple[str'
+    - str
+    - str]]
+    returns: dict[str, dict[str, Any]]
+  - name: _team_attribution
+    args:
+    - 'root: Path'
+    - 'changed_paths: list[str]'
+    returns: dict[str, Any]
+  - name: _redacted_continuity
+    args:
+    - 'root: Path'
+    returns: dict[str, Any]
+  - name: _action
+    args:
+    - '*'
+    - 'action_id: str'
+    - 'kind: str'
+    - 'severity: str'
+    - 'title: str'
+    - 'what_changed: str'
+    - 'why_it_matters: str'
+    - 'do_this_next: str'
+    - 'review_sha256: str | None'
+    - 'contributor_seat_ids: list[str]'
+    - '**evidence: Any'
+    returns: dict[str, Any]
+  - name: _actions_from_review
+    args:
+    - 'review: dict[str'
+    - Any]
+    - 'team: dict[str'
+    - Any]
+    returns: list[dict[str, Any]]
+  - name: _markers
+    args:
+    - '*'
+    - 'explicit: bool'
+    - 'unavailable: bool'
+    - 'has_scope_gap: bool'
+    - 'has_stale_proof: bool'
+    - 'team_available: bool'
+    returns: list[str]
+  - name: developer_memory_brief
+    args:
+    - 'root: Path'
+    - 'base: str = "main"'
+    - 'changed: list[str] | None = None'
+    returns: dict[str, Any]
+- name: factoryline_e2e_proof
+  path: factoryline/e2e_proof.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha_bytes
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _reject
+    args:
+    - 'code: str'
+    - 'message: str'
+    returns: None
+  - name: _workspace_path
+    args:
+    - 'root: Path'
+    - 'value: object'
+    - 'field: str'
+    - '*'
+    - 'directory: bool = False'
+    returns: Path
+  - name: _relative
+    args:
+    - 'root: Path'
+    - 'path: Path'
+    returns: str
+  - name: _text
+    args:
+    - 'value: object'
+    - 'field: str'
+    - '*'
+    - 'pattern: re.Pattern[str] | None = None'
+    - 'limit: int = 128'
+    returns: str
+  - name: _argv
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: list[str]
+  - name: _load_manifest
+    args:
+    - 'root: Path'
+    - 'manifest_path: Path'
+    returns: tuple[dict[str, Any], Path, str]
+  - name: _validate_manifest_shape
+    args:
+    - 'source: dict[str'
+    - Any]
+    returns: None
+  - name: _validate_approval
+    args:
+    - 'value: object'
+    returns: dict[str, str]
+  - name: _validate_timeout
+    args:
+    - 'value: object'
+    returns: int
+  - name: _validate_commands
+    args:
+    - 'source: dict[str'
+    - Any]
+    returns: dict[str, dict[str, list[str]]]
+  - name: _validate_artifact_paths
+    args:
+    - 'root: Path'
+    - 'value: object'
+    returns: list[str]
+  - name: validate_e2e_proof_manifest
+    args:
+    - 'root: Path'
+    - 'manifest_path: Path'
+    returns: dict[str, Any]
+  - name: _capture
+    args:
+    - 'value: bytes | str | None'
+    returns: bytes
+  - name: _run_command
+    args:
+    - 'argv: list[str]'
+    - '*'
+    - 'cwd: Path'
+    - 'timeout_seconds: int'
+    returns: tuple[dict[str, Any], dict[str, str]]
+  - name: _artifact_hashes
+    args:
+    - 'root: Path'
+    - 'artifact_paths: list[str]'
+    returns: tuple[list[dict[str, str]], list[str]]
+  - name: _terminal
+    args:
+    - 'positive: dict[str'
+    - Any]
+    - 'negative: dict[str'
+    - Any]
+    - 'missing_artifacts: list[str]'
+    returns: tuple[str, str, bool]
+  - name: _mermaid
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    returns: str
+  - name: _markdown
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    returns: str
+  - name: _public
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: verify_e2e_proof
+    args:
+    - 'root: Path'
+    - 'manifest_path: Path'
+    returns: dict[str, Any]
+  - name: _validate_receipt_shape
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+  - name: _validate_receipt_hash
+    args:
+    - 'value: dict[str'
+    - Any]
+    returns: None
+  - name: _validate_receipt_result
+    args:
+    - 'value: dict[str'
+    - Any]
+    returns: None
+  - name: _validate_receipt_views
+    args:
+    - 'value: dict[str'
+    - Any]
+    returns: None
+  - name: _validate_captures
+    args:
+    - 'value: dict[str'
+    - Any]
+    returns: None
+  - name: validate_e2e_proof_receipt
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+  - name: _atomic_bytes
+    args:
+    - 'path: Path'
+    - 'content: bytes'
+    returns: str
+  - name: write_e2e_proof_artifacts
+    args:
+    - 'receipt: dict'
+    - 'out_dir: Path'
+    returns: dict
+  - name: public_e2e_proof_receipt
+    args:
+    - 'receipt: dict'
+    returns: dict
+- name: factoryline_enterprise_receipts
+  path: factoryline/enterprise_receipts.py
+  language: python
+  functions:
+  - name: _require_crypto
+    args: []
+    returns: None
+  - name: _canonical
+    args:
+    - 'value: Any'
+    returns: bytes
+  - name: canonical_json
+    args:
+    - 'value: Any'
+    returns: bytes
+  - name: _b64e
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _b64d
+    args:
+    - 'value: str'
+    - 'field: str'
+    returns: bytes
+  - name: _sha256
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _pae_field
+    args:
+    - 'value: bytes'
+    returns: bytes
+  - name: dsse_pae
+    args:
+    - 'payload_type: str'
+    - 'payload: bytes'
+    returns: bytes
+  - name: _read_json
+    args:
+    - 'path: Path'
+    returns: dict
+  - name: _write_json
+    args:
+    - 'path: Path'
+    - 'value: dict'
+    returns: Path
+  - name: _now
+    args: []
+    returns: str
+  - name: _timestamp
+    args:
+    - 'value: str'
+    returns: datetime
+  - name: validate_receipt_v2
+    args:
+    - 'payload: dict'
+    returns: dict
+  - name: receipt_v2_from_v1
+    args:
+    - 'payload: dict'
+    - '*'
+    - 'tenant_id: str = "local"'
+    - 'policy_sha256: str | None = None'
+    returns: dict
+  - name: _load_private_key
+    args:
+    - 'path: Path'
+    returns: unknown
+  - name: _load_public_key
+    args:
+    - 'value: str'
+    returns: unknown
+  - name: _signature_metadata
+    args:
+    - '*'
+    - 'keyid: str'
+    - 'identity: str'
+    - 'issuer: str'
+    - 'signature: bytes'
+    returns: dict
+  - name: sign_payload
+    args:
+    - 'payload: dict'
+    - '*'
+    - 'payload_type: str'
+    - 'private_key_path: Path'
+    - 'keyid: str'
+    - 'identity: str'
+    - 'issuer: str'
+    returns: dict
+  - name: seal_receipt_v2
+    args:
+    - 'payload: dict'
+    - 'private_key_path: Path'
+    - 'keyid: str'
+    - 'identity: str'
+    - 'issuer: str'
+    - 'out: Path'
+    returns: dict
+  - name: _validate_trust_root
+    args:
+    - 'root: dict'
+    returns: dict
+  - name: _verify_envelope
+    args:
+    - 'envelope: dict'
+    - '*'
+    - 'expected_payload_type: str'
+    - 'trust_root: dict'
+    returns: tuple[dict, dict, bytes]
+  - name: _verify_signed_document
+    args:
+    - 'path: Path'
+    - '*'
+    - 'payload_type: str'
+    - 'schema: str'
+    - 'trust_root: dict'
+    returns: tuple[dict, dict]
+  - name: _revoked
+    args:
+    - 'revocations: dict'
+    - '*'
+    - 'keyid: str'
+    - 'identity: str'
+    - 'receipt_ts: datetime'
+    returns: bool
+  - name: verify_receipt_v2
+    args:
+    - 'path: Path'
+    - 'trust_root_path: Path'
+    - 'policy_bundle_path: Path | None = None'
+    - 'revocations_path: Path | None = None'
+    returns: dict
+  - name: sign_policy_bundle
+    args:
+    - 'policy: dict'
+    - 'private_key_path: Path'
+    - 'keyid: str'
+    - 'identity: str'
+    - 'issuer: str'
+    - 'out: Path'
+    returns: dict
+  - name: sign_revocations
+    args:
+    - 'entries: list[dict]'
+    - 'private_key_path: Path'
+    - 'keyid: str'
+    - 'identity: str'
+    - 'issuer: str'
+    - 'out: Path'
+    returns: dict
+  - name: generate_key_material
+    args:
+    - '*'
+    - 'out_dir: Path'
+    - 'keyid: str'
+    - 'identity: str'
+    - 'issuer: str'
+    returns: dict
+- name: factoryline_evidence_frontier
+  path: factoryline/evidence_frontier.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _digest
+    args:
+    - 'value: object'
+    returns: str
+  - name: _load
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _write
+    args:
+    - 'payload: dict[str'
+    - Any]
+    - 'out: Path'
+    returns: None
+  - name: _text
+    args:
+    - 'value: object'
+    - 'field: str'
+    - 'maximum: int = 320'
+    returns: str
+  - name: _relative
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: str
+  - name: _integer
+    args:
+    - 'value: object'
+    - 'field: str'
+    - 'maximum: int'
+    returns: int
+  - name: _sha
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: str
+  - name: _path_sha
+    args:
+    - 'root: Path'
+    - 'relative: str'
+    - 'expected: str'
+    - 'field: str'
+    returns: Path
+  - name: _evaluation
+    args:
+    - 'root: Path'
+    - 'raw: object'
+    returns: tuple[dict[str, Any], dict[str, str], list[str]]
+  - name: _measurement
+    args:
+    - 'root: Path'
+    - 'raw: object'
+    - 'experiment_id: str'
+    returns: dict[str, Any] | None
+  - name: _experiment
+    args:
+    - 'root: Path'
+    - 'raw: object'
+    - 'eligible: list[str]'
+    - 'seen: set[str]'
+    returns: dict[str, Any]
+  - name: _rank
+    args:
+    - 'experiment: dict[str'
+    - Any]
+    returns: tuple[object, ...]
+  - name: _core
+    args:
+    - 'evaluation: dict[str'
+    - str]
+    - 'eligible: list[str]'
+    - 'maximum: int'
+    - 'experiments: list[dict[str'
+    - Any]]
+    returns: dict[str, Any]
+  - name: plan_evidence_frontier
+    args:
+    - 'root: Path'
+    - 'request_path: Path'
+    - 'out: Path'
+    returns: dict[str, Any]
+  - name: verify_evidence_frontier
+    args:
+    - 'root: Path'
+    - 'frontier_path: Path'
+    returns: dict[str, Any]
+- name: factoryline_github_assurance_dossier
+  path: factoryline/github_assurance_dossier.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _reject
+    args:
+    - 'code: str'
+    - 'message: str'
+    returns: None
+  - name: _timestamp
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: str
+  - name: _list_of_names
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: list[str]
+  - name: _ruleset
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+  - name: _validate_policy_snapshot
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+  - name: policy_snapshot_sha256
+    args:
+    - 'snapshot: object'
+    returns: str
+  - name: _finding
+    args:
+    - 'identifier: str'
+    - 'severity: str'
+    - 'message: str'
+    - 'ruleset: str'
+    returns: dict[str, str]
+  - name: _detect_policy_drift
+    args:
+    - 'baseline: object'
+    - 'current: object'
+    returns: list[dict[str, str]]
+  - name: _validate_assurance_exception
+    args:
+    - 'value: object'
+    - '*'
+    - 'policy_sha256: str'
+    - 'head_sha: str'
+    - 'now: datetime | None = None'
+    returns: dict[str, Any]
+  - name: _load_json
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _review
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+  - name: _render_markdown
+    args:
+    - 'core: dict[str'
+    - Any]
+    returns: str
+  - name: _policy_context
+    args:
+    - 'current_policy: object'
+    - 'baseline_policy: object | None'
+    returns: tuple[dict[str, Any], str, list[dict[str, str]], str | None]
+  - name: _bound_exceptions
+    args:
+    - 'items: list[object]'
+    - 'current_sha: str'
+    - 'head_sha: str'
+    - 'finding_ids: set[str]'
+    - 'now: datetime | None'
+    returns: list[dict[str, Any]]
+  - name: _dossier_decision
+    args:
+    - 'has_baseline: bool'
+    - 'findings: list[dict[str'
+    - str]]
+    - 'exceptions: list[dict[str'
+    - Any]]
+    returns: tuple[str, tuple[str, str], list[dict[str, str]]]
+  - name: _dossier_core
+    args:
+    - 'review: dict[str'
+    - Any]
+    - 'current: dict[str'
+    - Any]
+    - 'current_sha: str'
+    - 'baseline_sha: str | None'
+    - 'findings: list[dict[str'
+    - str]]
+    - 'exceptions: list[dict[str'
+    - Any]]
+    - 'status: str'
+    - 'action: tuple[str'
+    - str]
+    - 'unresolved: list[dict[str'
+    - str]]
+    - 'has_baseline: bool'
+    returns: dict[str, Any]
+  - name: build_assurance_dossier
+    args:
+    - 'proof_review: object'
+    - 'current_policy: object'
+    - 'baseline_policy: object | None = None'
+    - 'exceptions: list[object] | None = None'
+    - 'now: datetime | None = None'
+    returns: dict[str, Any]
+  - name: _validate_assurance_dossier
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+  - name: write_assurance_dossier_artifacts
+    args:
+    - 'dossier: object'
+    - 'out_dir: Path'
+    returns: dict[str, Any]
+  - name: _build_assurance_dossier_from_paths
+    args:
+    - 'proof_review_path: Path'
+    - 'current_policy_path: Path'
+    - 'baseline_policy_path: Path | None = None'
+    - 'exception_paths: list[Path] | None = None'
+    - 'now: datetime | None = None'
+    returns: dict[str, Any]
+- name: factoryline_github_plan_proof_review
+  path: factoryline/github_plan_proof_review.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _valid_head_sha
+    args:
+    - 'head_sha: str'
+    returns: str
+  - name: _cohort_for
+    args:
+    - 'path: str'
+    returns: str
+  - name: _cohorts
+    args:
+    - 'paths: list[str]'
+    returns: list[dict[str, Any]]
+  - name: _items
+    args:
+    - 'items: list[Any]'
+    - render
+    returns: str
+  - name: _walkthrough
+    args:
+    - 'core: dict[str'
+    - Any]
+    returns: str
+  - name: _review_fields
+    args:
+    - 'review: object'
+    returns: dict[str, Any]
+  - name: render_github_plan_proof_review
+    args:
+    - 'review: object'
+    - 'head_sha: str'
+    returns: dict[str, Any]
+  - name: compile_github_plan_proof_review
+    args:
+    - 'root: Path'
+    - 'plan_path: Path'
+    - '*'
+    - 'base: str = "main"'
+    - 'changed: list[str] | None = None'
+    - 'head_sha: str = ""'
+    returns: dict[str, Any]
+  - name: _atomic_text
+    args:
+    - 'path: Path'
+    - 'content: str'
+    returns: str
+  - name: write_github_plan_proof_review_artifacts
+    args:
+    - 'payload: dict[str'
+    - Any]
+    - 'out_dir: Path'
+    returns: dict[str, Any]
+- name: factoryline_github_proof_review
+  path: factoryline/github_proof_review.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _reject
+    args:
+    - 'message: str'
+    returns: None
+  - name: _valid_review
+    args:
+    - 'review: object'
+    returns: dict[str, Any]
+  - name: _valid_head_sha
+    args:
+    - 'head_sha: str'
+    returns: str
+  - name: _cohort_for
+    args:
+    - 'path: str'
+    returns: str
+  - name: _path_cohorts
+    args:
+    - 'paths: list[str]'
+    returns: list[dict[str, Any]]
+  - name: _list_or_none
+    args:
+    - 'items: list[Any]'
+    - render
+    returns: str
+  - name: _walkthrough
+    args:
+    - 'core: dict[str'
+    - Any]
+    returns: str
+  - name: _payload_core
+    args:
+    - 'payload: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _valid_payload
+    args:
+    - 'payload: object'
+    returns: dict[str, Any]
+  - name: validate_github_proof_review_payload
+    args:
+    - 'payload: object'
+    returns: dict[str, Any]
+  - name: render_github_proof_review
+    args:
+    - 'review: object'
+    - 'head_sha: str'
+    returns: dict[str, Any]
+  - name: compile_github_proof_review
+    args:
+    - 'root: Path'
+    - 'base: str = "main"'
+    - 'changed: list[str] | None = None'
+    - 'head_sha: str = ""'
+    returns: dict[str, Any]
+  - name: _atomic_text
+    args:
+    - 'path: Path'
+    - 'content: str'
+    returns: str
+  - name: write_github_proof_review_artifacts
+    args:
+    - 'payload: dict[str'
+    - Any]
+    - 'out_dir: Path'
+    returns: dict[str, Any]
+- name: factoryline_graph_authorization
+  path: factoryline/graph_authorization.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _reject
+    args:
+    - 'code: str'
+    - 'message: str'
+    returns: None
+  - name: _text
+    args:
+    - 'value: object'
+    - 'field: str'
+    - '*'
+    - 'identifier: bool = False'
+    returns: str
+  - name: _relative_existing
+    args:
+    - 'root: Path'
+    - 'value: object'
+    - 'field: str'
+    returns: tuple[Path, str]
+  - name: _now
+    args: []
+    returns: datetime
+  - name: _expiry
+    args:
+    - 'value: object'
+    - 'now: datetime'
+    returns: str
+  - name: _load
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _write_new
+    args:
+    - 'path: Path'
+    - 'value: dict[str'
+    - Any]
+    returns: None
+  - name: _write_replace
+    args:
+    - 'path: Path'
+    - 'value: dict[str'
+    - Any]
+    returns: None
+  - name: _authorization_lock
+    args:
+    - 'path: Path'
+    returns: unknown
+  - name: _node_binding
+    args:
+    - 'root: Path'
+    - 'node_id: str'
+    - 'action: str'
+    returns: dict[str, Any]
+  - name: create_graph_authorization
+    args:
+    - 'root: Path'
+    - 'payload: dict[str'
+    - Any]
+    - '*'
+    - 'now: datetime | None = None'
+    returns: dict[str, Any]
+  - name: _authorization_shape
+    args:
+    - 'value: object'
+    returns: tuple[dict[str, Any], set[str], set[str]]
+  - name: _authorization_state_shape
+    args:
+    - 'value: dict[str'
+    - Any]
+    - 'required: set[str]'
+    - 'allowed: set[str]'
+    returns: None
+  - name: _authorization_integrity
+    args:
+    - 'value: dict[str'
+    - Any]
+    returns: None
+  - name: _authorization_identity
+    args:
+    - 'value: dict[str'
+    - Any]
+    returns: None
+  - name: _authorization_timestamps
+    args:
+    - 'value: dict[str'
+    - Any]
+    returns: None
+  - name: validate_graph_authorization
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+  - name: _authorization_path
+    args:
+    - 'root: Path'
+    - 'authorization_path: Path'
+    returns: Path
+  - name: _active_reality_authorization
+    args:
+    - 'path: Path'
+    - 'now: datetime'
+    returns: dict[str, Any]
+  - name: _bound_reality_receipt
+    args:
+    - 'root: Path'
+    - 'authorization: dict[str'
+    - Any]
+    returns: Path
+  - name: _consume
+    args:
+    - 'path: Path'
+    - 'authorization: dict[str'
+    - Any]
+    - 'current: datetime'
+    - 'receipt: dict[str'
+    - Any]
+    - 'outputs: dict[str'
+    - str]
+    - 'root: Path'
+    returns: None
+  - name: run_authorized_reality_check
+    args:
+    - 'root: Path'
+    - 'authorization_path: Path'
+    - '*'
+    - 'now: datetime | None = None'
+    returns: dict[str, Any]
+- name: factoryline_graph_forensics
+  path: factoryline/graph_forensics.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _digest
+    args:
+    - 'value: object'
+    returns: str
+  - name: _bounded
+    args:
+    - 'value: object'
+    - 'field: str'
+    - 'maximum: int = 160'
+    returns: str
+  - name: _hash
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: str
+  - name: _items
+    args:
+    - 'raw: object'
+    - 'field: str'
+    returns: list[dict[str, Any]]
+  - name: _load
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _nonnegative
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: int
+  - name: _normalize_read
+    args:
+    - 'item: dict[str'
+    - Any]
+    - 'field: str'
+    returns: dict[str, Any]
+  - name: _normalize_write
+    args:
+    - 'item: dict[str'
+    - Any]
+    - 'field: str'
+    returns: dict[str, Any]
+  - name: _normalize_evidence
+    args:
+    - 'item: dict[str'
+    - Any]
+    - '_field: str'
+    returns: dict[str, str]
+  - name: _normalize_effect
+    args:
+    - 'item: dict[str'
+    - Any]
+    - '_field: str'
+    returns: dict[str, str]
+  - name: _normalize_collection
+    args:
+    - 'raw: object'
+    - 'field: str'
+    - 'normalizer: Any'
+    - 'errors: list[str]'
+    returns: list[dict[str, Any]]
+  - name: _normalize_step
+    args:
+    - 'raw: object'
+    - 'offset: int'
+    - 'seen: set[int]'
+    - 'errors: list[str]'
+    returns: dict[str, Any] | None
+  - name: _lineage_steps
+    args:
+    - 'value: dict[str'
+    - Any]
+    - 'errors: list[str]'
+    returns: list[object]
+  - name: _validate_identity
+    args:
+    - 'value: dict[str'
+    - Any]
+    - 'errors: list[str]'
+    returns: None
+  - name: verify_graph_lineage
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _steps_for_seal
+    args:
+    - 'steps: list[object]'
+    returns: list[dict[str, Any]]
+  - name: seal_graph_lineage
+    args:
+    - 'run_id: str'
+    - 'graph_id: str'
+    - 'steps_path: Path'
+    - 'out: Path'
+    returns: dict[str, Any]
+  - name: mission_history_steps
+    args:
+    - 'history: dict[str'
+    - Any]
+    returns: list[dict[str, Any]]
+  - name: seal_mission_graph_lineage
+    args:
+    - 'mission_path: Path'
+    - 'root: Path'
+    - 'run_id: str'
+    - 'out: Path'
+    returns: dict[str, Any]
+  - name: _step_fingerprint
+    args:
+    - 'step: dict[str'
+    - Any]
+    returns: str
+  - name: _anomalies
+    args:
+    - 'steps: list[dict[str'
+    - Any]]
+    returns: list[dict[str, Any]]
+  - name: _causal_cone
+    args:
+    - 'steps: list[dict[str'
+    - Any]]
+    - 'start: int'
+    - 'changed_keys: set[str]'
+    returns: tuple[list[int], list[str]]
+  - name: _divergence_index
+    args:
+    - 'left: list[dict[str'
+    - Any]]
+    - 'right: list[dict[str'
+    - Any]]
+    returns: int | None
+  - name: _recovery_analysis
+    args:
+    - 'left: list[dict[str'
+    - Any]]
+    - 'right: list[dict[str'
+    - Any]]
+    - 'index: int | None'
+    returns: tuple[dict[str, Any] | None, dict[str, Any]]
+  - name: graph_forensics
+    args:
+    - 'baseline_path: Path'
+    - 'candidate_path: Path'
+    returns: dict[str, Any]
+  - name: _label
+    args:
+    - 'value: object'
+    returns: str
+  - name: _forensics_mermaid
+    args:
+    - 'divergence: dict[str'
+    - Any] | None
+    - 'recovery: dict[str'
+    - Any]
+    returns: str
+- name: factoryline_graph_ops
+  path: factoryline/graph_ops.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _source
+    args:
+    - 'root: Path'
+    - 'path: Path'
+    returns: tuple[Path, str]
+  - name: _record_error
+    args:
+    - 'errors: list[dict[str'
+    - str]]
+    - 'path: Path'
+    - 'code: str'
+    returns: None
+  - name: _load_json
+    args:
+    - 'root: Path'
+    - 'candidate: Path'
+    - 'errors: list[dict[str'
+    - str]]
+    returns: tuple[dict[str, Any] | None, str | None]
+  - name: _text
+    args:
+    - 'value: object'
+    - 'fallback: str'
+    returns: str
+  - name: _node
+    args:
+    - 'state: dict[str'
+    - Any]
+    - '*'
+    - 'node_id: str'
+    - 'kind: str'
+    - 'label: str'
+    - 'source: str | None = None'
+    - 'status: str | None = None'
+    - 'facts: dict[str'
+    - Any] | None = None
+    returns: bool
+  - name: _edge
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'source: str'
+    - 'target: str'
+    - 'relation: str'
+    returns: bool
+  - name: _artifact
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    - 'raw: object'
+    - '*'
+    - 'source: str'
+    - 'role: str'
+    returns: str | None
+  - name: _append_product_graphs
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: tuple[dict[tuple[str, str], str], dict[str, list[str]]]
+  - name: _append_missions
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    - 'requirements: dict[tuple[str'
+    - str]
+    - str]
+    - 'slices: dict[str'
+    - list[str]]
+    returns: set[str]
+  - name: _append_intake_confirmations
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _append_proofs
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: int
+  - name: _append_plans
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: Counter[str]
+  - name: _append_traces
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: None
+  - name: _append_verifier_sessions
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _append_graph_forensics
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _append_proofsearch
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _append_evidence_frontiers
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _append_reality_checks
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _append_graph_authorizations
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _append_github_assurance_dossiers
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _append_continuity
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _append_proof_deltas
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _append_counterexamples
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _append_guardrail_evaluations
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _append_resilience_plans
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: _mermaid
+    args:
+    - 'nodes: list[dict[str'
+    - Any]]
+    - 'edges: list[dict[str'
+    - Any]]
+    returns: str
+  - name: _recommendation
+    args:
+    - 'facts: dict[str'
+    - int]
+    returns: tuple[str, str]
+  - name: _snapshot_facts
+    args:
+    - 'nodes: list[dict[str'
+    - Any]]
+    - 'evidenced: set[str]'
+    - 'stale_proof_count: int'
+    - 'gates: Counter[str]'
+    - 'verifier_sessions: dict[str'
+    - int]
+    - 'forensics: dict[str'
+    - int]
+    - 'proofsearch: dict[str'
+    - int]
+    - 'frontier: dict[str'
+    - int]
+    - 'reality: dict[str'
+    - int]
+    - 'authorizations: dict[str'
+    - int]
+    - 'assurance: dict[str'
+    - int]
+    - 'continuity: dict[str'
+    - int]
+    - 'counterexamples: dict[str'
+    - int]
+    - 'guardrails: dict[str'
+    - int]
+    - 'resilience: dict[str'
+    - int]
+    - 'proof_deltas: dict[str'
+    - int]
+    returns: dict[str, int]
+  - name: _snapshot_markers
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'nodes: list[dict[str'
+    - Any]]
+    - 'verifier_sessions: dict[str'
+    - int]
+    - 'forensics: dict[str'
+    - int]
+    - 'proofsearch: dict[str'
+    - int]
+    - 'frontier: dict[str'
+    - int]
+    - 'reality: dict[str'
+    - int]
+    - 'authorizations: dict[str'
+    - int]
+    - 'assurance: dict[str'
+    - int]
+    - 'continuity: dict[str'
+    - int]
+    - 'counterexamples: dict[str'
+    - int]
+    - 'guardrails: dict[str'
+    - int]
+    - 'resilience: dict[str'
+    - int]
+    - 'proof_deltas: dict[str'
+    - int]
+    returns: list[str]
+  - name: _append_admission_packets
+    args:
+    - 'state: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, int]
+  - name: graph_ops_snapshot
+    args:
+    - 'root: Path'
+    returns: dict[str, Any]
+  - name: _changed_path
+    args:
+    - 'value: str'
+    returns: str
+  - name: graph_ops_impact
+    args:
+    - 'root: Path'
+    - 'changed_paths: list[str]'
+    returns: dict[str, Any]
+  - name: graph_ops_html
+    args:
+    - 'token: str'
+    returns: str
+- name: factoryline_graph_portfolio
+  path: factoryline/graph_portfolio.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _dependency_graph
+    args:
+    - 'snapshot: dict[str'
+    - Any]
+    returns: tuple[list[str], dict[str, list[str]], dict[str, dict[str, Any]]]
+  - name: _cycle_components
+    args:
+    - 'nodes: list[str]'
+    - 'successors: dict[str'
+    - list[str]]
+    returns: list[list[str]]
+  - name: _topological_order
+    args:
+    - 'nodes: list[str]'
+    - 'successors: dict[str'
+    - list[str]]
+    returns: list[str]
+  - name: _valid_durations
+    args:
+    - 'nodes: list[str]'
+    - 'observations: object'
+    returns: dict[str, int] | None
+  - name: _descendants
+    args:
+    - 'nodes: list[str]'
+    - 'successors: dict[str'
+    - list[str]]
+    returns: dict[str, list[str]]
+  - name: _blocked_ancestors
+    args:
+    - 'nodes: list[str]'
+    - 'successors: dict[str'
+    - list[str]]
+    - 'source_nodes: dict[str'
+    - dict[str
+    - Any]]
+    returns: dict[str, list[str]]
+  - name: _disposition
+    args:
+    - 'node: dict[str'
+    - Any]
+    returns: str
+  - name: _common
+    args:
+    - 'snapshot: object'
+    returns: dict[str, Any]
+  - name: _blocked_plan
+    args:
+    - 'common: dict[str'
+    - Any]
+    - 'marker: str'
+    - 'cycles: list[list[str]]'
+    returns: dict[str, Any]
+  - name: _predecessors
+    args:
+    - 'nodes: list[str]'
+    - 'successors: dict[str'
+    - list[str]]
+    returns: dict[str, list[str]]
+  - name: _schedule
+    args:
+    - 'ordered: list[str]'
+    - 'successors: dict[str'
+    - list[str]]
+    - 'predecessors: dict[str'
+    - list[str]]
+    - 'durations: dict[str'
+    - int] | None
+    returns: tuple[dict[str, int], dict[str, str | None], dict[str, int]]
+  - name: _critical_path
+    args:
+    - 'nodes: list[str]'
+    - 'earliest: dict[str'
+    - int]
+    - 'parents: dict[str'
+    - str | None]
+    returns: tuple[list[str], int]
+  - name: _workset
+    args:
+    - 'ordered: list[str]'
+    - 'source_nodes: dict[str'
+    - dict[str
+    - Any]]
+    - 'earliest: dict[str'
+    - int]
+    - 'downstream: dict[str'
+    - int]
+    - 'horizon: int'
+    - 'descendants: dict[str'
+    - list[str]]
+    - 'blocked: dict[str'
+    - list[str]]
+    - 'durations: dict[str'
+    - int] | None
+    returns: list[dict[str, Any]]
+  - name: _parallel_waves
+    args:
+    - 'workset: list[dict[str'
+    - Any]]
+    returns: list[dict[str, Any]]
+  - name: graph_portfolio_plan
+    args:
+    - 'snapshot: dict[str'
+    - Any]
+    - 'duration_observations: object = None'
+    returns: dict[str, Any]
+  - name: _unmeasured
+    args: []
+    returns: dict[str, Any]
+  - name: _quantitative
+    args:
+    - 'horizon: int'
+    - 'durations: dict[str'
+    - int] | None
+    returns: dict[str, Any]
+- name: factoryline_guardrails
+  path: factoryline/guardrails.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _text
+    args:
+    - 'value: object'
+    - 'field: str'
+    - '*'
+    - 'limit: int = 160'
+    - 'identifier: bool = False'
+    returns: str
+  - name: _path
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: str
+  - name: _validate_guardrail
+    args:
+    - 'item: object'
+    - 'index: int'
+    - 'seen: set[str]'
+    returns: dict[str, Any]
+  - name: validate_guardrail_manifest
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+  - name: _load
+    args:
+    - 'path: Path'
+    returns: tuple[dict[str, Any], str]
+  - name: _match
+    args:
+    - 'prefix: str'
+    - 'path: str'
+    returns: bool
+  - name: _changed_paths
+    args:
+    - 'value: object'
+    returns: list[str]
+  - name: _recalled_records
+    args:
+    - 'manifest: dict[str'
+    - Any]
+    - 'db_path: Path'
+    - 'principal: ContinuityPrincipal'
+    returns: dict[str, dict[str, Any]]
+  - name: _guardrail_row
+    args:
+    - 'guardrail: dict[str'
+    - Any]
+    - 'paths: list[str]'
+    - 'records: dict[str'
+    - dict[str
+    - Any]]
+    returns: dict[str, Any]
+  - name: evaluate_guardrails
+    args:
+    - 'manifest_path: Path'
+    - 'db_path: Path'
+    - 'principal: ContinuityPrincipal'
+    - '*'
+    - 'changed_paths: list[str]'
+    returns: dict[str, Any]
+  - name: verify_guardrail_evaluation
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+- name: factoryline_habituation
+  path: factoryline/habituation.py
+  language: python
+  functions:
+  - name: _exact
+    args:
+    - 'value: Any'
+    returns: Any
+  - name: _plain
+    args:
+    - 'value: Any'
+    returns: Any
+  - name: _ratio
+    args:
+    - 'numerator: Any'
+    - 'denominator: Any'
+    returns: float | None
+  - name: _identity_key
+    args:
+    - 'identity: str'
+    returns: str
+  - name: normalize_review
+    args:
+    - 'event: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _habituation_dir
+    args:
+    - 'root: Path'
+    - '*'
+    - 'create: bool = True'
+    returns: Path
+  - name: record_review
+    args:
+    - 'root: Path'
+    - 'event: dict[str'
+    - Any]
+    - '*'
+    - 'replace: bool = False'
+    returns: dict[str, Any]
+  - name: load_reviews
+    args:
+    - 'root: Path'
+    returns: list[dict[str, Any]]
+  - name: _mean
+    args:
+    - 'values: list[Any]'
+    returns: Any
+  - name: calibrate_reviewer
+    args:
+    - 'reviews: Iterable[dict[str'
+    - Any]]
+    returns: dict[str, Any]
+  - name: record_calibration
+    args:
+    - 'root: Path'
+    - '*'
+    - 'replace: bool = True'
+    returns: dict[str, Any]
+  - name: blind_spot_sample
+    args:
+    - 'root: Path'
+    - '*'
+    - 'rate: int = BLIND_SAMPLE_RATE'
+    - 'replace: bool = True'
+    returns: dict[str, Any]
+  - name: record_resample_outcome
+    args:
+    - 'root: Path'
+    - 'review_id: str'
+    - '*'
+    - 'defect_found: bool'
+    - 'reviewer: str'
+    - 'notes: str = ""'
+    returns: dict[str, Any]
+  - name: load_resamples
+    args:
+    - 'root: Path'
+    returns: list[dict[str, Any]]
+  - name: defect_linkage
+    args:
+    - 'root: Path'
+    - '*'
+    - 'enable: bool = False'
+    returns: dict[str, Any]
+  - name: evaluate_gate
+    args:
+    - 'root: Path'
+    - '*'
+    - 'allow_block: bool = False'
+    returns: dict[str, Any]
+  - name: public_habituation_report
+    args:
+    - 'root: Path'
+    - '*'
+    - 'enable_defect_linkage: bool = False'
+    returns: dict[str, Any]
+  - name: export_public_habituation_report
+    args:
+    - 'root: Path'
+    - 'destination: Path'
+    - '*'
+    - 'enable_defect_linkage: bool = False'
+    returns: Path
+- name: factoryline_hosted_api
+  path: factoryline/hosted_api.py
+  language: python
+  functions:
+  - name: _configured_maps
+    args:
+    - 'env: Mapping[str'
+    - str]
+    returns: tuple[dict[int, bytes], dict[int, str], dict[str, str]]
+  - name: _identity_config
+    args:
+    - 'env: Mapping[str'
+    - str]
+    returns: tuple[str, str]
+  - name: _validate_installation_maps
+    args:
+    - 'secrets: dict[int'
+    - bytes]
+    - 'tenants: dict[int'
+    - str]
+    returns: None
+  - name: _json_bytes
+    args:
+    - 'value: Any'
+    returns: bytes
+  - name: _finish
+    args:
+    - 'start_response: Callable'
+    - 'status: str'
+    - 'value: Any'
+    returns: list[bytes]
+  - name: _finish_html
+    args:
+    - 'start_response: Callable'
+    - 'value: str'
+    returns: list[bytes]
+  - name: _read_body
+    args:
+    - 'environ: Mapping[str'
+    - Any]
+    - 'maximum: int'
+    returns: bytes
+  - name: _json_body
+    args:
+    - 'environ: Mapping[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _installation_id
+    args:
+    - 'body: bytes'
+    returns: int
+  - name: _bearer
+    args:
+    - 'environ: Mapping[str'
+    - Any]
+    returns: str
+  - name: _status_for
+    args:
+    - 'code: str'
+    returns: str
+  - name: create_hosted_app
+    args:
+    - 'service: HostedPRAssuranceService'
+    returns: HostedPRAssuranceAPI
+  - name: create_hosted_app_from_env
+    args:
+    - 'environ: Mapping[str'
+    - str] | None = None
+    returns: HostedPRAssuranceAPI
+- name: factoryline_hosted_control
+  path: factoryline/hosted_control.py
+  language: python
+  functions:
+  - name: _utcnow
+    args: []
+    returns: datetime
+  - name: _tenant_id
+    args:
+    - 'value: str'
+    returns: str
+  - name: _authorize
+    args:
+    - 'principal: Principal'
+    - 'tenant_id: str'
+    - '*'
+    - 'write: bool'
+    returns: str
+  - name: _https_url
+    args:
+    - 'value: str'
+    - 'name: str'
+    returns: str
+  - name: _secret_reference
+    args:
+    - 'value: str'
+    returns: str
+  - name: _safe_role_map
+    args:
+    - 'value: Mapping[str'
+    - str]
+    returns: dict[str, str]
+  - name: _state_hint
+    args:
+    - 'token: str'
+    returns: str
+  - name: initialize_control_schema
+    args:
+    - 'store: PostgresControlStore'
+    returns: None
+  - name: issue_installation_state
+    args:
+    - 'store: PostgresControlStore'
+    - 'principal: Principal'
+    - 'tenant_id: str'
+    returns: dict[str, Any]
+- name: factoryline_hosted_github
+  path: factoryline/hosted_github.py
+  language: python
+  functions:
+  - name: _b64
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _app_jwt
+    args:
+    - 'app_id: int'
+    - 'private_key_pem: str'
+    - 'now: int'
+    returns: str
+  - name: publish_check
+    args:
+    - 'publisher: GitHubAppPublisher'
+    - 'installation_id: int'
+    - 'repository: str'
+    - 'request: dict[str'
+    - Any]
+    returns: int
+- name: factoryline_hosted_identity
+  path: factoryline/hosted_identity.py
+  language: python
+  functions:
+  - name: get_jwks
+    args:
+    - 'cache: JwksCache'
+    returns: dict[str, Any]
+- name: factoryline_hosted_storage
+  path: factoryline/hosted_storage.py
+  language: python
+  functions:
+  - name: _validate_decision
+    args:
+    - 'principal: Principal'
+    - 'decision: str'
+    - 'reason: str'
+    returns: None
+  - name: _require_pending
+    args:
+    - 'row: Any'
+    - 'principal: Principal'
+    returns: None
+  - name: _default_connect
+    args:
+    - 'dsn: str'
+    returns: unknown
+  - name: _database_error
+    args:
+    - 'exc: Exception'
+    - 'duplicate_code: str'
+    returns: PRAssuranceError
+  - name: initialize_schema
+    args:
+    - 'store: PostgresAssuranceStore'
+    returns: None
+- name: factoryline_intake_grill
+  path: factoryline/intake_grill.py
+  language: python
+  functions:
+  - name: _now
+    args: []
+    returns: str
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _sha_bytes
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _project_id
+    args:
+    - 'value: str'
+    returns: str
+  - name: _relative
+    args:
+    - 'root: Path'
+    - 'value: Path | str'
+    - 'field: str'
+    - '*'
+    - 'exists: bool = True'
+    returns: tuple[Path, str]
+  - name: _read_prd
+    args:
+    - 'root: Path'
+    - 'value: Path | str'
+    returns: tuple[Path, str, bytes]
+  - name: _atomic_write
+    args:
+    - 'path: Path'
+    - 'data: bytes'
+    - '*'
+    - 'force: bool'
+    returns: Path
+  - name: _text
+    args:
+    - 'value: str'
+    - 'field: str'
+    - '*'
+    - 'minimum: int = 8'
+    - 'maximum: int = MAX_TEXT'
+    returns: str
+  - name: _frameworks
+    args:
+    - 'text: str'
+    returns: list[dict[str, Any]]
+  - name: _question_tree
+    args:
+    - 'shortlist: list[dict[str'
+    - Any]]
+    returns: list[dict[str, Any]]
+  - name: _markdown
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    returns: str
+  - name: _core
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _load_receipt
+    args:
+    - 'root: Path'
+    - 'value: Path | str'
+    - 'field: str'
+    - 'schema: str'
+    returns: tuple[Path, str, dict[str, Any]]
+  - name: _sealed_receipt
+    args:
+    - 'path: Path'
+    - 'schema: str'
+    - 'core: dict[str'
+    - Any]
+    - 'hash_field: str'
+    - 'timestamp_field: str'
+    - '*'
+    - 'force: bool'
+    returns: tuple[dict[str, Any], bool]
+  - name: grill_intake
+    args:
+    - 'prd_path: Path'
+    - 'root: Path'
+    - 'project: str | None = None'
+    - 'out_path: Path | None = None'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: verify_intake_grill
+    args:
+    - 'root: Path'
+    - 'receipt_path: Path'
+    returns: dict[str, Any]
+  - name: _confirmation_core
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: confirm_intake
+    args:
+    - 'root: Path'
+    - 'intake_path: Path'
+    - 'framework: str'
+    - 'intent: str'
+    - 'acceptance: str'
+    - 'external_effects: str'
+    - 'approved_by: str'
+    - 'rationale: str'
+    - 're_evaluate_when: str | None = None'
+    - 'out_path: Path | None = None'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: verify_intake_confirmation
+    args:
+    - 'root: Path'
+    - 'receipt_path: Path'
+    returns: dict[str, Any]
+  - name: intake_status
+    args:
+    - 'root: Path'
+    - 'prd_path: Path | None = None'
+    returns: dict[str, Any]
+- name: factoryline_integrations
+  path: factoryline/integrations.py
+  language: python
+  functions:
+  - name: _required
+    args:
+    - 'value: Any'
+    - 'name: str'
+    returns: str
+  - name: roles_from_groups
+    args:
+    - 'groups: Iterable[str]'
+    - 'role_map: dict[str'
+    - str]
+    returns: tuple[str, ...]
+  - name: principal_from_verified_oidc
+    args:
+    - 'claims: dict[str'
+    - Any]
+    - '*'
+    - 'expected_issuer: str'
+    - 'role_map: dict[str'
+    - str]
+    returns: Principal
+  - name: normalize_scm_event
+    args:
+    - 'provider: str'
+    - 'claims: dict[str'
+    - Any]
+    - '*'
+    - 'tenant_id: str'
+    - 'actor_roles: Iterable[str]'
+    returns: tuple[SCMEvent, Principal]
+  - name: event_json
+    args:
+    - 'event: SCMEvent'
+    returns: bytes
+- name: factoryline_langgraph_assurance
+  path: factoryline/langgraph_assurance.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _identifier
+    args:
+    - 'value: object'
+    - 'label: str'
+    returns: str
+  - name: _state
+    args:
+    - 'value: object'
+    - 'label: str'
+    returns: dict[str, Any]
+  - name: _opaque
+    args:
+    - 'value: object'
+    - 'label: str'
+    returns: str
+  - name: _inside
+    args:
+    - 'root: Path'
+    - 'value: Path | str'
+    - 'label: str'
+    - '*'
+    - 'must_exist: bool'
+    returns: Path
+  - name: _atomic_json
+    args:
+    - 'path: Path'
+    - 'payload: dict[str'
+    - Any]
+    returns: None
+  - name: _anomaly_cone
+    args:
+    - 'steps: list[dict[str'
+    - Any]]
+    - 'anomaly: dict[str'
+    - Any]
+    returns: tuple[dict[str, Any], dict[str, Any]]
+  - name: _mermaid
+    args:
+    - 'divergence: dict[str'
+    - Any] | None
+    - 'recovery: dict[str'
+    - Any]
+    returns: str
+  - name: _incident_capsule
+    args:
+    - 'graph_id: str'
+    - 'reference: dict[str'
+    - Any]
+    - 'resumed: dict[str'
+    - Any]
+    - 'divergence: dict[str'
+    - Any] | None
+    - 'anomalies: list[dict[str'
+    - Any]]
+    - 'recovery: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _verified_comparison
+    args:
+    - 'reference_file: Path'
+    - 'resumed_file: Path'
+    returns: tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]
+  - name: _assurance_payload
+    args:
+    - 'reference: dict[str'
+    - Any]
+    - 'resumed: dict[str'
+    - Any]
+    - 'comparison: dict[str'
+    - Any]
+    - 'baseline: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: verify_langgraph_resume_parity
+    args:
+    - 'root: Path'
+    - 'reference_path: Path | str'
+    - 'resumed_path: Path | str'
+    - 'out: Path | str | None = None'
+    returns: dict[str, Any]
+- name: factoryline_learning_loop
+  path: factoryline/learning_loop.py
+  language: python
+  functions:
+  - name: _now
+    args: []
+    returns: str
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _slug
+    args:
+    - 'value: str'
+    returns: str
+  - name: _sealed
+    args:
+    - 'core: dict[str'
+    - Any]
+    - 'field: str'
+    returns: dict[str, Any]
+  - name: _atomic_json
+    args:
+    - 'path: Path'
+    - 'value: dict[str'
+    - Any]
+    - '*'
+    - 'replace: bool = False'
+    returns: None
+  - name: _load
+    args:
+    - 'path: Path'
+    - 'schema: str'
+    - 'hash_field: str'
+    returns: dict[str, Any]
+  - name: _inside
+    args:
+    - 'root: Path'
+    - 'path: Path'
+    - 'code: str'
+    returns: Path
+  - name: _task_dir
+    args:
+    - 'root: Path'
+    - 'task_id: str'
+    returns: Path
+  - name: _normalize_milestones
+    args:
+    - 'milestones: list[dict[str'
+    - Any]]
+    returns: list[dict[str, Any]]
+  - name: _normalize_criteria
+    args:
+    - 'criteria: list[dict[str'
+    - Any]]
+    returns: list[dict[str, str]]
+  - name: init_learning_task
+    args:
+    - 'root: Path'
+    - 'task_id: str'
+    - 'owner: str'
+    - 'objective: str'
+    - 'milestones: list[dict[str'
+    - Any]]
+    - '*'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: _milestone
+    args:
+    - 'task: dict[str'
+    - Any]
+    - 'milestone_id: str'
+    returns: dict[str, Any]
+  - name: _promotion_path
+    args:
+    - 'task_path: Path'
+    - 'milestone_id: str'
+    returns: Path
+  - name: _assert_prior_milestones
+    args:
+    - 'task: dict[str'
+    - Any]
+    - 'task_path: Path'
+    - 'milestone: dict[str'
+    - Any]
+    returns: None
+  - name: propose_instruction_candidate
+    args:
+    - 'task_path: Path'
+    - 'root: Path'
+    - 'milestone_id: str'
+    - 'worker: str'
+    - 'outcome_path: Path'
+    - 'instructions: list[dict[str'
+    - str]]
+    - '*'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: _normalize_instruction_edits
+    args:
+    - 'instructions: list[dict[str'
+    - str]]
+    returns: list[dict[str, str]]
+  - name: _normalize_validation_results
+    args:
+    - 'root: Path'
+    - 'results: list[dict[str'
+    - Any]]
+    - 'expected: set[str]'
+    returns: tuple[list[dict[str, Any]], bool]
+  - name: _bound_evidence
+    args:
+    - 'root: Path'
+    - 'value: object'
+    returns: dict[str, str]
+  - name: validate_instruction_candidate
+    args:
+    - 'candidate_path: Path'
+    - 'root: Path'
+    - 'validator: str'
+    - 'results: list[dict[str'
+    - Any]]
+    - '*'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: promote_instruction_candidate
+    args:
+    - 'validation_path: Path'
+    - 'owner: str'
+    - '*'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: build_fresh_worker_packet
+    args:
+    - 'task_path: Path'
+    - 'milestone_id: str'
+    - 'worker: str'
+    - '*'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: plan_learning_experiment
+    args:
+    - 'task_path: Path'
+    - 'search_space: dict[str'
+    - list[Any]]
+    - '*'
+    - 'variant: str = "asha"'
+    - 'max_resource: int = 50'
+    - 'grace_period: int = 5'
+    - 'reduction_factor: int = 3'
+    - 'max_concurrent: int = 4'
+    - 'samples: int = 20'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: _validate_experiment_inputs
+    args:
+    - 'search_space: dict[str'
+    - list[Any]]
+    - 'variant: str'
+    - 'max_resource: int'
+    - 'grace_period: int'
+    - 'reduction_factor: int'
+    - 'max_concurrent: int'
+    - 'samples: int'
+    returns: None
+- name: factoryline_live_activity
+  path: factoryline/live_activity.py
+  language: python
+  functions:
+  - name: _now
+    args: []
+    returns: str
+  - name: _parse_time
+    args:
+    - 'value: object'
+    returns: datetime | None
+  - name: activity_snapshot
+    args:
+    - 'root: Path'
+    - '*'
+    - 'stale_after_seconds: float = STALE_AFTER_SECONDS'
+    returns: dict[str, Any]
+  - name: request_stop
+    args:
+    - 'root: Path'
+    returns: dict[str, Any]
+- name: factoryline_loop_passport
+  path: factoryline/loop_passport.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha256_path
+    args:
+    - 'path: Path'
+    returns: str
+  - name: _now
+    args: []
+    returns: str
+  - name: _error
+    args:
+    - 'errors: list[str]'
+    - 'path: str'
+    - 'message: str'
+    returns: None
+  - name: _nonempty_string
+    args:
+    - 'value: object'
+    - 'path: str'
+    - 'errors: list[str]'
+    returns: str | None
+  - name: _string_list
+    args:
+    - 'value: object'
+    - 'path: str'
+    - 'errors: list[str]'
+    returns: list[str]
+  - name: _nonnegative_number
+    args:
+    - 'value: object'
+    - 'path: str'
+    - 'errors: list[str]'
+    returns: float | None
+  - name: _scan_for_secrets
+    args:
+    - 'value: object'
+    - 'path: str'
+    - 'errors: list[str]'
+    returns: None
+  - name: _validate_trigger
+    args:
+    - 'trigger: object'
+    - 'errors: list[str]'
+    returns: None
+  - name: _validate_workspace
+    args:
+    - 'workspace: object'
+    - 'autonomy: str | None'
+    - 'errors: list[str]'
+    returns: None
+  - name: _validate_capabilities
+    args:
+    - 'capabilities: object'
+    - 'approvals: object'
+    - 'errors: list[str]'
+    returns: None
+  - name: _validate_budgets
+    args:
+    - 'budgets: object'
+    - 'errors: list[str]'
+    returns: None
+  - name: _validate_validators
+    args:
+    - 'validators: object'
+    - 'autonomy: str | None'
+    - 'errors: list[str]'
+    returns: None
+  - name: _validate_approvals
+    args:
+    - 'approvals: object'
+    - 'errors: list[str]'
+    returns: None
+  - name: _validate_states
+    args:
+    - 'states: object'
+    - 'errors: list[str]'
+    returns: None
+  - name: default_manifest
+    args:
+    - 'loop_id: str'
+    - 'owner: str'
+    returns: dict[str, Any]
+  - name: init_loop
+    args:
+    - 'root: Path'
+    - 'loop_id: str'
+    - 'owner: str'
+    - '*'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: load_manifest
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: validate_manifest
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _loop_mermaid
+    args:
+    - 'passport: dict[str'
+    - Any]
+    returns: str
+  - name: build_loop_passport
+    args:
+    - 'root: Path'
+    - 'manifest_path: Path'
+    returns: dict[str, Any]
+  - name: verify_loop_passport
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: evaluate_budget
+    args:
+    - 'root: Path'
+    - 'manifest_path: Path'
+    - 'usage_path: Path'
+    returns: dict[str, Any]
+- name: factoryline_mcp
+  path: factoryline/mcp.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: str
+  - name: _workspace_root
+    args:
+    - 'root: Path | str'
+    returns: Path
+  - name: _tool_definitions
+    args: []
+    returns: list[dict[str, object]]
+  - name: mcp_status
+    args:
+    - 'root: Path | str'
+    returns: dict[str, object]
+  - name: _relative_path
+    args:
+    - 'root: Path'
+    - 'value: object'
+    - 'label: str'
+    - '*'
+    - 'must_exist: bool = False'
+    returns: tuple[str, Path]
+  - name: _receipt_path
+    args:
+    - 'root: Path'
+    - 'value: object'
+    - '*'
+    - 'must_exist: bool = False'
+    returns: tuple[str, Path]
+  - name: _receipt_files
+    args:
+    - 'root: Path'
+    returns: list[Path]
+  - name: _load_small_json
+    args:
+    - 'path: Path'
+    returns: dict[str, Any] | None
+  - name: _receipt_metadata
+    args:
+    - 'root: Path'
+    - 'path: Path'
+    returns: dict[str, object]
+  - name: _feature
+    args:
+    - 'value: object'
+    - 'label: str = "feature"'
+    returns: str
+  - name: _feature_matches
+    args:
+    - 'payload: dict[str'
+    - Any]
+    - 'feature: str'
+    returns: bool
+  - name: _find_feature_receipt
+    args:
+    - 'root: Path'
+    - 'feature: str'
+    - '*'
+    - 'schema: str | None = None'
+    returns: tuple[Path, dict[str, Any]] | None
+  - name: _receipt_listing
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: dict[str, object]
+  - name: _get_receipt
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: dict[str, object]
+  - name: _error
+    args:
+    - 'request_id: object'
+    - 'code: int'
+    - 'message: str'
+    - 'marker: str'
+    returns: dict[str, object]
+  - name: _result
+    args:
+    - 'request_id: object'
+    - 'result: dict[str'
+    - object]
+    returns: dict[str, object]
+  - name: _content
+    args:
+    - 'payload: object'
+    returns: dict[str, object]
+  - name: _changed_paths
+    args:
+    - 'arguments: object'
+    returns: list[str]
+  - name: _graph_summary
+    args:
+    - 'graph: dict[str'
+    - Any]
+    returns: dict[str, object]
+  - name: _graph_ops
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: dict[str, object]
+  - name: _developer_memory
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: dict[str, object]
+  - name: _langgraph_assurance
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: dict[str, object]
+  - name: _verifier_session_path
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: tuple[Path, dict[str, Any]] | None
+  - name: _verifier_status
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: dict[str, object]
+  - name: _proof_reuse
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: dict[str, object]
+  - name: _proof_delta_status
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: dict[str, object]
+  - name: _cdte_status
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: dict[str, object]
+  - name: _prd_grill_status
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: dict[str, object]
+  - name: _workspace_advisor
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: dict[str, object]
+  - name: _intake_status
+    args:
+    - 'root: Path'
+    - 'arguments: object'
+    returns: dict[str, object]
+  - name: _tool_call
+    args:
+    - 'root: Path'
+    - 'params: object'
+    returns: dict[str, object]
+  - name: _resource_read
+    args:
+    - 'root: Path'
+    - 'params: object'
+    returns: dict[str, object]
+  - name: _require_no_params
+    args:
+    - 'params: object'
+    - 'method: str'
+    returns: None
+  - name: _initialize
+    args:
+    - '_root: Path'
+    - 'params: object'
+    returns: dict[str, object]
+  - name: _tools_list
+    args:
+    - '_root: Path'
+    - 'params: object'
+    returns: dict[str, object]
+  - name: _tools_call
+    args:
+    - 'root: Path'
+    - 'params: object'
+    returns: dict[str, object]
+  - name: _resources_list
+    args:
+    - '_root: Path'
+    - 'params: object'
+    returns: dict[str, object]
+  - name: _resources_read
+    args:
+    - 'root: Path'
+    - 'params: object'
+    returns: dict[str, object]
+  - name: _method_result
+    args:
+    - 'root: Path'
+    - 'method: str'
+    - 'params: object'
+    returns: dict[str, object]
+  - name: _request_context
+    args:
+    - 'request: object'
+    returns: tuple[object, bool, str, object] | None
+  - name: _error_or_notification
+    args:
+    - 'is_notification: bool'
+    - 'request_id: object'
+    - 'code: int'
+    - 'message: str'
+    - 'marker: str'
+    returns: dict[str, object] | None
+  - name: _result_or_notification
+    args:
+    - 'is_notification: bool'
+    - 'request_id: object'
+    - 'result: dict[str'
+    - object]
+    returns: dict[str, object] | None
+  - name: dispatch
+    args:
+    - 'request: object'
+    - 'root: Path | str'
+    returns: dict[str, object] | None
+  - name: serve_stdio
+    args:
+    - 'root: Path | str'
+    - '*'
+    - 'input_stream: TextIO | None = None'
+    - 'output_stream: TextIO | None = None'
+    returns: int
+- name: factoryline_mcp_setup
+  path: factoryline/mcp_setup.py
+  language: python
+  functions:
+  - name: _workspace
+    args:
+    - 'root: Path | str'
+    returns: Path
+  - name: _command
+    args:
+    - 'root: Path'
+    returns: list[str]
+  - name: _json_config
+    args:
+    - 'root: Path'
+    returns: dict[str, object]
+  - name: _opencode_config
+    args:
+    - 'root: Path'
+    returns: dict[str, object]
+  - name: mcp_connection_config
+    args:
+    - 'root: Path | str'
+    - 'client: str = "generic"'
+    returns: dict[str, object]
+- name: factoryline_meter
+  path: factoryline/meter.py
+  language: python
+  functions:
+  - name: summarize
+    args:
+    - 'root: Path'
+    - '*'
+    - 'baseline_tokens_per_run: int = 4000'
+    - 'runs_projected: int = 1000'
+    returns: dict
+  - name: _known_sum
+    args:
+    - 'stages: list[StageTiming]'
+    - 'field: str'
+    returns: dict
+  - name: _known_rate
+    args:
+    - 'stages: list[StageTiming]'
+    - 'field: str'
+    returns: dict
+  - name: _guarded_ratio
+    args:
+    - 'numerator: dict'
+    - 'denominator: dict'
+    - '*'
+    - 'scale: float = 1.0'
+    returns: float | None
+  - name: _flow_metrics
+    args:
+    - 'stages: list[StageTiming]'
+    returns: dict
+  - name: overhead
+    args:
+    - 'root: Path'
+    returns: dict
+  - name: live_snapshot
+    args:
+    - 'root: Path'
+    - '*'
+    - 'baseline_tokens_per_run: int = 4000'
+    - 'runs_projected: int = 1000'
+    returns: dict
+  - name: summary_table
+    args:
+    - 'summary: dict'
+    returns: str
+  - name: live_summary_table
+    args:
+    - 'snapshot: dict'
+    returns: str
+- name: factoryline_migration
+  path: factoryline/migration.py
+  language: python
+  functions:
+  - name: _now
+    args: []
+    returns: str
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha_bytes
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _sha_path
+    args:
+    - 'path: Path'
+    returns: str
+  - name: _load
+    args:
+    - 'path: Path'
+    - 'schema: str'
+    returns: dict[str, Any]
+  - name: _contained
+    args:
+    - 'root: Path'
+    - 'value: str'
+    returns: Path
+  - name: _atomic_json
+    args:
+    - 'path: Path'
+    - 'value: dict[str'
+    - Any]
+    - '*'
+    - 'force: bool = False'
+    returns: Path
+  - name: _argv_valid
+    args:
+    - 'command: object'
+    returns: bool
+  - name: _bound_check_evidence
+    args:
+    - 'root: Path'
+    - 'category: str'
+    - 'values: object'
+    returns: tuple[bool, list[dict[str, Any]]]
+  - name: _assess_check
+    args:
+    - 'root: Path'
+    - 'check: object'
+    returns: tuple[str, bool, list[dict[str, Any]]]
+  - name: assess_migration_readiness
+    args:
+    - 'manifest_path: Path'
+    - 'root: Path'
+    - '*'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: _verify_bound_records
+    args:
+    - 'values: object'
+    - 'label: str'
+    returns: list[str]
+  - name: verify_migration_readiness
+    args:
+    - 'receipt_path: Path'
+    returns: dict[str, Any]
+  - name: _git
+    args:
+    - 'root: Path'
+    - '*args: str'
+    returns: list[str]
+  - name: _adr_rows
+    args:
+    - 'root: Path'
+    - 'tracked: list[str]'
+    returns: list[tuple[str, str]]
+  - name: _component_origins
+    args:
+    - 'root: Path'
+    - 'top: Counter'
+    returns: list[dict[str, str]]
+  - name: _repository_facts
+    args:
+    - 'root: Path'
+    returns: dict[str, Any]
+  - name: _autowiki_text
+    args:
+    - 'facts: dict[str'
+    - Any]
+    returns: str
+  - name: _lore_text
+    args:
+    - 'facts: dict[str'
+    - Any]
+    returns: str
+  - name: _video_payload
+    args: []
+    returns: dict[str, Any]
+  - name: _write_context_text
+    args:
+    - 'autowiki: Path'
+    - 'lore: Path'
+    - 'facts: dict[str'
+    - Any]
+    - 'force: bool'
+    returns: None
+  - name: build_repository_context
+    args:
+    - 'root: Path'
+    - '*'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: verify_repository_context
+    args:
+    - 'receipt_path: Path'
+    returns: dict[str, Any]
+- name: factoryline_mission_graph
+  path: factoryline/mission_graph.py
+  language: python
+  functions:
+  - name: _now
+    args: []
+    returns: str
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha_bytes
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _sha_path
+    args:
+    - 'path: Path'
+    returns: str
+  - name: _load_json
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _bounded_text
+    args:
+    - 'value: str'
+    - 'field: str'
+    returns: str
+  - name: _reject_sensitive_payload
+    args:
+    - 'value: Any'
+    - 'path: str = "payload"'
+    returns: None
+  - name: _resolve_under
+    args:
+    - 'root: Path'
+    - 'value: Path'
+    - 'code: str'
+    returns: Path
+  - name: _mission
+    args:
+    - 'root: Path'
+    - 'mission_path: Path'
+    returns: tuple[Path, dict[str, Any]]
+  - name: _db_path
+    args:
+    - 'root: Path'
+    - 'mission_path: Path'
+    returns: Path
+  - name: _connect
+    args:
+    - 'path: Path'
+    returns: sqlite3.Connection
+  - name: _milestones
+    args:
+    - 'mission: dict[str'
+    - Any]
+    returns: list[dict[str, Any]]
+  - name: _readiness
+    args:
+    - 'mission: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _row_state
+    args:
+    - 'row: sqlite3.Row'
+    - 'mission: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _thread
+    args:
+    - 'connection: sqlite3.Connection'
+    - 'mission_id: str'
+    returns: sqlite3.Row
+  - name: init_mission_graph
+    args:
+    - 'mission_path: Path'
+    - 'root: Path'
+    returns: dict
+  - name: _bound_receipt
+    args:
+    - 'root: Path'
+    - 'receipt_path: Path | None'
+    - 'mission_id: str'
+    returns: tuple[Path, dict[str, Any], str]
+  - name: _decision_receipt
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    - 'mission: dict[str'
+    - Any]
+    - 'event: str'
+    - 'actor: str'
+    returns: None
+  - name: _completion_receipt
+    args:
+    - 'path: Path'
+    - 'receipt: dict[str'
+    - Any]
+    - 'mission: dict[str'
+    - Any]
+    - 'actor: str'
+    - 'creator_id: str | None'
+    returns: None
+  - name: _usage
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    - 'mission_id: str'
+    returns: dict[str, Any]
+  - name: _allowed_events
+    args:
+    - 'state: str'
+    returns: list[str]
+  - name: _transition
+    args:
+    - 'state: str'
+    - 'event: str'
+    returns: tuple[str, frozenset[str]]
+  - name: _verify_chain
+    args:
+    - 'connection: sqlite3.Connection'
+    - 'row: sqlite3.Row'
+    - 'mission_path: Path'
+    - 'mission: dict[str'
+    - Any]
+    returns: list[str]
+  - name: _intent
+    args:
+    - 'event: str'
+    - 'actor: str'
+    - 'role: str'
+    - 'payload: dict[str'
+    - Any]
+    - 'receipt_sha: str | None'
+    returns: str
+  - name: _guard_actor
+    args:
+    - 'row: sqlite3.Row'
+    - 'mission: dict[str'
+    - Any]
+    - 'event: str'
+    - 'actor: str'
+    - 'role: str'
+    - 'roles: frozenset[str]'
+    returns: None
+  - name: _guard_decision_candidate
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    - 'mission: dict[str'
+    - Any]
+    - 'event: str'
+    - 'actor: str'
+    returns: None
+  - name: _guard_validation
+    args:
+    - 'row: sqlite3.Row'
+    - 'receipt_file: Path'
+    - 'receipt: dict[str'
+    - Any]
+    - 'mission: dict[str'
+    - Any]
+    - 'event: str'
+    - 'actor: str'
+    - 'payload: dict[str'
+    - Any]
+    returns: None
+  - name: _latest_correction_binding
+    args:
+    - 'connection: sqlite3.Connection'
+    - 'mission_id: str'
+    returns: tuple[dict[str, Any], dict[str, Any]]
+  - name: _guard_retry_review
+    args:
+    - 'connection: sqlite3.Connection'
+    - 'row: sqlite3.Row'
+    - 'root: Path'
+    - 'receipt_file: Path'
+    - 'receipt: dict[str'
+    - Any]
+    - 'event: str'
+    - 'payload: dict[str'
+    - Any]
+    returns: None
+  - name: _guard_context
+    args:
+    - 'receipt_file: Path'
+    - 'event: str'
+    returns: None
+  - name: _reduce_usage
+    args:
+    - 'row: sqlite3.Row'
+    - 'receipt: dict[str'
+    - Any]
+    - 'mission: dict[str'
+    - Any]
+    - 'event: str'
+    - 'target: str'
+    returns: tuple[dict[str, Any], str, str]
+  - name: _reduce_milestones
+    args:
+    - 'row: sqlite3.Row'
+    - 'receipt: dict[str'
+    - Any]
+    - 'event: str'
+    - 'payload: dict[str'
+    - Any]
+    returns: list[dict[str, Any]]
+  - name: _reduce_thread
+    args:
+    - 'row: sqlite3.Row'
+    - 'event: str'
+    - 'actor: str'
+    - 'target: str'
+    - 'receipt_file: Path'
+    - 'receipt_sha: str'
+    - 'marker: str'
+    returns: dict[str, Any]
+  - name: apply_mission_event
+    args:
+    - 'mission_path: Path'
+    - 'root: Path'
+    - 'event: str'
+    - 'actor: str'
+    - 'role: str'
+    - 'idempotency_key: str'
+    - 'receipt_path: Path | None = None'
+    - 'payload: dict[str'
+    - Any] | None = None
+    returns: dict
+  - name: mission_graph_status
+    args:
+    - 'mission_path: Path'
+    - 'root: Path'
+    returns: dict
+  - name: mission_graph_history
+    args:
+    - 'mission_path: Path'
+    - 'root: Path'
+    returns: dict
+  - name: verify_mission_graph
+    args:
+    - 'mission_path: Path'
+    - 'root: Path'
+    returns: dict
+  - name: export_mission_graph
+    args:
+    - 'mission_path: Path'
+    - 'root: Path'
+    returns: dict
+  - name: langgraph_doctor
+    args: []
+    returns: dict
+  - name: _remaining_budget_ratio
+    args:
+    - 'status: dict[str'
+    - Any]
+    returns: float | None
+  - name: _route_reasons
+    args:
+    - 'risk: str'
+    - 'floor: str'
+    - 'failures: int'
+    - 'progress: float'
+    - 'remaining: float | None'
+    - 'cache_continuity: bool'
+    returns: list[str]
+  - name: recommend_mission_route
+    args:
+    - 'mission_path: Path'
+    - 'root: Path'
+    - 'risk: str'
+    - 'quality_floor: str = "balanced"'
+    - 'cache_continuity: bool = True'
+    returns: dict
+  - name: build_langgraph_adapter
+    args:
+    - 'mission_path: Path'
+    - 'root: Path'
+    - 'checkpointer: Any | None = None'
+    returns: Any
+- name: factoryline_operations
+  path: factoryline/operations.py
+  language: python
+  functions:
+  - name: _required
+    args:
+    - 'value: Any'
+    - 'name: str'
+    returns: str
+  - name: measured_span
+    args:
+    - 'recorder: TelemetryRecorder'
+    - 'name: str'
+    - '*'
+    - 'attributes: dict[str'
+    - Any] | None = None
+    returns: unknown
+  - name: rollback_receipt
+    args:
+    - 'deployment: dict[str'
+    - Any]
+    - '*'
+    - 'actor: str'
+    - 'reason: str'
+    returns: dict[str, Any]
+  - name: vulnerability_response
+    args:
+    - '*'
+    - 'vulnerability: str'
+    - 'severity: str'
+    - 'components: Iterable[str]'
+    - 'actions: Iterable[str]'
+    - 'status: str = "OPEN"'
+    returns: dict[str, Any]
+  - name: connector_event
+    args:
+    - '*'
+    - 'target: str'
+    - 'event_type: str'
+    - 'tenant_id: str'
+    - 'subject_digest: str'
+    - 'attributes: dict[str'
+    - Any] | None = None
+    returns: dict[str, Any]
+- name: factoryline_optimizer
+  path: factoryline/optimizer.py
+  language: python
+  functions:
+  - name: write_policy
+    args:
+    - 'root: Path'
+    - '*'
+    - 'force: bool = False'
+    returns: Path
+  - name: _git_current_branch
+    args:
+    - 'root: Path'
+    returns: str | None
+  - name: _changed_paths
+    args:
+    - 'root: Path'
+    - 'base: str'
+    - 'explicit: list[str] | None = None'
+    returns: list[str]
+  - name: pr_pack
+    args:
+    - 'root: Path'
+    - 'feature: str'
+    - '*'
+    - 'trace_path: Path | None = None'
+    - 'out: Path | None = None'
+    returns: dict
+  - name: optimize_pr
+    args:
+    - 'root: Path'
+    - '*'
+    - 'base: str = "main"'
+    - 'changed: list[str] | None = None'
+    - 'feature: str | None = None'
+    returns: dict
+- name: factoryline_output_map
+  path: factoryline/output_map.py
+  language: python
+  functions:
+  - name: _relative_path
+    args:
+    - 'value: str'
+    returns: str
+  - name: _label
+    args:
+    - 'value: str'
+    returns: str
+  - name: _files
+    args:
+    - 'root: Path'
+    - 'expected_paths: Iterable[str]'
+    returns: list[str]
+  - name: _mermaid
+    args:
+    - '*'
+    - 'name: str'
+    - 'source_sha256: str'
+    - 'status: str'
+    - 'paths: list[str]'
+    returns: str
+- name: factoryline_overrides
+  path: factoryline/overrides.py
+  language: python
+  functions:
+  - name: record_override
+    args:
+    - 'root: Path'
+    - 'issue: str'
+    - '*'
+    - 'reason: str'
+    - 'approved_by: str'
+    - 'expires: str | None = None'
+    returns: dict
+  - name: ci_template
+    args:
+    - 'feature: str'
+    returns: str
+- name: factoryline_passport
+  path: factoryline/passport.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'payload: object'
+    returns: bytes
+  - name: _sha256
+    args:
+    - 'path: Path'
+    returns: str
+  - name: _safe_label
+    args:
+    - 'value: object'
+    returns: str
+  - name: mermaid_for
+    args:
+    - 'passport: dict'
+    returns: str
+  - name: _badge
+    args:
+    - 'passport: dict'
+    returns: str
+  - name: build_passport
+    args:
+    - 'root: Path'
+    - 'feature: str'
+    - 'trace_path: Path'
+    - 'challenge_paths: list[Path]'
+    returns: dict
+  - name: verify_passport
+    args:
+    - 'path: Path'
+    returns: dict
+- name: factoryline_plan_proof_review
+  path: factoryline/plan_proof_review.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _reject
+    args:
+    - 'message: str'
+    returns: None
+  - name: _text
+    args:
+    - 'value: object'
+    - 'field: str'
+    - '*'
+    - 'pattern: re.Pattern[str] | None = None'
+    returns: str
+  - name: _path
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: str
+  - name: _paths
+    args:
+    - 'value: object'
+    - 'field: str'
+    - '*'
+    - 'allow_empty: bool'
+    returns: list[str]
+  - name: _load_plan
+    args:
+    - 'value: Path | dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: validate_agent_plan
+    args:
+    - 'value: Path | dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _item_for_path
+    args:
+    - 'plan: dict[str'
+    - Any]
+    - 'path: str'
+    returns: dict[str, Any] | None
+  - name: _finding
+    args:
+    - 'kind: str'
+    - 'severity: str'
+    - 'message: str'
+    - '**facts: Any'
+    returns: dict[str, Any]
+  - name: _plan_findings
+    args:
+    - 'plan: dict[str'
+    - Any]
+    - 'changed_paths: list[str]'
+    returns: tuple[dict[str, Any], list[dict[str, Any]]]
+  - name: _next_action
+    args:
+    - 'plan_findings: list[dict[str'
+    - Any]]
+    - 'source_review: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _settlement_for
+    args:
+    - 'finding: dict[str'
+    - Any]
+    returns: str
+  - name: _proof_debt
+    args:
+    - 'plan_findings: list[dict[str'
+    - Any]]
+    - 'source_review: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _mermaid_label
+    args:
+    - 'value: object'
+    returns: str
+  - name: _mermaid
+    args:
+    - 'review: dict[str'
+    - Any]
+    returns: str
+  - name: _markdown
+    args:
+    - 'review: dict[str'
+    - Any]
+    returns: str
+  - name: review_plan_proof
+    args:
+    - 'root: Path'
+    - 'plan_path: Path'
+    - '*'
+    - 'base: str = "main"'
+    - 'changed: list[str] | None = None'
+    returns: dict[str, Any]
+  - name: validate_plan_proof_review
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+  - name: _atomic_text
+    args:
+    - 'path: Path'
+    - 'content: str'
+    returns: str
+  - name: write_plan_proof_review_artifacts
+    args:
+    - 'review: dict[str'
+    - Any]
+    - 'out_dir: Path'
+    returns: dict[str, Any]
+- name: factoryline_pr_assurance
+  path: factoryline/pr_assurance.py
+  language: python
+  functions:
+  - name: _header
+    args:
+    - 'headers: Mapping[str'
+    - str]
+    - 'name: str'
+    returns: str
+  - name: _required_text
+    args:
+    - 'value: Any'
+    - 'field: str'
+    returns: str
+  - name: _positive_int
+    args:
+    - 'value: Any'
+    - 'field: str'
+    returns: int
+  - name: _verify_webhook_envelope
+    args:
+    - 'body: bytes'
+    - 'headers: Mapping[str'
+    - str]
+    - 'secret: bytes'
+    returns: str
+  - name: _parse_webhook_body
+    args:
+    - 'body: bytes'
+    returns: dict[str, Any]
+  - name: _normalize_pr_payload
+    args:
+    - 'payload: dict[str'
+    - Any]
+    - 'delivery_id: str'
+    - 'body: bytes'
+    returns: PullRequestEvent
+  - name: verify_github_webhook
+    args:
+    - 'body: bytes'
+    - 'headers: Mapping[str'
+    - str]
+    - 'secret: bytes'
+    returns: PullRequestEvent
+  - name: _decode_segment
+    args:
+    - 'value: str'
+    - 'code: str'
+    returns: bytes
+  - name: _reject_duplicates
+    args:
+    - 'pairs: list[tuple[str'
+    - Any]]
+    returns: dict[str, Any]
+  - name: _json_segment
+    args:
+    - 'value: str'
+    returns: dict[str, Any]
+  - name: _integer_claim
+    args:
+    - 'claims: dict[str'
+    - Any]
+    - 'name: str'
+    returns: int
+  - name: _trusted_rsa_key
+    args:
+    - 'jwks: dict[str'
+    - Any]
+    - 'kid: str'
+    returns: dict[str, Any]
+  - name: _verify_oidc_signature
+    args:
+    - 'key: dict[str'
+    - Any]
+    - 'signature: str'
+    - 'signing_input: bytes'
+    returns: None
+  - name: _validate_oidc_claims
+    args:
+    - 'claims: dict[str'
+    - Any]
+    - 'expected_issuer: str'
+    - 'expected_audience: str'
+    - 'current: int'
+    - 'clock_skew_seconds: int'
+    returns: None
+  - name: _parse_oidc_token
+    args:
+    - 'token: str'
+    - 'expected_issuer: str'
+    - 'expected_audience: str'
+    - 'clock_skew_seconds: int'
+    returns: tuple[str, str, str, dict[str, Any], dict[str, Any]]
+  - name: verify_oidc_token
+    args:
+    - 'token: str'
+    - 'jwks: dict[str'
+    - Any]
+    - 'expected_issuer: str'
+    - 'expected_audience: str'
+    - '*'
+    - 'now: int | None = None'
+    - 'clock_skew_seconds: int = 60'
+    returns: dict[str, Any]
+  - name: github_check_request
+    args:
+    - 'event: PullRequestEvent'
+    - '*'
+    - 'evidence_digest: str'
+    - 'approval_id: str'
+    - 'status: str'
+    returns: dict[str, Any]
+  - name: ingest_pull_request
+    args:
+    - 'store: PRAssuranceStore'
+    - 'body: bytes'
+    - 'headers: Mapping[str'
+    - str]
+    - 'secret: bytes'
+    - 'tenant_id: str'
+    returns: dict[str, Any]
+  - name: decide_pull_request
+    args:
+    - 'store: PRAssuranceStore'
+    - 'approval_id: str'
+    - 'token: str'
+    - 'jwks: dict[str'
+    - Any]
+    - 'expected_issuer: str'
+    - 'expected_audience: str'
+    - '*'
+    - 'tenant_id: str'
+    - 'role_map: dict[str'
+    - str]
+    - 'decision: str'
+    - 'reason: str'
+    - 'now: int | None = None'
+    returns: dict[str, Any]
+- name: factoryline_prd_grill
+  path: factoryline/prd_grill.py
+  language: python
+  functions:
+  - name: _now
+    args: []
+    returns: str
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _atomic_write
+    args:
+    - 'path: Path'
+    - 'data: bytes'
+    - '*'
+    - 'force: bool'
+    returns: Path
+  - name: _read_prd
+    args:
+    - 'path: Path'
+    returns: bytes
+  - name: _repository_facts
+    args:
+    - 'root: Path'
+    returns: list[dict[str, str]]
+  - name: _question
+    args:
+    - 'code: str'
+    - 'gap: dict[str'
+    - str]
+    returns: dict[str, Any]
+  - name: _frontier
+    args:
+    - 'gaps: list[dict[str'
+    - str]]
+    - 'mode: str'
+    returns: tuple[list[dict[str, Any]], list[dict[str, Any]]]
+  - name: _markdown
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    returns: str
+  - name: _receipt_for_core
+    args:
+    - 'receipt_path: Path'
+    - 'core: dict[str'
+    - Any]
+    - '*'
+    - 'force: bool'
+    returns: tuple[dict[str, Any], bool]
+  - name: _write_grill_artifacts
+    args:
+    - 'source_path: Path'
+    - 'receipt_path: Path'
+    - 'markdown_path: Path'
+    - 'source: bytes'
+    - 'receipt: dict[str'
+    - Any]
+    - '*'
+    - 'force: bool'
+    returns: None
+  - name: grill_prd
+    args:
+    - 'prd_path: Path'
+    - 'root: Path'
+    - 'mode: str = "quick"'
+    - 'project: str | None = None'
+    - 'out_path: Path | None = None'
+    - 'confirm: bool = False'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: verify_prd_grill
+    args:
+    - 'receipt_path: Path'
+    returns: dict[str, Any]
+- name: factoryline_privacy
+  path: factoryline/privacy.py
+  language: python
+  functions:
+  - name: _leaf
+    args:
+    - 'value: str'
+    returns: str
+  - name: _parent
+    args:
+    - 'left: str'
+    - 'right: str'
+    returns: str
+  - name: merkle_root
+    args:
+    - 'leaves: Iterable[str]'
+    returns: str
+  - name: merkle_disclosure
+    args:
+    - 'leaves: Iterable[str]'
+    - 'disclosed: str'
+    returns: dict[str, Any]
+  - name: verify_merkle_disclosure
+    args:
+    - 'disclosure: dict[str'
+    - Any]
+    returns: bool
+  - name: bbs_status
+    args: []
+    returns: dict[str, Any]
+  - name: issue_bbs_credential
+    args:
+    - '*args: Any'
+    - '**kwargs: Any'
+    returns: dict[str, Any]
+  - name: zkvm_pilot_status
+    args: []
+    returns: dict[str, Any]
+- name: factoryline_product_missions
+  path: factoryline/product_missions.py
+  language: python
+  functions:
+  - name: _now
+    args: []
+    returns: str
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha_bytes
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _sha_path
+    args:
+    - 'path: Path'
+    returns: str
+  - name: _slug
+    args:
+    - 'value: str'
+    - 'fallback: str = "product"'
+    returns: str
+  - name: _load_json
+    args:
+    - 'path: Path'
+    - 'schema: str | None = None'
+    returns: dict[str, Any]
+  - name: _atomic_text
+    args:
+    - 'path: Path'
+    - 'text: str'
+    - '*'
+    - 'force: bool = False'
+    returns: Path
+  - name: _atomic_json
+    args:
+    - 'path: Path'
+    - 'value: dict[str'
+    - Any]
+    - '*'
+    - 'force: bool = False'
+    returns: Path
+  - name: _headings
+    args:
+    - 'text: str'
+    returns: dict[int, str]
+  - name: _clean_bullet
+    args:
+    - 'line: str'
+    returns: str | None
+  - name: _stable_requirement_id
+    args:
+    - 'statement: str'
+    returns: str
+  - name: _is_requirement
+    args:
+    - 'statement: str'
+    - 'section: str'
+    returns: bool
+  - name: _requirement_kind
+    args:
+    - 'statement: str'
+    - 'section: str'
+    returns: str
+  - name: _extract_requirements
+    args:
+    - 'text: str'
+    returns: list[dict[str, Any]]
+  - name: _bullets_in_sections
+    args:
+    - 'text: str'
+    - 'names: Iterable[str]'
+    returns: list[str]
+  - name: _extract_actors
+    args:
+    - 'text: str'
+    returns: list[str]
+  - name: _extract_product_facts
+    args:
+    - 'text: str'
+    returns: dict[str, list[str]]
+  - name: _extract_acceptance
+    args:
+    - 'text: str'
+    returns: list[dict[str, Any]]
+  - name: _ux_audit
+    args:
+    - 'text: str'
+    - 'requirements: list[dict[str'
+    - Any]]
+    returns: dict[str, str]
+  - name: _graph_mermaid
+    args:
+    - 'graph: dict[str'
+    - Any]
+    returns: str
+  - name: _project_name
+    args:
+    - 'text: str'
+    - 'fallback: str'
+    returns: str
+  - name: _product_gaps
+    args:
+    - 'requirements: list[dict[str'
+    - Any]]
+    - 'acceptance: list[dict[str'
+    - Any]]
+    - 'actors: list[str]'
+    - 'outcomes: list[str]'
+    - 'ux_states: dict[str'
+    - str]
+    - 'facts: dict[str'
+    - list[str]]
+    returns: list[dict[str, str]]
+  - name: analyze_product_text
+    args:
+    - 'text: str'
+    - 'source_name: str'
+    - 'project: str | None = None'
+    - 'bindings: dict[str'
+    - str] | None = None
+    returns: dict[str, Any]
+  - name: compile_product_text
+    args:
+    - 'text: str'
+    - '*'
+    - 'root: Path'
+    - 'source_name: str'
+    - 'project: str | None = None'
+    - 'force: bool = False'
+    - 'bindings: dict[str'
+    - str] | None = None
+    - 'intake_binding: dict[str'
+    - Any] | None = None
+    returns: dict[str, Any]
+  - name: compile_product_prd
+    args:
+    - 'prd_path: Path'
+    - 'root: Path'
+    - 'project: str | None = None'
+    - 'force: bool = False'
+    - 'intake_path: Path | None = None'
+    returns: dict
+  - name: verify_product_graph
+    args:
+    - 'graph_path: Path'
+    returns: dict[str, Any]
+  - name: _theme
+    args:
+    - 'requirement: dict[str'
+    - Any]
+    returns: str
+  - name: _slice_gates
+    args:
+    - 'requirements: list[dict[str'
+    - Any]]
+    returns: list[str]
+  - name: _slice_risk
+    args:
+    - 'requirements: list[dict[str'
+    - Any]]
+    returns: str
+  - name: _slice_score
+    args:
+    - 'requirements: list[dict[str'
+    - Any]]
+    - 'graph: dict[str'
+    - Any]
+    returns: dict[str, int]
+  - name: _slices_mermaid
+    args:
+    - 'plan: dict[str'
+    - Any]
+    returns: str
+  - name: _requirement_groups
+    args:
+    - 'requirements: list[dict[str'
+    - Any]]
+    - 'maximum: int'
+    returns: list[tuple[str, list[dict[str, Any]]]]
+  - name: _value_slice
+    args:
+    - 'name: str'
+    - 'requirements: list[dict[str'
+    - Any]]
+    - 'graph: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _bind_slice_dependencies
+    args:
+    - 'slices: list[dict[str'
+    - Any]]
+    - 'requirements: list[dict[str'
+    - Any]]
+    returns: None
+  - name: _validate_slice_coverage
+    args:
+    - 'slices: list[dict[str'
+    - Any]]
+    - 'requirements: list[dict[str'
+    - Any]]
+    returns: tuple[list[str], list[str]]
+  - name: plan_value_slices
+    args:
+    - 'graph_path: Path'
+    - 'root: Path'
+    - 'max_requirements: int = 3'
+    - 'force: bool = False'
+    returns: dict
+  - name: _bounded_budget
+    args:
+    - 'name: str'
+    - 'value: float | int | None'
+    returns: float | int
+  - name: _completion_criteria
+    args:
+    - 'selected: dict[str'
+    - Any]
+    returns: list[dict[str, Any]]
+  - name: _mission_hypotheses
+    args:
+    - 'criteria: list[dict[str'
+    - Any]]
+    returns: list[dict[str, Any]]
+  - name: _routing_policy
+    args:
+    - 'risk: str'
+    returns: dict[str, Any]
+  - name: _mission_context
+    args:
+    - 'mission: dict[str'
+    - Any]
+    - 'selected: dict[str'
+    - Any]
+    returns: str
+  - name: _validated_slices
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _validated_graph
+    args:
+    - 'slices: dict[str'
+    - Any]
+    returns: tuple[Path, dict[str, Any]]
+  - name: _selected_slice
+    args:
+    - 'slices: dict[str'
+    - Any]
+    - 'slice_id: str'
+    returns: dict[str, Any]
+  - name: _existing_mission
+    args:
+    - 'path: Path'
+    - 'force: bool'
+    returns: dict[str, Any] | None
+  - name: _optional_mission_inputs
+    args:
+    - 'root: Path'
+    - 'readiness_path: Path | None'
+    - 'graph: dict[str'
+    - Any]
+    - 'require_intake: bool'
+    returns: tuple[dict[str, Any], list[str]]
+  - name: _mission_markers
+    args:
+    - 'criteria: list[dict[str'
+    - Any]]
+    - 'extra: list[str]'
+    returns: list[str]
+  - name: create_mission
+    args:
+    - 'slices_path: Path'
+    - 'slice_id: str'
+    - 'root: Path'
+    - 'owner: str'
+    - 'executor: str = "manual"'
+    - 'force: bool = False'
+    - 'max_iterations: int | None = None'
+    - 'max_wall_seconds: int | None = None'
+    - 'max_tokens: int | None = None'
+    - 'max_cost_usd: float | None = None'
+    - 'readiness_path: Path | None = None'
+    - 'require_intake: bool = False'
+    returns: dict
+  - name: _verify_primary_input
+    args:
+    - 'mission: dict[str'
+    - Any]
+    - 'name: str'
+    returns: list[str]
+  - name: _verify_optional_input
+    args:
+    - 'mission: dict[str'
+    - Any]
+    - 'name: str'
+    returns: list[str]
+  - name: _verify_mission_passport
+    args:
+    - 'mission: dict[str'
+    - Any]
+    returns: list[str]
+  - name: verify_mission
+    args:
+    - 'mission_path: Path'
+    returns: dict
+  - name: decide_mission
+    args:
+    - 'mission_path: Path'
+    - 'root: Path'
+    - '*'
+    - 'owner: str'
+    - 'decision: str'
+    - 'rationale: str'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: _evidence
+    args:
+    - 'root: Path'
+    - 'paths: list[Path]'
+    returns: list[dict[str, Any]]
+  - name: _review_evidence
+    args:
+    - 'evidence: list[dict[str'
+    - Any]]
+    returns: dict[str, list[dict[str, Any]]]
+  - name: _validation_manifest
+    args:
+    - 'path: Path'
+    - 'root: Path'
+    returns: tuple[dict[str, Any], Path]
+  - name: _validate_context_wall
+    args:
+    - 'mission: dict[str'
+    - Any]
+    - 'manifest: dict[str'
+    - Any]
+    returns: None
+  - name: _browser_flow_artifacts
+    args:
+    - 'mission: dict[str'
+    - Any]
+    - 'criterion: dict[str'
+    - Any]
+    - 'evidence_path: Path'
+    - 'verifier_id: str'
+    - 'root: Path'
+    returns: tuple[list[Path], dict[str, Any]]
+  - name: _validated_completion_results
+    args:
+    - 'mission: dict[str'
+    - Any]
+    - 'manifest: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: tuple[list[dict[str, Any]], list[dict[str, Any]]]
+  - name: close_mission
+    args:
+    - 'mission_path: Path'
+    - 'validation_path: Path'
+    - 'root: Path'
+    - '*'
+    - 'force: bool = False'
+    returns: dict[str, Any]
+  - name: _bound_file_error
+    args:
+    - 'item: dict[str'
+    - Any]
+    - 'label: str'
+    returns: str | None
+  - name: _completion_errors
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    returns: list[str]
+  - name: verify_mission_completion
+    args:
+    - 'completion_path: Path'
+    returns: dict[str, Any]
+  - name: _pr_markdown
+    args:
+    - 'draft: dict[str'
+    - Any]
+    returns: str
+  - name: draft_pr
+    args:
+    - 'mission_path: Path'
+    - 'root: Path'
+    - 'evidence_paths: list[Path] | None = None'
+    - 'force: bool = False'
+    returns: dict
+  - name: _validate_outcome
+    args:
+    - 'metric: str'
+    - 'value: float | None'
+    - 'target: float | None'
+    - 'evidence_class: str'
+    - 'source: str | None'
+    - 'notes: str'
+    returns: None
+  - name: _last_outcome_sha
+    args:
+    - 'path: Path'
+    returns: str | None
+  - name: _outcome_verdict
+    args:
+    - 'value: float | None'
+    - 'target: float | None'
+    returns: str
+  - name: record_outcome
+    args:
+    - 'mission_path: Path'
+    - 'root: Path'
+    - 'metric: str'
+    - 'value: float | None'
+    - 'target: float | None'
+    - 'evidence_class: str'
+    - 'source: str | None = None'
+    - 'notes: str = ""'
+    returns: dict
+  - name: outcome_summary
+    args:
+    - 'root: Path'
+    - 'mission_id: str | None = None'
+    returns: dict[str, Any]
+- name: factoryline_proof
+  path: factoryline/proof.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'payload: object'
+    returns: bytes
+  - name: _sha256_bytes
+    args:
+    - 'data: bytes'
+    returns: str
+  - name: _sha256_file
+    args:
+    - 'path: Path'
+    returns: str
+  - name: _rel
+    args:
+    - 'path: Path'
+    - 'root: Path'
+    returns: str
+  - name: _coerce_paths
+    args:
+    - 'value: object'
+    returns: list[str]
+  - name: _declared_paths
+    args:
+    - 'container: object'
+    returns: list[str]
+  - name: _artifact_hashes
+    args:
+    - 'root: Path'
+    - 'receipt: Receipt'
+    returns: list[dict]
+  - name: _load_latest_receipts
+    args:
+    - 'root: Path'
+    - 'feature: str'
+    returns: list[dict]
+  - name: _stage_command
+    args:
+    - 'feature: str'
+    - 'module: str'
+    - 'stage: str'
+    returns: str | None
+  - name: build_trace
+    args:
+    - 'root: Path'
+    - 'feature: str'
+    - '*'
+    - 'out: Path | None = None'
+    returns: dict
+  - name: load_trace
+    args:
+    - 'path: Path'
+    returns: dict
+  - name: verify_trace
+    args:
+    - 'trace_path: Path'
+    - '*'
+    - 'root: Path | None = None'
+    returns: dict
+  - name: risk_for_paths
+    args:
+    - 'paths: Iterable[str]'
+    returns: dict
+  - name: replay_plan
+    args:
+    - 'trace: dict'
+    - 'changed_paths: Iterable[str]'
+    returns: dict
+  - name: execute_replay
+    args:
+    - 'plan: dict'
+    - '*'
+    - 'root: Path'
+    returns: dict
+  - name: export_attestations
+    args:
+    - 'trace: dict'
+    - '*'
+    - 'out_dir: Path'
+    returns: dict
+  - name: git_changed_paths
+    args:
+    - 'root: Path'
+    - 'base: str'
+    returns: list[str]
+  - name: public_evidence
+    args:
+    - 'root: Path'
+    - 'feature: str'
+    - '*'
+    - 'trace_path: Path | None = None'
+    returns: dict
+  - name: public_evidence_text
+    args:
+    - 'evidence: dict'
+    returns: str
+- name: factoryline_proof_delta
+  path: factoryline/proof_delta.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _sha_bytes
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _relative
+    args:
+    - 'root: Path'
+    - 'value: Path | str'
+    - 'field: str'
+    - '*'
+    - 'exists: bool = True'
+    returns: tuple[Path, str]
+  - name: _load_json
+    args:
+    - 'path: Path'
+    - 'field: str'
+    returns: dict[str, Any]
+  - name: _reference
+    args:
+    - 'root: Path'
+    - 'value: Path | str'
+    - 'field: str'
+    returns: tuple[dict[str, str], dict[str, Any]]
+  - name: _sha_text
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: str
+  - name: _changed_paths
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: list[str]
+  - name: _evidence
+    args:
+    - 'root: Path'
+    - 'value: object'
+    - 'field: str'
+    returns: list[dict[str, str]]
+  - name: _candidate
+    args:
+    - 'root: Path'
+    - 'reference: dict[str'
+    - str]
+    - 'mission_id: str'
+    - 'field: str'
+    returns: dict[str, Any]
+  - name: _failure
+    args:
+    - 'root: Path'
+    - 'reference: dict[str'
+    - str]
+    - 'mission_id: str'
+    returns: dict[str, str]
+  - name: _mission
+    args:
+    - 'root: Path'
+    - 'reference: dict[str'
+    - str]
+    - 'mission_id: str'
+    returns: dict[str, str]
+  - name: _new_evidence
+    args:
+    - 'prior: list[dict[str'
+    - str]]
+    - 'repair: list[dict[str'
+    - str]]
+    returns: list[dict[str, str]]
+  - name: _reason
+    args:
+    - 'disposition: str'
+    returns: str
+  - name: _core
+    args:
+    - 'value: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: create_proof_delta
+    args:
+    - 'root: Path'
+    - 'mission_path: Path'
+    - 'prior_candidate_path: Path'
+    - 'repair_candidate_path: Path'
+    - 'failure_path: Path'
+    - 'criterion_id: str'
+    - 'out: Path'
+    returns: dict[str, Any]
+  - name: verify_proof_delta
+    args:
+    - 'root: Path'
+    - 'receipt_path: Path'
+    returns: dict[str, Any]
+  - name: proof_delta_status
+    args:
+    - 'root: Path'
+    - 'mission_id: str | None = None'
+    returns: dict[str, Any]
+- name: factoryline_proof_reuse
+  path: factoryline/proof_reuse.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha_bytes
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _sha_file
+    args:
+    - 'path: Path'
+    returns: str
+  - name: _normalized_mapping
+    args:
+    - 'value: object'
+    - 'label: str'
+    returns: dict[str, str]
+  - name: _relative_file
+    args:
+    - 'root: Path'
+    - 'raw: str'
+    - 'label: str'
+    returns: tuple[str, Path]
+  - name: _snapshot
+    args:
+    - 'root: Path'
+    - 'paths: object'
+    - 'label: str'
+    returns: list[dict[str, str]]
+  - name: _command_digest
+    args:
+    - 'command: object'
+    returns: str
+  - name: _proof_key
+    args:
+    - 'facts: dict[str'
+    - Any]
+    returns: str
+  - name: proof_facts
+    args:
+    - 'root: Path'
+    - 'gate: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: proof_key
+    args:
+    - 'root: Path'
+    - 'gate: dict[str'
+    - Any]
+    returns: str
+  - name: _proof_directory
+    args:
+    - 'root: Path'
+    returns: Path
+  - name: _plan_directory
+    args:
+    - 'root: Path'
+    returns: Path
+  - name: _validate_record_observation
+    args:
+    - 'gate: dict[str'
+    - Any]
+    - 'elapsed_ms: int'
+    - 'tokens: int | None'
+    - 'status: str'
+    returns: None
+  - name: _authority
+    args: []
+    returns: dict[str, bool]
+  - name: record_proof
+    args:
+    - 'root: Path'
+    - 'gate: dict[str'
+    - Any]
+    - '*'
+    - 'elapsed_ms: int'
+    - 'tokens: int | None = None'
+    - 'status: str = "green"'
+    - 'replace: bool = False'
+    returns: dict[str, Any]
+  - name: _load_receipt
+    args:
+    - 'receipt_path: Path'
+    returns: tuple[dict[str, Any] | None, list[str]]
+  - name: _verify_rows
+    args:
+    - 'root: Path'
+    - 'payload: dict[str'
+    - Any]
+    - 'field: str'
+    returns: list[str]
+  - name: _receipt_facts
+    args:
+    - 'payload: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: verify_proof_receipt
+    args:
+    - 'root: Path'
+    - 'receipt_path: Path'
+    returns: dict[str, Any]
+  - name: _normalize_changed
+    args:
+    - 'paths: Iterable[str]'
+    returns: list[str]
+  - name: _relevant
+    args:
+    - 'gate: dict[str'
+    - Any]
+    - 'changed: list[str]'
+    returns: bool | None
+  - name: _reuse_savings
+    args:
+    - 'root: Path'
+    - 'receipt_path: Path'
+    - 'routing_elapsed_ms: int'
+    returns: dict[str, Any] | None
+  - name: _route_gate
+    args:
+    - 'root: Path'
+    - 'gate: object'
+    - 'changed: list[str]'
+    - 'auto_savings: bool'
+    returns: dict[str, Any]
+  - name: _finish_route
+    args:
+    - 'item: dict[str'
+    - Any]
+    - 'markers: list[str]'
+    - 'started: int'
+    - 'elapsed_ms: int | None = None'
+    returns: dict[str, Any]
+  - name: _validated_gates
+    args:
+    - 'manifest: dict[str'
+    - Any]
+    returns: list[dict[str, Any]]
+  - name: load_manifest
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: challenge_proof_receipt
+    args:
+    - 'root: Path'
+    - 'receipt_path: Path'
+    returns: dict[str, Any]
+- name: factoryline_proofsearch
+  path: factoryline/proofsearch.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _digest
+    args:
+    - 'value: object'
+    returns: str
+  - name: _load
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _write
+    args:
+    - 'payload: dict[str'
+    - Any]
+    - 'out: Path'
+    returns: None
+  - name: _text
+    args:
+    - 'value: object'
+    - 'field: str'
+    - 'maximum: int = 320'
+    returns: str
+  - name: _relative
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: str
+  - name: _integer
+    args:
+    - 'value: object'
+    - 'field: str'
+    - 'maximum: int = 10**12'
+    returns: int
+  - name: _number_or_none
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: float | int | None
+  - name: _sha
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: str
+  - name: _path_sha
+    args:
+    - 'root: Path'
+    - 'relative: str'
+    - 'expected: str'
+    - 'field: str'
+    returns: None
+  - name: create_proofsearch_plan
+    args:
+    - 'root: Path'
+    - 'baseline_path: Path'
+    - 'candidate_path: Path'
+    - 'changed_paths: list[str]'
+    - 'out: Path'
+    returns: dict[str, Any]
+  - name: _verify_plan
+    args:
+    - 'value: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _proof
+    args:
+    - 'root: Path'
+    - 'raw: object'
+    - 'offset: int'
+    returns: dict[str, Any]
+  - name: _receipt_outcome
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    returns: bool | None
+  - name: _candidate
+    args:
+    - 'root: Path'
+    - 'raw: object'
+    - 'authorized: set[str]'
+    - 'seen: set[str]'
+    returns: dict[str, Any]
+  - name: _metrics
+    args:
+    - 'candidate: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _rank
+    args:
+    - 'candidate: dict[str'
+    - Any]
+    returns: tuple[object, ...]
+  - name: _savings
+    args:
+    - 'request: dict[str'
+    - Any]
+    - 'winner: dict[str'
+    - Any] | None
+    returns: dict[str, Any]
+  - name: _compare_candidates
+    args:
+    - 'workspace: Path'
+    - 'raw_candidates: list[object]'
+    - 'authorized: set[str]'
+    returns: tuple[list[dict[str, Any]], dict[str, Any] | None]
+  - name: _evaluation_markers
+    args:
+    - 'marker: str'
+    - 'candidates: list[dict[str'
+    - Any]]
+    - 'paired_baseline: object'
+    returns: list[str]
+  - name: evaluate_proofsearch
+    args:
+    - 'root: Path'
+    - 'request_path: Path'
+    - 'out: Path'
+    returns: dict[str, Any]
+  - name: verify_proofsearch_evaluation
+    args:
+    - 'root: Path'
+    - 'evaluation_path: Path'
+    returns: dict[str, Any]
+- name: factoryline_protocol
+  path: factoryline/protocol.py
+  language: python
+  functions:
+  - name: version_tuple
+    args:
+    - 'value: str'
+    returns: tuple[int, ...]
+  - name: package_version
+    args:
+    - 'package: str'
+    returns: str | None
+  - name: compatibility
+    args:
+    - 'module: str'
+    - 'meta: dict'
+    - 'help_text: str | None = None'
+    - '*'
+    - 'reported_version: str | None = None'
+    returns: Compatibility
+- name: factoryline_provenance
+  path: factoryline/provenance.py
+  language: python
+  functions:
+  - name: _source_commit
+    args:
+    - 'module_dir: Path'
+    returns: str | None
+  - name: _build_hash
+    args:
+    - 'module_dir: Path'
+    returns: str
+  - name: provenance
+    args: []
+    returns: dict
+- name: factoryline_provider_router
+  path: factoryline/provider_router.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha_bytes
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _load
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _atomic_json
+    args:
+    - 'path: Path'
+    - 'value: dict[str'
+    - Any]
+    - '*'
+    - 'force: bool'
+    returns: Path
+  - name: _identifier
+    args:
+    - 'value: Any'
+    - 'label: str'
+    returns: str
+  - name: _price
+    args:
+    - 'value: Any'
+    - 'label: str'
+    returns: float | None
+  - name: _bounded_int
+    args:
+    - 'value: Any'
+    - 'label: str'
+    - 'minimum: int'
+    - 'maximum: int'
+    - 'default: int'
+    returns: int
+  - name: _capabilities
+    args:
+    - 'value: Any'
+    returns: list[str]
+  - name: _privacy_class
+    args:
+    - 'value: Any'
+    returns: str
+  - name: _output_contracts
+    args:
+    - 'value: Any'
+    returns: list[str]
+  - name: _endpoint
+    args:
+    - 'value: Any'
+    returns: str | None
+  - name: _ides
+    args:
+    - 'values: Any'
+    - 'label: str'
+    returns: list[str]
+  - name: _normalize_model
+    args:
+    - 'value: Any'
+    returns: dict[str, Any]
+  - name: _normalize_provider
+    args:
+    - 'value: Any'
+    - 'policy_ides: list[str]'
+    returns: dict[str, Any]
+  - name: _normalize
+    args:
+    - 'owner: str'
+    - 'providers: list[dict[str'
+    - Any]]
+    - 'allowed_ides: list[str]'
+    - 'max_cost_usd: float'
+    - 'quality_floor: str'
+    - 'routing_bias: int'
+    returns: dict[str, Any]
+  - name: create_provider_policy
+    args:
+    - 'root: Path'
+    - 'owner: str'
+    - 'providers: list[dict[str'
+    - Any]]
+    - 'allowed_ides: list[str]'
+    - 'max_cost_usd: float'
+    - 'quality_floor: str = "balanced"'
+    - 'routing_bias: int = 50'
+    - 'force: bool = False'
+    returns: dict
+  - name: verify_provider_policy
+    args:
+    - 'policy_path: Path'
+    returns: dict
+  - name: provider_doctor
+    args:
+    - 'policy_path: Path'
+    returns: dict
+  - name: _model_cost
+    args:
+    - 'model: dict[str'
+    - Any]
+    returns: float
+  - name: _privacy_satisfies
+    args:
+    - 'candidate: str'
+    - 'required: str'
+    returns: bool
+  - name: _eligible_candidates
+    args:
+    - 'policy: dict[str'
+    - Any]
+    - 'ide: str'
+    - 'minimum_tier: int'
+    - '*'
+    - 'projected_tokens: int = 0'
+    - 'latency_budget_ms: int = MAX_LATENCY_MS'
+    - 'required_capabilities: list[str] | None = None'
+    - 'privacy_class: str = "standard"'
+    - 'output_contract: str = "json"'
+    returns: list[dict[str, Any]]
+  - name: _filter_preference
+    args:
+    - 'candidates: list[dict[str'
+    - Any]]
+    - 'provider: str | None'
+    - 'model: str | None'
+    returns: list[dict[str, Any]]
+  - name: _select_candidate
+    args:
+    - 'candidates: list[dict[str'
+    - Any]]
+    - 'cache_provider: str | None'
+    - 'cache_model: str | None'
+    returns: tuple[dict[str, Any], bool]
+  - name: route_provider
+    args:
+    - 'policy_path: Path'
+    - 'mission_path: Path'
+    - 'root: Path'
+    - 'ide: str'
+    - 'risk: str'
+    - 'preferred_provider: str | None = None'
+    - 'preferred_model: str | None = None'
+    - 'cache_provider: str | None = None'
+    - 'cache_model: str | None = None'
+    - 'projected_tokens: int = 0'
+    - 'projected_cost_usd: float | None = None'
+    - 'latency_budget_ms: int = MAX_LATENCY_MS'
+    - 'required_capabilities: list[str] | None = None'
+    - 'privacy_class: str = "standard"'
+    - 'output_contract: str = "json"'
+    returns: dict
+- name: factoryline_reality_check
+  path: factoryline/reality_check.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _reject
+    args:
+    - 'code: str'
+    - 'message: str'
+    returns: None
+  - name: _relative_file
+    args:
+    - 'root: Path'
+    - 'value: object'
+    - 'field: str'
+    returns: tuple[Path, str]
+  - name: _text
+    args:
+    - 'value: object'
+    - 'field: str'
+    - '*'
+    - 'identifier: bool = False'
+    returns: str
+  - name: _load
+    args:
+    - 'root: Path'
+    - 'manifest_path: Path'
+    returns: tuple[dict[str, Any], str, str]
+  - name: _intent_assertions
+    args:
+    - 'value: object'
+    returns: list[dict[str, str]]
+  - name: validate_reality_check_manifest
+    args:
+    - 'root: Path'
+    - 'manifest_path: Path'
+    returns: dict[str, Any]
+  - name: inspect_reality_intent
+    args:
+    - 'root: Path'
+    - 'manifest_path: Path'
+    returns: dict[str, Any]
+  - name: _terminal
+    args:
+    - 'e2e: dict[str'
+    - Any]
+    returns: tuple[str, str, bool]
+  - name: _assertion_results
+    args:
+    - 'manifest: dict[str'
+    - Any]
+    - 'e2e: dict[str'
+    - Any]
+    returns: list[dict[str, Any]]
+  - name: _mermaid
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    returns: str
+  - name: _markdown
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    returns: str
+  - name: run_reality_check
+    args:
+    - 'root: Path'
+    - 'manifest_path: Path'
+    returns: dict[str, Any]
+  - name: _receipt_shape
+    args:
+    - 'value: object'
+    returns: tuple[dict[str, Any], set[str]]
+  - name: _receipt_manifest
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+  - name: _receipt_result
+    args:
+    - 'value: dict[str'
+    - Any]
+    returns: None
+  - name: _receipt_hash_and_views
+    args:
+    - 'value: dict[str'
+    - Any]
+    - 'required: set[str]'
+    returns: None
+  - name: validate_reality_check_receipt
+    args:
+    - 'value: object'
+    returns: dict[str, Any]
+  - name: write_reality_check_artifacts
+    args:
+    - 'receipt: dict[str'
+    - Any]
+    - 'out_dir: Path'
+    returns: dict[str, str]
+- name: factoryline_receipt_challenge
+  path: factoryline/receipt_challenge.py
+  language: python
+  functions:
+  - name: _b64e
+    args:
+    - 'value: bytes'
+    returns: str
+  - name: _b64d
+    args:
+    - 'value: str'
+    returns: bytes
+  - name: _write
+    args:
+    - 'path: Path'
+    - 'value: dict[str'
+    - Any]
+    returns: None
+  - name: _receipt_payload
+    args: []
+    returns: dict[str, Any]
+  - name: _challenge
+    args:
+    - 'name: str'
+    - 'expected_code: str'
+    - 'verifier: Any'
+    returns: dict[str, Any]
+  - name: verify_receipt_mutations
+    args:
+    - 'root: Path'
+    - 'out: Path | None = None'
+    returns: dict[str, Any]
+- name: factoryline_refinement
+  path: factoryline/refinement.py
+  language: python
+  functions:
+  - name: select_edit
+    args:
+    - 'target_stage: str'
+    - 'failure_class: FailureClass'
+    returns: Edit
+  - name: pareto_win
+    args:
+    - 'current: dict[str'
+    - float]
+    - 'previous: dict[str'
+    - float]
+    - 'target: str'
+    returns: bool
+  - name: refine
+    args:
+    - evaluate
+    - propose
+    - apply
+    - revert
+    - 'root: Path'
+    - 'max_iters: int = 6'
+    returns: dict
+- name: factoryline_release_integrity
+  path: factoryline/release_integrity.py
+  language: python
+  functions:
+  - name: _read_workflow
+    args:
+    - 'root: Path'
+    - 'name: str'
+    returns: str
+  - name: _read_source
+    args:
+    - 'root: Path'
+    - 'relative: str'
+    returns: str
+  - name: _job
+    args:
+    - 'workflow: str'
+    - 'name: str'
+    returns: str
+  - name: _check
+    args:
+    - 'check_id: str'
+    - 'passed: bool'
+    - 'evidence: str'
+    returns: dict[str, Any]
+  - name: _fan_in_check
+    args:
+    - 'workflow: str'
+    returns: dict[str, Any]
+  - name: _partition_check
+    args:
+    - 'workflow: str'
+    returns: dict[str, Any]
+  - name: _openvsx_check
+    args:
+    - 'workflow: str'
+    returns: dict[str, Any]
+  - name: _pypi_check
+    args:
+    - 'workflow: str'
+    returns: dict[str, Any]
+  - name: _jetbrains_check
+    args:
+    - 'workflow: str'
+    returns: dict[str, Any]
+  - name: _intellij_compatibility_check
+    args:
+    - 'root: Path'
+    returns: dict[str, Any]
+  - name: _huggingface_metadata_check
+    args:
+    - 'root: Path'
+    returns: dict[str, Any]
+  - name: _python_package_data_check
+    args:
+    - 'root: Path'
+    returns: dict[str, Any]
+  - name: _checks
+    args:
+    - 'root: Path'
+    returns: list[dict[str, Any]]
+  - name: release_integrity
+    args:
+    - 'root: Path'
+    returns: dict[str, Any]
+  - name: render_release_integrity
+    args:
+    - 'result: dict[str'
+    - Any]
+    returns: str
+- name: factoryline_repair_sandbox
+  path: factoryline/repair_sandbox.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _workspace
+    args:
+    - 'root: Path'
+    returns: Path
+  - name: _relative_path
+    args:
+    - 'value: object'
+    - '*'
+    - 'code: str = "REPAIR_SCOPE_PATH_REJECTED"'
+    returns: str
+  - name: _text
+    args:
+    - 'value: object'
+    - 'label: str'
+    - 'maximum: int'
+    returns: str
+  - name: _under_workspace
+    args:
+    - 'workspace: Path'
+    - 'value: Path'
+    - '*'
+    - 'code: str = "REPAIR_SCOPE_PATH_REJECTED"'
+    - 'file_only: bool = False'
+    returns: Path
+  - name: _baseline_entry
+    args:
+    - 'workspace: Path'
+    - 'relative: str'
+    returns: dict[str, Any]
+  - name: _review_excerpt
+    args:
+    - 'review: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _required_checks
+    args:
+    - 'review: dict[str'
+    - Any]
+    returns: list[dict[str, str]]
+  - name: _scope_core
+    args:
+    - 'scope: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _context_budget
+    args:
+    - 'paths: list[dict[str'
+    - Any]]
+    - 'limit_bytes: int'
+    returns: dict[str, Any]
+  - name: create_repair_scope
+    args:
+    - 'root: Path'
+    - 'change_list: str'
+    - 'changed: list[str]'
+    - '*'
+    - 'context_budget_bytes: int = DEFAULT_CONTEXT_BUDGET_BYTES'
+    returns: dict[str, Any]
+  - name: _scope_digest
+    args:
+    - 'scope: dict[str'
+    - Any]
+    - 'core: dict[str'
+    - Any]
+    returns: str
+  - name: _scope_baseline
+    args:
+    - 'item: object'
+    - 'seen: set[str]'
+    returns: dict[str, Any]
+  - name: _verify_scope_paths
+    args:
+    - 'workspace: Path'
+    - 'paths: object'
+    returns: None
+  - name: _verify_context_budget
+    args:
+    - 'value: object'
+    - 'paths: list[dict[str'
+    - Any]]
+    returns: None
+  - name: verify_repair_scope
+    args:
+    - 'scope: dict[str'
+    - Any]
+    - 'root: Path'
+    returns: dict[str, Any]
+  - name: _scope_mermaid
+    args:
+    - 'scope: dict[str'
+    - Any]
+    returns: str
+  - name: _scope_markdown
+    args:
+    - 'scope: dict[str'
+    - Any]
+    returns: str
+  - name: _atomic_text
+    args:
+    - 'path: Path'
+    - 'content: str'
+    returns: str
+  - name: _artifact_directory
+    args:
+    - 'root: Path'
+    - 'out_dir: Path'
+    returns: Path
+  - name: write_repair_scope_artifacts
+    args:
+    - 'scope: dict[str'
+    - Any]
+    - 'root: Path'
+    - 'out_dir: Path'
+    returns: dict[str, Any]
+  - name: _load_scope
+    args:
+    - 'root: Path'
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _patch_path
+    args:
+    - 'value: str'
+    returns: str
+  - name: _patch_header_path
+    args:
+    - 'value: str'
+    - 'prefix: str'
+    returns: str | None
+  - name: _candidate_patch_paths
+    args:
+    - 'patch: Path'
+    returns: list[str]
+  - name: inspect_repair_candidate
+    args:
+    - 'root: Path'
+    - 'scope_path: Path'
+    - 'patch_path: Path'
+    returns: dict[str, Any]
+  - name: _candidate_markdown
+    args:
+    - 'candidate: dict[str'
+    - Any]
+    returns: str
+  - name: write_repair_candidate_artifacts
+    args:
+    - 'candidate: dict[str'
+    - Any]
+    - 'root: Path'
+    - 'out_dir: Path'
+    returns: dict[str, Any]
+- name: factoryline_repository_history
+  path: factoryline/repository_history.py
+  language: python
+  functions:
+  - name: git_lines
+    args:
+    - 'root: Path'
+    - '*args: str'
+    returns: list[str]
+- name: factoryline_resilience
+  path: factoryline/resilience.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _relative
+    args:
+    - 'root: Path'
+    - 'path: Path'
+    returns: str
+  - name: _lineage
+    args:
+    - 'root: Path'
+    - 'path: Path'
+    returns: tuple[dict[str, Any], str]
+  - name: _schedule
+    args:
+    - 'schedule_id: str'
+    - 'kind: str'
+    - '*'
+    - 'node_id: str'
+    - 'sequence: int'
+    - 'state_key: str | None = None'
+    - 'effect_id: str | None = None'
+    returns: dict[str, Any]
+  - name: _schedules
+    args:
+    - 'lineage: dict[str'
+    - Any]
+    returns: list[dict[str, Any]]
+  - name: compile_temporal_resilience_plan
+    args:
+    - 'root: Path'
+    - 'lineage_path: Path'
+    returns: dict[str, Any]
+  - name: _read_resilience_plan
+    args:
+    - 'root: Path'
+    - 'plan_path: Path'
+    returns: dict[str, Any]
+  - name: _resilience_plan_hash
+    args:
+    - 'plan: dict[str'
+    - Any]
+    returns: str | None
+  - name: _resilience_source
+    args:
+    - 'plan: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _resilience_comparison
+    args:
+    - 'plan: dict[str'
+    - Any]
+    - 'expected: dict[str'
+    - Any]
+    - 'supplied: str'
+    returns: dict[str, Any]
+  - name: verify_temporal_resilience_plan
+    args:
+    - 'root: Path'
+    - 'plan_path: Path'
+    returns: dict[str, Any]
+  - name: write_temporal_resilience_plan
+    args:
+    - 'plan: dict[str'
+    - Any]
+    - 'out_path: Path'
+    returns: Path
+- name: factoryline_run_admission
+  path: factoryline/run_admission.py
+  language: python
+  functions:
+  - name: _canonical
+    args:
+    - 'value: object'
+    returns: bytes
+  - name: _sha
+    args:
+    - 'value: object'
+    returns: str
+  - name: _load
+    args:
+    - 'path: Path'
+    returns: dict[str, Any]
+  - name: _inside
+    args:
+    - 'root: Path'
+    - 'candidate: Path'
+    returns: Path
+  - name: _relative_path
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: str
+  - name: _utc
+    args:
+    - 'value: object'
+    - 'field: str'
+    returns: datetime
+  - name: _fingerprint
+    args:
+    - 'root: Path'
+    returns: str
+  - name: _string_list
+    args:
+    - 'value: object'
+    - 'field: str'
+    - '*'
+    - 'maximum: int = 64'
+    returns: list[str]
+  - name: _validate_request
+    args:
+    - 'root: Path'
+    - 'request: dict[str'
+    - Any]
+    - 'passport: dict[str'
+    - Any]
+    returns: dict[str, Any]
+  - name: _atomic_json
+    args:
+    - 'path: Path'
+    - 'payload: dict[str'
+    - Any]
+    returns: None
+  - name: prepare_admission
+    args:
+    - 'root: Path'
+    - 'passport_path: Path'
+    - 'request_path: Path'
+    - 'out_dir: Path | None = None'
+    returns: dict[str, Any]
+  - name: _packet_valid
+    args:
+    - 'payload: dict[str'
+    - Any]
+    returns: bool
+  - name: _blocked
+    args:
+    - 'reason: str'
+    returns: dict[str, Any]
+  - name: _bound_passport_path
+    args:
+    - 'workspace: Path'
+    - 'packet: dict[str'
+    - Any]
+    returns: Path | None
+  - name: _passport_binding_is_current
+    args:
+    - 'path: Path'
+    - 'packet: dict[str'
+    - Any]
+    returns: bool
+  - name: _request_binding_is_current
+    args:
+    - 'workspace: Path'
+    - 'packet: dict[str'
+    - Any]
+    - 'passport_path: Path'
+    returns: str | None
+  - name: verify_admission
+    args:
+    - 'root: Path'
+    - 'packet_path: Path'
+    returns: dict[str, Any]
+- name: factoryline_run_metrics
+  path: factoryline/run_metrics.py
+  language: python
+  functions:
+  - name: _runs_dir
+    args:
+    - 'root: Path'
+    - '*'
+    - 'create: bool = True'
+    returns: Path
+  - name: _atomic_json
+    args:
+    - 'path: Path'
+    - 'payload: dict[str'
+    - Any]
+    returns: None
+  - name: load_run_receipts
+    args:
+    - 'root: Path'
+    returns: list[dict[str, Any]]
+  - name: retry_count
+    args:
+    - 'root: Path'
+    - 'feature: str'
+    returns: int
+  - name: write_run_receipt
+    args:
+    - 'root: Path'
+    - 'payload: dict[str'
+    - Any]
+    returns: Path
+  - name: public_metrics
+    args:
+    - 'root: Path'
+    returns: dict[str, Any]
+  - name: export_public_metrics
+    args:
+    - 'root: Path'
+    - 'output: Path'
+    returns: Path
+- name: factoryline_savings
+  path: factoryline/savings.py
+  language: python
+  functions:
+  - name: _observation
+    args:
+    - 'value: dict[str'
+    - Any]
+    - 'label: str'
+    returns: dict[str, Any]
+  - name: _exact
+    args:
+    - 'value: Any'
+    returns: Any
+  - name: _plain
+    args:
+    - 'value: Any'
+    returns: Any
+  - name: _ratio
+    args:
+    - 'numerator: Any'
+    - 'denominator: Any'
+    returns: float | None
+  - name: _delta
+    args:
+    - 'baseline: dict[str'
+    - Any]
+    - 'factory: dict[str'
+    - Any]
+    - 'key: str'
+    returns: tuple[Any, Any]
+  - name: _savings_dir
+    args:
+    - 'root: Path'
+    - '*'
+    - 'create: bool = True'
+    returns: Path
+  - name: _evidence_digest
+    args:
+    - 'equivalent_outcome: bool'
+    - 'evidence: Path | None'
+    returns: str | None
+  - name: _pair_markers
+    args:
+    - 'evidence_digest: str | None'
+    - 'values: tuple[Any'
+    - '...]'
+    - 'has_unknown: bool'
+    returns: list[str]
+  - name: record_savings_pair
+    args:
+    - 'root: Path'
+    - 'pair_id: str'
+    - 'baseline: dict[str'
+    - Any]
+    - 'factory: dict[str'
+    - Any]
+    - '*'
+    - 'equivalent_outcome: bool = False'
+    - 'evidence: Path | None = None'
+    - 'replace: bool = False'
+    returns: dict[str, Any]
+  - name: load_savings_pairs
+    args:
+    - 'root: Path'
+    returns: list[dict[str, Any]]
+  - name: _metric
+    args:
+    - 'rows: list[dict[str'
+    - Any]]
+    - 'key: str'
+    - 'saved_key: str'
+    returns: dict[str, Any]
+  - name: public_savings_report
+    args:
+    - 'root: Path'
+    returns: dict[str, Any]
+  - name: export_public_savings_report
+    args:
+    - 'root: Path'
+    - 'output: Path'
+    returns: Path
+- name: editors_vscode_src_extension
+  path: editors/vscode/src/extension.ts
+  language: typescript
+  functions:
+  - name: activate
+    args:
+    - 'context: vscode.ExtensionContext'
+    returns: 'void '
+  - name: deactivate
+    args: []
+    returns: 'void '
+- name: editors_vscode_src_meter
+  path: editors/vscode/src/meter.ts
+  language: typescript
+  functions:
+  - name: meterHtml
+    args:
+    - 'value: unknown'
+    returns: 'string '
+  - name: savingsHtml
+    args:
+    - 'value: unknown'
+    returns: 'string '
+- name: editors_vscode_src_receipt
+  path: editors/vscode/src/receipt.ts
+  language: typescript
+  functions:
+  - name: summarizeReceipt
+    args:
+    - 'value: unknown'
+    returns: 'ReceiptSummary '
+  - name: escapeHtml
+    args:
+    - 'value: string'
+    returns: 'string '
+  - name: receiptHtml
+    args:
+    - 'value: unknown'
+    - 'title: string'
+    returns: 'string '
+- name: editors_vscode_src_requirement
+  path: editors/vscode/src/requirement.ts
+  language: typescript
+  functions:
+  - name: requirementIds
+    args:
+    - 'text: string'
+    returns: 'string[] '
+  - name: findRequirementEvidence
+    args:
+    - 'workspace: string'
+    - 'requirementId: string'
+    returns: 'Promise<RequirementEvidence[]> '
+- name: editors_vscode_src_runner
+  path: editors/vscode/src/runner.ts
+  language: typescript
+  functions:
+  - name: factoryExecutable
+    args:
+    - 'command: string'
+    - platform = process.platform
+    returns: 'string '
+  - name: isFeatureName
+    args:
+    - 'value: string'
+    returns: 'boolean '
+  - name: factoryStudioUrl
+    args:
+    - 'output: string'
+    returns: 'string | undefined '
+- name: editors_vscode_src_star_prompt
+  path: editors/vscode/src/star_prompt.ts
+  language: typescript
+  functions:
+  - name: starPromptKey
+    args: []
+    returns: 'string '
+  - name: shouldOfferGitHubStar
+    args:
+    - 'promptedForVersion: unknown'
+    - 'installedVersion: string'
+    returns: 'boolean '
+dependencies: []
+invariants: []

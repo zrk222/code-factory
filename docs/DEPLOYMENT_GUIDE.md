@@ -60,6 +60,29 @@ after all listed prerequisites exist and Studio shows no unresolved mission or
 verification failures. Code Factory does not infer credentials or silently
 convert a local approval into release authority.
 
+## Preset all-platform release path
+
+The repository's preset public release path is the GitHub Release workflow in
+`.github/workflows/publish.yml`. It validates the Python distribution and the
+VS Code and IntelliJ artifacts, stages one immutable `release-bundle`, attaches
+the bundle to the GitHub Release, and publishes the Python packages through the
+protected PyPI environment. A branch push runs CI and proof checks; a release
+publication is the explicit promotion event, so a normal code push cannot
+silently publish packages.
+
+```bash
+factory doctor --strict --json
+python -m pytest -q
+git push origin <reviewed-branch>
+# after human release approval and a reviewed immutable tag:
+gh release create <tag> --generate-notes
+```
+
+The workflow is the all-platform bundle for this repository: Python package,
+VS Code extension, IntelliJ plugin, and retained proof artifacts. It does not
+deploy unrelated web/mobile services or submit an app-store build; those
+remain separate, credentialed product pipelines and approval-bound.
+
 ## Provider and IDE routing
 
 `factory provider` adds a selection layer before a governed runtime invokes a

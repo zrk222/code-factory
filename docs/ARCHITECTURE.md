@@ -55,7 +55,7 @@ flowchart TB
         SHIP["GitHub, PyPI, Zenodo, Hugging Face<br/>VS Code + JetBrains packages"]
         OUT["Classified outcomes<br/>measured, observed, modeled, unknown"]
         METER["Meter v2<br/>time, tokens, cost, retries, quality"]
-        UI["Factory Studio + IDE control rooms<br/>live status and approval-ready actions"]
+    UI["Factory Studio + IDE control rooms<br/>live status, Graph Ops, and approval-ready actions"]
     end
 
     SIG --> SR --> OD --> PO
@@ -142,7 +142,7 @@ verification to completion, and completion grants no merge or release authority.
 flowchart LR
     VSC["VS Code<br/>CodeLens + commands"]
     JB["JetBrains family<br/>gutter + tool window"]
-    ST["Factory Studio<br/>control room"]
+    ST["Factory Studio<br/>control room + Graph Ops"]
     CLI["Local factory CLI<br/>single proof authority"]
     ART[".factory artifacts<br/>graphs, missions, receipts, traces"]
     M2["Meter v2 event stream"]
@@ -177,3 +177,5 @@ flowchart LR
 The IDEs and Studio are control surfaces, not alternate receipt authorities.
 They invoke explicit local CLI commands and display local artifacts; they do
 not upload source, infer approval, or bypass the no-finish and release gates.
+Graph Ops is a bounded read-only overlay over those same artifacts, not a new
+authority source. See [Unified Graph Ops](GRAPH_OPS.md).

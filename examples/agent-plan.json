@@ -1,0 +1,32 @@
+{
+  "schema": "factory.agent_plan.v1",
+  "provider": "generic",
+  "plan_id": "approval-tracker-slice-1",
+  "approval": {
+    "state": "approved",
+    "approved_by": "Engineering Lead"
+  },
+  "items": [
+    {
+      "id": "approval-service",
+      "paths": [
+        "src/approval_service.py"
+      ],
+      "test_paths": [
+        "tests/test_approval_service.py"
+      ],
+      "review_tier": "standard"
+    },
+    {
+      "id": "approval-authorisation",
+      "paths": [
+        "src/approval_authorisation.py"
+      ],
+      "test_paths": [
+        "tests/test_approval_authorisation.py"
+      ],
+      "review_tier": "deep",
+      "review_owner": "security-owner"
+    }
+  ]
+}

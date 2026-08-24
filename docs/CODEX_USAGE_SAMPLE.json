@@ -1,0 +1,52 @@
+{
+  "schema": "factory.codex-usage-sample.v1",
+  "sample_date": "2026-07-24",
+  "scope": {
+    "history_files_parsed": 8,
+    "assembly_invocations": 19,
+    "token_counter_sessions": 4
+  },
+  "assembly_invocations": {
+    "real": 10,
+    "help": 7,
+    "dry_run": 2,
+    "real_terminal_classification": {
+      "halted": 2,
+      "paused": 6,
+      "unclassified": 2,
+      "confirmed_end_to_end": 0
+    },
+    "real_wall_seconds_total": 23.2,
+    "real_wall_seconds_median": 2.35,
+    "help_wall_seconds_total": 15.1,
+    "paused_output_characters_mean": 14327
+  },
+  "factory_command_usage": {
+    "shell_payloads_with_factory_family_strings": 1851,
+    "help_discovery_payloads": 184,
+    "payloads_with_at_least_3_commands": 672,
+    "maximum_commands_in_one_payload": 17
+  },
+  "token_counters": {
+    "total": 3216785227,
+    "input": 3208839354,
+    "cached_input": 3121512901,
+    "cached_input_rate": 0.9728,
+    "output": 7945873,
+    "reasoning": 1768217,
+    "attribution": "not_attributable_to_code_factory"
+  },
+  "productivity_claims": {
+    "time_saved_seconds": null,
+    "tokens_saved": null,
+    "productivity_gain_rate": null,
+    "quality": "unknown",
+    "reason": "No paired counterfactual baseline or historical factory run receipts were present."
+  },
+  "privacy": {
+    "contains_prompts": false,
+    "contains_paths": false,
+    "contains_feature_names": false,
+    "contains_log_bodies": false
+  }
+}

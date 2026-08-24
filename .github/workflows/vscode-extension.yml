@@ -25,6 +25,7 @@ jobs:
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
       - run: npm ci
+      - run: npm run audit
       - run: npm test
       - run: npx vsce package --no-dependencies --out factoryline-vscode.vsix
       - uses: actions/upload-artifact@v7.0.1

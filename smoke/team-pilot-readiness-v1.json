@@ -1,0 +1,20 @@
+{
+  "checks": [
+    {
+      "name": "team_pilot_readiness_hash_binds_customer_managed_evidence",
+      "kind": "python",
+      "run": "import hashlib, json, tempfile\nfrom pathlib import Path\nfrom factoryline.team_pilot import evaluate_team_pilot_readiness\nwith tempfile.TemporaryDirectory() as raw:\n    root = Path(raw)\n    (root / 'docs').mkdir()\n    (root / 'docs' / 'COMMERCIAL_PACKAGING.json').write_text(json.dumps({'schema': 'factory.commercial-packaging.v1', 'governance': {'classification': 'human_controlled', 'automation_may_activate': False}, 'current_verdict': 'COMMERCIALIZATION_STAGED_NOT_SELLABLE', 'tiers': {'team_proof_hub': {'availability': 'design_partner_only', 'purchasable': False}}}), encoding='utf-8')\n    kinds = ['commercial_terms_review', 'data_retention_decision', 'deployment_security_review', 'design_partner_selection', 'support_and_incident_owner']\n    evidence = []\n    for kind in kinds:\n        path = root / f'{kind}.json'\n        path.write_text(json.dumps({'kind': kind}), encoding='utf-8')\n        evidence.append({'kind': kind, 'path': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})\n    manifest = {'schema': 'factory.team-pilot-launch.v1', 'pilot_id': 'smoke-team', 'owner': 'smoke-owner', 'partner_count': 3, 'governance': 'human_controlled', 'delivery_mode': 'customer_managed_reference', 'evidence': evidence}\n    path = root / 'team-pilot.json'\n    path.write_text(json.dumps(manifest), encoding='utf-8')\n    receipt = evaluate_team_pilot_readiness(root, path)\n    assert receipt['marker'] == 'TEAM_PILOT_READY_FOR_OWNER_REVIEW'\n    assert receipt['authority']['payment'] is False\nprint('TEAM_PILOT_READY_FOR_OWNER_REVIEW')\n",
+      "expect_exit": 0,
+      "expect_stdout": "TEAM_PILOT_READY_FOR_OWNER_REVIEW",
+      "timeout_s": 30,
+      "covers": [
+        "REQ_TEAM_PILOT_MANIFEST",
+        "REQ_TEAM_PILOT_EVIDENCE",
+        "REQ_TEAM_PILOT_COMMERCIAL_BOUNDARY",
+        "REQ_TEAM_PILOT_READY",
+        "REQ_TEAM_PILOT_AUTHORITY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

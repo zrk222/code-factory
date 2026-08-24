@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Code Factory Proof Card</title>
+  <desc id="desc">A test that could not say no was caught. Privacy-safe summary of one verified local receipt.</desc>
+  <rect width="1280" height="720" rx="36" fill="#f8fafc"/>
+  <rect x="44" y="44" width="1192" height="632" rx="28" fill="#ffffff" stroke="#cbd5e1" stroke-width="3"/>
+  <text x="92" y="118" font-family="Arial, sans-serif" font-size="24" font-weight="700" fill="#475569">CODE FACTORY · PROOF CARD</text>
+  <text x="92" y="205" font-family="Arial, sans-serif" font-size="50" font-weight="800" fill="#0f172a">A test that could not say no was caught</text>
+  <rect x="92" y="260" width="500" height="126" rx="20" fill="#ecfeff" stroke="#a5f3fc"/>
+  <text x="124" y="308" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#475569">POSITIVE CHECK</text>
+  <text x="124" y="358" font-family="Arial, sans-serif" font-size="34" font-weight="800" fill="#0f766e">PASS</text>
+  <rect x="620" y="260" width="500" height="126" rx="20" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="652" y="308" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#475569">DECLARED FAILURE CASE</text>
+  <text x="652" y="358" font-family="Arial, sans-serif" font-size="34" font-weight="800" fill="#b45309">SURVIVED</text>
+  <text x="92" y="468" font-family="Arial, sans-serif" font-size="23" fill="#334155">Outcome · HOLLOW_TEST_DETECTED</text>
+  <text x="92" y="510" font-family="Arial, sans-serif" font-size="20" fill="#64748b">Receipt · f9f2f82b281dfe149000…</text>
+  <text x="92" y="550" font-family="Arial, sans-serif" font-size="20" fill="#64748b">No code, paths, prompts, logs, or identity included.</text>
+  <line x1="92" y1="590" x2="1120" y2="590" stroke="#e2e8f0" stroke-width="2"/>
+  <text x="92" y="632" font-family="Arial, sans-serif" font-size="18" fill="#64748b">One verified receipt · not a production-readiness certificate</text>
+  <text x="1120" y="632" text-anchor="end" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#2563eb">github.com/zrk222/code-factory</text>
+</svg>

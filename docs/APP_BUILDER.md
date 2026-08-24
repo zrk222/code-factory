@@ -22,27 +22,29 @@ factory app from-prompt "Build an expense approval app with manager review, audi
 
 ```mermaid
 flowchart TD
-    A["PRD or prompt"] --> B["Blueprint: stack, purpose, roles, workflows"]
-    B --> C["Full-stack scaffold"]
-    C --> D["SpecLine: optimize PRD"]
-    C --> E["Prestige: purpose design brief"]
-    C --> F["ForgeLine: bounded hardening loop"]
-    C --> G["HSF: deterministic decision logic candidates"]
-    D --> H["Factoryline PR evidence packet"]
-    E --> H
-    F --> H
-    G --> H
-    H --> I["VS Code + JetBrains\nlocal receipt controls"]
+    A["PRD or prompt"] --> C["Blueprint: stack, purpose, roles, workflows"]
+    A -. "optional author-owned PRD preflight" .-> B["PRD Grill: source-bound question frontier"]
+    B -. "deliberate PRD update" .-> C
+    C --> D["Full-stack scaffold"]
+    D --> E["SpecLine: optimize PRD"]
+    D --> F["Prestige: purpose design brief"]
+    D --> G["ForgeLine: bounded hardening loop"]
+    D --> H["HSF: deterministic decision logic candidates"]
+    E --> I["Factoryline PR evidence packet"]
+    F --> I
+    G --> I
+    H --> I
+    I --> J["VS Code + JetBrains\nlocal receipt controls"]
     classDef intent fill:#e0f2fe,stroke:#0284c7,color:#10233f
     classDef scaffold fill:#fef3c7,stroke:#d97706,color:#10233f
     classDef gate fill:#dcfce7,stroke:#16a34a,color:#10233f
     classDef proof fill:#ccfbf1,stroke:#0f766e,color:#10233f
     classDef editor fill:#ede9fe,stroke:#7c3aed,color:#10233f
-    class A,B intent
-    class C scaffold
-    class D,E,F,G gate
-    class H proof
-    class I editor
+    class A,B,C intent
+    class D scaffold
+    class E,F,G,H gate
+    class I proof
+    class J editor
 ```
 
 ## What Gets Generated
@@ -94,6 +96,8 @@ Most app generators optimize for speed. `factory app` optimizes for speed plus
 reviewability:
 
 - PRD and prompt become a machine-readable `app_blueprint.json`.
+- A PRD can first pass through a capped, source-bound **PRD Grill** question
+  sheet; its recommendations never alter the PRD or authorize building.
 - The generated repo carries smoke-test and PR-evidence hooks.
 - Business-rule candidates are listed for deterministic HSF compilation.
 - UI work starts with a Prestige purpose brief instead of a generic theme.
@@ -116,6 +120,7 @@ Current stacks:
 
 ```bash
 cd my-app
+factory prd grill PRD.md --root . --mode quick
 specline optimize-prd PRD.md
 prestige brief PRD.md --purpose saas
 forge verify-tests <app-name> <app-name>.ssat.yaml --root .

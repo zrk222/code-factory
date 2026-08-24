@@ -1,0 +1,44 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.zrk222/code-factory",
+  "description": "Local proof facts for AI coding clients: intent, tests, Graph Ops, and review evidence.",
+  "repository": {
+    "url": "https://github.com/zrk222/code-factory",
+    "source": "github",
+    "id": "1293217553"
+  },
+  "version": "0.44.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "factoryline-code-factory",
+      "version": "0.44.1",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--from",
+          "value": "factoryline-code-factory==0.44.1"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "factory"
+        },
+        {
+          "type": "positional",
+          "value": "mcp"
+        },
+        {
+          "type": "positional",
+          "value": "serve"
+        }
+      ]
+    }
+  ]
+}

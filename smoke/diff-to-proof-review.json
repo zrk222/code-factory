@@ -1,0 +1,22 @@
+{
+  "checks": [
+    {
+      "name": "diff_to_proof_review_contract_is_exact_and_analysis_only",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_change_review.py']) == 0\n",
+      "covers": [
+        "DIFF_TO_PROOF_REVIEW_V1",
+        "DIFF_TO_PROOF_INPUTS_EXACT",
+        "DIFF_TO_PROOF_GRAPH_IMPACT_EXACT",
+        "DIFF_TO_PROOF_COVERAGE_GAPS_EXPLICIT",
+        "DIFF_TO_PROOF_RERUN_PLAN_EXACT",
+        "DIFF_TO_PROOF_UNMATCHED_PRIORITY",
+        "DIFF_TO_PROOF_MERMAID_EXPORTED",
+        "DIFF_TO_PROOF_ARTIFACTS_OPTIONAL",
+        "DIFF_TO_PROOF_NO_EXECUTION",
+        "DIFF_TO_PROOF_PATH_REJECTED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

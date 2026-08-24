@@ -1,0 +1,55 @@
+name: savings-tracker-v1
+language: python
+modules:
+  - name: savings
+    path: factoryline/savings.py
+    functions:
+      - name: record_savings_pair
+        args: [root, pair_id, baseline, factory]
+        returns: dict
+      - name: public_savings_report
+        args: [root]
+        returns: dict
+      - name: export_public_savings_report
+        args: [root, output]
+        returns: Path
+  - name: cli
+    path: factoryline/cli.py
+    functions:
+      - name: main
+        args: [argv]
+        returns: int
+  - name: studio
+    path: factoryline/studio.py
+    functions:
+      - name: savings_from_studio
+        args: [root, payload]
+        returns: dict
+dependencies:
+  - from: cli
+    to: savings
+  - from: cli
+    to: studio
+  - from: studio
+    to: savings
+  - from: savings
+    to: run_metrics
+invariants:
+  - name: savings_record_has_no_execution_or_remote_authority
+    forbid_pattern: "\\b(?:subprocess|requests|httpx|urllib|socket)\\b|\\b(?:deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: savings
+        symbol: record_savings_pair
+        max_lines: 95
+  - name: savings_report_has_no_private_identifiers
+    forbid_pattern: "\\b(?:pair_id|feature|path|command|prompt|log|evidence_sha256)\\b"
+    scopes:
+      - module: savings
+        symbol: public_savings_report
+        max_lines: 85
+  - name: studio_savings_has_no_release_authority
+    forbid_pattern: "\\b(?:deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: studio
+        symbol: savings_from_studio
+        max_lines: 35

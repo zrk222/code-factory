@@ -42,6 +42,21 @@ flowchart LR
   verification path establishes the relevant claim.
 - Changed-proof analysis through `factory risk-diff` and signature state through
   `factory receipt status`.
+- A dedicated **Proof Review** tab that renders schema-bound local
+  `factory change review` facts for the complete current diff or the active
+  file, orders findings by declared severity, and opens only project-contained
+  changed paths.
+- An explicit **Save Review Handoff** action that writes the current review's
+  hash-bound JSON, Markdown, and Mermaid packet below
+  `.factory/change-reviews/`; it never applies a suggested change.
+- A **Verified Repair Sandbox** tab that seals one native Change List as a
+  local Scope Passport, exposes exact bytes without token or credit estimates,
+  and rejects textual candidate patches that cross its current path scope. It
+  does not invoke a repair model, apply the patch, or replace independent
+  verifier evidence and a human IDE decision.
+- A **Workspace Advisor** tab that renders bounded local filesystem shape and
+  path-only Remote/WSL facts, then offers manual review paths without changing
+  IDE settings, indexes, caches, plugins, project files, or remote state.
 - Plugin Verifier CI across IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion,
   GoLand, RustRover, and DataGrip.
 - One Mission Operations entry point for graph initialization, status, history,
@@ -53,10 +68,11 @@ flowchart LR
 
 ## Deliberately Not Claimed Yet
 
-The initial receipt schema does not consistently carry file/symbol locations,
-so the adapter does not invent gutter findings, PSI navigation, diff overlays,
-SARIF locations, or a before-commit gate. Those are follow-on features after
-the CLI exports deterministic location-bearing findings and freshness data.
+The change-review schema consistently carries changed file paths, so Proof
+Review can safely navigate those workspace-contained files. It still does not
+invent finding line/symbol locations, PSI navigation, diff overlays, SARIF
+locations, or a before-commit gate. Those are follow-on features after the CLI
+exports deterministic location-bearing findings and freshness data.
 
 Likewise, the adapter does not include a GitHub API client, TeamCity runner,
 MCP server, local daemon client, remote artifact store, issue tracker client,
@@ -64,6 +80,12 @@ or an automated policy override. Existing CLI/CI surfaces remain the correct
 integration boundary: `factory ci init` can create the opt-in GitHub PR-comment
 workflow, and `factory control` remains the separately governed local
 control-plane adapter.
+
+Workspace Advisor is not a PSI or IDE-runtime observer. It does not sample
+heap, CPU, GC, indexing time, UI responsiveness, remote connectivity, or
+plugin behavior, so it cannot claim a performance diagnosis or automatic
+remediation. Its facts remain an input to a human-controlled JetBrains or
+platform-team decision.
 
 ## Security Boundary
 

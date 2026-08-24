@@ -1,0 +1,25 @@
+{
+  "checks": [
+    {
+      "name": "workspace_advisor_is_bounded_local_and_artifact_explicit",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_workspace_advisor.py']) == 0\n",
+      "covers": [
+        "WORKSPACE_ADVISOR_LOCAL_READ_ONLY",
+        "WORKSPACE_ADVISOR_NO_IDE_MUTATION",
+        "WORKSPACE_ADVISOR_NO_REMOTE_CONNECTION",
+        "WORKSPACE_ADVISOR_NOT_PERFORMANCE_DIAGNOSIS"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "workspace_advisor_mcp_stays_in_memory_and_zero_authority",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_mcp.py']) == 0\n",
+      "covers": [
+        "MCP_WORKSPACE_ADVISOR_READ_ONLY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

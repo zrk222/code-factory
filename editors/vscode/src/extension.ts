@@ -4,9 +4,10 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { receiptHtml } from "./receipt";
-import { meterHtml } from "./meter";
+import { meterHtml, savingsHtml } from "./meter";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "./runner";
 import { findRequirementEvidence, requirementIds } from "./requirement";
+import { GITHUB_REPOSITORY_URL, shouldOfferGitHubStar, starPromptKey } from "./star_prompt";
 
 const output = vscode.window.createOutputChannel("FactoryLine");
 const receiptDirectories = [".factory", "receipts"];
@@ -63,6 +64,23 @@ async function runFactory(root: string, args: string[]): Promise<string> {
     child.on("error", reject);
     child.on("close", (code) => code === 0 ? resolve(combined) : reject(new Error(`FactoryLine exited with ${code ?? "an unknown error"}.`)));
   });
+}
+
+async function offerGitHubStar(context: vscode.ExtensionContext): Promise<void> {
+  const installedVersion = String(context.extension.packageJSON.version);
+  const key = starPromptKey();
+  if (!shouldOfferGitHubStar(context.globalState.get<string>(key), installedVersion)) {
+    return;
+  }
+  await context.globalState.update(key, installedVersion);
+  const choice = await vscode.window.showInformationMessage(
+    "FactoryLine completed local work. If it clarified what is proven, you can star Code Factory to follow updates.",
+    "Star Code Factory",
+    "Not now",
+  );
+  if (choice === "Star Code Factory") {
+    await vscode.env.openExternal(vscode.Uri.parse(GITHUB_REPOSITORY_URL));
+  }
 }
 
 function parseMeterSnapshot(outputText: string): unknown {
@@ -158,7 +176,7 @@ async function openRequirementEvidence(requirementId: string): Promise<void> {
   editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
 }
 
-async function runFeature(command: "assemble" | "verify"): Promise<void> {
+async function runFeature(context: vscode.ExtensionContext, command: "assemble" | "verify"): Promise<void> {
   const root = requireTrustedWorkspace();
   if (!root) {
     return;
@@ -175,6 +193,32 @@ async function runFeature(command: "assemble" | "verify"): Promise<void> {
       await showReceipt(latest);
     }
     void vscode.window.showInformationMessage(`FactoryLine ${command} completed for ${feature}.`);
+    await offerGitHubStar(context);
+  } catch (error) {
+    void vscode.window.showErrorMessage(`${error instanceof Error ? error.message : String(error)} See the FactoryLine output channel.`);
+  }
+}
+
+async function continueAssembly(context: vscode.ExtensionContext): Promise<void> {
+  const root = requireTrustedWorkspace();
+  if (!root) {
+    return;
+  }
+  const feature = await vscode.window.showInputBox({
+    prompt: "Feature name (leave blank only when exactly one feature is discoverable)",
+    validateInput: (value) => !value || isFeatureName(value) ? undefined : "Use letters, digits, hyphens, and underscores only.",
+  });
+  if (feature === undefined) {
+    return;
+  }
+  try {
+    const args = ["continue", ...(feature ? [feature] : []), "--root", root];
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "FactoryLine: continue assembly" },
+      () => runFactory(root, args),
+    );
+    void vscode.window.showInformationMessage("FactoryLine reached the next assembly boundary. See the output channel for the exact next action.");
+    await offerGitHubStar(context);
   } catch (error) {
     void vscode.window.showErrorMessage(`${error instanceof Error ? error.message : String(error)} See the FactoryLine output channel.`);
   }
@@ -202,13 +246,41 @@ async function openMeter(): Promise<void> {
   }
 }
 
-async function openFactoryStudio(productMode = false): Promise<void> {
+async function openSavings(): Promise<void> {
   const root = requireTrustedWorkspace();
   if (!root) {
     return;
   }
   const confirmed = await vscode.window.showWarningMessage(
-    `${productMode ? "Open Product Missions" : "Start Factory Studio"} on loopback for this workspace? Local artifacts may be created, but this grants no execute, merge, deploy, publish, credential, connector, or external-message authority.`,
+    "FactoryLine will read aggregate-safe paired savings receipts from this workspace.",
+    { modal: true },
+    "Read paired savings",
+  );
+  if (confirmed !== "Read paired savings") {
+    return;
+  }
+  try {
+    const raw = await runFactory(root, ["savings", "report", "--root", root, "--json"]);
+    const panel = vscode.window.createWebviewPanel("factorylineSavings", "FactoryLine Paired Savings", vscode.ViewColumn.Beside, { enableScripts: false });
+    panel.webview.html = savingsHtml(parseMeterSnapshot(raw));
+  } catch (error) {
+    void vscode.window.showErrorMessage(`${error instanceof Error ? error.message : String(error)} See the FactoryLine output channel.`);
+  }
+}
+
+type StudioView = "studio" | "product" | "graph";
+
+async function openFactoryStudio(view: StudioView = "studio"): Promise<void> {
+  const productMode = view === "product";
+  const graphMode = view === "graph";
+  const title = graphMode ? "Open Graph Ops" : productMode ? "Open Product Missions" : "Start Factory Studio";
+  const route = (url: string): string => graphMode ? `${url}graph-ops` : productMode ? `${url}?mode=product` : url;
+  const root = requireTrustedWorkspace();
+  if (!root) {
+    return;
+  }
+  const confirmed = await vscode.window.showWarningMessage(
+    `${title} on loopback for this workspace? Graph Ops only inspects local artifacts; Studio grants no execute, merge, deploy, publish, credential, connector, or external-message authority.`,
     { modal: true },
     "Start local Studio",
   );
@@ -219,9 +291,12 @@ async function openFactoryStudio(productMode = false): Promise<void> {
   if (productMode) {
     output.appendLine("marker: EDITOR_PRODUCT_MISSION_CONFIRMED");
   }
+  if (graphMode) {
+    output.appendLine("marker: EDITOR_GRAPH_OPS_CONFIRMED");
+  }
   if (studioProcess && studioProcess.exitCode === null) {
     if (studioUrl) {
-      await vscode.env.openExternal(vscode.Uri.parse(productMode ? `${studioUrl}?mode=product` : studioUrl));
+      await vscode.env.openExternal(vscode.Uri.parse(route(studioUrl)));
     } else {
       void vscode.window.showInformationMessage("Factory Studio is still starting. See the FactoryLine output channel.");
     }
@@ -235,6 +310,9 @@ async function openFactoryStudio(productMode = false): Promise<void> {
   output.appendLine("marker: EDITOR_TRUST_CONFIRMED");
   if (productMode) {
     output.appendLine("marker: EDITOR_PRODUCT_MISSION_CONFIRMED");
+  }
+  if (graphMode) {
+    output.appendLine("marker: EDITOR_GRAPH_OPS_CONFIRMED");
   }
   output.appendLine(`$ ${command} studio --root <workspace> --port 0 --no-browser`);
   output.show(true);
@@ -255,7 +333,7 @@ async function openFactoryStudio(productMode = false): Promise<void> {
     if (!studioUrl && parsed) {
       studioUrl = parsed;
       clearTimeout(timeout);
-      const opened = await vscode.env.openExternal(vscode.Uri.parse(productMode ? `${parsed}?mode=product` : parsed));
+      const opened = await vscode.env.openExternal(vscode.Uri.parse(route(parsed)));
       if (!opened) {
         void vscode.window.showWarningMessage(`Factory Studio is running at ${parsed}`);
       }
@@ -281,12 +359,15 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     output,
     vscode.languages.registerCodeLensProvider({ scheme: "file" }, new RequirementCodeLensProvider()),
-    vscode.commands.registerCommand("factoryline.assemble", () => runFeature("assemble")),
-    vscode.commands.registerCommand("factoryline.verify", () => runFeature("verify")),
+    vscode.commands.registerCommand("factoryline.assemble", () => runFeature(context, "assemble")),
+    vscode.commands.registerCommand("factoryline.continue", () => continueAssembly(context)),
+    vscode.commands.registerCommand("factoryline.verify", () => runFeature(context, "verify")),
     vscode.commands.registerCommand("factoryline.openMeter", openMeter),
+    vscode.commands.registerCommand("factoryline.openSavings", openSavings),
     vscode.commands.registerCommand("factoryline.openLatestReceipt", openLatestReceipt),
-    vscode.commands.registerCommand("factoryline.openStudio", () => openFactoryStudio(false)),
-    vscode.commands.registerCommand("factoryline.openProductMissions", () => openFactoryStudio(true)),
+    vscode.commands.registerCommand("factoryline.openStudio", () => openFactoryStudio()),
+    vscode.commands.registerCommand("factoryline.openProductMissions", () => openFactoryStudio("product")),
+    vscode.commands.registerCommand("factoryline.openGraphOps", () => openFactoryStudio("graph")),
     vscode.commands.registerCommand("factoryline.openRequirementEvidence", openRequirementEvidence),
     { dispose: () => { if (studioProcess?.exitCode === null) { studioProcess.kill(); } } },
   );

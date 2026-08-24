@@ -1,19 +1,231 @@
 # Release Channels
 
-Code Factory v0.20.0 publishes one verified source state through channel-specific
+Code Factory v0.44.1 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.20.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.20.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.44.1`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.44.1` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code | `factoryline-vscode-0.5.0.vsix` | GitHub release bundle; Marketplace requires a separately configured publisher token | Installable VSIX or public Marketplace version |
-| JetBrains | `factoryline-intellij-0.5.0.zip` | One-time manual Marketplace listing, then scoped workflow updates | Public plugin/version page after moderation |
+| VS Code / Open VSX | `factoryline-vscode-0.8.11.vsix` | GitHub release bundle; protected `openvsx.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX and public Open VSX version |
+| JetBrains | `factoryline-intellij-0.8.17.zip` | Public plugin 33009 update submitted through the authenticated Marketplace editor | Installable ZIP or public plugin/version page after moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured.
+
+### 0.44.1 Current visuals and transparent outcome model
+
+This patch aligns the public Code Factory surfaces with the current product,
+adds role-specific expected outcomes, and publishes one clearly bounded 60-day
+personal-use case. Observed activity and modeled capacity remain visually and
+textually separated; the case is not a benchmark, guaranteed ROI, or verified
+cash saving.
+
+### 0.44.0 First Proof
+
+This adoption release adds a sealed, one-command hollow-test demonstration,
+privacy-safe and tamper-evident Proof Cards, and local opt-in activation
+milestones with no central telemetry. A 21-day feature pause concentrates work
+on reliability and activation; a voluntary Proof Clinic invites ten real
+repositories without pre-claiming participants or outcomes.
+
+### 0.43.0 Evidence Supply Line
+
+This release adds an admitted wrapper for any local agent CLI, explicit
+independent-validator execution, exact workspace-delta receipts, and immutable
+Agent License ingestion. It also adds inert Gauntlet drafts derived from real
+repository structure and bounded Claude Code hook traces. The wrapper observes
+but does not sandbox the process; drafts cannot execute before human-reviewed
+promotion and a separate named admission.
+
+### 0.40.2 MCP Registry metadata hotfix
+
+This hotfix shortens the public MCP descriptor to the registry's declared
+description limit. It does not change the local MCP tool surface, runtime
+authority, IDE Health observations, or Index Continuity classifications.
+
+### 0.40.1 IDE Health and Index Continuity
+
+The current release adds bounded local JetBrains IDE Health observations and an
+explicit Index Continuity baseline/compare path. Runtime samples remain in
+memory, while the optional structural baseline stays inside the workspace.
+Neither control changes configuration, repairs an index, assigns a root cause,
+or predicts a performance result.
+
+### 0.40.0 Intake Grill, Proof-Delta Loop, and Gauntlet
+
+The current release adds source-bound framework, intent, acceptance-evidence,
+and external-effects decisions before an optionally intake-required Product
+Mission can start. It also blocks a mission retry unless the packet binds a
+changed candidate diff and new hash-checked evidence to the latest failed
+criterion. Finally, Gauntlet turns a human-written, named set of local E2E
+sabotage cases into an expiry-bound, one-run supervised batch and an
+offline-verifiable Survival Card. The local MCP and Graph Ops surfaces inspect
+these receipts; neither can make decisions or execute work. A Survival Card is
+not a production-readiness, security, coverage, performance, cost, token,
+quality, or release claim.
+
+### 0.39.1 Official MCP Registry
+
+The Official MCP Registry descriptor makes the existing local, read-only
+MCP server discoverable using the public PyPI/`uvx` package entry. It publishes
+only after the exact package version and ownership marker are visible from
+PyPI. It neither hosts the server nor grants write authority.
+
+### 0.39.0 LangGraph Assurance Bridge
+
+`factory langgraph replay-verify` compares a supplied sealed reference lineage
+with a separately recorded resumed lineage. It returns resume parity only when
+the supplied transitions match and neither lineage exposes deterministic stale
+state, duplicate completed effects, or unsafe parallel writes. A divergence
+produces a hash-only incident capsule with Mermaid and a review-only recovery
+cone. The open-source bridge also exposes a read-only MCP tool and an opt-in
+GitHub Action that writes the same Proof Card from pre-recorded receipts. It
+does not invoke LangGraph, mutate checkpoints, replay effects, establish
+production resilience, or estimate savings.
+
+JetBrains Marketplace publication remains blocked while any submitted update is
+pending Marketplace approval. Do not dispatch the 0.8.16 candidate until the
+Marketplace status gate reports clear.
+
+### 0.42.0 Declared Change Profile and Senior Attention
+
+This release adds a hash-bound, human-declared Change Profile to the existing
+independently human-promoted Judgment Capsules and deterministic, read-only Change
+Safety Case. It can route novel declared boundaries to Senior Attention without
+inspecting source semantics; it cannot infer intent, promote/waive a decision,
+run evidence, repair code, approve, merge, publish, deploy, sign, message, or
+access credentials.
+
+### 0.8.16 Guardian Core + Engineering Judgment candidate
+
+The JetBrains-only candidate adds bounded local Guardian Core observations plus
+the conventional Change Profile handoff for selected Change Lists. It shows
+declared attention and decision drift without changing IDE configuration,
+running a CLI command outside confirmed actions, or applying a repair.
+
+### 0.41.0 Engineering Judgment Safety Case
+
+The prior release added repository-tracked, independently human-promoted Judgment
+Capsules plus a deterministic, read-only Change Safety Case for explicit changed
+paths and hash-bound proof receipts. The route is review context only; it cannot
+infer intent, promote/waive a decision, run evidence, repair code, approve,
+merge, publish, deploy, sign, message, or access credentials.
+
+### Visual Studio Marketplace publisher setup
+
+The package is already bound to publisher `zrk222` and extension name
+`factoryline-vscode`. To enable the separately protected marketplace lane:
+
+1. Sign in to the Visual Studio Marketplace publisher portal with the account
+   that owns `zrk222`.
+2. Create a publisher credential with only **Marketplace (Manage)** scope and
+   a bounded expiry. Store it as the `VSCE_PAT` secret in the GitHub Actions
+   environment named `vscode-marketplace`; never put it in source, a release
+   asset, or a repository-level secret.
+3. Create or protect the `vscode-marketplace` environment with the repository's
+   normal release reviewers.
+4. Dispatch **Publish VS Code Marketplace extension** for the immutable
+   release tag, first with `publish=false`. After the green candidate receipt
+   is reviewed, dispatch it again with `publish=true`.
+
+The workflow verifies the tag-to-commit binding, restores from the lockfile,
+runs the high-severity audit and tests, seals the VSIX SHA-256, and verifies
+the sealed artifact again before it can call the Marketplace. `vsce` receives
+the environment-scoped `VSCE_PAT` only in the protected publication job. A
+missing credential fails closed at the publish boundary. Replace this PAT path
+with the Marketplace's supported Microsoft Entra automation path before the
+December 1, 2026 global PAT retirement.
+
+### 0.36.0 Graph Portfolio and Run Admission
+
+`factory graph portfolio` derives a deterministic structural critical path,
+safe proposal-only parallel waves, shared-proof candidates, and explicit
+blocker chains from local Graph Ops evidence. `factory admission prepare|verify`
+seals and rechecks a short-lived external-run proposal against a Loop Passport,
+workspace, graph, budget, paths, approvals, and validity deadline. Graph Ops
+renders the status while execution and external-harness authorization remain
+disabled. This is not an autonomous runner and does not create a savings claim.
+
+### 0.34.0 Merge Evidence Dossier and Proof Observatory
+
+`factory proofsearch frontier plan|verify` creates and validates a sealed,
+non-executing next-evidence plan. It ranks only user-supplied hypotheses by
+declared repair-pair separation. Graph Ops renders the decision and keeps
+experimentation, workspace changes, approval, merging, publishing, and
+deployment locked. No saving or productivity value is inferred.
+
+### 0.32.0 Graph Forensics and ProofSearch
+
+`factory graph forensics` identifies the first semantic divergence and its
+causal path from sealed lineage. `factory proofsearch` binds the resulting
+proof slice to 2 through 12 supplied candidates, rejects hollow or unsafe
+repairs, and selects one deterministic verified winner. Graph Ops displays the
+complete Counterfactual Arena while apply, merge, publication, and deployment
+remain locked. Paired observations are required for any savings value.
+
+### 0.31.0 E2E proof and Team Pilot readiness
+
+`factory e2e verify` proves an approved positive/negative command pair can
+reject the declared failure instead of merely turning green. `factory team-pilot
+readiness` hash-binds the five non-secret operating decisions required for a
+human-selected, customer-managed reference review. Neither command accepts a
+customer, provisions access, collects payment, or claims a managed service.
+
+### 0.30.0 plan-to-proof and design review
+
+`factory plan verify` turns a human-approved agent plan into a strict local
+review contract. It compares exact plan paths and declared tests with a changed
+diff, routes deep work to a named reviewer, and writes explicit Proof Debt for
+human triage. The optional GitHub workflow publishes one neutral, commit-bound
+advisory Check; it does not approve, merge, execute tests, invoke a provider,
+or turn a plan into authorization.
+
+The optional Prestige Design Review lane adds a purpose-led design brief and
+visible review artifacts for hierarchy, responsive behavior, affordances,
+consistency, and declared design tokens. It is evidence for a reviewer, not a
+conversion claim, an accessibility certification, or a production-readiness
+claim.
+
+### 0.29.0 review-stack compatibility
+
+The bundled VS Code and JetBrains adapter copy now explains the optional GitHub
+Proof Review workflow. The workflow can coexist with CodeRabbit or another AI
+reviewer without a vendor credential or comment becoming proof. The local
+extensions remain local-first and do not gain approval, merge, source-write, or
+model authority.
+
+### 0.28.0 product surfaces
+
+Proof Review, Verified Repair Sandbox, and Workspace Load Advisor are available
+in the JetBrains adapter. They produce bounded local review packets and never
+edit code, invoke a model, access credentials, or certify runtime isolation.
+
+### Verifier Plane (0.27.0)
+
+The Verifier Plane is release-visible but not a release authority. Its receipts
+prove supplied local byte bindings, declared independent identities, and
+deterministic checks. Runtime isolation, egress policy, and credential handling
+remain separately evidenced by an external supervised runner.
+
+### Contradiction gate (0.26.0)
+
+`factory cdte scan` detects architecturally incompatible NFR pairs before any
+code is generated, by deterministic lookup over a decision table. No model is
+called. Analysis is tiered `measured` / `modeled` / `structural`, and a modeled
+analysis whose inputs are absent is withheld rather than estimated. Critical and
+high severity conflicts engage the fail-closed boundary and pause the line at
+`nfr_conflict`.
+
+### Habituation gate (0.26.0)
+
+`factory habituation status` calibrates the human approval signal against each
+reviewer's own baseline and escalates: surface, second approver, fail closed.
+Blocking is refused until blind-spot re-review outcomes correct the proxy.
+Public exports carry distributions only, never per-reviewer rows.

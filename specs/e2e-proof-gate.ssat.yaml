@@ -1,0 +1,31 @@
+name: e2e-proof-gate
+language: python
+modules:
+  - name: e2e_proof
+    path: factoryline/e2e_proof.py
+    imports:
+      - pathlib.Path
+    functions:
+      - name: verify_e2e_proof
+        args: ["root: Path", "manifest_path: Path"]
+        returns: dict
+      - name: validate_e2e_proof_receipt
+        args: ["value: object"]
+        returns: dict
+      - name: write_e2e_proof_artifacts
+        args: ["receipt: dict", "out_dir: Path"]
+        returns: dict
+dependencies: []
+invariants:
+  - name: verifier_never_enables_shell
+    forbid_pattern: "shell\\s*=\\s*True"
+    scopes:
+      - module: e2e_proof
+        symbol: verify_e2e_proof
+        max_lines: 220
+  - name: verifier_rejects_write_without_explicit_artifact_call
+    forbid_pattern: "write_(?:text|bytes)\\(|replace\\("
+    scopes:
+      - module: e2e_proof
+        symbol: verify_e2e_proof
+        max_lines: 220

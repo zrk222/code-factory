@@ -1,13 +1,21 @@
 package app.factoryline.intellij
 
 import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.util.Computable
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.vcs.changes.Change
+import com.intellij.openapi.vcs.changes.ChangeListManager
+import java.nio.file.Files
 import java.nio.file.Path
 
 object FactoryLineExecutionConfirmation {
@@ -43,22 +51,92 @@ object FactoryLineController {
         }
     }
 
-    private fun runBackground(project: Project, title: String, operation: () -> CommandResult) {
+    private fun runBackground(
+        project: Project,
+        title: String,
+        onCompleted: (CommandResult) -> Unit = { FactoryLinePanels.show(project, it) },
+        operation: () -> CommandResult,
+    ) {
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "FactoryLine: $title", true) {
             private lateinit var result: CommandResult
             override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
                 indicator.isIndeterminate = true
                 result = operation()
             }
-            override fun onSuccess() = FactoryLinePanels.show(project, result)
+            override fun onSuccess() {
+                onCompleted(result)
+            }
         })
     }
 
+    fun runFirstProof(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Run First Proof")) return
+        runBackground(project, "Run First Proof") { FactoryLineRunner.firstProof(project) }
+    }
+
+    fun analyzeWorkspaceAdvisor(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Analyze Workspace Load and Remote/WSL Preflight")) return
+        runBackground(project, "Workspace Load Advisor", onCompleted = { FactoryLinePanels.showWorkspaceAdvisor(project, it) }) {
+            FactoryLineRunner.workspaceAdvisor(project)
+        }
+    }
+
+    fun saveWorkspaceAdvisorReport(project: Project) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Save Workspace Advisor Report")) return
+        runBackground(project, "Save Workspace Advisor Report", onCompleted = { FactoryLinePanels.showWorkspaceAdvisor(project, it) }) {
+            FactoryLineRunner.workspaceAdvisor(project, root.resolve(".factory").resolve("workspace-advice"))
+        }
+    }
+
+    fun captureIndexContinuityBaseline(project: Project) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val out = root.resolve(".factory").resolve("index-continuity").resolve("baseline.json")
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Capture Index Continuity Baseline")) return
+        runBackground(project, "Capture Index Continuity Baseline", onCompleted = { FactoryLinePanels.showIndexContinuity(project, it) }) {
+            FactoryLineRunner.indexContinuityBaseline(project, out)
+        }
+    }
+
+    fun compareIndexContinuityBaseline(project: Project) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val baseline = root.resolve(".factory").resolve("index-continuity").resolve("baseline.json")
+        if (!Files.isRegularFile(baseline)) {
+            Messages.showInfoMessage(project, "Capture the local baseline first. FactoryLine will not infer one from an old workspace state.", "FactoryLine Index Continuity Guard")
+            return
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Compare Index Continuity Baseline")) return
+        runBackground(project, "Compare Index Continuity Baseline", onCompleted = { FactoryLinePanels.showIndexContinuity(project, it) }) {
+            FactoryLineRunner.indexContinuityCompare(project, baseline)
+        }
+    }
+
+    fun openIdeHealth(project: Project) {
+        val toolWindow = com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater {
+                toolWindow.contentManager.findContent("IDE Health")?.let { toolWindow.contentManager.setSelectedContent(it) }
+                project.getUserData(FactoryLinePanels.ideHealthKey)?.showCurrent()
+            }
+        }
+    }
+
+    fun openGuardian(project: Project) = FactoryLinePanels.showGuardian(project)
+
     fun missionOperations(project: Project) {
         val options = MissionGraphOperation.entries.map { it.label }.toTypedArray()
-        val selected = Messages.showChooseDialog(
+        val selected = Messages.showDialog(
             project, "Choose a receipt-governed mission operation.", "FactoryLine Mission Operations",
-            Messages.getQuestionIcon(), options, options.first()
+            options, 0, Messages.getQuestionIcon()
         )
         if (selected < 0) return
         val operation = MissionGraphOperation.entries[selected]
@@ -75,14 +153,14 @@ object FactoryLineController {
 
     private fun recordMissionEvent(project: Project) {
         val mission = workspacePath(project, "Mission JSON path") ?: return
-        val eventIndex = Messages.showChooseDialog(
-            project, "Event to record:", "FactoryLine Guarded Event", Messages.getQuestionIcon(), graphEvents, graphEvents.first()
+        val eventIndex = Messages.showDialog(
+            project, "Event to record:", "FactoryLine Guarded Event", graphEvents, 0, Messages.getQuestionIcon()
         )
         if (eventIndex < 0) return
         val actor = Messages.showInputDialog(project, "Actor identity:", "FactoryLine Guarded Event", null)?.trim().orEmpty()
         if (actor.isBlank()) return
         val roles = arrayOf("owner", "worker", "validator", "operator")
-        val roleIndex = Messages.showChooseDialog(project, "Actor role:", "FactoryLine Guarded Event", Messages.getQuestionIcon(), roles, roles.first())
+        val roleIndex = Messages.showDialog(project, "Actor role:", "FactoryLine Guarded Event", roles, 0, Messages.getQuestionIcon())
         if (roleIndex < 0) return
         val key = Messages.showInputDialog(project, "Unique idempotency key:", "FactoryLine Guarded Event", null)?.trim().orEmpty()
         if (key.isBlank()) return
@@ -107,7 +185,7 @@ object FactoryLineController {
         val policy = workspacePath(project, "Provider policy JSON path") ?: return
         val mission = workspacePath(project, "Mission JSON path") ?: return
         val risks = arrayOf("low", "medium", "high")
-        val riskIndex = Messages.showChooseDialog(project, "Mission risk:", "FactoryLine BYOK Router", Messages.getQuestionIcon(), risks, "medium")
+        val riskIndex = Messages.showDialog(project, "Mission risk:", "FactoryLine BYOK Router", risks, 1, Messages.getQuestionIcon())
         if (riskIndex < 0) return
         val provider = Messages.showInputDialog(project, "Preferred provider ID (optional):", "FactoryLine BYOK Router", null) ?: return
         val model = Messages.showInputDialog(project, "Preferred model ID (optional):", "FactoryLine BYOK Router", null) ?: return
@@ -182,6 +260,210 @@ object FactoryLineController {
         })
     }
 
+    fun reviewCurrentDiff(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Review Current Diff")) return
+        runBackground(project, "Proof Review", onCompleted = { FactoryLinePanels.showProofReview(project, it) }) {
+            FactoryLineRunner.proofReview(project)
+        }
+    }
+
+    fun reviewCurrentFile(project: Project, requestedFile: VirtualFile? = null) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val file = requestedFile ?: FileEditorManager.getInstance(project).selectedFiles.firstOrNull()
+        val resolved = file?.let { WorkspacePath.resolve(root, it.path) }
+        if (file == null || resolved == null || resolved == root || file.isDirectory) {
+            Messages.showErrorDialog(project, "Open a project file before starting a focused Proof Review.", "FactoryLine")
+            return
+        }
+        val relative = root.toAbsolutePath().normalize().relativize(resolved).toString().replace('\\', '/')
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Review This File")) return
+        runBackground(project, "Proof Review This File", onCompleted = { FactoryLinePanels.showProofReview(project, it) }) {
+            FactoryLineRunner.proofReview(project, relative)
+        }
+    }
+
+    fun saveProofReviewHandoff(project: Project) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val outDir = root.resolve(".factory").resolve("change-reviews")
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Save Review Handoff")) return
+        runBackground(project, "Save Proof Review Handoff", onCompleted = { FactoryLinePanels.showProofReview(project, it) }) {
+            FactoryLineRunner.proofReview(project, outDir = outDir)
+        }
+    }
+
+    fun prepareRepairScope(project: Project) {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val scopes = runCatching { NativeChangeListScopes.collect(project, root) }.getOrElse { failure ->
+            Messages.showErrorDialog(project, "Could not read local Change Lists: ${failure.message}", "FactoryLine")
+            return
+        }.filter { it.paths.isNotEmpty() || it.unavailableChanges > 0 }
+        if (scopes.isEmpty()) {
+            Messages.showInfoMessage(project, "No local Change List contains a project change. Make or select a local change first.", "FactoryLine Repair Sandbox")
+            return
+        }
+        val selectedIndex = Messages.showDialog(
+            project,
+            "Select one Change List to seal. FactoryLine will send only its explicit project paths to the local CLI.",
+            "FactoryLine: Prepare Repair Scope",
+            scopes.map { it.displayName() }.toTypedArray(),
+            0,
+            Messages.getQuestionIcon(),
+        )
+        if (selectedIndex < 0) return
+        val selected = scopes[selectedIndex]
+        if (selected.unavailableChanges > 0) {
+            Messages.showErrorDialog(
+                project,
+                "'${selected.name}' includes ${selected.unavailableChanges} change(s) outside the project or without a resolvable file path. FactoryLine will not silently drop them; use a fully project-contained Change List.",
+                "FactoryLine Repair Sandbox",
+            )
+            return
+        }
+        if (selected.paths.isEmpty()) {
+            Messages.showErrorDialog(project, "The selected Change List contains no project files to seal.", "FactoryLine Repair Sandbox")
+            return
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Prepare Repair Scope")) return
+        val outDir = root.resolve(".factory").resolve("repair-sandboxes")
+        runBackground(project, "Prepare Repair Scope", onCompleted = { FactoryLinePanels.showRepairSandbox(project, it) }) {
+            FactoryLineRunner.repairScope(project, selected.name, selected.paths, outDir)
+        }
+    }
+
+    fun inspectIntentLedger(project: Project) {
+        val selected = selectIntentScope(project) ?: return
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect Intent Ledger")) return
+        runBackground(project, "Inspect Intent Ledger", onCompleted = { FactoryLinePanels.showIntentLedger(project, it) }) {
+            FactoryLineRunner.inspectIntentLedger(project, selected.name, selected.paths)
+        }
+    }
+
+    fun inspectJudgment(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect Engineering Judgment")) return
+        runBackground(project, "Inspect Engineering Judgment", onCompleted = { FactoryLinePanels.showJudgment(project, it) }) {
+            FactoryLineRunner.judgmentStatus(project)
+        }
+    }
+
+    fun inspectJudgmentSafetyCase(project: Project) {
+        val selected = selectIntentScope(project, "FactoryLine Engineering Judgment") ?: return
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect Judgment Safety Case")) return
+        runBackground(project, "Inspect Judgment Safety Case", onCompleted = { FactoryLinePanels.showJudgment(project, it) }) {
+            FactoryLineRunner.judgmentSafetyCase(project, selected.paths)
+        }
+    }
+
+    fun captureIntentLedger(project: Project) {
+        val selected = selectIntentScope(project) ?: return
+        val confirmedBy = Messages.showInputDialog(project, "Named human confirming this behavioral contract:", "FactoryLine: Capture Intent Ledger", null)
+            ?.trim().orEmpty()
+        if (confirmedBy.isBlank()) return
+        val promise = Messages.showInputDialog(project, "Observable promise for this Change List:", "FactoryLine: Capture Intent Ledger", null)
+            ?.trim().orEmpty()
+        if (promise.isBlank()) return
+        val nonGoal = Messages.showInputDialog(project, "Explicit non-goal for this Change List:", "FactoryLine: Capture Intent Ledger", null)
+            ?.trim().orEmpty()
+        if (nonGoal.isBlank()) return
+        val failureCase = Messages.showInputDialog(project, "Negative behavior the later proof must be able to catch:", "FactoryLine: Capture Intent Ledger", null)
+            ?.trim().orEmpty()
+        if (failureCase.isBlank()) return
+        val phrase = "CAPTURE ${selected.name}"
+        val confirmation = Messages.showInputDialog(
+            project,
+            "FactoryLine will save only a local intent record for ${selected.paths.size} selected Change List path(s).\n\nIt will not edit source, modify the Change List, run a test, or start an agent.\n\nType exactly: $phrase",
+            "FactoryLine: Confirm Intent Ledger Capture",
+            null,
+        )?.trim().orEmpty()
+        if (confirmation != phrase) {
+            Messages.showErrorDialog(project, "Capture was not confirmed. The required phrase is: $phrase", "FactoryLine Intent Ledger")
+            return
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Capture Intent Ledger")) return
+        runBackground(project, "Capture Intent Ledger", onCompleted = { FactoryLinePanels.showIntentLedger(project, it) }) {
+            FactoryLineRunner.captureIntentLedger(project, selected.name, selected.paths, confirmedBy, promise, nonGoal, failureCase, confirmation)
+        }
+    }
+
+    private fun selectIntentScope(project: Project, title: String = "FactoryLine Intent Ledger"): NativeChangeListScope? {
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return null
+        }
+        val scopes = runCatching { NativeChangeListScopes.collect(project, root) }.getOrElse { failure ->
+            Messages.showErrorDialog(project, "Could not read local Change Lists: ${failure.message}", "FactoryLine")
+            return null
+        }.filter { it.paths.isNotEmpty() || it.unavailableChanges > 0 }
+        if (scopes.isEmpty()) {
+            Messages.showInfoMessage(project, "No local Change List contains a project change. Make or select a local change first.", title)
+            return null
+        }
+        val selectedIndex = Messages.showDialog(
+            project,
+            "Select one native Change List. FactoryLine will use only its explicit project paths; it will not change VCS state.",
+            title,
+            scopes.map { it.displayName() }.toTypedArray(),
+            0,
+            Messages.getQuestionIcon(),
+        )
+        if (selectedIndex < 0) return null
+        val selected = scopes[selectedIndex]
+        if (selected.unavailableChanges > 0) {
+            Messages.showErrorDialog(
+                project,
+                "'${selected.name}' includes ${selected.unavailableChanges} change(s) outside the project or without a resolvable file path. FactoryLine will not silently drop them.",
+                title,
+            )
+            return null
+        }
+        if (selected.paths.isEmpty()) {
+            Messages.showErrorDialog(project, "The selected Change List contains no project files to inspect.", title)
+            return null
+        }
+        return selected
+    }
+
+    fun validateRepairCandidate(project: Project, scope: RepairScopeSummary?) {
+        val selectedScope = scope ?: run {
+            Messages.showInfoMessage(project, "Prepare a trusted Change List scope before validating a candidate patch.", "FactoryLine Repair Sandbox")
+            return
+        }
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return
+        }
+        val scopePath = selectedScope.artifactPaths.firstOrNull { it.endsWith(".json", ignoreCase = true) }?.let {
+            WorkspacePath.resolve(root, it)
+        } ?: run {
+            Messages.showErrorDialog(project, "The selected scope has no project-contained JSON packet. Prepare the Change List again.", "FactoryLine Repair Sandbox")
+            return
+        }
+        val patchValue = Messages.showInputDialog(
+            project,
+            "Candidate patch path (inside this workspace; textual Git diff only):",
+            "FactoryLine: Validate Repair Candidate",
+            null,
+        )?.trim() ?: return
+        val patchPath = WorkspacePath.resolve(root, patchValue)
+        if (patchPath == null || !Files.isRegularFile(patchPath)) {
+            Messages.showErrorDialog(project, "Candidate patch must be an existing regular file inside the current workspace.", "FactoryLine Repair Sandbox")
+            return
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Validate Repair Candidate")) return
+        val outDir = root.resolve(".factory").resolve("repair-sandboxes")
+        runBackground(project, "Validate Repair Candidate", onCompleted = { FactoryLinePanels.showRepairSandbox(project, it) }) {
+            FactoryLineRunner.repairCandidate(project, scopePath, patchPath, outDir)
+        }
+    }
+
     fun checkLatestReceiptSignature(project: Project) {
         if (!FactoryLineExecutionConfirmation.confirm(project, "Check Receipt Signature State")) return
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "FactoryLine: Check Receipt Signature State", true) {
@@ -224,15 +506,32 @@ object FactoryLineController {
         })
     }
 
-    fun openStudio(project: Project, productMode: Boolean = false) {
+    fun openSavings(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Open Paired Savings Report")) return
+        runBackground(project, "Open Paired Savings Report") { FactoryLineRunner.savings(project) }
+    }
+
+    fun openStudio(project: Project, productMode: Boolean = false, graphMode: Boolean = false) {
+        require(!(productMode && graphMode))
         val root = project.basePath ?: run {
             Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
             return
         }
+        fun targetUrl(base: String): String = when {
+            graphMode -> StudioUrl.graphOps(base) ?: base
+            productMode -> StudioUrl.productMissions(base) ?: base
+            else -> base
+        }
+        FactoryLineStudioSession.connectedUrl(project)?.let { connected ->
+            val target = targetUrl(connected)
+            BrowserUtil.browse(target)
+            FactoryLinePanels.showStudioConnection(project, target, reused = true)
+            return
+        }
         val confirmed = Messages.showYesNoDialog(
             project,
-            "Open ${if (productMode) "Product Missions" else "Factory Studio"} on loopback for:\n$root\n\nLocal artifacts may be created. This grants no execute, merge, deploy, publish, credential, connector, or external-message authority.",
-            "FactoryLine: ${if (productMode) "Open Product Missions" else "Open Local Factory Studio"}",
+            "Open ${if (graphMode) "Unified Graph Ops" else if (productMode) "Product Missions" else "Factory Studio"} on loopback for:\n$root\n\nGraph Ops only inspects local artifacts. Studio grants no execute, merge, deploy, publish, credential, connector, or external-message authority.",
+            "FactoryLine: ${if (graphMode) "Open Unified Graph Ops" else if (productMode) "Open Product Missions" else "Open Local Factory Studio"}",
             "Start local Studio",
             "Cancel",
             Messages.getWarningIcon()
@@ -241,12 +540,15 @@ object FactoryLineController {
         FactoryLineRunner.startStudio(
             project,
             onStarted = { url ->
-                val targetUrl = if (productMode) "$url?mode=product" else url
-                BrowserUtil.browse(targetUrl)
-                val marker = if (productMode) "EDITOR_PRODUCT_MISSION_CONFIRMED" else "EDITOR_TRUST_CONFIRMED"
-                Messages.showInfoMessage(project, "Factory Studio is running at $targetUrl\n\nmarker: $marker", "FactoryLine")
+                FactoryLineStudioSession.remember(project, url)
+                val target = targetUrl(url)
+                BrowserUtil.browse(target)
+                val marker = if (graphMode) "EDITOR_GRAPH_OPS_CONFIRMED" else if (productMode) "EDITOR_PRODUCT_MISSION_CONFIRMED" else "EDITOR_TRUST_CONFIRMED"
+                FactoryLinePanels.showStudioConnection(project, target, reused = false)
+                Messages.showInfoMessage(project, "Factory Studio is running at $target\n\nmarker: $marker", "FactoryLine")
             },
-            onFailure = { message -> Messages.showErrorDialog(project, message, "FactoryLine") }
+            onFailure = { message -> Messages.showErrorDialog(project, message, "FactoryLine") },
+            onStopped = { FactoryLineStudioSession.clear(project) },
         )
     }
 }
@@ -259,9 +561,21 @@ abstract class FactoryLineAction : AnAction() {
     }
 }
 
+class RunFirstProofAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.runFirstProof(it) }
+    }
+}
+
 class RunAssemblyAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.requestFeature(it, FactoryLineOperation.ASSEMBLE) }
+    }
+}
+
+class ContinueAssemblyAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.requestFeature(it, FactoryLineOperation.CONTINUE) }
     }
 }
 
@@ -283,6 +597,108 @@ class AnalyzeChangedProofAction : FactoryLineAction() {
     }
 }
 
+class AnalyzeWorkspaceAdvisorAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.analyzeWorkspaceAdvisor(it) }
+    }
+}
+
+class CaptureIndexContinuityBaselineAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.captureIndexContinuityBaseline(it) }
+    }
+}
+
+class CompareIndexContinuityBaselineAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.compareIndexContinuityBaseline(it) }
+    }
+}
+
+class OpenIdeHealthAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.openIdeHealth(it) }
+    }
+}
+
+class OpenGuardianAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.openGuardian(it) }
+    }
+}
+
+data class NativeChangeListScope(
+    val name: String,
+    val paths: List<String>,
+    val unavailableChanges: Int,
+) {
+    fun displayName(): String = buildString {
+        append("$name â€” ${paths.size} project file(s)")
+        if (unavailableChanges > 0) append("; $unavailableChanges unavailable")
+    }
+}
+
+/** Reads only native local Change Lists; it neither modifies VCS state nor runs Git. */
+object NativeChangeListScopes {
+    fun collect(project: Project, root: Path): List<NativeChangeListScope> =
+        ApplicationManager.getApplication().runReadAction(Computable {
+            ChangeListManager.getInstance(project).changeLists.map { changeList ->
+                val paths = linkedSetOf<String>()
+                var unavailable = 0
+                changeList.changes.forEach { change ->
+                    val rawPaths = revisionPaths(change)
+                    val resolved = rawPaths.mapNotNull { raw ->
+                        WorkspacePath.resolve(root, raw)?.let { path ->
+                            root.toAbsolutePath().normalize().relativize(path).toString().replace('\\', '/')
+                        }
+                    }
+                    if (rawPaths.isEmpty() || resolved.size != rawPaths.size) unavailable += 1 else paths.addAll(resolved)
+                }
+                NativeChangeListScope(changeList.name, paths.toList().sorted(), unavailable)
+            }.sortedBy { it.name.lowercase() }
+        })
+
+    private fun revisionPaths(change: Change): List<String> = listOfNotNull(
+        change.beforeRevision?.file?.path,
+        change.afterRevision?.file?.path,
+    ).distinct()
+}
+
+class ReviewCurrentDiffAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.reviewCurrentDiff(it) }
+    }
+}
+
+class PrepareRepairScopeAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.prepareRepairScope(it) }
+    }
+}
+
+class InspectIntentLedgerAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.inspectIntentLedger(it) }
+    }
+}
+
+class CaptureIntentLedgerAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.captureIntentLedger(it) }
+    }
+}
+
+class ReviewCurrentFileAction : FactoryLineAction() {
+    override fun update(event: AnActionEvent) {
+        super.update(event)
+        event.presentation.isEnabledAndVisible = event.project != null && event.getData(CommonDataKeys.VIRTUAL_FILE)?.isDirectory == false
+    }
+
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.reviewCurrentFile(it, event.getData(CommonDataKeys.VIRTUAL_FILE)) }
+    }
+}
+
 class CheckLatestReceiptSignatureAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.checkLatestReceiptSignature(it) }
@@ -295,6 +711,12 @@ class OpenMeterAction : FactoryLineAction() {
     }
 }
 
+class OpenSavingsAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.openSavings(it) }
+    }
+}
+
 class OpenStudioAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.openStudio(it) }
@@ -304,6 +726,12 @@ class OpenStudioAction : FactoryLineAction() {
 class OpenProductMissionsAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.openStudio(it, productMode = true) }
+    }
+}
+
+class OpenGraphOpsAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.openStudio(it, graphMode = true) }
     }
 }
 

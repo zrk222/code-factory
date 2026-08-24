@@ -1,0 +1,68 @@
+name: assembly-continue-v1
+language: python
+modules:
+  - name: continuation
+    path: factoryline/continuation.py
+    functions:
+      - name: discover_features
+        args: [root]
+        returns: list
+      - name: resolve_feature
+        args: [root, feature]
+        returns: str
+      - name: continue_assembly
+        args: [root, feature]
+        returns: dict
+  - name: run_metrics
+    path: factoryline/run_metrics.py
+    functions:
+      - name: write_run_receipt
+        args: [root, payload]
+        returns: Path
+      - name: public_metrics
+        args: [root]
+        returns: dict
+  - name: cli
+    path: factoryline/cli.py
+    functions:
+      - name: main
+        args: [argv]
+        returns: int
+  - name: studio
+    path: factoryline/studio.py
+    functions:
+      - name: continue_from_studio
+        args: [root, payload]
+        returns: dict
+dependencies:
+  - from: cli
+    to: continuation
+  - from: cli
+    to: run_metrics
+  - from: cli
+    to: studio
+  - from: studio
+    to: continuation
+  - from: studio
+    to: run_metrics
+  - from: continuation
+    to: run_metrics
+invariants:
+  - name: continuation_has_no_remote_side_effect
+    forbid_pattern: "\\b(?:requests|httpx|urllib|socket)\\b|\\b(?:deploy|publish|send_message)\\s*\\("
+    scopes:
+      - module: continuation
+        symbol: continue_assembly
+        max_lines: 90
+  - name: metrics_export_has_no_remote_side_effect
+    forbid_pattern: "\\b(?:requests|httpx|urllib|socket|subprocess)\\b"
+    scopes:
+      - module: run_metrics
+        symbol: public_metrics
+        max_lines: 70
+  - name: studio_continuation_has_no_release_authority
+    forbid_pattern: "\\b(?:deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: studio
+        symbol: continue_from_studio
+        max_lines: 25

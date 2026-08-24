@@ -1,4 +1,5 @@
 """Tests for the factoryline connector — Lego assembly + honest metering."""
+from hashlib import sha256
 import json
 from pathlib import Path
 from factoryline.contract import ensure_layout, LAYOUT, Receipt, Meter, MODULES, STAGES
@@ -23,7 +24,35 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.20.0"
+    assert factoryline.__version__ == "0.44.1"
+
+
+def test_cli_mvp_builds_one_contained_web_starter_with_a_proof_path(tmp_path, capsys):
+    from factoryline.cli import main
+
+    code = main(["mvp", "Build an approval tracker for a small team.", "--root", str(tmp_path), "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["schema"] == "factory.mvp.v1"
+    assert payload["marker"] == "MVP_STARTER_CONTAINED"
+    assert payload["target_kind"] == "web"
+    assert Path(payload["out_dir"]) == tmp_path / "my-mvp"
+    assert (tmp_path / "my-mvp" / "app_blueprint.json").is_file()
+    assert Path(payload["output_map"]) == tmp_path / "my-mvp" / "docs" / "CODE_FACTORY_OUTPUT_MAP.md"
+    assert Path(payload["output_map"]).is_file()
+    assert payload["next_proof_commands"]
+    assert all(value is False for value in payload["authority"].values())
+
+
+def test_cli_mvp_refuses_to_overwrite_an_existing_starter(tmp_path, capsys):
+    from factoryline.cli import main
+
+    assert main(["mvp", "Build a tracker.", "--root", str(tmp_path)]) == 0
+    assert main(["mvp", "Build a different tracker.", "--root", str(tmp_path), "--json"]) == 1
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["marker"] == "MVP_STARTER_FAILED"
+    assert payload["code"] == "OUTPUT_EXISTS"
 
 
 def test_layout_created(tmp_path):
@@ -688,6 +717,15 @@ def test_app_builder_scaffolds_full_stack_repo(tmp_path):
     assert package["dependencies"]["next"] == "16.2.10"
     assert package["scripts"]["typecheck"] == "tsc --noEmit"
     assert package["overrides"]["postcss"] == "8.5.19"
+    output_map = tmp_path / "prior-auth" / "docs" / "CODE_FACTORY_OUTPUT_MAP.md"
+    assert result["output_map"] == str(output_map)
+    assert result["output_map_sha256"] == sha256(output_map.read_bytes()).hexdigest()
+    assert "APP_OUTPUT_MAP_WRITTEN" in result["markers"]
+    mapped = {
+        line[3:-1] for line in output_map.read_text(encoding="utf-8").splitlines()
+        if line.startswith("- `") and line.endswith("`")
+    }
+    assert mapped == set(result["files"])
 
 
 def test_app_builder_requirement_coverage_blocks_uncovered_product_reqs(tmp_path):

@@ -1,0 +1,25 @@
+{
+  "checks": [
+    {
+      "name": "mcp_protocol_and_output_maps_are_exact_and_read_only",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_mcp.py', 'tests/test_target_compiler.py', 'tests/test_factoryline.py', 'tests/test_publication_metadata.py']) == 0\n",
+      "covers": [
+        "FACTORY_MCP_LOCAL_READ_ONLY",
+        "MCP_INITIALIZED",
+        "FACTORY_MCP_TOOL_INVENTORY",
+        "MCP_GRAPH_OPS_PARITY",
+        "MCP_GRAPH_IMPACT_PARITY",
+        "MCP_INVALID_PARAMS_REJECTED",
+        "MCP_UNKNOWN_METHOD_REJECTED",
+        "MCP_RESOURCES_PARITY",
+        "CODE_FACTORY_OUTPUT_MAP_V1",
+        "OUTPUT_MERMAID_MAP_WRITTEN",
+        "APP_OUTPUT_MAP_WRITTEN",
+        "MCP_STDLIB_ONLY",
+        "OPENVSX_CANDIDATE_GUARDED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

@@ -1,8 +1,8 @@
 {
   "title": "Code Factory: Proof-by-Sabotage Software Factory",
-  "description": "Code Factory is a proof-first, open-source software factory for turning specifications, behavior checks, design contracts, policy verification, and release receipts into auditable delivery. Version 0.20 adds a transactional, hash-linked Product Mission graph with independent creator and validator identities, exact milestone verification, hard budget exhaustion, human pause and plan revision, fresh-context resume, Mermaid export, and an optional LangGraph checkpoint adapter. It also adds secret-free multi-provider BYOK policies with provider/model and IDE allowlists, quality floors, price metadata, mission budget ceilings, routing bias, and cache-continuity hints across CLI, Studio, VS Code, and JetBrains. Provider routing performs no provider call and stores no credential value. The supervised hosted tenant control plane, authenticated pull-request assurance, signed Capability Packs, seven starter targets, Factory Studio, and editor integrations remain included. Public documentation assets include exact Studio captures, the narrated quick start, Mermaid diagrams, and a nine-stage conceptual visual walkthrough; the illustrations are not UI screenshots or measured outcome evidence.\n\nEvidence boundary: the hosted reference is deployable and supervised but does not claim managed HA, automatic disaster recovery, SCIM, SAML enrollment, managed KMS, SOC 2, or an SLA. External runtimes remain responsible for provider credential injection, paid model calls, GitHub publication credentials, and production effects. A passing receipt proves the declared checks and supplied environment, not arbitrary production security.\n\nDual licensed under MIT or Apache-2.0.",
-  "version": "0.20.0",
-  "publication_date": "2026-07-20",
+  "description": "Code Factory catches AI-generated tests that could never fail and turns the result into local, reviewable evidence through Unified Graph Ops, including Mermaid diagrams for bounded proof paths. Existing assurance includes LangGraph resume parity and the Gauntlet Survival Card. Version 0.44.1 adds the current Code Factory product visuals, role-specific use cases for vibe coders, engineers, teams, and enterprises, and a transparent 60-day personal-use case. The observed slice contains 25 Code Factory-related tasks, 133 completed turns, 2,710 command runs, 785 MCP or app calls, and 555 file-change events. A separate counterfactual model estimates 30-110 gross manual-equivalent hours over 60 days after a 50% overlap haircut, or 15-55 hours per month. At an illustrative loaded rate of $75-$150/hour, the modeled gross capacity value is $2,250-$16,500. This is one user's case, not a benchmark, guaranteed ROI, or verified cash saving; net savings must subtract tool cost and human oversight.\n\nEvidence boundary: First Proof is a demonstration, not an assessment of the user's project. Proof Cards summarize one verified receipt and exclude commands, paths, repository names, prompts, logs, and identity. They do not certify production readiness, security, coverage, identity, or release authority.\n\nCase-study visual: https://raw.githubusercontent.com/zrk222/code-factory/v0.44.1/docs/assets/marketplace/code-factory-60-day-personal-case-study.png\n\nDual licensed under MIT or Apache-2.0.",
+  "version": "0.44.1",
+  "publication_date": "2026-08-24",
   "creators": [
     {
       "name": "Katz, Richard"
@@ -40,7 +40,33 @@
     "byok-routing",
     "multi-provider-routing",
     "human-in-the-loop",
-    "visual-walkthrough"
+    "product-captures",
+    "content-addressed-proof",
+    "proof-reuse",
+    "intake-grill",
+    "proof-delta-loop",
+    "gauntlet",
+    "survival-card",
+    "graph-ops",
+    "unified-graph",
+    "prd-grill",
+    "verifier-plane",
+    "github-pull-request",
+    "proof-review",
+    "plan-to-proof-review",
+    "proof-debt",
+    "design-review",
+    "ui-quality",
+    "e2e-proof",
+    "team-pilot",
+    "developer-memory",
+    "live-activity",
+    "langgraph-assurance",
+    "resume-parity",
+    "agent-replay",
+    "github-actions",
+    "mcp-registry",
+    "local-stdio"
   ],
   "related_identifiers": [
     {

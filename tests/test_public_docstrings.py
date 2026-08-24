@@ -49,6 +49,23 @@ def test_fail_closed_public_surfaces_document_refusal_semantics() -> None:
             "build_repository_context": "MigrationError",
             "verify_repository_context": "structured invalid",
         },
+        "factoryline/habituation.py": {
+            "normalize_review": "HabituationError",
+            "record_review": "HabituationError",
+            "record_calibration": "HabituationError",
+            "blind_spot_sample": "HabituationError",
+            "record_resample_outcome": "HabituationError",
+            "evaluate_gate": "HabituationError",
+        },
+        "factoryline/cdte.py": {
+            "normalize_constraint": "CDTEError",
+            "normalize_constraints": "CDTEError",
+            "load_registry": "CDTEError",
+            "record_scan": "CDTEError",
+            "resolve_conflict": "CDTEError",
+            "draft_adr": "CDTEError",
+            "bind_evidence": "CDTEError",
+        },
         "factoryline/signed_receipts.py": {
             "validate_receipt": "SignedReceiptError",
             "resolve_sigstore_command": "SignedReceiptError",
@@ -56,12 +73,13 @@ def test_fail_closed_public_surfaces_document_refusal_semantics() -> None:
             "verify_receipt": "SignedReceiptError",
         },
     }
-    found = {
-        path.relative_to(ROOT).as_posix(): {
-            node.name: ast.get_docstring(node) or "" for candidate, node in _public_callables() if candidate == path
-        }
-        for path in PACKAGE.glob("*.py")
-    }
+    # Parse the package once. Re-running _public_callables for every module
+    # turns this repository-wide validation into quadratic work as public
+    # modules grow, which made the deterministic gate needlessly slow.
+    found: dict[str, dict[str, str]] = {}
+    for path, node in _public_callables():
+        module = path.relative_to(ROOT).as_posix()
+        found.setdefault(module, {})[node.name] = ast.get_docstring(node) or ""
 
     failures = []
     for path, callables in required.items():

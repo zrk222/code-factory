@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "proofsearch_rejects_hollow_candidate_and_selects_verified_winner",
+      "kind": "python",
+      "run": "import hashlib, json, tempfile\nfrom pathlib import Path\nfrom factoryline.graph_forensics import seal_graph_lineage\nfrom factoryline.proofsearch import create_proofsearch_plan, evaluate_proofsearch\nwith tempfile.TemporaryDirectory() as raw:\n root=Path(raw); step={\"sequence\":1,\"superstep\":0,\"node_id\":\"build\",\"checkpoint_id\":\"cp\",\"reads\":[],\"writes\":[],\"evidence\":[],\"side_effects\":[],\"decision\":{\"route\":\"verify\",\"reason\":\"ready\"}}; a=root/'a.json'; b=root/'b.json'; a.write_text(json.dumps([step])); b.write_text(json.dumps([{**step,\"decision\":{\"route\":\"repair\",\"reason\":\"failed\"}}])); left=root/'left.json'; right=root/'right.json'; seal_graph_lineage('a','g',a,left); seal_graph_lineage('b','g',b,right); plan=root/'plan.json'; create_proofsearch_plan(root,left,right,['src/a.py'],plan)\n def candidate(name,risk,killed):\n  patch=root/f'{name}.patch'; patch.write_text(name); receipt=root/f'{name}.proof.json'; receipt.write_text('{}'); sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest(); return {\"candidate_id\":name,\"patch\":{\"path\":patch.name,\"sha256\":sha(patch)},\"changed_paths\":[\"src/a.py\"],\"proofs\":[{\"name\":\"unit\",\"required\":True,\"status\":\"passed\",\"receipt\":{\"path\":receipt.name,\"sha256\":sha(receipt)},\"elapsed_ms\":10,\"tokens\":None,\"cost_usd\":None}],\"mutation\":{\"killed\":killed,\"total\":1},\"guardrails\":{\"weakens_tests\":False,\"suppresses_errors\":False,\"expands_scope\":False},\"risk_score\":risk,\"changed_lines\":risk}\n sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest(); request=root/'request.json'; request.write_text(json.dumps({\"schema\":\"factory.proofsearch-request.v1\",\"plan\":{\"path\":plan.name,\"sha256\":sha(plan)},\"candidates\":[candidate('winner',2,1),candidate('hollow',1,0)]})); result=evaluate_proofsearch(root,request,root/'evaluation.json'); assert result['winner']=='winner'; assert next(c for c in result['candidates'] if c['candidate_id']=='hollow')['reasons']==['HOLLOW_CANDIDATE_TESTS']; assert result['apply'] is False\nprint('PROOFSEARCH_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "PROOFSEARCH_SMOKE_PASS",
+      "timeout_s": 30,
+      "covers": [
+        "PROOFSEARCH_PLAN_SEALED",
+        "PROOFSEARCH_WINNER_VERIFIED",
+        "PROOFSEARCH_AUTHORITY_RETAINED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

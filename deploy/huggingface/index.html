@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Code Factory turns AI-assisted changes into reviewable proof with specs, tests, policy, design contracts, and signed receipts.">
-  <title>Code Factory — Proof-first software delivery</title>
+  <meta name="description" content="Catch AI-generated tests that could never fail before review. Free, local proof for code built with AI.">
+  <title>Code Factory — Catch the test that could never fail.</title>
   <style>
     :root {
       --ink: #171610;
@@ -17,6 +17,7 @@
       --line: rgba(43, 37, 25, .15);
       --shadow: 0 24px 70px rgba(76, 50, 13, .15);
       --radius: 28px;
+      --focus: #075fd8;
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
@@ -29,42 +30,49 @@
       line-height: 1.65;
     }
     a { color: inherit; }
+    a:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; }
+    .skip-link { position: fixed; left: 16px; top: -80px; z-index: 20; padding: .9rem 1.2rem; border-radius: 12px; background: var(--ink); color: white; }
+    .skip-link:focus { top: 16px; }
     .shell { width: min(1160px, calc(100% - 40px)); margin: 0 auto; }
     header { display: flex; align-items: center; justify-content: space-between; padding: 24px 0; }
     .brand { display: flex; align-items: center; gap: 12px; font-weight: 850; letter-spacing: -.02em; text-decoration: none; }
     .mark { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: var(--ink); color: var(--amber); }
     nav { display: flex; gap: 22px; align-items: center; }
-    nav a { color: var(--muted); font-size: .92rem; font-weight: 700; text-decoration: none; }
+    nav a { color: var(--muted); font-size: 1rem; font-weight: 700; text-decoration: none; }
     .hero { display: grid; grid-template-columns: 1.02fr .98fr; gap: clamp(40px, 6vw, 82px); align-items: center; padding: 76px 0 100px; }
-    .eyebrow { color: var(--amber-dark); font-size: .77rem; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
-    h1 { max-width: 790px; margin: 16px 0 24px; font-size: clamp(3.2rem, 7vw, 6.8rem); line-height: .91; letter-spacing: -.075em; }
-    .lede { max-width: 620px; margin: 0 0 32px; color: var(--muted); font-size: clamp(1.05rem, 2vw, 1.3rem); }
+    .eyebrow { color: var(--amber-dark); font-size: .9rem; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { max-width: 12ch; margin: 16px 0 24px; font-size: clamp(3.2rem, 7vw, 6.8rem); line-height: normal; letter-spacing: -.075em; }
+    .lede { max-width: 58ch; margin: 0 0 32px; color: var(--muted); font-size: clamp(1.05rem, 2vw, 1.3rem); }
     .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-    .button { min-height: 50px; padding: 13px 20px; border: 1px solid var(--line); border-radius: 14px; font-weight: 850; text-decoration: none; transition: transform .2s ease, box-shadow .2s ease; }
+    .actions-center { justify-content: center; }
+    .button { min-height: 50px; padding: .9rem 1.25rem; border: 1px solid var(--line); border-radius: 14px; font-weight: 850; text-decoration: none; transition: transform .2s ease, box-shadow .2s ease, background-color .2s ease; }
     .button:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(65, 40, 8, .13); }
     .primary { background: var(--ink); color: white; border-color: var(--ink); }
-    .trust { margin-top: 18px; color: var(--green); font-size: .9rem; font-weight: 750; }
+    .proof .secondary { border-color: rgba(255,255,255,.46); color: white; }
+    .trust { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 18px; color: var(--green); font-size: .95rem; font-weight: 750; }
+    .trust span { display: inline-flex; align-items: center; gap: 6px; }
     .visual { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--cream); box-shadow: var(--shadow); }
-    .visual img { display: block; width: 100%; aspect-ratio: 4 / 5; object-fit: cover; }
-    section { padding: 92px 0; }
+    .visual img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top left; }
+    .visual figcaption { padding: 14px 18px; border-top: 1px solid var(--line); color: var(--muted); background: white; font-size: .95rem; }
+    section { padding: 7vw 0; }
     .section-head { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; align-items: end; margin-bottom: 42px; }
-    h2 { margin: 0; font-size: clamp(2.2rem, 5vw, 4.4rem); line-height: 1; letter-spacing: -.055em; }
+    h2 { margin: 0; font-size: clamp(2.2rem, 5vw, 4.4rem); line-height: normal; letter-spacing: -.055em; }
     .section-head p { margin: 0; color: var(--muted); }
     .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
     .card { padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,.66); }
-    .card span { color: var(--amber-dark); font-size: .76rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+    .card span { color: var(--amber-dark); font-size: .9rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
     .card h3 { margin: 12px 0 8px; font-size: 1.28rem; }
-    .card p { margin: 0; color: var(--muted); font-size: .95rem; }
+    .card p { margin: 0; color: var(--muted); font-size: 1rem; }
     .proof { display: grid; grid-template-columns: 1fr 1fr; gap: 38px; align-items: center; padding: clamp(30px, 6vw, 64px); border-radius: var(--radius); background: var(--ink); color: white; }
     .proof p { color: #d9d3c7; }
-    pre { overflow-x: auto; margin: 0; padding: 24px; border: 1px solid rgba(255,255,255,.14); border-radius: 18px; background: #0d0d0b; color: #ffd47c; font: 600 .88rem/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    pre { overflow-x: auto; margin: 0; padding: 24px; border: 1px solid rgba(255,255,255,.14); border-radius: 18px; background: #0d0d0b; color: #ffd47c; font: 600 .95rem/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
     .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
     .gallery img { display: block; width: 100%; border-radius: 18px; border: 1px solid var(--line); background: var(--cream); }
-    .boundary { margin-top: 18px; color: var(--muted); font-size: .85rem; text-align: center; }
+    .boundary { margin-top: 18px; color: var(--muted); font-size: .95rem; text-align: center; }
     .final { text-align: center; padding-bottom: 120px; }
-    .final h2 { max-width: 760px; margin: 0 auto 28px; }
-    footer { display: flex; justify-content: space-between; gap: 20px; padding: 28px 0 42px; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; }
-    @media (max-width: 800px) {
+    .final h2 { max-width: 16ch; margin: 0 auto 28px; }
+    footer { display: flex; justify-content: space-between; gap: 20px; padding: 28px 0 42px; border-top: 1px solid var(--line); color: var(--muted); font-size: .95rem; }
+    @media (max-width: 50rem) {
       nav a:not(.button) { display: none; }
       .hero, .section-head, .proof { grid-template-columns: 1fr; }
       .hero { padding-top: 48px; }
@@ -73,95 +81,306 @@
       section { padding: 68px 0; }
       footer { flex-direction: column; }
     }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .button { transition: none; }
+      .button:hover { transform: none; }
+    }
   </style>
 </head>
 <body>
+  <p class="sr-only">Catch AI-generated tests that could never fail before review. Free, local proof for code built with AI.</p>
+  <a class="skip-link" href="#main">Skip to product proof</a>
   <div class="shell">
     <header>
-      <div class="brand" aria-label="Code Factory"><span class="mark">CF</span> Code Factory</div>
+      <a class="brand" href="#main" aria-label="Code Factory home"><span class="mark">CF</span> Code Factory</a>
       <nav aria-label="Primary navigation">
-        <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Get Code Factory</a>
-        <a href="#proof">How it works</a>
-        <a href="https://github.com/zrk222/code-factory">Source</a>
+        <a href="#tour">Product tour</a>
+        <a href="https://github.com/zrk222/code-factory">GitHub source</a>
+        <a class="button" href="#first-run">Run first proof</a>
       </nav>
     </header>
   </div>
 
-  <main id="top">
+  <main id="main">
     <div class="shell hero">
       <div>
         <div class="eyebrow">Open source · Local first · Evidence backed</div>
-        <h1>Route any model. Govern every mission. Prove every ship.</h1>
-        <p class="lede">Code Factory turns specifications, tests, policies, design contracts, and signed receipts into a reviewable delivery line—then deliberately sabotages the gates to prove they reject bad builds.</p>
+        <h1>Catch the test that could never fail.</h1>
+        <p class="lede"><strong>Free, local proof for code built with AI.</strong> Start with an outcome, a fuzzy PRD, or a risky diff. Bind declared intent, challenge whether a test can actually reject its claimed failure, and route a declared novel boundary to the right senior attention before a human decides what may be applied.</p>
         <div class="actions">
-          <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Install Code Factory</a>
-          <a class="button" href="https://github.com/zrk222/code-factory/releases/tag/v0.20.0">Inspect the release</a>
+          <a class="button primary" href="#first-run">Run your first local proof</a>
+          <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md">See actual Factory Studio</a>
         </div>
-        <div class="trust">✓ MIT or Apache-2.0 &nbsp; ✓ Source available &nbsp; ✓ Archived release</div>
+        <div class="trust" id="release-proof" aria-label="Local proof boundaries">
+          <span>✓ Local by default</span>
+          <span>✓ No source upload</span>
+          <span>✓ No model account required</span>
+          <span>✓ Human decides what may be applied</span>
+          <span>✓ 3,445 PyPI downloads in the last 30 days (provider counter)</span>
+        </div>
       </div>
-      <div class="visual">
-        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/01-idea-to-blueprint.png" alt="Developer sends an application blueprint through a small software factory into code, data, interface, and server components.">
-      </div>
+      <figure class="visual">
+        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/first-proof-card.svg" alt="Actual privacy-safe Code Factory Proof Card showing that a hollow test was detected.">
+        <figcaption>Actual First Proof Card · healthy control passed · hollow test caught · no source uploaded</figcaption>
+      </figure>
     </div>
 
     <section id="proof">
       <div class="shell">
         <div class="section-head">
-          <h2>Proof, not promises.</h2>
-          <p>Each stage produces an artifact a reviewer can inspect. A fresh starter remains blocked until product-specific tests replace hollow coverage.</p>
+          <h2>Useful before code, during review, and when tests say green.</h2>
+          <p>Choose the smallest proof surface that answers the question in front of you. A fresh starter stays blocked until product-specific checks replace hollow coverage.</p>
         </div>
         <div class="grid">
-          <article class="card"><span>01 · Define</span><h3>Lock the intent</h3><p>Turn requirements into a bounded spec and an explicit architecture contract.</p></article>
-          <article class="card"><span>02 · Challenge</span><h3>Sabotage the gates</h3><p>Delete, invert, and corrupt critical controls. A surviving mutation blocks the claim.</p></article>
-          <article class="card"><span>03 · Route</span><h3>Choose models under rails</h3><p>Select provider and model references by IDE, quality floor, budget, and cache continuity without storing keys.</p></article>
-          <article class="card"><span>04 · Ship</span><h3>Carry the evidence</h3><p>Hash-link receipts and release artifacts so reviewers can reproduce the decision.</p></article>
+          <article class="card"><span>01 · Decide</span><h3>Pin down intent</h3><p>Bind the human-chosen framework, outcome, acceptance evidence, and external-effects boundary to exact PRD bytes.</p></article>
+          <article class="card"><span>02 · Clarify</span><h3>Grill the PRD</h3><p>Surface source-bound questions and incompatible requirements before code exists.</p></article>
+          <article class="card"><span>03 · Review</span><h3>Challenge the green check</h3><p>Delete, invert, and corrupt declared controls. A surviving mutation blocks the claim.</p></article>
+          <article class="card"><span>04 · Retry only with evidence</span><h3>Stop repeated failures</h3><p>Require a changed candidate and fresh evidence for a supervised retry, or deliberately halt.</p></article>
         </div>
+      </div>
+    </section>
+
+    <section id="gauntlet">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Supervised proof of survival</div>
+          <h2>Can this behavior survive the exact failure you are worried about?</h2>
+          <p>Gauntlet turns human-written E2E sabotage cases into one inspectable batch. A named reviewer admits one current local run; the resulting Survival Card shows every declared case as survived, hollow, or blocked. A green card is not a production, security, coverage, performance, quality, or release certificate.</p>
+          <div class="actions">
+            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/GAUNTLET.md">Read the Gauntlet guide</a>
+          </div>
+        </div>
+        <pre><code>factory gauntlet plan --root . --source gauntlet.json --json
+# Review the exact local E2E pairs, then make a named one-run admission.
+factory gauntlet run .factory/gauntlets/&lt;source&gt;/&lt;proposal&gt;.proposal.json \
+  --root . --admission .factory/gauntlets/&lt;source&gt;/&lt;admission&gt;.admission.json --json
+factory gauntlet card verify .factory/gauntlets/&lt;source&gt;/&lt;card&gt;.card.json --json</code></pre>
+      </div>
+    </section>
+
+    <section id="review-tools">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Your reviewer stays in control</div>
+          <h2>Use AI review suggestions and deterministic proof on the same PR.</h2>
+          <p>Code Factory complements CodeRabbit or another reviewer with one neutral, commit-bound proof walkthrough: exact scope, declared proof gaps, and the next fact-derived action. It does not need their account, copy their comments into receipts, approve, or merge code.</p>
+          <div class="actions">
+            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/GITHUB_PROOF_REVIEW.md">See the GitHub Proof Review</a>
+          </div>
+        </div>
+        <pre aria-label="GitHub Proof Review command">factory github proof-review \
+  --root . \
+  --base origin/main \
+  --head-sha &lt;pull-request-head-sha&gt; \
+  --json</pre>
+      </div>
+    </section>
+
+    <section id="langgraph">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">LangGraph resume assurance</div>
+          <h2>Compare the reference path with a resume, before review.</h2>
+          <p>Record transitions in your own LangGraph test harness, then compare sealed, hash-only reference and resumed lineages. The assurance bridge reports parity only when supplied transitions match and no deterministic stale state, duplicate completed effect, or unsafe parallel write is present. A divergence produces a Mermaid incident capsule with the first divergent node and a review-only causal cone. It never invokes a graph or replays an effect.</p>
+          <div class="actions">
+            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/LANGGRAPH_ASSURANCE.md">Read the LangGraph guide</a>
+          </div>
+        </div>
+        <pre><code>factory langgraph replay-verify \
+  --root . \
+  --reference .factory/langgraph/reference.json \
+  --resumed .factory/langgraph/resumed.json \
+  --out .factory/langgraph/assurance.json --json</code></pre>
+      </div>
+    </section>
+
+    <section id="proofsearch">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Verified counterfactual repair</div>
+          <h2>Compare every plausible fix. Accept only the proven winner.</h2>
+          <p>Graph Forensics identifies the first semantic divergence. ProofSearch binds its exact proof slice to 2–12 local candidates, rejects failed proofs, surviving mutants, scope escapes, test weakening, and error suppression, then explains the minimum-risk and minimum-scope winner. Evidence Frontier ranks supplied, non-executing checks by how many viable repair pairs they separate. Predictions are hypotheses, never proof or authority. Time, token, and cost savings stay unavailable until paired measurements exist.</p>
+        </div>
+        <pre><code>factory proofsearch plan --root . \
+  --baseline baseline.lineage.json \
+  --candidate failed.lineage.json \
+  --changed src/service.py --out repair.plan.json
+factory proofsearch evaluate candidates.json \
+  --root . --out repair.evaluation.json --json
+factory proofsearch frontier plan frontier.request.json \
+  --root . --out frontier.json --json</code></pre>
+      </div>
+    </section>
+
+    <section id="tour">
+      <div class="shell">
+        <div class="section-head">
+          <h2>See FactoryLine 0.44 operating—not just described.</h2>
+          <p>These are current local product captures: the live Graph Ops dashboard, the complete JetBrains controls, and a successful IDE First Proof.</p>
+        </div>
+        <div class="gallery">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-0.44-live-dashboard.png" alt="FactoryLine 0.44 Graph Ops dashboard showing a waiting-for-human assembly and evidence-backed next actions.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg" alt="FactoryLine AI Proof controls in IntelliJ IDEA for proofs, assemblies, receipts, Change Lists, workspace analysis, and the local meter.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg" alt="FactoryLine AI Proof completing a successful local First Proof in IntelliJ IDEA.">
+          <article class="card"><span>First local run</span><h3>Run First Proof</h3><p>Run one local command in a disposable sandbox. The healthy control passes; the hollow negative control is caught and bound to a privacy-safe Proof Card.</p><p><a href="#first-run">Run the demo →</a> · <a href="https://github.com/zrk222/code-factory/blob/main/docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md">Marketplace kit</a></p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="personal-case">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Observed creator use</div>
+          <h2>One 60-day case, with the estimate separated from the evidence.</h2>
+          <p>Local Codex metadata identified 25 FactoryLine-related tasks, 133 completed turns, 2,710 command runs, 785 MCP or app calls, and 555 file-change events. A transparent counterfactual model estimates 30–110 hours of gross manual-equivalent capacity over 60 days after a 50% overlap haircut. This is a one-user case, not a benchmark or guaranteed ROI; net savings must subtract tool cost and human oversight.</p>
+          <div class="actions">
+            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/OUTCOMES_MODEL.md">Inspect the assumptions</a>
+          </div>
+        </div>
+        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/code-factory-60-day-personal-case-study.png" alt="Code Factory 60-day personal case study separating observed local Codex metadata from a modeled capacity range.">
+      </div>
+    </section>
+
+    <section id="first-run">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Your first proof</div>
+          <h2>See Code Factory catch a hollow test in under two minutes.</h2>
+          <p>The demo runs only in a generated local sandbox. It proves the positive control can pass, catches the hollow negative control as <code>HOLLOW_E2E_TEST</code>, and writes a privacy-safe Proof Card. No account, model key, or source upload is required.</p>
+        </div>
+        <pre><code>pip install factoryline-code-factory
+factory first-proof --root .
+
+# Then use it on real work:
+factory mvp "Build an approval tracker" --root .
+factory coverage --root .\my-mvp --json
+factory graph ops --root .\my-mvp --json</code></pre>
       </div>
     </section>
 
     <section>
       <div class="shell proof">
         <div>
-          <div class="eyebrow">60-second first run</div>
-          <h2>Start locally. See the gap immediately.</h2>
-          <p>The coverage command intentionally exits nonzero when a generated application has requirements without meaningful tests. The scaffold is starting state, not a readiness claim.</p>
-          <a class="button" href="https://github.com/zrk222/code-factory/releases/download/v0.20.0/code-factory-quickstart-v0171.mp4">Watch the shipped UI walkthrough</a>
+          <div class="eyebrow">See the proof state</div>
+          <h2>Follow the proof path without giving it authority.</h2>
+          <p>Unified Graph Ops connects the local Product Graph, value slices, missions, approvals, completions, proofs, gate plans, traces, receipts, supplied-policy dossiers, and artifacts into one bounded visual result. Its Proof Observatory makes current coverage, blocked gates, and supplied-policy drift legible in a responsive graph, bar, and donut view. It recommends one next action from current facts and never executes a gate or release action.</p>
         </div>
-        <pre><code>pip install factoryline-code-factory==0.20.0
-factory create "Build an approval tracker" \
-  --target web --out approval-tracker
-factory coverage --root approval-tracker --json</code></pre>
+        <pre><code>factory graph ops --root . --json
+factory graph ops --root . --mermaid
+factory studio --root .</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Independent verification</div>
+          <h2>Keep the builder and verifier separate.</h2>
+          <p>Proof Review, Verified Repair Sandbox, and Workspace Load Advisor make the local handoff visible before a repair or environment change. The Verifier Plane binds a worker receipt to distinct verifier evidence, immutable check files, deterministic checks, and hard budgets. These surfaces never edit code, call a model, or claim a production sandbox. Start with <code>factory prd grill PRD.md --root . --mode quick</code>.</p>
+        </div>
+        <pre><code>factory verifier session .factory/missions/&lt;mission&gt;/mission.json ./candidate \
+  --bundle ./verification/checks.json --owner engineering-owner --root .
+factory verifier verify ./session.json ./worker-result.json ./verifier-result.json --root . --json
+factory verifier progress ./attempts.json --json</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Design is part of the review</div>
+          <h2>Make UI quality visible before a human says yes.</h2>
+          <p>For UI-scoped work, the optional Prestige Design Review adds a purpose-led brief and reviewer-visible checks for hierarchy, responsive behavior, affordances, consistency, and declared design tokens. Deterministic findings can inform a gate; heuristic critique stays a human prompt. It does not claim conversion, WCAG certification, or production readiness.</p>
+          <div class="actions">
+            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/PRESTIGE_DESIGN.md">See the design review lane</a>
+          </div>
+        </div>
+        <pre><code>pip install code-factory-4-design
+prestige init --root .
+prestige pr app.html --design DESIGN.md --root . --out-dir .prestige/pr</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Proof reuse</div>
+          <h2>Reuse evidence only when the inputs still match.</h2>
+          <p>Content-addressed receipts route read-only gates to RUN, REUSE, SKIP, or BLOCK. Exact reuse verifies every bound input and output; ambiguity runs again, and side effects stay blocked.</p>
+        </div>
+        <pre><code>factory proofs record proofs.json \
+  --gate python-tests --elapsed-ms 600000 --root .
+factory proofs plan proofs.json --changed src/app.py \
+  --auto-savings --out proof-plan.json --root .</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">First local run</div>
+          <h2>Start locally. See the next proof gap immediately.</h2>
+          <p>Create a contained MVP, then let Graph Ops reveal the requirement or receipt that needs evidence. A starter is useful starting state, not a readiness claim.</p>
+          <div class="actions">
+            <a class="button" href="https://pypi.org/project/factoryline-code-factory/">Run your first local proof</a>
+            <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md">See actual Factory Studio</a>
+            <a class="button" href="https://plugins.jetbrains.com/plugin/33009-factoryline-ai-proof">Explore FactoryLine for JetBrains</a>
+          </div>
+        </div>
+        <pre><code>pip install factoryline-code-factory
+factory mvp "Build an approval tracker" --root .
+factory studio --root .\my-mvp
+# Open Graph Ops in the local Studio</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Launch terms</div>
+          <h2>Clear dates. No surprise paid change.</h2>
+          <p>The GitHub Assurance Seat is free through December 1, 2026, with a $5.95 USD per named seat per month offer scheduled for December 2, 2026. It is built around commit-bound proof review, visible Proof Debt, supplied-policy drift dossiers, governed exceptions, and exportable evidence—not source access or opaque AI-token resale. The separate JetBrains Marketplace plan remains $4.95 USD per month from January 1, 2027, subject to JetBrains approval and a planned 30-day trial. Neither checkout nor entitlement is live; total price, taxes, fees, and billing terms must be shown before any approved purchase.</p>
+        </div>
+        <pre><code>Marketplace count: check the current listing
+Unique installs: not exposed by the listing
+0.8.17 Marketplace update: under review
+
+Never substitute CI or repository traffic for installs.</code></pre>
       </div>
     </section>
 
     <section>
       <div class="shell">
         <div class="section-head">
-          <h2>The factory line, illustrated.</h2>
-          <p>A conceptual walkthrough of verification, signed proof, and the split between accepted and rejected artifacts.</p>
+          <h2>Current product evidence, including the creator's own case.</h2>
+          <p>Inspect the live 0.44 operations surface, the real JetBrains workflow, and a bounded 60-day personal-use example.</p>
         </div>
         <div class="gallery">
-          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/04-security-contracts.png" alt="AI compiler stack with Python and security contracts.">
-          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/06-proof-by-sabotage.png" alt="Robotic magnifiers inspect passing checks and a deliberately broken check.">
-          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/08-signed-proof-chain.png" alt="Signed receipts travel through a proof chain and split into accepted and rejected paths.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-0.44-live-dashboard.png" alt="Current FactoryLine 0.44 Graph Ops dashboard.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg" alt="Current FactoryLine AI Proof IntelliJ workflow in action.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/code-factory-60-day-personal-case-study.png" alt="One-user 60-day Code Factory case study with observed metadata and modeled capacity clearly separated.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/factoryline-logo-480.png" alt="Current FactoryLine blue logo with a green verification check.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" alt="Actual Factory Studio for a local outcome-first MVP.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-studio-1280x800.png" alt="Actual Factory Studio Graph Ops view with proof counts and next action.">
         </div>
-        <p class="boundary">Concept illustrations—not UI screenshots or measured outcome evidence. <a href="https://github.com/zrk222/code-factory/blob/main/docs/HOW_IT_WORKS_VISUAL.md">Open all nine stages →</a></p>
+        <p class="boundary">Actual product capture set. The interface captures show actual product behavior. The case-study image separates observed metadata from an assumption-based capacity model; it is not universal productivity, cash-savings, conversion, Marketplace approval, or production-readiness evidence. <a href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md">Open the visual policy →</a></p>
       </div>
     </section>
 
     <section class="final">
       <div class="shell">
         <h2>Make the next change carry its own proof.</h2>
-        <div class="actions" style="justify-content:center">
-          <a class="button primary" href="https://pypi.org/project/factoryline-code-factory/">Install from PyPI</a>
-          <a class="button" href="https://doi.org/10.5281/zenodo.21447265">Open the archived release</a>
+        <div class="actions actions-center">
+          <a class="button" href="https://pypi.org/project/factoryline-code-factory/">Run your first local proof</a>
+          <a class="button" href="https://github.com/zrk222/code-factory">Read or star on GitHub</a>
         </div>
       </div>
     </section>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.20.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://doi.org/10.5281/zenodo.21447265">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.44.1 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.44.1">Release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

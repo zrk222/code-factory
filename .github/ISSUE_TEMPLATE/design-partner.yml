@@ -1,0 +1,58 @@
+name: Team Proof Hub design partner
+description: Share a high-level team proof and review workflow for a possible design-partner program.
+title: "[design-partner] "
+labels: ["design-partner"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form is discovery only. It does not accept a partner, create a contract, start a trial, or grant access to a service.
+
+        Do not include source code, credentials, tokens, customer data, private receipts, security incidents, or non-public repository details. GitHub issues may be public.
+  - type: dropdown
+    id: team_size
+    attributes:
+      label: Typical PR authors
+      description: Use a range only; do not identify individual contributors.
+      options:
+        - 2-5
+        - 6-20
+        - 21-100
+        - More than 100
+    validations:
+      required: true
+  - type: checkboxes
+    id: workflow
+    attributes:
+      label: Current workflow
+      options:
+        - label: We review AI-assisted changes at least weekly.
+          required: true
+        - label: We need a shared proof history, policy route, or approval trail.
+          required: true
+        - label: We understand this is discovery only and not a purchase or service commitment.
+          required: true
+  - type: textarea
+    id: recurring_problem
+    attributes:
+      label: Recurring proof or review problem
+      description: Describe the workflow in general terms. Do not include code, repository names, customer names, secrets, or incident details.
+      placeholder: "For example: reviewers cannot tell which declared checks actually exercised a risky change."
+    validations:
+      required: true
+  - type: textarea
+    id: desired_outcome
+    attributes:
+      label: Desired team outcome
+      description: What would a shared evidence or approval view make easier to decide?
+    validations:
+      required: true
+  - type: checkboxes
+    id: follow_up
+    attributes:
+      label: Follow-up permission
+      options:
+        - label: Maintainers may ask high-level follow-up questions in this issue.
+          required: true
+        - label: Maintainers may quote this feedback publicly without identifying my organization.
+          required: false

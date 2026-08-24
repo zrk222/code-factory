@@ -1,0 +1,30 @@
+name: jetbrains-proof-review
+language: python
+modules:
+  - name: change_review
+    path: factoryline/change_review.py
+    language: python
+    functions:
+      - name: review_change
+        args: ["root: Path", "base: str = 'main'", "changed: list[str] | None = None"]
+        returns: dict
+      - name: _resolve_changed_paths
+        args: ["root: Path", "base: str", "changed: list[str] | None"]
+        returns: "tuple[str, list[str]]"
+  - name: proof
+    path: factoryline/proof.py
+    language: python
+    functions:
+      - name: git_changed_paths
+        args: ["root: Path", "base: str"]
+        returns: "list[str]"
+dependencies:
+  - from: change_review
+    to: proof
+invariants:
+  - name: explicit_change_review_does_not_execute_or_publish
+    forbid_pattern: "\\b(?:execute|replay|merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: change_review
+        symbol: review_change
+        max_lines: 160

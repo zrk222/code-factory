@@ -55,7 +55,7 @@ flowchart TB
 
 ## Current implementation status
 
-The following foundations are shipped in FactoryLine 0.20.0:
+The following foundations are shipped in FactoryLine 0.22.0:
 
 | Plane | Shipped foundation | Not claimed yet |
 | --- | --- | --- |

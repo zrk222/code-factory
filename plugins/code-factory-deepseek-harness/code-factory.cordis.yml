@@ -1,0 +1,18 @@
+# Opt-in DeepSeek Harness overlay for Code Factory's local read-only MCP server.
+# DeepSeek Harness owns the child lifecycle; Code Factory owns only local facts.
+- insert:
+    - id: code-factory-proof-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: code_factory
+        transport: stdio
+        command: factory
+        args: [mcp, serve, --root, .]
+        cwd: !!js process.cwd()
+        failOnStartupError: true
+        toolCallTimeoutMs: 60000
+        reconnect:
+          enabled: true
+          initialDelayMs: 500
+          maxDelayMs: 30000
+          maxAttempts: 5

@@ -1,628 +1,346 @@
-# code-factory
+# Code Factory
 
 [![CI](https://github.com/zrk222/code-factory/actions/workflows/ci.yml/badge.svg)](https://github.com/zrk222/code-factory/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/factoryline-code-factory.svg)](https://pypi.org/project/factoryline-code-factory/)
 [![Python](https://img.shields.io/pypi/pyversions/factoryline-code-factory.svg)](https://pypi.org/project/factoryline-code-factory/)
 [![Hugging Face Space](https://img.shields.io/badge/Hugging%20Face-Space-ffd21e.svg)](https://huggingface.co/spaces/zrk222/code-factory)
+[![GitHub stars](https://img.shields.io/github/stars/zrk222/code-factory?style=social)](https://github.com/zrk222/code-factory/stargazers)
+[![Latest release](https://img.shields.io/github/v/release/zrk222/code-factory)](https://github.com/zrk222/code-factory/releases/latest)
 
-> One intent, seven software targets, and proof that the gates reject
-> deliberately sabotaged builds.
+<!-- mcp-name: io.github.zrk222/code-factory -->
 
-![Code Factory target compiler](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/target-compiler.svg)
+> **Catch AI-generated tests that could never fail — before review.**
 
-## 60-second first run
-
-**Exact shipped UI:** the walkthrough below is rendered from the actual Factory
-Studio surface; it is not concept art.
-
-[![Watch the exact-UI Code Factory quick start](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/code-factory-quickstart-cover-v0171.png)](https://github.com/zrk222/code-factory/releases/download/v0.20.0/code-factory-quickstart-v0171.mp4)
-
-[Watch or download the 60-second MP4](https://github.com/zrk222/code-factory/releases/download/v0.20.0/code-factory-quickstart-v0171.mp4).
-The absolute cover and release-asset URLs render from both GitHub and PyPI.
-
-The one-minute walkthrough is rendered from an actual 1920x1080 Factory
-Studio capture. Its focus frames point to the shipped Product Graph, value
-slice, approval, proof, and Meter v2 panels; it does not substitute a mock
-dashboard for the product UI.
-
-## Concept illustrations: how the proof line works
-
-The following concept illustrations explain the workflow; they are not UI
-screenshots or measured outcome evidence.
-
-<p align="center">
-  <img alt="Developer sends an application blueprint through a small factory into code, data, interface, and server components." src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/01-idea-to-blueprint.png" width="31%">
-  <img alt="Robotic magnifiers inspect green checks and a deliberately broken check on a conveyor." src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/06-proof-by-sabotage.png" width="31%">
-  <img alt="Signed receipts move through a glowing chain and split into accepted and rejected paths." src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/how-it-works/08-signed-proof-chain.png" width="31%">
-</p>
-
-[Open the complete nine-stage visual walkthrough](https://github.com/zrk222/code-factory/blob/main/docs/HOW_IT_WORKS_VISUAL.md).
-
-Use Code Factory to create an app-shaped starting state, then immediately see
-which requirements it refuses to certify without real tests:
-
-```bash
-pip install factoryline-code-factory==0.20.0
-factory targets --json
-factory create "Build a simple approval tracker with an audit log" --target web --deployment-profile local-split --out approval-tracker --purpose saas
-factory coverage --root approval-tracker --json
-```
-
-The last command intentionally exits nonzero on a fresh starter. It reports
-`"dominant_failure_class": "hollow_coverage"` for every product requirement
-that lacks a non-hollow test. The scaffold is useful starting state, not
-software the factory pretends is ready to ship.
-
-Use the same `factory create` command with `--target cli`, `api`, `mcp`,
-`worker`, `web`, `mobile`, or `agent-ui`. Select a deployment route from `factory targets --json`; the
-local or preview route is the safe default. Every output starts blocked and includes a governance manifest,
-SSAT, smoke hook, Mermaid map, and source-bound compile receipt. Open the local
-builder with `factory studio`, or from the VS Code and JetBrains integrations.
-See [Target Compiler and Factory Studio](docs/TARGET_COMPILER.md).
-
-## Hosted enterprise PR assurance
-
-The optional hosted adapter verifies GitHub webhooks and OIDC approvals at a
-real network boundary, isolates tenant records with PostgreSQL row-level
-security, and publishes GitHub Checks through a transactional outbox and
-short-lived GitHub App credentials.
-
-```bash
-pip install "factoryline-code-factory[hosted]"
-gunicorn --bind 0.0.0.0:8080 \
-  'factoryline.hosted_api:create_hosted_app_from_env()'
-```
-
-Tenant selection comes from an immutable GitHub installation mapping—not
-request headers. See the [hosted deployment and security contract](docs/HOSTED_PR_ASSURANCE.md).
-
-### Supervised tenant control plane
-
-Version 0.19 closes the onboarding gap around that adapter: a verified
-bootstrap administrator creates a tenant, pins tenant OIDC/JWKS configuration,
-maps directory groups, stores secret-manager references, and issues a
-600-second one-time GitHub installation state. PostgreSQL stores no resolved
-secret values, and every successful administrative mutation joins a
-tenant-scoped hash chain.
-
-The responsive `/console` surface is read-only. It shows installation, identity,
-role, approval, outbox, and audit status without mutation, approval, connector,
-credential, deployment, or release authority. See the
-[hosted control-plane contract](docs/HOSTED_CONTROL_PLANE.md).
-
-## Signed Capability Packs
-
-The seven starter targets and 22 composable surface, language, capability,
-data, and operations contracts now come from 29 first-party Capability Packs.
-Every pack binds its complete file map to an offline DSSE Ed25519 signature and
-must reject ten structural mutations before it can be installed or composed.
+> **Free, local proof for code built with AI.** Start from a plain-language
+> outcome, a fuzzy PRD, or a risky diff. Code Factory binds the declared intent,
+> challenges whether a test can actually reject the failure it claims to cover,
+> and shows the current proof gap plus the next human decision. Tests that only
+> look green are not proof: a starter is never called production-ready before
+> the relevant proof exists.
 
 ```powershell
-factory pack list
-factory pack validate factoryline/builtin_packs/target-worker
-factory pack install factoryline/builtin_packs/target-worker --root .
-factory pack compose factoryline/builtin_packs/target-web `
-  factoryline/builtin_packs/surface-nextjs `
-  factoryline/builtin_packs/language-typescript `
-  factoryline/builtin_packs/capability-auth --root . --name review-portal
+pip install factoryline-code-factory
+factory first-proof --root .
 ```
 
-Pack installation grants no execution, network, connector, deployment,
-publication, signing, or external-message authority. See
-[Capability Packs](docs/CAPABILITY_PACKS.md).
+That one local command creates a disposable sandbox, proves the healthy check
+can pass, then proves the hollow check is caught as `HOLLOW_E2E_TEST`. It writes
+a receipt and a privacy-safe Proof Card; it never uploads your code. When you
+are ready to build, run `factory mvp "Build an approval tracker" --root .`.
 
-For target-by-target local, preview, and release routes, prerequisites, checks,
-and approval boundaries, see the [Deployment Guide](docs/DEPLOYMENT_GUIDE.md).
-The per-channel artifact and moderation boundaries are listed in
-[Release Channels](docs/RELEASE_CHANNELS.md).
+![Actual privacy-safe First Proof Card: the hollow test was detected](docs/assets/first-proof-card.svg)
 
-## Product Missions: PRD to reviewer-ready value
+[See actual Factory Studio and the current FactoryLine visual set](docs/PRODUCT_VISUALS.md) or open the
+[live Hugging Face Space](https://zrk222-code-factory.static.hf.space).
 
-Version 0.17 completes the deterministic product-engineering layer above the existing
-spec-to-proof pipeline. It compiles a PRD into stable requirement atoms and a
-gap-audited Product Graph, assigns every requirement exactly once to a bounded
-value slice, and creates a supervised, hard-budgeted mission with a hash-bound
-Loop Passport. The output is an evidence-linked PR draft and a classified
-outcome chain, not an agent with hidden production authority.
+![Actual FactoryLine 0.44 Graph Ops dashboard showing a waiting-for-human assembly, live telemetry, and evidence-backed next actions](docs/assets/marketplace/factoryline-0.44-live-dashboard.png)
 
-![Code Factory Product Missions](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/product-missions.svg)
+![FactoryLine AI Proof controls in IntelliJ IDEA for first proof, assemblies, receipts, changed-proof analysis, Change Lists, workspace analysis, and the local meter](docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg)
+
+![FactoryLine AI Proof running a successful local First Proof on FactoryLine 0.44 inside IntelliJ IDEA](docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg)
+
+![Actual Factory Studio showing the outcome-first local MVP path and local-only boundary](docs/assets/marketplace/factory-studio-mvp-1280x800.png)
+
+## What it does
+
+- **Start a real project.** Turn one outcome into a contained web, mobile, API,
+  CLI, worker, MCP, or agent-UI starting state.
+- **Review what AI produced.** Turn requirements, diffs, proofs, and blockers into
+  receipts, Graph Ops, and one fact-derived next action.
+- **Refresh the evidence that matters.** Watch a local Assembly while it runs,
+  refresh the next-proof brief, and see privacy-bounded observed Git contribution
+  context without pretending it is a verified directory or billing roster.
+- **Keep "done" honest.** Challenge declared validators for hollow tests; a
+  green-looking scaffold is never called production-ready by default.
+- **Stop vague work before it starts.** Use [Intake Grill](docs/INTAKE_GRILL.md)
+  to record framework, exact intent, observable acceptance evidence, and the
+  external-effects boundary before a Product Mission begins.
+- **Make a behavior survive its declared failure cases.** Use the supervised
+  [Gauntlet](docs/GAUNTLET.md) to turn human-written E2E sabotage cases into an
+  offline-verifiable Survival Card. A hollow negative check stays visible; a
+  card is never a production-readiness certificate.
+- **Let autonomy be earned, not assumed.** Use `factory license` to derive an
+  expiry-bound local tier from independently verified governed runs. A severe
+  hollow-test, hollow-validator, or scope-escape result demotes the declared
+  agent automatically; it never authenticates identity or grants execution.
+- **Compare agents with receipts, not vibes.** Use `factory combine` to rank
+  completed, sealed, independently verified runs on the same task. It never
+  starts an agent or turns a local scoreboard into a vendor-quality claim.
+- **Make every agent session feed the evidence loop.** Use [`factory wrap`](docs/EVIDENCE_SUPPLY_LINE.md)
+  around Claude Code, Codex, DeepSeek, or another local CLI. It verifies a
+  sealed admission before launch, observes the exact file delta, runs declared
+  independent validators, and records the result for Agent License and Combine.
+  It stores hashes and bounded facts—not prompts or raw output—and observes the
+  process without pretending to sandbox it.
+- **Keep decisions from becoming tribal knowledge.** Use `factory judgment` to
+  track a human-promoted design decision with exact paths, a named owner,
+  review date, and hash-bound proof obligations. A Change Safety Case routes
+  one explicit diff to its owner; it never infers intent, promotes a decision,
+  runs a test, or approves a release.
+
+## What the latest upgrade resolves
+
+| Common AI-assisted delivery pain | FactoryLine response | What stays under human control |
+| --- | --- | --- |
+| A test is green but could never catch the behavior it claims to cover | Reality Check and Gauntlet bind declared positive and negative cases, then keep hollow or blocked checks visible in a Survival Card | Which behaviors and commands to admit; whether evidence is sufficient |
+| A vague PRD becomes the wrong scaffold or framework | Intake Grill records a named, byte-bound intent, framework decision, observable acceptance evidence, and external-effects posture before a mission begins | The answers, architecture choice, and decision to start work |
+| An agent retries the same failed approach and burns review time | Proof-Delta requires a changed candidate plus fresh, hash-bound evidence for a retry; no-gain attempts halt | Any repair, retry admission, and final apply |
+| Teams gradually trust an agent because it has been successful recently | Earned Autonomy derives an expiring local tier from governed evidence and demotes severe hollow-test or scope-escape results | Identity, permissions, execution, approval, and release authority |
+| A hard-won design decision is forgotten, then a later diff silently breaks its assumptions | Engineering Judgment Capsules bind one named owner, explicit path scope, review date, and declared proof obligations; an optional human-declared Change Profile makes novel boundaries and required Senior Attention explicit before review | Proposal, independent promotion, decision reconsideration, proof execution, acceptance, merge, and release |
+| A reviewer has suggestions but no shared evidence picture | Graph Ops, local receipts, and read-only MCP facts show current scope, proof debt, and the next fact-derived action | Merge, release, deployment, and provider access |
+| Agent work happens outside the evidence ledger, while writing real E2E manifests takes too long | Evidence Supply Line wraps any admitted local agent CLI; `gauntlet draft` proposes inert, structure-derived promise drafts and explicitly withholds commands it cannot derive | Agent identity, sandboxing, draft promotion, validator choice, Gauntlet admission, and release |
+| A large/remote workspace feels opaque or sluggish | Workspace Advisor measures bounded local project shape and path-only WSL/remote signals without changing indexes, heap, caches, inspections, or remote settings | Every IDE performance change and environment setting |
+
+These are local evidence and supervision tools, not guarantees of performance,
+security, productivity, production readiness, or an automatic repair service.
+
+## FactoryLine by role
+
+| Who is using it | Start here | Highest-value uses | The result they can inspect |
+| --- | --- | --- | --- |
+| **Novice / first-time builder** | `factory first-proof`, then `factory mvp` | Catch a test that only looks green; turn one outcome into a contained starter; learn the difference between generated code and proven behavior | A privacy-safe Proof Card, a local MVP, and a visible next step instead of an unexplained pass/fail |
+| **Junior developer** | `factory prd grill`, `factory plan verify`, `factory change review` | Clarify acceptance evidence before coding; keep an AI-assisted diff inside the approved plan; surface missing tests and Proof Debt before review | Source-bound questions, exact changed paths, severity-ordered findings, and a review handoff |
+| **Senior / staff engineer** | `factory judgment`, `factory graph forensics`, `factory proofsearch`, `factory gauntlet` | Protect architecture decisions; diagnose resumed or parallel workflow drift; compare candidate repairs; challenge whether critical E2E checks can actually reject declared failures | Hash-bound decision context, first-divergence facts, rejected candidates, a deterministic winner, and Survival Cards |
+| **Engineering team** | `factory wrap`, GitHub Proof Review, Graph Ops, Agent License and Combine | Put agent work into one evidence ledger; add a neutral PR Check beside AI review; hand off proof state; compare sealed runs without turning scores into vendor claims | Commit-bound Checks, local receipts, explicit owners and blockers, proof reuse decisions, and comparable governed-run records |
+| **Enterprise / platform team** | Intake Grill, Verifier Plane, policy challenge, assurance dossier, admission controls | Standardize approval boundaries; test whether policy rules matter; keep signers, exceptions, tenants, budgets, and release evidence explicit; integrate with existing SDLC controls | Independently verifiable packets and read-only operational views; identity, credentials, merge, release, and deployment remain in enterprise-owned systems |
+
+## Expected operational outcomes
+
+FactoryLine is designed to reduce avoidable review loops, evidence hunting, and
+the frustration of discovering late that an AI-generated test never exercised
+the claimed behavior. The expected outcome is a shorter path to a defensible
+human decision—not a promise that every project becomes faster or cheaper.
+
+| Outcome | What should improve | Evidence FactoryLine can retain |
+| --- | --- | --- |
+| **Less time lost before coding** | Ambiguous intent, missing acceptance evidence, and external-effect boundaries surface during intake instead of after implementation | Intake questions, approved scope, plan hashes, and explicit blockers |
+| **Faster review orientation** | Reviewers receive the exact diff, proof state, top risk, and one supported next action instead of reconstructing context across chat logs | Proof Cards, Change Review, Plan-to-Proof findings, GitHub Checks, and handoff packets |
+| **Less frustrating rework** | Hollow validators, duplicate effects, resume drift, and out-of-plan changes are challenged closer to their source | Negative-test results, first-divergence facts, rejected candidates, and Proof Debt |
+| **Lower evidence-handling cost** | Reusable receipts and read-only dashboards reduce repeated screenshots, manual summaries, and status meetings | Receipt reuse decisions, governed-run records, assurance dossiers, and local Graph Ops views |
+| **Measurable savings when a baseline exists** | Teams can compare observed duration or cost with a declared baseline; otherwise savings stay unavailable | Bounded savings records that label source, baseline, observation window, and confidence |
+
+FactoryLine never converts an unmeasured estimate into a savings claim. Use the
+[Savings Tracker](docs/SAVINGS_TRACKER.md) to report observed time or cost only
+when the repository has a valid baseline and evidence window.
+
+For planning, a transparent starting band is **25–120 minutes of avoidable
+review and rework per AI-assisted PR**: roughly 10–30 minutes of reviewer
+context reconstruction plus 15–90 minutes of one preventable clarification,
+validator, or scope-rework loop. At 50 AI-assisted PRs per month, that models
+about **21–100 hours**; at a team-supplied loaded cost of $75–$150/hour, the
+illustrative range is about **$1,560–$15,000 per month**. These are adjustable
+scenario inputs, not observed FactoryLine results. See the
+[outcomes and savings model](docs/OUTCOMES_MODEL.md) before using the range.
+
+![Code Factory 60-day personal case study: observed local Codex metadata and a clearly separated modeled capacity range](docs/assets/marketplace/code-factory-60-day-personal-case-study.png)
+
+## Works with your existing AI development stack
+
+FactoryLine is the proof and control layer around generation, orchestration, and
+review tools. The status column distinguishes implemented adapters from clean
+workflow fits; it does not imply a vendor partnership.
+
+| Product or stack | What it does well | Where FactoryLine adds value | Current connection status |
+| --- | --- | --- | --- |
+| **Blitzy** | Large codebase understanding, reviewed action plans, autonomous generation, validation, and PR creation | Seal the approved plan, compare it with the exact resulting diff, challenge declared tests, and attach a neutral proof walkthrough before human merge | **Workflow fit.** Use repository artifacts and PR Checks; no bundled Blitzy API adapter or claimed partnership |
+| **CodeRabbit** | AI review comments and remediation suggestions across the pull request | Supply deterministic FactoryLine Check results, proof gaps, and Proof Debt beside the AI review without treating suggestions as evidence | **Documented interoperability.** GitHub Checks are the boundary; no CodeRabbit credential or API is required |
+| **Mastra** | TypeScript agents, tools, memory, workflows, and MCP clients/servers | Expose read-only local proof context through MCP, then verify the resulting repository diff and declared tests independently | **Protocol-level fit.** Mastra supports MCP; a dedicated FactoryLine-Mastra adapter is not bundled or claimed tested |
+| **LangGraph** | Durable, stateful agent orchestration with checkpoints and human-in-the-loop control | Compare sealed reference and resumed transition lineages, detect duplicate effects or unsafe parallel writes, and keep receipts authoritative over checkpoints | **Native optional support.** LangGraph Assurance Bridge, optional adapter, GitHub Action, and cross-agent plugin are included |
+| **Codex, Claude Code, and Deep Agents** | Interactive or autonomous repository implementation | Admit scoped work, wrap the local CLI process, hash the file delta, run independent validators, and feed Agent License / Combine | **Included paths.** Local wrapper, read-only MCP, LangGraph plugin, and optional Claude session trace |
+| **Cursor and OpenCode** | IDE- or terminal-based AI coding with MCP clients | Read bounded FactoryLine receipt, verifier, PRD, memory-brief, and Graph Ops facts without granting write or release authority | **Documented local MCP setup.** Stdio-only and read-only |
+| **DeepSeek Harness** | Model session and tool lifecycle | Add FactoryLine’s local proof facts while keeping the harness responsible for the agent lifecycle | **Opt-in adapter.** Developer-preview upstream boundary is explicit |
+
+See the [complete compatibility and handoff guide](docs/WORKS_WITH.md) for the
+recommended flow and the exact authority boundary for each stack.
+
+**For teams:** use the [Teams and Enterprise Operations Manual](docs/ENTERPRISE_TEAMS_OPERATIONS.md)
+to run the same proof-first loop with named reviewers, approved AI-change scope,
+and explicit Proof Debt—without giving Code Factory merge, release, or provider authority.
+The [commercial packaging guide](docs/COMMERCIAL_PACKAGING.md) keeps the free
+core separate from proposed Team and Enterprise services that are not purchasable yet.
+For a human-selected, customer-managed reference pilot, the local
+[Team Pilot readiness gate](docs/TEAM_PILOT_LAUNCH.md) hash-binds the operating
+evidence for owner review; it does not accept a customer or activate a paid service.
+
+**Design is part of the review.** For UI-scoped work, add the optional
+[Prestige Design Review](docs/PRESTIGE_DESIGN.md): a purpose-led design brief
+plus review artifacts for hierarchy, responsive behavior, affordances,
+consistency, and declared design tokens. It makes design quality visible; it
+does not claim a conversion result, WCAG certification, or production readiness.
+
+**Reuse a proven decision without reusing stale context.** [Factory
+Continuity](docs/FACTORY_CONTINUITY.md) keeps a local, purpose-bound record of
+the evidence behind prior work. Graph Ops can replay only redacted, current,
+independently promoted metadata; it does not store private source, prompts,
+embeddings, or transcripts, and it cannot execute a repair.
+
+## Install
 
 ```powershell
-factory product compile .\PRD.md --root . --json
-factory product slices .\.factory\products\<project>\product_graph.json --root . --json
-factory mission create .\.factory\products\<project>\value_slices.json <slice-id> `
-  --root . --owner engineering-lead --executor codex --json
+# No account, model key, or cloud connection is required for this local run.
+pip install factoryline-code-factory
+factory first-proof --root .
+factory mvp "Build an approval tracker" --root .
+factory studio --root .\my-mvp
 ```
 
-The live Meter v2 adds queue, review, rework, cache, invalidation, and outcome
-telemetry while preserving unknown values as unknown. Open the same workflow in
-Factory Studio or through the explicit Product Missions command in VS Code and
-all supported JetBrains IDEs. See [Product Missions](docs/PRODUCT_MISSIONS.md).
+If Code Factory helps you find a proof gap or makes an AI-assisted change easier
+to review, [star Code Factory](https://github.com/zrk222/code-factory) so other
+developers can find it. This optional link only opens the repository.
 
-Version 0.20 adds durable mission execution through a hash-linked SQLite event
-ledger with guarded transitions, human pause/revise/resume, independent
-validation, budget exhaustion, release separation, and an optional LangGraph
-checkpoint adapter. A secret-free multi-provider policy selects BYOK provider
-and model references across CLI, Studio, VS Code, and JetBrains while never
-reading, storing, or calling with credential values. Operators can select the
-IDE surface, provider/model preference, quality floor, budget ceiling, and
-cache-continuity rail while the runtime remains responsible for actual key
-injection and spend authorization. See
-[Mission Graph Operations](docs/LANGGRAPH_OPS.md) and
-[Multi-Provider BYOK Routing](docs/PROVIDER_ROUTING.md).
+## Choose the job in front of you
 
-## Migration Missions: no finish without proof
+| If you need to… | Use | You get |
+| --- | --- | --- |
+| Build a first slice | [`factory mvp`](docs/START_HERE.md) | A contained, app-shaped local starting state |
+| Pin down intent before work begins | [`factory intake grill`](docs/INTAKE_GRILL.md) | A source-bound framework, intent, acceptance-evidence, and safety decision worksheet |
+| Clarify a fuzzy PRD | [`factory prd grill`](docs/PRD_GRILL.md) | Source-bound questions instead of invented requirements |
+| Review an AI-assisted diff | [`factory change review`](docs/DIFF_TO_PROOF_REVIEW.md) | A local risk, proof-gap, and next-action packet |
+| Turn a diff into the next safe proof | [`factory memory brief`](docs/DEVELOPER_MEMORY_BRIEF.md) | Refreshable actions, redacted continuity facts, and observed local Git contribution context |
+| Keep an agent diff inside approved scope | [`factory plan verify`](docs/PLAN_TO_PROOF_REVIEW.md) | Exact plan alignment and explicit Proof Debt—not another AI opinion |
+| Prove an E2E check can say no | [`factory e2e verify`](docs/E2E_PROOF_GATE.md) | A native positive/negative command-pair receipt that catches hollow E2E checks |
+| Ask whether a behavior survives declared sabotages | [`factory gauntlet`](docs/GAUNTLET.md) | A named, one-run admission, optional redacted verified-context binding, and offline-verifiable Survival Card—never generated commands or automatic repair |
+| Keep agent autonomy evidence-bound | [`factory license`](docs/AGENT_LICENSE.md) | A local, expiring tier derived from governed evidence, automatic severe-failure demotion, and no silent authority grant |
+| Compare completed agent evidence fairly | [`factory combine`](docs/AGENT_LICENSE.md) | A sealed-task, offline-verifiable scoreboard—never an agent launcher or vendor leaderboard |
+| Capture an agent run without copying its prompt | [`factory wrap`](docs/EVIDENCE_SUPPLY_LINE.md) | A pre-admitted, hash-bound delta and independent-validator receipt that feeds Agent License |
+| Draft the first Gauntlet promises | [`factory gauntlet draft`](docs/EVIDENCE_SUPPLY_LINE.md) | Inert structure-derived candidates, with unsupported HTTP commands explicitly withheld |
+| Prepare a bounded Team pilot | [`factory team-pilot readiness`](docs/TEAM_PILOT_LAUNCH.md) | Hash-bound, customer-managed readiness evidence for owner review—not a checkout or service activation |
+| Add evidence to a GitHub PR | [`factory github proof-review`](docs/GITHUB_PROOF_REVIEW.md) | One neutral Check and stable proof walkthrough, tied to the head commit |
+| Prove a LangGraph resume path | [`factory langgraph replay-verify`](docs/LANGGRAPH_ASSURANCE.md) | Hash-only parity, duplicate-effect and parallel-write safeguards, plus a shareable incident capsule |
+| Detect policy drift before a human merge | [`factory github assurance-dossier`](docs/GITHUB_ASSURANCE_DOSSIER.md) | Deterministic supplied-policy comparison, named expiring exceptions, and a merge-evidence packet |
+| Inspect delivery state | [`factory studio`](docs/TARGET_COMPILER.md) | Graph Ops, receipts, and the next supported action |
+| Debug why two graph runs diverged | [`factory graph forensics`](docs/GRAPH_FORENSICS.md) | Hash-sealed state lineage, concurrency findings, and a read-only recovery preview |
+| Choose among competing repairs | [`factory proofsearch`](docs/PROOFSEARCH.md) | Hash-bound candidate rejection, mutation-tested evidence, a deterministic winner, and locked apply authority |
+| Decide what evidence to collect next | [Evidence Frontier](docs/EVIDENCE_FRONTIER.md) | A deterministic next-test hypothesis that separates repair candidates, with execution locked |
+| Admit a repair retry only with new evidence | [Proof-Delta Loop](docs/PROOF_DELTA_LOOP.md) | A changed candidate and fresh hash-bound evidence, or a deliberate no-gain halt |
+| Reconsider verified prior work safely | [Factory Continuity](docs/FACTORY_CONTINUITY.md) | Purpose-bound, expiring Decision Replay metadata with independent promotion and no private content |
+| Prove one user-visible behavior | [Factory Reality Check](docs/REALITY_CHECK.md) | Deep intent assertions, a deliberate failure case, and an optional named one-time re-run authorization |
+| Verify supplied work | [Verifier Plane](docs/VERIFIER_PLANE.md) | Independent, hash-bound evidence checks |
 
-Large migrations can bind an executable readiness receipt before a Mission is
-created. Eight lanes are checked independently: unit, integration, E2E,
-lint/type, architecture, coverage/fuzz, reproducible environment, and
-telemetry/security. `lane_registration_pct` is never presented as behavioral
-proof; only hash-bound executed evidence contributes to
-`executable_proof_pct`.
+For the short product map, read the [overview](docs/OVERVIEW.md). For a two-minute
+first run, follow [Start Here](docs/START_HERE.md). For full command and contract
+reference, browse the [documentation directory](docs/).
 
-```powershell
-factory migration assess .\migration-readiness.json --root . --json
-factory context build --root . --json
-factory mission create <value-slices.json> <slice-id> --root . `
-  --owner migration-owner --executor codex `
-  --readiness .\.factory\migration\readiness.json --json
-```
+## Use Code Factory with CodeRabbit or another AI reviewer
 
-Every mission binds falsifiable hypotheses to exact completion criteria. A
-user-facing slice also receives a computer-control criterion with an exact URL,
-fewer-than-four-interaction ceiling, passing assertions, and hashed visual evidence.
-Independent validators cannot see creator transcripts or failed-attempt
-history. See [Migration Missions](docs/MIGRATION_MISSIONS.md).
+They solve different parts of the review problem. CodeRabbit can supply AI
+findings and suggestions; Code Factory makes declared local proof gaps,
+coverage, and the next review action explicit. Enable the opt-in
+[GitHub Proof Review](docs/GITHUB_PROOF_REVIEW.md) workflow to put one neutral,
+commit-bound FactoryLine Check and walkthrough beside existing CodeRabbit
+comments. It uses no CodeRabbit account, API, credential, or output as proof.
 
-## Signal Loop: owner-governed demand to independent proof
+For agent-created pull requests, add a small human-approved
+[`factory.agent_plan.v1` envelope](docs/PLAN_TO_PROOF_REVIEW.md). Plan-to-Proof
+compares that plan with the exact diff and exposes **Proof Debt**: unresolved
+scope, declared-test, human-routing, and existing proof obligations that must
+be settled before a team makes its own merge decision.
 
-Signal Loop accepts explicitly supplied GitHub, Slack, Sentry, social,
-telemetry, internal, or manual evidence as untrusted local data. A compact
-owner-controlled Opinion Dock records product taste, architecture guardrails,
-temporary hands-off rules, and abstract cost/quality profiles. Explainable
-triage cannot promote work until a Product Owner records a bound decision.
+That makes Code Factory a standalone proof layer for teams that do not use an AI
+reviewer, and a complementary evidence layer for teams that do. For
+agent-created pull requests, Code Factory does not replace human review,
+auto-approve a pull request, or merge code.
 
-![Code Factory Signal Loop](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/signal-loop.svg)
+## Use Code Factory with LangGraph
 
-```powershell
-factory opinion init --root . --owner product-owner --json
-factory signal capture --root . --source github --authorization owner_supplied `
-  --title "Export audit evidence" --body "Operators need a local export." --json
-factory signal triage <signal.json> <opinion_dock.json> --root . --json
-```
+LangGraph teams can keep their own graph and checkpoint runtime, then use the
+[LangGraph Assurance Bridge](docs/LANGGRAPH_ASSURANCE.md) to compare recorded
+reference and resumed transitions. The free local adapter produces hash-only
+parity evidence and a reviewable incident capsule when a run diverges; it does
+not import LangGraph, invoke a graph, or claim production resilience. The
+optional GitHub Action puts the same Proof Card in a pull-request job summary.
 
-Complete approved facts compile into the Product Graph; incomplete facts stop
-at a needs-input PRD draft. Mission owners receive an approval-ready Studio
-panel or may choose **Auto-resolve safe gaps**, which is limited to deterministic
-local corrections and cannot invent product intent. Independent completion
-requires distinct creator/verifier identities, exact criteria, and local bound
-evidence. Every rejection reports the causal stage, reason, and next action in
-`factory.failure_summary.v1`. See the [Signal Loop](docs/SIGNAL_LOOP.md) and
-[operations scenario matrix](docs/OPERATION_SCENARIOS.md).
+For Codex, Claude Code, and Deep Agents, install the
+[Code Factory LangGraph plugin](docs/LANGCHAIN_MARKETPLACE.md) to add the
+proof workflow and read-only local MCP facts to the coding-agent surface.
 
-For an existing repository, start with `forge adopt <feature> --root .`; after
-you review its SSAT and pass the human architecture gate, use
-`forge architect <feature> <ssat> --adopt-existing` to validate and receipt the
-working implementation without regenerating it. See
-[First Use On An Existing Repository](docs/FIRST_USE.md).
+## Use Code Factory with DeepSeek Harness
 
-## Editor integrations
+The optional [DeepSeek Harness adapter](docs/DEEPSEEK_HARNESS.md) starts the
+same local read-only MCP proof surface through Harness's official generic MCP
+client. It lets a Harness agent inspect Graph Ops, current proof gaps, and
+Earned Autonomy / Combine facts without sending source to a hosted endpoint or
+gaining permission to execute, repair, approve, release, deploy, sign, or use
+credentials.
 
-Both editor adapters run only an explicit local FactoryLine command and display
-local receipt data. Neither uploads the workspace, signs a receipt, or makes a
-release decision.
+## Use it where you work
 
-- **VS Code:** install the release VSIX. See [FactoryLine for VS Code](docs/VSCODE.md).
-- **IntelliJ Platform:** install the release ZIP in IntelliJ IDEA, PyCharm,
-  WebStorm, Rider, CLion, GoLand, RustRover, or DataGrip. The ZIP carries a
-  Marketplace preflight gate; a public Marketplace listing is not claimed until
-  JetBrains completes its first-upload review. See [FactoryLine for JetBrains
-  IDEs](docs/INTELLIJ.md), the [Marketplace release runbook](docs/JETBRAINS_MARKETPLACE.md),
-  and the [control-room boundary](docs/JETBRAINS_CONTROL_ROOM.md).
+Code Factory keeps the same local, receipt-bound workflow across the command line,
+[VS Code](editors/vscode/README.md), and the [JetBrains plugin](editors/intellij/README.md).
+It also provides local stdio [Cursor or OpenCode MCP](docs/AI_CLIENTS.md)
+without handing an AI client permission to publish, deploy, approve, sign, or access
+credentials.
 
-## Public workflow
+The same local proof surface is discoverable in the [Official MCP Registry](docs/MCP_REGISTRY.md)
+as `io.github.zrk222/code-factory`; registry setup starts the public PyPI
+package over local stdio and never creates a hosted service or write authority.
 
-Run `factory` with no arguments for a compact live view of installed bricks,
-local proof counts, and the next valid commands. This agent-first home view
-avoids a separate help/discovery turn while keeping `--help` available everywhere.
+FactoryLine's core local proof workflow remains free. The owner-approved future
+JetBrains Freemium plan starts **January 1, 2027**, subject to Marketplace and
+activation gates: **$5.95 USD per named seat/month** or **$60 USD per named seat/year**
+for optional Memory and Enterprise Assurance entitlements. It is not
+active today; no checkout, entitlement, or license enforcement exists. See the
+[Marketplace control-room guide](docs/JETBRAINS_CONTROL_ROOM.md) for the exact
+feature boundary and approval gates.
+
+The matching GitHub Assurance Seat is also planned for **January 1, 2027** at
+the same future price. It is for maintained, customer-managed proof operations
+(commit-bound review, Proof Debt, policy drift, governed exceptions, and evidence
+packets)—not source access or opaque AI-token resale. The source license and free
+core are unchanged. See the [GitHub per-seat plan](docs/GITHUB_MONETIZATION_2026.md).
+
+For Open VSX, the extension and local proof core remain free. All capabilities
+shipped before the transition are free through **December 14, 2026**. From
+**December 15, 2026**, optional hosted Personal Memory is scheduled at **$4.95
+USD/month**, and Team Assurance at **$5.95 USD per named seat/month** or **$60
+USD per named seat/year**, subject to explicit activation gates. See the
+[Open VSX service plan](docs/OPEN_VSX_MONETIZATION_2026.md).
+
+## The proof boundary
+
+Code Factory creates and inspects local artifacts. It does **not** silently call a
+model, discover credentials, publish, deploy, sign, approve, message, or grant a
+connector. The Gauntlet executes only caller-declared E2E pairs after a named,
+expiry-bound, one-run admission; all other Gauntlet paths are read-only. Its
+deterministic proof receipts bind supplied byte bindings, declared identities, and
+evidence; an external runner must separately prove runtime isolation and network
+policy. Token, cost, and productivity claims remain unknown until a bound measurement
+exists.
 
 ```mermaid
 flowchart LR
-    A["Intent or PRD"] --> B["Build and gate"]
-    B --> C["Compile and verify"]
-    C --> D["Signed receipts and human-owned ship"]
-    classDef input fill:#e0f2fe,stroke:#0284c7,color:#10233f
-    classDef build fill:#fef3c7,stroke:#d97706,color:#10233f
-    classDef proof fill:#dcfce7,stroke:#16a34a,color:#10233f
-    class A input
-    class B build
-    class C,D proof
+  intent["Plain-language outcome"] --> mvp["Local MVP"]
+  mvp --> evidence["Receipts and declared checks"]
+  evidence --> review["Graph Ops / review packet"]
+  review --> decision["One evidence-backed next action"]
 ```
 
-The detailed engineering map, mutation challenges, Passports, and replay paths
-remain in the technical docs. Publicly, the product contract is simpler: the
-model may help design at build time; HSF compiles eligible decision logic into
-deterministic code; the generated starter does not inherit runtime model,
-network, connector, credential, publish, or deploy authority.
-
-> New: PRD-to-app building. Factoryline can now turn a PRD or prompt into a
-> full-stack starter repo, then hand it to the same gated, receipted factory
-> flow that powers proof-carrying PRs.
-
-![PRD-to-App Factory](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/prd-to-app-factory.svg)
-
-**A code factory built like Lego.** Five small, independent, open-source pieces that
-snap together into one assembly line: describe a feature in plain language, and the
-line checks it for ambiguity, builds it, runs a gauntlet of gates, actually *runs*
-the finished code to watch it behave, compiles any decision logic into permanent
-zero-cost code, and ships it with a receipt at every step.
-
-Each piece is a separate repo you can install and use on its own. This repo is the
-**baseplate** (`factory`) that lines them up. It depends on none of them.
-
-## Five-brick workflow
-
-For the complete component, authority, mission, verification, IDE, and
-telemetry topology, see [Code Factory Architecture](docs/ARCHITECTURE.md).
-
-```mermaid
-flowchart LR
-    V["VS Code"] -. "explicit local command" .-> G
-    J["JetBrains IDEs"] -. "explicit local command" .-> G
-    Q["Owner-supplied signal"] --> O["Opinion Dock triage"]
-    O --> P
-    P["PRD Product Graph"] --> S["Dependency-ordered value slices"]
-    S --> M["Supervised mission passport"]
-    M --> B
-    A["Plain-language intent"] --> K["Signed Capability Pack"]
-    K --> B["1 SpecLine: clarify and lock the spec"]
-    B --> C["2 ForgeLine: build through gated phases"]
-    C --> D{"What changed?"}
-    D -->|"Business decision logic"| E["3 HSF: compile deterministic artifact"]
-    D -->|"User-facing UI"| F["4 Prestige: design-quality gate"]
-    E --> G["Receipts and signed artifacts"]
-    F --> G
-    C --> G
-    G --> H["Ship with evidence"]
-    G -. "local receipt view" .-> V
-    G -. "local receipt view" .-> J
-    classDef intent fill:#e0f2fe,stroke:#0284c7,color:#10233f
-    classDef gate fill:#fef3c7,stroke:#d97706,color:#10233f
-    classDef artifact fill:#dcfce7,stroke:#16a34a,color:#10233f
-    classDef design fill:#dbeafe,stroke:#2563eb,color:#10233f
-    classDef evidence fill:#ccfbf1,stroke:#0f766e,color:#10233f
-    classDef editor fill:#ede9fe,stroke:#7c3aed,color:#10233f
-    class A intent
-    class B,C gate
-    class E artifact
-    class F design
-    class G,H evidence
-    class V,J editor
-    class Q,O,P,S,M,K intent
-```
-
-Use the numbered repos like Lego bricks: start with the baseplate, add the spec
-brick when intent is fuzzy, add the forge brick when you want a state machine,
-add the compile brick when decisions must be deterministic, and add the design
-brick when the shipped thing has a user interface.
-
-```
-intent -> [1-spec] -> spec + strict contract -> handoff
-                                                   |
-          [2-forge] <---- tasks / plan <----------+
-              |  architect -> build -> gates -> smoke -> ship
-              |-> if UI -> [4-design] design-quality gate
-              +-> if decision table -> [3-compile] -> deterministic artifact
-```
-
-## The five pieces
-
-| Repo | pip install | CLI | What it does |
-|---|---|---|---|
-| **code-factory** (this) | `factoryline-code-factory` | `factory` | the baseplate - snaps the bricks together, meters cost |
-| **code-factory-1-spec** | `code-factory-1-spec` | `specline` | kills ambiguity *before* the AI writes code (anti-drift input contract) |
-| **code-factory-2-forge** | `code-factory-2-forge` | `forge` | the assembly line: architect -> build -> gates -> **runtime smoke** -> ship |
-| **code-factory-3-compile** | `code-factory-3-compile` | `hsf` | compiles a decision *once* into boring code that runs forever at zero AI cost |
-| **code-factory-4-design** | `code-factory-4-design` | `prestige` | design-quality gate, for when what you ship has a face |
-
-Numbered so the assembly order reads at a glance. Install one, some, or all.
-
-The baseplate's PyPI distribution is named `factoryline-code-factory` because
-PyPI reserves the more generic `code-factory` name. The repository and the
-`factory` command deliberately keep the simpler Code Factory identity.
-
-## Enterprise knowledge activation
-
-Code Factory treats agent instructions as **Atomic Knowledge Units (AKUs)**:
-small, high-density, validated units of institutional knowledge. The goal is to
-move from "retrieve a long doc and hope the agent interprets it" to "activate the
-right procedure, tools, governance, and validators at the exact step of work."
-
-See [AKU_STANDARD.md](AKU_STANDARD.md) for the enterprise schema and how each
-brick maps to codification, compression, injection, and validation.
-
-The governed learning lane now turns task outcomes into task-specific AKUs
-without transferring worker scratchpads. `factory learning init|packet|propose|validate|promote`
-requires ordered milestone evidence, a validator distinct from the worker, and
-the recorded human owner before any instruction becomes active. Harbor and
-Terminal-Bench results can be bound as external evidence, but cannot self-approve
-an instruction or edit the Architecture Opinion Dock. See
-[Governed Instruction Learning](docs/INSTRUCTION_LEARNING.md).
-
-## Install all five bricks
-
-```bash
-pip install factoryline-code-factory==0.20.0 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.7 code-factory-3-compile==0.5.5 code-factory-4-design==0.7.4
-factory doctor --json
-```
-
-`factory doctor` reports two separate facts: `installation_ok` verifies the
-CLIs, versions, and required commands; `workflow_ok` runs bounded,
-non-mutating canaries; and `provenance_ok` requires a source commit plus a
-build hash. The ForgeLine canaries exercise both ESM `.mjs` and TypeScript `.ts`
-features and require measured symbols, so a Python-centric or zero-symbol QA
-path cannot appear healthy. A normal package install can run correctly while
-still reporting `provenance_ok: false`; strict doctor exits nonzero in that
-state rather than presenting incomplete source identity as proof. Use signed
-receipts or a clean source checkout when signer or source identity is required.
-
-## Identity-signed receipts
-
-Authenticate any existing factory receipt with Sigstore's keyless OIDC flow:
-
-```bash
-pip install "factoryline-code-factory[sigstore]"
-factory receipt sign .factory/receipts/<receipt>.json
-factory receipt verify .factory/receipts/<receipt>.json \
-  --cert-identity "https://github.com/OWNER/REPO/.github/workflows/WORKFLOW.yml@refs/heads/main" \
-  --cert-oidc-issuer "https://token.actions.githubusercontent.com"
-```
-
-Verification binds the exact receipt bytes to the expected signer identity and
-issuer. Unsigned receipts remain readable but report `UNSIGNED`, never
-`VERIFIED`. See [Signed Factory Receipts](docs/SIGNED_RECEIPTS.md) for the CI
-workflow, expected JSON, failure behavior, and honest scope boundary.
-
-## Local control-plane foundation
-
-The control-plane surface adds tenant-scoped evidence, explicit role
-authorization, independent human approvals, and a hash-linked audit stream:
-
-```powershell
-factory control init --db .factory/control.sqlite3
-factory control evidence-put receipts/build.json --db .factory/control.sqlite3 `
-  --tenant acme --subject ci-runner --roles operator
-factory control audit-verify --db .factory/control.sqlite3 `
-  --tenant acme --subject auditor --roles viewer
-```
-
-See [docs/CONTROL_PLANE.md](docs/CONTROL_PLANE.md) for the approval workflow
-and exact boundary. This remains the deterministic local foundation. The
-optional hosted adapter adds supervised GitHub App and per-tenant OIDC flows,
-but does not claim SCIM, managed availability, or a hosted evidence service.
-
-## Enterprise Receipt v2 Foundation
-
-The optional enterprise extra adds an offline-verifiable DSSE envelope with an
-Ed25519 signer identity, signed policy bundles, and signed revocation lists:
-
-```bash
-pip install "factoryline-code-factory[enterprise]"
-factory enterprise keygen --out-dir .factory/keys --keyid ci-main \
-  --identity "https://github.com/OWNER/REPO/.github/workflows/proof.yml@refs/heads/main" \
-  --issuer "https://token.actions.githubusercontent.com"
-factory enterprise receipt-seal receipt-v2.json \
-  --private-key .factory/keys/ci-main.private.pem --keyid ci-main \
-  --identity "https://github.com/OWNER/REPO/.github/workflows/proof.yml@refs/heads/main" \
-  --issuer "https://token.actions.githubusercontent.com" --out receipt.dsse.json
-factory enterprise verify receipt.dsse.json --trust-root .factory/keys/trust-root.json
-```
-
-Verification is local and fail-closed. It checks the DSSE signature, exact
-payload digest, trusted key id, identity, issuer, policy digest, and supplied
-revocation list without contacting a service. v1 receipts remain readable but
-return `LEGACY_UNVERIFIED` in the enterprise verifier. The local control-plane
-foundation is documented above; the optional hosted GitHub/OIDC adapter is
-documented in [Hosted Control Plane](docs/HOSTED_CONTROL_PLANE.md). SCIM,
-managed HA, OSCAL packs, BBS credentials, and zkVM proofs remain future
-roadmap work; see [Enterprise Receipt v2](docs/ENTERPRISE_RECEIPTS.md).
-
-## Loop Passport
-
-`factory loop` makes an autonomous-loop contract reviewable before it runs. The
-manifest declares its trigger, workspace scope, named skills/connectors,
-allowed actions, hard token/cost/time/iteration limits, required approvals,
-validators, and state machine. The generated Passport hash-binds that contract
-and includes a first-class Mermaid graph.
-
-```powershell
-factory loop init dependency-audit --owner platform-team --root .
-factory loop validate .factory/loops/dependency-audit.loop.json --json
-factory loop passport .factory/loops/dependency-audit.loop.json --root . --json
-factory loop budget .factory/loops/dependency-audit.loop.json usage.json --root . --json
-factory loop verify .factory/loop-passports/dependency-audit.loop-passport.json --json
-```
-
-The budget command writes `WITHIN_BUDGET`, `BUDGET_EXCEEDED`, or
-`MANIFEST_INVALID` receipts. It enforces declared ceilings over usage supplied
-by a runtime adapter; it does not claim to independently enforce provider
-billing, credential injection, host sandboxing, or network egress. Those are
-runtime responsibilities that the Passport makes explicit for review.
-
-## Existing Repositories And PRs
-
-Start from inherited code with `forge adopt <feature> --root .`. It writes a
-reviewable architecture baseline and, for TypeScript, an explicit mutant
-manifest for `forge verify-tests-ts`. FactoryLine exposes the operational
-controls professionals need: `factory overhead` reports measured per-gate wall
-time, `factory override` writes an owned exception receipt, and `factory ci
-init --feature <feature>` writes an opt-in GitHub PR-comment workflow.
-
-```bash
-factory doctor --json   # versions, workflow canaries, and provenance status
-factory plan            # print the assembly pipeline
-factory init .          # lay down the shared workspace
-factory assemble my_feature   # run the line (skips any missing brick)
-factory meter           # receipted cost + savings, computed on YOUR runs
-factory meter --json    # current local overview for an IDE or dashboard
-factory meter --watch   # refresh as measured stages finish
-factory rollup my_feature      # aggregate receipt attribution for debugging
-factory trace my_feature       # hash-link receipts into a proof bundle
-factory verify-trace .factory/traces/my_feature.trace.json
-factory replay .factory/traces/my_feature.trace.json --changed smoke/my_feature.json
-factory evidence my_feature    # public-safe proof for a PR or release note
-factory policy                 # write default policy-as-code thresholds
-factory verify-policy --challenge policy.challenge.json # prove every policy rule is enforced
-factory optimize-pr --changed specs/my_feature.md --feature my_feature
-factory pr-pack my_feature     # reviewer-ready PR_EVIDENCE.md
-factory app from-prd PRD.md --out my-app --purpose saas
-factory challenge my_feature --trace .factory/traces/my_feature.trace.json
-factory passport my_feature --trace .factory/traces/my_feature.trace.json --challenge .factory/challenges/factoryline.json
-```
-
-`factory assemble` is resumable and stops at human-owned authoring and approval
-boundaries. Its JSON output names `paused_at` and the exact `next_command`; it
-does not silently approve architecture or claim unfinished scaffolds are built.
-
-For a concise existing-repository path and a first-run feedback route, see
-[First Use On An Existing Repository](docs/FIRST_USE.md). The best contribution
-right now is a real repo run, including where the workflow helped or failed.
-
-See [ProofLab and the Factory Passport](docs/PROOFLAB.md) for all five challenge
-commands and the generated Mermaid artifact.
-
-For publication order, GitHub release steps, Claude Code/Codex setup, and
-launch links, see [PUBLICATION_GUIDE.md](PUBLICATION_GUIDE.md).
-
-## Instant PRD-to-App Builder
-
-`factory app` is the one-shot app-builder workflow: PRD or prompt in,
-full-stack starter out, with gates and evidence hooks already attached.
-Treat the output as app-shaped starting state that must still move through
-SpecLine, ForgeLine, HSF, Prestige, and Factoryline proof before release.
-
-```bash
-factory app from-prompt "Build an expense approval app with manager review, audit logs, and policy-based approvals" --out expense-approval
-factory app from-prd PRD.md --stack nextjs-fastapi-postgres --purpose healthcare --out prior-auth-portal
-```
-
-It generates `app_blueprint.json`, `PRD.md`, frontend/backend/db starter files,
-smoke tests, and a workflow guide. The point is not to bypass engineering
-judgment; the point is to make the first app-shaped repo appear instantly while
-preserving the factory contract.
-
-See [docs/APP_BUILDER.md](docs/APP_BUILDER.md) for the visual workflow,
-illustrative readiness model, generated file tree, and follow-up commands.
-
-## PR optimization control plane
-
-Senior review is now a factory surface. `factory optimize-pr` turns a diff into
-a bounded hardening plan: changed paths, invalidated gates, design/release
-checks, terminal states, and the no-auto-merge authority boundary. It is
-deterministic and safe to run before opening or updating a PR.
-
-`factory pr-pack <feature>` writes a public-safe reviewer packet from the
-hash-linked trace: what changed, which receipts proved it, what the meter can
-honestly measure, and which claims remain scoped. `factory policy` keeps the
-team rules visible: hollow-test proof, hollow-validator proof, release
-readiness, design purpose, and approval boundaries.
-
-`factory verify-policy --challenge policy.challenge.json` completes the same
-mutation doctrine for policy rules: it deletes or inverts every rule and requires
-your evaluator to reject the changed policy. A rule that survives is reported as
-`HOLLOW_POLICY`; see [Verify Policy](docs/VERIFY_POLICY.md).
-
-![Verify Policy detects a hollow evaluator](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/verify-policy.gif)
-
-## Why Lego, not a monolith
-
-- **Each brick stands alone.** Install only what you need; a missing brick is skipped, not fatal.
-- **Filesystem interop = maximum portability.** Bricks pass work on disk under a shared
-  layout. Any IDE, agent (Codex / Claude Code / Cursor), CI runner, or OS that can run a
-  subprocess drives the factory. No daemon, no network, no lock-in.
-- **No hidden coupling.** The baseplate depends on none of the bricks — it shells out to
-  their CLIs. Upgrade or swap a brick independently.
-
-## Honest metering
-
-`factory meter` makes the "saves time and money" claim *yours*, computed from your runs:
-
-- With **no measured runs**, it refuses to print a savings percentage — no number against zero data.
-- When modules don't report token usage, it labels the figure a **model**, not a measurement, and says so.
-- It prints the **baseline assumption** inline, so no number hides what it's compared against.
-
-Wall-clock time is always measured. Projections are always labeled. Nothing is fabricated.
-
-Use `factory meter --json` for the same local overview in an IDE, or `factory
-meter --watch` for a terminal that refreshes as new stages finish. To capture a
-real local command without pretending it used a model:
-
-```bash
-factory meter --feature release --module codex --stage pytest \
-  --capture -- python -m pytest -q
-```
-
-The capture records wall time, exit status, feature, and a run ID. It leaves
-tokens **not reported** until a module supplies a standard meter block.
-
-## Launch Measurement
-
-Use [`scripts/capture_launch_metrics.ps1`](scripts/capture_launch_metrics.ps1)
-to save raw PyPI and GitHub traffic observations as JSON receipts. It records
-downloads, views, and clones without calling any of them unique users or
-attributed conversions; see [Launch Measurement](docs/LAUNCH_MEASUREMENT.md).
-
-## Proof-carrying PRs
-
-`factory trace <feature>` writes `.factory/traces/<feature>.trace.json`: a
-deterministic proof bundle over the latest compatible receipts for that feature.
-Each trace node records the stage, command, receipt hash, declared artifact
-hashes, previous node hash, and attribution summary. The chain head makes receipt
-or artifact tampering visible.
-`factory rollup <feature>` is the lower-level receipt attribution view for
-debugging failed stages; `factory evidence <feature>` is the public-safe view for
-PRs, release notes, and README claims.
-
-```bash
-factory trace checkout_flow
-factory verify-trace .factory/traces/checkout_flow.trace.json
-factory rollup checkout_flow
-factory risk-diff --changed smoke/checkout_flow.json
-factory replay .factory/traces/checkout_flow.trace.json --changed smoke/checkout_flow.json
-factory replay .factory/traces/checkout_flow.trace.json --changed smoke/checkout_flow.json --execute
-factory attest .factory/traces/checkout_flow.trace.json
-factory evidence checkout_flow
-```
-
-This is the enterprise Lego layer: the factory can say which guarantee a change
-invalidates, which minimum stages must rerun, whether the trace still verifies,
-and what public evidence can be shown without leaking raw logs. If a smoke check
-is hollow, the public evidence can say `hollow_test`; if the trace was tampered
-with, `verify-trace` fails before anyone trusts the PR. `factory attest` exports
-unsigned in-toto/SLSA-shaped JSON statements for teams that want supply-chain
-evidence attached beside a PR, release, or wheel.
-
-## Spec validator mutation
-
-The assembly line now validates the spec instrument itself:
-
-```bash
-specline strict checkout_flow --json
-specline verify-validators checkout_flow --json
-```
-
-`verify-validators` deletes or inverts one requirement at a time and requires
-strict lint to kill the mutant. A requirement whose mutant still passes reports
-`hollow_validator`: the spec looked valid, but no validator proved that
-requirement mattered. In the default factory chain, this runs after
-`specline:strict` and before spec gate signoff or downstream build stages.
-
-## Cross-platform
-
-The baseplate runs on Python 3.10-3.12. The four numbered bricks run on Python
-3.11-3.12. Their CI matrices cover Ubuntu, Windows, and macOS.
+Use [Intake Grill](docs/INTAKE_GRILL.md) to pin down intent before a mission,
+[PRD Grill](docs/PRD_GRILL.md) before code exists, the deterministic
+[contradiction gate](docs/RELEASE_NOTES_0.25.0.md) when requirements collide, [Proof Review](docs/DIFF_TO_PROOF_REVIEW.md)
+when a diff arrives, and the [Verifier Plane](docs/VERIFIER_PLANE.md) when a worker
+claims it is finished. Use the supervised [Gauntlet](docs/GAUNTLET.md) when a
+specific behavior needs to survive explicitly reviewed failure cases. The local
+[MCP contract](docs/MCP.md) and generated Mermaid output map make the same proof
+context reusable by a client you choose.
+
+## Go deeper when you need it
+
+- Read [why I built Code Factory](docs/WHY_I_BUILT_CODE_FACTORY.md) for the
+  founder story behind catching passing tests that fail in real use.
+- Start with [PRD Grill](docs/PRD_GRILL.md), [Proof Review](docs/DIFF_TO_PROOF_REVIEW.md),
+  or [Verifier Plane](docs/VERIFIER_PLANE.md) when the job calls for it.
+- Browse [Graph Ops](docs/GRAPH_OPS.md), [Gauntlet](docs/GAUNTLET.md), [Proof-Delta Loop](docs/PROOF_DELTA_LOOP.md), [Graph Portfolio and Run Admission](docs/GRAPH_PORTFOLIO_ADMISSION.md), [Evidence Frontier](docs/EVIDENCE_FRONTIER.md), [Factory Reality Check](docs/REALITY_CHECK.md), [proof reuse](docs/PROOF_REUSE.md), and
+  [LangGraph Assurance](docs/LANGGRAPH_ASSURANCE.md), and [savings boundaries](docs/SAVINGS_TRACKER.md) for advanced evidence workflows.
+- Use [IDE Health and Index Continuity](docs/IDE_HEALTH.md) when a JetBrains IDE slows down and you need locally observed signals before deciding what to review.
+- For UI work, read [Prestige Design Review](docs/PRESTIGE_DESIGN.md) for the
+  optional design-quality lane and its explicit review boundaries.
+- Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
+  for the design and limits of the habituation gate.
+- See the [release notes](docs/RELEASE_NOTES_0.44.1.md),
+  [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
+  [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 
 ## License
 
-MIT OR Apache-2.0. Free and open source. Each brick carries both license texts.
-Commercial support and integration services available — see [SUPPORT.md](SUPPORT.md).
+MIT OR Apache-2.0.

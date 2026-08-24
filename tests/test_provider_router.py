@@ -122,3 +122,38 @@ def test_router_preserves_equal_cost_cache_and_rejects_unsafe_policy(tmp_path: P
     unknown[0]["credential"] = "should-never-be-accepted"
     with pytest.raises(ProviderRouterError, match="unknown fields"):
         create_provider_policy(tmp_path / "unknown", "owner", unknown, ["cli", "studio", "vscode", "jetbrains"], 5.0)
+
+
+def test_router_enforces_execution_capability_privacy_latency_and_output_rails(tmp_path: Path, monkeypatch):
+    providers = _providers()
+    providers[0]["models"][0].update({
+        "max_context_tokens": 8000,
+        "max_latency_ms": 1000,
+        "capabilities": ["json", "tools"],
+        "privacy_class": "restricted",
+        "output_contracts": ["json"],
+    })
+    providers[0]["models"][1].update({
+        "max_context_tokens": 12000,
+        "max_latency_ms": 4500,
+        "capabilities": ["json"],
+        "privacy_class": "standard",
+        "output_contracts": ["text"],
+    })
+    for provider in providers:
+        provider["allowed_ides"] = ["jetbrains"]
+    policy = create_provider_policy(tmp_path, "owner", providers, ["jetbrains"], 10.0, quality_floor="balanced")
+    mission = _pipeline(tmp_path)
+    monkeypatch.setenv("PROVIDER_A_KEY", "a")
+    monkeypatch.setenv("PROVIDER_B_KEY", "b")
+    result = route_provider(
+        Path(policy["path"]), Path(mission["path"]), tmp_path, "jetbrains", "low",
+        projected_tokens=7000, latency_budget_ms=1500,
+        required_capabilities=["tools"], privacy_class="restricted", output_contract="json",
+    )
+    assert result["selected"]["model"] == "balanced-a"
+    assert result["execution_rails"]["projected_tokens"] == 7000
+    with pytest.raises(ProviderRouterError, match="PROVIDER_ROUTE_RAILS_ENFORCED"):
+        route_provider(Path(policy["path"]), Path(mission["path"]), tmp_path, "jetbrains", "low", projected_tokens=9000, required_capabilities=["tools"])
+    with pytest.raises(ProviderRouterError, match="PROVIDER_ROUTE_RAILS_ENFORCED"):
+        route_provider(Path(policy["path"]), Path(mission["path"]), tmp_path, "jetbrains", "low", output_contract="jsonl")

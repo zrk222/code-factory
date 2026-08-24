@@ -125,6 +125,18 @@ def _validation_for(mission: dict, creator: str, verifier: str, evidence: Path) 
         "creator_id": creator,
         "verifier_id": verifier,
         "verifier_context": ["mission.json", "candidate_diff", "evidence_manifest"],
+        "adapter_attestation": {
+            "schema": "factory.verifier-attestation.v1",
+            "mission_digest": mission["mission_sha256"],
+            "contract_digest": "c" * 64,
+            "creator_id": creator,
+            "verifier_id": verifier,
+            "verifier_context": ["mission.json", "candidate_diff", "evidence_manifest"],
+            "fresh_session": True,
+            "context_wall": "isolated",
+            "evidence_digest": "d" * 64,
+            "adapter_id": "test-adapter",
+        },
         "criteria": criteria,
     }
 

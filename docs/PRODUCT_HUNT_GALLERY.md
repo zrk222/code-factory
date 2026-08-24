@@ -1,51 +1,81 @@
-# Product Hunt Visual Gallery
+# Product Hunt visual gallery
 
-## Concept illustrations
+Use this gallery only on the existing **Code Factory** Product Hunt product.
+It is not a duplicate-launch kit.
 
-These images are explanatory artwork, not screenshots of the shipped Factory
-Studio UI and not measured outcome evidence. Keep the exact UI demonstration
-separate from this gallery.
+## Approved current media
 
-Release v0.20.0 adds two concrete operational use cases to the listing copy:
+Use the files in this exact order:
 
-- Durable, receipt-backed missions that pause for human plan review, resume
-  with fresh worker context, and refuse completion without independent proof.
-- Secret-free multi-provider BYOK routing across CLI, Studio, VS Code, and
-  JetBrains with explicit quality, budget, allowlist, and cache rails.
+1. `docs/assets/factoryline-logo-480.png` — current FactoryLine identity.
+2. `docs/assets/marketplace/factoryline-0.44-live-dashboard.png` — actual
+   FactoryLine 0.44 live telemetry, waiting-for-human boundary, and
+   evidence-backed next actions.
+3. `docs/assets/marketplace/code-factory-60-day-personal-case-study.png` — one
+   creator-use case with observed local metadata and a separately labeled,
+   assumption-based capacity range.
+4. `docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg` — actual
+   IntelliJ controls for proof, assemblies, receipts, Change Lists, workspace
+   analysis, and the local meter.
+5. `docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg` — actual
+   FactoryLine AI Proof running a successful local First Proof in IntelliJ IDEA.
+6. `docs/assets/marketplace/factory-studio-mvp-1280x800.png` — actual local,
+   outcome-first MVP flow and explicit local-only boundary.
+7. `docs/assets/marketplace/graph-ops-proofsearch.png` — actual Graph Ops
+   first-divergence, repair-candidate, winner, and locked-control surface.
+8. `docs/assets/marketplace/graph-ops-proofsearch-controls.png` — actual winner
+   rationale, measured-or-unavailable savings, and review/export/validation
+   controls with Apply visibly locked.
+9. `docs/assets/marketplace/graph-ops-evidence-frontier.png` — actual Evidence
+   Frontier ranking supplied next-evidence hypotheses, with execution visibly
+   locked.
 
-Suggested tagline: **Route any model. Govern every mission. Prove every ship.**
+These are product captures, not a claim of measured performance, savings,
+conversion, Marketplace approval, or production readiness. Do not use the
+retired v0.17 walkthrough, blank-dashboard images, or concept art.
 
-Suggested CTA: **Bring your own models, choose your IDE, and run the proof-first
-factory from the public repository.**
+Product Hunt currently requires at least two images for a visible gallery and
+recommends 1270 × 760 media. Upload the two 1280 × 800 product captures at
+their native aspect ratio; do not crop in a way that removes the authority or
+proof-status text. Use the 480 × 480 logo as the product icon rather than as a
+gallery replacement.
 
-Product Hunt currently requires at least 2 images for a visible gallery and
-recommends 1270 x 760 gallery images. Source images are 1122 x 1402 portrait PNGs;
-preview the uncropped originals in the Product Hunt editor before
-publishing. Do not crop or regenerate owner-supplied artwork without review.
+## Current upgrade copy
 
-Product Hunt video entries accept a full YouTube URL. A local MP4 or shortened
-URL is not a valid video entry. Publish the exact shipped UI walkthrough to
-YouTube first if a video should appear in the gallery.
+Use this only as an update associated with the existing **Code Factory**
+Product Hunt product.
 
-The repository MP4 remains appropriate for GitHub, PyPI, and Hugging Face. Do
-not claim it has been added to Product Hunt until a public, non-private full
-YouTube URL is available and the Product Hunt editor confirms the gallery item.
+**Headline:** Refresh the proof state. See the next safe action.
 
-## Upload order
+**Tagline:** Follow live local delivery evidence without handing an AI release authority.
 
-1. `01-idea-to-blueprint.png` - Turn a raw idea into an explicit blueprint.
-2. `02-prd-to-product-shape.png` - Bind the blueprint to a product shape.
-3. `03-ai-compiler-stack.png` - Compile recurring decisions deterministically.
-4. `04-security-contracts.png` - Make security contracts explicit.
-5. `05-governed-access.png` - Keep authority and access bounded.
-6. `06-proof-by-sabotage.png` - Prove that the gate catches sabotage.
-7. `07-failure-feedback.png` - Route concrete failures to the right stage.
-8. `08-signed-proof-chain.png` - Link accepted and rejected receipt evidence.
-9. `09-verified-release.png` - Release only after the required proof passes.
+**Update copy:**
 
-Upload from `docs/assets/how-it-works/` and preserve this order. The first image
-explains the start state; the sixth makes the proof-by-sabotage differentiator
-visible; the ninth supplies the end beat.
+Code Factory now keeps Factory Studio and Unified Graph Ops current while a
+local Assembly runs. Refresh the activity state, see the current stage and
+completed work, and open a Developer Memory Brief that turns the exact diff into
+one safe next-proof action. It also shows redacted continuity facts and observed
+local Git contribution context—never a claim that Git authors are verified
+seats, owners, approvers, or a billing roster.
+
+Evidence Frontier then ranks the supplied, non-executing checks by how many
+viable repair pairs each can distinguish. Its predictions are displayed as
+unverified hypotheses—not a model verdict—and the next experiment remains
+locked until a separately approved runner records external evidence.
+
+The same UI still makes evidence and authority visible: fresh or stale proof,
+next action, and measured-or-unavailable values are separated from approvals.
+Verification, export, and guardrail controls remain available; tests, repairs,
+apply, merge, publication, deployment, credentials, and connectors remain
+human-controlled.
+
+**Primary CTA:** Inspect the live repair arena and verify the winning evidence.
+
+**Proof links:**
+
+- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.44.1`
+- PyPI: `https://pypi.org/project/factoryline-code-factory/0.44.1/`
+- Source: `https://github.com/zrk222/code-factory`
 
 If no authenticated Code Factory post or draft exists, report
 `LISTING_NOT_FOUND` and keep this copy-ready gallery in the repository. Do not

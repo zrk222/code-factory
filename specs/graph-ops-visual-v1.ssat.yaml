@@ -1,0 +1,29 @@
+name: graph-ops-visual-v1
+language: python
+modules:
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_snapshot
+        args: [root]
+        returns: dict[str, Any]
+      - name: graph_ops_impact
+        args: [root, changed_paths]
+        returns: dict[str, Any]
+      - name: graph_ops_html
+        args: [token]
+        returns: str
+dependencies: []
+invariants:
+  - name: graph_snapshot_is_read_only
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: graph_ops
+        symbol: graph_ops_snapshot
+        max_lines: 80
+  - name: change_impact_is_read_only
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: graph_ops
+        symbol: graph_ops_impact
+        max_lines: 90

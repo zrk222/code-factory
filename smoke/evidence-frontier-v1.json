@@ -1,0 +1,17 @@
+{
+  "checks": [
+    {
+      "name": "evidence_frontier_selects_a_separating_experiment_without_execution",
+      "kind": "python",
+      "run": "import hashlib, json, tempfile\nfrom pathlib import Path\nfrom factoryline.graph_forensics import seal_graph_lineage\nfrom factoryline.proofsearch import create_proofsearch_plan, evaluate_proofsearch\nfrom factoryline.evidence_frontier import plan_evidence_frontier\nwith tempfile.TemporaryDirectory() as raw:\n root=Path(raw); sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest(); step={\"sequence\":1,\"superstep\":0,\"node_id\":\"build\",\"checkpoint_id\":\"cp\",\"reads\":[],\"writes\":[],\"evidence\":[],\"side_effects\":[],\"decision\":{\"route\":\"verify\",\"reason\":\"ready\"}}; left_steps=root/'left-steps.json'; right_steps=root/'right-steps.json'; left_steps.write_text(json.dumps([step])); right_steps.write_text(json.dumps([{**step,\"decision\":{\"route\":\"repair\",\"reason\":\"failed\"}}])); left=root/'left.json'; right=root/'right.json'; seal_graph_lineage('left','graph',left_steps,left); seal_graph_lineage('right','graph',right_steps,right); plan=root/'plan.json'; create_proofsearch_plan(root,left,right,['src/a.py'],plan)\n def candidate(name,risk):\n  patch=root/f'{name}.patch'; patch.write_text(name); receipt=root/f'{name}.proof.json'; receipt.write_text(json.dumps({\"passed\":True})); return {\"candidate_id\":name,\"patch\":{\"path\":patch.name,\"sha256\":sha(patch)},\"changed_paths\":[\"src/a.py\"],\"proofs\":[{\"name\":\"unit\",\"required\":True,\"status\":\"passed\",\"receipt\":{\"path\":receipt.name,\"sha256\":sha(receipt)},\"elapsed_ms\":10,\"tokens\":None,\"cost_usd\":None}],\"mutation\":{\"killed\":1,\"total\":1},\"guardrails\":{\"weakens_tests\":False,\"suppresses_errors\":False,\"expands_scope\":False},\"risk_score\":risk,\"changed_lines\":risk}\n request=root/'request.json'; request.write_text(json.dumps({\"schema\":\"factory.proofsearch-request.v1\",\"plan\":{\"path\":plan.name,\"sha256\":sha(plan)},\"candidates\":[candidate('a',1),candidate('b',2)]})); evaluation=root/'evaluation.json'; evaluate_proofsearch(root,request,evaluation); frontier_request=root/'frontier-request.json'; frontier_request.write_text(json.dumps({\"schema\":\"factory.evidence-frontier-request.v1\",\"evaluation\":{\"path\":evaluation.name,\"sha256\":sha(evaluation)},\"max_experiments\":1,\"experiments\":[{\"experiment_id\":\"contract\",\"kind\":\"test\",\"description\":\"Run one declared contract test.\",\"predictions\":{\"a\":\"pass\",\"b\":\"fail\"},\"measurement\":None}]})); result=plan_evidence_frontier(root,frontier_request,root/'frontier.json'); assert result['next_experiment']=='contract'; assert result['experiments'][0]['separation_count']==1; assert all(value is False for value in result['authority'].values())\nprint('EVIDENCE_FRONTIER_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "EVIDENCE_FRONTIER_SMOKE_PASS",
+      "timeout_s": 30,
+      "covers": [
+        "EVIDENCE_FRONTIER_NEXT_EXPERIMENT_SELECTED",
+        "EVIDENCE_FRONTIER_AUTHORITY_RETAINED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

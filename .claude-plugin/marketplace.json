@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "code-factory",
+  "owner": {
+    "name": "Code Factory",
+    "email": "rkatz22@gmail.com"
+  },
+  "description": "Local proof plugins that catch AI-code evidence gaps before review.",
+  "plugins": [
+    {
+      "name": "code-factory-langgraph",
+      "source": "./plugins/code-factory-langgraph",
+      "description": "Proof-aware LangGraph guidance and read-only resume-parity receipts before review.",
+      "author": {
+        "name": "Richard Katz",
+        "email": "rkatz22@gmail.com"
+      }
+    },
+    {
+      "name": "code-factory-session-recorder",
+      "source": "./plugins/code-factory-session-recorder",
+      "description": "Hash-chain Claude Code tool boundaries and connect admitted sessions to Code Factory governed evidence.",
+      "author": {
+        "name": "Richard Katz",
+        "email": "rkatz22@gmail.com"
+      }
+    }
+  ]
+}

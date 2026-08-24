@@ -1,5 +1,14 @@
 {
   "constraints": {
+    "A_SUBPROC": {
+      "code": "A_SUBPROC",
+      "rule": "A_SUBPROC subprocess use in factoryline/cli.py",
+      "promoted_from_count": 3,
+      "promoted_at": "2026-08-19T03:42:59.193810+00:00",
+      "times_enforced": 4,
+      "prevented_recurrence": 4,
+      "status": "active"
+    },
     "J_PARSER_UNSUPPORTED": {
       "code": "J_PARSER_UNSUPPORTED",
       "rule": "J_PARSER_UNSUPPORTED products/agent-cloud/app/src/components/IntentComposer.tsx: TypeScript compiler is required for TSX",

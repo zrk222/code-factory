@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.20.0"
-description = "A proof-first software factory with durable missions, secret-free multi-provider BYOK routing, signed receipts, and supervised enterprise control."
+version = "0.44.1"
+description = "Catch AI-generated tests that could never fail and review AI code with local proof."
 authors = [
   { name = "Richard Katz" },
   { email = "rkatz22@gmail.com" },
@@ -23,6 +23,28 @@ keywords = [
   "mutation-testing",
   "release-evidence",
   "developer-tools",
+  "mvp",
+  "mcp",
+  "model-context-protocol",
+  "cursor",
+  "opencode",
+  "ai-coding-assistant",
+  "graph-ops",
+  "prd-grill",
+  "independent-verification",
+  "verifier-plane",
+  "github-pull-request",
+  "proof-review",
+  "proof-debt",
+  "ai-governance",
+  "design-review",
+  "ui-quality",
+  "langgraph",
+  "agent-replay",
+  "resume-parity",
+  "gauntlet",
+  "e2e-testing",
+  "survival-card",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -35,7 +57,10 @@ classifiers = [
   "Topic :: Software Development :: Build Tools",
   "Topic :: Software Development :: Quality Assurance",
 ]
-dependencies = ["cryptography>=42,<50"]
+dependencies = [
+  "cryptography>=42,<50",
+  "tomli>=2.0; python_version < '3.11'",
+]
 
 [project.urls]
 Homepage = "https://github.com/zrk222/code-factory"
@@ -62,11 +87,15 @@ langgraph = [
   "langgraph-checkpoint-sqlite>=3,<4",
 ]
 
+[tool.pytest.ini_options]
+pythonpath = ["tests", "."]
+
 [project.scripts]
 factory = "factoryline.cli:main"
 
 [tool.setuptools]
 packages = ["factoryline", "factoryline.builtin_packs"]
+include-package-data = false
 
 [tool.setuptools.package-data]
-factoryline = ["builtin_packs/**/*", "hosted_console.html"]
+factoryline = ["builtin_packs/**/*", "data/*.json", "hosted_console.html", "graph_ops.html"]

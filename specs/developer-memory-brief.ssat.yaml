@@ -1,0 +1,55 @@
+name: developer-memory-brief
+language: python
+modules:
+  - name: developer_memory
+    path: factoryline/developer_memory.py
+    functions:
+      - name: developer_memory_brief
+        args: [root, base, changed]
+        returns: dict
+  - name: cli
+    path: factoryline/cli.py
+    functions:
+      - name: main
+        args: [argv]
+        returns: int
+  - name: mcp
+    path: factoryline/mcp.py
+    functions:
+      - name: _tool_call
+        args: [root, params]
+        returns: dict
+  - name: studio
+    path: factoryline/studio.py
+    functions:
+      - name: developer_memory_snapshot
+        args: [root]
+        returns: dict
+dependencies:
+  - from: cli
+    to: studio
+  - from: cli
+    to: mcp
+  - from: cli
+    to: developer_memory
+  - from: mcp
+    to: developer_memory
+  - from: studio
+    to: developer_memory
+  - from: developer_memory
+    to: change_review
+  - from: developer_memory
+    to: continuity
+invariants:
+  - name: brief_is_analysis_only
+    forbid_pattern: "write_(?:text|bytes)\\(|mkdir\\(|replace\\(|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:execute|merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: developer_memory
+        symbol: developer_memory_brief
+        max_lines: 230
+  - name: studio_brief_has_no_execution_authority
+    forbid_pattern: "\\b(?:deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: studio
+        symbol: developer_memory_snapshot
+        max_lines: 65

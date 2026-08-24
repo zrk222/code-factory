@@ -1,23 +1,29 @@
-# Public Visual Assets
+# Current public visual assets
 
-`code-factory-quickstart-v0171.mp4` is the 60-second narrated quick start.
-`code-factory-quickstart-cover-v0171.png` is its public cover. The video uses
-`factory-studio-control-room-1080.png`, an exact 1920x1080 capture of the
-shipped local Studio, as its only UI source; its highlights follow the real
-panel geometry rather than reconstructed dashboard cards.
+Public product surfaces use only the assets listed in
+[`../PRODUCT_VISUALS.md`](../PRODUCT_VISUALS.md): the FactoryLine identity
+asset and current exact product captures. They are product evidence, not
+performance, savings, or readiness evidence.
 
-`factory-studio-control-room.png` is the full-page Studio reference capture.
+`marketplace/factoryline-0.44-live-dashboard.png` shows the current Graph Ops
+telemetry and evidence-backed next actions for a real local Assembly.
+`marketplace/factoryline-jetbrains-0.44-all-controls.jpg` shows the current
+JetBrains control surface for proof, assemblies, receipts, Change Lists,
+workspace analysis, and the local meter.
+`marketplace/factoryline-jetbrains-0.44-in-action.jpg` shows the current
+JetBrains plugin completing a local First Proof.
+`marketplace/factoryline-60-day-personal-case-study.png` visualizes one
+observed 60-day local Codex case and a separately labeled capacity model.
+`marketplace/code-factory-60-day-personal-case-study.png` is the same bounded
+case-study evidence with the public Code Factory brand for GitHub, Hugging Face,
+Product Hunt, Zenodo, Open VSX, and social distribution.
+The remaining captures retain
+current feature-specific walkthroughs. `marketplace/factory-studio-mvp-1280x800.png` shows the outcome-first local MVP
+path and explicit local-only boundary. `marketplace/graph-ops-studio-1280x800.png`
+shows the Graph Ops evidence path, including an incomplete proof state rather
+than a simulated success. `factoryline-logo-480.png` is the current identity
+asset used beside these product captures.
 
-Use `factory-editor-control-room.svg` for current Code Factory public material.
-It depicts the shipped local VS Code and JetBrains control surfaces and keeps
-the CLI as the receipt authority.
-
-`prd-to-app-factory.svg` is the current PRD-to-app workflow visual. Its
-readiness labels are deliberately illustrative and say `NOT RUN` until receipts
-exist.
-
-`code-factory-design.png` and `code-factory-proof-first.png` are retained as
-historical social-image drafts. They are not referenced by current public docs
-or launch copy, and their embedded counts are not current release claims.
-
-`verify-policy.gif` is a command demonstration, not a metric artifact.
+`verify-policy.gif` remains a command demonstration for technical
+documentation. The SVG workflow diagrams are technical documentation assets;
+do not present them as product screenshots or Marketplace media.

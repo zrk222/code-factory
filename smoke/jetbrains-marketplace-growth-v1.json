@@ -1,0 +1,20 @@
+{
+  "checks": [
+    {
+      "name": "jetbrains_listing_and_first_proof_are_bound",
+      "kind": "python",
+      "run": "from pathlib import Path\nimport json\nroot=Path.cwd()\nxml=(root/'editors/intellij/src/main/resources/META-INF/plugin.xml').read_text(encoding='utf-8')\ncore=(root/'editors/intellij/src/main/kotlin/app/factoryline/intellij/FactoryLineCore.kt').read_text(encoding='utf-8')\nactions=(root/'editors/intellij/src/main/kotlin/app/factoryline/intellij/FactoryLineActions.kt').read_text(encoding='utf-8')\nshots=(root/'docs/JETBRAINS_MARKETPLACE_SCREENSHOTS.md').read_text(encoding='utf-8')\npricing=json.loads((root/'docs/JETBRAINS_PRICING_BENCHMARK.json').read_text(encoding='utf-8'))\nassert '<id>app.factoryline</id>' in xml\nassert '<name>FactoryLine AI Proof</name>' in xml\nassert '<p>Verify AI code before you ship.</p>' in xml\nassert 'fun firstProof(): List<String> = listOf(\"doctor\", \"--json\")' in core\nassert 'FactoryLineExecutionConfirmation.confirm(project, \"Run First Proof\")' in actions\nassert 'Use real plugin UI, not concept art.' in shots and '1200x760' in shots\nassert pricing['status']=='planning_sample_not_a_marketplace_price' and pricing['free_through']=='2026-12-31'\n",
+      "covers": [
+        "STABLE_MARKETPLACE_ID",
+        "OUTCOME_LED_PREVIEW",
+        "FIRST_PROOF_RESULT",
+        "REDACTED_LOCAL_RESULT",
+        "FIRST_PROOF_BLOCKED",
+        "REAL_SCREENSHOT_BRIEF",
+        "PRICING_NOTICE_BOUNDED",
+        "HUMAN_PUBLICATION_REQUIRED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

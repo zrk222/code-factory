@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from hashlib import sha256
 import json
 
 import pytest
@@ -24,6 +25,7 @@ from factoryline.product_missions import (
     decide_mission,
     plan_value_slices,
 )
+from factoryline.proof_delta import create_proof_delta
 
 
 PRD = """# Graph Runtime Fixture
@@ -63,6 +65,16 @@ def _receipt(tmp_path: Path, name: str, schema: str, mission_id: str, **values) 
     return path
 
 
+def _candidate_with_evidence(tmp_path: Path, name: str, mission: dict, diff_sha256: str, evidence_name: str) -> Path:
+    evidence = tmp_path / evidence_name
+    evidence.write_text(f"evidence for {name}\n", encoding="utf-8")
+    return _receipt(
+        tmp_path, name, "factory.mission.candidate.v1", mission["id"],
+        candidate={"diff_sha256": diff_sha256, "changed_paths": ["src/example.py"]},
+        evidence=[{"path": evidence.name, "sha256": sha256(evidence.read_bytes()).hexdigest(), "kind": "test_result"}],
+    )
+
+
 def _completion(tmp_path: Path, mission: dict, creator: str, verifier: str) -> Path:
     evidence = tmp_path / f"evidence-{creator}.json"
     evidence.write_text('{"passed":true}\n', encoding="utf-8")
@@ -72,6 +84,18 @@ def _completion(tmp_path: Path, mission: dict, creator: str, verifier: str) -> P
         "creator_id": creator,
         "verifier_id": verifier,
         "verifier_context": ["mission.json", "candidate_diff", "evidence_manifest"],
+        "adapter_attestation": {
+            "schema": "factory.verifier-attestation.v1",
+            "mission_digest": mission["mission_sha256"],
+            "contract_digest": "c" * 64,
+            "creator_id": creator,
+            "verifier_id": verifier,
+            "verifier_context": ["mission.json", "candidate_diff", "evidence_manifest"],
+            "fresh_session": True,
+            "context_wall": "isolated",
+            "evidence_digest": "d" * 64,
+            "adapter_id": "test-adapter",
+        },
         "criteria": [
             {"id": item["id"], "passed": True, "evidence": [str(evidence)]}
             for item in mission["completion_contract"]["criteria"]
@@ -98,7 +122,7 @@ def test_native_graph_resumes_through_correction_and_completion(tmp_path: Path):
         Path(mission["path"]), tmp_path, "approve", "mission-owner", "owner", "approve-1", _approve(tmp_path, mission),
     )
     assert approved["state"] == "creator_running"
-    candidate_1 = _receipt(tmp_path, "candidate-1.json", "factory.mission.candidate.v1", mission["id"])
+    candidate_1 = _candidate_with_evidence(tmp_path, "candidate-1.json", mission, "a" * 64, "candidate-1-evidence.txt")
     apply_mission_event(
         Path(mission["path"]), tmp_path, "candidate_ready", "worker-1", "worker", "candidate-1", candidate_1,
     )
@@ -109,14 +133,17 @@ def test_native_graph_resumes_through_correction_and_completion(tmp_path: Path):
         {"criterion_id": criterion_id},
     )
     assert result["state"] == "correction_required"
-    retry = _receipt(tmp_path, "retry.json", "factory.mission.retry.v1", mission["id"])
+    candidate_2 = _candidate_with_evidence(tmp_path, "candidate-2.json", mission, "b" * 64, "candidate-2-evidence.txt")
+    retry = tmp_path / ".factory" / "proof-deltas" / "retry.json"
+    create_proof_delta(
+        tmp_path, Path(mission["path"]), candidate_1, candidate_2, failed, criterion_id, retry,
+    )
     result = apply_mission_event(
         Path(mission["path"]), tmp_path, "retry", "mission-owner", "owner", "retry-1", retry,
         {"fresh_context": True},
     )
     assert result["state"] == "creator_running"
     assert result["attempts"] == 2
-    candidate_2 = _receipt(tmp_path, "candidate-2.json", "factory.mission.candidate.v1", mission["id"])
     apply_mission_event(
         Path(mission["path"]), tmp_path, "candidate_ready", "worker-2", "worker", "candidate-2", candidate_2,
     )

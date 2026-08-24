@@ -1,0 +1,39 @@
+name: langgraph-assurance-bridge
+language: python
+modules:
+  - name: langgraph_assurance
+    path: factoryline/langgraph_assurance.py
+    functions:
+      - name: verify_langgraph_resume_parity
+        args: [root, reference_path, resumed_path, out]
+        returns: dict[str, Any]
+  - name: mcp
+    path: factoryline/mcp.py
+    functions:
+      - name: _tool_call
+        args: [root, params]
+        returns: dict[str, object]
+  - name: graph_forensics
+    path: factoryline/graph_forensics.py
+    functions:
+      - name: graph_forensics
+        args: [baseline_path, candidate_path]
+        returns: dict[str, Any]
+dependencies:
+  - from: langgraph_assurance
+    to: graph_forensics
+  - from: mcp
+    to: langgraph_assurance
+invariants:
+  - name: parity_comparison_has_no_runtime_graph_or_network_authority
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:invoke|execute|approve|merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: langgraph_assurance
+        symbol: verify_langgraph_resume_parity
+        max_lines: 120
+  - name: mcp_bridge_cannot_create_or_replay_graph_work
+    forbid_pattern: "\\b(?:write|seal|invoke|execute|approve|merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: mcp
+        symbol: _langgraph_assurance
+        max_lines: 40

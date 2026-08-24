@@ -1,0 +1,20 @@
+{
+  "checks": [
+    {
+      "name": "portfolio_orders_safe_waves_and_admission_detects_staleness_without_execution",
+      "kind": "python",
+      "run": "import json, tempfile\nfrom datetime import datetime, timedelta, timezone\nfrom pathlib import Path\nfrom factoryline.graph_portfolio import graph_portfolio_plan\nfrom factoryline.loop_passport import build_loop_passport, init_loop\nfrom factoryline.run_admission import prepare_admission, verify_admission\nraw=tempfile.TemporaryDirectory(); root=Path(raw.name)\nmanifest=Path(init_loop(root, 'dependency-audit', 'platform-team')['path'])\npassport=Path(build_loop_passport(root, manifest)['paths']['json'])\nrequest=root/'request.json'\nrequest.write_text(json.dumps({'schema':'factory.run-admission.request.v1','id':'smoke-admission','valid_until':(datetime.now(timezone.utc)+timedelta(minutes=30)).isoformat(),'trigger':{'type':'manual'},'actions':['read_repository'],'paths':['.'],'budget':{'max_iterations':1,'max_wall_seconds':900,'max_tokens':0,'max_cost_usd':0},'approvals':[]}))\nportfolio=graph_portfolio_plan({'complete':True,'graph_sha256':'a'*64,'nodes':[{'id':'slice:a','kind':'slice','status':'unknown'},{'id':'slice:b','kind':'slice','status':'unknown'},{'id':'slice:c','kind':'slice','status':'unknown'}],'edges':[{'source':'slice:a','target':'slice:b','relation':'depends_on'},{'source':'slice:a','target':'slice:c','relation':'depends_on'}]})\nassert portfolio['critical_path']==['slice:a','slice:b'] and portfolio['parallel_waves'][1]['node_ids']==['slice:b','slice:c'] and all(value is False for value in portfolio['authority'].values())\npacket=prepare_admission(root, passport, request)\nassert verify_admission(root, Path(packet['path']))['marker']=='ADMISSION_READY'\n(root/'changed.txt').write_text('changed')\nassert verify_admission(root, Path(packet['path']))['marker']=='ADMISSION_STALE'\nraw.cleanup()\nprint('GRAPH_PORTFOLIO_ADMISSION_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "GRAPH_PORTFOLIO_ADMISSION_SMOKE_PASS",
+      "timeout_s": 30,
+      "covers": [
+        "GRAPH_PORTFOLIO_STRUCTURAL_PLAN",
+        "GRAPH_PORTFOLIO_SAFE_PARALLEL_WAVES",
+        "ADMISSION_PACKET_SEALED",
+        "ADMISSION_READY",
+        "ADMISSION_STALE"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

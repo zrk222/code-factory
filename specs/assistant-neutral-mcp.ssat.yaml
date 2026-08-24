@@ -1,0 +1,17 @@
+name: assistant-neutral-mcp
+language: python
+modules:
+  - name: mcp_setup
+    path: factoryline/mcp_setup.py
+    functions:
+      - name: mcp_connection_config
+        args: [root, client]
+        returns: dict[str, object]
+dependencies: []
+invariants:
+  - name: setup_is_copy_only
+    forbid_pattern: "write_text|write_bytes|mkdir|subprocess\\.|requests\\.|urllib\\.|socket\\."
+    scopes:
+      - module: mcp_setup
+        symbol: mcp_connection_config
+        max_lines: 80

@@ -1,0 +1,35 @@
+name: release-reliability-hardening
+language: python
+modules:
+  - name: release_integrity
+    path: factoryline/release_integrity.py
+    functions:
+      - name: release_integrity
+        args: ["root: Path"]
+        returns: dict[str, Any]
+      - name: render_release_integrity
+        args: ["result: dict[str, Any]"]
+        returns: str
+  - name: huggingface_space_metadata
+    path: scripts/huggingface_space_metadata.py
+    functions:
+      - name: inspect
+        args: ["readme: Path"]
+        returns: dict[str, Any]
+      - name: main
+        args: ["argv: list[str] | None"]
+        returns: int
+dependencies: []
+invariants:
+  - name: integrity_inspection_never_executes_or_writes
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|write_(?:text|bytes)\\(|replace\\(|\\b(?:execute|merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: release_integrity
+        symbol: release_integrity
+        max_lines: 120
+  - name: huggingface_preflight_never_uploads
+    forbid_pattern: "HfApi|upload_folder|requests\\.|httpx\\.|urllib\\.|socket\\.|write_(?:text|bytes)\\(|replace\\("
+    scopes:
+      - module: huggingface_space_metadata
+        symbol: inspect
+        max_lines: 80

@@ -1,0 +1,32 @@
+name: graph-forensics-v1
+language: python
+modules:
+  - name: graph_forensics
+    path: factoryline/graph_forensics.py
+    functions:
+      - name: verify_graph_lineage
+        args: [path]
+        returns: dict[str, Any]
+      - name: graph_forensics
+        args: [baseline_path, candidate_path]
+        returns: dict[str, Any]
+      - name: seal_graph_lineage
+        args: [run_id, graph_id, steps_path, out]
+        returns: dict[str, Any]
+      - name: seal_mission_graph_lineage
+        args: [mission_path, root, run_id, out]
+        returns: dict[str, Any]
+dependencies: []
+invariants:
+  - name: forensics_is_read_only
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:deploy|publish|sign|send_message|grant_connector|update_state|invoke)\\s*\\("
+    scopes:
+      - module: graph_forensics
+        symbol: graph_forensics
+        max_lines: 100
+  - name: lineage_verification_is_bounded
+    forbid_pattern: "rglob\\(|glob\\(|walk\\(|subprocess\\.|requests\\.|httpx\\."
+    scopes:
+      - module: graph_forensics
+        symbol: verify_graph_lineage
+        max_lines: 180

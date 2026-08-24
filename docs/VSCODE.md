@@ -10,10 +10,10 @@ release. The JetBrains adapter is documented separately in
 
 ## Install
 
-1. Install FactoryLine: `pip install factoryline-code-factory==0.20.0`.
+1. Install FactoryLine: `pip install factoryline-code-factory==0.44.1`.
 2. Download a `factoryline-vscode-*.vsix` release asset, or build it from
    `editors/vscode` with `npm ci` then `npm run package`.
-3. Run `code --install-extension factoryline-vscode-0.5.0.vsix`.
+3. Run `code --install-extension factoryline-vscode-0.8.11.vsix`.
 
 Durable mission graphs and secret-free BYOK routing are available from the
 workspace through the local `factory langgraph` and `factory provider`
@@ -29,8 +29,9 @@ an allowed IDE, but the extension does not accept or retain credential values.
 | `FactoryLine: Verify Feature Receipts` | `factory verify <feature> --root <workspace>` |
 | `FactoryLine: Open Local Meter` | Reads `factory meter --root <workspace> --json` after workspace confirmation |
 | `FactoryLine: Open Latest Receipt` | Renders JSON found below `.factory/` or `receipts/` |
-| `FactoryLine: Open Local Factory Studio` | Opens the live dashboard plus target and deployment-route selectors after confirming workspace trust |
+| `FactoryLine: Open Local Factory Studio` | Opens the outcome-first **Instant MVP** flow after confirming workspace trust; professional controls remain one visible tab away |
 | `FactoryLine: Open Product Missions` | Uses the same confirmation and loopback boundary, then opens Studio at `?mode=product` for deterministic PRD-to-mission compilation |
+| `FactoryLine: Open Unified Graph Ops` | Uses the same loopback boundary, then opens `/graph-ops` to inspect the local Product, mission, proof, gate, trace, and artifact path without executing it |
 | `FactoryLine: Open Requirement Evidence` | A CodeLens on `REQ-*`, `FR-*`, or `NFR-*` opens matching bounded local proof without executing a command |
 
 Command output stays in the **FactoryLine** output channel. A successful command

@@ -2,13 +2,13 @@
 
 ## Decision
 
-If the Week 2 rights/provenance gate does not approve a WizeMe fork, Code Factory shall build `factory-memory-core` and `factory-trust-core` as clean-room implementations. A clean-room implementation is new work derived from independently authored behavioral contracts—not a fork, extraction, refactor, translation, or copy of WizeMe source.
+If the Week 2 rights/provenance gate does not approve use of a restricted upstream implementation, Code Factory shall build `factory-memory-core` and `factory-trust-core` as clean-room implementations. A clean-room implementation is new work derived from independently authored behavioral contracts—not a fork, extraction, refactor, translation, or copy of restricted source.
 
-The WizeMe application folder is outside the authorized workspace for this procedure. No agent, script, test, build, indexer, search command, or dependency resolver may read from or write to it.
+The restricted upstream application folder is outside the authorized workspace for this procedure. No agent, script, test, build, indexer, search command, or dependency resolver may read from or write to it.
 
 ## Non-negotiable invariants
 
-1. WizeMe application source never enters the clean implementation context.
+1. Restricted upstream application source never enters the clean implementation context.
 2. No source, comments, tests, schemas, prompts, migrations, assets, names, or generated artifacts are copied or mechanically translated.
 3. Only approved inputs listed in the evidence manifest may inform implementation.
 4. Memory cannot grant authority; Trust alone makes action-authorization decisions.
@@ -19,7 +19,7 @@ The WizeMe application folder is outside the authorized workspace for this proce
 
 ## Roles and context wall
 
-| Role | May access WizeMe source? | Receives | Produces |
+| Role | May access restricted source? | Receives | Produces |
 |---|---:|---|---|
 | Rights officer | Only when legally authorized | ownership, licenses, repository history | written fork or clean-room decision |
 | Reference/specification team | No by default; black-box behavior and approved public/user-authored material only | approved input manifest | behavioral requirements, examples, protocol transcripts |
@@ -27,7 +27,7 @@ The WizeMe application folder is outside the authorized workspace for this proce
 | Independent validation team | No | sealed contracts, test vectors, built artifacts | conformance, security, mutation, and provenance receipts |
 | Release authority | No source access required | evidence bundle and approvals | signed release/no-release decision |
 
-One person may not act as both rights officer and sole release authority. Anyone previously exposed to restricted WizeMe implementation details must disclose that exposure; legal/security decides whether they may join the clean implementation team.
+One person may not act as both rights officer and sole release authority. Anyone previously exposed to restricted upstream implementation details must disclose that exposure; legal/security decides whether they may join the clean implementation team.
 
 ## Authorized inputs
 
@@ -46,7 +46,7 @@ The clean team may not use decompiled output, source-derived tests, copied datab
 
 ### Gate CR-0 — freeze and boundary declaration
 
-1. Record the authorized Code Factory root and the prohibited WizeMe roots without enumerating their contents.
+1. Record the authorized Code Factory root and the prohibited upstream roots without enumerating their contents.
 2. Configure search, indexing, backup, IDE, and agent tools to exclude prohibited roots.
 3. Create empty independent repositories or packages for Memory and Trust.
 4. Record participants and prior-exposure declarations.
@@ -77,7 +77,7 @@ Required Trust contract areas:
 - normalized action binding, audience/resource scoping, expiry, nonce/idempotency, budget reservation, and key rotation;
 - expired, replayed, wrong-audience, wrong-resource, over-budget, and revoked rejection behavior.
 
-**Pass:** contracts are hash-sealed, reviewed by security/product, and contain no code-shaped material from WizeMe.
+**Pass:** contracts are hash-sealed, reviewed by security/product, and contain no code-shaped material from the restricted upstream implementation.
 
 ### Gate CR-3 — adversarial test vectors before implementation
 
@@ -99,7 +99,7 @@ Create tests that initially fail because no implementation exists:
 4. Reject convenience imports that cross the Memory/Trust boundary.
 5. Keep all credentials external and runtime-injected.
 
-**Pass:** tests pass in an environment with no WizeMe path mounted or available.
+**Pass:** tests pass in an environment with no restricted upstream path mounted or available.
 
 ### Gate CR-5 — independent validation
 
@@ -126,7 +126,7 @@ Stop immediately if restricted source, source-derived content, or an unapproved 
 
 1. Do not copy, summarize, commit, or continue using the material.
 2. Record time, actor/tool, path, and artifact hash without recording restricted content.
-3. Quarantine only the affected clean-room artifacts; do not alter the WizeMe application.
+3. Quarantine only the affected clean-room artifacts; do not alter the restricted upstream application.
 4. Notify legal/security and suspend affected contributors or agents.
 5. Determine the last uncontaminated commit from evidence.
 6. Rebuild affected work from sealed contracts with an eligible clean team.

@@ -279,7 +279,9 @@ def risk_for_paths(paths: Iterable[str]) -> dict:
     stage_reasons: dict[tuple[str, str], set[str]] = {}
     path_entries = []
     for raw in paths:
-        path = raw.replace("\\", "/").lstrip("./")
+        # Preserve dotfiles and hidden directories in the evidence presented
+        # to users; `.github/...` is not the same path as `github/...`.
+        path = raw.replace("\\", "/").removeprefix("./")
         stages: list[tuple[str, str, str]] = []
         if path.startswith(("specs/", "plans/", "handoff/")):
             stages.extend([
@@ -462,17 +464,32 @@ def export_attestations(trace: dict, *, out_dir: Path) -> dict:
 
 
 def git_changed_paths(root: Path, base: str) -> list[str]:
-    """Return normalized paths changed from a Git base revision."""
-    proc = subprocess.run(
+    """Return every reviewable local path from a Git base and working tree.
+
+    The branch delta alone is not an IDE user's current diff.  Include tracked
+    unstaged changes, index changes, and non-ignored untracked files so an
+    analysis-only review can account for the exact local work a developer sees.
+    A missing base still fails closed rather than silently narrowing the scope.
+    """
+    commands = (
         ["git", "diff", "--name-only", f"{base}...HEAD"],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        timeout=30,
+        ["git", "diff", "--name-only"],
+        ["git", "diff", "--cached", "--name-only"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
     )
-    if proc.returncode != 0:
-        raise RuntimeError((proc.stderr or proc.stdout).strip())
-    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    paths: set[str] = set()
+    for command in commands:
+        proc = subprocess.run(
+            command,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError((proc.stderr or proc.stdout).strip())
+        paths.update(line.strip() for line in proc.stdout.splitlines() if line.strip())
+    return sorted(paths)
 
 
 def public_evidence(root: Path, feature: str, *, trace_path: Path | None = None) -> dict:

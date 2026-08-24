@@ -1,0 +1,52 @@
+{
+  "schema": "factory.jetbrains-pricing-benchmark.v1",
+  "observed_on": "2026-08-01",
+  "currency": "USD",
+  "billing_basis": "commercial_monthly_list_price",
+  "status": "owner_approved_future_price_not_active_on_marketplace",
+  "comparables": [
+    {
+      "plugin_id": 27573,
+      "name": "AI CodeEye",
+      "monthly_price": 4.9,
+      "source": "https://plugins.jetbrains.com/plugin/27573-ai-codeeye/pricing"
+    },
+    {
+      "plugin_id": 31227,
+      "name": "SlopGuard",
+      "monthly_price": 5.0,
+      "source": "https://plugins.jetbrains.com/plugin/31227-slopguard-formerly-entropyguard-/pricing"
+    },
+    {
+      "plugin_id": 29112,
+      "name": "AI Diff Review",
+      "monthly_price": 14.9,
+      "source": "https://plugins.jetbrains.com/plugin/29112-ai-diff-review/pricing"
+    },
+    {
+      "plugin_id": 32028,
+      "name": "AI Review and Commit",
+      "monthly_price": 2.0,
+      "source": "https://plugins.jetbrains.com/plugin/32028-ai-review-and-commit/pricing"
+    },
+    {
+      "plugin_id": 29361,
+      "name": "Code Review Plus",
+      "monthly_price": 1.5,
+      "source": "https://plugins.jetbrains.com/plugin/29361-code-review-plus/pricing"
+    }
+  ],
+  "sample_average": 5.66,
+  "owner_approved_monthly_price": 5.95,
+  "owner_approved_annual_price": 60.0,
+  "discount_from_sample_average": -0.0512367491,
+  "effective_date_planned": "2027-01-01",
+  "free_through": "2026-12-31",
+  "required_before_activation": [
+    "revalidate every comparable price for context without changing the owner-approved 5.95 monthly or 60 annual price",
+    "complete JetBrains paid-plugin onboarding",
+    "define and test the license boundary",
+    "announce the final price before changing the payment model",
+    "obtain JetBrains approval"
+  ]
+}
