@@ -59,3 +59,53 @@ small pilot into a universal productivity claim.
 
 For measured reporting, use the [Savings Tracker](SAVINGS_TRACKER.md). If a
 baseline or observation is unavailable, report the saving as unavailable.
+
+## Personal 60-day case study
+
+The initial product was built for its creator's own workflow, so the first
+worked example uses local Codex metadata from 28 June through 24 August 2026.
+The FactoryLine-related slice matched thread title, working directory, or first
+request text against `factory`, `factoryline`, or `code-factory`.
+
+### Observed metadata
+
+| Observed signal | Value |
+| --- | ---: |
+| FactoryLine-related threads | 25 |
+| Completed turns | 133 |
+| Failed / interrupted terminal turns | 1 / 2 |
+| Terminal-turn completion | 97.8% of 136 terminal turns |
+| Recorded active agent time | 18.33 hours |
+| User messages | 263 |
+| Command executions | 2,710 |
+| MCP / app calls | 785 |
+| File-change events | 555 |
+| Web-search events | 39 |
+| Image-view events | 169 |
+
+`completed` is a turn status, not proof that the user's whole goal succeeded.
+Thread matching can omit related work or include a thread that only mentions
+FactoryLine; this is a one-user observational slice.
+
+### Counterfactual capacity model
+
+The raw manual-equivalent range applies these explicit planning assumptions:
+
+- command execution: 0.5–2 minutes each;
+- MCP / app call: 1–3 minutes each;
+- file-change event: 2–8 minutes each;
+- web search: 3–10 minutes each;
+- image view: 1–3 minutes each.
+
+Those inputs produce about 59–219 raw hours. Because the event types overlap
+and some actions would be batched manually, the displayed range applies a 50%
+overlap haircut and rounds to **30–110 hours over 60 days**, or **15–55 hours
+per month**. At a team-supplied loaded cost of $75–$150/hour, that is an
+illustrative gross capacity value of **$2,250–$16,500 over 60 days**.
+
+This is not verified cash saved. Net savings must subtract tool costs, human
+oversight, unsuccessful work, and any time that would not otherwise have been
+spent. Direct frustration savings cannot be inferred from metadata alone; the
+failed/interrupted counts and coordination volume are only starting proxies.
+
+![FactoryLine 60-day personal case study infographic](assets/marketplace/factoryline-60-day-personal-case-study.png)

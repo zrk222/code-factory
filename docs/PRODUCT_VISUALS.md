@@ -23,28 +23,36 @@ claim a Marketplace approval, download count, or readiness result.
 Use for the current operations story: follow a local Assembly, see its exact
 waiting boundary, and turn changed work into evidence-backed next actions.
 
-## 3. FactoryLine AI Proof 0.8.17: complete IDE controls
+## 3. Personal 60-day case study
+
+![FactoryLine 60-day personal case study: observed local Codex metadata and a clearly separated modeled capacity range](assets/marketplace/factoryline-60-day-personal-case-study.png)
+
+Use only as a one-user case study. The observed metadata and modeled capacity
+range are visually separated; neither is a universal benchmark or guaranteed
+ROI claim.
+
+## 4. FactoryLine AI Proof 0.8.17: complete IDE controls
 
 ![FactoryLine AI Proof controls in IntelliJ IDEA for first proof, assemblies, receipts, changed-proof analysis, Change Lists, workspace analysis, and the local meter](assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg)
 
 Use for the JetBrains capability story: the current control surface shows the
 complete local workflow without implying that every action has already run.
 
-## 4. FactoryLine AI Proof 0.8.17: local IDE proof
+## 5. FactoryLine AI Proof 0.8.17: local IDE proof
 
 ![FactoryLine AI Proof running a successful local First Proof on FactoryLine 0.44 inside IntelliJ IDEA](assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg)
 
 Use for the JetBrains story: the real IDE tool window, explicit controls, local
 JSON result, and successful First Proof status are visible together.
 
-## 5. Factory Studio: start an MVP
+## 6. Factory Studio: start an MVP
 
 ![Actual Factory Studio showing the outcome-first MVP path and a local-only boundary](assets/marketplace/factory-studio-mvp-1280x800.png)
 
 Use for the first-screen story: describe a local outcome, create a contained
 MVP, and keep the authority boundary explicit.
 
-## 6. Graph Ops: compare repair candidates
+## 7. Graph Ops: compare repair candidates
 
 ![Actual Graph Ops Counterfactual Arena showing verified and rejected repair candidates](assets/marketplace/graph-ops-proofsearch.png)
 
@@ -52,14 +60,14 @@ Use for the second-screen story: Graph Ops reports the evidence state, compares
 supplied candidates, and shows the next supported action. It is not a simulated green result;
 rejected candidates preserve the incomplete proof state.
 
-## 7. Graph Ops: review the winner controls
+## 8. Graph Ops: review the winner controls
 
 ![Actual Graph Ops winner rationale, evidence export, guardrail validation, and locked apply control](assets/marketplace/graph-ops-proofsearch-controls.png)
 
 Use for the authority story: evidence can be copied, exported, and validated,
 while repair application remains visibly locked for human review.
 
-## 8. Graph Ops: choose the next discriminating proof
+## 9. Graph Ops: choose the next discriminating proof
 
 ![Actual Graph Ops Evidence Frontier showing ranked next-evidence hypotheses and locked execution](assets/marketplace/graph-ops-evidence-frontier.png)
 
@@ -67,7 +75,7 @@ Use for the loop story: Evidence Frontier ranks supplied, non-executing
 experiments by how many viable repair pairs they distinguish. Predictions stay
 explicitly unverified, and the UI permits copy, export, and validation only.
 
-## 9. Operational proof loop
+## 10. Operational proof loop
 
 ![Code Factory operational proof loop: scope work, inspect proof gaps, bind evidence, then show the reviewer one next action](assets/operational-proof-loop-1600x900.png)
 
