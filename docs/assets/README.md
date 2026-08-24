@@ -14,6 +14,9 @@ workspace analysis, and the local meter.
 JetBrains plugin completing a local First Proof.
 `marketplace/factoryline-60-day-personal-case-study.png` visualizes one
 observed 60-day local Codex case and a separately labeled capacity model.
+`marketplace/code-factory-60-day-personal-case-study.png` is the same bounded
+case-study evidence with the public Code Factory brand for GitHub, Hugging Face,
+Product Hunt, Zenodo, Open VSX, and social distribution.
 The remaining captures retain
 current feature-specific walkthroughs. `marketplace/factory-studio-mvp-1280x800.png` shows the outcome-first local MVP
 path and explicit local-only boundary. `marketplace/graph-ops-studio-1280x800.png`

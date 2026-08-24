@@ -132,7 +132,7 @@ illustrative range is about **$1,560–$15,000 per month**. These are adjustable
 scenario inputs, not observed FactoryLine results. See the
 [outcomes and savings model](docs/OUTCOMES_MODEL.md) before using the range.
 
-![FactoryLine 60-day personal case study: observed local Codex metadata and a clearly separated modeled capacity range](docs/assets/marketplace/factoryline-60-day-personal-case-study.png)
+![Code Factory 60-day personal case study: observed local Codex metadata and a clearly separated modeled capacity range](docs/assets/marketplace/code-factory-60-day-personal-case-study.png)
 
 ## Works with your existing AI development stack
 
