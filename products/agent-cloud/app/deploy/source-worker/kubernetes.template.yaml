@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-oven-source-worker
+  labels:
+    app.kubernetes.io/name: agent-oven-source-worker
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-oven-source-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-oven-source-worker
+    spec:
+      automountServiceAccountToken: false
+      serviceAccountName: agent-oven-source-worker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: ${SOURCE_WORKER_IMAGE_DIGEST}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: health
+              containerPort: 8080
+          env:
+            - name: CONVEX_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-oven-source-worker
+                  key: convex-url
+            - name: SOURCE_WORKER_AGENT_SPEC_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-oven-source-worker
+                  key: agent-spec-id
+            - name: SOURCE_WORKER_POLL_SECONDS
+              value: "60"
+            - name: SOURCE_WORKER_HEALTH_PORT
+              value: "8080"
+            - name: SOURCE_WORKER_OIDC_TOKEN_FILE
+              value: /var/run/agent-oven/identity/oidc-token
+            - name: SOURCE_WORKER_VAULT_MOUNT
+              value: /var/run/agent-oven/source-secrets
+            - name: SOURCE_WORKER_ALERT_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-oven-source-worker
+                  key: alert-webhook-url
+                  optional: true
+          volumeMounts:
+            - name: workload-identity
+              mountPath: /var/run/agent-oven/identity
+              readOnly: true
+            - name: source-secrets
+              mountPath: /var/run/agent-oven/source-secrets
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: workload-identity
+          projected:
+            defaultMode: 288
+            sources:
+              - serviceAccountToken:
+                  audience: ${SOURCE_WORKER_OIDC_AUDIENCE}
+                  expirationSeconds: 900
+                  path: oidc-token
+        - name: source-secrets
+          csi:
+            driver: ${SOURCE_WORKER_SECRET_CSI_DRIVER}
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: ${SOURCE_WORKER_SECRET_PROVIDER_CLASS}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agent-oven-source-worker
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-oven-source-worker

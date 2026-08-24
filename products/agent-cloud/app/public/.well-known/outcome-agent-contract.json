@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-oven:outcome-agent-contract:v1",
+  "title": "Agent Oven Outcome Hire Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspaceId", "offerId", "callerKind", "intentRef", "intentDigest", "delegationDepth", "idempotencyKey"],
+  "properties": {
+    "workspaceId": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "offerId": { "type": "string", "enum": ["pr-evidence-auditor", "security-questionnaire-agent", "support-resolution-agent", "data-quality-reconciler", "invoice-exception-triage", "compliance-evidence-monitor"] },
+    "callerKind": { "type": "string", "enum": ["human", "agent"] },
+    "callerAgentId": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "intentRef": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "intentDigest": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "mandateDigest": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "delegationDepth": { "type": "integer", "minimum": 0, "maximum": 1 },
+    "idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 120 }
+  },
+  "allOf": [{ "if": { "properties": { "callerKind": { "const": "agent" } } }, "then": { "required": ["callerAgentId", "mandateDigest"] } }]
+}
