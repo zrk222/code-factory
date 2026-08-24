@@ -29,7 +29,7 @@ describe("production activation cockpit", () => {
     expect(screen.getByText("2 of 7 controls ready")).toBeInTheDocument();
     for (const item of controls) expect(screen.getByText(item.label)).toBeInTheDocument();
     expect(screen.getByText(/no secret values or references are returned/i)).toBeInTheDocument();
-    expect(container.textContent).not.toMatch(/AUTH0_|AGENT_OVEN_|vault:\/\/private/);
+    expect(container.textContent).not.toMatch(/CLERK_|AGENT_OVEN_|vault:\/\/private/);
     expect(container.querySelector('[data-control-count="7"]')).toBeInTheDocument();
     const accessibility = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(accessibility.violations).toEqual([]);

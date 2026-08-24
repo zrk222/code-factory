@@ -1,0 +1,67 @@
+name: agent-oven-clerk-oauth-v1
+governance: supervised
+modules:
+  - name: clerk_browser
+    path: products/agent-cloud/app/src/HostedAppBoundary.tsx
+    imports:
+      - products/agent-cloud/app/src/AuthBoundary.tsx
+    functions:
+      - name: isHostedConfigurationValid
+        args: [configuration]
+        returns: boolean
+      - name: HostedAppBoundary
+        args: ["{ configuration }"]
+        returns: JSX.Element
+  - name: clerk_session_ui
+    path: products/agent-cloud/app/src/AuthBoundary.tsx
+    imports: []
+    functions:
+      - name: SessionAction
+        args: []
+        returns: JSX.Element
+  - name: clerk_server_readiness
+    path: products/agent-cloud/app/convex/productionReadinessDomain.ts
+    imports: []
+    functions:
+      - name: evaluateProductionReadiness
+        args: [environment]
+        returns: ProductionReadiness
+  - name: clerk_browser_tests
+    path: products/agent-cloud/app/src/HostedAppBoundary.test.tsx
+    imports:
+      - products/agent-cloud/app/src/HostedAppBoundary.tsx
+    functions: []
+  - name: clerk_readiness_tests
+    path: products/agent-cloud/app/convex/productionReadinessDomain.test.ts
+    imports:
+      - products/agent-cloud/app/convex/productionReadinessDomain.ts
+    functions: []
+dependencies:
+  - from: clerk_browser
+    to: clerk_session_ui
+  - from: clerk_browser_tests
+    to: clerk_browser
+  - from: clerk_readiness_tests
+    to: clerk_server_readiness
+invariants:
+  - name: browser_configuration_is_public_and_bounded
+    forbid_pattern: "AUTH0|client_secret|CLERK_SECRET_KEY|localStorage"
+    scopes:
+      - module: clerk_browser
+        symbol: isHostedConfigurationValid
+        max_lines: 30
+      - module: clerk_browser
+        symbol: HostedAppBoundary
+        max_lines: 40
+  - name: oauth_session_does_not_authorize_operations
+    forbid_pattern: "useMutation|useQuery|workspaceId|organizationId"
+    scopes:
+      - module: clerk_session_ui
+        symbol: SessionAction
+        max_lines: 40
+  - name: readiness_does_not_return_configuration_values
+    forbid_pattern: "process\\.env|console\\.|JSON\\.stringify"
+    scopes:
+      - module: clerk_server_readiness
+        symbol: evaluateProductionReadiness
+        max_lines: 50

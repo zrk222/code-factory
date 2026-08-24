@@ -1,9 +1,7 @@
 const required = [
   "VITE_CONVEX_URL",
-  "VITE_AUTH0_DOMAIN",
-  "VITE_AUTH0_CLIENT_ID",
-  "AUTH0_DOMAIN",
-  "AUTH0_CLIENT_ID",
+  "VITE_CLERK_PUBLISHABLE_KEY",
+  "CLERK_FRONTEND_API_URL",
   "AGENT_OVEN_APP_URL",
   "AGENT_OVEN_BILLING_WEBHOOK_SECRET_REF",
   "AGENT_OVEN_EMAIL_CONNECTION_REF",
@@ -28,29 +26,21 @@ function requireHttps(name) {
 }
 
 requireHttps("VITE_CONVEX_URL");
+requireHttps("CLERK_FRONTEND_API_URL");
 requireHttps("AGENT_OVEN_APP_URL");
 
-function requireHostname(name) {
-  const value = process.env[name]?.trim();
-  if (!value) return;
-  if (value.length > 253 || value.includes("://") || value.includes("/") || value.includes("@") || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(value)) {
-    invalid.push(`${name} must be a hostname without scheme or path`);
+const clerkKey = process.env.VITE_CLERK_PUBLISHABLE_KEY?.trim();
+if (clerkKey && !/^pk_(?:test|live)_[A-Za-z0-9_-]{16,}$/.test(clerkKey)) invalid.push("VITE_CLERK_PUBLISHABLE_KEY must be a Clerk publishable key");
+
+const clerkFrontendUrl = process.env.CLERK_FRONTEND_API_URL?.trim();
+if (clerkFrontendUrl) {
+  try {
+    const url = new URL(clerkFrontendUrl);
+    if (url.pathname !== "/" || url.search || url.hash) invalid.push("CLERK_FRONTEND_API_URL must not contain a path, query, or fragment");
+  } catch {
+    // requireHttps already records malformed URLs.
   }
 }
-
-function requireClientIdentifier(name) {
-  const value = process.env[name]?.trim();
-  if (!value) return;
-  if (value.length < 8 || value.length > 160 || !/^[A-Za-z0-9_-]+$/.test(value)) invalid.push(`${name} must be a valid client identifier`);
-}
-
-requireHostname("VITE_AUTH0_DOMAIN");
-requireHostname("AUTH0_DOMAIN");
-requireClientIdentifier("VITE_AUTH0_CLIENT_ID");
-requireClientIdentifier("AUTH0_CLIENT_ID");
-
-if (process.env.VITE_AUTH0_DOMAIN && process.env.AUTH0_DOMAIN && process.env.VITE_AUTH0_DOMAIN.trim() !== process.env.AUTH0_DOMAIN.trim()) invalid.push("Browser and server identity domains must match");
-if (process.env.VITE_AUTH0_CLIENT_ID && process.env.AUTH0_CLIENT_ID && process.env.VITE_AUTH0_CLIENT_ID.trim() !== process.env.AUTH0_CLIENT_ID.trim()) invalid.push("Browser and server identity client identifiers must match");
 
 for (const name of [
   "AGENT_OVEN_BILLING_WEBHOOK_SECRET_REF",
@@ -75,4 +65,4 @@ if (missing.length || invalid.length) {
   process.exit(1);
 }
 
-console.log(`PRODUCTION_ENV_VERIFIED ${required.length} required names present; identity values match; no values printed`);
+console.log(`PRODUCTION_ENV_VERIFIED ${required.length} required names present; Clerk identity boundary valid; no values printed`);

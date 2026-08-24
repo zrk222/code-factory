@@ -20,8 +20,7 @@ export const productionReadiness = query({
   handler: async (ctx, args) => {
     await requireWorkspaceRole(ctx, args.workspaceId, "admin");
     return evaluateProductionReadiness({
-      AUTH0_DOMAIN: process.env.AUTH0_DOMAIN,
-      AUTH0_CLIENT_ID: process.env.AUTH0_CLIENT_ID,
+      CLERK_FRONTEND_API_URL: process.env.CLERK_FRONTEND_API_URL,
       AGENT_OVEN_APP_URL: process.env.AGENT_OVEN_APP_URL,
       AGENT_OVEN_BILLING_WEBHOOK_SECRET_REF: process.env.AGENT_OVEN_BILLING_WEBHOOK_SECRET_REF,
       AGENT_OVEN_EMAIL_CONNECTION_REF: process.env.AGENT_OVEN_EMAIL_CONNECTION_REF,

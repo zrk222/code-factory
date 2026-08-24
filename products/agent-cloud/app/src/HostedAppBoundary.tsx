@@ -1,25 +1,24 @@
-import { Auth0Provider } from "@auth0/auth0-react";
+import { ClerkProvider, useAuth } from "@clerk/react";
 import { ConvexReactClient } from "convex/react";
-import { ConvexProviderWithAuth0 } from "convex/react-auth0";
+import { ConvexProviderWithClerk } from "convex/react-clerk";
 import { ArrowLeft, ShieldCheck } from "lucide-react";
 import { AuthBoundary } from "./AuthBoundary";
 
 export type HostedBrowserConfiguration = {
   deploymentUrl: string | undefined;
-  authDomain: string | undefined;
-  authClientId: string | undefined;
+  clerkPublishableKey: string | undefined;
 };
 
 const placeholderPattern = /your-|placeholder|example\.com|localhost|127\.0\.0\.1/i;
 
-/** Returns true only for a hosted Convex URL and non-placeholder OIDC public values. */
+/** Returns true only for a hosted Convex URL and a non-placeholder Clerk publishable key. */
 export function isHostedConfigurationValid(configuration: HostedBrowserConfiguration) {
-  const { deploymentUrl, authDomain, authClientId } = configuration;
-  if (!deploymentUrl || !authDomain || !authClientId) return false;
-  if (placeholderPattern.test(`${deploymentUrl} ${authDomain} ${authClientId}`)) return false;
+  const { deploymentUrl, clerkPublishableKey } = configuration;
+  if (!deploymentUrl || !clerkPublishableKey) return false;
+  if (placeholderPattern.test(`${deploymentUrl} ${clerkPublishableKey}`)) return false;
   try {
     const url = new URL(deploymentUrl);
-    return url.protocol === "https:" && url.hostname.endsWith(".convex.cloud") && authDomain.includes(".") && authClientId.length >= 8;
+    return url.protocol === "https:" && url.hostname.endsWith(".convex.cloud") && /^pk_(?:test|live)_[A-Za-z0-9_-]{16,}$/.test(clerkPublishableKey);
   } catch {
     return false;
   }
@@ -47,16 +46,15 @@ export function HostedAppBoundary({ configuration }: { configuration: HostedBrow
   if (!isHostedConfigurationValid(configuration)) return <AccessProvisioning />;
   const convex = new ConvexReactClient(configuration.deploymentUrl!);
   return (
-    <Auth0Provider
-      domain={configuration.authDomain!}
-      clientId={configuration.authClientId!}
-      authorizationParams={{ redirect_uri: `${window.location.origin}/app` }}
-      useRefreshTokens
-      cacheLocation="localstorage"
+    <ClerkProvider
+      publishableKey={configuration.clerkPublishableKey!}
+      signInFallbackRedirectUrl="/app"
+      signUpFallbackRedirectUrl="/app"
+      afterSignOutUrl="/"
     >
-      <ConvexProviderWithAuth0 client={convex}>
+      <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
         <AuthBoundary />
-      </ConvexProviderWithAuth0>
-    </Auth0Provider>
+      </ConvexProviderWithClerk>
+    </ClerkProvider>
   );
 }

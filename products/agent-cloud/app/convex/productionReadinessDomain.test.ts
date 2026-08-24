@@ -2,8 +2,7 @@ import { describe, expect, test } from "vitest";
 import { evaluateProductionReadiness, type ProductionReadinessEnvironment } from "./productionReadinessDomain";
 
 const complete: ProductionReadinessEnvironment = {
-  AUTH0_DOMAIN: "login.agentoven.example",
-  AUTH0_CLIENT_ID: "client_identifier_123",
+  CLERK_FRONTEND_API_URL: "https://clerk.agentoven.example",
   AGENT_OVEN_APP_URL: "https://agentoven.example",
   AGENT_OVEN_BILLING_WEBHOOK_SECRET_REF: "vault://agent-oven/billing-webhook",
   AGENT_OVEN_EMAIL_CONNECTION_REF: "aws-sm://agent-oven/transactional-email",
@@ -13,8 +12,8 @@ const complete: ProductionReadinessEnvironment = {
 };
 
 describe("production readiness classifier", () => {
-  test("validateHostname, validateClientIdentifier, and validateIdentity reject malformed identity configuration", () => {
-    const result = evaluateProductionReadiness({ ...complete, AUTH0_DOMAIN: "https://login.example/path", AUTH0_CLIENT_ID: "bad id" });
+  test("validateClerkFrontendUrl rejects malformed identity configuration", () => {
+    const result = evaluateProductionReadiness({ ...complete, CLERK_FRONTEND_API_URL: "https://login.example/path" });
     expect(result.controls.find((item) => item.key === "identity")?.status).toBe("invalid");
   });
 
@@ -26,7 +25,7 @@ describe("production readiness classifier", () => {
   });
 
   test("distinguishes a live control plane from enterprise operations", () => {
-    const result = evaluateProductionReadiness({ AUTH0_DOMAIN: complete.AUTH0_DOMAIN, AUTH0_CLIENT_ID: complete.AUTH0_CLIENT_ID, AGENT_OVEN_APP_URL: complete.AGENT_OVEN_APP_URL });
+    const result = evaluateProductionReadiness({ CLERK_FRONTEND_API_URL: complete.CLERK_FRONTEND_API_URL, AGENT_OVEN_APP_URL: complete.AGENT_OVEN_APP_URL });
     expect(result).toMatchObject({ marker: "PRODUCTION_READINESS_EXPLAINED", evidenceMarker: "READINESS_RESPONSE_REDACTED", phaseMarker: "PRODUCTION_PILOT_READY", status: "pilot", controlPlaneReady: true, enterpriseReady: false, summary: { ready: 2, total: 7 } });
     expect(result.controls).toHaveLength(7);
     expect(result.controls.filter((item) => item.status === "missing")).toHaveLength(5);
@@ -40,7 +39,7 @@ describe("production readiness classifier", () => {
   });
 
   test("fails the foundation closed when identity or endpoint is absent", () => {
-    const missingIdentity = evaluateProductionReadiness({ ...complete, AUTH0_DOMAIN: "" });
+    const missingIdentity = evaluateProductionReadiness({ ...complete, CLERK_FRONTEND_API_URL: "" });
     const invalidEndpoint = evaluateProductionReadiness({ ...complete, AGENT_OVEN_APP_URL: "http://agentoven.example" });
     expect(missingIdentity).toMatchObject({ phaseMarker: "PRODUCTION_ACTIVATION_BLOCKED", status: "blocked", controlPlaneReady: false });
     expect(invalidEndpoint.controls.find((item) => item.key === "app-endpoint")?.status).toBe("invalid");
