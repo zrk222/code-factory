@@ -25,7 +25,7 @@ waiting boundary, and turn changed work into evidence-backed next actions.
 
 ## 3. Personal 60-day case study
 
-![FactoryLine 60-day personal case study: observed local Codex metadata and a clearly separated modeled capacity range](assets/marketplace/factoryline-60-day-personal-case-study.png)
+![Code Factory 60-day personal case study: observed local Codex metadata and a clearly separated modeled capacity range](assets/marketplace/code-factory-60-day-personal-case-study.png)
 
 Use only as a one-user case study. The observed metadata and modeled capacity
 range are visually separated; neither is a universal benchmark or guaranteed

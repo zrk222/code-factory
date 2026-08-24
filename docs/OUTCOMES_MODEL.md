@@ -108,4 +108,4 @@ oversight, unsuccessful work, and any time that would not otherwise have been
 spent. Direct frustration savings cannot be inferred from metadata alone; the
 failed/interrupted counts and coordination volume are only starting proxies.
 
-![FactoryLine 60-day personal case study infographic](assets/marketplace/factoryline-60-day-personal-case-study.png)
+![Code Factory 60-day personal case study infographic](assets/marketplace/code-factory-60-day-personal-case-study.png)

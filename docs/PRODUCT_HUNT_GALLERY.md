@@ -11,7 +11,7 @@ Use the files in this exact order:
 2. `docs/assets/marketplace/factoryline-0.44-live-dashboard.png` — actual
    FactoryLine 0.44 live telemetry, waiting-for-human boundary, and
    evidence-backed next actions.
-3. `docs/assets/marketplace/factoryline-60-day-personal-case-study.png` — one
+3. `docs/assets/marketplace/code-factory-60-day-personal-case-study.png` — one
    creator-use case with observed local metadata and a separately labeled,
    assumption-based capacity range.
 4. `docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg` — actual
