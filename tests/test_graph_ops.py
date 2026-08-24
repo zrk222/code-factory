@@ -5,6 +5,7 @@ from pathlib import Path
 
 from factoryline.cli import main
 from factoryline.graph_ops import GRAPH_OPS_SCHEMA, graph_ops_html, graph_ops_impact, graph_ops_snapshot
+from factoryline.external_evidence import import_external_runtime_bundle
 from factoryline.product_missions import close_mission
 from factoryline.proof_reuse import record_proof
 from factoryline.run_admission import prepare_admission
@@ -122,6 +123,46 @@ def test_graph_ops_reports_compact_error_for_malformed_json(tmp_path: Path):
 
     assert snapshot["complete"] is False
     assert snapshot["source_errors"] == [{"source": ".factory/proofs/broken.json", "code": "SOURCE_UNREADABLE"}]
+
+
+def test_graph_ops_projects_external_runtime_as_observed_read_only_evidence(tmp_path: Path):
+    artifact = tmp_path / "runtime.txt"
+    artifact.write_text("observed failure\n", encoding="utf-8")
+    import hashlib
+    bundle = tmp_path / "testsprite.json"
+    bundle.write_text(json.dumps({
+        "schema": "factory.external-runtime-bundle.v1",
+        "provider": "testsprite",
+        "project_id": "approval-tracker",
+        "test_id": "checkout-approval",
+        "run_id": "run-graph",
+        "snapshot_id": "snapshot-graph",
+        "code_version": "commit-graph",
+        "environment": {"fingerprint": "ci-node-22", "label": "ci"},
+        "verdict": "failed",
+        "failure_kind": "assertion",
+        "first_failed_step": {"index": 1, "label": "submit"},
+        "hypothesis": "persist failed",
+        "recommended_fix": "inspect transaction",
+        "artifacts": [{
+            "path": "runtime.txt",
+            "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+            "kind": "runtime-log",
+        }],
+        "observed_at": "2026-08-24T12:00:00Z",
+    }) + "\n", encoding="utf-8")
+    import_external_runtime_bundle(tmp_path, bundle, "testsprite")
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    node = next(item for item in snapshot["nodes"] if item["kind"] == "external_runtime")
+    assert node["status"] == "observed_external"
+    assert node["facts"]["hypothesis"] == "persist failed"
+    assert node["facts"]["authority"]["publication"] is False
+    assert node["facts"]["execution"] is False
+    assert snapshot["facts"]["external_runtime_count"] == 1
+    assert snapshot["facts"]["external_runtime_failed_count"] == 1
+    assert "GRAPH_OPS_EXTERNAL_RUNTIME_READ_ONLY" in snapshot["markers"]
 
 
 def test_graph_ops_exposes_declared_gate_state_without_running_commands(tmp_path: Path):

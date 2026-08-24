@@ -1,0 +1,45 @@
+name: external-runtime-evidence-v1
+language: python
+modules:
+  - name: external_evidence
+    path: factoryline/external_evidence.py
+    imports: []
+    functions:
+      - name: import_external_runtime_bundle
+        args: ["root: Path", "bundle: Path", "provider: str", "out: Path | None = None"]
+        returns: "dict[str, Any]"
+        doc: "Verify one bounded provider bundle and write one observed-only receipt."
+      - name: diff_external_runtime_receipts
+        args: ["root: Path", "left: Path", "right: Path"]
+        returns: "dict[str, Any]"
+        doc: "Compare two verified receipts without provider execution or authority."
+      - name: verify_external_runtime_receipt
+        args: ["root: Path", "receipt: Path"]
+        returns: "dict[str, Any]"
+        doc: "Verify one receipt and its source/artifact bindings for read-only projection."
+dependencies: []
+invariants:
+  - name: no_network_client
+    forbid_pattern: "(?i)\\b(requests|httpx|urllib3|subprocess)\\b"
+    scopes:
+      - module: external_evidence
+        symbol: import_external_runtime_bundle
+        max_lines: 240
+      - module: external_evidence
+        symbol: diff_external_runtime_receipts
+        max_lines: 180
+      - module: external_evidence
+        symbol: verify_external_runtime_receipt
+        max_lines: 40
+  - name: no_credential_lookup
+    forbid_pattern: "(?i)\\b(os\\.environ|os\\.getenv|subprocess|requests|httpx|urllib3)\\b"
+    scopes:
+      - module: external_evidence
+        symbol: import_external_runtime_bundle
+        max_lines: 240
+      - module: external_evidence
+        symbol: diff_external_runtime_receipts
+        max_lines: 180
+      - module: external_evidence
+        symbol: verify_external_runtime_receipt
+        max_lines: 40

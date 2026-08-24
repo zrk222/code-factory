@@ -31,6 +31,7 @@ from .resilience import ResilienceError, verify_temporal_resilience_plan
 from .agent_license import license_projection
 from .combine import combine_projection
 from .judgment import judgment_projection
+from .external_evidence import ExternalEvidenceError, verify_external_runtime_receipt
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -1089,6 +1090,63 @@ def _append_resilience_plans(state: dict[str, Any], root: Path) -> dict[str, int
     return facts
 
 
+def _append_external_evidence(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project verified external runtime receipts as observed, non-authoritative facts."""
+    facts = {
+        "count": 0,
+        "passed_count": 0,
+        "failed_count": 0,
+        "blocked_count": 0,
+        "unknown_count": 0,
+        "invalid_count": 0,
+        "stale_count": 0,
+    }
+    directory = root / ".factory" / "external-evidence"
+    for path in sorted(directory.glob("*.json")):
+        try:
+            verification = verify_external_runtime_receipt(root, path)
+        except ExternalEvidenceError as exc:
+            _record_error(state["errors"], path, exc.code)
+            facts["invalid_count"] += 1
+            facts["stale_count"] += int(exc.code in {"EXTERNAL_EVIDENCE_BUNDLE_STALE", "EXTERNAL_EVIDENCE_RECEIPT_STALE", "EXTERNAL_EVIDENCE_ARTIFACT_STALE"})
+            continue
+        receipt = verification["receipt"]
+        receipt_sha = str(receipt["receipt_sha256"])
+        node_id = f"external-runtime:{receipt_sha[:24]}"
+        source = str(verification["path"]).replace("\\", "/")
+        _node(
+            state,
+            node_id=node_id,
+            kind="external_runtime",
+            label=f"{receipt['provider']} · {receipt['test_id']}",
+            source=source,
+            status="observed_external",
+            facts={
+                "provider": receipt["provider"],
+                "project_id": receipt["project_id"],
+                "test_id": receipt["test_id"],
+                "run_id": receipt["run_id"],
+                "snapshot_id": receipt["snapshot_id"],
+                "code_version": receipt["code_version"],
+                "environment": receipt["environment"],
+                "verdict": receipt["verdict"],
+                "failure_kind": receipt["failure_kind"],
+                "first_failed_step": receipt["first_failed_step"],
+                "hypothesis": receipt["hypothesis"],
+                "recommended_fix": receipt["recommended_fix"],
+                "artifact_count": len(receipt["artifacts"]),
+                "source_bundle_sha256": receipt["source_bundle"]["sha256"],
+                "receipt_sha256": receipt_sha,
+                "trust": "observed_external",
+                "execution": False,
+                "authority": dict(_AUTHORITY),
+            },
+        )
+        facts["count"] += 1
+        facts[f"{receipt['verdict']}_count"] += 1
+    return facts
+
+
 def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
     visible = nodes[:80]
     allowed = {node["id"] for node in visible}
@@ -1130,6 +1188,8 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "refresh_counterexample_plan", "A counterexample plan is stale or invalid; recompile it from its current bounded requirement source."
     if facts["resilience_invalid_count"] > 0:
         return "refresh_temporal_resilience_plan", "A temporal resilience plan is stale, incomplete, or invalid; recompile it from verified current lineage."
+    if facts["external_runtime_invalid_count"] > 0:
+        return "refresh_external_runtime_evidence", "An imported external runtime receipt is stale or invalid; re-import the bounded runner bundle before relying on its observations."
     if facts["guardrail_withheld_count"] > 0:
         return "review_guardrail_withheld", "At least one scoped guardrail lacks independently promoted current continuity evidence."
     if facts["assurance_unresolved_high_count"] > 0:
@@ -1171,7 +1231,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
                     frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int]) -> dict[str, int]:
+                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -1238,6 +1298,13 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "judgment_proposed_count": judgment["proposed_count"],
         "judgment_review_due_count": judgment["review_due_count"],
         "judgment_invalid_count": judgment["invalid_count"],
+        "external_runtime_count": external_evidence["count"],
+        "external_runtime_passed_count": external_evidence["passed_count"],
+        "external_runtime_failed_count": external_evidence["failed_count"],
+        "external_runtime_blocked_count": external_evidence["blocked_count"],
+        "external_runtime_unknown_count": external_evidence["unknown_count"],
+        "external_runtime_invalid_count": external_evidence["invalid_count"],
+        "external_runtime_stale_count": external_evidence["stale_count"],
         "intake_confirmation_count": sum(node["kind"] == "intake" for node in nodes),
         "intake_confirmed_count": sum(node["kind"] == "intake" and node.get("status") == "confirmed" for node in nodes),
         "intake_invalid_count": sum(node["kind"] == "intake" and node.get("status") == "invalid" for node in nodes),
@@ -1247,7 +1314,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
                       proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int]) -> list[str]:
+                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -1294,6 +1361,8 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_COMBINE_SCOREBOARDS_READ_ONLY")
     if judgment["count"]:
         markers.append("GRAPH_OPS_JUDGMENT_CAPSULES_READ_ONLY")
+    if external_evidence["count"]:
+        markers.append("GRAPH_OPS_EXTERNAL_RUNTIME_READ_ONLY")
     if any(node["kind"] == "intake" for node in nodes):
         markers.append("GRAPH_OPS_INTAKE_DECISIONS_READ_ONLY")
     if state["errors"] or state["truncated"]:
@@ -1347,14 +1416,15 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     survival_cards = _append_survival_cards(state, workspace)
     agent_supervision = _append_agent_supervision(state, workspace)
     judgment = _append_judgment_capsules(state, workspace)
+    external_evidence = _append_external_evidence(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
-    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment)
+    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence)
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
-    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment)
+    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence)
     base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",

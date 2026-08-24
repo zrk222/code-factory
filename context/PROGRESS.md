@@ -412,3 +412,9 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-21 11:09] GATE plan evidence-supply-line-v1 approver=human tasks=9 sha=36e2c1543a00d0ff
 - [2026-08-21 11:25] GATE spec evidence-supply-line-v1 approver=human strict=True sha=36e2c1543a00d0ff
 - [2026-08-21 11:25] GATE plan evidence-supply-line-v1 approver=human tasks=9 sha=36e2c1543a00d0ff
+
+- [2026-08-24 15:25] GATE spec external-runtime-evidence-v1 approver=human strict=True sha=47b3e43505f755fa
+- [2026-08-24 15:35] GATE spec external-runtime-evidence-v1 approver=human strict=True sha=56a9ab5dd03ca6ed
+- [2026-08-24 15:35] GATE plan external-runtime-evidence-v1 approver=human tasks=4 sha=56a9ab5dd03ca6ed
+- [2026-08-24 15:49] GATE spec external-runtime-evidence-v1 approver=human strict=True sha=6eee0cdd3a28fb6b
+- [2026-08-24 15:50] GATE plan external-runtime-evidence-v1 approver=human tasks=6 sha=6eee0cdd3a28fb6b
