@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "name": "external_runtime_triage_ui_contract",
+      "kind": "python",
+      "run": "from pathlib import Path; page=Path('factoryline/graph_ops.html').read_text(encoding='utf-8'); required=['GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_UI','REQ_EXT_TRIAGE_UI_COPY','REQ_EXT_TRIAGE_UI_AUTHORITY','REQ_EXT_TRIAGE_UI_RESPONSIVE','review_external_runtime_failure','No automatic repair is available.','Observed-only boundary.']; assert all(item in page for item in required) and 'innerHTML' not in page",
+      "expect_exit": 0,
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    }
+  ]
+}

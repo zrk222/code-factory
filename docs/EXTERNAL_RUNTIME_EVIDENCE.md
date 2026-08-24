@@ -93,6 +93,12 @@ authority. Invalid or stale receipts keep the higher-priority
 `refresh_external_runtime_evidence` action so untrusted observations are
 refreshed before triage.
 
+The Graph Ops page mirrors that state in a **Review before repair** callout. It
+names the next action, repeats the first-step/hypothesis review boundary, and
+states that no automatic repair or external-effect control is available. The
+callout is hidden when invalid or stale evidence has precedence, and it stacks
+on narrow screens without adding a second endpoint or provider integration.
+
 This is an observation bridge, not a TestSprite integration claim and not a
 production-readiness claim. A human or repository-owned workflow still decides
 which runner to use and what local proof is required.

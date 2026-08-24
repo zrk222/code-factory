@@ -251,6 +251,10 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert 'id="external-evidence-panel"' in page
     assert 'id="external-evidence-cards"' in page
     assert 'id="external-evidence-badge"' in page
+    assert 'id="external-evidence-triage"' in page
+    assert "GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_UI" in page
+    assert "REQ_EXT_TRIAGE_UI_COPY" in page
+    assert "No automatic repair is available." in page
     assert "renderExternalEvidence(nodes,facts)" in page
     assert "Observed-only boundary." in page
     assert "GRAPH_OPS_EXTERNAL_RUNTIME_TEXT_NODE" in page
