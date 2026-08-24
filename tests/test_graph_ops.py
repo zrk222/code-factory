@@ -163,6 +163,14 @@ def test_graph_ops_projects_external_runtime_as_observed_read_only_evidence(tmp_
     assert snapshot["facts"]["external_runtime_count"] == 1
     assert snapshot["facts"]["external_runtime_failed_count"] == 1
     assert "GRAPH_OPS_EXTERNAL_RUNTIME_READ_ONLY" in snapshot["markers"]
+    assert "GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_READ_ONLY" in snapshot["markers"]
+    assert snapshot["recommendation"]["action"] == "review_external_runtime_failure"
+    assert snapshot["authority"]["execution"] is False
+
+    artifact.write_text("tampered\n", encoding="utf-8")
+    stale = graph_ops_snapshot(tmp_path)
+    assert stale["recommendation"]["action"] == "refresh_external_runtime_evidence"
+    assert "GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_READ_ONLY" not in stale["markers"]
 
 
 def test_graph_ops_exposes_declared_gate_state_without_running_commands(tmp_path: Path):

@@ -84,6 +84,15 @@ run id, artifact count, hypothesis, and suggested next check. Invalid or stale
 receipts are shown as fail-closed observations that must be re-imported. The
 lane is explanatory only; it adds no provider request or execution control.
 
+When a verified receipt is `failed`, `blocked`, or `unknown`, Graph Ops adds the
+deterministic `review_external_runtime_failure` next action and the
+`GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_READ_ONLY` marker. This tells the developer
+to review the first failed step and hypothesis before admitting a bounded local
+proof or repair. It does not run the provider, apply a fix, or change any
+authority. Invalid or stale receipts keep the higher-priority
+`refresh_external_runtime_evidence` action so untrusted observations are
+refreshed before triage.
+
 This is an observation bridge, not a TestSprite integration claim and not a
 production-readiness claim. A human or repository-owned workflow still decides
 which runner to use and what local proof is required.

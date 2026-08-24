@@ -1161,7 +1161,20 @@ def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _external_runtime_triage(facts: dict[str, int]) -> tuple[str, str] | None:
+    """Return one advisory action for valid external observations only."""
+    if facts["external_runtime_invalid_count"] > 0:
+        return None
+    if (facts["external_runtime_failed_count"] > 0
+            or facts["external_runtime_blocked_count"] > 0
+            or facts["external_runtime_unknown_count"] > 0):
+        return "review_external_runtime_failure", "A verified external runtime observation is failed, blocked, or unknown; review its first failed step and hypothesis before admitting a bounded local proof or repair."
+    return None
+
+
 def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
+    if facts["external_runtime_invalid_count"] > 0:
+        return "refresh_external_runtime_evidence", "An imported external runtime receipt is stale or invalid; re-import the bounded runner bundle before relying on its observations."
     if facts["node_count"] == 0:
         return "initialize_graph", "No readable local Factory graph artifacts were found."
     if facts["agent_incident_count"] > 0:
@@ -1188,8 +1201,9 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "refresh_counterexample_plan", "A counterexample plan is stale or invalid; recompile it from its current bounded requirement source."
     if facts["resilience_invalid_count"] > 0:
         return "refresh_temporal_resilience_plan", "A temporal resilience plan is stale, incomplete, or invalid; recompile it from verified current lineage."
-    if facts["external_runtime_invalid_count"] > 0:
-        return "refresh_external_runtime_evidence", "An imported external runtime receipt is stale or invalid; re-import the bounded runner bundle before relying on its observations."
+    external_triage = _external_runtime_triage(facts)
+    if external_triage is not None:
+        return external_triage
     if facts["guardrail_withheld_count"] > 0:
         return "review_guardrail_withheld", "At least one scoped guardrail lacks independently promoted current continuity evidence."
     if facts["assurance_unresolved_high_count"] > 0:
@@ -1363,6 +1377,10 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_JUDGMENT_CAPSULES_READ_ONLY")
     if external_evidence["count"]:
         markers.append("GRAPH_OPS_EXTERNAL_RUNTIME_READ_ONLY")
+    if (external_evidence["failed_count"]
+            or external_evidence["blocked_count"]
+            or external_evidence["unknown_count"]):
+        markers.append("GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_READ_ONLY")
     if any(node["kind"] == "intake" for node in nodes):
         markers.append("GRAPH_OPS_INTAKE_DECISIONS_READ_ONLY")
     if state["errors"] or state["truncated"]:

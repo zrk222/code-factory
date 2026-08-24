@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "name": "external_runtime_failure_triage_is_advisory",
+      "kind": "python",
+      "run": "from pathlib import Path; import hashlib, json, tempfile; from factoryline.external_evidence import import_external_runtime_bundle; from factoryline.graph_ops import graph_ops_snapshot; root=Path(tempfile.mkdtemp(prefix='factory-triage-')); artifact=root/'runtime.txt'; artifact.write_text('failed\\n', encoding='utf-8'); bundle=root/'bundle.json'; bundle.write_text(json.dumps({'schema':'factory.external-runtime-bundle.v1','provider':'testsprite','project_id':'triage-project','test_id':'triage-test','run_id':'triage-run','snapshot_id':'triage-snapshot','code_version':'triage-commit','environment':{'fingerprint':'triage-env','label':'local'},'verdict':'failed','failure_kind':'assertion','first_failed_step':{'index':1,'label':'submit'},'hypothesis':'persist failed','recommended_fix':'inspect transaction','artifacts':[{'path':'runtime.txt','sha256':hashlib.sha256(artifact.read_bytes()).hexdigest(),'kind':'runtime-log'}],'observed_at':'2026-08-24T12:00:00Z'}), encoding='utf-8'); import_external_runtime_bundle(root, bundle, 'testsprite'); snapshot=graph_ops_snapshot(root); assert snapshot['recommendation']['action']=='review_external_runtime_failure' and 'GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_READ_ONLY' in snapshot['markers'] and snapshot['authority']['execution'] is False",
+      "expect_exit": 0,
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    }
+  ]
+}
