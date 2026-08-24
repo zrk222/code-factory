@@ -1,0 +1,37 @@
+feature: external-runtime-evidence-navigation-v1
+version: "1.0"
+intent: "Let reviewers locate the exact local Graph Ops node for imported runtime observations without granting execution authority."
+requirements:
+  - id: REQ_EXT_NAV_JUMP
+    description: "A valid external runtime card exposes Inspect node details for its matching Graph Ops node."
+    invariant: "REQ_EXT_NAV_JUMP"
+    checks:
+      - "REQ_EXT_NAV_JUMP"
+      - "external-evidence-jump"
+      - "Inspect node details"
+  - id: REQ_EXT_NAV_READ_ONLY
+    description: "Navigation reuses local selection, focus, and scrolling only; it never calls providers or mutates workspace state."
+    invariant: "REQ_EXT_NAV_READ_ONLY"
+    checks:
+      - "REQ_EXT_NAV_READ_ONLY"
+      - "focusExternalNode"
+      - "scrollIntoView"
+  - id: REQ_EXT_NAV_MISSING
+    description: "A missing node target disables navigation and reports unavailable details without inventing a target."
+    invariant: "REQ_EXT_NAV_MISSING"
+    checks:
+      - "REQ_EXT_NAV_MISSING"
+      - "Node details unavailable"
+      - "jump.disabled=!target"
+  - id: REQ_EXT_NAV_RESPONSIVE
+    description: "The navigation affordance remains readable and at least 44 pixels tall on narrow screens."
+    invariant: "REQ_EXT_NAV_RESPONSIVE"
+    checks:
+      - "REQ_EXT_NAV_RESPONSIVE"
+      - "min-height:44px"
+      - "max-width:768px"
+gates:
+  - type: test
+    command: "py -3.11 -m pytest -q tests/test_graph_ops.py -k visual"
+  - type: smoke
+    command: "python -c \"from pathlib import Path; p=Path('factoryline/graph_ops.html').read_text(); assert 'REQ_EXT_NAV_JUMP' in p and 'innerHTML' not in p\""

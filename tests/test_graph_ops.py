@@ -258,6 +258,13 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "renderExternalEvidence(nodes,facts)" in page
     assert "Observed-only boundary." in page
     assert "GRAPH_OPS_EXTERNAL_RUNTIME_TEXT_NODE" in page
+    assert "REQ_EXT_NAV_JUMP" in page
+    assert "REQ_EXT_NAV_READ_ONLY" in page
+    assert "REQ_EXT_NAV_MISSING" in page
+    assert 'className="external-evidence-jump"' in page
+    assert "Inspect node details" in page
+    assert "scrollIntoView" in page
+    assert "button.dataset.nodeId=node.id" in page
     assert "innerHTML" not in page
     assert "Observed project contributors" in page
     assert "not a verified identity-provider or billing-seat roster" in page

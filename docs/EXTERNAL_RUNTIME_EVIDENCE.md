@@ -99,6 +99,15 @@ states that no automatic repair or external-effect control is available. The
 callout is hidden when invalid or stale evidence has precedence, and it stacks
 on narrow screens without adding a second endpoint or provider integration.
 
+Each valid observation card also provides **Inspect node details**. This is a
+local evidence locator: it selects the exact `external_runtime` node already
+rendered in Graph lanes, focuses its existing detail panel, and scrolls it into
+view. If the target is missing, the control is disabled and the UI reports
+`REQ_EXT_NAV_MISSING` rather than selecting a substitute. The affordance stays
+read-only, keyboard accessible, and full width on narrow screens; it never
+calls a provider, mutates workspace state, authorizes execution, or infers a
+repair.
+
 This is an observation bridge, not a TestSprite integration claim and not a
 production-readiness claim. A human or repository-owned workflow still decides
 which runner to use and what local proof is required.
