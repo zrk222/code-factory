@@ -1,0 +1,36 @@
+name: agent-oven-runtime-adapters-v1
+governance: supervised
+modules:
+  - name: adapter_contract
+    path: products/agent-cloud/app/runtime/runtimeAdapter.ts
+    imports: []
+    functions: []
+  - name: adapter_control
+    path: products/agent-cloud/app/convex/runtimeAdapters.ts
+    imports:
+      - products/agent-cloud/app/convex/access.ts
+      - products/agent-cloud/app/convex/domain.ts
+    functions: []
+  - name: execution_control
+    path: products/agent-cloud/app/convex/execution.ts
+    imports:
+      - products/agent-cloud/app/convex/runtimeAdapters.ts
+    functions: []
+  - name: adapter_ui
+    path: products/agent-cloud/app/src/components/HostedRuntimeLauncher.tsx
+    imports:
+      - products/agent-cloud/app/convex/runtimeAdapters.ts
+    functions: []
+  - name: adapter_tests
+    path: products/agent-cloud/app/convex/runtimeAdapters.test.ts
+    imports:
+      - products/agent-cloud/app/convex/runtimeAdapters.ts
+    functions: []
+dependencies:
+  - from: execution_control
+    to: adapter_control
+  - from: adapter_ui
+    to: adapter_control
+  - from: adapter_tests
+    to: adapter_control
+invariants: []

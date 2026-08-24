@@ -1,0 +1,23 @@
+name: agent-cloud-identity-isolation-v1
+governance: supervised
+modules:
+  - name: identity_schema
+    path: products/agent-cloud/app/convex/schema.ts
+    imports: []
+    functions: []
+  - name: identity_gateway
+    path: products/agent-cloud/app/convex/access.ts
+    imports:
+      - products/agent-cloud/app/convex/domain.ts
+    functions: []
+  - name: identity_tests
+    path: products/agent-cloud/app/convex/access.test.ts
+    imports:
+      - products/agent-cloud/app/convex/access.ts
+    functions: []
+dependencies:
+  - from: identity_gateway
+    to: identity_schema
+  - from: identity_tests
+    to: identity_gateway
+invariants: []

@@ -1,0 +1,53 @@
+name: booked-job-concierge-v1
+governance: supervised
+modules:
+  - name: concierge_schema
+    path: products/agent-cloud/app/convex/schema.ts
+    imports: []
+    functions: []
+  - name: concierge_domain
+    path: products/agent-cloud/app/convex/conciergeDomain.ts
+    imports: []
+    functions:
+      - name: scoreLead
+        signature:
+          args: ["input: LeadScoreInput"]
+          returns: "LeadScoreResult"
+  - name: concierge_api
+    path: products/agent-cloud/app/convex/concierge.ts
+    imports:
+      - products/agent-cloud/app/convex/conciergeDomain.ts
+      - products/agent-cloud/app/convex/access.ts
+    functions: []
+  - name: concierge_ui
+    path: products/agent-cloud/app/src/components/BookedJobConcierge.tsx
+    imports:
+      - products/agent-cloud/app/convex/concierge.ts
+    functions: []
+  - name: concierge_tests
+    path: products/agent-cloud/app/convex/concierge.test.ts
+    imports:
+      - products/agent-cloud/app/convex/concierge.ts
+    functions: []
+dependencies:
+  - from: concierge_api
+    to: concierge_domain
+  - from: concierge_api
+    to: concierge_schema
+  - from: concierge_ui
+    to: concierge_api
+  - from: concierge_tests
+    to: concierge_api
+invariants:
+  - name: memory_never_grants_booking_authority
+    module: concierge_api
+    kind: regex
+    pattern: "requireWorkspaceRole\\(ctx, .*operator"
+  - name: raw_secrets_rejected
+    module: concierge_api
+    kind: regex
+    pattern: "validateSecretReference\\("
+  - name: production_requires_ready_adapters
+    module: concierge_api
+    kind: regex
+    pattern: "E_CONCIERGE_ADAPTERS_NOT_READY"

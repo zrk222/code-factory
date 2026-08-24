@@ -1,0 +1,23 @@
+{
+  "checks": [
+    {
+      "name": "authoritative_source_control_contract",
+      "kind": "python",
+      "run": "import subprocess\nfrom pathlib import Path\napp=Path('products/agent-cloud/app')\nresult=subprocess.run(['npm.cmd','test','--','--run','runtime/sourceAssurance.test.ts','convex/authoritativeSources.test.ts'],cwd=app,capture_output=True,text=True,timeout=180,check=False)\nassert result.returncode==0,result.stdout+result.stderr\nassert '7 passed' in result.stdout\n",
+      "covers": [
+        "SOURCE_AUTHORITY_CATEGORY_REGISTRY",
+        "AUTHORITATIVE_SOURCE_CONFIGURATION",
+        "SOURCE_FRESH_NO_FAILURES",
+        "SOURCE_WITHIN_MAX_AGE_DEGRADED",
+        "SOURCE_OLDER_THAN_MAX_AGE",
+        "SOURCE_FAILURES_AT_LEAST_THREE",
+        "SOURCE_SECONDARY_CORROBORATION",
+        "GROUP_MINIMUM_AND_HEALTHY_MET",
+        "GROUP_REQUIREMENT_MISSED",
+        "SOURCE_OBSERVATION_REPLAY",
+        "E_AUTHORITATIVE_SOURCES_NOT_READY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

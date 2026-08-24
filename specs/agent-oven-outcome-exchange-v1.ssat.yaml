@@ -1,0 +1,64 @@
+name: agent-oven-outcome-exchange-v1
+governance: supervised
+modules:
+  - name: outcome_domain
+    path: products/agent-cloud/app/convex/agentExchangeDomain.ts
+    imports:
+      - products/agent-cloud/app/convex/domain.ts
+    functions:
+      - name: buildOutcomeContract
+        args: [input]
+        returns: OutcomeContract
+      - name: verifyOutcomeEvidence
+        args: [input]
+        returns: OutcomeEvidenceVerdict
+      - name: assertOutcomeTransition
+        args: [from, to]
+        returns: void
+  - name: outcome_api
+    path: products/agent-cloud/app/convex/agentExchange.ts
+    imports:
+      - products/agent-cloud/app/convex/agentExchangeDomain.ts
+      - products/agent-cloud/app/convex/access.ts
+    functions: []
+  - name: outcome_ui
+    path: products/agent-cloud/app/src/components/AgentExchangePanel.tsx
+    imports:
+      - products/agent-cloud/app/convex/agentExchange.ts
+    functions:
+      - name: AgentExchangePanel
+        args: [props]
+        returns: JSX.Element
+  - name: outcome_domain_tests
+    path: products/agent-cloud/app/convex/agentExchangeDomain.test.ts
+    imports:
+      - products/agent-cloud/app/convex/agentExchangeDomain.ts
+    functions: []
+  - name: outcome_api_tests
+    path: products/agent-cloud/app/convex/agentExchange.test.ts
+    imports:
+      - products/agent-cloud/app/convex/agentExchange.ts
+    functions: []
+  - name: outcome_ui_tests
+    path: products/agent-cloud/app/src/components/AgentExchangePanel.test.tsx
+    imports:
+      - products/agent-cloud/app/src/components/AgentExchangePanel.tsx
+    functions: []
+dependencies:
+  - from: outcome_api
+    to: outcome_domain
+  - from: outcome_ui
+    to: outcome_api
+  - from: outcome_domain_tests
+    to: outcome_domain
+  - from: outcome_api_tests
+    to: outcome_api
+  - from: outcome_ui_tests
+    to: outcome_ui
+invariants:
+  - name: outcome_contract_builder_has_no_randomness_or_network
+    forbid_pattern: "Math\\.random|fetch\\("
+    scopes:
+      - module: outcome_domain
+        symbol: buildOutcomeContract
+        max_lines: 220

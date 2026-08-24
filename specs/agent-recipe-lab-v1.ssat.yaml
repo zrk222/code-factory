@@ -1,0 +1,33 @@
+name: agent-recipe-lab-v1
+governance: supervised
+modules:
+  - name: recipe_domain
+    path: products/agent-cloud/app/convex/recipeLabDomain.ts
+    imports: []
+    functions: []
+  - name: recipe_control_plane
+    path: products/agent-cloud/app/convex/recipeLab.ts
+    imports:
+      - products/agent-cloud/app/convex/recipeLabDomain.ts
+      - products/agent-cloud/app/convex/access.ts
+      - products/agent-cloud/app/convex/domain.ts
+    functions: []
+  - name: recipe_domain_tests
+    path: products/agent-cloud/app/convex/recipeLabDomain.test.ts
+    imports:
+      - products/agent-cloud/app/convex/recipeLabDomain.ts
+    functions: []
+  - name: recipe_control_tests
+    path: products/agent-cloud/app/convex/recipeLab.test.ts
+    imports:
+      - products/agent-cloud/app/convex/recipeLab.ts
+      - products/agent-cloud/app/convex/recipeLabDomain.ts
+    functions: []
+dependencies:
+  - from: recipe_control_plane
+    to: recipe_domain
+  - from: recipe_domain_tests
+    to: recipe_domain
+  - from: recipe_control_tests
+    to: recipe_control_plane
+invariants: []

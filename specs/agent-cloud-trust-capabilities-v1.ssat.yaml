@@ -1,0 +1,23 @@
+name: agent-cloud-trust-capabilities-v1
+governance: supervised
+modules:
+  - name: trust_schema
+    path: products/agent-cloud/app/convex/schema.ts
+    imports: []
+    functions: []
+  - name: trust_gateway
+    path: products/agent-cloud/app/convex/trust.ts
+    imports:
+      - products/agent-cloud/app/convex/domain.ts
+    functions: []
+  - name: trust_tests
+    path: products/agent-cloud/app/convex/trust.test.ts
+    imports:
+      - products/agent-cloud/app/convex/trust.ts
+    functions: []
+dependencies:
+  - from: trust_gateway
+    to: trust_schema
+  - from: trust_tests
+    to: trust_gateway
+invariants: []
