@@ -82,6 +82,12 @@ jobs:
             const repo = context.repo.repo;
             const issue_number = context.issue.number;
             const marker = '<!-- factoryline-proof-review -->';
+            const checkTextLimit = 65535;
+            const truncateCheckText = (value) => {
+              if (typeof value !== 'string' || value.length <= checkTextLimit) return value;
+              const notice = '\n\n[Display truncated to the GitHub Checks API limit. Download the factoryline-github-proof-review artifact for the complete signed report.]';
+              return `${value.slice(0, checkTextLimit - notice.length)}${notice}`;
+            };
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number, per_page: 100,
             });
@@ -95,6 +101,11 @@ jobs:
                 owner, repo, issue_number, body: report.github_comment,
               });
             }
+            const checkOutput = {
+              ...report.check.output,
+              summary: truncateCheckText(report.check.output?.summary),
+              text: truncateCheckText(report.check.output?.text),
+            };
             await github.rest.checks.create({
               owner,
               repo,
@@ -103,7 +114,7 @@ jobs:
               status: report.check.status,
               conclusion: report.check.conclusion,
               external_id: report.payload_sha256,
-              output: report.check.output,
+              output: checkOutput,
             });
       - name: Add the exact walkthrough to the job summary
         shell: bash
