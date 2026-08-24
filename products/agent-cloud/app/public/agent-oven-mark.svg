@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Agent Oven</title>
+  <desc id="description">Agent Oven industrial orange mark</desc>
+  <rect width="512" height="512" rx="112" fill="#0b0d0f"/>
+  <rect x="94" y="118" width="324" height="276" rx="70" fill="#ff6b19"/>
+  <path d="M154 207h204M154 264h204" fill="none" stroke="#0b0d0f" stroke-width="30" stroke-linecap="round"/>
+  <rect x="154" y="312" width="204" height="44" rx="22" fill="#0b0d0f"/>
+  <circle cx="169" cy="164" r="15" fill="#77c66e"/>
+  <circle cx="214" cy="164" r="15" fill="#ffb547"/>
+</svg>

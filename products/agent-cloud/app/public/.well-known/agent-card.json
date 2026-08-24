@@ -1,0 +1,23 @@
+{
+  "schema": "agent-oven.agent-discovery.v1",
+  "name": "Agent Oven Outcome Exchange",
+  "description": "A governed catalog of fixed-price result agents with deterministic evidence gates and conditional platform-credit settlement.",
+  "version": "1.0.0",
+  "documentationUrl": "/app?view=exchange",
+  "authentication": { "type": "oidc-bearer", "resourceAudienceRequired": true, "tokenPassthroughForbidden": true, "humanSponsorRequired": true },
+  "interfaces": {
+    "convex": { "status": "active-when-deployment-configured", "module": "agentExchange", "functions": ["catalog", "overview", "hire", "start", "submitEvidence", "verify", "release", "cancel"] },
+    "composer": { "status": "active-when-deployment-configured", "module": "agentComposer", "functions": ["compile", "latest", "markApplied"], "runtimeCompatibility": "/.well-known/runtime-compatibility.json" },
+    "a2a": { "status": "setup-required", "reason": "The deployment-specific HTTPS endpoint and OIDC resource audience must be configured and verified before advertising an A2A service URL." },
+    "mcp": { "status": "setup-required", "reason": "Remote MCP authorization and deployment-specific endpoint read-back are required before activation." }
+  },
+  "governance": { "maximumDelegationDepth": 1, "idempotencyRequired": true, "independentVerifierRequired": true, "workerMayReleasePayment": false, "externalMoneySettlement": "disabled" },
+  "skills": [
+    { "id": "pr-evidence-auditor", "name": "PR Evidence Auditor", "resultCredits": 90 },
+    { "id": "security-questionnaire-agent", "name": "Security Questionnaire Agent", "resultCredits": 120 },
+    { "id": "support-resolution-agent", "name": "Support Resolution Agent", "resultCredits": 60 },
+    { "id": "data-quality-reconciler", "name": "Data Quality Reconciler", "resultCredits": 140 },
+    { "id": "invoice-exception-triage", "name": "Invoice Exception Triage", "resultCredits": 100 },
+    { "id": "compliance-evidence-monitor", "name": "Compliance Evidence Monitor", "resultCredits": 160 }
+  ]
+}
