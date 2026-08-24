@@ -1147,6 +1147,74 @@ def _append_external_evidence(state: dict[str, Any], root: Path) -> dict[str, in
     return facts
 
 
+def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project the newest local Forge ship receipt as read-only intent evidence."""
+    facts = {"count": 0, "traceable_count": 0, "untraceable_count": 0, "blocked_count": 0, "invalid_count": 0}
+    directory = root / ".forge"
+    for path in sorted(directory.glob("*/receipts.jsonl")):
+        try:
+            receipt_path, source = _source(root, path)
+            if receipt_path.stat().st_size > MAX_SOURCE_BYTES:
+                _record_error(state["errors"], source, "SOURCE_TOO_LARGE")
+                facts["invalid_count"] += 1
+                continue
+            lines = receipt_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError, ValueError):
+            _record_error(state["errors"], path, "INTENT_TRACE_RECEIPT_UNREADABLE")
+            facts["invalid_count"] += 1
+            continue
+        latest: tuple[dict[str, Any], str] | None = None
+        invalid = False
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                invalid = True
+                continue
+            if isinstance(value, dict) and value.get("phase") == "ship":
+                latest = (value, line)
+        if invalid:
+            _record_error(state["errors"], source, "INTENT_TRACE_RECEIPT_INVALID")
+            facts["invalid_count"] += 1
+        if latest is None:
+            continue
+        value, raw_line = latest
+        shipped = value.get("shipped") is True
+        # A malformed source invalidates the whole projection. Do not surface a
+        # traceable card beside a rejected line and accidentally invite reliance.
+        traceable = not invalid and shipped and value.get("intent_traceable") is True
+        status = "traceable" if traceable else "blocked" if not shipped else "untraceable"
+        feature = _text(path.parent.name, "unknown-feature")
+        receipt_sha = hashlib.sha256(raw_line.encode("utf-8")).hexdigest()
+        node_id = f"intent-trace:{feature}:{receipt_sha[:24]}"
+        _node(
+            state,
+            node_id=node_id,
+            kind="intent_trace",
+            label=f"{feature} · intent trace",
+            source=source,
+            status=status,
+            facts={
+                "feature": feature,
+                "shipped": shipped,
+                "intent_traceable": traceable,
+                "intent_hash": value.get("intent_hash") if isinstance(value.get("intent_hash"), str) else None,
+                "obligations": value.get("obligations") if isinstance(value.get("obligations"), str) else None,
+                "receipt_sha256": receipt_sha,
+                "timestamp": value.get("ts") if isinstance(value.get("ts"), str) else None,
+                "authority": dict(_AUTHORITY),
+                "execution": False,
+            },
+        )
+        facts["count"] += 1
+        facts["traceable_count"] += int(traceable)
+        facts["untraceable_count"] += int(shipped and not traceable)
+        facts["blocked_count"] += int(not shipped)
+    return facts
+
+
 def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
     visible = nodes[:80]
     allowed = {node["id"] for node in visible}
@@ -1245,7 +1313,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
                     frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int]) -> dict[str, int]:
+                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -1319,6 +1387,11 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "external_runtime_unknown_count": external_evidence["unknown_count"],
         "external_runtime_invalid_count": external_evidence["invalid_count"],
         "external_runtime_stale_count": external_evidence["stale_count"],
+        "intent_trace_count": intent_traces["count"],
+        "intent_trace_traceable_count": intent_traces["traceable_count"],
+        "intent_trace_untraceable_count": intent_traces["untraceable_count"],
+        "intent_trace_blocked_count": intent_traces["blocked_count"],
+        "intent_trace_invalid_count": intent_traces["invalid_count"],
         "intake_confirmation_count": sum(node["kind"] == "intake" for node in nodes),
         "intake_confirmed_count": sum(node["kind"] == "intake" and node.get("status") == "confirmed" for node in nodes),
         "intake_invalid_count": sum(node["kind"] == "intake" and node.get("status") == "invalid" for node in nodes),
@@ -1328,7 +1401,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
                       proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int]) -> list[str]:
+                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -1381,6 +1454,12 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
             or external_evidence["blocked_count"]
             or external_evidence["unknown_count"]):
         markers.append("GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_READ_ONLY")
+    if intent_traces["count"]:
+        markers.append("GRAPH_OPS_INTENT_TRACE_READ_ONLY")
+    if (intent_traces["untraceable_count"]
+            or intent_traces["blocked_count"]
+            or intent_traces["invalid_count"]):
+        markers.append("GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED")
     if any(node["kind"] == "intake" for node in nodes):
         markers.append("GRAPH_OPS_INTAKE_DECISIONS_READ_ONLY")
     if state["errors"] or state["truncated"]:
@@ -1435,14 +1514,15 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     agent_supervision = _append_agent_supervision(state, workspace)
     judgment = _append_judgment_capsules(state, workspace)
     external_evidence = _append_external_evidence(state, workspace)
+    intent_traces = _append_intent_traces(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
-    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence)
+    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
-    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence)
+    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",

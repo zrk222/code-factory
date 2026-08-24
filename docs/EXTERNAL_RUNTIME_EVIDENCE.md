@@ -108,6 +108,21 @@ read-only, keyboard accessible, and full width on narrow screens; it never
 calls a provider, mutates workspace state, authorizes execution, or infers a
 repair.
 
+## Intent trace in Graph Ops
+
+Graph Ops also reads the newest local Forge `ship` line from each bounded
+`.forge/*/receipts.jsonl` file. The **Forge receipt · intent trace** panel shows
+the recorded intent hash, obligation result, shipped state, and a content hash
+of the receipt line. A `traceable` card means the receipt explicitly recorded
+`intent_traceable=true`; it is not a new approval or a cryptographic signature.
+
+If no ship receipt exists, the panel says intent traceability is unverified. A
+missing, malformed, blocked, or untraceable receipt stays fail closed and emits
+`GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED`. The projection is local and read-only: it
+does not infer intent, run Forge, call a provider, mutate the workspace, or
+grant execution, approval, publication, deployment, signing, messaging,
+credential, or connector authority.
+
 This is an observation bridge, not a TestSprite integration claim and not a
 production-readiness claim. A human or repository-owned workflow still decides
 which runner to use and what local proof is required.

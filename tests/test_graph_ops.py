@@ -173,6 +173,58 @@ def test_graph_ops_projects_external_runtime_as_observed_read_only_evidence(tmp_
     assert "GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_READ_ONLY" not in stale["markers"]
 
 
+def test_graph_ops_projects_latest_forge_intent_trace_without_authority(tmp_path: Path):
+    receipt_path = tmp_path / ".forge" / "intent-navigation" / "receipts.jsonl"
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text(
+        json.dumps({"phase": "review", "ts": "2026-08-24T12:00:00Z"}) + "\n"
+        + json.dumps({
+            "phase": "ship", "ts": "2026-08-24T12:01:00Z", "shipped": True,
+            "intent_traceable": True, "intent_hash": "a" * 64, "obligations": "1/1",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    node = next(item for item in snapshot["nodes"] if item["kind"] == "intent_trace")
+    assert node["status"] == "traceable"
+    assert node["facts"]["intent_hash"] == "a" * 64
+    assert node["facts"]["obligations"] == "1/1"
+    assert node["facts"]["authority"]["execution"] is False
+    assert snapshot["facts"]["intent_trace_count"] == 1
+    assert snapshot["facts"]["intent_trace_traceable_count"] == 1
+    assert "GRAPH_OPS_INTENT_TRACE_READ_ONLY" in snapshot["markers"]
+    assert "GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED" not in snapshot["markers"]
+
+
+def test_graph_ops_fails_closed_for_untraceable_or_malformed_intent_receipts(tmp_path: Path):
+    missing = tmp_path / ".forge" / "missing-intent" / "receipts.jsonl"
+    missing.parent.mkdir(parents=True)
+    missing.write_text(
+        json.dumps({"phase": "ship", "shipped": True, "obligations": "1/1"}) + "\n",
+        encoding="utf-8",
+    )
+    malformed = tmp_path / ".forge" / "malformed-intent" / "receipts.jsonl"
+    malformed.parent.mkdir(parents=True)
+    malformed.write_text(
+        "not-json\n" + json.dumps({
+            "phase": "ship", "shipped": True, "intent_traceable": True,
+            "intent_hash": "b" * 64, "obligations": "1/1",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    traces = [item for item in snapshot["nodes"] if item["kind"] == "intent_trace"]
+    assert {item["status"] for item in traces} == {"untraceable"}
+    assert snapshot["facts"]["intent_trace_traceable_count"] == 0
+    assert snapshot["facts"]["intent_trace_untraceable_count"] == 2
+    assert snapshot["facts"]["intent_trace_invalid_count"] == 1
+    assert "GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED" in snapshot["markers"]
+
+
 def test_graph_ops_exposes_declared_gate_state_without_running_commands(tmp_path: Path):
     plan_dir = tmp_path / ".factory" / "proof-plans"
     plan_dir.mkdir(parents=True)
@@ -265,6 +317,13 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "Inspect node details" in page
     assert "scrollIntoView" in page
     assert "button.dataset.nodeId=node.id" in page
+    assert 'id="intent-trace-panel"' in page
+    assert 'id="intent-trace-cards"' in page
+    assert "REQ_INTENT_TRACE_UI" in page
+    assert "GRAPH_OPS_INTENT_TRACE_READ_ONLY" in page
+    assert "GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED" in page
+    assert "No local Forge ship receipt is present. Intent traceability is unverified." in page
+    assert "renderIntentTrace(nodes,facts)" in page
     assert "innerHTML" not in page
     assert "Observed project contributors" in page
     assert "not a verified identity-provider or billing-seat roster" in page
