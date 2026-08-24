@@ -1,0 +1,45 @@
+name: agent-oven-production-readiness-v1
+governance: supervised
+modules:
+  - name: readiness_domain
+    path: products/agent-cloud/app/convex/productionReadinessDomain.ts
+    imports: []
+    functions: []
+  - name: readiness_api
+    path: products/agent-cloud/app/convex/operations.ts
+    imports:
+      - products/agent-cloud/app/convex/productionReadinessDomain.ts
+      - products/agent-cloud/app/convex/access.ts
+    functions: []
+  - name: readiness_ui
+    path: products/agent-cloud/app/src/components/ProductionActivationPanel.tsx
+    imports:
+      - products/agent-cloud/app/convex/operations.ts
+    functions: []
+  - name: readiness_domain_tests
+    path: products/agent-cloud/app/convex/productionReadinessDomain.test.ts
+    imports:
+      - products/agent-cloud/app/convex/productionReadinessDomain.ts
+    functions: []
+  - name: readiness_api_tests
+    path: products/agent-cloud/app/convex/operations.test.ts
+    imports:
+      - products/agent-cloud/app/convex/operations.ts
+    functions: []
+  - name: readiness_ui_tests
+    path: products/agent-cloud/app/src/components/ProductionActivationPanel.test.tsx
+    imports:
+      - products/agent-cloud/app/src/components/ProductionActivationPanel.tsx
+    functions: []
+dependencies:
+  - from: readiness_api
+    to: readiness_domain
+  - from: readiness_ui
+    to: readiness_api
+  - from: readiness_domain_tests
+    to: readiness_domain
+  - from: readiness_api_tests
+    to: readiness_api
+  - from: readiness_ui_tests
+    to: readiness_ui
+invariants: []

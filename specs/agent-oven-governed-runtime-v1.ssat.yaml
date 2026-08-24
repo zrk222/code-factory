@@ -1,0 +1,52 @@
+name: agent-oven-governed-runtime-v1
+governance: supervised
+modules:
+  - name: runtime_domain
+    path: products/agent-cloud/app/convex/agentIntelligenceDomain.ts
+    imports: []
+    functions: []
+  - name: runtime_control
+    path: products/agent-cloud/app/convex/agentIntelligence.ts
+    imports:
+      - products/agent-cloud/app/convex/agentIntelligenceDomain.ts
+      - products/agent-cloud/app/convex/access.ts
+    functions: []
+  - name: database_control
+    path: products/agent-cloud/app/convex/databaseTools.ts
+    imports:
+      - products/agent-cloud/app/convex/access.ts
+      - products/agent-cloud/app/convex/domain.ts
+    functions: []
+  - name: runtime_ui
+    path: products/agent-cloud/app/src/components/GovernedRuntimePanel.tsx
+    imports:
+      - products/agent-cloud/app/convex/agentIntelligence.ts
+    functions: []
+  - name: database_ui
+    path: products/agent-cloud/app/src/components/DatabaseToolPanel.tsx
+    imports:
+      - products/agent-cloud/app/convex/databaseTools.ts
+    functions: []
+  - name: runtime_tests
+    path: products/agent-cloud/app/convex/agentIntelligence.test.ts
+    imports:
+      - products/agent-cloud/app/convex/agentIntelligence.ts
+      - products/agent-cloud/app/convex/agentIntelligenceDomain.ts
+    functions: []
+  - name: database_tests
+    path: products/agent-cloud/app/convex/databaseTools.test.ts
+    imports:
+      - products/agent-cloud/app/convex/databaseTools.ts
+    functions: []
+dependencies:
+  - from: runtime_control
+    to: runtime_domain
+  - from: runtime_ui
+    to: runtime_control
+  - from: database_ui
+    to: database_control
+  - from: runtime_tests
+    to: runtime_control
+  - from: database_tests
+    to: database_control
+invariants: []

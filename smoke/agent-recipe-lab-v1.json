@@ -1,0 +1,22 @@
+{
+  "checks": [
+    {
+      "name": "recipe_lab_control_plane_contract",
+      "kind": "python",
+      "run": "import subprocess\nfrom pathlib import Path\napp=Path('products/agent-cloud/app')\nresult=subprocess.run(['npm.cmd','test','--','recipeLab'],cwd=app,capture_output=True,text=True,timeout=180,check=False)\nassert result.returncode==0,result.stdout+result.stderr\nassert '5 passed' in result.stdout\n",
+      "covers": [
+        "AGENT_RECIPE_STUDY_CREATED",
+        "RECIPE_CANDIDATES_GENERATED",
+        "RECIPE_TRIAL_CLAIMED",
+        "RECIPE_CHECKPOINT_RECORDED",
+        "RECIPE_TRIAL_PRUNED",
+        "RECIPE_TRIAL_COMPLETED",
+        "RECIPE_CHAMPION_PROPOSED",
+        "RECIPE_CHAMPION_APPROVED",
+        "RECIPE_STUDY_REDACTED",
+        "RECIPE_LAB_SIX_STAGES"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

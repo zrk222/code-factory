@@ -1,0 +1,72 @@
+name: agent-oven-portable-composer-v1
+governance: supervised
+modules:
+  - name: composer_domain
+    path: products/agent-cloud/app/convex/agentComposerDomain.ts
+    imports:
+      - products/agent-cloud/app/convex/domain.ts
+    functions:
+      - name: compileAgentIntent
+        args: [input]
+        returns: CompiledAgentIntent
+  - name: composer_api
+    path: products/agent-cloud/app/convex/agentComposer.ts
+    imports:
+      - products/agent-cloud/app/convex/agentComposerDomain.ts
+      - products/agent-cloud/app/convex/access.ts
+    functions: []
+  - name: blueprint_gate
+    path: products/agent-cloud/app/convex/blueprints.ts
+    imports:
+      - products/agent-cloud/app/convex/access.ts
+      - products/agent-cloud/app/convex/domain.ts
+      - products/agent-cloud/app/convex/pricing.ts
+    functions: []
+  - name: composer_ui
+    path: products/agent-cloud/app/src/components/IntentComposer.tsx
+    imports:
+      - products/agent-cloud/app/convex/agentComposerDomain.ts
+    functions:
+      - name: IntentComposer
+        args: ["{ agentSpec }"]
+        returns: JSX.Element
+  - name: composer_domain_tests
+    path: products/agent-cloud/app/convex/agentComposerDomain.test.ts
+    imports:
+      - products/agent-cloud/app/convex/agentComposerDomain.ts
+    functions: []
+  - name: composer_api_tests
+    path: products/agent-cloud/app/convex/agentComposer.test.ts
+    imports:
+      - products/agent-cloud/app/convex/agentComposer.ts
+    functions: []
+  - name: composer_ui_tests
+    path: products/agent-cloud/app/src/components/IntentComposer.test.tsx
+    imports:
+      - products/agent-cloud/app/src/components/IntentComposer.tsx
+    functions: []
+  - name: blueprint_tests
+    path: products/agent-cloud/app/convex/blueprints.test.ts
+    imports:
+      - products/agent-cloud/app/convex/blueprints.ts
+    functions: []
+dependencies:
+  - from: composer_api
+    to: composer_domain
+  - from: composer_ui
+    to: composer_api
+  - from: composer_domain_tests
+    to: composer_domain
+  - from: composer_api_tests
+    to: composer_api
+  - from: composer_ui_tests
+    to: composer_ui
+  - from: blueprint_tests
+    to: blueprint_gate
+invariants:
+  - name: deterministic_compiler_has_no_clock_network_or_randomness
+    forbid_pattern: "Date\\.now|Math\\.random|fetch\\(|useMutation\\("
+    scopes:
+      - module: composer_domain
+        symbol: compileAgentIntent
+        max_lines: 180

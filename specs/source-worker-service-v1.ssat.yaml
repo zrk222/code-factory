@@ -1,0 +1,37 @@
+name: source-worker-service-v1
+governance: supervised
+modules:
+  - name: source_probe
+    path: products/agent-cloud/app/runtime/sourceWorker.ts
+    imports: []
+    functions: []
+  - name: worker_service
+    path: products/agent-cloud/app/runtime/sourceWorkerService.ts
+    imports:
+      - products/agent-cloud/app/runtime/sourceWorker.ts
+    functions: []
+  - name: worker_entrypoint
+    path: products/agent-cloud/app/runtime/sourceWorkerEntrypoint.ts
+    imports:
+      - products/agent-cloud/app/runtime/sourceWorker.ts
+      - products/agent-cloud/app/runtime/sourceWorkerService.ts
+    functions: []
+  - name: worker_service_tests
+    path: products/agent-cloud/app/runtime/sourceWorkerService.test.ts
+    imports:
+      - products/agent-cloud/app/runtime/sourceWorker.ts
+      - products/agent-cloud/app/runtime/sourceWorkerService.ts
+    functions: []
+dependencies:
+  - from: worker_service
+    to: source_probe
+  - from: worker_entrypoint
+    to: worker_service
+  - from: worker_entrypoint
+    to: source_probe
+  - from: worker_service_tests
+    to: worker_service
+invariants:
+  - source content and resolved credentials never cross the worker boundary
+  - monitoring cycles do not overlap
+  - readiness requires a recent successful cycle
