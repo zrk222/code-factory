@@ -12,6 +12,7 @@ const requiredFiles = [
   "docs/OUTCOME_AGENT_EXCHANGE.md",
   "docs/PORTABLE_AGENT_COMPOSER.md",
   "docs/ADVERSARIAL_APPROVAL.md",
+  "docs/CLERK_OAUTH.md",
   "public/.well-known/agent-card.json",
   "public/.well-known/outcome-agent-contract.json",
   "public/.well-known/runtime-compatibility.json",

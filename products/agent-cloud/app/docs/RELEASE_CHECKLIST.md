@@ -7,7 +7,7 @@
 - [ ] Settings shows `Control plane · Live`; `Enterprise operations · Ready` is claimed only after all seven sanitized controls pass.
 - [ ] Legal entity, privacy notice, terms, security contact, and security.txt approved.
 - [ ] CSP allowlist contains only exact production hosts.
-- [ ] Auth0 callback/logout/origin settings verified in the production tenant.
+- [ ] Clerk production instance, Convex integration, allowed origins, OAuth/SSO connections, account-linking policy, MFA policy, and custom provider credentials verified.
 - [ ] Billing webhook signature rejection and replay behavior exercised.
 - [ ] BYOK secret references resolve only inside the runtime boundary.
 - [ ] Runtime worker proves idempotent claim, heartbeat, cancellation, retry, settlement, and receipt.

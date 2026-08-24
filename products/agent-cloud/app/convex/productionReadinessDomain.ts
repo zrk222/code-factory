@@ -3,8 +3,7 @@ export type ProductionControlStatus = "missing" | "invalid" | "ready";
 export type ProductionControlCategory = "foundation" | "operations";
 
 export type ProductionReadinessEnvironment = {
-  AUTH0_DOMAIN?: string;
-  AUTH0_CLIENT_ID?: string;
+  CLERK_FRONTEND_API_URL?: string;
   AGENT_OVEN_APP_URL?: string;
   AGENT_OVEN_BILLING_WEBHOOK_SECRET_REF?: string;
   AGENT_OVEN_EMAIL_CONNECTION_REF?: string;
@@ -41,22 +40,15 @@ function configured(value: string | undefined) {
   return value?.trim() ?? "";
 }
 
-function validateHostname(value: string | undefined): Validation {
+function validateClerkFrontendUrl(value: string | undefined): Validation {
   const candidate = configured(value);
   if (!candidate) return "missing";
-  return HOSTNAME_PATTERN.test(candidate) ? "ready" : "invalid";
-}
-
-function validateClientIdentifier(value: string | undefined): Validation {
-  const candidate = configured(value);
-  if (!candidate) return "missing";
-  return candidate.length >= 8 && candidate.length <= 160 && /^[A-Za-z0-9_-]+$/.test(candidate) ? "ready" : "invalid";
-}
-
-function validateIdentity(domain: string | undefined, clientId: string | undefined): Validation {
-  const states = [validateHostname(domain), validateClientIdentifier(clientId)];
-  if (states.includes("invalid")) return "invalid";
-  return states.includes("missing") ? "missing" : "ready";
+  try {
+    const url = new URL(candidate);
+    return url.protocol === "https:" && !url.username && !url.password && HOSTNAME_PATTERN.test(url.hostname) && url.pathname === "/" && !url.search && !url.hash ? "ready" : "invalid";
+  } catch {
+    return "invalid";
+  }
 }
 
 function validateHttpsUrl(value: string | undefined): Validation {
@@ -103,7 +95,7 @@ function control(
 /** Classifies production activation from server configuration without returning configured names, references, or values. */
 export function evaluateProductionReadiness(environment: ProductionReadinessEnvironment): ProductionReadiness {
   const controls: ProductionReadinessControl[] = [
-    control("identity", "foundation", "Identity trust", validateIdentity(environment.AUTH0_DOMAIN, environment.AUTH0_CLIENT_ID), "Connect the production identity tenant and its browser application."),
+    control("identity", "foundation", "Identity trust", validateClerkFrontendUrl(environment.CLERK_FRONTEND_API_URL), "Activate Clerk's Convex integration and set its Frontend API URL in the Convex deployment."),
     control("app-endpoint", "foundation", "Application endpoint", validateHttpsUrl(environment.AGENT_OVEN_APP_URL), "Publish the application at its final HTTPS address."),
     control("billing-webhook", "operations", "Billing webhook", validateSecretReference(environment.AGENT_OVEN_BILLING_WEBHOOK_SECRET_REF), "Add an opaque secret-manager reference for signed billing events."),
     control("transactional-email", "operations", "Transactional email", validateSecretReference(environment.AGENT_OVEN_EMAIL_CONNECTION_REF), "Add an opaque secret-manager reference for the email service."),

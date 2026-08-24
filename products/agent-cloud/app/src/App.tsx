@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { UserButton } from "@clerk/react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 import {
@@ -78,14 +79,14 @@ export default function App() {
           {navigation.map(([id, label, Icon]) => <button key={id} className={view === id ? "active" : ""} onClick={() => navigate(id)}><Icon size={18} /><span>{label}</span>{id === "runs" && pending > 0 && <em>{pending}</em>}</button>)}
         </nav>
         <div className="sidebar-proof"><ShieldCheck size={20} /><div><strong>Trust boundary active</strong><p>Memory informs. Policy authorizes.</p></div></div>
-        <div className="sidebar-footer"><span className="avatar">RK</span><div><strong>Reviewer</strong><small>reviewer@factory.local</small></div></div>
+        <div className="sidebar-footer"><span className="avatar"><ShieldCheck size={16} /></span><div><strong>Verified session</strong><small>Identity by Clerk</small></div></div>
       </aside>
 
       <div className="app-body">
         <header className="topbar">
           <button className="mobile-menu" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation"><Menu size={21} /></button>
           <div className="deployment-state"><span className="pulse" /><strong>Local Convex</strong><span>Realtime control plane</span></div>
-          <div className="topbar-actions"><span className="prototype-pill">Prototype · unsigned receipts</span><button className="icon-button" aria-label="Notifications"><Bell size={18} />{pending > 0 && <i />}</button><span className="avatar small">RK</span></div>
+          <div className="topbar-actions"><span className="prototype-pill">Prototype · unsigned receipts</span><button className="icon-button" aria-label="Notifications"><Bell size={18} />{pending > 0 && <i />}</button><UserButton /></div>
         </header>
 
         <main className="main-content">

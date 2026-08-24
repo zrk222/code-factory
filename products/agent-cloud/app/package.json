@@ -22,7 +22,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@auth0/auth0-react": "^2.22.0",
+    "@clerk/react": "^6.14.5",
     "convex": "^1.42.3",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
