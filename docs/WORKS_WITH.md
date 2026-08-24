@@ -6,6 +6,20 @@ builder, orchestrator, reviewer, IDE, or CI system. It gives those systems a
 shared local evidence contract: declared intent, exact scope, independent
 validators, receipts, proof gaps, and a human-owned next decision.
 
+## Outcomes to expect—and how to measure them
+
+- **Time:** earlier scope questions and commit-bound review packets should
+  reduce time spent reconstructing what changed and what remains unproven.
+- **Frustration:** explicit blockers, hollow-test challenges, and one supported
+  next action should reduce late surprises and circular reviewer-agent loops.
+- **Savings:** reusable evidence can reduce repeated validation and reporting
+  work, but FactoryLine reports a saving only when an observed baseline,
+  measurement window, source, and confidence are available.
+
+Treat these as operational hypotheses until your own receipts establish a
+baseline. FactoryLine does not claim a universal percentage, dollar saving, or
+productivity multiplier.
+
 ## Choose the connection by job
 
 | If your primary tool is… | Let it own… | Let FactoryLine own… | Recommended handoff |

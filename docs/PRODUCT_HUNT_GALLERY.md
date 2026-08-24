@@ -16,12 +16,14 @@ Use the files in this exact order:
    analysis, and the local meter.
 4. `docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg` — actual
    FactoryLine AI Proof running a successful local First Proof in IntelliJ IDEA.
-5. `docs/assets/marketplace/graph-ops-proofsearch.png` — actual Graph Ops
+5. `docs/assets/marketplace/factory-studio-mvp-1280x800.png` — actual local,
+   outcome-first MVP flow and explicit local-only boundary.
+6. `docs/assets/marketplace/graph-ops-proofsearch.png` — actual Graph Ops
    first-divergence, repair-candidate, winner, and locked-control surface.
-6. `docs/assets/marketplace/graph-ops-proofsearch-controls.png` — actual winner
+7. `docs/assets/marketplace/graph-ops-proofsearch-controls.png` — actual winner
    rationale, measured-or-unavailable savings, and review/export/validation
    controls with Apply visibly locked.
-7. `docs/assets/marketplace/graph-ops-evidence-frontier.png` — actual Evidence
+8. `docs/assets/marketplace/graph-ops-evidence-frontier.png` — actual Evidence
    Frontier ranking supplied next-evidence hypotheses, with execution visibly
    locked.
 

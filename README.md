@@ -30,7 +30,7 @@ are ready to build, run `factory mvp "Build an approval tracker" --root .`.
 
 ![Actual privacy-safe First Proof Card: the hollow test was detected](docs/assets/first-proof-card.svg)
 
-[See the current FactoryLine visual set](docs/PRODUCT_VISUALS.md) or open the
+[See actual Factory Studio and the current FactoryLine visual set](docs/PRODUCT_VISUALS.md) or open the
 [live Hugging Face Space](https://zrk222-code-factory.static.hf.space).
 
 ![Actual FactoryLine 0.44 Graph Ops dashboard showing a waiting-for-human assembly, live telemetry, and evidence-backed next actions](docs/assets/marketplace/factoryline-0.44-live-dashboard.png)
@@ -38,6 +38,8 @@ are ready to build, run `factory mvp "Build an approval tracker" --root .`.
 ![FactoryLine AI Proof controls in IntelliJ IDEA for first proof, assemblies, receipts, changed-proof analysis, Change Lists, workspace analysis, and the local meter](docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg)
 
 ![FactoryLine AI Proof running a successful local First Proof on FactoryLine 0.44 inside IntelliJ IDEA](docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg)
+
+![Actual Factory Studio showing the outcome-first local MVP path and local-only boundary](docs/assets/marketplace/factory-studio-mvp-1280x800.png)
 
 ## What it does
 
@@ -101,6 +103,34 @@ security, productivity, production readiness, or an automatic repair service.
 | **Senior / staff engineer** | `factory judgment`, `factory graph forensics`, `factory proofsearch`, `factory gauntlet` | Protect architecture decisions; diagnose resumed or parallel workflow drift; compare candidate repairs; challenge whether critical E2E checks can actually reject declared failures | Hash-bound decision context, first-divergence facts, rejected candidates, a deterministic winner, and Survival Cards |
 | **Engineering team** | `factory wrap`, GitHub Proof Review, Graph Ops, Agent License and Combine | Put agent work into one evidence ledger; add a neutral PR Check beside AI review; hand off proof state; compare sealed runs without turning scores into vendor claims | Commit-bound Checks, local receipts, explicit owners and blockers, proof reuse decisions, and comparable governed-run records |
 | **Enterprise / platform team** | Intake Grill, Verifier Plane, policy challenge, assurance dossier, admission controls | Standardize approval boundaries; test whether policy rules matter; keep signers, exceptions, tenants, budgets, and release evidence explicit; integrate with existing SDLC controls | Independently verifiable packets and read-only operational views; identity, credentials, merge, release, and deployment remain in enterprise-owned systems |
+
+## Expected operational outcomes
+
+FactoryLine is designed to reduce avoidable review loops, evidence hunting, and
+the frustration of discovering late that an AI-generated test never exercised
+the claimed behavior. The expected outcome is a shorter path to a defensible
+human decision—not a promise that every project becomes faster or cheaper.
+
+| Outcome | What should improve | Evidence FactoryLine can retain |
+| --- | --- | --- |
+| **Less time lost before coding** | Ambiguous intent, missing acceptance evidence, and external-effect boundaries surface during intake instead of after implementation | Intake questions, approved scope, plan hashes, and explicit blockers |
+| **Faster review orientation** | Reviewers receive the exact diff, proof state, top risk, and one supported next action instead of reconstructing context across chat logs | Proof Cards, Change Review, Plan-to-Proof findings, GitHub Checks, and handoff packets |
+| **Less frustrating rework** | Hollow validators, duplicate effects, resume drift, and out-of-plan changes are challenged closer to their source | Negative-test results, first-divergence facts, rejected candidates, and Proof Debt |
+| **Lower evidence-handling cost** | Reusable receipts and read-only dashboards reduce repeated screenshots, manual summaries, and status meetings | Receipt reuse decisions, governed-run records, assurance dossiers, and local Graph Ops views |
+| **Measurable savings when a baseline exists** | Teams can compare observed duration or cost with a declared baseline; otherwise savings stay unavailable | Bounded savings records that label source, baseline, observation window, and confidence |
+
+FactoryLine never converts an unmeasured estimate into a savings claim. Use the
+[Savings Tracker](docs/SAVINGS_TRACKER.md) to report observed time or cost only
+when the repository has a valid baseline and evidence window.
+
+For planning, a transparent starting band is **25–120 minutes of avoidable
+review and rework per AI-assisted PR**: roughly 10–30 minutes of reviewer
+context reconstruction plus 15–90 minutes of one preventable clarification,
+validator, or scope-rework loop. At 50 AI-assisted PRs per month, that models
+about **21–100 hours**; at a team-supplied loaded cost of $75–$150/hour, the
+illustrative range is about **$1,560–$15,000 per month**. These are adjustable
+scenario inputs, not observed FactoryLine results. See the
+[outcomes and savings model](docs/OUTCOMES_MODEL.md) before using the range.
 
 ## Works with your existing AI development stack
 
