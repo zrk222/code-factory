@@ -1,0 +1,60 @@
+name: agent-oven-adversarial-approval-v1
+governance: supervised
+modules:
+  - name: approval_policy
+    path: products/agent-cloud/app/convex/adversarialApprovalDomain.ts
+    imports: []
+    functions:
+      - name: evaluateAdversarialApproval
+        args: [input]
+        returns: ApprovalReviewResult
+      - name: compareProofEvidence
+        args: [current, prior]
+        returns: ProofDelta
+  - name: approval_control
+    path: products/agent-cloud/app/convex/control.ts
+    imports:
+      - products/agent-cloud/app/convex/adversarialApprovalDomain.ts
+      - products/agent-cloud/app/convex/access.ts
+    functions: []
+  - name: approval_ui
+    path: products/agent-cloud/app/src/components/RunPanel.tsx
+    imports:
+      - products/agent-cloud/app/convex/control.ts
+    functions: []
+  - name: approval_policy_tests
+    path: products/agent-cloud/app/convex/adversarialApprovalDomain.test.ts
+    imports:
+      - products/agent-cloud/app/convex/adversarialApprovalDomain.ts
+    functions: []
+  - name: approval_integration_tests
+    path: products/agent-cloud/app/convex/adversarialApprovals.test.ts
+    imports:
+      - products/agent-cloud/app/convex/control.ts
+    functions: []
+  - name: approval_ui_tests
+    path: products/agent-cloud/app/src/components/RunPanel.test.tsx
+    imports:
+      - products/agent-cloud/app/src/components/RunPanel.tsx
+    functions: []
+dependencies:
+  - from: approval_control
+    to: approval_policy
+  - from: approval_ui
+    to: approval_control
+  - from: approval_policy_tests
+    to: approval_policy
+  - from: approval_integration_tests
+    to: approval_control
+  - from: approval_ui_tests
+    to: approval_ui
+invariants:
+  - name: policy_is_deterministic_and_offline
+    forbid_pattern: "Date\\.now|Math\\.random|fetch\\(|useMutation\\("
+    scopes:
+      - module: approval_policy
+        symbol: evaluateAdversarialApproval
+        max_lines: 100
+      - module: approval_policy
+        symbol: compareProofEvidence
+        max_lines: 40
