@@ -9,10 +9,11 @@
  */
 
 import type * as access from "../access.js";
-import type * as agentExchange from "../agentExchange.js";
-import type * as agentExchangeDomain from "../agentExchangeDomain.js";
+import type * as adversarialApprovalDomain from "../adversarialApprovalDomain.js";
 import type * as agentComposer from "../agentComposer.js";
 import type * as agentComposerDomain from "../agentComposerDomain.js";
+import type * as agentExchange from "../agentExchange.js";
+import type * as agentExchangeDomain from "../agentExchangeDomain.js";
 import type * as agentIntelligence from "../agentIntelligence.js";
 import type * as agentIntelligenceDomain from "../agentIntelligenceDomain.js";
 import type * as authoritativeSources from "../authoritativeSources.js";
@@ -53,10 +54,11 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   access: typeof access;
-  agentExchange: typeof agentExchange;
-  agentExchangeDomain: typeof agentExchangeDomain;
+  adversarialApprovalDomain: typeof adversarialApprovalDomain;
   agentComposer: typeof agentComposer;
   agentComposerDomain: typeof agentComposerDomain;
+  agentExchange: typeof agentExchange;
+  agentExchangeDomain: typeof agentExchangeDomain;
   agentIntelligence: typeof agentIntelligence;
   agentIntelligenceDomain: typeof agentIntelligenceDomain;
   authoritativeSources: typeof authoritativeSources;
