@@ -1,0 +1,17 @@
+name: external-runtime-evidence-ui-v1
+language: python
+modules:
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_html
+        args: [token]
+        returns: str
+dependencies: []
+invariants:
+  - name: external_runtime_ui_has_no_provider_client
+    forbid_pattern: "requests\\.|httpx\\.|urllib\\.|socket\\.|subprocess\\.|\\b(?:publish|deploy|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: graph_ops
+        symbol: graph_ops_html
+        max_lines: 20

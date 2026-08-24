@@ -78,6 +78,12 @@ release, deployment, signing action, credential use, connector, or message.
 Stale or malformed receipts are reported as source errors and never become
 trusted graph facts.
 
+When the local Graph Ops page receives these nodes, its **Observed runtime**
+lane shows the provider/test identity, verdict, first failed step, environment,
+run id, artifact count, hypothesis, and suggested next check. Invalid or stale
+receipts are shown as fail-closed observations that must be re-imported. The
+lane is explanatory only; it adds no provider request or execution control.
+
 This is an observation bridge, not a TestSprite integration claim and not a
 production-readiness claim. A human or repository-owned workflow still decides
 which runner to use and what local proof is required.

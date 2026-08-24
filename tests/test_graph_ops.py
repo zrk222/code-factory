@@ -240,6 +240,13 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "factory judgment safety-case --root . --changed <path> --change-profile .factory/judgment/change-profile.json --json" in page
     assert "renderJudgment(nodes)" in page
     assert "cannot infer intent, promote or waive a decision, execute a repair, approve code, merge, publish, deploy, sign, message, or access credentials" in page
+    assert 'id="external-evidence-panel"' in page
+    assert 'id="external-evidence-cards"' in page
+    assert 'id="external-evidence-badge"' in page
+    assert "renderExternalEvidence(nodes,facts)" in page
+    assert "Observed-only boundary." in page
+    assert "GRAPH_OPS_EXTERNAL_RUNTIME_TEXT_NODE" in page
+    assert "innerHTML" not in page
     assert "Observed project contributors" in page
     assert "not a verified identity-provider or billing-seat roster" in page
     assert "setInterval(()=>{if(memoryAutoRefresh)loadDeveloperMemory();},5000)" in page
