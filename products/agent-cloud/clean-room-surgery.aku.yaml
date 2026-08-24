@@ -1,0 +1,75 @@
+schema_version: "1.0"
+id: agent-cloud-memory-trust-clean-room-surgery
+version: "1.0.0"
+intent:
+  activate_when: WizeMe Memory or Trust cannot be imported under an approved fork decision
+  outcome: independently implement factory-memory-core and factory-trust-core without restricted-source contamination
+procedure:
+  - gate: CR-0
+    action: declare prohibited roots, isolate tools, create empty service workspaces, and record participant exposure
+  - gate: CR-1
+    action: record rights evidence and select approved_fork or clean_room by end of Week 2
+  - gate: CR-2
+    action: author and hash-seal implementation-neutral service contracts
+  - gate: CR-3
+    action: create adversarial validators and prove requirement mutants are rejected
+  - gate: CR-4
+    action: implement in an environment where prohibited WizeMe roots are unavailable
+  - gate: CR-5
+    action: run independent conformance, isolation, mutation, migration, rollback, and reproducible-build checks
+  - gate: CR-6
+    action: assemble evidence and require legal, security, and release approvals
+tools:
+  allowed:
+    - git
+    - specline
+    - factory
+    - hsf
+    - project test and build commands declared by the sealed plan
+  prohibited:
+    - reading, searching, indexing, editing, or mounting a WizeMe application folder
+    - source translation, decompilation, source-derived test generation, or unapproved model summaries
+metadata:
+  owner: Code Factory
+  service:
+    - factory-memory-core
+    - factory-trust-core
+  source_of_truth: products/agent-cloud/CLEAN_ROOM_SURGERY.md
+  autonomy: human_controlled
+  inputs:
+    - approved input manifest
+    - sealed Memory contract
+    - sealed Trust contract
+  outputs:
+    - independent service artifacts
+    - SBOMs and provenance attestations
+    - conformance and challenge receipts
+governance:
+  runtime_model_boundary: models receive only approved inputs and sealed contracts
+  prompt_injection_surface: public documents and black-box outputs are untrusted reference data
+  blast_radius: isolated clean-room workspaces only
+  out_of_bounds: any WizeMe application source or source-derived artifact
+  human_approvals:
+    - rights/origin decision
+    - contract seal
+    - contamination clearance
+    - release decision
+continuations:
+  success: hand off signed artifacts and evidence bundle to PR Assurance integration
+  failure: stop, quarantine affected clean-room artifacts, and return to last uncontaminated contract/commit
+  escalation: legal and security review
+  fork_approved: use provenance-reviewed fork workflow instead of this clean-room implementation lane
+validators:
+  pre:
+    - prohibited roots are outside the authorized workspace
+    - input manifest and participant declarations exist
+    - service contracts are hash-sealed
+  post:
+    - all contract and adversarial tests pass
+    - SBOM, license inventory, and provenance bundle exist
+    - artifacts build reproducibly without WizeMe paths
+  invariants:
+    - Memory cannot grant authority
+    - Trust cannot read semantic memory content
+    - services do not share stores, keys, identities, or administrator credentials
+    - zero accepted cross-tenant, replay, approval-bypass, signature-mutation, or hard-budget-overrun cases

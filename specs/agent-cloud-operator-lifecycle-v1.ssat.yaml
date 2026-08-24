@@ -1,0 +1,57 @@
+name: agent-cloud-operator-lifecycle-v1
+modules:
+  - name: convex_schema
+    path: products/agent-cloud/app/convex/schema.ts
+    imports: []
+    functions: []
+  - name: lifecycle_domain
+    path: products/agent-cloud/app/convex/domain.ts
+    imports: []
+    functions:
+      - name: validateSecretReference
+        args: ["value: string"]
+        returns: string
+        doc: "Accept an allowlisted secret reference while rejecting raw credential material."
+      - name: canonicalAgentSpec
+        args: ["value: AgentSpecSemantic"]
+        returns: string
+        doc: "Serialize exactly the seven portable AgentSpec semantic fields in stable order."
+  - name: lifecycle_control
+    path: products/agent-cloud/app/convex/lifecycle.ts
+    imports: [lifecycle_domain]
+    functions: []
+  - name: run_control
+    path: products/agent-cloud/app/convex/control.ts
+    imports: [lifecycle_domain]
+    functions: []
+  - name: operations_ui
+    path: products/agent-cloud/app/src/components/OperationsPanel.tsx
+    imports: []
+    functions: []
+dependencies:
+  - from: lifecycle_control
+    to: lifecycle_domain
+  - from: run_control
+    to: lifecycle_domain
+invariants:
+  - name: convex_only_backend
+    forbid_pattern: "@supabase|SUPABASE_URL|supabase[.]co"
+    scopes:
+      - module: lifecycle_domain
+        symbol: canonicalAgentSpec
+        max_lines: 800
+      - module: lifecycle_domain
+        symbol: validateSecretReference
+        max_lines: 800
+  - name: no_raw_secret_fields
+    forbid_pattern: "(secretValue|apiKey|accessToken|privateKey)"
+    scopes:
+      - module: lifecycle_domain
+        symbol: validateSecretReference
+        max_lines: 800
+  - name: no_memory_authority
+    forbid_pattern: "memory.*(allow|authorize|capability)|(?:allow|authorize|capability).*memory"
+    scopes:
+      - module: lifecycle_domain
+        symbol: canonicalAgentSpec
+        max_lines: 800

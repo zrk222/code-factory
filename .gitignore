@@ -17,5 +17,8 @@ receipts/
 *.adoption.ssat.yaml
 *.zip
 .DS_Store
+.env.render.local
+.tools/
+.netlify/
 .idea/
 editors/intellij/.kotlin/

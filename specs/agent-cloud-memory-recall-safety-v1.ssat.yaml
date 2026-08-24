@@ -1,0 +1,34 @@
+feature: agent-cloud-memory-recall-safety-v1
+version: 1
+governance: supervised
+intent: Enforce exact-scope, quarantined, explainable memory recall without authority expansion.
+inputs:
+  agentSpecId: existing AgentSpec identifier
+  subject: non-empty string, maximum 200 characters
+  purpose: non-empty string, maximum 300 characters
+  limit: integer from 1 through 20
+outputs:
+  markers:
+    - MEMORY_RECALL_SCOPED
+    - MEMORY_QUARANTINE_ENFORCED
+    - MEMORY_AUTHORITY_SEPARATED
+    - MEMORY_RECALL_EXPLAINED
+    - MEMORY_CONTENT_REDACTED_FROM_AUDIT
+gates:
+  - workspace and agent are derived from AgentSpec
+  - exact normalized subject and purpose filtering precedes ranking
+  - quarantined records are excluded
+  - recalled records carry bounded provenance explanations
+  - audit and receipt metadata omit memory content
+  - native tests, mutation tests, typecheck, build, stack verification, and architecture checks pass
+authority:
+  memory: untrusted-context
+  grants: []
+  prohibited:
+    - credentials
+    - provider access
+    - approvals
+    - deployment authority
+continuation:
+  next: semantic retrieval may be considered only after scoped lexical recall has evidence
+  stop: any scope leakage or authority-bearing recall result

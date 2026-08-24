@@ -1,0 +1,20 @@
+{
+  "checks": [
+    {
+      "name": "agent_oven_local_port_and_render_blueprint",
+      "kind": "python",
+      "run": "from pathlib import Path\nvite=Path('products/agent-cloud/app/vite.config.ts').read_text()\nblueprint=Path('render.yaml').read_text()\nassert '127.0.0.1' in vite and '6670' in vite and vite.count('strictPort: true') == 2\nassert 'runtime: static' in blueprint and 'rootDir: products/agent-cloud/app' in blueprint and 'staticPublishPath: ./dist' in blueprint\nassert blueprint.count('sync: false') == 3\nassert 'type: worker' not in blueprint\n",
+      "covers": [
+        "LOCAL_DEVELOPMENT_STARTS",
+        "LOCAL_PREVIEW_STARTS",
+        "LOCAL_PORT_OCCUPIED",
+        "LOCAL_HTTP_SMOKE_RUNS",
+        "RENDER_STATIC_BLUEPRINT_EXISTS",
+        "RENDER_BROWSER_CONFIGURATION_REQUIRED",
+        "RENDER_WORKER_IDENTITY_UNAVAILABLE",
+        "RENDER_ACCOUNT_AUTHENTICATION_MISSING"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

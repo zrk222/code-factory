@@ -1,0 +1,28 @@
+{
+  "checks": [
+    {
+      "name": "source_worker_activation_preflight_contract",
+      "kind": "python",
+      "run": "import os, subprocess\nfrom pathlib import Path\napp=Path('products/agent-cloud/app')\nnode=os.environ.get('AGENT_OVEN_TEST_NODE','node')\nresult=subprocess.run([node,'node_modules/vitest/vitest.mjs','run','runtime/sourceWorkerActivation.test.ts','runtime/sourceWorkerActivationEntrypoint.test.ts'],cwd=app,capture_output=True,text=True,timeout=180,check=False)\nassert result.returncode==0,result.stdout+result.stderr\nassert 'passed' in result.stdout\n",
+      "covers": [
+        "ACTIVATION_CONFIGURATION_MISSING",
+        "ACTIVATION_CONFIGURATION_INVALID",
+        "ACTIVATION_CONFIGURATION_VALID",
+        "ACTIVATION_STATIC_IDENTITY_SELECTED",
+        "ACTIVATION_TOKEN_MALFORMED",
+        "ACTIVATION_TOKEN_ISSUER_MISMATCH",
+        "ACTIVATION_TOKEN_AUDIENCE_MISMATCH",
+        "ACTIVATION_TOKEN_SUBJECT_MISMATCH",
+        "ACTIVATION_TOKEN_TIME_INVALID",
+        "ACTIVATION_PREFLIGHT_READY",
+        "ACTIVATION_RECEIPT_REDACTED",
+        "ACTIVATION_ROTATION_DRILL_SUCCEEDS",
+        "ACTIVATION_ROTATION_DRILL_TIMES_OUT",
+        "ACTIVATION_REFERENCE_UNRESOLVED",
+        "ACTIVATION_COMMAND_SUCCEEDS",
+        "ACTIVATION_COMMAND_FAILS"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

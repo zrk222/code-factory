@@ -1,0 +1,23 @@
+name: agent-oven-render-local-port-v1
+governance: supervised
+modules:
+  - name: vite_local_server
+    path: products/agent-cloud/app/vite.config.ts
+    imports: []
+    functions: []
+  - name: render_blueprint
+    path: render.yaml
+    imports: []
+    functions: []
+dependencies: []
+invariants:
+  - name: local_server_is_loopback_only
+    forbid_pattern: "host:\\s*['\"](?:0[.]0[.]0[.]0|::)['\"]"
+    scopes:
+      - module: vite_local_server
+        max_lines: 100
+  - name: render_blueprint_has_no_literal_browser_credentials
+    forbid_pattern: "VITE_(?:CONVEX_URL|AUTH0_DOMAIN|AUTH0_CLIENT_ID):\\s*[^\\n]+"
+    scopes:
+      - module: render_blueprint
+        max_lines: 200
