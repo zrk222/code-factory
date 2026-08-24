@@ -27,4 +27,4 @@ Verified July 21, 2026 from the app directory:
 
 ## Deployment activation ledger
 
-The following are deliberately not represented as completed by repository tests: production Auth0/SCIM configuration, billing webhook signatures and checkout, transactional email delivery, runtime-worker provider calls, backup object writes, connector OAuth/sync, production DSSE key custody, DNS, telemetry alerts, external penetration test, legal approval, support staffing, and live SLO measurement. The production runbook converts each into an explicit deployment check and evidence receipt.
+The following are deliberately not represented as completed by repository tests: production Clerk OAuth/SSO and directory configuration, billing webhook signatures and checkout, transactional email delivery, runtime-worker provider calls, backup object writes, connector OAuth/sync, production DSSE key custody, DNS, telemetry alerts, external penetration test, legal approval, support staffing, and live SLO measurement. The production runbook converts each into an explicit deployment check and evidence receipt.

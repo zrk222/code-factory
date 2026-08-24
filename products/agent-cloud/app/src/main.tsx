@@ -11,8 +11,7 @@ if (protectedRoute) {
     <StrictMode>
       <HostedAppBoundary configuration={{
         deploymentUrl: import.meta.env.VITE_CONVEX_URL,
-        authDomain: import.meta.env.VITE_AUTH0_DOMAIN,
-        authClientId: import.meta.env.VITE_AUTH0_CLIENT_ID,
+        clerkPublishableKey: import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
       }} />
     </StrictMode>,
   ));

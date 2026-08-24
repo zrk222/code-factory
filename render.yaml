@@ -15,9 +15,7 @@ services:
     envVars:
       - key: VITE_CONVEX_URL
         sync: false
-      - key: VITE_AUTH0_DOMAIN
-        sync: false
-      - key: VITE_AUTH0_CLIENT_ID
+      - key: VITE_CLERK_PUBLISHABLE_KEY
         sync: false
     routes:
       - type: rewrite

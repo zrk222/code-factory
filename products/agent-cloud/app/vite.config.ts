@@ -6,7 +6,7 @@ export default defineConfig({
   build: {
     rolldownOptions: {
       output: {
-        manualChunks: (id) => id.includes("node_modules/@auth0/") ? "auth-runtime" : id.includes("node_modules/convex/") ? "convex-runtime" : undefined,
+        manualChunks: (id) => id.includes("node_modules/@clerk/") ? "auth-runtime" : id.includes("node_modules/convex/") ? "convex-runtime" : undefined,
       },
     },
   },

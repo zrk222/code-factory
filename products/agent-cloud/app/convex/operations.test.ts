@@ -10,7 +10,7 @@ describe("production operations evidence", () => {
     expect(result).toMatchObject({ marker: "PRODUCTION_READINESS_EXPLAINED", evidenceMarker: "READINESS_RESPONSE_REDACTED", enterpriseReady: false, summary: { total: 7 } });
     expect(result.controls).toHaveLength(7);
     const serialized = JSON.stringify(result);
-    expect(serialized).not.toMatch(/AUTH0_|AGENT_OVEN_|vault:\/\/|aws-sm:\/\/|azure-kv:\/\/|gcp-sm:\/\//);
+    expect(serialized).not.toMatch(/CLERK_|AGENT_OVEN_|vault:\/\/|aws-sm:\/\/|azure-kv:\/\/|gcp-sm:\/\//);
   });
 
   test("rejects a viewer before returning deployment readiness", async () => {

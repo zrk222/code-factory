@@ -37,6 +37,10 @@ vi.mock("convex/react", () => ({
   useMutation: () => mutate,
 }));
 
+vi.mock("@clerk/react", () => ({
+  UserButton: () => <button aria-label="User account" />,
+}));
+
 beforeEach(() => window.localStorage.clear());
 
 describe("Agent Oven shell", () => {

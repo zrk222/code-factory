@@ -26,7 +26,7 @@ Current plans are Starter (500 monthly credits / 2 agents), Growth (2,500 / 10),
 
 The Convex backend now includes an identity-derived membership guard, one-time empty-workspace owner bootstrap, owner-controlled member administration, last-owner protection, revoked-member denial, and protected AgentSpec reads that reject cross-workspace identifiers. The principal comes from Convex `tokenIdentifier`; access APIs accept no acting identity from the client, and evidence omits identity claims and tokens.
 
-Every public query and mutation is classified by a route-authorization manifest. Enterprise controls add organization ownership, delegated administrators and auditors, SSO/SCIM metadata, directory-driven role mapping, idempotent provisioning, and cross-organization denial. Production OIDC and directory activation still requires real tenant configuration and credentials.
+Every public query and mutation is classified by a route-authorization manifest. Clerk supplies OAuth, enterprise SSO, and session identity; Convex independently resolves organization and workspace membership on every operation. Enterprise controls add organization ownership, delegated administrators and auditors, SSO/SCIM metadata, directory-driven role mapping, idempotent provisioning, and cross-organization denial. Social providers, production OAuth credentials, and enterprise connections remain tenant-controlled Clerk configuration rather than source-code secrets.
 
 ## Recipe builder and Knowledge Wall
 
@@ -116,7 +116,7 @@ The first command can create a local Convex deployment without an account. The g
 
 ## Render web deployment
 
-The repository-root `render.yaml` deploys the Agent Oven UI as a Render static site. Render must receive `VITE_CONVEX_URL`, `VITE_AUTH0_DOMAIN`, and `VITE_AUTH0_CLIENT_ID` through its Dashboard; no browser configuration value is committed. The source worker is intentionally excluded because Render static hosting cannot satisfy its projected workload-identity and CSI-mounted-secret contract.
+The repository-root `render.yaml` deploys the Agent Oven UI as a Render static site. Render must receive `VITE_CONVEX_URL` and the public `VITE_CLERK_PUBLISHABLE_KEY` through its Dashboard. The Convex deployment separately receives `CLERK_FRONTEND_API_URL`; no Clerk secret key is accepted by the browser application. The source worker is intentionally excluded because Render static hosting cannot satisfy its projected workload-identity and CSI-mounted-secret contract.
 
 ## Verify
 
@@ -138,4 +138,4 @@ The enterprise gate runs all tests, typechecking, production build, Convex-only 
 
 ## Product boundary
 
-The repository is an enterprise release candidate, not a claim that an external production tenant is live. Real Auth0/SCIM tenants, billing and email providers, DNS, CSP host allowlists, runtime and backup workers, object storage, connector OAuth grants, DSSE production signing, telemetry, penetration testing, legal approval, support staffing, and measured live SLOs must be activated and recorded during deployment. See `docs/PRODUCTION_RUNBOOK.md` and `docs/ENTERPRISE_RC_HANDOFF.md`.
+The repository is an enterprise release candidate, not a claim that an external production tenant is live. A real Clerk application and Convex integration, selected OAuth/SSO connections, billing and email providers, DNS, CSP host allowlists, runtime and backup workers, object storage, connector OAuth grants, DSSE production signing, telemetry, penetration testing, legal approval, support staffing, and measured live SLOs must be activated and recorded during deployment. See `docs/PRODUCTION_RUNBOOK.md` and `docs/ENTERPRISE_RC_HANDOFF.md`.
