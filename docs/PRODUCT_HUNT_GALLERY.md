@@ -45,31 +45,31 @@ gallery replacement.
 Use this only as an update associated with the existing **Code Factory**
 Product Hunt product.
 
-**Headline:** Refresh the proof state. See the next safe action.
+**Headline:** Can your AI-generated test actually fail?
 
-**Tagline:** Follow live local delivery evidence without handing an AI release authority.
+**Tagline:** One local command exposes a test that only looks green.
 
 **Update copy:**
 
-Code Factory now keeps Factory Studio and Unified Graph Ops current while a
-local Assembly runs. Refresh the activity state, see the current stage and
-completed work, and open a Developer Memory Brief that turns the exact diff into
-one safe next-proof action. It also shows redacted continuity facts and observed
-local Git contribution context—never a claim that Git authors are verified
-seats, owners, approvers, or a billing roster.
+I built Code Factory after losing time to AI-generated tests that passed but
+failed in real use. The front door is now deliberately simple: run
+`factory first-proof --root .` and see a safe demonstration of whether a test
+can actually reject a known failure. It stays local and does not change your
+project.
 
-Evidence Frontier then ranks the supplied, non-executing checks by how many
-viable repair pairs each can distinguish. Its predictions are displayed as
-unverified hypotheses—not a model verdict—and the next experiment remains
-locked until a separately approved runner records external evidence.
+For a solo developer or vibe coder, that is the whole starting value. For a
+team, `factory wrap` records the exact file delta from an admitted agent run,
+runs the validators the team declared, and leaves a reviewable receipt without
+retaining prompts or raw model output. Platform and assurance teams can evaluate
+the deeper policy and evidence controls in a pilot, but this beta does not claim
+an SLA, certification, customer references, or procurement readiness.
 
-The same UI still makes evidence and authority visible: fresh or stale proof,
-next action, and measured-or-unavailable values are separated from approvals.
-Verification, export, and guardrail controls remain available; tests, repairs,
-apply, merge, publication, deployment, credentials, and connectors remain
-human-controlled.
+Version 0.44.3 also compares declared and observed product journeys, preserves
+the failed step in a bounded evidence capsule, checks state and cleanup, and
+audits the repairing agent separately. Human approval, apply, merge, release,
+credentials, and deployment remain outside Code Factory's authority.
 
-**Primary CTA:** Inspect the live repair arena and verify the winning evidence.
+**Primary CTA:** Run your first local proof.
 
 **Proof links:**
 

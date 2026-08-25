@@ -41,7 +41,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
         "Issues": "https://github.com/zrk222/code-factory/issues",
         "Changelog": "https://github.com/zrk222/code-factory/releases",
     }
-    assert project["description"] == "Catch AI-generated tests that could never fail and review AI code with local proof."
+    assert project["description"] == "Catch AI-generated tests that could never fail with one local proof command."
     assert {
         "mvp",
         "mcp",
@@ -78,7 +78,7 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     value = "Catch AI-generated tests that could never fail — before review."
     assert value in readme
     assert "challenges whether a test can actually reject" in readme
-    assert readme.index(value) < readme.index("## What it does")
+    assert readme.index(value) < readme.index("## Advanced workflows")
     assert "factory mvp \"Build an approval tracker\" --root ." in readme
     assert "See actual Factory Studio" in readme
     assert "factory-studio-mvp-1280x800.png" in readme
