@@ -1,0 +1,11 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "forgeline-intent-lineage-navigation-v1",
+  "sealed_hash": "793b3059705af618d1b23fcd60b76445b498056b1c218db7380798ff01f4390b",
+  "coherence_score": 100,
+  "source": "specs/forgeline-intent-lineage-navigation-v1.md",
+  "intent": "Make verified Forge lineage easy to inspect in Graph Ops without adding authority.",
+  "assumptions": [
+    "Assumes no external provider or connector authorization is required; source navigation remains local and read-only."
+  ]
+}

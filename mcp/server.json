@@ -7,19 +7,19 @@
     "source": "github",
     "id": "1293217553"
   },
-  "version": "0.44.1",
+  "version": "0.44.2",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "factoryline-code-factory",
-      "version": "0.44.1",
+      "version": "0.44.2",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {
           "type": "named",
           "name": "--from",
-          "value": "factoryline-code-factory==0.44.1"
+          "value": "factoryline-code-factory==0.44.2"
         }
       ],
       "transport": {

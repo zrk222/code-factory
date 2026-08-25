@@ -73,8 +73,8 @@ human-controlled.
 
 **Proof links:**
 
-- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.44.1`
-- PyPI: `https://pypi.org/project/factoryline-code-factory/0.44.1/`
+- GitHub release: `https://github.com/zrk222/code-factory/releases/tag/v0.44.2`
+- PyPI: `https://pypi.org/project/factoryline-code-factory/0.44.2/`
 - Source: `https://github.com/zrk222/code-factory`
 
 If no authenticated Code Factory post or draft exists, report

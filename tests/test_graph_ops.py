@@ -519,6 +519,10 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED" in page
     assert "No local Forge ship receipt is present. Intent traceability is unverified." in page
     assert "renderIntentTrace(nodes,facts)" in page
+    assert "GRAPH_OPS_INTENT_LINEAGE_NAV_READ_ONLY" in page
+    assert "No traversable Forge lineage" in page
+    assert "Inspect source" in page
+    assert "focusExternalNode(sourceNode)" in page
     assert "innerHTML" not in page
     assert "Observed project contributors" in page
     assert "not a verified identity-provider or billing-seat roster" in page

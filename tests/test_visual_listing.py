@@ -100,7 +100,7 @@ def test_zenodo_and_release_metadata_only_package_current_public_visuals() -> No
     metadata = json.loads((ROOT / ".zenodo.json").read_text(encoding="utf-8"))
     workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
 
-    assert metadata["version"] == "0.44.1"
+    assert metadata["version"] == "0.44.2"
     assert metadata["publication_date"] == "2026-08-24"
     assert "60-day personal-use case" in metadata["description"]
     assert "not a benchmark, guaranteed ROI, or verified cash saving" in metadata["description"]

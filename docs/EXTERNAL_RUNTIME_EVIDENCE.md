@@ -141,6 +141,12 @@ fail closed. The edge is navigation evidence only and cannot execute, repair,
 approve, publish, deploy, sign, message, access credentials, or grant a
 connector.
 
+The intent card may also show an **Inspect source** action when that edge exists.
+It reuses the existing local node-focus path to select the `intent_source`
+node; it does not refresh, execute, repair, or authorize anything. When the
+edge is absent, the card says `No traversable Forge lineage` and withholds the
+action.
+
 If no ship receipt exists, the panel says intent traceability is unverified. A
 missing, malformed, blocked, or untraceable receipt stays fail closed and emits
 `GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED`. A malformed adapter suppresses the legacy
