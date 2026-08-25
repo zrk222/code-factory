@@ -1,0 +1,9 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "journey-proof-engine-v1",
+  "sealed_hash": "2153e64a5da6f827b1e737fc48fc1a2759ac50b1a7b04f1d905a3aad013a2257",
+  "coherence_score": 100,
+  "source": "specs/journey-proof-engine-v1.md",
+  "intent": "Provide one provider-neutral proof engine that compares declared and observed journeys, preserves bounded failure evidence, proves stateful workflow behavior, and independently audits bounded human or agent repairs without granting release authority.",
+  "assumptions": []
+}

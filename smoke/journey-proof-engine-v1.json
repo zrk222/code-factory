@@ -1,0 +1,21 @@
+{
+  "checks": [
+    {
+      "name": "journey_proof_engine_contract",
+      "kind": "python",
+      "run": "from pathlib import Path; source=Path('factoryline/journey_proof.py').read_text(encoding='utf-8'); ui=Path('factoryline/graph_ops.html').read_text(encoding='utf-8'); docs=Path('docs/JOURNEY_PROOF_ENGINE.md').read_text(encoding='utf-8'); required=['JOURNEY_REALITY_REVIEW_REQUIRED','FAILURE_CAPSULE_BOUND','WORKFLOW_PROOF_PASSED','WORKFLOW_CLEANUP_MISSING','HEALING_PROOF_ADMISSIBLE','HOLLOW_HEALING_PROOF','HEALING_HUMAN_REVIEW_REQUIRED','HEALING_AUTO_AWAITING_PROMOTION','AGENT_WORK_AUDITED','JOURNEY_STATUS_READ_ONLY','human_controlled','supervised_auto','BYOK / local','Managed service']; assert all(item in source+ui+docs for item in required) and 'subprocess.run' not in source and 'worker_approval\\\": True' not in source",
+      "expect_exit": 0,
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "journey_proof_behavior",
+      "kind": "python",
+      "run": "import pytest; result=pytest.main(['-q','tests/test_journey_proof.py']); assert result==0; print('JOURNEY_PROOF_BEHAVIOR_PASS')",
+      "expect_exit": 0,
+      "expect_stdout": "JOURNEY_PROOF_BEHAVIOR_PASS",
+      "timeout_s": 120,
+      "must_fail_on_stub": true
+    }
+  ]
+}

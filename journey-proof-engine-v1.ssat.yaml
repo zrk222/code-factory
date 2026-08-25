@@ -1,0 +1,55 @@
+name: journey-proof-engine-v1
+language: python
+modules:
+  - name: journey_proof
+    path: factoryline/journey_proof.py
+    functions:
+      - name: compile_reality_graph
+        args: [root, declaration_path, observation_path, out]
+        returns: dict[str, Any]
+      - name: create_failure_capsule
+        args: [root, input_path, out]
+        returns: dict[str, Any]
+      - name: verify_stateful_workflow
+        args: [root, input_path, out]
+        returns: dict[str, Any]
+      - name: verify_proof_gated_healing
+        args: [root, input_path, out, timeout_seconds]
+        returns: dict[str, Any]
+      - name: journey_proof_status
+        args: [root]
+        returns: dict[str, Any]
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_snapshot
+        args: [root]
+        returns: dict[str, Any]
+dependencies:
+  - from: graph_ops
+    to: journey_proof
+invariants:
+  - name: journey_compilers_do_not_call_providers
+    forbid_pattern: "requests\\.|httpx\\.|urllib\\.|socket\\.|openai\\.|anthropic\\.|testsprite"
+    scopes:
+      - module: journey_proof
+        symbol: _compile_reality_graph
+        max_lines: 260
+      - module: journey_proof
+        symbol: _create_failure_capsule
+        max_lines: 260
+      - module: journey_proof
+        symbol: _verify_stateful_workflow
+        max_lines: 320
+  - name: healing_never_applies_or_promotes
+    forbid_pattern: "\\b(?:apply|commit|merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: journey_proof
+        symbol: _verify_proof_gated_healing
+        max_lines: 340
+  - name: graph_projection_is_read_only
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:apply|commit|merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: graph_ops
+        symbol: graph_ops_snapshot
+        max_lines: 180

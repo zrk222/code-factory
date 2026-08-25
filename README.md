@@ -77,6 +77,13 @@ are ready to build, run `factory mvp "Build an approval tracker" --root .`.
   review date, and hash-bound proof obligations. A Change Safety Case routes
   one explicit diff to its owner; it never infers intent, promotes a decision,
   runs a test, or approves a release.
+- **Prove the whole journey—and audit the repairing agent.** Use
+  [`factory journey`](docs/JOURNEY_PROOF_ENGINE.md) to compare declared and
+  observed product journeys, preserve a hash-bound failure capsule, prove
+  state flow and cleanup, and challenge a proposed healing with a negative
+  mutation. Choose human-controlled or bounded supervised-auto mode; every
+  autonomous attempt receives a separate FactoryLine audit and neither mode
+  can self-approve.
 
 ## What the latest upgrade resolves
 
@@ -88,6 +95,7 @@ are ready to build, run `factory mvp "Build an approval tracker" --root .`.
 | Teams gradually trust an agent because it has been successful recently | Earned Autonomy derives an expiring local tier from governed evidence and demotes severe hollow-test or scope-escape results | Identity, permissions, execution, approval, and release authority |
 | A hard-won design decision is forgotten, then a later diff silently breaks its assumptions | Engineering Judgment Capsules bind one named owner, explicit path scope, review date, and declared proof obligations; an optional human-declared Change Profile makes novel boundaries and required Senior Attention explicit before review | Proposal, independent promotion, decision reconsideration, proof execution, acceptance, merge, and release |
 | A reviewer has suggestions but no shared evidence picture | Graph Ops, local receipts, and read-only MCP facts show current scope, proof debt, and the next fact-derived action | Merge, release, deployment, and provider access |
+| A selector repair makes the test green but changes the user journey—or an autonomous agent silently edits outside scope | Journey Reality, Stateful Workflow Proof, and Proof-Gated Healing require preserved semantic identity and coverage, cleanup proof, an adversarial negative result, exact workspace deltas, and an independent Agent Work Audit | Agent/provider choice, repair admission, final approval, merge, and release |
 | Agent work happens outside the evidence ledger, while writing real E2E manifests takes too long | Evidence Supply Line wraps any admitted local agent CLI; `gauntlet draft` proposes inert, structure-derived promise drafts and explicitly withholds commands it cannot derive | Agent identity, sandboxing, draft promotion, validator choice, Gauntlet admission, and release |
 | A large/remote workspace feels opaque or sluggish | Workspace Advisor measures bounded local project shape and path-only WSL/remote signals without changing indexes, heap, caches, inspections, or remote settings | Every IDE performance change and environment setting |
 

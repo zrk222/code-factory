@@ -37,6 +37,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
     assert status["tools"] == [
         "factory.status",
         "factory.graph_ops",
+        "factory.journey_status",
         "factory.graph_impact",
         "factory.developer_memory",
         "factory.intent_ledger",

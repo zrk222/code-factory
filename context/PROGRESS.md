@@ -459,3 +459,15 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-25 02:34] GATE plan forgeline-intent-receipt-lineage-edge-v1 approver=human tasks=8 sha=3bc08ccd743763ff
 - [2026-08-25 02:40] GATE spec forgeline-intent-lineage-navigation-v1 approver=human strict=True sha=793b3059705af618
 - [2026-08-25 02:40] GATE plan forgeline-intent-lineage-navigation-v1 approver=human tasks=7 sha=793b3059705af618
+- [2026-08-25 05:50] GATE spec journey-proof-engine-v1 approver=human strict=True sha=10398c71cd333fce
+- [2026-08-25 05:50] GATE plan journey-proof-engine-v1 approver=human tasks=1 sha=10398c71cd333fce
+- [2026-08-25 05:52] GATE spec journey-proof-engine-v1 approver=human strict=True sha=561cdb79f70aa6e6
+- [2026-08-25 05:52] GATE plan journey-proof-engine-v1 approver=human tasks=1 sha=561cdb79f70aa6e6
+- [2026-08-25 05:52] GATE spec journey-proof-engine-v1 approver=human strict=True sha=beb7be3a47c6ff1d
+- [2026-08-25 05:52] GATE plan journey-proof-engine-v1 approver=human tasks=1 sha=beb7be3a47c6ff1d
+- [2026-08-25 05:53] GATE spec journey-proof-engine-v1 approver=human strict=True sha=9673655da299264b
+- [2026-08-25 05:53] GATE plan journey-proof-engine-v1 approver=human tasks=1 sha=9673655da299264b
+- [2026-08-25 05:55] GATE spec journey-proof-engine-v1 approver=human strict=True sha=652ecafb3c96ec63
+- [2026-08-25 05:55] GATE plan journey-proof-engine-v1 approver=human tasks=1 sha=652ecafb3c96ec63
+- [2026-08-25 06:12] GATE spec journey-proof-engine-v1 approver=human strict=True sha=2153e64a5da6f827
+- [2026-08-25 06:12] GATE plan journey-proof-engine-v1 approver=human tasks=1 sha=2153e64a5da6f827

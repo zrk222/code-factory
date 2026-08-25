@@ -224,6 +224,18 @@ def _run_command(argv: list[str], *, cwd: Path, timeout_seconds: int) -> tuple[d
     }, captures
 
 
+def run_supervised_command(argv: list[str], *, cwd: Path, timeout_seconds: int) -> dict[str, Any]:
+    """Run one caller-approved no-shell argv and return bounded, log-free facts."""
+    result, _captures = _run_command(argv, cwd=cwd, timeout_seconds=timeout_seconds)
+    return {
+        "exit_code": result["exit_code"],
+        "timed_out": result["status"] == "timed_out",
+        "launch_error": result["status"] == "spawn_error",
+        "stdout_sha256": result["stdout_sha256"],
+        "stderr_sha256": result["stderr_sha256"],
+    }
+
+
 def _artifact_hashes(root: Path, artifact_paths: list[str]) -> tuple[list[dict[str, str]], list[str]]:
     found: list[dict[str, str]] = []
     missing: list[str] = []
