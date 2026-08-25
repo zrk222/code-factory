@@ -35,14 +35,30 @@ receipt and a privacy-safe Proof Card; it does not assess or change your project
   runs the validators your team declared, and stores hashes and bounded facts—not
   prompts or raw model output—so reviewers can compare the claim with the change.
 - **Platform or assurance team:** evaluate local policy gates, evidence packets,
-  expiring exceptions, and tenant boundaries in a controlled pilot. Code Factory
-  is beta software; it does not provide a support SLA, compliance certification,
-  customer references, or procurement readiness.
+  expiring exceptions, and tenant boundaries in a controlled pilot. The free core
+  is community-supported on a best-effort basis; the proposed enterprise support
+  SLA is documented separately and is not effective until its activation evidence
+  and signed terms exist.
 
 When you need more than the first proof, open the [advanced workflow guide](docs/OVERVIEW.md).
 To create a contained starter later, run
 `factory mvp "Build an approval tracker" --root .`.
 That starter is never called production-ready until the relevant proof exists.
+
+## Support posture
+
+The open-source core is free. Community support runs through public GitHub issues
+and has no guaranteed response time. For teams that need an operating commitment,
+the repository includes a transparent [proposed Support SLA](docs/SUPPORT_SLA.md)
+with P1/P2/P3 response targets, availability, recovery, exclusions, and an
+activation checklist.
+
+Those targets are planning terms, not a current contract: the SLA remains
+**proposed and non-effective** until Code Factory has a named support owner,
+monitored escalation, production telemetry, dependency and recovery evidence,
+legal/security terms, and a signed enterprise order. This keeps the GitHub page
+useful to evaluators without implying that a free repository already carries a
+managed-service guarantee.
 
 ![Actual privacy-safe First Proof Card: the hollow test was detected](docs/assets/first-proof-card.svg)
 
@@ -127,6 +143,7 @@ security, productivity, production readiness, or an automatic repair service.
 | **Senior / staff engineer** | `factory judgment`, `factory graph forensics`, `factory proofsearch`, `factory gauntlet` | Protect architecture decisions; diagnose resumed or parallel workflow drift; compare candidate repairs; challenge whether critical E2E checks can actually reject declared failures | Hash-bound decision context, first-divergence facts, rejected candidates, a deterministic winner, and Survival Cards |
 | **Engineering team** | `factory wrap`, then GitHub Proof Review | Record the exact agent-created file delta, run declared independent validators, and hand reviewers a commit-bound evidence packet without retaining prompts | Local receipts, exact changed paths, explicit blockers, and a neutral PR Check beside AI review |
 | **Platform / assurance pilot** | Policy gates and evidence packets | Evaluate named approval boundaries, expiring exceptions, tenant isolation, budgets, and release evidence inside existing SDLC controls | Independently verifiable packets and read-only views; identity, credentials, merge, release, and deployment remain enterprise-owned. No SLA, certification, references, or procurement-readiness claim |
+| **Enterprise support evaluator** | Support and operating requirements | Review the proposed response, availability, recovery, exclusions, and activation evidence before procurement | [Support SLA policy](docs/SUPPORT_SLA.md); terms remain proposed until a signed order and all activation gates are evidenced |
 
 ## Expected operational outcomes
 
