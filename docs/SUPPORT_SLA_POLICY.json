@@ -1,0 +1,38 @@
+{
+  "schema": "factory.support-sla.v1",
+  "status": "proposed",
+  "effective": false,
+  "community": {
+    "channel": "public-github-issue",
+    "response_target": null,
+    "commitment": "best-effort"
+  },
+  "pilot": {
+    "p1_ack_minutes": 30,
+    "p1_update_minutes": 60,
+    "p2_ack_business_hours": 4,
+    "p3_ack_business_days": 2
+  },
+  "enterprise": {
+    "contract_required": true,
+    "availability_target": "99.9% monthly, excluding announced maintenance",
+    "default_rto_minutes": 60,
+    "default_rpo_minutes": 15,
+    "service_credits": "only when stated in the signed order form"
+  },
+  "exclusions": [
+    "customer-controlled inference providers",
+    "customer credentials and quotas",
+    "third-party connectors and networks",
+    "unsupported configurations"
+  ],
+  "activation_evidence": [
+    "named_support_owner",
+    "monitored_escalation_channel",
+    "production_telemetry",
+    "dependency_failure_mapping",
+    "tested_restore_drill",
+    "approved_legal_security_privacy_terms",
+    "signed_order_form"
+  ]
+}
