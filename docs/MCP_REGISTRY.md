@@ -2,7 +2,7 @@
 
 Code Factory is published to the Official MCP Registry as
 `io.github.zrk222/code-factory`. The registry package entry uses the public
-PyPI distribution `factoryline-code-factory==0.44.1` and starts the existing
+PyPI distribution `factoryline-code-factory==0.44.2` and starts the existing
 local stdio adapter through `uvx`:
 
 **Use it to give an AI coding client read-only facts about declared intent,
@@ -10,7 +10,7 @@ test challenges, Graph Ops, and review evidence—without handing that client
 write or release authority.**
 
 ```text
-uvx --from factoryline-code-factory==0.44.1 factory mcp serve
+uvx --from factoryline-code-factory==0.44.2 factory mcp serve
 ```
 
 The server needs a workspace root. Configure that explicit path in a client

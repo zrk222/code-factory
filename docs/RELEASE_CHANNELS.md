@@ -1,13 +1,13 @@
 # Release Channels
 
-Code Factory v0.44.1 publishes one verified source state through channel-specific
+Code Factory v0.44.2 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.44.1`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.44.1` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.44.2`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.44.2` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
@@ -18,6 +18,15 @@ listing has accepted the artifact.
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured.
+
+### 0.44.2 Intent lineage navigation
+
+This patch makes a verified Forge intent trace easier to inspect in Graph Ops.
+Bound adapters now show a compact trace-to-source path and a local **Inspect
+source** navigation action that focuses the exact hash-bound Forge ship line.
+Missing, malformed, and mismatched bindings keep the source action withheld.
+The change remains read-only: it does not run, repair, approve, publish,
+deploy, sign, message, or access credentials.
 
 ### 0.44.1 Current visuals and transparent outcome model
 

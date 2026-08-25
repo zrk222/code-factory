@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 from factoryline.cli import main
 from factoryline.graph_ops import GRAPH_OPS_SCHEMA, graph_ops_html, graph_ops_impact, graph_ops_snapshot
+from factoryline.external_evidence import import_external_runtime_bundle
 from factoryline.product_missions import close_mission
 from factoryline.proof_reuse import record_proof
 from factoryline.run_admission import prepare_admission
@@ -124,6 +126,300 @@ def test_graph_ops_reports_compact_error_for_malformed_json(tmp_path: Path):
     assert snapshot["source_errors"] == [{"source": ".factory/proofs/broken.json", "code": "SOURCE_UNREADABLE"}]
 
 
+def test_graph_ops_projects_external_runtime_as_observed_read_only_evidence(tmp_path: Path):
+    artifact = tmp_path / "runtime.txt"
+    artifact.write_text("observed failure\n", encoding="utf-8")
+    import hashlib
+    bundle = tmp_path / "testsprite.json"
+    bundle.write_text(json.dumps({
+        "schema": "factory.external-runtime-bundle.v1",
+        "provider": "testsprite",
+        "project_id": "approval-tracker",
+        "test_id": "checkout-approval",
+        "run_id": "run-graph",
+        "snapshot_id": "snapshot-graph",
+        "code_version": "commit-graph",
+        "environment": {"fingerprint": "ci-node-22", "label": "ci"},
+        "verdict": "failed",
+        "failure_kind": "assertion",
+        "first_failed_step": {"index": 1, "label": "submit"},
+        "hypothesis": "persist failed",
+        "recommended_fix": "inspect transaction",
+        "artifacts": [{
+            "path": "runtime.txt",
+            "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+            "kind": "runtime-log",
+        }],
+        "observed_at": "2026-08-24T12:00:00Z",
+    }) + "\n", encoding="utf-8")
+    import_external_runtime_bundle(tmp_path, bundle, "testsprite")
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    node = next(item for item in snapshot["nodes"] if item["kind"] == "external_runtime")
+    assert node["status"] == "observed_external"
+    assert node["facts"]["hypothesis"] == "persist failed"
+    assert node["facts"]["authority"]["publication"] is False
+    assert node["facts"]["execution"] is False
+    assert snapshot["facts"]["external_runtime_count"] == 1
+    assert snapshot["facts"]["external_runtime_failed_count"] == 1
+    assert "GRAPH_OPS_EXTERNAL_RUNTIME_READ_ONLY" in snapshot["markers"]
+    assert "GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_READ_ONLY" in snapshot["markers"]
+    assert snapshot["recommendation"]["action"] == "review_external_runtime_failure"
+    assert snapshot["authority"]["execution"] is False
+
+    artifact.write_text("tampered\n", encoding="utf-8")
+    stale = graph_ops_snapshot(tmp_path)
+    assert stale["recommendation"]["action"] == "refresh_external_runtime_evidence"
+    assert "GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_READ_ONLY" not in stale["markers"]
+
+
+def test_graph_ops_projects_latest_forge_intent_trace_without_authority(tmp_path: Path):
+    receipt_path = tmp_path / ".forge" / "intent-navigation" / "receipts.jsonl"
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text(
+        json.dumps({"phase": "review", "ts": "2026-08-24T12:00:00Z"}) + "\n"
+        + json.dumps({
+            "phase": "ship", "ts": "2026-08-24T12:01:00Z", "shipped": True,
+            "intent_traceable": True, "intent_hash": "a" * 64, "obligations": "1/1",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    node = next(item for item in snapshot["nodes"] if item["kind"] == "intent_trace")
+    assert node["status"] == "traceable"
+    assert node["facts"]["intent_hash"] == "a" * 64
+    assert node["facts"]["obligations"] == "1/1"
+    assert node["facts"]["authority"]["execution"] is False
+    assert snapshot["facts"]["intent_trace_count"] == 1
+    assert snapshot["facts"]["intent_trace_traceable_count"] == 1
+    assert "GRAPH_OPS_INTENT_TRACE_READ_ONLY" in snapshot["markers"]
+    assert "GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED" not in snapshot["markers"]
+
+
+def test_graph_ops_fails_closed_for_untraceable_or_malformed_intent_receipts(tmp_path: Path):
+    missing = tmp_path / ".forge" / "missing-intent" / "receipts.jsonl"
+    missing.parent.mkdir(parents=True)
+    missing.write_text(
+        json.dumps({"phase": "ship", "shipped": True, "obligations": "1/1"}) + "\n",
+        encoding="utf-8",
+    )
+    malformed = tmp_path / ".forge" / "malformed-intent" / "receipts.jsonl"
+    malformed.parent.mkdir(parents=True)
+    malformed.write_text(
+        "not-json\n" + json.dumps({
+            "phase": "ship", "shipped": True, "intent_traceable": True,
+            "intent_hash": "b" * 64, "obligations": "1/1",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    traces = [item for item in snapshot["nodes"] if item["kind"] == "intent_trace"]
+    assert {item["status"] for item in traces} == {"untraceable"}
+    assert snapshot["facts"]["intent_trace_traceable_count"] == 0
+    assert snapshot["facts"]["intent_trace_untraceable_count"] == 2
+    assert snapshot["facts"]["intent_trace_invalid_count"] == 1
+    assert "GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED" in snapshot["markers"]
+
+
+def test_graph_ops_prefers_explicit_factoryline_adapter_over_legacy_forge_receipt(tmp_path: Path):
+    feature = "adapter-feature"
+    legacy = tmp_path / ".forge" / feature / "receipts.jsonl"
+    legacy.parent.mkdir(parents=True)
+    legacy_line = json.dumps({"phase": "ship", "ts": "2026-08-24T12:01:00Z", "shipped": True})
+    legacy.write_text(json.dumps({"phase": "verify", "verified": True}) + "\n" + legacy_line + "\n", encoding="utf-8")
+    adapter_dir = tmp_path / "receipts"
+    adapter_dir.mkdir(parents=True)
+    adapter = {
+        "module": "forgeline",
+        "stage": "ship",
+        "feature": feature,
+        "ok": True,
+        "ts": "2026-08-24T12:02:00Z",
+        "outputs": {
+            "intent_trace": {
+                "schema": "factoryline.intent-trace.v1",
+                "source": "forgeline-cli",
+                "shipped": True,
+                "intent_traceable": True,
+                "intent_hash": "c" * 64,
+                "obligations": "1/1",
+                "forge_receipt_sha256": hashlib.sha256(legacy_line.encode("utf-8")).hexdigest(),
+                "ts": "2026-08-24T12:01:00Z",
+                "authority": {key: False for key in (
+                    "execution", "approval", "publication", "deployment",
+                    "signing", "messaging", "credential", "connector",
+                )},
+                "execution": False,
+            }
+        },
+    }
+    (adapter_dir / f"forgeline-{feature}-ship-adapter.json").write_text(json.dumps(adapter), encoding="utf-8")
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    traces = [item for item in snapshot["nodes"] if item["kind"] == "intent_trace"]
+    assert len(traces) == 1
+    assert traces[0]["status"] == "traceable"
+    assert traces[0]["facts"]["source_type"] == "factoryline_adapter"
+    assert traces[0]["facts"]["preferred"] is True
+    assert traces[0]["facts"]["provenance_status"] == "bound"
+    assert traces[0]["facts"]["provenance_match"] is True
+    assert traces[0]["facts"]["forge_receipt_source"] == ".forge/adapter-feature/receipts.jsonl"
+    assert traces[0]["facts"]["forge_receipt_line"] == 2
+    assert snapshot["facts"]["intent_trace_traceable_count"] == 1
+    assert snapshot["facts"]["intent_trace_untraceable_count"] == 0
+    assert snapshot["facts"]["intent_trace_binding_count"] == 1
+    source = next(item for item in snapshot["nodes"] if item["kind"] == "intent_source")
+    assert source["facts"]["source_path"] == ".forge/adapter-feature/receipts.jsonl"
+    assert source["facts"]["line"] == 2
+    assert source["facts"]["sha256"] == traces[0]["facts"]["observed_forge_receipt_sha256"]
+    assert source["facts"]["authority"]["execution"] is False
+    assert snapshot["facts"]["intent_trace_lineage_node_count"] == 1
+    assert snapshot["facts"]["intent_trace_lineage_edge_count"] == 1
+    assert {edge["relation"] for edge in snapshot["edges"] if edge["source"] == traces[0]["id"]} == {"bound_to_forge_line"}
+    assert "GRAPH_OPS_INTENT_ADAPTER_BOUND" in snapshot["markers"]
+    assert "GRAPH_OPS_INTENT_ADAPTER_LINEAGE" in snapshot["markers"]
+    assert "GRAPH_OPS_INTENT_LINEAGE_EDGE" in snapshot["markers"]
+
+
+def test_graph_ops_rejects_malformed_factoryline_adapter_without_legacy_fallback(tmp_path: Path):
+    feature = "malformed-adapter"
+    legacy = tmp_path / ".forge" / feature / "receipts.jsonl"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps({"phase": "ship", "ts": "2026-08-24T12:01:00Z", "shipped": True, "intent_traceable": True}) + "\n",
+        encoding="utf-8",
+    )
+    adapter_dir = tmp_path / "receipts"
+    adapter_dir.mkdir(parents=True)
+    (adapter_dir / f"forgeline-{feature}-ship-adapter.json").write_text(json.dumps({
+        "module": "forgeline", "stage": "ship", "feature": feature, "ok": True,
+        "outputs": {"intent_trace": {"schema": "factoryline.intent-trace.v1", "shipped": True}},
+    }), encoding="utf-8")
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    traces = [item for item in snapshot["nodes"] if item["kind"] == "intent_trace"]
+    assert len(traces) == 1
+    assert traces[0]["status"] == "untraceable"
+    assert snapshot["facts"]["intent_trace_traceable_count"] == 0
+    assert snapshot["facts"]["intent_trace_invalid_count"] == 1
+    assert snapshot["facts"]["intent_trace_unbound_count"] == 1
+    assert not any(item["kind"] == "intent_source" for item in snapshot["nodes"])
+    assert snapshot["facts"]["intent_trace_lineage_edge_count"] == 0
+    assert "GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED" in snapshot["markers"]
+    assert "GRAPH_OPS_INTENT_ADAPTER_UNBOUND" in snapshot["markers"]
+
+
+def test_graph_ops_marks_adapter_hash_mismatch_without_trusting_traceability(tmp_path: Path):
+    feature = "mismatched-adapter"
+    legacy = tmp_path / ".forge" / feature / "receipts.jsonl"
+    legacy.parent.mkdir(parents=True)
+    legacy_line = json.dumps({
+        "phase": "ship", "ts": "2026-08-24T12:01:00Z", "shipped": True,
+        "intent_hash": "e" * 64, "obligations": "1/1",
+    })
+    legacy.write_text(legacy_line + "\n", encoding="utf-8")
+    adapter_dir = tmp_path / "receipts"
+    adapter_dir.mkdir(parents=True)
+    (adapter_dir / f"forgeline-{feature}-ship-adapter.json").write_text(json.dumps({
+        "module": "forgeline", "stage": "ship", "feature": feature, "ok": True,
+        "outputs": {"intent_trace": {
+            "schema": "factoryline.intent-trace.v1", "source": "forgeline-cli",
+            "shipped": True, "intent_traceable": True, "intent_hash": "e" * 64,
+            "obligations": "1/1", "forge_receipt_sha256": "f" * 64,
+            "authority": {key: False for key in (
+                "execution", "approval", "publication", "deployment",
+                "signing", "messaging", "credential", "connector",
+            )},
+            "execution": False,
+        }},
+    }), encoding="utf-8")
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    trace = next(item for item in snapshot["nodes"] if item["kind"] == "intent_trace")
+    assert trace["status"] == "untraceable"
+    assert trace["facts"]["provenance_status"] == "mismatch"
+    assert trace["facts"]["provenance_match"] is False
+    assert snapshot["facts"]["intent_trace_binding_mismatch_count"] == 1
+    assert snapshot["recommendation"]["action"] == "repair_intent_trace_binding"
+    assert "GRAPH_OPS_INTENT_ADAPTER_MISMATCH" in snapshot["markers"]
+    assert not any(item["kind"] == "intent_source" for item in snapshot["nodes"])
+    assert snapshot["facts"]["intent_trace_lineage_edge_count"] == 0
+
+
+def test_graph_ops_marks_adapter_claim_mismatch_without_trusting_traceability(tmp_path: Path):
+    feature = "claim-mismatch-adapter"
+    legacy = tmp_path / ".forge" / feature / "receipts.jsonl"
+    legacy.parent.mkdir(parents=True)
+    legacy_line = json.dumps({
+        "phase": "ship", "ts": "2026-08-24T12:01:00Z", "shipped": True,
+        "intent_hash": "e" * 64, "obligations": "1/1",
+    })
+    legacy.write_text(legacy_line + "\n", encoding="utf-8")
+    adapter_dir = tmp_path / "receipts"
+    adapter_dir.mkdir(parents=True)
+    (adapter_dir / f"forgeline-{feature}-ship-adapter.json").write_text(json.dumps({
+        "module": "forgeline", "stage": "ship", "feature": feature, "ok": True,
+        "outputs": {"intent_trace": {
+            "schema": "factoryline.intent-trace.v1", "source": "forgeline-cli",
+            "shipped": True, "intent_traceable": True, "intent_hash": "d" * 64,
+            "obligations": "1/1",
+            "forge_receipt_sha256": hashlib.sha256(legacy_line.encode("utf-8")).hexdigest(),
+            "authority": {key: False for key in (
+                "execution", "approval", "publication", "deployment",
+                "signing", "messaging", "credential", "connector",
+            )},
+            "execution": False,
+        }},
+    }), encoding="utf-8")
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    trace = next(item for item in snapshot["nodes"] if item["kind"] == "intent_trace")
+    assert trace["status"] == "untraceable"
+    assert trace["facts"]["provenance_status"] == "mismatch"
+    assert trace["facts"]["observed_forge_receipt_sha256"] == trace["facts"]["forge_receipt_sha256"]
+    assert snapshot["facts"]["intent_trace_binding_mismatch_count"] == 1
+    assert snapshot["recommendation"]["action"] == "repair_intent_trace_binding"
+
+
+def test_graph_ops_withholds_lineage_for_missing_forge_source(tmp_path: Path):
+    feature = "missing-lineage-adapter"
+    adapter_dir = tmp_path / "receipts"
+    adapter_dir.mkdir(parents=True)
+    (adapter_dir / f"forgeline-{feature}-ship-adapter.json").write_text(json.dumps({
+        "module": "forgeline", "stage": "ship", "feature": feature, "ok": True,
+        "outputs": {"intent_trace": {
+            "schema": "factoryline.intent-trace.v1", "source": "forgeline-cli",
+            "shipped": True, "intent_traceable": True, "intent_hash": "e" * 64,
+            "obligations": "1/1", "forge_receipt_sha256": "f" * 64,
+            "authority": {key: False for key in (
+                "execution", "approval", "publication", "deployment",
+                "signing", "messaging", "credential", "connector",
+            )},
+            "execution": False,
+        }},
+    }), encoding="utf-8")
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    trace = next(item for item in snapshot["nodes"] if item["kind"] == "intent_trace")
+    assert trace["status"] == "untraceable"
+    assert trace["facts"]["provenance_status"] == "missing"
+    assert trace["facts"]["forge_receipt_source"] is None
+    assert trace["facts"]["forge_receipt_line"] is None
+    assert "GRAPH_OPS_INTENT_ADAPTER_UNBOUND" in snapshot["markers"]
+    assert not any(item["kind"] == "intent_source" for item in snapshot["nodes"])
+    assert snapshot["facts"]["intent_trace_lineage_edge_count"] == 0
+
+
 def test_graph_ops_exposes_declared_gate_state_without_running_commands(tmp_path: Path):
     plan_dir = tmp_path / ".factory" / "proof-plans"
     plan_dir.mkdir(parents=True)
@@ -199,6 +495,35 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "factory judgment safety-case --root . --changed <path> --change-profile .factory/judgment/change-profile.json --json" in page
     assert "renderJudgment(nodes)" in page
     assert "cannot infer intent, promote or waive a decision, execute a repair, approve code, merge, publish, deploy, sign, message, or access credentials" in page
+    assert 'id="external-evidence-panel"' in page
+    assert 'id="external-evidence-cards"' in page
+    assert 'id="external-evidence-badge"' in page
+    assert 'id="external-evidence-triage"' in page
+    assert "GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_UI" in page
+    assert "REQ_EXT_TRIAGE_UI_COPY" in page
+    assert "No automatic repair is available." in page
+    assert "renderExternalEvidence(nodes,facts)" in page
+    assert "Observed-only boundary." in page
+    assert "GRAPH_OPS_EXTERNAL_RUNTIME_TEXT_NODE" in page
+    assert "REQ_EXT_NAV_JUMP" in page
+    assert "REQ_EXT_NAV_READ_ONLY" in page
+    assert "REQ_EXT_NAV_MISSING" in page
+    assert 'className="external-evidence-jump"' in page
+    assert "Inspect node details" in page
+    assert "scrollIntoView" in page
+    assert "button.dataset.nodeId=node.id" in page
+    assert 'id="intent-trace-panel"' in page
+    assert 'id="intent-trace-cards"' in page
+    assert "REQ_INTENT_TRACE_UI" in page
+    assert "GRAPH_OPS_INTENT_TRACE_READ_ONLY" in page
+    assert "GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED" in page
+    assert "No local Forge ship receipt is present. Intent traceability is unverified." in page
+    assert "renderIntentTrace(nodes,facts)" in page
+    assert "GRAPH_OPS_INTENT_LINEAGE_NAV_READ_ONLY" in page
+    assert "No traversable Forge lineage" in page
+    assert "Inspect source" in page
+    assert "focusExternalNode(sourceNode)" in page
+    assert "innerHTML" not in page
     assert "Observed project contributors" in page
     assert "not a verified identity-provider or billing-seat roster" in page
     assert "setInterval(()=>{if(memoryAutoRefresh)loadDeveloperMemory();},5000)" in page

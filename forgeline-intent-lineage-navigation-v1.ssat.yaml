@@ -1,0 +1,40 @@
+feature: forgeline-intent-lineage-navigation-v1
+version: "1.0"
+intent: "Make verified Forge lineage easy to inspect in Graph Ops without adding authority."
+requirements:
+  - id: REQ_INTENT_LINEAGE_NAV_READ_ONLY
+    description: "A bound intent card shows a visible trace-to-Forge source path with exact source and line."
+    invariant: "REQ_INTENT_LINEAGE_NAV_READ_ONLY"
+    checks:
+      - "REQ_INTENT_LINEAGE_NAV_READ_ONLY"
+      - "Intent trace"
+      - "Forge ship line"
+      - "GRAPH_OPS_INTENT_LINEAGE_NAV_READ_ONLY"
+  - id: REQ_INTENT_LINEAGE_NAV_BUTTON
+    description: "A bound source has one local Inspect source action that reuses the existing focus path."
+    invariant: "REQ_INTENT_LINEAGE_NAV_BUTTON"
+    checks:
+      - "REQ_INTENT_LINEAGE_NAV_BUTTON"
+      - "Inspect source"
+      - "focusExternalNode(sourceNode)"
+      - "GRAPH_OPS_INTENT_LINEAGE_NAV_READ_ONLY"
+  - id: REQ_INTENT_LINEAGE_NAV_FAIL_CLOSED
+    description: "No matching bound source yields no navigation action and an explicit withheld state."
+    invariant: "REQ_INTENT_LINEAGE_NAV_FAIL_CLOSED"
+    checks:
+      - "REQ_INTENT_LINEAGE_NAV_FAIL_CLOSED"
+      - "No traversable Forge lineage"
+      - "data-state=\"unbound\""
+  - id: REQ_INTENT_LINEAGE_NAV_RESPONSIVE
+    description: "The lineage path wraps at the existing mobile breakpoint and remains text-node rendered."
+    invariant: "REQ_INTENT_LINEAGE_NAV_RESPONSIVE"
+    checks:
+      - "REQ_INTENT_LINEAGE_NAV_RESPONSIVE"
+      - "@media (max-width:768px)"
+      - "textContent"
+      - "innerHTML"
+gates:
+  - type: test
+    command: "py -3.11 -m pytest -q tests/test_graph_ops.py -k visual"
+  - type: smoke
+    command: "python -c \"from pathlib import Path; page=Path('factoryline/graph_ops.html').read_text(encoding='utf-8'); docs=Path('docs/EXTERNAL_RUNTIME_EVIDENCE.md').read_text(encoding='utf-8'); required=['REQ_INTENT_LINEAGE_NAV_READ_ONLY','REQ_INTENT_LINEAGE_NAV_BUTTON','REQ_INTENT_LINEAGE_NAV_FAIL_CLOSED','REQ_INTENT_LINEAGE_NAV_RESPONSIVE','Intent trace','Forge ship line','Inspect source','No traversable Forge lineage','GRAPH_OPS_INTENT_LINEAGE_NAV_READ_ONLY']; assert all(item in page+docs for item in required) and 'innerHTML' not in page\""

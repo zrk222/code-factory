@@ -1,0 +1,11 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "forgeline-intent-receipt-adapter-v1",
+  "sealed_hash": "714e96b9554552af0fd41177dd92fc4a8846107d6f5960f2e3a8d40e267eb845",
+  "coherence_score": 100,
+  "source": "specs/forgeline-intent-receipt-adapter-v1.md",
+  "intent": "Bind explicit Forge ship intent evidence to a local Factoryline receipt without granting authority.",
+  "assumptions": [
+    "Assumes the Factoryline adapter preserves a human authorization boundary and never grants authorization."
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "intent-trace-graph-ops-v1",
+  "sealed_hash": "6dde0e9dfb359fcd267e0e34ffda229e0ebffb64d4772c5d42b4de227b72a291",
+  "coherence_score": 100,
+  "source": "specs/intent-trace-graph-ops-v1.md",
+  "intent": "Show local Forge intent evidence in Graph Ops without granting execution authority.",
+  "assumptions": [
+    "Assumes the Graph Ops intent projection preserves a human authorization boundary and never grants authorization."
+  ]
+}

@@ -88,6 +88,7 @@ from .change_review import ChangeReviewError, review_change, write_review_artifa
 from .developer_memory import developer_memory_brief
 from .intent_ledger import IntentLedgerError, capture_intent_ledger, inspect_intent_ledger
 from .judgment import JudgmentError, judgment_status, promote_capsule, propose_capsule, reconsider_capsule, safety_case
+from .external_evidence import ExternalEvidenceError, diff_external_runtime_receipts, import_external_runtime_bundle
 from .github_proof_review import (
     GitHubProofReviewError,
     compile_github_proof_review,
@@ -449,6 +450,20 @@ def main(argv=None) -> int:
     e2e_verify.add_argument("--manifest", required=True, help="workspace-contained factory.e2e_proof_manifest.v1 JSON path")
     e2e_verify.add_argument("--out-dir", help="explicit local directory for receipt, Mermaid, and captured output artifacts")
     e2e_verify.add_argument("--json", action="store_true")
+
+    external = sub.add_parser("external", help="import and compare offline external runtime evidence")
+    external_sub = external.add_subparsers(required=True, dest="external_cmd")
+    external_import = external_sub.add_parser("import", help="verify one provider bundle and write an observed-only receipt")
+    external_import.add_argument("bundle", help="workspace-contained factory.external-runtime-bundle.v1 JSON path")
+    external_import.add_argument("--root", default=".")
+    external_import.add_argument("--provider", required=True, help="declared adapter id, for example testsprite")
+    external_import.add_argument("--out", help="receipt path below .factory/external-evidence/")
+    external_import.add_argument("--json", action="store_true")
+    external_diff = external_sub.add_parser("diff", help="compare two verified receipts without provider execution")
+    external_diff.add_argument("left", help="left receipt path")
+    external_diff.add_argument("right", help="right receipt path")
+    external_diff.add_argument("--root", default=".")
+    external_diff.add_argument("--json", action="store_true")
 
     first_proof = sub.add_parser("first-proof", help="run a local sandbox demonstration that catches an intentionally hollow check")
     first_proof.add_argument("--root", default=".")
@@ -1781,6 +1796,27 @@ def main(argv=None) -> int:
         return _home(Path(a.root), a.json)
     if a.cmd == "doctor":
         return _doctor(a.strict, a.json)
+    if a.cmd == "external":
+        try:
+            if a.external_cmd == "import":
+                result = import_external_runtime_bundle(
+                    Path(a.root), Path(a.bundle), a.provider,
+                    Path(a.out) if a.out else None,
+                )
+            else:
+                result = diff_external_runtime_receipts(Path(a.root), Path(a.left), Path(a.right))
+        except ExternalEvidenceError as exc:
+            print(json.dumps({
+                "schema": "factory.workflow_error.v1", "status": "failed",
+                "code": exc.code, "message": exc.message,
+                "marker": exc.code,
+                "failure": explain_failure(exc.code, exc.message),
+            }, indent=2, sort_keys=True), file=sys.stderr)
+            return 1
+        print(json.dumps(result, indent=2, sort_keys=True))
+        if a.external_cmd == "diff" and result.get("comparable") is not True:
+            return 1
+        return 0
     if a.cmd in {"prd", "intake", "product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider", "agent", "telemetry", "verifier"}:
         try:
             if a.cmd == "prd" and a.prd_cmd == "grill":

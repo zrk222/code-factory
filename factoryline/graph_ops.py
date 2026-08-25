@@ -31,6 +31,7 @@ from .resilience import ResilienceError, verify_temporal_resilience_plan
 from .agent_license import license_projection
 from .combine import combine_projection
 from .judgment import judgment_projection
+from .external_evidence import ExternalEvidenceError, verify_external_runtime_receipt
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -1089,6 +1090,342 @@ def _append_resilience_plans(state: dict[str, Any], root: Path) -> dict[str, int
     return facts
 
 
+def _append_external_evidence(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project verified external runtime receipts as observed, non-authoritative facts."""
+    facts = {
+        "count": 0,
+        "passed_count": 0,
+        "failed_count": 0,
+        "blocked_count": 0,
+        "unknown_count": 0,
+        "invalid_count": 0,
+        "stale_count": 0,
+    }
+    directory = root / ".factory" / "external-evidence"
+    for path in sorted(directory.glob("*.json")):
+        try:
+            verification = verify_external_runtime_receipt(root, path)
+        except ExternalEvidenceError as exc:
+            _record_error(state["errors"], path, exc.code)
+            facts["invalid_count"] += 1
+            facts["stale_count"] += int(exc.code in {"EXTERNAL_EVIDENCE_BUNDLE_STALE", "EXTERNAL_EVIDENCE_RECEIPT_STALE", "EXTERNAL_EVIDENCE_ARTIFACT_STALE"})
+            continue
+        receipt = verification["receipt"]
+        receipt_sha = str(receipt["receipt_sha256"])
+        node_id = f"external-runtime:{receipt_sha[:24]}"
+        source = str(verification["path"]).replace("\\", "/")
+        _node(
+            state,
+            node_id=node_id,
+            kind="external_runtime",
+            label=f"{receipt['provider']} · {receipt['test_id']}",
+            source=source,
+            status="observed_external",
+            facts={
+                "provider": receipt["provider"],
+                "project_id": receipt["project_id"],
+                "test_id": receipt["test_id"],
+                "run_id": receipt["run_id"],
+                "snapshot_id": receipt["snapshot_id"],
+                "code_version": receipt["code_version"],
+                "environment": receipt["environment"],
+                "verdict": receipt["verdict"],
+                "failure_kind": receipt["failure_kind"],
+                "first_failed_step": receipt["first_failed_step"],
+                "hypothesis": receipt["hypothesis"],
+                "recommended_fix": receipt["recommended_fix"],
+                "artifact_count": len(receipt["artifacts"]),
+                "source_bundle_sha256": receipt["source_bundle"]["sha256"],
+                "receipt_sha256": receipt_sha,
+                "trust": "observed_external",
+                "execution": False,
+                "authority": dict(_AUTHORITY),
+            },
+        )
+        facts["count"] += 1
+        facts[f"{receipt['verdict']}_count"] += 1
+    return facts
+
+
+def _forge_ship_binding(root: Path, feature: str) -> dict[str, Any]:
+    """Read the exact Forge line referenced by a Factoryline adapter.
+
+    REQ_INTENT_BINDING_VERIFY · REQ_INTENT_BINDING_FAIL_CLOSED ·
+    REQ_INTENT_BINDING_FACTS
+    """
+    candidate = Path(root) / ".forge" / feature / "receipts.jsonl"
+    if not candidate.exists():
+        return {"status": "missing", "sha256": None, "value": None, "source": None, "line": None}
+    try:
+        receipt_path, relative = _source(root, candidate)
+        if receipt_path.stat().st_size > MAX_SOURCE_BYTES:
+            return {"status": "invalid", "sha256": None, "value": None, "source": None, "line": None}
+        lines = receipt_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError, ValueError):
+        return {"status": "invalid", "sha256": None, "value": None, "source": None, "line": None}
+    latest: tuple[dict[str, Any], str, int] | None = None
+    for line_number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            return {"status": "invalid", "sha256": None, "value": None, "source": None, "line": None}
+        if isinstance(value, dict) and value.get("phase") == "ship":
+            latest = (value, line, line_number)
+    if latest is None:
+        return {"status": "missing", "sha256": None, "value": None, "source": None, "line": None}
+    value, raw_line, line_number = latest
+    return {
+        "status": "bound",
+        "sha256": hashlib.sha256(raw_line.encode("utf-8")).hexdigest(),
+        "value": value,
+        "source": relative,
+        "line": line_number,
+    }
+
+
+def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project local Forge intent evidence without inferring traceability.
+
+    REQ_INTENT_ADAPTER_PREFER · GRAPH_OPS_INTENT_ADAPTER_PREFERRED ·
+    GRAPH_OPS_INTENT_ADAPTER_FAIL_CLOSED · GRAPH_OPS_INTENT_ADAPTER_BOUND
+
+    Assembly-driven runs may contain a standard Factoryline receipt with an
+    explicit ``outputs.intent_trace`` adapter.  That adapter is preferred for
+    its feature over the upstream ``.forge`` line because it binds the CLI
+    result to the factory receipt that observed it.  Direct Forge runs remain
+    supported as a legacy fallback and stay fail closed when their persisted
+    line omits ``intent_traceable``.
+    """
+    # REQ_INTENT_LINEAGE_SOURCE · REQ_INTENT_LINEAGE_FAIL_CLOSED ·
+    # REQ_INTENT_LINEAGE_FACTS · GRAPH_OPS_INTENT_ADAPTER_LINEAGE ·
+    # REQ_INTENT_LINEAGE_EDGE · REQ_INTENT_LINEAGE_EDGE_FAIL_CLOSED ·
+    # REQ_INTENT_LINEAGE_EDGE_FACTS · GRAPH_OPS_INTENT_LINEAGE_EDGE
+    facts = {"count": 0, "traceable_count": 0, "untraceable_count": 0, "blocked_count": 0, "invalid_count": 0, "bound_count": 0, "mismatch_count": 0, "unbound_count": 0, "lineage_edge_count": 0, "lineage_node_count": 0}
+    adapter_candidates: dict[str, list[dict[str, Any]]] = {}
+    adapter_features: set[str] = set()
+    adapter_dir = root / "receipts"
+    for path in sorted(adapter_dir.glob("forgeline-*-ship-*.json")):
+        derived_feature = path.name[len("forgeline-"):-len(".json")].rsplit("-ship-", 1)[0]
+        feature = derived_feature or "unknown-feature"
+        candidate: dict[str, Any] = {"path": path, "payload": None, "source": str(path).replace("\\", "/"), "feature": feature, "mtime_ns": 0, "timestamp": ""}
+        try:
+            receipt_path, source = _source(root, path)
+            candidate["path"] = receipt_path
+            candidate["source"] = source
+            candidate["mtime_ns"] = receipt_path.stat().st_mtime_ns
+            if receipt_path.stat().st_size > MAX_SOURCE_BYTES:
+                _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_TOO_LARGE")
+            else:
+                payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    outputs = payload.get("outputs")
+                    # Older Factoryline receipts are not adapter records and
+                    # must not hide a readable legacy Forge source.
+                    if not isinstance(outputs, dict) or "intent_trace" not in outputs:
+                        continue
+                    candidate["payload"] = payload
+                    if isinstance(payload.get("feature"), str) and payload["feature"].strip():
+                        candidate["feature"] = payload["feature"].strip()[:240]
+                    candidate["timestamp"] = payload.get("ts") if isinstance(payload.get("ts"), str) else ""
+                else:
+                    _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_INVALID")
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            _record_error(state["errors"], candidate["source"], "INTENT_TRACE_ADAPTER_INVALID")
+        if candidate["payload"] is None and not any(
+            item["source"] == candidate["source"] for item in state["errors"]
+        ):
+            # A matching ship receipt that cannot be read is still an adapter
+            # candidate; suppress legacy fallback and surface the gap.
+            _record_error(state["errors"], candidate["source"], "INTENT_TRACE_ADAPTER_INVALID")
+        adapter_features.add(candidate["feature"])
+        adapter_candidates.setdefault(candidate["feature"], []).append(candidate)
+
+    def _project_adapter(feature: str, candidate: dict[str, Any]) -> None:
+        source = candidate["source"]
+        payload = candidate.get("payload")
+        trace = payload.get("outputs", {}).get("intent_trace") if isinstance(payload, dict) else None
+        authority = trace.get("authority") if isinstance(trace, dict) else None
+        shape_valid = (
+            isinstance(payload, dict)
+            and payload.get("module") == "forgeline"
+            and payload.get("stage") == "ship"
+            and payload.get("feature") == feature
+            and payload.get("ok") is True
+            and isinstance(trace, dict)
+            and trace.get("schema") == "factoryline.intent-trace.v1"
+            and isinstance(trace.get("shipped"), bool)
+            and isinstance(trace.get("intent_traceable"), bool)
+            and isinstance(trace.get("forge_receipt_sha256"), str)
+            and len(trace["forge_receipt_sha256"]) == 64
+            and all(character in "0123456789abcdef" for character in trace["forge_receipt_sha256"])
+            and isinstance(authority, dict)
+            and all(authority.get(key) is False for key in _AUTHORITY)
+            and trace.get("execution") is False
+        )
+        binding = _forge_ship_binding(root, feature) if shape_valid else {"status": "invalid", "sha256": None, "value": None}
+        binding_value = binding.get("value") if isinstance(binding.get("value"), dict) else None
+        provenance_match = (
+            shape_valid
+            and binding.get("status") == "bound"
+            and trace.get("forge_receipt_sha256") == binding.get("sha256")
+            and isinstance(binding_value, dict)
+            and binding_value.get("shipped") is trace.get("shipped")
+            and (not isinstance(trace.get("intent_hash"), str) or not isinstance(binding_value.get("intent_hash"), str) or trace.get("intent_hash") == binding_value.get("intent_hash"))
+            and (not isinstance(trace.get("obligations"), str) or not isinstance(binding_value.get("obligations"), str) or trace.get("obligations") == binding_value.get("obligations"))
+        )
+        valid = bool(shape_valid and provenance_match)
+        if not valid:
+            _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_INVALID")
+            facts["invalid_count"] += 1
+        shipped = trace.get("shipped") is True if isinstance(trace, dict) else False
+        traceable = valid and shipped and trace.get("intent_traceable") is True if isinstance(trace, dict) else False
+        status = "traceable" if traceable else "blocked" if not shipped and valid else "untraceable"
+        provenance_status = "bound" if valid else "mismatch" if shape_valid and binding.get("status") == "bound" else str(binding.get("status") or "invalid")
+        if provenance_status == "bound":
+            facts["bound_count"] += 1
+        elif provenance_status == "mismatch":
+            facts["mismatch_count"] += 1
+        else:
+            facts["unbound_count"] += 1
+        try:
+            receipt_sha = hashlib.sha256(candidate["path"].read_bytes()).hexdigest()
+        except OSError:
+            receipt_sha = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        node_id = f"intent-trace:{feature}:{receipt_sha[:24]}"
+        _node(
+            state,
+            node_id=node_id,
+            kind="intent_trace",
+            label=f"{feature} · intent trace",
+            source=source,
+            status=status,
+            facts={
+                "feature": feature,
+                "shipped": shipped,
+                "intent_traceable": traceable,
+                "intent_hash": trace.get("intent_hash") if isinstance(trace, dict) and isinstance(trace.get("intent_hash"), str) else None,
+                "obligations": trace.get("obligations") if isinstance(trace, dict) and isinstance(trace.get("obligations"), str) else None,
+                "receipt_sha256": receipt_sha,
+                "forge_receipt_sha256": trace.get("forge_receipt_sha256") if isinstance(trace, dict) else None,
+                "observed_forge_receipt_sha256": binding.get("sha256"),
+                "forge_receipt_source": binding.get("source"),
+                "forge_receipt_line": binding.get("line"),
+                "provenance_status": provenance_status,
+                "provenance_match": provenance_match,
+                "timestamp": trace.get("ts") if isinstance(trace, dict) and isinstance(trace.get("ts"), str) else None,
+                "source_type": "factoryline_adapter",
+                "preferred": True,
+                "authority": dict(_AUTHORITY),
+                "execution": False,
+            },
+        )
+        # Only a fully hash-bound adapter may create a traversable provenance
+        # relationship. Mismatch, missing, and invalid states remain closed.
+        if valid and isinstance(binding.get("source"), str) and isinstance(binding.get("line"), int) and isinstance(binding.get("sha256"), str):
+            source_id = f"intent-source:{feature}:{binding['sha256'][:24]}"
+            source_created = source_id not in state["nodes"]
+            source_added = _node(
+                state,
+                node_id=source_id,
+                kind="intent_source",
+                label=f"{feature} · Forge ship line",
+                source=binding["source"],
+                status="bound",
+                facts={
+                    "feature": feature,
+                    "source_path": binding["source"],
+                    "line": binding["line"],
+                    "sha256": binding["sha256"],
+                    "source_type": "forge_ship_line",
+                    "authority": dict(_AUTHORITY),
+                    "execution": False,
+                },
+            )
+            if source_added:
+                facts["lineage_node_count"] += int(source_created)
+            if source_added and _edge(state, node_id, source_id, "bound_to_forge_line"):
+                facts["lineage_edge_count"] += 1
+        facts["count"] += 1
+        facts["traceable_count"] += int(traceable)
+        facts["untraceable_count"] += int(shipped and not traceable)
+        facts["blocked_count"] += int(not shipped and valid)
+
+    for feature, candidates in sorted(adapter_candidates.items()):
+        candidates.sort(key=lambda item: (item.get("timestamp", ""), item.get("mtime_ns", 0), item.get("source", "")))
+        _project_adapter(feature, candidates[-1])
+
+    directory = root / ".forge"
+    for path in sorted(directory.glob("*/receipts.jsonl")):
+        try:
+            receipt_path, source = _source(root, path)
+            if receipt_path.stat().st_size > MAX_SOURCE_BYTES:
+                _record_error(state["errors"], source, "SOURCE_TOO_LARGE")
+                facts["invalid_count"] += 1
+                continue
+            lines = receipt_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError, ValueError):
+            _record_error(state["errors"], path, "INTENT_TRACE_RECEIPT_UNREADABLE")
+            facts["invalid_count"] += 1
+            continue
+        latest: tuple[dict[str, Any], str] | None = None
+        invalid = False
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                invalid = True
+                continue
+            if isinstance(value, dict) and value.get("phase") == "ship":
+                latest = (value, line)
+        if invalid:
+            _record_error(state["errors"], source, "INTENT_TRACE_RECEIPT_INVALID")
+            facts["invalid_count"] += 1
+        if latest is None:
+            continue
+        value, raw_line = latest
+        feature = _text(path.parent.name, "unknown-feature")
+        if feature in adapter_features:
+            # An explicit adapter, including an invalid one, is the preferred
+            # record for this feature.  Do not silently fall back to older
+            # upstream evidence and mask the adapter failure.
+            continue
+        shipped = value.get("shipped") is True
+        # A malformed source invalidates the whole projection. Do not surface a
+        # traceable card beside a rejected line and accidentally invite reliance.
+        traceable = not invalid and shipped and value.get("intent_traceable") is True
+        status = "traceable" if traceable else "blocked" if not shipped else "untraceable"
+        receipt_sha = hashlib.sha256(raw_line.encode("utf-8")).hexdigest()
+        node_id = f"intent-trace:{feature}:{receipt_sha[:24]}"
+        _node(
+            state,
+            node_id=node_id,
+            kind="intent_trace",
+            label=f"{feature} · intent trace",
+            source=source,
+            status=status,
+            facts={
+                "feature": feature,
+                "shipped": shipped,
+                "intent_traceable": traceable,
+                "intent_hash": value.get("intent_hash") if isinstance(value.get("intent_hash"), str) else None,
+                "obligations": value.get("obligations") if isinstance(value.get("obligations"), str) else None,
+                "receipt_sha256": receipt_sha,
+                "timestamp": value.get("ts") if isinstance(value.get("ts"), str) else None,
+                "authority": dict(_AUTHORITY),
+                "execution": False,
+            },
+        )
+        facts["count"] += 1
+        facts["traceable_count"] += int(traceable)
+        facts["untraceable_count"] += int(shipped and not traceable)
+        facts["blocked_count"] += int(not shipped)
+    return facts
+
+
 def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
     visible = nodes[:80]
     allowed = {node["id"] for node in visible}
@@ -1103,7 +1440,24 @@ def _mermaid(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _external_runtime_triage(facts: dict[str, int]) -> tuple[str, str] | None:
+    """Return one advisory action for valid external observations only."""
+    if facts["external_runtime_invalid_count"] > 0:
+        return None
+    if (facts["external_runtime_failed_count"] > 0
+            or facts["external_runtime_blocked_count"] > 0
+            or facts["external_runtime_unknown_count"] > 0):
+        return "review_external_runtime_failure", "A verified external runtime observation is failed, blocked, or unknown; review its first failed step and hypothesis before admitting a bounded local proof or repair."
+    return None
+
+
 def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
+    if facts["external_runtime_invalid_count"] > 0:
+        return "refresh_external_runtime_evidence", "An imported external runtime receipt is stale or invalid; re-import the bounded runner bundle before relying on its observations."
+    if facts.get("intent_trace_binding_mismatch_count", 0) > 0:
+        return "repair_intent_trace_binding", "A Factoryline intent adapter no longer matches the exact Forge ship line it claims to observe; review the bounded receipt pair before relying on traceability."
+    if facts.get("intent_trace_unbound_count", 0) > 0:
+        return "refresh_intent_trace_adapter", "A Factoryline intent adapter cannot be bound to a readable Forge ship line; rerun the supervised assembly or repair the local evidence source."
     if facts["node_count"] == 0:
         return "initialize_graph", "No readable local Factory graph artifacts were found."
     if facts["agent_incident_count"] > 0:
@@ -1130,6 +1484,9 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "refresh_counterexample_plan", "A counterexample plan is stale or invalid; recompile it from its current bounded requirement source."
     if facts["resilience_invalid_count"] > 0:
         return "refresh_temporal_resilience_plan", "A temporal resilience plan is stale, incomplete, or invalid; recompile it from verified current lineage."
+    external_triage = _external_runtime_triage(facts)
+    if external_triage is not None:
+        return external_triage
     if facts["guardrail_withheld_count"] > 0:
         return "review_guardrail_withheld", "At least one scoped guardrail lacks independently promoted current continuity evidence."
     if facts["assurance_unresolved_high_count"] > 0:
@@ -1171,7 +1528,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
                     frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int]) -> dict[str, int]:
+                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -1238,6 +1595,23 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "judgment_proposed_count": judgment["proposed_count"],
         "judgment_review_due_count": judgment["review_due_count"],
         "judgment_invalid_count": judgment["invalid_count"],
+        "external_runtime_count": external_evidence["count"],
+        "external_runtime_passed_count": external_evidence["passed_count"],
+        "external_runtime_failed_count": external_evidence["failed_count"],
+        "external_runtime_blocked_count": external_evidence["blocked_count"],
+        "external_runtime_unknown_count": external_evidence["unknown_count"],
+        "external_runtime_invalid_count": external_evidence["invalid_count"],
+        "external_runtime_stale_count": external_evidence["stale_count"],
+        "intent_trace_count": intent_traces["count"],
+        "intent_trace_traceable_count": intent_traces["traceable_count"],
+        "intent_trace_untraceable_count": intent_traces["untraceable_count"],
+        "intent_trace_blocked_count": intent_traces["blocked_count"],
+        "intent_trace_invalid_count": intent_traces["invalid_count"],
+        "intent_trace_binding_count": intent_traces["bound_count"],
+        "intent_trace_binding_mismatch_count": intent_traces["mismatch_count"],
+        "intent_trace_unbound_count": intent_traces["unbound_count"],
+        "intent_trace_lineage_edge_count": intent_traces["lineage_edge_count"],
+        "intent_trace_lineage_node_count": intent_traces["lineage_node_count"],
         "intake_confirmation_count": sum(node["kind"] == "intake" for node in nodes),
         "intake_confirmed_count": sum(node["kind"] == "intake" and node.get("status") == "confirmed" for node in nodes),
         "intake_invalid_count": sum(node["kind"] == "intake" and node.get("status") == "invalid" for node in nodes),
@@ -1247,7 +1621,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
                       proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int]) -> list[str]:
+                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -1294,6 +1668,27 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_COMBINE_SCOREBOARDS_READ_ONLY")
     if judgment["count"]:
         markers.append("GRAPH_OPS_JUDGMENT_CAPSULES_READ_ONLY")
+    if external_evidence["count"]:
+        markers.append("GRAPH_OPS_EXTERNAL_RUNTIME_READ_ONLY")
+    if (external_evidence["failed_count"]
+            or external_evidence["blocked_count"]
+            or external_evidence["unknown_count"]):
+        markers.append("GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_READ_ONLY")
+    if intent_traces["count"]:
+        markers.append("GRAPH_OPS_INTENT_TRACE_READ_ONLY")
+    if (intent_traces["untraceable_count"]
+            or intent_traces["blocked_count"]
+            or intent_traces["invalid_count"]):
+        markers.append("GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED")
+    if intent_traces["bound_count"]:
+        markers.append("GRAPH_OPS_INTENT_ADAPTER_BOUND")
+        markers.append("GRAPH_OPS_INTENT_ADAPTER_LINEAGE")
+    if intent_traces["lineage_edge_count"]:
+        markers.append("GRAPH_OPS_INTENT_LINEAGE_EDGE")
+    if intent_traces["mismatch_count"]:
+        markers.append("GRAPH_OPS_INTENT_ADAPTER_MISMATCH")
+    if intent_traces["unbound_count"]:
+        markers.append("GRAPH_OPS_INTENT_ADAPTER_UNBOUND")
     if any(node["kind"] == "intake" for node in nodes):
         markers.append("GRAPH_OPS_INTAKE_DECISIONS_READ_ONLY")
     if state["errors"] or state["truncated"]:
@@ -1347,14 +1742,16 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     survival_cards = _append_survival_cards(state, workspace)
     agent_supervision = _append_agent_supervision(state, workspace)
     judgment = _append_judgment_capsules(state, workspace)
+    external_evidence = _append_external_evidence(state, workspace)
+    intent_traces = _append_intent_traces(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
-    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment)
+    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
-    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment)
+    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
