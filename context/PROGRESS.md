@@ -433,3 +433,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-24 17:35] GATE spec intent-trace-graph-ops-v1 approver=human strict=True sha=bef05213d552fcb1
 - [2026-08-24 17:39] GATE spec intent-trace-graph-ops-v1 approver=human strict=True sha=6dde0e9dfb359fcd
 - [2026-08-24 17:39] GATE plan intent-trace-graph-ops-v1 approver=human tasks=5 sha=6dde0e9dfb359fcd
+- [2026-08-25 01:41] GATE spec forgeline-intent-receipt-adapter-v1 approver=human strict=True sha=714e96b9554552af
+- [2026-08-25 01:42] GATE plan forgeline-intent-receipt-adapter-v1 approver=human tasks=7 sha=714e96b9554552af
+- [2026-08-25 01:42] GATE spec forgeline-intent-receipt-adapter-v1 approver=human strict=True sha=714e96b9554552af
+- [2026-08-25 01:42] GATE plan forgeline-intent-receipt-adapter-v1 approver=human tasks=7 sha=714e96b9554552af

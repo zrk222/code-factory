@@ -1148,8 +1148,122 @@ def _append_external_evidence(state: dict[str, Any], root: Path) -> dict[str, in
 
 
 def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
-    """Project the newest local Forge ship receipt as read-only intent evidence."""
+    """Project local Forge intent evidence without inferring traceability.
+
+    REQ_INTENT_ADAPTER_PREFER · GRAPH_OPS_INTENT_ADAPTER_PREFERRED ·
+    GRAPH_OPS_INTENT_ADAPTER_FAIL_CLOSED
+
+    Assembly-driven runs may contain a standard Factoryline receipt with an
+    explicit ``outputs.intent_trace`` adapter.  That adapter is preferred for
+    its feature over the upstream ``.forge`` line because it binds the CLI
+    result to the factory receipt that observed it.  Direct Forge runs remain
+    supported as a legacy fallback and stay fail closed when their persisted
+    line omits ``intent_traceable``.
+    """
     facts = {"count": 0, "traceable_count": 0, "untraceable_count": 0, "blocked_count": 0, "invalid_count": 0}
+    adapter_candidates: dict[str, list[dict[str, Any]]] = {}
+    adapter_features: set[str] = set()
+    adapter_dir = root / "receipts"
+    for path in sorted(adapter_dir.glob("forgeline-*-ship-*.json")):
+        derived_feature = path.name[len("forgeline-"):-len(".json")].rsplit("-ship-", 1)[0]
+        feature = derived_feature or "unknown-feature"
+        candidate: dict[str, Any] = {"path": path, "payload": None, "source": str(path).replace("\\", "/"), "feature": feature, "mtime_ns": 0, "timestamp": ""}
+        try:
+            receipt_path, source = _source(root, path)
+            candidate["path"] = receipt_path
+            candidate["source"] = source
+            candidate["mtime_ns"] = receipt_path.stat().st_mtime_ns
+            if receipt_path.stat().st_size > MAX_SOURCE_BYTES:
+                _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_TOO_LARGE")
+            else:
+                payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    outputs = payload.get("outputs")
+                    # Older Factoryline receipts are not adapter records and
+                    # must not hide a readable legacy Forge source.
+                    if not isinstance(outputs, dict) or "intent_trace" not in outputs:
+                        continue
+                    candidate["payload"] = payload
+                    if isinstance(payload.get("feature"), str) and payload["feature"].strip():
+                        candidate["feature"] = payload["feature"].strip()[:240]
+                    candidate["timestamp"] = payload.get("ts") if isinstance(payload.get("ts"), str) else ""
+                else:
+                    _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_INVALID")
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            _record_error(state["errors"], candidate["source"], "INTENT_TRACE_ADAPTER_INVALID")
+        if candidate["payload"] is None and not any(
+            item["source"] == candidate["source"] for item in state["errors"]
+        ):
+            # A matching ship receipt that cannot be read is still an adapter
+            # candidate; suppress legacy fallback and surface the gap.
+            _record_error(state["errors"], candidate["source"], "INTENT_TRACE_ADAPTER_INVALID")
+        adapter_features.add(candidate["feature"])
+        adapter_candidates.setdefault(candidate["feature"], []).append(candidate)
+
+    def _project_adapter(feature: str, candidate: dict[str, Any]) -> None:
+        source = candidate["source"]
+        payload = candidate.get("payload")
+        trace = payload.get("outputs", {}).get("intent_trace") if isinstance(payload, dict) else None
+        authority = trace.get("authority") if isinstance(trace, dict) else None
+        valid = (
+            isinstance(payload, dict)
+            and payload.get("module") == "forgeline"
+            and payload.get("stage") == "ship"
+            and payload.get("feature") == feature
+            and payload.get("ok") is True
+            and isinstance(trace, dict)
+            and trace.get("schema") == "factoryline.intent-trace.v1"
+            and isinstance(trace.get("shipped"), bool)
+            and isinstance(trace.get("intent_traceable"), bool)
+            and isinstance(trace.get("forge_receipt_sha256"), str)
+            and len(trace["forge_receipt_sha256"]) == 64
+            and all(character in "0123456789abcdef" for character in trace["forge_receipt_sha256"])
+            and isinstance(authority, dict)
+            and all(authority.get(key) is False for key in _AUTHORITY)
+            and trace.get("execution") is False
+        )
+        if not valid:
+            _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_INVALID")
+            facts["invalid_count"] += 1
+        shipped = trace.get("shipped") is True if isinstance(trace, dict) else False
+        traceable = valid and shipped and trace.get("intent_traceable") is True if isinstance(trace, dict) else False
+        status = "traceable" if traceable else "blocked" if not shipped and valid else "untraceable"
+        try:
+            receipt_sha = hashlib.sha256(candidate["path"].read_bytes()).hexdigest()
+        except OSError:
+            receipt_sha = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        node_id = f"intent-trace:{feature}:{receipt_sha[:24]}"
+        _node(
+            state,
+            node_id=node_id,
+            kind="intent_trace",
+            label=f"{feature} · intent trace",
+            source=source,
+            status=status,
+            facts={
+                "feature": feature,
+                "shipped": shipped,
+                "intent_traceable": traceable,
+                "intent_hash": trace.get("intent_hash") if isinstance(trace, dict) and isinstance(trace.get("intent_hash"), str) else None,
+                "obligations": trace.get("obligations") if isinstance(trace, dict) and isinstance(trace.get("obligations"), str) else None,
+                "receipt_sha256": receipt_sha,
+                "forge_receipt_sha256": trace.get("forge_receipt_sha256") if isinstance(trace, dict) else None,
+                "timestamp": trace.get("ts") if isinstance(trace, dict) and isinstance(trace.get("ts"), str) else None,
+                "source_type": "factoryline_adapter",
+                "preferred": True,
+                "authority": dict(_AUTHORITY),
+                "execution": False,
+            },
+        )
+        facts["count"] += 1
+        facts["traceable_count"] += int(traceable)
+        facts["untraceable_count"] += int(shipped and not traceable)
+        facts["blocked_count"] += int(not shipped and valid)
+
+    for feature, candidates in sorted(adapter_candidates.items()):
+        candidates.sort(key=lambda item: (item.get("timestamp", ""), item.get("mtime_ns", 0), item.get("source", "")))
+        _project_adapter(feature, candidates[-1])
+
     directory = root / ".forge"
     for path in sorted(directory.glob("*/receipts.jsonl")):
         try:
@@ -1181,12 +1295,17 @@ def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
         if latest is None:
             continue
         value, raw_line = latest
+        feature = _text(path.parent.name, "unknown-feature")
+        if feature in adapter_features:
+            # An explicit adapter, including an invalid one, is the preferred
+            # record for this feature.  Do not silently fall back to older
+            # upstream evidence and mask the adapter failure.
+            continue
         shipped = value.get("shipped") is True
         # A malformed source invalidates the whole projection. Do not surface a
         # traceable card beside a rejected line and accidentally invite reliance.
         traceable = not invalid and shipped and value.get("intent_traceable") is True
         status = "traceable" if traceable else "blocked" if not shipped else "untraceable"
-        feature = _text(path.parent.name, "unknown-feature")
         receipt_sha = hashlib.sha256(raw_line.encode("utf-8")).hexdigest()
         node_id = f"intent-trace:{feature}:{receipt_sha[:24]}"
         _node(

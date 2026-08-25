@@ -111,17 +111,25 @@ repair.
 ## Intent trace in Graph Ops
 
 Graph Ops also reads the newest local Forge `ship` line from each bounded
-`.forge/*/receipts.jsonl` file. The **Forge receipt · intent trace** panel shows
-the recorded intent hash, obligation result, shipped state, and a content hash
-of the receipt line. A `traceable` card means the receipt explicitly recorded
-`intent_traceable=true`; it is not a new approval or a cryptographic signature.
+`.forge/*/receipts.jsonl` file. When the run was driven through Factoryline,
+the standard `receipts/forgeline-*-ship-*.json` receipt carries an explicit
+`outputs.intent_trace` adapter. The adapter binds the CLI's explicit
+`intent_traceable` result to the Forge line hash without rewriting Forge's
+append-only store. Graph Ops prefers that adapter for the feature and retains
+the upstream line as a fallback only when no adapter exists. The **Forge
+receipt · intent trace** panel shows the recorded intent hash, obligation
+result, shipped state, and a content hash of the observed receipt. A
+`traceable` card means the evidence explicitly recorded `intent_traceable=true`;
+it is not a new approval or a cryptographic signature.
 
 If no ship receipt exists, the panel says intent traceability is unverified. A
 missing, malformed, blocked, or untraceable receipt stays fail closed and emits
-`GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED`. The projection is local and read-only: it
-does not infer intent, run Forge, call a provider, mutate the workspace, or
-grant execution, approval, publication, deployment, signing, messaging,
-credential, or connector authority.
+`GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED`. A malformed adapter suppresses the legacy
+fallback for that feature so an older traceable line cannot mask the newer
+receipt-integrity failure. The projection is local and read-only: it does not
+infer intent, run Forge, call a provider, mutate the workspace, or grant
+execution, approval, publication, deployment, signing, messaging, credential,
+or connector authority.
 
 This is an observation bridge, not a TestSprite integration claim and not a
 production-readiness claim. A human or repository-owned workflow still decides
