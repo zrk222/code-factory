@@ -108,7 +108,7 @@ def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(tm
     invalid_readme = tmp_path / "README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Catch tests that could never fail. Prove AI code locally.",
+            "short_description: One local command shows whether a test can actually fail.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",
@@ -133,7 +133,7 @@ def test_huggingface_metadata_preflight_cli_reports_the_local_result(tmp_path: P
     invalid_readme = tmp_path / "invalid-README.md"
     invalid_readme.write_text(
         (SPACE / "README.md").read_text(encoding="utf-8").replace(
-            "short_description: Catch tests that could never fail. Prove AI code locally.",
+            "short_description: One local command shows whether a test can actually fail.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",

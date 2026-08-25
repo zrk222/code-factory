@@ -3,6 +3,18 @@
 Code Factory 0.44.3 proves the journey around a result, not only the final
 screen or test status.
 
+## Who it helps
+
+- **Individual developers and vibe coders:** start with one command—
+  `factory first-proof --root .`—to see whether a test can actually reject a
+  known failure before trusting AI-generated tests.
+- **Senior developers and teams:** wrap an admitted agent run, preserve its
+  exact file delta, run declared independent validators, and hand reviewers
+  bounded facts and hashes instead of retained prompts or model claims.
+- **Platform and assurance teams:** evaluate the deeper policy and evidence
+  controls in a controlled pilot. This beta does not claim an SLA, compliance
+  certification, customer references, or procurement readiness.
+
 ## What changed
 
 - **Journey Reality** compares declared and observed states, transitions,

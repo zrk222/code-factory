@@ -11,22 +11,38 @@
 
 > **Catch AI-generated tests that could never fail — before review.**
 
-> **Free, local proof for code built with AI.** Start from a plain-language
-> outcome, a fuzzy PRD, or a risky diff. Code Factory binds the declared intent,
-> challenges whether a test can actually reject the failure it claims to cover,
-> and shows the current proof gap plus the next human decision. Tests that only
-> look green are not proof: a starter is never called production-ready before
-> the relevant proof exists.
+> **One command answers one question: can this test actually fail?** Code Factory
+> runs a safe negative control, records what happened, and gives you a local
+> result you can review. It challenges whether a test can actually reject the
+> failure it claims to cover. It does not upload your code or call a green test
+> proof when that test could never catch the failure.
 
 ```powershell
 pip install factoryline-code-factory
 factory first-proof --root .
 ```
 
-That one local command creates a disposable sandbox, proves the healthy check
-can pass, then proves the hollow check is caught as `HOLLOW_E2E_TEST`. It writes
-a receipt and a privacy-safe Proof Card; it never uploads your code. When you
-are ready to build, run `factory mvp "Build an approval tracker" --root .`.
+That one local command creates a disposable demonstration sandbox, proves the
+healthy check can pass, then proves the hollow check is rejected. It writes a
+receipt and a privacy-safe Proof Card; it does not assess or change your project.
+
+### Pick the path that matches your work
+
+- **Individual developer or vibe coder:** start with `factory first-proof`.
+  Learn what a real negative control looks like before trusting AI-generated tests.
+- **Engineering team:** put `factory wrap` around an admitted Codex, Claude Code,
+  DeepSeek, or other local agent run. Code Factory records the exact file delta,
+  runs the validators your team declared, and stores hashes and bounded facts—not
+  prompts or raw model output—so reviewers can compare the claim with the change.
+- **Platform or assurance team:** evaluate local policy gates, evidence packets,
+  expiring exceptions, and tenant boundaries in a controlled pilot. Code Factory
+  is beta software; it does not provide a support SLA, compliance certification,
+  customer references, or procurement readiness.
+
+When you need more than the first proof, open the [advanced workflow guide](docs/OVERVIEW.md).
+To create a contained starter later, run
+`factory mvp "Build an approval tracker" --root .`.
+That starter is never called production-ready until the relevant proof exists.
 
 ![Actual privacy-safe First Proof Card: the hollow test was detected](docs/assets/first-proof-card.svg)
 
@@ -41,7 +57,7 @@ are ready to build, run `factory mvp "Build an approval tracker" --root .`.
 
 ![Actual Factory Studio showing the outcome-first local MVP path and local-only boundary](docs/assets/marketplace/factory-studio-mvp-1280x800.png)
 
-## What it does
+## Advanced workflows
 
 - **Start a real project.** Turn one outcome into a contained web, mobile, API,
   CLI, worker, MCP, or agent-UI starting state.
@@ -106,11 +122,11 @@ security, productivity, production readiness, or an automatic repair service.
 
 | Who is using it | Start here | Highest-value uses | The result they can inspect |
 | --- | --- | --- | --- |
-| **Novice / first-time builder** | `factory first-proof`, then `factory mvp` | Catch a test that only looks green; turn one outcome into a contained starter; learn the difference between generated code and proven behavior | A privacy-safe Proof Card, a local MVP, and a visible next step instead of an unexplained pass/fail |
+| **Individual developer / vibe coder** | `factory first-proof` | See whether a passing test can actually reject a known failure before trusting it | A local receipt and privacy-safe Proof Card from a disposable demonstration; your project remains unchanged |
 | **Junior developer** | `factory prd grill`, `factory plan verify`, `factory change review` | Clarify acceptance evidence before coding; keep an AI-assisted diff inside the approved plan; surface missing tests and Proof Debt before review | Source-bound questions, exact changed paths, severity-ordered findings, and a review handoff |
 | **Senior / staff engineer** | `factory judgment`, `factory graph forensics`, `factory proofsearch`, `factory gauntlet` | Protect architecture decisions; diagnose resumed or parallel workflow drift; compare candidate repairs; challenge whether critical E2E checks can actually reject declared failures | Hash-bound decision context, first-divergence facts, rejected candidates, a deterministic winner, and Survival Cards |
-| **Engineering team** | `factory wrap`, GitHub Proof Review, Graph Ops, Agent License and Combine | Put agent work into one evidence ledger; add a neutral PR Check beside AI review; hand off proof state; compare sealed runs without turning scores into vendor claims | Commit-bound Checks, local receipts, explicit owners and blockers, proof reuse decisions, and comparable governed-run records |
-| **Enterprise / platform team** | Intake Grill, Verifier Plane, policy challenge, assurance dossier, admission controls | Standardize approval boundaries; test whether policy rules matter; keep signers, exceptions, tenants, budgets, and release evidence explicit; integrate with existing SDLC controls | Independently verifiable packets and read-only operational views; identity, credentials, merge, release, and deployment remain in enterprise-owned systems |
+| **Engineering team** | `factory wrap`, then GitHub Proof Review | Record the exact agent-created file delta, run declared independent validators, and hand reviewers a commit-bound evidence packet without retaining prompts | Local receipts, exact changed paths, explicit blockers, and a neutral PR Check beside AI review |
+| **Platform / assurance pilot** | Policy gates and evidence packets | Evaluate named approval boundaries, expiring exceptions, tenant isolation, budgets, and release evidence inside existing SDLC controls | Independently verifiable packets and read-only views; identity, credentials, merge, release, and deployment remain enterprise-owned. No SLA, certification, references, or procurement-readiness claim |
 
 ## Expected operational outcomes
 
