@@ -236,7 +236,8 @@
     "use strict";
     const sessionToken=__FACTORY_STUDIO_TOKEN__;
     const endpoint="/api/graph-ops";
-     const laneOrder=["intake","product","requirement","slice","mission","approval","authorization","admission","judgment_scope","judgment_capsule","agent_license","agent_incident","combine_scoreboard","completion","lineage","forensics","repair_candidate","proof_delta","proofsearch","evidence_experiment","evidence_frontier","continuity_purpose","continuity_scope","continuity_record","continuity_evidence","reality_check","gauntlet","gauntlet_case","assurance_dossier","policy_drift","proof","gate","trace","receipt","artifact"];
+     // REQ_INTENT_LINEAGE_EDGE_UI · GRAPH_OPS_INTENT_LINEAGE_EDGE_READ_ONLY · no controls
+     const laneOrder=["intake","product","requirement","slice","mission","approval","authorization","admission","judgment_scope","judgment_capsule","agent_license","agent_incident","combine_scoreboard","completion","lineage","intent_trace","intent_source","forensics","repair_candidate","proof_delta","proofsearch","evidence_experiment","evidence_frontier","continuity_purpose","continuity_scope","continuity_record","continuity_evidence","reality_check","gauntlet","gauntlet_case","assurance_dossier","policy_drift","proof","gate","trace","receipt","artifact"];
     const byId=(id)=>document.getElementById(id);
     const addText=(parent,text,tag="span")=>{const node=document.createElement(tag);node.textContent=String(text);parent.appendChild(node);return node;};
     const setText=(id,text)=>{byId(id).textContent=String(text);};

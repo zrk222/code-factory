@@ -1199,8 +1199,10 @@ def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
     line omits ``intent_traceable``.
     """
     # REQ_INTENT_LINEAGE_SOURCE · REQ_INTENT_LINEAGE_FAIL_CLOSED ·
-    # REQ_INTENT_LINEAGE_FACTS · GRAPH_OPS_INTENT_ADAPTER_LINEAGE
-    facts = {"count": 0, "traceable_count": 0, "untraceable_count": 0, "blocked_count": 0, "invalid_count": 0, "bound_count": 0, "mismatch_count": 0, "unbound_count": 0}
+    # REQ_INTENT_LINEAGE_FACTS · GRAPH_OPS_INTENT_ADAPTER_LINEAGE ·
+    # REQ_INTENT_LINEAGE_EDGE · REQ_INTENT_LINEAGE_EDGE_FAIL_CLOSED ·
+    # REQ_INTENT_LINEAGE_EDGE_FACTS · GRAPH_OPS_INTENT_LINEAGE_EDGE
+    facts = {"count": 0, "traceable_count": 0, "untraceable_count": 0, "blocked_count": 0, "invalid_count": 0, "bound_count": 0, "mismatch_count": 0, "unbound_count": 0, "lineage_edge_count": 0, "lineage_node_count": 0}
     adapter_candidates: dict[str, list[dict[str, Any]]] = {}
     adapter_features: set[str] = set()
     adapter_dir = root / "receipts"
@@ -1319,6 +1321,32 @@ def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
                 "execution": False,
             },
         )
+        # Only a fully hash-bound adapter may create a traversable provenance
+        # relationship. Mismatch, missing, and invalid states remain closed.
+        if valid and isinstance(binding.get("source"), str) and isinstance(binding.get("line"), int) and isinstance(binding.get("sha256"), str):
+            source_id = f"intent-source:{feature}:{binding['sha256'][:24]}"
+            source_created = source_id not in state["nodes"]
+            source_added = _node(
+                state,
+                node_id=source_id,
+                kind="intent_source",
+                label=f"{feature} · Forge ship line",
+                source=binding["source"],
+                status="bound",
+                facts={
+                    "feature": feature,
+                    "source_path": binding["source"],
+                    "line": binding["line"],
+                    "sha256": binding["sha256"],
+                    "source_type": "forge_ship_line",
+                    "authority": dict(_AUTHORITY),
+                    "execution": False,
+                },
+            )
+            if source_added:
+                facts["lineage_node_count"] += int(source_created)
+            if source_added and _edge(state, node_id, source_id, "bound_to_forge_line"):
+                facts["lineage_edge_count"] += 1
         facts["count"] += 1
         facts["traceable_count"] += int(traceable)
         facts["untraceable_count"] += int(shipped and not traceable)
@@ -1582,6 +1610,8 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "intent_trace_binding_count": intent_traces["bound_count"],
         "intent_trace_binding_mismatch_count": intent_traces["mismatch_count"],
         "intent_trace_unbound_count": intent_traces["unbound_count"],
+        "intent_trace_lineage_edge_count": intent_traces["lineage_edge_count"],
+        "intent_trace_lineage_node_count": intent_traces["lineage_node_count"],
         "intake_confirmation_count": sum(node["kind"] == "intake" for node in nodes),
         "intake_confirmed_count": sum(node["kind"] == "intake" and node.get("status") == "confirmed" for node in nodes),
         "intake_invalid_count": sum(node["kind"] == "intake" and node.get("status") == "invalid" for node in nodes),
@@ -1653,6 +1683,8 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
     if intent_traces["bound_count"]:
         markers.append("GRAPH_OPS_INTENT_ADAPTER_BOUND")
         markers.append("GRAPH_OPS_INTENT_ADAPTER_LINEAGE")
+    if intent_traces["lineage_edge_count"]:
+        markers.append("GRAPH_OPS_INTENT_LINEAGE_EDGE")
     if intent_traces["mismatch_count"]:
         markers.append("GRAPH_OPS_INTENT_ADAPTER_MISMATCH")
     if intent_traces["unbound_count"]:

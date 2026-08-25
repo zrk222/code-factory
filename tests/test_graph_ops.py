@@ -274,8 +274,17 @@ def test_graph_ops_prefers_explicit_factoryline_adapter_over_legacy_forge_receip
     assert snapshot["facts"]["intent_trace_traceable_count"] == 1
     assert snapshot["facts"]["intent_trace_untraceable_count"] == 0
     assert snapshot["facts"]["intent_trace_binding_count"] == 1
+    source = next(item for item in snapshot["nodes"] if item["kind"] == "intent_source")
+    assert source["facts"]["source_path"] == ".forge/adapter-feature/receipts.jsonl"
+    assert source["facts"]["line"] == 2
+    assert source["facts"]["sha256"] == traces[0]["facts"]["observed_forge_receipt_sha256"]
+    assert source["facts"]["authority"]["execution"] is False
+    assert snapshot["facts"]["intent_trace_lineage_node_count"] == 1
+    assert snapshot["facts"]["intent_trace_lineage_edge_count"] == 1
+    assert {edge["relation"] for edge in snapshot["edges"] if edge["source"] == traces[0]["id"]} == {"bound_to_forge_line"}
     assert "GRAPH_OPS_INTENT_ADAPTER_BOUND" in snapshot["markers"]
     assert "GRAPH_OPS_INTENT_ADAPTER_LINEAGE" in snapshot["markers"]
+    assert "GRAPH_OPS_INTENT_LINEAGE_EDGE" in snapshot["markers"]
 
 
 def test_graph_ops_rejects_malformed_factoryline_adapter_without_legacy_fallback(tmp_path: Path):
@@ -301,6 +310,8 @@ def test_graph_ops_rejects_malformed_factoryline_adapter_without_legacy_fallback
     assert snapshot["facts"]["intent_trace_traceable_count"] == 0
     assert snapshot["facts"]["intent_trace_invalid_count"] == 1
     assert snapshot["facts"]["intent_trace_unbound_count"] == 1
+    assert not any(item["kind"] == "intent_source" for item in snapshot["nodes"])
+    assert snapshot["facts"]["intent_trace_lineage_edge_count"] == 0
     assert "GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED" in snapshot["markers"]
     assert "GRAPH_OPS_INTENT_ADAPTER_UNBOUND" in snapshot["markers"]
 
@@ -339,6 +350,8 @@ def test_graph_ops_marks_adapter_hash_mismatch_without_trusting_traceability(tmp
     assert snapshot["facts"]["intent_trace_binding_mismatch_count"] == 1
     assert snapshot["recommendation"]["action"] == "repair_intent_trace_binding"
     assert "GRAPH_OPS_INTENT_ADAPTER_MISMATCH" in snapshot["markers"]
+    assert not any(item["kind"] == "intent_source" for item in snapshot["nodes"])
+    assert snapshot["facts"]["intent_trace_lineage_edge_count"] == 0
 
 
 def test_graph_ops_marks_adapter_claim_mismatch_without_trusting_traceability(tmp_path: Path):
@@ -403,6 +416,8 @@ def test_graph_ops_withholds_lineage_for_missing_forge_source(tmp_path: Path):
     assert trace["facts"]["forge_receipt_source"] is None
     assert trace["facts"]["forge_receipt_line"] is None
     assert "GRAPH_OPS_INTENT_ADAPTER_UNBOUND" in snapshot["markers"]
+    assert not any(item["kind"] == "intent_source" for item in snapshot["nodes"])
+    assert snapshot["facts"]["intent_trace_lineage_edge_count"] == 0
 
 
 def test_graph_ops_exposes_declared_gate_state_without_running_commands(tmp_path: Path):

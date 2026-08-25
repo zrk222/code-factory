@@ -1,0 +1,11 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "forgeline-intent-receipt-lineage-edge-v1",
+  "sealed_hash": "3bc08ccd743763ffc7783db341f8b862e311bd0d1086fe35d87bf20511c7ce0b",
+  "coherence_score": 100,
+  "source": "specs/forgeline-intent-receipt-lineage-edge-v1.md",
+  "intent": "Connect a verified local Forge ship-line source to its Factoryline intent adapter as a read-only graph edge without granting authority.",
+  "assumptions": [
+    "Assumes no external provider or connector authorization is required; the bounded Forge receipt remains local and its source path is normalized relative to the workspace."
+  ]
+}

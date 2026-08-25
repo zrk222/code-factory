@@ -130,6 +130,17 @@ source easy to inspect without following links, mutating either receipt, or
 granting any authority. Missing or invalid bindings leave the source and line
 unset rather than guessing a location.
 
+When the adapter is fully hash-bound, Graph Ops also projects a read-only
+`intent_source` node for the exact Forge ship line and a
+`bound_to_forge_line` edge from the intent trace to that node. The node carries
+the normalized path, 1-based line, observed raw-line hash, and false authority
+flags, so a reviewer can traverse the graph to the evidence without copying a
+path from prose. Mismatch, missing, and invalid bindings intentionally emit no
+source node or lineage edge; the card remains untraceable and the graph stays
+fail closed. The edge is navigation evidence only and cannot execute, repair,
+approve, publish, deploy, sign, message, access credentials, or grant a
+connector.
+
 If no ship receipt exists, the panel says intent traceability is unverified. A
 missing, malformed, blocked, or untraceable receipt stays fail closed and emits
 `GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED`. A malformed adapter suppresses the legacy

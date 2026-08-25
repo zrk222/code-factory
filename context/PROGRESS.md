@@ -453,3 +453,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-25 02:12] GATE plan forgeline-intent-receipt-lineage-v1 approver=human tasks=8 sha=5b5c253c7976c12e
 - [2026-08-25 02:19] GATE spec forgeline-intent-receipt-lineage-v1 approver=human strict=True sha=5b5c253c7976c12e
 - [2026-08-25 02:19] GATE plan forgeline-intent-receipt-lineage-v1 approver=human tasks=8 sha=5b5c253c7976c12e
+- [2026-08-25 02:30] GATE spec forgeline-intent-receipt-lineage-edge-v1 approver=human strict=True sha=3bc08ccd743763ff
+- [2026-08-25 02:30] GATE plan forgeline-intent-receipt-lineage-edge-v1 approver=human tasks=8 sha=3bc08ccd743763ff
+- [2026-08-25 02:34] GATE spec forgeline-intent-receipt-lineage-edge-v1 approver=human strict=True sha=3bc08ccd743763ff
+- [2026-08-25 02:34] GATE plan forgeline-intent-receipt-lineage-edge-v1 approver=human tasks=8 sha=3bc08ccd743763ff
