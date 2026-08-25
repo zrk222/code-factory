@@ -1155,31 +1155,33 @@ def _forge_ship_binding(root: Path, feature: str) -> dict[str, Any]:
     """
     candidate = Path(root) / ".forge" / feature / "receipts.jsonl"
     if not candidate.exists():
-        return {"status": "missing", "sha256": None, "value": None}
+        return {"status": "missing", "sha256": None, "value": None, "source": None, "line": None}
     try:
-        receipt_path, _ = _source(root, candidate)
+        receipt_path, relative = _source(root, candidate)
         if receipt_path.stat().st_size > MAX_SOURCE_BYTES:
-            return {"status": "invalid", "sha256": None, "value": None}
+            return {"status": "invalid", "sha256": None, "value": None, "source": None, "line": None}
         lines = receipt_path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError, ValueError):
-        return {"status": "invalid", "sha256": None, "value": None}
-    latest: tuple[dict[str, Any], str] | None = None
-    for line in lines:
+        return {"status": "invalid", "sha256": None, "value": None, "source": None, "line": None}
+    latest: tuple[dict[str, Any], str, int] | None = None
+    for line_number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
         try:
             value = json.loads(line)
         except json.JSONDecodeError:
-            return {"status": "invalid", "sha256": None, "value": None}
+            return {"status": "invalid", "sha256": None, "value": None, "source": None, "line": None}
         if isinstance(value, dict) and value.get("phase") == "ship":
-            latest = (value, line)
+            latest = (value, line, line_number)
     if latest is None:
-        return {"status": "missing", "sha256": None, "value": None}
-    value, raw_line = latest
+        return {"status": "missing", "sha256": None, "value": None, "source": None, "line": None}
+    value, raw_line, line_number = latest
     return {
         "status": "bound",
         "sha256": hashlib.sha256(raw_line.encode("utf-8")).hexdigest(),
         "value": value,
+        "source": relative,
+        "line": line_number,
     }
 
 
@@ -1196,6 +1198,8 @@ def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
     supported as a legacy fallback and stay fail closed when their persisted
     line omits ``intent_traceable``.
     """
+    # REQ_INTENT_LINEAGE_SOURCE · REQ_INTENT_LINEAGE_FAIL_CLOSED ·
+    # REQ_INTENT_LINEAGE_FACTS · GRAPH_OPS_INTENT_ADAPTER_LINEAGE
     facts = {"count": 0, "traceable_count": 0, "untraceable_count": 0, "blocked_count": 0, "invalid_count": 0, "bound_count": 0, "mismatch_count": 0, "unbound_count": 0}
     adapter_candidates: dict[str, list[dict[str, Any]]] = {}
     adapter_features: set[str] = set()
@@ -1304,6 +1308,8 @@ def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
                 "receipt_sha256": receipt_sha,
                 "forge_receipt_sha256": trace.get("forge_receipt_sha256") if isinstance(trace, dict) else None,
                 "observed_forge_receipt_sha256": binding.get("sha256"),
+                "forge_receipt_source": binding.get("source"),
+                "forge_receipt_line": binding.get("line"),
                 "provenance_status": provenance_status,
                 "provenance_match": provenance_match,
                 "timestamp": trace.get("ts") if isinstance(trace, dict) and isinstance(trace.get("ts"), str) else None,
@@ -1646,6 +1652,7 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED")
     if intent_traces["bound_count"]:
         markers.append("GRAPH_OPS_INTENT_ADAPTER_BOUND")
+        markers.append("GRAPH_OPS_INTENT_ADAPTER_LINEAGE")
     if intent_traces["mismatch_count"]:
         markers.append("GRAPH_OPS_INTENT_ADAPTER_MISMATCH")
     if intent_traces["unbound_count"]:

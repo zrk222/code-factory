@@ -123,6 +123,13 @@ the Factoryline receipt and the observed Forge line. A
 `traceable` card means the evidence explicitly recorded `intent_traceable=true`;
 it is not a new approval or a cryptographic signature.
 
+For a hash-bound adapter, the panel also shows the normalized local Forge
+receipt path and the exact 1-based ship-line number used to calculate the
+observed hash. This is reviewer navigation evidence: it makes the offline
+source easy to inspect without following links, mutating either receipt, or
+granting any authority. Missing or invalid bindings leave the source and line
+unset rather than guessing a location.
+
 If no ship receipt exists, the panel says intent traceability is unverified. A
 missing, malformed, blocked, or untraceable receipt stays fail closed and emits
 `GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED`. A malformed adapter suppresses the legacy

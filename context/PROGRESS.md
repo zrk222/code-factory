@@ -445,3 +445,11 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-25 01:59] GATE plan forgeline-intent-receipt-integrity-v1 approver=human tasks=8 sha=d8d0f365495b6794
 - [2026-08-25 02:05] GATE spec forgeline-intent-receipt-integrity-v1 approver=human strict=True sha=d8d0f365495b6794
 - [2026-08-25 02:05] GATE plan forgeline-intent-receipt-integrity-v1 approver=human tasks=8 sha=d8d0f365495b6794
+- [2026-08-25 02:08] GATE spec forgeline-intent-receipt-lineage-v1 approver=human strict=True sha=3ac9a8d782592664
+- [2026-08-25 02:08] GATE plan forgeline-intent-receipt-lineage-v1 approver=human tasks=8 sha=3ac9a8d782592664
+- [2026-08-25 02:11] GATE spec forgeline-intent-receipt-lineage-v1 approver=human strict=True sha=3ac9a8d782592664
+- [2026-08-25 02:11] GATE plan forgeline-intent-receipt-lineage-v1 approver=human tasks=8 sha=3ac9a8d782592664
+- [2026-08-25 02:12] GATE spec forgeline-intent-receipt-lineage-v1 approver=human strict=True sha=5b5c253c7976c12e
+- [2026-08-25 02:12] GATE plan forgeline-intent-receipt-lineage-v1 approver=human tasks=8 sha=5b5c253c7976c12e
+- [2026-08-25 02:19] GATE spec forgeline-intent-receipt-lineage-v1 approver=human strict=True sha=5b5c253c7976c12e
+- [2026-08-25 02:19] GATE plan forgeline-intent-receipt-lineage-v1 approver=human tasks=8 sha=5b5c253c7976c12e

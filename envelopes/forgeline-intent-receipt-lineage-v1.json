@@ -1,0 +1,11 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "forgeline-intent-receipt-lineage-v1",
+  "sealed_hash": "5b5c253c7976c12e6b82f5fb468733dc5d9cc60472ef6a80c5a68c4e55294f2d",
+  "coherence_score": 100,
+  "source": "specs/forgeline-intent-receipt-lineage-v1.md",
+  "intent": "Expose the exact local Forge ship-line source for already hash-bound intent evidence without granting authority.",
+  "assumptions": [
+    "Assumes no external provider or connector authorization is required; the bounded Forge receipt remains local and its source path is normalized relative to the workspace."
+  ]
+}
