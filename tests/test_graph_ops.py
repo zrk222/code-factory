@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 from factoryline.cli import main
@@ -229,10 +230,8 @@ def test_graph_ops_prefers_explicit_factoryline_adapter_over_legacy_forge_receip
     feature = "adapter-feature"
     legacy = tmp_path / ".forge" / feature / "receipts.jsonl"
     legacy.parent.mkdir(parents=True)
-    legacy.write_text(
-        json.dumps({"phase": "ship", "ts": "2026-08-24T12:01:00Z", "shipped": True}) + "\n",
-        encoding="utf-8",
-    )
+    legacy_line = json.dumps({"phase": "ship", "ts": "2026-08-24T12:01:00Z", "shipped": True})
+    legacy.write_text(legacy_line + "\n", encoding="utf-8")
     adapter_dir = tmp_path / "receipts"
     adapter_dir.mkdir(parents=True)
     adapter = {
@@ -249,7 +248,7 @@ def test_graph_ops_prefers_explicit_factoryline_adapter_over_legacy_forge_receip
                 "intent_traceable": True,
                 "intent_hash": "c" * 64,
                 "obligations": "1/1",
-                "forge_receipt_sha256": "d" * 64,
+                "forge_receipt_sha256": hashlib.sha256(legacy_line.encode("utf-8")).hexdigest(),
                 "ts": "2026-08-24T12:01:00Z",
                 "authority": {key: False for key in (
                     "execution", "approval", "publication", "deployment",
@@ -268,8 +267,12 @@ def test_graph_ops_prefers_explicit_factoryline_adapter_over_legacy_forge_receip
     assert traces[0]["status"] == "traceable"
     assert traces[0]["facts"]["source_type"] == "factoryline_adapter"
     assert traces[0]["facts"]["preferred"] is True
+    assert traces[0]["facts"]["provenance_status"] == "bound"
+    assert traces[0]["facts"]["provenance_match"] is True
     assert snapshot["facts"]["intent_trace_traceable_count"] == 1
     assert snapshot["facts"]["intent_trace_untraceable_count"] == 0
+    assert snapshot["facts"]["intent_trace_binding_count"] == 1
+    assert "GRAPH_OPS_INTENT_ADAPTER_BOUND" in snapshot["markers"]
 
 
 def test_graph_ops_rejects_malformed_factoryline_adapter_without_legacy_fallback(tmp_path: Path):
@@ -294,7 +297,81 @@ def test_graph_ops_rejects_malformed_factoryline_adapter_without_legacy_fallback
     assert traces[0]["status"] == "untraceable"
     assert snapshot["facts"]["intent_trace_traceable_count"] == 0
     assert snapshot["facts"]["intent_trace_invalid_count"] == 1
+    assert snapshot["facts"]["intent_trace_unbound_count"] == 1
     assert "GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED" in snapshot["markers"]
+    assert "GRAPH_OPS_INTENT_ADAPTER_UNBOUND" in snapshot["markers"]
+
+
+def test_graph_ops_marks_adapter_hash_mismatch_without_trusting_traceability(tmp_path: Path):
+    feature = "mismatched-adapter"
+    legacy = tmp_path / ".forge" / feature / "receipts.jsonl"
+    legacy.parent.mkdir(parents=True)
+    legacy_line = json.dumps({
+        "phase": "ship", "ts": "2026-08-24T12:01:00Z", "shipped": True,
+        "intent_hash": "e" * 64, "obligations": "1/1",
+    })
+    legacy.write_text(legacy_line + "\n", encoding="utf-8")
+    adapter_dir = tmp_path / "receipts"
+    adapter_dir.mkdir(parents=True)
+    (adapter_dir / f"forgeline-{feature}-ship-adapter.json").write_text(json.dumps({
+        "module": "forgeline", "stage": "ship", "feature": feature, "ok": True,
+        "outputs": {"intent_trace": {
+            "schema": "factoryline.intent-trace.v1", "source": "forgeline-cli",
+            "shipped": True, "intent_traceable": True, "intent_hash": "e" * 64,
+            "obligations": "1/1", "forge_receipt_sha256": "f" * 64,
+            "authority": {key: False for key in (
+                "execution", "approval", "publication", "deployment",
+                "signing", "messaging", "credential", "connector",
+            )},
+            "execution": False,
+        }},
+    }), encoding="utf-8")
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    trace = next(item for item in snapshot["nodes"] if item["kind"] == "intent_trace")
+    assert trace["status"] == "untraceable"
+    assert trace["facts"]["provenance_status"] == "mismatch"
+    assert trace["facts"]["provenance_match"] is False
+    assert snapshot["facts"]["intent_trace_binding_mismatch_count"] == 1
+    assert snapshot["recommendation"]["action"] == "repair_intent_trace_binding"
+    assert "GRAPH_OPS_INTENT_ADAPTER_MISMATCH" in snapshot["markers"]
+
+
+def test_graph_ops_marks_adapter_claim_mismatch_without_trusting_traceability(tmp_path: Path):
+    feature = "claim-mismatch-adapter"
+    legacy = tmp_path / ".forge" / feature / "receipts.jsonl"
+    legacy.parent.mkdir(parents=True)
+    legacy_line = json.dumps({
+        "phase": "ship", "ts": "2026-08-24T12:01:00Z", "shipped": True,
+        "intent_hash": "e" * 64, "obligations": "1/1",
+    })
+    legacy.write_text(legacy_line + "\n", encoding="utf-8")
+    adapter_dir = tmp_path / "receipts"
+    adapter_dir.mkdir(parents=True)
+    (adapter_dir / f"forgeline-{feature}-ship-adapter.json").write_text(json.dumps({
+        "module": "forgeline", "stage": "ship", "feature": feature, "ok": True,
+        "outputs": {"intent_trace": {
+            "schema": "factoryline.intent-trace.v1", "source": "forgeline-cli",
+            "shipped": True, "intent_traceable": True, "intent_hash": "d" * 64,
+            "obligations": "1/1",
+            "forge_receipt_sha256": hashlib.sha256(legacy_line.encode("utf-8")).hexdigest(),
+            "authority": {key: False for key in (
+                "execution", "approval", "publication", "deployment",
+                "signing", "messaging", "credential", "connector",
+            )},
+            "execution": False,
+        }},
+    }), encoding="utf-8")
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    trace = next(item for item in snapshot["nodes"] if item["kind"] == "intent_trace")
+    assert trace["status"] == "untraceable"
+    assert trace["facts"]["provenance_status"] == "mismatch"
+    assert trace["facts"]["observed_forge_receipt_sha256"] == trace["facts"]["forge_receipt_sha256"]
+    assert snapshot["facts"]["intent_trace_binding_mismatch_count"] == 1
+    assert snapshot["recommendation"]["action"] == "repair_intent_trace_binding"
 
 
 def test_graph_ops_exposes_declared_gate_state_without_running_commands(tmp_path: Path):

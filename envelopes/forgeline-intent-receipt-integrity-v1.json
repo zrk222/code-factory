@@ -1,0 +1,11 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "forgeline-intent-receipt-integrity-v1",
+  "sealed_hash": "d8d0f365495b6794430b58f49daeb8657890caa35285ee06bbe8ab21f8d98178",
+  "coherence_score": 100,
+  "source": "specs/forgeline-intent-receipt-integrity-v1.md",
+  "intent": "Verify Factoryline intent adapter provenance against the exact local Forge ship line without granting authority.",
+  "assumptions": [
+    "Assumes Graph Ops preserves a human authorization boundary and never grants authorization from a provenance match."
+  ]
+}

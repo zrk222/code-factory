@@ -1147,11 +1147,47 @@ def _append_external_evidence(state: dict[str, Any], root: Path) -> dict[str, in
     return facts
 
 
+def _forge_ship_binding(root: Path, feature: str) -> dict[str, Any]:
+    """Read the exact Forge line referenced by a Factoryline adapter.
+
+    REQ_INTENT_BINDING_VERIFY · REQ_INTENT_BINDING_FAIL_CLOSED ·
+    REQ_INTENT_BINDING_FACTS
+    """
+    candidate = Path(root) / ".forge" / feature / "receipts.jsonl"
+    if not candidate.exists():
+        return {"status": "missing", "sha256": None, "value": None}
+    try:
+        receipt_path, _ = _source(root, candidate)
+        if receipt_path.stat().st_size > MAX_SOURCE_BYTES:
+            return {"status": "invalid", "sha256": None, "value": None}
+        lines = receipt_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError, ValueError):
+        return {"status": "invalid", "sha256": None, "value": None}
+    latest: tuple[dict[str, Any], str] | None = None
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            return {"status": "invalid", "sha256": None, "value": None}
+        if isinstance(value, dict) and value.get("phase") == "ship":
+            latest = (value, line)
+    if latest is None:
+        return {"status": "missing", "sha256": None, "value": None}
+    value, raw_line = latest
+    return {
+        "status": "bound",
+        "sha256": hashlib.sha256(raw_line.encode("utf-8")).hexdigest(),
+        "value": value,
+    }
+
+
 def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
     """Project local Forge intent evidence without inferring traceability.
 
     REQ_INTENT_ADAPTER_PREFER · GRAPH_OPS_INTENT_ADAPTER_PREFERRED ·
-    GRAPH_OPS_INTENT_ADAPTER_FAIL_CLOSED
+    GRAPH_OPS_INTENT_ADAPTER_FAIL_CLOSED · GRAPH_OPS_INTENT_ADAPTER_BOUND
 
     Assembly-driven runs may contain a standard Factoryline receipt with an
     explicit ``outputs.intent_trace`` adapter.  That adapter is preferred for
@@ -1160,7 +1196,7 @@ def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
     supported as a legacy fallback and stay fail closed when their persisted
     line omits ``intent_traceable``.
     """
-    facts = {"count": 0, "traceable_count": 0, "untraceable_count": 0, "blocked_count": 0, "invalid_count": 0}
+    facts = {"count": 0, "traceable_count": 0, "untraceable_count": 0, "blocked_count": 0, "invalid_count": 0, "bound_count": 0, "mismatch_count": 0, "unbound_count": 0}
     adapter_candidates: dict[str, list[dict[str, Any]]] = {}
     adapter_features: set[str] = set()
     adapter_dir = root / "receipts"
@@ -1205,7 +1241,7 @@ def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
         payload = candidate.get("payload")
         trace = payload.get("outputs", {}).get("intent_trace") if isinstance(payload, dict) else None
         authority = trace.get("authority") if isinstance(trace, dict) else None
-        valid = (
+        shape_valid = (
             isinstance(payload, dict)
             and payload.get("module") == "forgeline"
             and payload.get("stage") == "ship"
@@ -1222,12 +1258,31 @@ def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
             and all(authority.get(key) is False for key in _AUTHORITY)
             and trace.get("execution") is False
         )
+        binding = _forge_ship_binding(root, feature) if shape_valid else {"status": "invalid", "sha256": None, "value": None}
+        binding_value = binding.get("value") if isinstance(binding.get("value"), dict) else None
+        provenance_match = (
+            shape_valid
+            and binding.get("status") == "bound"
+            and trace.get("forge_receipt_sha256") == binding.get("sha256")
+            and isinstance(binding_value, dict)
+            and binding_value.get("shipped") is trace.get("shipped")
+            and (not isinstance(trace.get("intent_hash"), str) or not isinstance(binding_value.get("intent_hash"), str) or trace.get("intent_hash") == binding_value.get("intent_hash"))
+            and (not isinstance(trace.get("obligations"), str) or not isinstance(binding_value.get("obligations"), str) or trace.get("obligations") == binding_value.get("obligations"))
+        )
+        valid = bool(shape_valid and provenance_match)
         if not valid:
             _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_INVALID")
             facts["invalid_count"] += 1
         shipped = trace.get("shipped") is True if isinstance(trace, dict) else False
         traceable = valid and shipped and trace.get("intent_traceable") is True if isinstance(trace, dict) else False
         status = "traceable" if traceable else "blocked" if not shipped and valid else "untraceable"
+        provenance_status = "bound" if valid else "mismatch" if shape_valid and binding.get("status") == "bound" else str(binding.get("status") or "invalid")
+        if provenance_status == "bound":
+            facts["bound_count"] += 1
+        elif provenance_status == "mismatch":
+            facts["mismatch_count"] += 1
+        else:
+            facts["unbound_count"] += 1
         try:
             receipt_sha = hashlib.sha256(candidate["path"].read_bytes()).hexdigest()
         except OSError:
@@ -1248,6 +1303,9 @@ def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
                 "obligations": trace.get("obligations") if isinstance(trace, dict) and isinstance(trace.get("obligations"), str) else None,
                 "receipt_sha256": receipt_sha,
                 "forge_receipt_sha256": trace.get("forge_receipt_sha256") if isinstance(trace, dict) else None,
+                "observed_forge_receipt_sha256": binding.get("sha256"),
+                "provenance_status": provenance_status,
+                "provenance_match": provenance_match,
                 "timestamp": trace.get("ts") if isinstance(trace, dict) and isinstance(trace.get("ts"), str) else None,
                 "source_type": "factoryline_adapter",
                 "preferred": True,
@@ -1362,6 +1420,10 @@ def _external_runtime_triage(facts: dict[str, int]) -> tuple[str, str] | None:
 def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
     if facts["external_runtime_invalid_count"] > 0:
         return "refresh_external_runtime_evidence", "An imported external runtime receipt is stale or invalid; re-import the bounded runner bundle before relying on its observations."
+    if facts.get("intent_trace_binding_mismatch_count", 0) > 0:
+        return "repair_intent_trace_binding", "A Factoryline intent adapter no longer matches the exact Forge ship line it claims to observe; review the bounded receipt pair before relying on traceability."
+    if facts.get("intent_trace_unbound_count", 0) > 0:
+        return "refresh_intent_trace_adapter", "A Factoryline intent adapter cannot be bound to a readable Forge ship line; rerun the supervised assembly or repair the local evidence source."
     if facts["node_count"] == 0:
         return "initialize_graph", "No readable local Factory graph artifacts were found."
     if facts["agent_incident_count"] > 0:
@@ -1511,6 +1573,9 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "intent_trace_untraceable_count": intent_traces["untraceable_count"],
         "intent_trace_blocked_count": intent_traces["blocked_count"],
         "intent_trace_invalid_count": intent_traces["invalid_count"],
+        "intent_trace_binding_count": intent_traces["bound_count"],
+        "intent_trace_binding_mismatch_count": intent_traces["mismatch_count"],
+        "intent_trace_unbound_count": intent_traces["unbound_count"],
         "intake_confirmation_count": sum(node["kind"] == "intake" for node in nodes),
         "intake_confirmed_count": sum(node["kind"] == "intake" and node.get("status") == "confirmed" for node in nodes),
         "intake_invalid_count": sum(node["kind"] == "intake" and node.get("status") == "invalid" for node in nodes),
@@ -1579,6 +1644,12 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
             or intent_traces["blocked_count"]
             or intent_traces["invalid_count"]):
         markers.append("GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED")
+    if intent_traces["bound_count"]:
+        markers.append("GRAPH_OPS_INTENT_ADAPTER_BOUND")
+    if intent_traces["mismatch_count"]:
+        markers.append("GRAPH_OPS_INTENT_ADAPTER_MISMATCH")
+    if intent_traces["unbound_count"]:
+        markers.append("GRAPH_OPS_INTENT_ADAPTER_UNBOUND")
     if any(node["kind"] == "intake" for node in nodes):
         markers.append("GRAPH_OPS_INTAKE_DECISIONS_READ_ONLY")
     if state["errors"] or state["truncated"]:

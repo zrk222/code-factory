@@ -118,7 +118,8 @@ the standard `receipts/forgeline-*-ship-*.json` receipt carries an explicit
 append-only store. Graph Ops prefers that adapter for the feature and retains
 the upstream line as a fallback only when no adapter exists. The **Forge
 receipt · intent trace** panel shows the recorded intent hash, obligation
-result, shipped state, and a content hash of the observed receipt. A
+result, shipped state, adapter provenance status, and content hashes for both
+the Factoryline receipt and the observed Forge line. A
 `traceable` card means the evidence explicitly recorded `intent_traceable=true`;
 it is not a new approval or a cryptographic signature.
 
@@ -126,7 +127,10 @@ If no ship receipt exists, the panel says intent traceability is unverified. A
 missing, malformed, blocked, or untraceable receipt stays fail closed and emits
 `GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED`. A malformed adapter suppresses the legacy
 fallback for that feature so an older traceable line cannot mask the newer
-receipt-integrity failure. The projection is local and read-only: it does not
+receipt-integrity failure. If the adapter's Forge-line hash or shipped,
+obligation, or intent values disagree with the current bounded Forge line,
+Graph Ops emits `GRAPH_OPS_INTENT_ADAPTER_MISMATCH` and keeps the card
+untraceable. The projection is local and read-only: it does not
 infer intent, run Forge, call a provider, mutate the workspace, or grant
 execution, approval, publication, deployment, signing, messaging, credential,
 or connector authority.
