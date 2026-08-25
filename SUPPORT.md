@@ -21,4 +21,8 @@ receipted metering setup. Early-adopter requests currently start as a public
 first-run or spec-gallery issue so the problem and scope are visible before any
 commercial discussion.
 
+Future enterprise support terms are staged in the [Support SLA policy](docs/SUPPORT_SLA.md).
+The policy is explicitly proposed and non-effective until its staffing,
+telemetry, recovery, legal, and signed-order gates are evidenced.
+
 *Services fund the open-source work. The code stays free.*
