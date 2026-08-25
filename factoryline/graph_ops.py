@@ -32,6 +32,7 @@ from .agent_license import license_projection
 from .combine import combine_projection
 from .judgment import judgment_projection
 from .external_evidence import ExternalEvidenceError, verify_external_runtime_receipt
+from .journey_proof import journey_proof_status
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -1147,6 +1148,51 @@ def _append_external_evidence(state: dict[str, Any], root: Path) -> dict[str, in
     return facts
 
 
+def _append_journey_proofs(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project hash-verified Journey Proof receipts without executing work."""
+    status = journey_proof_status(root)
+    facts = {"count": 0, "invalid_count": status["facts"]["invalid_count"], "admissible_count": 0}
+    healing_nodes: dict[str, str] = {}
+    pending_audits: list[tuple[str, str]] = []
+    for receipt in status["receipts"]:
+        digest = str(receipt["receipt_sha256"])
+        schema = str(receipt.get("schema") or "unknown")
+        kind = {
+            "factory.journey-reality-receipt.v1": "journey_reality",
+            "factory.failure-capsule.v1": "failure_capsule",
+            "factory.stateful-workflow-receipt.v1": "stateful_workflow_proof",
+            "factory.proof-gated-healing-receipt.v1": "proof_gated_healing",
+            "factory.agent-work-audit.v1": "agent_work_audit",
+        }.get(schema, "journey_proof")
+        label_id = receipt.get("journey_id") or receipt.get("workflow_id") or receipt.get("healing_id") or digest[:12]
+        node_id = f"journey-proof:{digest[:24]}"
+        decision = receipt.get("decision")
+        _node(
+            state,
+            node_id=node_id,
+            kind=kind,
+            label=f"{kind.replace('_', ' ')} · {label_id}",
+            source=receipt["path"],
+            status=str(decision or receipt.get("marker") or "verified"),
+            facts={**receipt, "execution": False, "authority": dict(_AUTHORITY)},
+        )
+        facts["count"] += 1
+        facts["admissible_count"] += int(decision in {"matched", "passed", "admissible_for_human_review"})
+        healing_id = receipt.get("healing_id")
+        if isinstance(healing_id, str):
+            if kind == "proof_gated_healing":
+                healing_nodes[healing_id] = node_id
+            elif kind == "agent_work_audit":
+                pending_audits.append((healing_id, node_id))
+    for healing_id, audit_node in pending_audits:
+        healing_node = healing_nodes.get(healing_id)
+        if healing_node:
+            _edge(state, audit_node, healing_node, "audits_agent_work_for")
+    for invalid in status["invalid_receipts"]:
+        _record_error(state["errors"], root / invalid, "JOURNEY_RECEIPT_INVALID")
+    return facts
+
+
 def _forge_ship_binding(root: Path, feature: str) -> dict[str, Any]:
     """Read the exact Forge line referenced by a Factoryline adapter.
 
@@ -1743,15 +1789,21 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     agent_supervision = _append_agent_supervision(state, workspace)
     judgment = _append_judgment_capsules(state, workspace)
     external_evidence = _append_external_evidence(state, workspace)
+    journey_proofs = _append_journey_proofs(state, workspace)
     intent_traces = _append_intent_traces(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
     facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
+    facts["journey_proof_count"] = journey_proofs["count"]
+    facts["journey_proof_admissible_count"] = journey_proofs["admissible_count"]
+    facts["journey_proof_invalid_count"] = journey_proofs["invalid_count"]
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
     markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
+    if journey_proofs["count"]:
+        markers = sorted({*markers, "JOURNEY_STATUS_READ_ONLY", "GRAPH_OPS_JOURNEY_PROOF_READ_ONLY"})
     base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",

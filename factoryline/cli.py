@@ -89,6 +89,14 @@ from .developer_memory import developer_memory_brief
 from .intent_ledger import IntentLedgerError, capture_intent_ledger, inspect_intent_ledger
 from .judgment import JudgmentError, judgment_status, promote_capsule, propose_capsule, reconsider_capsule, safety_case
 from .external_evidence import ExternalEvidenceError, diff_external_runtime_receipts, import_external_runtime_bundle
+from .journey_proof import (
+    JourneyProofError,
+    compile_reality_graph,
+    create_failure_capsule,
+    journey_proof_status,
+    verify_proof_gated_healing,
+    verify_stateful_workflow,
+)
 from .github_proof_review import (
     GitHubProofReviewError,
     compile_github_proof_review,
@@ -464,6 +472,34 @@ def main(argv=None) -> int:
     external_diff.add_argument("right", help="right receipt path")
     external_diff.add_argument("--root", default=".")
     external_diff.add_argument("--json", action="store_true")
+
+    journey = sub.add_parser("journey", help="prove runtime journeys, stateful workflows, failures, and bounded healing")
+    journey_sub = journey.add_subparsers(required=True, dest="journey_cmd")
+    journey_reality = journey_sub.add_parser("reality", help="compare declared and observed journey graphs without inference")
+    journey_reality.add_argument("declaration", help="factory.journey-declaration.v1 JSON path")
+    journey_reality.add_argument("observation", help="factory.journey-observation.v1 JSON path")
+    journey_reality.add_argument("--root", default=".")
+    journey_reality.add_argument("--out", help="receipt path below .factory/journey-proof/")
+    journey_reality.add_argument("--json", action="store_true")
+    journey_capsule = journey_sub.add_parser("capsule", help="bind a failed step and adjacent evidence into JSON and Markdown")
+    journey_capsule.add_argument("input", help="factory.failure-capsule-input.v1 JSON path")
+    journey_capsule.add_argument("--root", default=".")
+    journey_capsule.add_argument("--out", help="receipt path below .factory/journey-proof/")
+    journey_capsule.add_argument("--json", action="store_true")
+    journey_workflow = journey_sub.add_parser("workflow-proof", help="prove state flow, cleanup, and idempotency")
+    journey_workflow.add_argument("input", help="factory.stateful-workflow-input.v1 JSON path")
+    journey_workflow.add_argument("--root", default=".")
+    journey_workflow.add_argument("--out", help="receipt path below .factory/journey-proof/")
+    journey_workflow.add_argument("--json", action="store_true")
+    journey_healing = journey_sub.add_parser("heal-verify", help="challenge a repair under human or supervised-auto review")
+    journey_healing.add_argument("input", help="factory.proof-gated-healing-input.v1 JSON path")
+    journey_healing.add_argument("--root", default=".")
+    journey_healing.add_argument("--out", help="receipt path below .factory/journey-proof/")
+    journey_healing.add_argument("--timeout-seconds", type=int, default=300)
+    journey_healing.add_argument("--json", action="store_true")
+    journey_status_parser = journey_sub.add_parser("status", help="read verified local Journey Proof receipts without execution")
+    journey_status_parser.add_argument("--root", default=".")
+    journey_status_parser.add_argument("--json", action="store_true")
 
     first_proof = sub.add_parser("first-proof", help="run a local sandbox demonstration that catches an intentionally hollow check")
     first_proof.add_argument("--root", default=".")
@@ -1815,6 +1851,32 @@ def main(argv=None) -> int:
             return 1
         print(json.dumps(result, indent=2, sort_keys=True))
         if a.external_cmd == "diff" and result.get("comparable") is not True:
+            return 1
+        return 0
+    if a.cmd == "journey":
+        try:
+            root = Path(a.root)
+            if a.journey_cmd == "reality":
+                result = compile_reality_graph(root, Path(a.declaration), Path(a.observation), Path(a.out) if a.out else None)
+            elif a.journey_cmd == "capsule":
+                result = create_failure_capsule(root, Path(a.input), Path(a.out) if a.out else None)
+            elif a.journey_cmd == "workflow-proof":
+                result = verify_stateful_workflow(root, Path(a.input), Path(a.out) if a.out else None)
+            elif a.journey_cmd == "heal-verify":
+                result = verify_proof_gated_healing(root, Path(a.input), Path(a.out) if a.out else None, a.timeout_seconds)
+            else:
+                result = journey_proof_status(root)
+        except JourneyProofError as exc:
+            print(json.dumps({
+                "schema": "factory.workflow_error.v1", "status": "failed",
+                "code": exc.code, "message": str(exc), "marker": exc.code,
+                "failure": explain_failure(exc.code, str(exc)),
+            }, indent=2, sort_keys=True), file=sys.stderr)
+            return 1
+        print(json.dumps(result, indent=2, sort_keys=True))
+        if a.journey_cmd == "reality" and result.get("decision") != "matched":
+            return 1
+        if a.journey_cmd in {"workflow-proof", "heal-verify"} and result.get("decision") not in {"passed", "admissible_for_human_review"}:
             return 1
         return 0
     if a.cmd in {"prd", "intake", "product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider", "agent", "telemetry", "verifier"}:

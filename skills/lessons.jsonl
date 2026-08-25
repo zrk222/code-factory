@@ -131,3 +131,4 @@
 {"phase": "fill", "failure_code": "A_SUBPROC", "fix": "A_SUBPROC subprocess use in factoryline/session_recorder.py", "feature": "evidence-supply-line-v1", "count": 2, "last_seen": "2026-08-21T11:12:02.530616+00:00"}
 {"phase": "fill", "failure_code": "QA_COMPLEXITY", "fix": "QA_COMPLEXITY factoryline/agent_license.py:derive_license complexity 18 > 10; policy=hard", "feature": "evidence-supply-line-v1", "count": 1, "last_seen": "2026-08-21T11:09:36.324196+00:00"}
 {"phase": "fill", "failure_code": "QA_COMPLEXITY", "fix": "QA_COMPLEXITY factoryline/session_recorder.py:run_observed_session complexity 23 > 10; policy=hard", "feature": "evidence-supply-line-v1", "count": 1, "last_seen": "2026-08-21T11:09:36.338202+00:00"}
+{"phase": "fill", "failure_code": "A_SUBPROC", "fix": "A_SUBPROC subprocess use in factoryline/journey_proof.py", "feature": "journey-proof-engine-v1", "count": 1, "last_seen": "2026-08-25T06:15:45.575263+00:00"}

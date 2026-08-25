@@ -5,8 +5,8 @@
       "rule": "A_SUBPROC subprocess use in factoryline/cli.py",
       "promoted_from_count": 3,
       "promoted_at": "2026-08-19T03:42:59.193810+00:00",
-      "times_enforced": 4,
-      "prevented_recurrence": 4,
+      "times_enforced": 5,
+      "prevented_recurrence": 5,
       "status": "active"
     },
     "J_PARSER_UNSUPPORTED": {
@@ -37,6 +37,6 @@
       "status": "active"
     }
   },
-  "version": 80,
-  "updated": "2026-08-24T06:16:33.525013+00:00"
+  "version": 83,
+  "updated": "2026-08-25T06:15:46.120230+00:00"
 }

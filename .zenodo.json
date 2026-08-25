@@ -1,8 +1,8 @@
 {
   "title": "Code Factory: Proof-by-Sabotage Software Factory",
-  "description": "Code Factory catches AI-generated tests that could never fail and turns the result into local, reviewable evidence through Unified Graph Ops, including Mermaid diagrams for bounded proof paths. Existing assurance includes LangGraph resume parity and the Gauntlet Survival Card. Version 0.44.2 adds read-only intent-lineage navigation: a verified adapter shows the exact Forge ship source and line and lets a reviewer focus that node without granting authority. The 60-day personal-use case remains illustrative and is not a benchmark, guaranteed ROI, or verified cash saving; net savings must subtract tool cost and human oversight.\n\nEvidence boundary: First Proof is a demonstration, not an assessment of the user's project. Proof Cards summarize one verified receipt and exclude commands, paths, repository names, prompts, logs, and identity. They do not certify production readiness, security, coverage, identity, or release authority.\n\nCase-study visual: https://raw.githubusercontent.com/zrk222/code-factory/v0.44.2/docs/assets/marketplace/code-factory-60-day-personal-case-study.png\n\nDual licensed under MIT or Apache-2.0.",
-  "version": "0.44.2",
-  "publication_date": "2026-08-24",
+  "description": "Code Factory catches AI-generated tests that could never fail and turns the result into local, reviewable evidence through Unified Graph Ops, including Mermaid diagrams for bounded proof paths. Existing assurance includes LangGraph resume parity and the Gauntlet Survival Card. Version 0.44.3 adds Journey Reality, bounded failure capsules, stateful workflow proof, and proof-gated healing that audits the agent independently. BYOK/local is the default; a future managed execution tier must pass the identical verifier. Neither path grants final approval or release authority. The 60-day personal-use case remains illustrative and is not a benchmark, guaranteed ROI, or verified cash saving; net savings must subtract tool cost and human oversight.\n\nEvidence boundary: First Proof is a demonstration, not an assessment of the user's project. Proof Cards summarize one verified receipt and exclude commands, paths, repository names, prompts, logs, and identity. They do not certify production readiness, security, coverage, identity, or release authority.\n\nCase-study visual: https://raw.githubusercontent.com/zrk222/code-factory/v0.44.3/docs/assets/marketplace/code-factory-60-day-personal-case-study.png\n\nDual licensed under MIT or Apache-2.0.",
+  "version": "0.44.3",
+  "publication_date": "2026-08-25",
   "creators": [
     {
       "name": "Katz, Richard"
@@ -66,7 +66,12 @@
     "agent-replay",
     "github-actions",
     "mcp-registry",
-    "local-stdio"
+    "local-stdio",
+    "journey-reality",
+    "failure-capsule",
+    "stateful-workflow-proof",
+    "proof-gated-healing",
+    "agent-work-audit"
   ],
   "related_identifiers": [
     {

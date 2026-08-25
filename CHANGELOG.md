@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.44.3 - 2026-08-25
+
+- Add Journey Reality, a deterministic comparison between declared and observed
+  journey states, transitions, requirements, and outcomes. Missing evidence is
+  reported as unknown; it is never silently converted into success.
+- Add bounded failure capsules and stateful workflow proof for the failed step,
+  adjacent evidence, producer/consumer state, cleanup, and idempotency.
+- Add proof-gated healing with explicit human or supervised-auto modes. A repair
+  is accepted only when the positive proof passes, the negative control fails,
+  and the repairing agent's work passes an independent audit. BYOK/local remains
+  the default; no mode grants approval, merge, release, or credential authority.
+
 ## 0.43.0 - 2026-08-21
 
 - Add the Evidence Supply Line: `factory wrap` verifies a current run-admission

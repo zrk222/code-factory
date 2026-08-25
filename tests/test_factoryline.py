@@ -24,7 +24,7 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.44.2"
+    assert factoryline.__version__ == "0.44.3"
 
 
 def test_cli_mvp_builds_one_contained_web_starter_with_a_proof_path(tmp_path, capsys):

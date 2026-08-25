@@ -37,6 +37,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
     assert status["tools"] == [
         "factory.status",
         "factory.graph_ops",
+        "factory.journey_status",
         "factory.graph_impact",
         "factory.developer_memory",
         "factory.intent_ledger",
@@ -72,7 +73,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {"name": "code-factory", "version": "0.44.2"},
+                "serverInfo": {"name": "code-factory", "version": "0.44.3"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }
