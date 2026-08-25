@@ -345,7 +345,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.44.2.md),
+- See the [release notes](docs/RELEASE_NOTES_0.44.3.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

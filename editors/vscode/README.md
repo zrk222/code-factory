@@ -79,7 +79,7 @@ coders, the practical target is less context reconstruction and fewer false
 "done" states. For engineers, it is reviewable proof beside the diff. For
 teams and enterprises, it is repeatable evidence with explicit human authority.
 
-![Code Factory 60-day personal case study](https://raw.githubusercontent.com/zrk222/code-factory/v0.44.2/docs/assets/marketplace/code-factory-60-day-personal-case-study.png)
+![Code Factory 60-day personal case study](https://raw.githubusercontent.com/zrk222/code-factory/v0.44.3/docs/assets/marketplace/code-factory-60-day-personal-case-study.png)
 
 ## Install
 
