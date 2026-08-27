@@ -1417,6 +1417,76 @@ def main(argv=None) -> int:
     telemetry_inventory_parser.add_argument("--root", default=".")
     telemetry_inventory_parser.add_argument("--json", action="store_true")
 
+    ops = sub.add_parser("ops", help="run the local enterprise operations golden path")
+    ops_sub = ops.add_subparsers(dest="ops_cmd", required=True)
+    ops_init = ops_sub.add_parser("init", help="initialize a tenant-bound evidence and operations workspace")
+    ops_init.add_argument("--root", default=".")
+    ops_init.add_argument("--tenant", required=True)
+    ops_init.add_argument("--owner", required=True)
+    ops_init.add_argument("--retention-days", type=int, default=90)
+    ops_init.add_argument("--force", action="store_true")
+    ops_init.add_argument("--json", action="store_true")
+    ops_status = ops_sub.add_parser("status", help="show evidence, identity, runner, outcome, SLA, and next-action state")
+    ops_status.add_argument("--root", default=".")
+    ops_status.add_argument("--json", action="store_true")
+    ops_identity = ops_sub.add_parser("identity", help="provision, suspend, or revoke a local identity")
+    ops_identity.add_argument("subject")
+    ops_identity.add_argument("--root", default=".")
+    ops_identity.add_argument("--tenant", required=True)
+    ops_identity.add_argument("--role", required=True)
+    ops_identity.add_argument("--status", default="active", choices=["active", "suspended", "revoked"])
+    ops_identity.add_argument("--actor", required=True)
+    ops_identity.add_argument("--json", action="store_true")
+    ops_evidence = ops_sub.add_parser("evidence", help="record one immutable tenant evidence payload")
+    ops_evidence.add_argument("payload", help="JSON evidence object path")
+    ops_evidence.add_argument("--root", default=".")
+    ops_evidence.add_argument("--tenant", required=True)
+    ops_evidence.add_argument("--subject", required=True)
+    ops_evidence.add_argument("--evidence-id")
+    ops_evidence.add_argument("--json", action="store_true")
+    ops_export = ops_sub.add_parser("export", help="export aggregate-safe evidence metadata")
+    ops_export.add_argument("--root", default=".")
+    ops_export.add_argument("--out", required=True)
+    ops_export.add_argument("--json", action="store_true")
+    ops_run = ops_sub.add_parser("run", help="run one bounded proof argv with explicit isolation posture")
+    ops_run.add_argument("--root", default=".")
+    ops_run.add_argument("--backend", choices=["docker", "process"], default="docker")
+    ops_run.add_argument("--command", nargs="+")
+    ops_run.add_argument("--command-json", help="JSON argv list; use this when an argument begins with '-' ")
+    ops_run.add_argument("--timeout-seconds", type=int, default=120)
+    ops_run.add_argument("--output-limit", type=int, default=65536)
+    ops_run.add_argument("--allow-process-boundary", action="store_true")
+    ops_run.add_argument("--json", action="store_true")
+    ops_checks = ops_sub.add_parser("checks", help="evaluate required proof checks for changed paths")
+    ops_checks.add_argument("--root", default=".")
+    ops_checks.add_argument("--changed", action="append", required=True)
+    ops_checks.add_argument("--proof", action="append", default=[])
+    ops_checks.add_argument("--json", action="store_true")
+    ops_outcome = ops_sub.add_parser("outcome", help="append one allowlisted deployment or incident outcome")
+    ops_outcome.add_argument("--root", default=".")
+    ops_outcome.add_argument("--tenant", required=True)
+    ops_outcome.add_argument("--subject", required=True)
+    ops_outcome.add_argument("--service", required=True)
+    ops_outcome.add_argument("--environment", required=True)
+    ops_outcome.add_argument("--result", required=True)
+    ops_outcome.add_argument("--duration-ms", required=True, type=int)
+    ops_outcome.add_argument("--deployed", action="store_true")
+    ops_outcome.add_argument("--incident", action="store_true")
+    ops_outcome.add_argument("--rollback", action="store_true")
+    ops_outcome.add_argument("--json", action="store_true")
+    ops_summary = ops_sub.add_parser("summary", help="summarize hash-linked outcome telemetry")
+    ops_summary.add_argument("--root", default=".")
+    ops_summary.add_argument("--json", action="store_true")
+    ops_otel = ops_sub.add_parser("otel", help="export aggregate-safe outcome telemetry in OTLP-shaped JSON")
+    ops_otel.add_argument("--root", default=".")
+    ops_otel.add_argument("--out", required=True)
+    ops_otel.add_argument("--json", action="store_true")
+    ops_sla = ops_sub.add_parser("sla", help="evaluate seven evidence gates without activating an SLA")
+    ops_sla.add_argument("--root", default=".")
+    ops_sla.add_argument("--manifest")
+    ops_sla.add_argument("--out")
+    ops_sla.add_argument("--json", action="store_true")
+
     verifier = sub.add_parser(
         "verifier",
         help="bind independent verifier evidence without execution, merge, or publish authority",
@@ -1823,6 +1893,68 @@ def main(argv=None) -> int:
     version = sub.add_parser("version", help="show package provenance")
     version.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
+
+    if a.cmd == "ops":
+        from .enterprise_ops import (
+            EnterpriseOpsError,
+            evaluate_required_checks,
+            evaluate_sla,
+            export_evidence,
+            export_otel,
+            initialize_workspace,
+            outcome_summary,
+            provision_identity,
+            put_evidence,
+            record_outcome,
+            run_proof,
+            verify_workspace,
+            workspace_status,
+        )
+        try:
+            root = Path(a.root)
+            if a.ops_cmd == "init":
+                result = initialize_workspace(root, a.tenant, a.owner, retention_days=a.retention_days, force=a.force)
+            elif a.ops_cmd == "status":
+                result = workspace_status(root)
+            elif a.ops_cmd == "identity":
+                result = provision_identity(root, a.tenant, a.subject, a.role, actor=a.actor, status=a.status)
+            elif a.ops_cmd == "evidence":
+                payload = json.loads(Path(a.payload).read_text(encoding="utf-8"))
+                result = put_evidence(root, a.tenant, a.subject, payload, evidence_id=a.evidence_id)
+            elif a.ops_cmd == "export":
+                result = export_evidence(root, Path(a.out))
+            elif a.ops_cmd == "run":
+                command = json.loads(a.command_json) if a.command_json else a.command
+                result = run_proof(root, command, backend=a.backend, timeout_seconds=a.timeout_seconds, output_limit=a.output_limit, allow_process_boundary=a.allow_process_boundary)
+            elif a.ops_cmd == "checks":
+                result = evaluate_required_checks(root, a.changed, proof_receipts=a.proof)
+            elif a.ops_cmd == "outcome":
+                result = record_outcome(root, a.tenant, a.subject, service=a.service, environment=a.environment, result=a.result, duration_ms=a.duration_ms, deployed=a.deployed, incident=a.incident, rollback=a.rollback)
+            elif a.ops_cmd == "summary":
+                result = outcome_summary(root)
+            elif a.ops_cmd == "otel":
+                result = export_otel(root, Path(a.out))
+            elif a.ops_cmd == "sla":
+                result = evaluate_sla(root, Path(a.manifest) if a.manifest else None, out=Path(a.out) if a.out else None)
+            else:
+                result = verify_workspace(root)
+        except (EnterpriseOpsError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            error = {"schema": "factory.enterprise-ops.error.v1", "marker": "EOPS_FAIL_CLOSED", "status": "failed", "code": getattr(exc, "code", "E_OPS_INPUT"), "message": getattr(exc, "message", str(exc))}
+            print(json.dumps(error, indent=2, sort_keys=True), file=sys.stderr)
+            return 2
+        if getattr(a, "json", False):
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        if a.ops_cmd == "run":
+            return 0 if result.get("status") == "passed" else 1
+        if a.ops_cmd == "checks":
+            return 0 if result.get("decision") == "READY_FOR_HUMAN_REVIEW" else 1
+        if a.ops_cmd == "sla":
+            return 0 if result.get("status") == "READY_FOR_CONTRACT" else 1
+        if a.ops_cmd in {"summary", "otel", "export"}:
+            return 0 if result.get("integrity", {}).get("valid", True) else 1
+        return 0
 
     if a.cmd is None:
         return _home()

@@ -246,6 +246,7 @@ developers can find it. This optional link only opens the repository.
 | Capture an agent run without copying its prompt | [`factory wrap`](docs/EVIDENCE_SUPPLY_LINE.md) | A pre-admitted, hash-bound delta and independent-validator receipt that feeds Agent License |
 | Draft the first Gauntlet promises | [`factory gauntlet draft`](docs/EVIDENCE_SUPPLY_LINE.md) | Inert structure-derived candidates, with unsupported HTTP commands explicitly withheld |
 | Prepare a bounded Team pilot | [`factory team-pilot readiness`](docs/TEAM_PILOT_LAUNCH.md) | Hash-bound, customer-managed readiness evidence for owner review—not a checkout or service activation |
+| Operate a team evidence workspace | [`factory ops`](docs/ENTERPRISE_OPERATIONS.md) | Tenant-bound identities, immutable evidence, explicit runner posture, fresh required checks, outcome telemetry, and seven-gate SLA readiness—without merge, deploy, billing, SSO, or contract authority |
 | Add evidence to a GitHub PR | [`factory github proof-review`](docs/GITHUB_PROOF_REVIEW.md) | One neutral Check and stable proof walkthrough, tied to the head commit |
 | Prove a LangGraph resume path | [`factory langgraph replay-verify`](docs/LANGGRAPH_ASSURANCE.md) | Hash-only parity, duplicate-effect and parallel-write safeguards, plus a shareable incident capsule |
 | Detect policy drift before a human merge | [`factory github assurance-dossier`](docs/GITHUB_ASSURANCE_DOSSIER.md) | Deterministic supplied-policy comparison, named expiring exceptions, and a merge-evidence packet |

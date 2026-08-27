@@ -1,0 +1,11 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "enterprise-ops-control-plane-v1",
+  "sealed_hash": "4fc4e65419a94c02a1d3427ddb56d62fd3810d4c2bb13ae23e04d6ff6d15d6d3",
+  "coherence_score": 100,
+  "source": "specs/enterprise-ops-control-plane-v1.md",
+  "intent": "Give teams one evidence-bound local operations path from admission through human release review.",
+  "assumptions": [
+    "Assumes proof execution must fail closed when dependency availability is missing, while any explicitly permitted process fallback remains visibly labelled and bounded."
+  ]
+}

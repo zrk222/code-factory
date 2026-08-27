@@ -87,12 +87,15 @@ with a proposed five-author minimum. This is a planning hypothesis, not an
 active price, invoice, trial, or purchase offer. It must be tested with real
 partners against the value and operating cost before any launch decision.
 
-The local codebase already demonstrates tenant-scoped evidence, audit chains,
-independent approvals, signed receipts, and a supervised hosted reference
-adapter. It does **not** yet provide the managed onboarding, shared workspace,
-support, retention commitment, or billing needed to call Team Proof Hub a
-service. See [Control Plane](CONTROL_PLANE.md) and [Hosted control plane]
-(HOSTED_CONTROL_PLANE.md) for exact current boundaries.
+The local codebase now demonstrates tenant-scoped evidence, an auditable local
+identity lifecycle, explicit Docker/process runner posture, required-check
+evaluation, hash-linked outcome telemetry, independent approvals, signed
+receipts, and a supervised hosted reference adapter. It still does **not**
+provide the managed onboarding, hosted shared workspace, support, retention
+commitment, or billing needed to call Team Proof Hub a service. See
+[Enterprise Operations](ENTERPRISE_OPERATIONS.md), [Control Plane](CONTROL_PLANE.md),
+and [Hosted control plane](HOSTED_CONTROL_PLANE.md) for exact current
+boundaries.
 
 For a selected design partner, the shipped [Team Pilot readiness gate]
 (TEAM_PILOT_LAUNCH.md) can now hash-bind the five local operating decisions
