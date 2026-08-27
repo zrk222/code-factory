@@ -11,7 +11,7 @@ listing has accepted the artifact.
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code / Open VSX | `factoryline-vscode-0.8.11.vsix` | GitHub release bundle; protected `openvsx.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX and public Open VSX version |
+| VS Code / Open VSX | `factoryline-vscode-0.8.12.vsix` | GitHub release bundle; protected `openvsx.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX and public Open VSX version |
 | JetBrains | `factoryline-intellij-0.8.17.zip` | Public plugin 33009 update submitted through the authenticated Marketplace editor | Installable ZIP or public plugin/version page after moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 

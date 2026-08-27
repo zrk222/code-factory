@@ -95,7 +95,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.8.11.vsix
+code --install-extension factoryline-vscode-0.8.12.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
