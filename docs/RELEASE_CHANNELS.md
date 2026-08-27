@@ -12,7 +12,7 @@ listing has accepted the artifact.
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
 | VS Code / Open VSX | `factoryline-vscode-0.8.12.vsix` | GitHub release bundle; protected `openvsx.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX and public Open VSX version |
-| JetBrains | `factoryline-intellij-0.8.17.zip` | Public plugin 33009 update submitted through the authenticated Marketplace editor | Installable ZIP or public plugin/version page after moderation |
+| JetBrains | `factoryline-intellij-0.8.18.zip` | Public plugin 33009 update submitted through the protected Marketplace workflow | Installable ZIP or public plugin/version page after moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
 The release pipeline never treats a queued review, draft listing, uploaded
@@ -117,9 +117,9 @@ GitHub Action that writes the same Proof Card from pre-recorded receipts. It
 does not invoke LangGraph, mutate checkpoints, replay effects, establish
 production resilience, or estimate savings.
 
-JetBrains Marketplace publication remains blocked while any submitted update is
-pending Marketplace approval. Do not dispatch the 0.8.16 candidate until the
-Marketplace status gate reports clear.
+JetBrains Marketplace publication is blocked only when the binary upload slot is
+occupied. Do not dispatch the 0.8.18 candidate until the upload-slot check is
+clear; listing metadata review may remain a separate external state.
 
 ### 0.42.0 Declared Change Profile and Senior Attention
 
@@ -130,7 +130,7 @@ inspecting source semantics; it cannot infer intent, promote/waive a decision,
 run evidence, repair code, approve, merge, publish, deploy, sign, message, or
 access credentials.
 
-### 0.8.16 Guardian Core + Engineering Judgment candidate
+### 0.8.18 Guardian Core + Engineering Judgment candidate
 
 The JetBrains-only candidate adds bounded local Guardian Core observations plus
 the conventional Change Profile handoff for selected Change Lists. It shows

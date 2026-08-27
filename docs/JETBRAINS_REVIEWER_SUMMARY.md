@@ -1,4 +1,4 @@
-# FactoryLine 0.8.16 — JetBrains reviewer summary
+# FactoryLine 0.8.18 — JetBrains reviewer summary
 
 This is a concise map from common IDE and Marketplace review concerns to the
 candidate's shipped behavior and local evidence. It describes the candidate;
@@ -19,7 +19,7 @@ it is not a claim of Marketplace approval or a diagnosis of an IDE.
 
 ## Candidate boundary
 
-FactoryLine 0.8.16 is a local, supervised JetBrains adapter. It does not
+FactoryLine 0.8.18 is a local, supervised JetBrains adapter. It does not
 upload project source, store API keys, silently invoke a model, sign an
 artifact, approve a change, merge, publish, deploy, or replace human release
 authority. The Marketplace manual review team remains the authority for

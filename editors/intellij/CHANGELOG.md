@@ -1,5 +1,12 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.18 - 2026-08-27
+
+- Package the Guardian Core and Engineering Judgment usability update as the
+  current Marketplace candidate. The release keeps bounded local observation,
+  hash-bound review context, and human confirmation boundaries; it never
+  infers source semantics, applies repairs, or approves a release.
+
 ## 0.8.16 - 2026-08-21
 
 - Make the Engineering Judgment Safety Case actionable for a selected Change

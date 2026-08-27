@@ -67,19 +67,19 @@ that maps each local claim to its guardrail and source-level or package-level
 evidence. Marketplace account-side requirements and manual moderation remain
 external gates, never local claims.
 
-Use the strict [0.8.16 compliance checklist](JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_16.md)
+Use the strict [0.8.18 compliance checklist](JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_18.md)
 before a dispatch, and keep post-approval discovery/review work inside the
 prepared, policy-compliant [growth plan](JETBRAINS_POST_RELEASE_GROWTH.md).
 
 ## Protected publication
 
-1. Confirm the vendor dashboard has no update that would be unintentionally
-   replaced. Resolve any pending JetBrains feedback first.
-   `python scripts/jetbrains_marketplace_status.py --plugin-id 33009 --require-clear --json`
-   must return `MARKETPLACE_UPDATE_CLEAR`.
+1. Confirm the vendor dashboard has an open binary upload slot and inspect any
+   separate listing-metadata review state.
+   `python scripts/jetbrains_marketplace_status.py --plugin-id 33009 --require-upload-slot --json`
+   must return `upload_slot_clear: true`.
 2. Merge the tested release commit to `main`.
 3. Create the immutable tag matching the plugin version, currently
-   `jetbrains-v0.8.16` after the remaining Marketplace metadata review is clear.
+   `jetbrains-v0.8.18` after the remaining Marketplace metadata review is clear.
 4. Run **Publish JetBrains Marketplace plugin** with that tag and the intended
    channel. The `JETBRAINS_MARKETPLACE_TOKEN` remains scoped to the protected
    `jetbrains-marketplace` environment.

@@ -298,7 +298,7 @@ def test_hosted_release_and_editor_versions_are_declared():
     assert project["version"] == "0.44.4"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.8.12"
-    assert 'version = "0.8.16"' in gradle
+    assert 'version = "0.8.18"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -311,7 +311,7 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
     assert "Your IDE feels slow. Your AI code looks fine." in plugin_xml
     assert "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains." in plugin_xml
-    assert "New in 0.8.16 — Senior Attention, not another vague warning" in plugin_xml
+    assert "New in 0.8.18 — Senior Attention, not another vague warning" in plugin_xml
     assert "Tools | FactoryLine | Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
     assert "Run First Proof" in plugin_xml
@@ -399,7 +399,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     assert plan["offer"]["annual_price_usd"] == 60.0
     assert plan["offer"]["monthly_price_status"] == "owner_approved"
     assert plan["offer"]["paid_from"] == "2027-01-01"
-    assert plan["plugin"]["current_free_version"] == "0.8.16"
+    assert plan["plugin"]["current_free_version"] == "0.8.18"
     assert plan["paid_descriptor"] == {
         "product_code": "PFACTORYLINE",
         "product_code_status": "proposed_not_registered",
@@ -439,7 +439,7 @@ def test_jetbrains_publication_workflow_blocks_an_occupied_binary_update_slot():
 
 def test_jetbrains_reviewer_and_growth_docs_keep_external_approval_and_reviews_honest():
     reviewer = (ROOT / "docs" / "JETBRAINS_REVIEWER_SUMMARY.md").read_text(encoding="utf-8")
-    compliance = (ROOT / "docs" / "JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_16.md").read_text(encoding="utf-8")
+    compliance = (ROOT / "docs" / "JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_18.md").read_text(encoding="utf-8")
     growth = (ROOT / "docs" / "JETBRAINS_POST_RELEASE_GROWTH.md").read_text(encoding="utf-8")
 
     assert "Guardian Core" in reviewer
