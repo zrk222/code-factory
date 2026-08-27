@@ -491,3 +491,5 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-27 17:45] GATE plan codex-metadata-integrity-v1 approver=human tasks=4 sha=0eb20060a8f27074
 - [2026-08-27 17:46] GATE spec codex-metadata-integrity-v1 approver=human strict=True sha=e78372c91beff8b6
 - [2026-08-27 17:46] GATE plan codex-metadata-integrity-v1 approver=human tasks=4 sha=e78372c91beff8b6
+- [2026-08-27 18:21] GATE spec codex-metadata-integrity-v1 approver=human strict=True sha=e78372c91beff8b6
+- [2026-08-27 18:21] GATE plan codex-metadata-integrity-v1 approver=human tasks=4 sha=e78372c91beff8b6
