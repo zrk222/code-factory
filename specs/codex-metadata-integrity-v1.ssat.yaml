@@ -1,0 +1,29 @@
+name: codex-metadata-integrity-v1
+language: python
+modules:
+  - name: codex_metadata
+    path: factoryline/codex_metadata.py
+    functions:
+      - name: audit_metadata
+        args: ["root: Path", "paths: list[Path] | None"]
+        returns: "dict[str, Any]"
+      - name: write_metadata_audit
+        args: ["root: Path", "paths: list[Path] | None", "out: Path | None"]
+        returns: "dict[str, Any]"
+dependencies: []
+invariants:
+  - name: metadata_audit_has_no_execution_or_network_authority
+    forbid_pattern: "\\b(?:subprocess|requests|urllib|httpx|socket|os\\.system|shell\\s*=)\\b"
+    scopes:
+      - module: codex_metadata
+        symbol: audit_metadata
+        max_lines: 420
+      - module: codex_metadata
+        symbol: write_metadata_audit
+        max_lines: 120
+  - name: metadata_result_has_no_privileged_authority
+    require_pattern: "execute.*False.*merge.*False.*deploy.*False.*release.*False.*publish.*False.*billing.*False"
+    scopes:
+      - module: codex_metadata
+        symbol: audit_metadata
+        max_lines: 420

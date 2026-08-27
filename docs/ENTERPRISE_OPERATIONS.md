@@ -48,6 +48,40 @@ same manifest, records the source hash, and leaves unsupported rules in
 `review_required` rather than silently dropping them. It does not execute the
 checks or grant merge, deployment, release, or billing authority.
 
+Audit the local Codex/workflow metadata before treating an agent report as
+evidence:
+
+```powershell
+factory ops metadata --root . --path context --path skills --path envelopes --out .factory/ops/metadata-integrity.json
+```
+
+The audit hashes every selected file and parses every JSON/JSONL record. It
+returns `REVIEW_REQUIRED` (exit code 1) for unbound terminal claims,
+provider-completion claims without a provider receipt or read-back URL,
+contradictory pending/failed states, orphan `active` states, workspace-path
+mismatches, self-attested gates, unclear intent, weak command-only evidence, or
+green test claims with no mutation/holdout/counterexample proof. Malformed and
+unsupported files are named rather than skipped. A verified result is still a
+local metadata-integrity result: it does not verify a remote provider, approve a
+release, or grant execution, merge, deploy, publish, or billing authority.
+
+This separation is deliberate. A coding agent may propose tests and gates, but
+an independent verifier must bind the acceptance criteria to a confirmed intent
+and challenge the tests with negative evidence before a terminal claim can be
+trusted. Historical prose that cannot meet that contract remains visible as
+review-needed rather than being upgraded into a success receipt.
+
+The same intent boundary is now enforced at every proof-planning entrypoint:
+Intake Grill confirmations, Intent Ledger promises, Reality Check behavior and
+assertions, Counterexample requirements, and Gauntlet promises and Survival
+Cards. These checks reject unresolved placeholders, known vague phrases, and
+statements with no action or observable outcome before they can be hashed into
+a proof plan. Survival Cards also require each outcome promise to match its
+Reality Check promise and its proposal id, preventing a resealed card from
+quietly switching the behavior being graded. This is a lexical integrity gate,
+not semantic proof: a named human still confirms the intent, and an independent
+verifier still supplies the behavioral result.
+
 Run a proof with explicit posture. Docker is preferred and fails closed when
 unavailable:
 

@@ -14,6 +14,7 @@ import re
 from typing import Any
 
 from .e2e_proof import E2EProofError, public_e2e_proof_receipt, validate_e2e_proof_receipt, verify_e2e_proof
+from .intent_quality import IntentQualityError, require_clear
 
 
 REALITY_CHECK_MANIFEST_SCHEMA = "factory.reality-check-manifest.v1"
@@ -74,6 +75,15 @@ def _text(value: object, field: str, *, identifier: bool = False) -> str:
     return result
 
 
+def _clear_intent(value: str, field: str, *, observable: bool = False) -> str:
+    """Reject unresolved or non-observable behavior text before execution."""
+    try:
+        require_clear(value, field=field, require_action=True, require_observable=observable)
+    except IntentQualityError as exc:
+        _reject("REALITY_CHECK_INTENT_UNCLEAR", f"{field}: {exc.message}")
+    return value
+
+
 def _load(root: Path, manifest_path: Path) -> tuple[dict[str, Any], str, str]:
     path = Path(manifest_path).resolve()
     try:
@@ -124,12 +134,18 @@ def validate_reality_check_manifest(root: Path, manifest_path: Path) -> dict[str
     if not isinstance(behavior, dict) or set(behavior) != {"promise", "happy_path", "failure_case"}:
         _reject("REALITY_CHECK_MANIFEST_INVALID", "behavior must contain exactly promise, happy_path, and failure_case")
     e2e_path, e2e_relative = _relative_file(workspace, source.get("e2e_manifest"), "e2e_manifest")
+    _clear_intent(behavior["promise"], "behavior.promise")
+    _clear_intent(behavior["happy_path"], "behavior.happy_path", observable=True)
+    _clear_intent(behavior["failure_case"], "behavior.failure_case", observable=True)
+    validated_assertions = _intent_assertions(source.get("intent_assertions"))
+    for assertion in validated_assertions:
+        _clear_intent(assertion["statement"], f"intent_assertions[{assertion['id']}].statement", observable=True)
     return {
         "schema": REALITY_CHECK_MANIFEST_SCHEMA,
         "id": _text(source.get("id"), "id", identifier=True),
         "approval": {"state": "approved", "approved_by": _text(approval.get("approved_by"), "approval.approved_by")},
         "behavior": {name: _text(behavior.get(name), f"behavior.{name}") for name in ("promise", "happy_path", "failure_case")},
-        "intent_assertions": _intent_assertions(source.get("intent_assertions")),
+        "intent_assertions": validated_assertions,
         "e2e_manifest": {"path": e2e_relative, "sha256": sha256(e2e_path.read_bytes()).hexdigest()},
         "manifest_path": path,
         "manifest_sha256": digest,
@@ -234,11 +250,16 @@ def _receipt_manifest(value: object) -> dict[str, Any]:
     _text(approval.get("approved_by"), "receipt manifest approved_by")
     for field in ("promise", "happy_path", "failure_case"):
         _text(behavior.get(field), f"receipt manifest behavior.{field}")
+    _clear_intent(behavior["promise"], "receipt manifest behavior.promise")
+    _clear_intent(behavior["happy_path"], "receipt manifest behavior.happy_path", observable=True)
+    _clear_intent(behavior["failure_case"], "receipt manifest behavior.failure_case", observable=True)
     _text(e2e_manifest.get("path"), "receipt manifest E2E path")
     _text(value.get("manifest_path"), "receipt manifest path")
     if not isinstance(value.get("manifest_sha256"), str) or not _SHA.fullmatch(value["manifest_sha256"]):
         _reject("REALITY_CHECK_RECEIPT_INVALID", "receipt manifest SHA-256 is invalid")
-    _intent_assertions(value.get("intent_assertions"))
+    assertions = _intent_assertions(value.get("intent_assertions"))
+    for assertion in assertions:
+        _clear_intent(assertion["statement"], f"receipt intent_assertions[{assertion['id']}].statement", observable=True)
     return value
 
 
@@ -262,8 +283,8 @@ def _receipt_hash_and_views(value: dict[str, Any], required: set[str]) -> None:
 def validate_reality_check_receipt(value: object) -> dict[str, Any]:
     """Validate a hash-bound Reality Check receipt and its deterministic views."""
     receipt, required = _receipt_shape(value)
-    _receipt_result(receipt)
     _receipt_hash_and_views(receipt, required)
+    _receipt_result(receipt)
     return receipt
 
 

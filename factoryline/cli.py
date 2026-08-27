@@ -1491,6 +1491,11 @@ def main(argv=None) -> int:
     ops_policy.add_argument("--root", default=".")
     ops_policy.add_argument("--out", help="workspace-contained compiled manifest path")
     ops_policy.add_argument("--json", action="store_true")
+    ops_metadata = ops_sub.add_parser("metadata", help="audit local Codex/workflow metadata for unbound or contradictory claims")
+    ops_metadata.add_argument("--root", default=".")
+    ops_metadata.add_argument("--path", action="append", help="workspace-contained metadata file or directory; repeatable")
+    ops_metadata.add_argument("--out", help="workspace-contained metadata audit receipt path")
+    ops_metadata.add_argument("--json", action="store_true")
 
     verifier = sub.add_parser(
         "verifier",
@@ -1916,6 +1921,7 @@ def main(argv=None) -> int:
             workspace_status,
         )
         from .policy_compiler import PolicyCompileError, write_compiled_policy
+        from .codex_metadata import MetadataAuditError, write_metadata_audit
         try:
             root = Path(a.root)
             if a.ops_cmd == "init":
@@ -1944,9 +1950,12 @@ def main(argv=None) -> int:
                 result = evaluate_sla(root, Path(a.manifest) if a.manifest else None, out=Path(a.out) if a.out else None)
             elif a.ops_cmd == "policy":
                 result = write_compiled_policy(root, Path(a.policy), Path(a.out) if a.out else None)
+            elif a.ops_cmd == "metadata":
+                selected = [Path(item) for item in a.path] if a.path else None
+                result = write_metadata_audit(root, selected, Path(a.out) if a.out else None)
             else:
                 result = verify_workspace(root)
-        except (EnterpriseOpsError, PolicyCompileError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        except (EnterpriseOpsError, PolicyCompileError, MetadataAuditError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             error = {"schema": "factory.enterprise-ops.error.v1", "marker": "EOPS_FAIL_CLOSED", "status": "failed", "code": getattr(exc, "code", "E_OPS_INPUT"), "message": getattr(exc, "message", str(exc))}
             print(json.dumps(error, indent=2, sort_keys=True), file=sys.stderr)
             return 2
@@ -1962,6 +1971,8 @@ def main(argv=None) -> int:
             return 0 if result.get("status") == "READY_FOR_CONTRACT" else 1
         if a.ops_cmd == "policy":
             return 0 if result.get("status") == "COMPILED" else 1
+        if a.ops_cmd == "metadata":
+            return 0 if result.get("status") == "VERIFIED" else 1
         if a.ops_cmd in {"summary", "otel", "export"}:
             return 0 if result.get("integrity", {}).get("valid", True) else 1
         return 0

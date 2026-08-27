@@ -1,0 +1,12 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "codex-metadata-integrity-v1",
+  "sealed_hash": "e78372c91beff8b61d4abd2f8af8ee15a55894148802a65cdbac9755df9b5be3",
+  "coherence_score": 100,
+  "source": "specs/codex-metadata-integrity-v1.md",
+  "intent": "Prevent unbound, stale, contradictory, malformed, or misattributed Codex metadata from being treated as verified engineering evidence.",
+  "assumptions": [
+    "The auditor is read-only and offline; external provider status and approval remain separate evidence gates.",
+    "Free-form historical prose may require review because it cannot be upgraded into a receipt without a structured evidence anchor."
+  ]
+}
