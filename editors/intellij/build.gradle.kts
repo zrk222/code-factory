@@ -160,6 +160,9 @@ dependencies {
 
     intellijPlatform {
         intellijIdea("2025.2.6.2")
+        // Keep Plugin Verifier available on clean CI runners. Local caches can
+        // mask this dependency, but compatibility jobs must be self-contained.
+        pluginVerifier()
         testFramework(TestFrameworkType.Platform)
     }
 }
