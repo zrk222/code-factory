@@ -1,0 +1,30 @@
+name: policy-check-compiler-v1
+language: python
+modules:
+  - name: policy_compiler
+    path: factoryline/policy_compiler.py
+    functions:
+      - name: compile_policy
+        args: ["root: Path", "policy: Path"]
+        returns: "dict[str, Any]"
+      - name: write_compiled_policy
+        args: ["root: Path", "policy: Path", "out: Path | None"]
+        returns: "dict[str, Any]"
+dependencies: []
+invariants:
+  - name: compiler_has_no_execution_or_network_authority
+    forbid_pattern: "\\b(?:subprocess|requests|urllib|httpx|socket|os\\.system|shell\\s*=)\\b"
+    scopes:
+      - module: policy_compiler
+        symbol: compile_policy
+        max_lines: 260
+      - module: policy_compiler
+        symbol: write_compiled_policy
+        max_lines: 120
+  - name: compiled_manifest_has_no_privileged_authority
+    forbid_pattern: "\\b(?:subprocess|requests|urllib|httpx|socket|os\\.system|shell\\s*=)\\b"
+    require_pattern: "execute.*False.*merge.*False.*deploy.*False.*release.*False.*billing.*False"
+    scopes:
+      - module: policy_compiler
+        symbol: compile_policy
+        max_lines: 260

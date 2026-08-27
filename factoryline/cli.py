@@ -1486,6 +1486,11 @@ def main(argv=None) -> int:
     ops_sla.add_argument("--manifest")
     ops_sla.add_argument("--out")
     ops_sla.add_argument("--json", action="store_true")
+    ops_policy = ops_sub.add_parser("policy", help="compile explicit policy rules into deterministic checks")
+    ops_policy.add_argument("policy", help="factory.policy.v1 JSON path")
+    ops_policy.add_argument("--root", default=".")
+    ops_policy.add_argument("--out", help="workspace-contained compiled manifest path")
+    ops_policy.add_argument("--json", action="store_true")
 
     verifier = sub.add_parser(
         "verifier",
@@ -1910,6 +1915,7 @@ def main(argv=None) -> int:
             verify_workspace,
             workspace_status,
         )
+        from .policy_compiler import PolicyCompileError, write_compiled_policy
         try:
             root = Path(a.root)
             if a.ops_cmd == "init":
@@ -1936,9 +1942,11 @@ def main(argv=None) -> int:
                 result = export_otel(root, Path(a.out))
             elif a.ops_cmd == "sla":
                 result = evaluate_sla(root, Path(a.manifest) if a.manifest else None, out=Path(a.out) if a.out else None)
+            elif a.ops_cmd == "policy":
+                result = write_compiled_policy(root, Path(a.policy), Path(a.out) if a.out else None)
             else:
                 result = verify_workspace(root)
-        except (EnterpriseOpsError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        except (EnterpriseOpsError, PolicyCompileError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             error = {"schema": "factory.enterprise-ops.error.v1", "marker": "EOPS_FAIL_CLOSED", "status": "failed", "code": getattr(exc, "code", "E_OPS_INPUT"), "message": getattr(exc, "message", str(exc))}
             print(json.dumps(error, indent=2, sort_keys=True), file=sys.stderr)
             return 2
@@ -1952,6 +1960,8 @@ def main(argv=None) -> int:
             return 0 if result.get("decision") == "READY_FOR_HUMAN_REVIEW" else 1
         if a.ops_cmd == "sla":
             return 0 if result.get("status") == "READY_FOR_CONTRACT" else 1
+        if a.ops_cmd == "policy":
+            return 0 if result.get("status") == "COMPILED" else 1
         if a.ops_cmd in {"summary", "otel", "export"}:
             return 0 if result.get("integrity", {}).get("valid", True) else 1
         return 0

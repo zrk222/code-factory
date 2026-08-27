@@ -36,6 +36,18 @@ factory ops checks --root . --changed src/api.py --proof .factory/receipts/api-p
 factory ops status --root .
 ```
 
+Compile the explicit repository policy into a stable, reviewable check
+manifest before wiring it to CI:
+
+```powershell
+factory ops policy factory.policy.json --root . --out .factory/ops/policy-checks.json
+```
+
+The compiler accepts only `factory.policy.v1`, sorts equivalent inputs to the
+same manifest, records the source hash, and leaves unsupported rules in
+`review_required` rather than silently dropping them. It does not execute the
+checks or grant merge, deployment, release, or billing authority.
+
 Run a proof with explicit posture. Docker is preferred and fails closed when
 unavailable:
 

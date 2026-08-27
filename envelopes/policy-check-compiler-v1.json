@@ -1,0 +1,11 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "policy-check-compiler-v1",
+  "sealed_hash": "bd3f67f11dad5508a0d899d74f5b2e054fca280d4e4a1d0aa7e79bc777f0a199",
+  "coherence_score": 100,
+  "source": "specs/policy-check-compiler-v1.md",
+  "intent": "Compile explicit team policy into deterministic checks that preserve review boundaries.",
+  "assumptions": [
+    "Assumes dependency availability and unsupported rules remain explicit; compilation must fail closed rather than execute."
+  ]
+}
