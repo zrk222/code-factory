@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "marketplace_plugin_contract_refresh_reuses_the_version_bound_contract",
+      "kind": "python",
+      "run": "import json\nfrom pathlib import Path\nmanifest = json.loads((Path('smoke') / 'langgraph-marketplace-plugin.json').read_text(encoding='utf-8'))\nexec(manifest['checks'][0]['run'], {'__name__': '__main__'})\n",
+      "expect_exit": 0,
+      "expect_stdout": "LANGGRAPH_MARKETPLACE_PLUGIN_SMOKE_PASS",
+      "timeout_s": 30,
+      "covers": [
+        "LANGGRAPH_MARKETPLACE_PLUGIN",
+        "LANGGRAPH_MCP_READ_ONLY",
+        "LANGGRAPH_ACTION_READ_ONLY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}
