@@ -38,11 +38,12 @@ def test_plugin_skill_and_workflow_keep_execution_and_release_authority_human_co
 
     assert "factory langgraph replay-verify" in skill
     assert "factory.langgraph_assurance" in skill
+    assert "factoryline-code-factory-v044" in skill
     assert "cannot invoke a graph" in skill
     assert "Do not authorize or execute repairs" in skill
     assert "pull_request_target" not in workflow
     assert "contents: read" in workflow
-    assert "zrk222/code-factory@v0.44.3" in workflow
+    assert f"zrk222/code-factory@v{__version__}" in workflow
     assert "write" not in workflow
 
 
@@ -64,3 +65,27 @@ def test_marketplace_entry_and_docs_expose_all_supported_coding_agent_installs()
     assert "/plugin install code-factory-langgraph@code-factory" in docs
     assert "dcode plugin install code-factory-langgraph@code-factory" in docs
     assert "factoryline-code-factory>=0.44.0" in docs
+    assert "accepts only official\nLangChain skills and MCPs" in docs
+    assert "does not imply LangChain endorsement" in docs
+    assert "while that review is pending" not in docs
+    assert "separate upstream-review process" not in docs
+
+
+def test_plugin_smoke_tracks_the_package_version_instead_of_a_stale_literal() -> None:
+    smoke = _json(ROOT / "smoke" / "langgraph-marketplace-plugin.json")
+    checks = smoke["checks"]
+    assert isinstance(checks, list)
+    command = checks[0]["run"]
+    assert isinstance(command, str)
+    assert "from factoryline import __version__" in command
+    assert "codex['version'] == __version__" in command
+    assert "0.39.0" not in command
+
+
+def test_refresh_smoke_reuses_the_version_bound_plugin_contract() -> None:
+    smoke = _json(ROOT / "smoke" / "langgraph-marketplace-plugin-v044-refresh.json")
+    checks = smoke["checks"]
+    assert isinstance(checks, list)
+    command = checks[0]["run"]
+    assert isinstance(command, str)
+    assert "langgraph-marketplace-plugin.json" in command

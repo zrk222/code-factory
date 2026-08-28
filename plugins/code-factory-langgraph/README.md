@@ -1,7 +1,9 @@
 # Code Factory LangGraph Proof Plugin
 
-This cross-tool plugin gives Codex, Claude Code, and Deep Agents guidance for
-using Code Factory as a local proof layer around a LangGraph test harness.
+This independently published, cross-tool plugin gives Codex, Claude Code, and
+Deep Agents guidance for using Code Factory as a local proof layer around a
+LangGraph test harness. It is distributed from the Code Factory marketplace,
+not the `langchain-ai/langchain-plugins` repository.
 
 It ships two deliberately bounded surfaces:
 

@@ -1,4 +1,4 @@
-# Code Factory for LangGraph coding agents
+# Code Factory plugin for LangGraph coding agents
 
 **Run LangGraph your way. Prove the resume path before review.**
 
@@ -11,7 +11,7 @@ It does not replace LangGraph, LangSmith, or your checkpointer. It does not
 invoke a graph, expose raw state, replay effects, repair code, approve a pull
 request, or claim production resilience or savings.
 
-## Install the marketplace plugin
+## Install the independent plugin
 
 Install the Python package into the environment that will host the local MCP
 server:
@@ -21,7 +21,10 @@ server:
 factory mcp status --root .
 ```
 
-Then add the Code Factory marketplace and install the plugin.
+Then add the source-controlled Code Factory marketplace and install the
+plugin. This is an independent Code Factory distribution: it does not require
+a LangChain account, LangSmith account, external credential, or a LangChain
+marketplace listing.
 
 ### OpenAI Codex
 
@@ -68,12 +71,14 @@ local assurance receipt. A GitHub Action starter is included at
 It has read-only contents permission and makes a failing divergence visible in
 the job; it does not make merge decisions.
 
-## Official LangChain marketplace submission
+## Upstream repository status
 
-This repository now provides its own marketplace entry and a portable plugin.
-The LangChain Plugins marketplace has a separate upstream-review process. A
-submitted contribution is not an endorsement or a completed listing; use the
-Code Factory marketplace above while that review is pending.
+On 2026-08-28, a LangChain maintainer closed the proposed contribution to
+`langchain-ai/langchain-plugins` because that repository accepts only official
+LangChain skills and MCPs. The maintainer explicitly invited independent
+publication. Code Factory therefore publishes this portable plugin through the
+Code Factory marketplace above; it does not imply LangChain endorsement,
+approval, or a pending LangChain review.
 
 ## Boundaries
 

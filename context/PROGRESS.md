@@ -471,3 +471,12 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-25 05:55] GATE plan journey-proof-engine-v1 approver=human tasks=1 sha=652ecafb3c96ec63
 - [2026-08-25 06:12] GATE spec journey-proof-engine-v1 approver=human strict=True sha=2153e64a5da6f827
 - [2026-08-25 06:12] GATE plan journey-proof-engine-v1 approver=human tasks=1 sha=2153e64a5da6f827
+- [2026-08-28 15:14] GATE spec langgraph-marketplace-plugin approver=human strict=True sha=42760dd99680078f
+- [2026-08-28 15:14] GATE plan langgraph-marketplace-plugin approver=human tasks=4 sha=42760dd99680078f
+- [2026-08-28 15:22] GATE spec langgraph-marketplace-plugin approver=human strict=True sha=1f022298d16f289d
+- [2026-08-28 15:22] GATE plan langgraph-marketplace-plugin approver=human tasks=4 sha=1f022298d16f289d
+- [2026-08-28 15:22] GATE code langgraph-marketplace-plugin approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
+- [2026-08-28 15:23] GATE spec langgraph-marketplace-plugin approver=human strict=True sha=1f022298d16f289d
+- [2026-08-28 15:23] GATE plan langgraph-marketplace-plugin approver=human tasks=4 sha=1f022298d16f289d
+- [2026-08-28 15:23] GATE code langgraph-marketplace-plugin approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
+- [2026-08-28 15:24] GATE code langgraph-marketplace-plugin approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
