@@ -1,0 +1,38 @@
+name: agent-cloud-memory-governance-v1
+modules:
+  - name: memory_schema
+    path: products/agent-cloud/app/convex/schema.ts
+    imports: []
+    functions: []
+  - name: memory_domain
+    path: products/agent-cloud/app/convex/domain.ts
+    imports: []
+    functions:
+      - name: canonicalMemoryExport
+        args: ["records: MemoryExportRecord[]"]
+        returns: string
+        doc: "Serialize governed memory history without database identifiers, receipt fingerprints, or erased content."
+  - name: memory_control
+    path: products/agent-cloud/app/convex/memory.ts
+    imports: [memory_domain]
+    functions: []
+  - name: memory_ui
+    path: products/agent-cloud/app/src/components/MemoryPanel.tsx
+    imports: []
+    functions: []
+dependencies:
+  - from: memory_control
+    to: memory_domain
+invariants:
+  - name: no_memory_authority
+    forbid_pattern: "memory.*(allow|authorize|capability)|(?:allow|authorize|capability).*memory"
+    scopes:
+      - module: memory_domain
+        symbol: canonicalMemoryExport
+        max_lines: 1000
+  - name: no_deleted_content_export
+    forbid_pattern: "receiptFingerprint|previousFingerprint|memoryId"
+    scopes:
+      - module: memory_domain
+        symbol: canonicalMemoryExport
+        max_lines: 1000

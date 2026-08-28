@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "name": "forgeline_intent_receipt_lineage_edge_contract",
+      "kind": "python",
+      "run": "from pathlib import Path; source=Path('factoryline/graph_ops.py').read_text(encoding='utf-8'); page=Path('factoryline/graph_ops.html').read_text(encoding='utf-8'); docs=Path('docs/EXTERNAL_RUNTIME_EVIDENCE.md').read_text(encoding='utf-8'); required=['REQ_INTENT_LINEAGE_EDGE','REQ_INTENT_LINEAGE_EDGE_FAIL_CLOSED','REQ_INTENT_LINEAGE_EDGE_FACTS','intent_source','bound_to_forge_line','GRAPH_OPS_INTENT_LINEAGE_EDGE','GRAPH_OPS_INTENT_LINEAGE_EDGE_READ_ONLY']; assert all(item in source+page+docs for item in required) and 'innerHTML' not in page",
+      "expect_exit": 0,
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    }
+  ]
+}

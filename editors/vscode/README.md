@@ -63,6 +63,24 @@ review artifacts for hierarchy, responsive behavior, affordances, consistency,
 and design tokens. The extension does not apply a design change or treat a
 visual score as production readiness.
 
+## Expected outcomes
+
+Code Factory was built first for the creator's own AI-assisted workflow. A
+60-day local Codex metadata slice observed 25 related tasks, 133 completed
+turns, 2,710 command runs, 785 MCP or app calls, and 555 file-change events.
+A separate, transparent counterfactual model estimates 30–110 gross
+manual-equivalent hours over the period after a 50% overlap haircut, or 15–55
+hours per month. At an illustrative loaded rate of $75–$150/hour, that is
+$2,250–$16,500 of modeled gross capacity value.
+
+This is one user's case—not a benchmark, guaranteed ROI, or verified cash
+saving. Net savings must subtract tool cost and human oversight. For vibe
+coders, the practical target is less context reconstruction and fewer false
+"done" states. For engineers, it is reviewable proof beside the diff. For
+teams and enterprises, it is repeatable evidence with explicit human authority.
+
+![Code Factory 60-day personal case study](https://raw.githubusercontent.com/zrk222/code-factory/v0.44.3/docs/assets/marketplace/code-factory-60-day-personal-case-study.png)
+
 ## Install
 
 Install the Code Factory CLI first:
@@ -77,7 +95,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.8.10.vsix
+code --install-extension factoryline-vscode-0.8.11.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
@@ -101,7 +119,7 @@ It is deployed separately from this local editor extension; see
 This is the VS Code adapter. The separate JetBrains Platform adapter and its
 compatibility boundary are documented in [docs/INTELLIJ.md](../../docs/INTELLIJ.md).
 
-### Verifier Plane (0.28.0)
+### Verifier Plane
 
 `factory verifier` separates a worker's candidate receipt from a distinct
 verifier's evidence. It rejects self-verification, drift, path escape, false
@@ -109,7 +127,7 @@ passing checks, and declared budget overrun. Graph Ops renders a bound session
 as `runtime-unattested` until independently supplied evidence is verified;
 this adapter does not claim to execute or enforce a sandbox.
 
-### Contradiction gate (0.26.0)
+### Contradiction gate
 
 `factory cdte scan` detects architecturally incompatible NFR pairs before any
 code is generated, by deterministic lookup over a decision table. No model is
@@ -118,7 +136,7 @@ analysis whose inputs are absent is withheld rather than estimated. Critical and
 high severity conflicts engage the fail-closed boundary and pause the line at
 `nfr_conflict`.
 
-### Habituation gate (0.26.0)
+### Habituation gate
 
 `factory habituation status` calibrates the human approval signal against each
 reviewer's own baseline and escalates: surface, second approver, fail closed.

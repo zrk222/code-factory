@@ -20,7 +20,7 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Catch tests that could never fail. Prove AI code locally.
+short_description: One local command shows whether a test can actually fail.
 ---
 
 # Code Factory
@@ -31,17 +31,19 @@ local-first proof layer for AI-assisted code.
 
 > **Catch AI-generated tests that could never fail — before review.**
 
-**Free, local proof for code built with AI.** Start from a plain-language
-outcome, a fuzzy PRD, or a risky diff. Code Factory binds the declared intent,
-challenges whether a test can actually reject the failure it claims to cover,
-and shows the current proof gap plus the next human decision.
+**One command answers one question: can this test actually fail?** Run
+`factory first-proof --root .` to see a safe negative-control demonstration and
+receive a local receipt. It does not upload or change your project.
 
-- **Vibe coding:** make a contained MVP, then see what remains unproven before
-  calling it done.
-- **Senior review:** challenge a passing test, inspect the exact changed scope,
-  and leave a local receipt another reviewer can check.
-- **Teams:** keep AI-created diffs within approved scope, preserve named human
-  decisions, and surface Proof Debt before a human makes a merge decision.
+- **Individual developer or vibe coder:** learn what a real negative control
+  looks like before trusting an AI-generated test.
+- **Senior developer or team:** wrap an admitted agent run, record its exact
+  file delta, run declared validators, and review hashes and bounded facts—not
+  retained prompts or raw model output.
+- **Platform or assurance team:** evaluate policy gates, evidence packets,
+  expiring exceptions, and tenant boundaries in a controlled pilot. Code Factory
+  is beta software, not an SLA, compliance certification, customer-reference,
+  or procurement-readiness claim.
 
 ### Common pain points, addressed without hidden authority
 

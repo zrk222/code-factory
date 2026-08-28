@@ -1,0 +1,16 @@
+name: agent-cloud-release-safety-v1
+modules:
+  - name: release_schema
+    path: products/agent-cloud/app/convex/schema.ts
+    imports: []
+    functions: []
+  - name: release_control
+    path: products/agent-cloud/app/convex/releases.ts
+    imports: []
+    functions: []
+  - name: release_ui
+    path: products/agent-cloud/app/src/components/ReleaseSafetyPanel.tsx
+    imports: []
+    functions: []
+dependencies: []
+invariants: []

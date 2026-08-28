@@ -145,6 +145,11 @@ jobs:
           release-bundle/python/*
           release-bundle/editors/*
           docs/assets/factoryline-logo-480.png
+          docs/assets/marketplace/factoryline-0.44-live-dashboard.png
+          docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg
+          docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg
+          docs/assets/marketplace/factoryline-60-day-personal-case-study.png
+          docs/assets/marketplace/code-factory-60-day-personal-case-study.png
           docs/assets/marketplace/factory-studio-mvp-1280x800.png
           docs/assets/marketplace/graph-ops-studio-1280x800.png
           docs/assets/marketplace/graph-ops-proofsearch.png

@@ -89,7 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: zrk222/code-factory@v0.39.0
+      - uses: zrk222/code-factory@v0.44.3
         with:
           reference: .factory/langgraph/reference.json
           resumed: .factory/langgraph/resumed.json

@@ -5,11 +5,38 @@
       "rule": "A_SUBPROC subprocess use in factoryline/cli.py",
       "promoted_from_count": 3,
       "promoted_at": "2026-08-19T03:42:59.193810+00:00",
-      "times_enforced": 4,
-      "prevented_recurrence": 4,
+      "times_enforced": 5,
+      "prevented_recurrence": 5,
+      "status": "active"
+    },
+    "J_PARSER_UNSUPPORTED": {
+      "code": "J_PARSER_UNSUPPORTED",
+      "rule": "J_PARSER_UNSUPPORTED products/agent-cloud/app/src/components/IntentComposer.tsx: TypeScript compiler is required for TSX",
+      "promoted_from_count": 3,
+      "promoted_at": "2026-08-24T05:48:00.503689+00:00",
+      "times_enforced": 1,
+      "prevented_recurrence": 1,
+      "status": "active"
+    },
+    "A_PARSER_UNSUPPORTED": {
+      "code": "A_PARSER_UNSUPPORTED",
+      "rule": "A_PARSER_UNSUPPORTED products/agent-cloud/app/src/components/IntentComposer.tsx: TypeScript compiler is required for TSX",
+      "promoted_from_count": 3,
+      "promoted_at": "2026-08-24T05:48:00.504678+00:00",
+      "times_enforced": 1,
+      "prevented_recurrence": 1,
+      "status": "active"
+    },
+    "QA_PARSER_UNSUPPORTED": {
+      "code": "QA_PARSER_UNSUPPORTED",
+      "rule": "QA_PARSER_UNSUPPORTED products/agent-cloud/app/src/components/IntentComposer.tsx: TypeScript compiler is required for TSX",
+      "promoted_from_count": 3,
+      "promoted_at": "2026-08-24T05:48:00.504678+00:00",
+      "times_enforced": 1,
+      "prevented_recurrence": 1,
       "status": "active"
     }
   },
-  "version": 75,
-  "updated": "2026-08-28T15:21:59.057737+00:00"
+  "version": 84,
+  "updated": "2026-08-28T15:25:00.000000+00:00"
 }

@@ -1,0 +1,17 @@
+{
+  "schema": "agent-oven.runtime-compatibility.v1",
+  "compiler": {
+    "status": "active-when-convex-deployment-configured",
+    "rawDescriptionStored": false,
+    "activationFromProse": false
+  },
+  "inference": [
+    { "mode": "agent-oven-api", "status": "setup-required", "reason": "A deployment-specific provider route and usage read-back must be configured." },
+    { "mode": "byok", "status": "active-when-secret-reference-is-ready", "reason": "Only opaque server-side secret references are accepted." }
+  ],
+  "runtimes": [
+    { "id": "agent-oven-native", "bestFor": "Bounded hosted workflows", "activation": "hosted-worker-required" },
+    { "id": "langgraph", "bestFor": "State, checkpoints, interrupts, replay, and explicit graphs", "activation": "validated-adapter-required" },
+    { "id": "mastra", "bestFor": "TypeScript agents, tools, workflows, workspaces, and MCP", "activation": "validated-adapter-required" }
+  ]
+}

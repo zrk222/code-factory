@@ -1,0 +1,37 @@
+name: authoritative-source-control-v1
+governance: supervised
+modules:
+  - name: source_contract
+    path: products/agent-cloud/app/runtime/sourceAssurance.ts
+    imports: []
+    functions: []
+  - name: source_control
+    path: products/agent-cloud/app/convex/authoritativeSources.ts
+    imports:
+      - products/agent-cloud/app/runtime/sourceAssurance.ts
+      - products/agent-cloud/app/convex/access.ts
+      - products/agent-cloud/app/convex/domain.ts
+    functions: []
+  - name: execution_control
+    path: products/agent-cloud/app/convex/sourceAdmission.ts
+    imports:
+      - products/agent-cloud/app/convex/authoritativeSources.ts
+    functions: []
+  - name: source_tests
+    path: products/agent-cloud/app/convex/authoritativeSources.test.ts
+    imports:
+      - products/agent-cloud/app/convex/authoritativeSources.ts
+    functions: []
+  - name: source_contract_tests
+    path: products/agent-cloud/app/runtime/sourceAssurance.test.ts
+    imports:
+      - products/agent-cloud/app/runtime/sourceAssurance.ts
+    functions: []
+dependencies:
+  - from: source_control
+    to: source_contract
+  - from: execution_control
+    to: source_control
+  - from: source_tests
+    to: source_control
+invariants: []

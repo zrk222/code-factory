@@ -1,0 +1,46 @@
+{
+  "name": "agent-oven",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:convex": "convex dev",
+    "build": "tsc -b && vite build",
+    "build:source-worker": "tsc -p tsconfig.worker.json",
+    "start:source-worker": "node dist-worker/runtime/sourceWorkerEntrypoint.js",
+    "verify:source-worker-activation": "npm run build:source-worker && node dist-worker/runtime/sourceWorkerActivationEntrypoint.js",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run --maxWorkers=2",
+    "test:convex": "vitest run convex --maxWorkers=2",
+    "verify:stack": "node scripts/verify-stack.mjs",
+    "verify:production-env": "node scripts/verify-production-env.mjs",
+    "verify:release": "npm run verify && node scripts/release-qualification.mjs",
+    "verify:enterprise": "npm run verify:release && node scripts/enterprise-qualification.mjs",
+    "test:load": "node scripts/load-test.mjs",
+    "verify": "npm run test && npm run typecheck && npm run build:source-worker && npm run build && npm run verify:stack",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@clerk/react": "^6.14.5",
+    "convex": "^1.42.3",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.3",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^6.0.3",
+    "axe-core": "^4.12.1",
+    "convex-test": "^0.0.54",
+    "jsdom": "^25.0.1",
+    "typescript": "~5.7.2",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10"
+  }
+}

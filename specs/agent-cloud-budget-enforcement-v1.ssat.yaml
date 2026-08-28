@@ -1,0 +1,30 @@
+name: agent-cloud-budget-enforcement-v1
+governance: supervised
+modules:
+  - name: budget_schema
+    path: products/agent-cloud/app/convex/schema.ts
+    imports: []
+    functions: []
+  - name: budget_gateway
+    path: products/agent-cloud/app/convex/budget.ts
+    imports:
+      - products/agent-cloud/app/convex/domain.ts
+    functions: []
+  - name: budget_tests
+    path: products/agent-cloud/app/convex/budget.test.ts
+    imports:
+      - products/agent-cloud/app/convex/budget.ts
+    functions: []
+  - name: budget_console
+    path: products/agent-cloud/app/src/components/RunPanel.tsx
+    imports:
+      - products/agent-cloud/app/convex/budget.ts
+    functions: []
+dependencies:
+  - from: budget_gateway
+    to: budget_schema
+  - from: budget_tests
+    to: budget_gateway
+  - from: budget_console
+    to: budget_gateway
+invariants: []

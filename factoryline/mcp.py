@@ -14,6 +14,7 @@ from .developer_memory import developer_memory_brief
 from .intent_ledger import IntentLedgerError, inspect_intent_ledger
 from .judgment import JudgmentError, judgment_status, safety_case
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
+from .journey_proof import journey_proof_status
 from .langgraph_assurance import MCP_MARKER, LangGraphAssuranceError, verify_langgraph_resume_parity
 from .proof_delta import proof_delta_status
 from .proof_reuse import verify_proof_receipt
@@ -63,6 +64,7 @@ _RECEIPT_ROOTS = (
     Path(".factory/agent-licenses"),
     Path(".factory/combines"),
     Path(".factory/intent-ledgers"),
+    Path(".factory/journey-proof"),
 )
 
 
@@ -102,6 +104,12 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "properties": {"format": {"type": "string", "enum": ["json", "summary"], "default": "json"}},
                 "additionalProperties": False,
             },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.journey_status",
+            "description": "Return only hash-verified local Journey Reality, failure capsule, workflow, healing, and agent-audit receipts. It never executes an agent or provider.",
+            "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
@@ -831,6 +839,10 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(mcp_status(root))
     if name == "factory.graph_ops":
         return _content(_graph_ops(root, arguments))
+    if name == "factory.journey_status":
+        if arguments != {}:
+            raise McpError("factory.journey_status accepts no arguments")
+        return _content(journey_proof_status(root))
     if name == "factory.graph_impact":
         return _content({
             "marker": "MCP_GRAPH_IMPACT_PARITY",

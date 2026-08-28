@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "name": "external_runtime_import_and_verify",
+      "kind": "python",
+      "run": "from pathlib import Path; import hashlib, json; from factoryline.external_evidence import import_external_runtime_bundle, verify_external_runtime_receipt; root=Path('.'); artifact=root/'runtime.txt'; artifact.write_text('green\\n', encoding='utf-8'); bundle=root/'bundle.json'; bundle.write_text(json.dumps({'schema':'factory.external-runtime-bundle.v1','provider':'testsprite','project_id':'smoke-project','test_id':'smoke-test','run_id':'smoke-run','snapshot_id':'smoke-snapshot','code_version':'smoke-commit','environment':{'fingerprint':'smoke-env','label':'local'},'verdict':'passed','failure_kind':'none','first_failed_step':{'index':None,'label':None},'hypothesis':'','recommended_fix':'','artifacts':[{'path':'runtime.txt','sha256':hashlib.sha256(artifact.read_bytes()).hexdigest(),'kind':'runtime-log'}],'observed_at':'2026-08-24T12:00:00Z'}), encoding='utf-8'); result=import_external_runtime_bundle(root, bundle, 'testsprite'); verified=verify_external_runtime_receipt(root, root/result['path']); assert result['marker']=='EXTERNAL_EVIDENCE_IMPORTED' and verified['valid'] is True",
+      "expect_exit": 0,
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    }
+  ]
+}

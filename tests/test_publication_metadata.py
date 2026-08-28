@@ -25,7 +25,7 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-21"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-08-25"
 
 
 def test_pypi_storefront_has_identity_and_canonical_links():
@@ -41,7 +41,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
         "Issues": "https://github.com/zrk222/code-factory/issues",
         "Changelog": "https://github.com/zrk222/code-factory/releases",
     }
-    assert project["description"] == "Catch AI-generated tests that could never fail and review AI code with local proof."
+    assert project["description"] == "Catch AI-generated tests that could never fail with one local proof command."
     assert {
         "mvp",
         "mcp",
@@ -78,7 +78,7 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     value = "Catch AI-generated tests that could never fail — before review."
     assert value in readme
     assert "challenges whether a test can actually reject" in readme
-    assert readme.index(value) < readme.index("## What it does")
+    assert readme.index(value) < readme.index("## Advanced workflows")
     assert "factory mvp \"Build an approval tracker\" --root ." in readme
     assert "See actual Factory Studio" in readme
     assert "factory-studio-mvp-1280x800.png" in readme
@@ -295,9 +295,9 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.44.0"
+    assert project["version"] == "0.44.3"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.8.10"
+    assert vscode["version"] == "0.8.11"
     assert 'version = "0.8.16"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
@@ -472,10 +472,13 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
     assert "Mermaid diagrams" in metadata["description"]
-    assert metadata["version"] == "0.44.0"
-    assert metadata["publication_date"] == "2026-08-21"
+    assert metadata["version"] == "0.44.3"
+    assert metadata["publication_date"] == "2026-08-25"
     assert "Unified Graph Ops" in metadata["description"]
-    assert "current FactoryLine identity asset" in metadata["description"]
+    assert "Journey Reality" in metadata["description"]
+    assert "audits the agent" in metadata["description"]
+    assert "60-day personal-use case" in metadata["description"]
+    assert "not a benchmark, guaranteed ROI, or verified cash saving" in metadata["description"]
     assert "conceptual visual walkthrough" not in metadata["description"]
     assert "prd-grill" in metadata["keywords"]
     assert "verifier-plane" in metadata["keywords"]

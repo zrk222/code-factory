@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: agent-oven
+    runtime: static
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: true
+    rootDir: products/agent-cloud/app
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    buildFilter:
+      paths:
+        - products/agent-cloud/app/**
+    envVars:
+      - key: VITE_CONVEX_URL
+        sync: false
+      - key: VITE_CLERK_PUBLISHABLE_KEY
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(), microphone=(), geolocation=()
+
+# The authoritative-source worker is intentionally absent. Its production
+# contract requires projected workload identity and CSI-mounted secrets.

@@ -1,0 +1,104 @@
+name: Publish GitHub Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to tag (for example 0.44.3)"
+        required: true
+        default: "0.44.3"
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: github-packages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish container packages
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: factoryline-hosted
+            context: .
+            file: deploy/hosted/Dockerfile
+            description: "FactoryLine hosted assurance adapter"
+          - name: factoryline-source-worker
+            context: products/agent-cloud/app
+            file: products/agent-cloud/app/Dockerfile.source-worker
+            description: "FactoryLine governed source worker"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Resolve package version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${INPUT_VERSION:-}"
+          if [[ -z "$version" && "$REF_NAME" == v* ]]; then
+            version="${REF_NAME#v}"
+          fi
+          if [[ -z "$version" ]]; then
+            echo "A version input or v* tag is required." >&2
+            exit 1
+          fi
+          python - "$version" <<'PY'
+          import re, sys
+          version = sys.argv[1]
+          if not re.fullmatch(r"(?:0|[1-9]\d*)\.\d+\.\d+(?:[.-][0-9A-Za-z.-]+)?", version):
+              raise SystemExit(f"invalid release version: {version}")
+          PY
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare image metadata
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v') }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.name }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Build and publish package
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+
+      - name: Emit package receipt
+        shell: bash
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "Published package: ${IMAGE}:${VERSION}"
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}"

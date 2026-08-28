@@ -1,0 +1,54 @@
+name: agent-cloud-convex-v1
+modules:
+  - name: convex_schema
+    path: products/agent-cloud/app/convex/schema.ts
+    imports: []
+    functions: []
+  - name: convex_domain
+    path: products/agent-cloud/app/convex/domain.ts
+    imports: []
+    functions:
+      - name: assertBudget
+        args: ["hardBudgetCents: number", "estimatedCostCents: number"]
+        returns: void
+        doc: "Reject estimated costs that exceed the hard run budget before database writes."
+      - name: receiptFingerprint
+        args: ["parts: readonly string[]"]
+        returns: string
+        doc: "Create a deterministic prototype fingerprint that is explicitly not a digital signature."
+  - name: convex_control
+    path: products/agent-cloud/app/convex/control.ts
+    imports: [convex_domain]
+    functions: []
+  - name: convex_memory
+    path: products/agent-cloud/app/convex/memory.ts
+    imports: [convex_domain]
+    functions: []
+  - name: app_shell
+    path: products/agent-cloud/app/src/App.tsx
+    imports: []
+    functions: []
+dependencies:
+  - from: convex_control
+    to: convex_domain
+  - from: convex_memory
+    to: convex_domain
+invariants:
+  - name: no_supabase_dependency
+    forbid_pattern: "@supabase|SUPABASE_URL|supabase[.]co"
+    scopes:
+      - module: convex_schema
+        max_lines: 400
+      - module: convex_domain
+        max_lines: 500
+      - module: convex_control
+        max_lines: 900
+      - module: convex_memory
+        max_lines: 500
+      - module: app_shell
+        max_lines: 1200
+  - name: memory_cannot_authorize
+    forbid_pattern: "memory.*(allow|authorize|capability)|(?:allow|authorize|capability).*memory"
+    scopes:
+      - module: convex_memory
+        max_lines: 500

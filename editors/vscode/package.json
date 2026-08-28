@@ -2,7 +2,7 @@
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
   "description": "Catch AI-generated tests that could never fail. Review code with local proof.",
-  "version": "0.8.10",
+  "version": "0.8.11",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -29,9 +29,9 @@
     "ui-quality",
     "prd-grill",
     "independent-verification",
-    "verifier-plane"
-    ,"proofsearch"
-    ,"counterfactual-repair"
+    "verifier-plane",
+    "proofsearch",
+    "counterfactual-repair"
   ],
   "activationEvents": [
     "onCommand:factoryline.assemble",

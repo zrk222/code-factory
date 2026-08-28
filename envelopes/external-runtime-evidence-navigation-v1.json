@@ -1,0 +1,11 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "external-runtime-evidence-navigation-v1",
+  "sealed_hash": "148291a22dffa37cc9fc4b9bf6c31a8ad7a25e106ec5da776d53830c7263b7d9",
+  "coherence_score": 100,
+  "source": "specs/external-runtime-evidence-navigation-v1.md",
+  "intent": "Let reviewers locate the exact local Graph Ops node for imported runtime observations without granting execution authority.",
+  "assumptions": [
+    "Assumes the Graph Ops navigation preserves a human authorization boundary and never grants authorization."
+  ]
+}

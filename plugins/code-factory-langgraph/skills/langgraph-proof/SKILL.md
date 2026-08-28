@@ -20,8 +20,8 @@ factory mcp status --root .
 ```
 
 If the CLI is missing, return the prerequisite marker
-`factoryline-code-factory-v043` and explain that the user must install
-`factoryline-code-factory>=0.43.0` in the environment that will host the local
+`factoryline-code-factory-v044` and explain that the user must install
+`factoryline-code-factory>=0.44.0` in the environment that will host the local
 MCP process. Do not install Python packages, change a client configuration, or
 start a server without the user's approval.
 

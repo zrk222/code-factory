@@ -20,11 +20,11 @@ or release authority.
 
 ### Requirements (EARS)
 <!-- Every requirement uses an EARS keyword: shall / When / While / If / Where -->
-- The system shall write `code-factory-langgraph` into identical Codex and Claude Code manifests bound to Code Factory `0.44.0` and `factory mcp serve --root .`.
+- The system shall write `code-factory-langgraph` into identical Codex and Claude Code manifests bound to Code Factory `0.44.3` and `factory mcp serve --root .`.
 - When a supported coding agent loads the plugin, the system shall return a proof skill containing `LANGGRAPH_RESUME_PARITY_VERIFIED`, `LANGGRAPH_REPLAY_DIVERGENCE`, and `LANGGRAPH_INPUT_REJECTED` without production-resilience or savings claims.
 - When a developer requests a local receipt comparison, the system shall emit a no-write CLI form and require explicit user approval before adding `--out`.
-- When a pull request contains the declared sealed receipt paths, the system shall return the action verdict from `zrk222/code-factory@v0.44.0` with `contents: read`, exclude `pull_request_target`, and retain no write, merge, repair, graph, checkpoint, side-effect, deployment, publication, messaging, credential, or connector authority.
-- If the Code Factory CLI is unavailable, the system shall return the `factoryline-code-factory-v043` prerequisite marker with the `factoryline-code-factory>=0.43.0` install instruction and shall not install it or alter client configuration itself.
+- When a pull request contains the declared sealed receipt paths, the system shall return the action verdict from `zrk222/code-factory@v0.44.3` with `contents: read`, exclude `pull_request_target`, and retain no write, merge, repair, graph, checkpoint, side-effect, deployment, publication, messaging, credential, or connector authority.
+- If the Code Factory CLI is unavailable, the system shall return the `factoryline-code-factory-v044` prerequisite marker with the `factoryline-code-factory>=0.44.0` install instruction and shall not install it or alter client configuration itself.
 - Where the Code Factory marketplace is used, the system shall return a repository-local `marketplace.json` entry and Codex, Claude Code, and Deep Agents install forms.
 
 ### Acceptance criteria (Gherkin)
@@ -38,7 +38,7 @@ Scenario: coding agent requests a resume proof
 Scenario: pull request has a divergence
   Given the declared LangGraph receipt paths exist in a pull request
   When the included GitHub proof starter runs
-  Then it runs Code Factory version `0.44.0` with read-only contents permission
+  Then it runs Code Factory version `0.44.3` with read-only contents permission
   And a divergence fails the job without granting merge or repair authority
 
 Scenario: plugin install has no hidden dependency action
@@ -50,12 +50,12 @@ Scenario: plugin install has no hidden dependency action
 Scenario: static plugin contract cannot be weakened
   Given the Code Factory LangGraph marketplace plugin contract
   When strict validator mutation runs
-  Then both manifests retain `code-factory-langgraph` and version `0.44.0`
+  Then both manifests retain `code-factory-langgraph` and version `0.44.3`
   And the skill retains `LANGGRAPH_RESUME_PARITY_VERIFIED`
   And the skill requires explicit approval before it adds `--out`
-  And the GitHub starter retains `zrk222/code-factory@v0.44.0` and `contents: read`
+  And the GitHub starter retains `zrk222/code-factory@v0.44.3` and `contents: read`
   And the starter excludes `pull_request_target`
-  And the proof skill retains `factoryline-code-factory-v043` and setup documentation retains `factoryline-code-factory>=0.43.0`
+  And the proof skill retains `factoryline-code-factory-v044` and setup documentation retains `factoryline-code-factory>=0.44.0`
   And the marketplace index retains `marketplace.json`
 ```
 

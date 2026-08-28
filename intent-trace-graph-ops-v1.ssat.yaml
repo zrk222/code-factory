@@ -1,0 +1,45 @@
+feature: intent-trace-graph-ops-v1
+version: "1.0"
+intent: "Show local Forge intent evidence in Graph Ops while preserving a strict read-only authorization boundary."
+requirements:
+  - id: REQ_INTENT_TRACE_UI
+    description: "A valid local Forge ship receipt renders an intent trace panel with hashes, obligations, and shipped state."
+    invariant: "REQ_INTENT_TRACE_UI"
+    checks:
+      - "REQ_INTENT_TRACE_UI"
+      - "intent-trace-panel"
+      - "renderIntentTrace"
+      - "intent_hash"
+      - "receipt_sha256"
+  - id: REQ_INTENT_TRACE_READ_ONLY
+    description: "The projection reads bounded local receipts and never grants execution, approval, or provider authority."
+    invariant: "REQ_INTENT_TRACE_READ_ONLY"
+    checks:
+      - "REQ_INTENT_TRACE_READ_ONLY"
+      - "GRAPH_OPS_INTENT_TRACE_READ_ONLY"
+      - "authority"
+      - "execution: false"
+      - "approval: false"
+  - id: REQ_INTENT_TRACE_FAIL_CLOSED
+    description: "Missing, malformed, blocked, or untraceable receipts remain unverified and emit a fail-closed marker."
+    invariant: "REQ_INTENT_TRACE_FAIL_CLOSED"
+    checks:
+      - "REQ_INTENT_TRACE_FAIL_CLOSED"
+      - "REQ_INTENT_TRACE_MISSING_FAIL_CLOSED"
+      - "REQ_INTENT_TRACE_SOURCE_FAIL_CLOSED"
+      - "GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED"
+      - "Not verified"
+      - "requires review"
+  - id: REQ_INTENT_TRACE_RESPONSIVE
+    description: "Intent trace facts remain readable in a one-column layout at narrow widths."
+    invariant: "REQ_INTENT_TRACE_RESPONSIVE"
+    checks:
+      - "REQ_INTENT_TRACE_RESPONSIVE"
+      - "GRAPH_OPS_INTENT_TRACE_RESPONSIVE"
+      - "max-width:768px"
+      - "grid-template-columns:1fr"
+gates:
+  - type: test
+    command: "py -3.11 -m pytest -q tests/test_graph_ops.py"
+  - type: smoke
+    command: "python -c \"from pathlib import Path; p=Path('factoryline/graph_ops.html').read_text(encoding='utf-8'); assert 'REQ_INTENT_TRACE_UI' in p and 'renderIntentTrace' in p and 'innerHTML' not in p\""

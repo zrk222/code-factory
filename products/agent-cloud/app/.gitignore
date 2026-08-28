@@ -1,0 +1,10 @@
+
+.env.local
+node_modules/
+dist/
+dist-worker/
+coverage/
+playwright-report/
+test-results/
+.playwright-cli/
+output/

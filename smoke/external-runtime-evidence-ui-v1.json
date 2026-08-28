@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "name": "graph_ops_external_runtime_ui_contract",
+      "kind": "python",
+      "run": "from pathlib import Path; p=Path('factoryline/graph_ops.html').read_text(encoding='utf-8'); assert 'GRAPH_OPS_EXTERNAL_RUNTIME_UI' in p and 'GRAPH_OPS_EXTERNAL_RUNTIME_HYPOTHESIS' in p and 'GRAPH_OPS_EXTERNAL_RUNTIME_AUTHORITY_LOCKED' in p and 'GRAPH_OPS_EXTERNAL_RUNTIME_RESPONSIVE' in p and 'GRAPH_OPS_EXTERNAL_RUNTIME_TEXT_NODE' in p and 'innerHTML' not in p",
+      "expect_exit": 0,
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    }
+  ]
+}

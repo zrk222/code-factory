@@ -9,6 +9,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import json
+import hashlib
 import re
 import time
 import uuid
@@ -119,6 +120,106 @@ def _meter_from_output(output: str) -> tuple[Meter, bool]:
             continue
         return Meter(0, **values), True
     return Meter(), False
+
+
+def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
+    """Adapt one explicit Forge ship result into a Code Factory receipt.
+
+    REQ_INTENT_ADAPTER_CAPTURE · REQ_INTENT_ADAPTER_READ_ONLY ·
+    REQ_INTENT_ADAPTER_FAIL_CLOSED
+
+    ForgeLine owns its append-only ``.forge`` store.  FactoryLine must not
+    rewrite that store or infer a traceability result from a successful exit
+    code.  The adapter is emitted only when the CLI explicitly reports both
+    boolean fields and the corresponding Forge ship line is readable and
+    consistent.  Missing fields therefore leave the legacy fail-closed path
+    untouched.
+    """
+    payloads: list[dict] = []
+    decoder = json.JSONDecoder()
+    for offset, char in enumerate(output):
+        if char != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(output[offset:])
+        except ValueError:
+            continue
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    forge_result = next(
+        (
+            payload for payload in reversed(payloads)
+            if isinstance(payload.get("shipped"), bool)
+            and isinstance(payload.get("intent_traceable"), bool)
+        ),
+        None,
+    )
+    if forge_result is None:  # REQ_INTENT_ADAPTER_FAIL_CLOSED
+        return None
+
+    try:
+        root_path = Path(root).resolve()
+        receipt_path = (root_path / ".forge" / feature / "receipts.jsonl").resolve()
+        receipt_path.relative_to(root_path)
+    except (OSError, ValueError):
+        return None
+    try:
+        if receipt_path.stat().st_size > 1_048_576:
+            return None
+        lines = receipt_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    latest: tuple[dict, str] | None = None
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(value, dict) and value.get("phase") == "ship":
+            latest = (value, line)
+    if latest is None:
+        return None
+    forge_receipt, raw_line = latest
+    if not isinstance(forge_receipt.get("shipped"), bool):
+        return None
+    if forge_receipt["shipped"] is not forge_result["shipped"]:
+        return None
+
+    intent_hash = forge_receipt.get("intent_hash")
+    if not isinstance(intent_hash, str):
+        intent_hash = forge_result.get("intent_hash") if isinstance(forge_result.get("intent_hash"), str) else None
+    obligations = forge_receipt.get("obligations")
+    if not isinstance(obligations, str):
+        obligations = forge_result.get("obligations_met")
+        if not isinstance(obligations, str):
+            obligations = forge_result.get("obligations") if isinstance(forge_result.get("obligations"), str) else None
+    timestamp = forge_receipt.get("ts")
+    if not isinstance(timestamp, str):
+        timestamp = forge_result.get("ts") if isinstance(forge_result.get("ts"), str) else None
+    return {
+        "schema": "factoryline.intent-trace.v1",
+        "source": "forgeline-cli",
+        "shipped": forge_result["shipped"],
+        "intent_traceable": forge_result["intent_traceable"],
+        "intent_hash": intent_hash,
+        "obligations": obligations,
+        "forge_receipt_sha256": hashlib.sha256(raw_line.encode("utf-8")).hexdigest(),
+        "ts": timestamp,
+        "authority": {
+            "execution": False,
+            "approval": False,
+            "publication": False,
+            "deployment": False,
+            "signing": False,
+            "messaging": False,
+            "credential": False,
+            "connector": False,
+        },
+        "execution": False,
+    }
 
 
 # The default pipeline: (module, cli-args-template). {f} = feature.
@@ -327,9 +428,14 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False) -> dic
             feature=feature,
             run_id=run_id,
         ))
+        outputs = {"log_tail": out[-2000:]}
+        if module == "forgeline" and stage_name == "ship":
+            intent_trace = _forge_intent_trace(root, feature, out)
+            if intent_trace is not None:
+                outputs["intent_trace"] = intent_trace
         Receipt(module=module, stage=stage_name, feature=feature, ok=ok,
                 meter=stage_meter,
-                outputs={"log_tail": out[-2000:]},
+                outputs=outputs,
                 attribution=attribution_block).write(root)
         report["stages"].append({"module": module, "stage": stage_name,
                                  "status": "ok" if ok else "failed",

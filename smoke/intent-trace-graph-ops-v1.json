@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "name": "intent_trace_graph_ops_contract",
+      "kind": "python",
+      "run": "from pathlib import Path; page=Path('factoryline/graph_ops.html').read_text(encoding='utf-8'); source=Path('factoryline/graph_ops.py').read_text(encoding='utf-8'); required=['REQ_INTENT_TRACE_UI','REQ_INTENT_TRACE_READ_ONLY','REQ_INTENT_TRACE_FAIL_CLOSED','REQ_INTENT_TRACE_RESPONSIVE','GRAPH_OPS_INTENT_TRACE_READ_ONLY','GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED','intent-trace-panel','renderIntentTrace','intent_traceable','receipt_sha256']; assert all(item in page for item in required) and all(item in source for item in ['_append_intent_traces','intent_trace_count','authority']) and 'innerHTML' not in page",
+      "expect_exit": 0,
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    }
+  ]
+}

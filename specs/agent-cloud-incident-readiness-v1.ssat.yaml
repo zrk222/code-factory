@@ -1,0 +1,16 @@
+name: agent-cloud-incident-readiness-v1
+modules:
+  - name: incident_schema
+    path: products/agent-cloud/app/convex/schema.ts
+    imports: []
+    functions: []
+  - name: incident_control
+    path: products/agent-cloud/app/convex/incidents.ts
+    imports: []
+    functions: []
+  - name: incident_ui
+    path: products/agent-cloud/app/src/components/IncidentResponsePanel.tsx
+    imports: []
+    functions: []
+dependencies: []
+invariants: []

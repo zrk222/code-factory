@@ -1,6 +1,10 @@
+{"code": "J_PARSER_UNSUPPORTED", "event": "enforce", "prevented": true, "ts": "2026-08-24T06:14:56.560524+00:00"}
+{"code": "A_PARSER_UNSUPPORTED", "event": "enforce", "prevented": true, "ts": "2026-08-24T06:14:56.561447+00:00"}
+{"code": "QA_PARSER_UNSUPPORTED", "event": "enforce", "prevented": true, "ts": "2026-08-24T06:14:56.561447+00:00"}
 {"code": "A_SUBPROC", "event": "promote", "from_count": 3, "rule": "A_SUBPROC subprocess use in factoryline/cli.py", "ts": "2026-08-19T03:42:59.193810+00:00"}
 {"code": "A_SUBPROC", "event": "probation", "reason": "never fired since promotion", "ts": "2026-08-19T03:42:59.213819+00:00"}
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-08-19T07:11:08.697305+00:00"}
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-08-19T07:13:50.897983+00:00"}
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-08-21T11:09:36.311228+00:00"}
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-08-21T11:12:02.529090+00:00"}
+{"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-08-25T06:15:45.558335+00:00"}

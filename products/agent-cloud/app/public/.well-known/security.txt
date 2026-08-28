@@ -1,0 +1,6 @@
+Contact: mailto:security@example.com
+Expires: 2027-07-20T00:00:00.000Z
+Preferred-Languages: en
+Policy: https://app.example.com/legal/security
+Canonical: https://app.example.com/.well-known/security.txt
+# Replace example.com values during the production-domain activation checklist.

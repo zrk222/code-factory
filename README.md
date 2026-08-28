@@ -11,31 +11,69 @@
 
 > **Catch AI-generated tests that could never fail — before review.**
 
-> **Free, local proof for code built with AI.** Start from a plain-language
-> outcome, a fuzzy PRD, or a risky diff. Code Factory binds the declared intent,
-> challenges whether a test can actually reject the failure it claims to cover,
-> and shows the current proof gap plus the next human decision. Tests that only
-> look green are not proof: a starter is never called production-ready before
-> the relevant proof exists.
+> **One command answers one question: can this test actually fail?** Code Factory
+> runs a safe negative control, records what happened, and gives you a local
+> result you can review. It challenges whether a test can actually reject the
+> failure it claims to cover. It does not upload your code or call a green test
+> proof when that test could never catch the failure.
 
 ```powershell
 pip install factoryline-code-factory
 factory first-proof --root .
 ```
 
-That one local command creates a disposable sandbox, proves the healthy check
-can pass, then proves the hollow check is caught as `HOLLOW_E2E_TEST`. It writes
-a receipt and a privacy-safe Proof Card; it never uploads your code. When you
-are ready to build, run `factory mvp "Build an approval tracker" --root .`.
+That one local command creates a disposable demonstration sandbox, proves the
+healthy check can pass, then proves the hollow check is rejected. It writes a
+receipt and a privacy-safe Proof Card; it does not assess or change your project.
+
+### Pick the path that matches your work
+
+- **Individual developer or vibe coder:** start with `factory first-proof`.
+  Learn what a real negative control looks like before trusting AI-generated tests.
+- **Engineering team:** put `factory wrap` around an admitted Codex, Claude Code,
+  DeepSeek, or other local agent run. Code Factory records the exact file delta,
+  runs the validators your team declared, and stores hashes and bounded facts—not
+  prompts or raw model output—so reviewers can compare the claim with the change.
+- **Platform or assurance team:** evaluate local policy gates, evidence packets,
+  expiring exceptions, and tenant boundaries in a controlled pilot. The free core
+  is community-supported on a best-effort basis; the proposed enterprise support
+  SLA is documented separately and is not effective until its activation evidence
+  and signed terms exist.
+
+When you need more than the first proof, open the [advanced workflow guide](docs/OVERVIEW.md).
+To create a contained starter later, run
+`factory mvp "Build an approval tracker" --root .`.
+That starter is never called production-ready until the relevant proof exists.
+
+## Support posture
+
+The open-source core is free. Community support runs through public GitHub issues
+and has no guaranteed response time. For teams that need an operating commitment,
+the repository includes a transparent [proposed Support SLA](docs/SUPPORT_SLA.md)
+with P1/P2/P3 response targets, availability, recovery, exclusions, and an
+activation checklist.
+
+Those targets are planning terms, not a current contract: the SLA remains
+**proposed and non-effective** until Code Factory has a named support owner,
+monitored escalation, production telemetry, dependency and recovery evidence,
+legal/security terms, and a signed enterprise order. This keeps the GitHub page
+useful to evaluators without implying that a free repository already carries a
+managed-service guarantee.
 
 ![Actual privacy-safe First Proof Card: the hollow test was detected](docs/assets/first-proof-card.svg)
 
-[See actual Factory Studio](docs/PRODUCT_VISUALS.md) or open the
+[See actual Factory Studio and the current FactoryLine visual set](docs/PRODUCT_VISUALS.md) or open the
 [live Hugging Face Space](https://zrk222-code-factory.static.hf.space).
 
-![Actual Factory Studio: the outcome-first local MVP path](docs/assets/marketplace/factory-studio-mvp-1280x800.png)
+![Actual FactoryLine 0.44 Graph Ops dashboard showing a waiting-for-human assembly, live telemetry, and evidence-backed next actions](docs/assets/marketplace/factoryline-0.44-live-dashboard.png)
 
-## What it does
+![FactoryLine AI Proof controls in IntelliJ IDEA for first proof, assemblies, receipts, changed-proof analysis, Change Lists, workspace analysis, and the local meter](docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg)
+
+![FactoryLine AI Proof running a successful local First Proof on FactoryLine 0.44 inside IntelliJ IDEA](docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg)
+
+![Actual Factory Studio showing the outcome-first local MVP path and local-only boundary](docs/assets/marketplace/factory-studio-mvp-1280x800.png)
+
+## Advanced workflows
 
 - **Start a real project.** Turn one outcome into a contained web, mobile, API,
   CLI, worker, MCP, or agent-UI starting state.
@@ -71,6 +109,13 @@ are ready to build, run `factory mvp "Build an approval tracker" --root .`.
   review date, and hash-bound proof obligations. A Change Safety Case routes
   one explicit diff to its owner; it never infers intent, promotes a decision,
   runs a test, or approves a release.
+- **Prove the whole journey—and audit the repairing agent.** Use
+  [`factory journey`](docs/JOURNEY_PROOF_ENGINE.md) to compare declared and
+  observed product journeys, preserve a hash-bound failure capsule, prove
+  state flow and cleanup, and challenge a proposed healing with a negative
+  mutation. Choose human-controlled or bounded supervised-auto mode; every
+  autonomous attempt receives a separate FactoryLine audit and neither mode
+  can self-approve.
 
 ## What the latest upgrade resolves
 
@@ -82,11 +127,72 @@ are ready to build, run `factory mvp "Build an approval tracker" --root .`.
 | Teams gradually trust an agent because it has been successful recently | Earned Autonomy derives an expiring local tier from governed evidence and demotes severe hollow-test or scope-escape results | Identity, permissions, execution, approval, and release authority |
 | A hard-won design decision is forgotten, then a later diff silently breaks its assumptions | Engineering Judgment Capsules bind one named owner, explicit path scope, review date, and declared proof obligations; an optional human-declared Change Profile makes novel boundaries and required Senior Attention explicit before review | Proposal, independent promotion, decision reconsideration, proof execution, acceptance, merge, and release |
 | A reviewer has suggestions but no shared evidence picture | Graph Ops, local receipts, and read-only MCP facts show current scope, proof debt, and the next fact-derived action | Merge, release, deployment, and provider access |
+| A selector repair makes the test green but changes the user journey—or an autonomous agent silently edits outside scope | Journey Reality, Stateful Workflow Proof, and Proof-Gated Healing require preserved semantic identity and coverage, cleanup proof, an adversarial negative result, exact workspace deltas, and an independent Agent Work Audit | Agent/provider choice, repair admission, final approval, merge, and release |
 | Agent work happens outside the evidence ledger, while writing real E2E manifests takes too long | Evidence Supply Line wraps any admitted local agent CLI; `gauntlet draft` proposes inert, structure-derived promise drafts and explicitly withholds commands it cannot derive | Agent identity, sandboxing, draft promotion, validator choice, Gauntlet admission, and release |
 | A large/remote workspace feels opaque or sluggish | Workspace Advisor measures bounded local project shape and path-only WSL/remote signals without changing indexes, heap, caches, inspections, or remote settings | Every IDE performance change and environment setting |
 
 These are local evidence and supervision tools, not guarantees of performance,
 security, productivity, production readiness, or an automatic repair service.
+
+## FactoryLine by role
+
+| Who is using it | Start here | Highest-value uses | The result they can inspect |
+| --- | --- | --- | --- |
+| **Individual developer / vibe coder** | `factory first-proof` | See whether a passing test can actually reject a known failure before trusting it | A local receipt and privacy-safe Proof Card from a disposable demonstration; your project remains unchanged |
+| **Junior developer** | `factory prd grill`, `factory plan verify`, `factory change review` | Clarify acceptance evidence before coding; keep an AI-assisted diff inside the approved plan; surface missing tests and Proof Debt before review | Source-bound questions, exact changed paths, severity-ordered findings, and a review handoff |
+| **Senior / staff engineer** | `factory judgment`, `factory graph forensics`, `factory proofsearch`, `factory gauntlet` | Protect architecture decisions; diagnose resumed or parallel workflow drift; compare candidate repairs; challenge whether critical E2E checks can actually reject declared failures | Hash-bound decision context, first-divergence facts, rejected candidates, a deterministic winner, and Survival Cards |
+| **Engineering team** | `factory wrap`, then GitHub Proof Review | Record the exact agent-created file delta, run declared independent validators, and hand reviewers a commit-bound evidence packet without retaining prompts | Local receipts, exact changed paths, explicit blockers, and a neutral PR Check beside AI review |
+| **Platform / assurance pilot** | Policy gates and evidence packets | Evaluate named approval boundaries, expiring exceptions, tenant isolation, budgets, and release evidence inside existing SDLC controls | Independently verifiable packets and read-only views; identity, credentials, merge, release, and deployment remain enterprise-owned. No SLA, certification, references, or procurement-readiness claim |
+| **Enterprise support evaluator** | Support and operating requirements | Review the proposed response, availability, recovery, exclusions, and activation evidence before procurement | [Support SLA policy](docs/SUPPORT_SLA.md); terms remain proposed until a signed order and all activation gates are evidenced |
+
+## Expected operational outcomes
+
+FactoryLine is designed to reduce avoidable review loops, evidence hunting, and
+the frustration of discovering late that an AI-generated test never exercised
+the claimed behavior. The expected outcome is a shorter path to a defensible
+human decision—not a promise that every project becomes faster or cheaper.
+
+| Outcome | What should improve | Evidence FactoryLine can retain |
+| --- | --- | --- |
+| **Less time lost before coding** | Ambiguous intent, missing acceptance evidence, and external-effect boundaries surface during intake instead of after implementation | Intake questions, approved scope, plan hashes, and explicit blockers |
+| **Faster review orientation** | Reviewers receive the exact diff, proof state, top risk, and one supported next action instead of reconstructing context across chat logs | Proof Cards, Change Review, Plan-to-Proof findings, GitHub Checks, and handoff packets |
+| **Less frustrating rework** | Hollow validators, duplicate effects, resume drift, and out-of-plan changes are challenged closer to their source | Negative-test results, first-divergence facts, rejected candidates, and Proof Debt |
+| **Lower evidence-handling cost** | Reusable receipts and read-only dashboards reduce repeated screenshots, manual summaries, and status meetings | Receipt reuse decisions, governed-run records, assurance dossiers, and local Graph Ops views |
+| **Measurable savings when a baseline exists** | Teams can compare observed duration or cost with a declared baseline; otherwise savings stay unavailable | Bounded savings records that label source, baseline, observation window, and confidence |
+
+FactoryLine never converts an unmeasured estimate into a savings claim. Use the
+[Savings Tracker](docs/SAVINGS_TRACKER.md) to report observed time or cost only
+when the repository has a valid baseline and evidence window.
+
+For planning, a transparent starting band is **25–120 minutes of avoidable
+review and rework per AI-assisted PR**: roughly 10–30 minutes of reviewer
+context reconstruction plus 15–90 minutes of one preventable clarification,
+validator, or scope-rework loop. At 50 AI-assisted PRs per month, that models
+about **21–100 hours**; at a team-supplied loaded cost of $75–$150/hour, the
+illustrative range is about **$1,560–$15,000 per month**. These are adjustable
+scenario inputs, not observed FactoryLine results. See the
+[outcomes and savings model](docs/OUTCOMES_MODEL.md) before using the range.
+
+![Code Factory 60-day personal case study: observed local Codex metadata and a clearly separated modeled capacity range](docs/assets/marketplace/code-factory-60-day-personal-case-study.png)
+
+## Works with your existing AI development stack
+
+FactoryLine is the proof and control layer around generation, orchestration, and
+review tools. The status column distinguishes implemented adapters from clean
+workflow fits; it does not imply a vendor partnership.
+
+| Product or stack | What it does well | Where FactoryLine adds value | Current connection status |
+| --- | --- | --- | --- |
+| **Blitzy** | Large codebase understanding, reviewed action plans, autonomous generation, validation, and PR creation | Seal the approved plan, compare it with the exact resulting diff, challenge declared tests, and attach a neutral proof walkthrough before human merge | **Workflow fit.** Use repository artifacts and PR Checks; no bundled Blitzy API adapter or claimed partnership |
+| **CodeRabbit** | AI review comments and remediation suggestions across the pull request | Supply deterministic FactoryLine Check results, proof gaps, and Proof Debt beside the AI review without treating suggestions as evidence | **Documented interoperability.** GitHub Checks are the boundary; no CodeRabbit credential or API is required |
+| **Mastra** | TypeScript agents, tools, memory, workflows, and MCP clients/servers | Expose read-only local proof context through MCP, then verify the resulting repository diff and declared tests independently | **Protocol-level fit.** Mastra supports MCP; a dedicated FactoryLine-Mastra adapter is not bundled or claimed tested |
+| **LangGraph** | Durable, stateful agent orchestration with checkpoints and human-in-the-loop control | Compare sealed reference and resumed transition lineages, detect duplicate effects or unsafe parallel writes, and keep receipts authoritative over checkpoints | **Native optional support.** LangGraph Assurance Bridge, optional adapter, GitHub Action, and cross-agent plugin are included |
+| **Codex, Claude Code, and Deep Agents** | Interactive or autonomous repository implementation | Admit scoped work, wrap the local CLI process, hash the file delta, run independent validators, and feed Agent License / Combine | **Included paths.** Local wrapper, read-only MCP, LangGraph plugin, and optional Claude session trace |
+| **Cursor and OpenCode** | IDE- or terminal-based AI coding with MCP clients | Read bounded FactoryLine receipt, verifier, PRD, memory-brief, and Graph Ops facts without granting write or release authority | **Documented local MCP setup.** Stdio-only and read-only |
+| **DeepSeek Harness** | Model session and tool lifecycle | Add FactoryLine’s local proof facts while keeping the harness responsible for the agent lifecycle | **Opt-in adapter.** Developer-preview upstream boundary is explicit |
+
+See the [complete compatibility and handoff guide](docs/WORKS_WITH.md) for the
+recommended flow and the exact authority boundary for each stack.
 
 **For teams:** use the [Teams and Enterprise Operations Manual](docs/ENTERPRISE_TEAMS_OPERATIONS.md)
 to run the same proof-first loop with named reviewers, approved AI-change scope,
@@ -272,7 +378,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.44.0.md),
+- See the [release notes](docs/RELEASE_NOTES_0.44.3.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

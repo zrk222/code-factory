@@ -20,9 +20,11 @@
       --focus: #075fd8;
     }
     * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
+    html { max-width: 100%; overflow-x: clip; scroll-behavior: smooth; }
     body {
       margin: 0;
+      max-width: 100%;
+      overflow-x: clip;
       color: var(--ink);
       background: radial-gradient(circle at 80% 6%, #ffe8b6 0, transparent 30%), var(--paper);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -64,8 +66,9 @@
     .card h3 { margin: 12px 0 8px; font-size: 1.28rem; }
     .card p { margin: 0; color: var(--muted); font-size: 1rem; }
     .proof { display: grid; grid-template-columns: 1fr 1fr; gap: 38px; align-items: center; padding: clamp(30px, 6vw, 64px); border-radius: var(--radius); background: var(--ink); color: white; }
+    .proof > * { min-width: 0; }
     .proof p { color: #d9d3c7; }
-    pre { overflow-x: auto; margin: 0; padding: 24px; border: 1px solid rgba(255,255,255,.14); border-radius: 18px; background: #0d0d0b; color: #ffd47c; font: 600 .95rem/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    pre { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; margin: 0; padding: 24px; border: 1px solid rgba(255,255,255,.14); border-radius: 18px; background: #0d0d0b; color: #ffd47c; font: 600 .95rem/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
     .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
     .gallery img { display: block; width: 100%; border-radius: 18px; border: 1px solid var(--line); background: var(--cream); }
     .boundary { margin-top: 18px; color: var(--muted); font-size: .95rem; text-align: center; }
@@ -107,7 +110,7 @@
       <div>
         <div class="eyebrow">Open source · Local first · Evidence backed</div>
         <h1>Catch the test that could never fail.</h1>
-        <p class="lede"><strong>Free, local proof for code built with AI.</strong> Start with an outcome, a fuzzy PRD, or a risky diff. Bind declared intent, challenge whether a test can actually reject its claimed failure, and route a declared novel boundary to the right senior attention before a human decides what may be applied.</p>
+        <p class="lede"><strong>One command answers one question: can this test actually fail?</strong> Run a safe negative-control demonstration, receive a local receipt, and see what trustworthy evidence looks like before relying on AI-generated tests. Your project is not uploaded or changed.</p>
         <div class="actions">
           <a class="button primary" href="#first-run">Run your first local proof</a>
           <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md">See actual Factory Studio</a>
@@ -195,6 +198,21 @@ factory gauntlet card verify .factory/gauntlets/&lt;source&gt;/&lt;card&gt;.card
       </div>
     </section>
 
+    <section id="journey-proof">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Journey proof · audited healing</div>
+          <h2>Prove the real journey. Audit the agent that repairs it.</h2>
+          <p>Journey Reality compares declared and observed states, transitions, requirements, and outcomes without turning missing evidence into success. Failure Capsules keep the failed step and adjacent evidence bounded. Stateful Workflow Proof checks producer and consumer state, cleanup, and idempotency. Healing stays human-controlled or supervised-auto, and a candidate is accepted only when its positive proof passes, its negative control fails, and the repairing agent passes an independent scope-and-evidence audit.</p>
+          <p>BYOK and local execution remain the default. A future managed tier must use the same verifier. No mode grants approval, merge, release, credential, or production authority.</p>
+        </div>
+        <pre><code>factory journey reality declared.json observed.json --root . --json
+factory journey capsule failure.json --root . --json
+factory journey workflow-proof workflow.json --root . --json
+factory journey heal-verify request.json --root . --json</code></pre>
+      </div>
+    </section>
+
     <section id="proofsearch">
       <div class="shell proof">
         <div>
@@ -216,15 +234,29 @@ factory proofsearch frontier plan frontier.request.json \
     <section id="tour">
       <div class="shell">
         <div class="section-head">
-          <h2>From first MVP to the exact proof path.</h2>
-          <p>These are real local product captures, not concept art or a simulated IDE. The Marketplace media set remains IDE-native and review-gated.</p>
+          <h2>See FactoryLine 0.44 operating—not just described.</h2>
+          <p>These are current local product captures: the live Graph Ops dashboard, the complete JetBrains controls, and a successful IDE First Proof.</p>
         </div>
         <div class="gallery">
-          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" alt="Factory Studio showing the outcome-first MVP and professional workflow tabs.">
-          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-proofsearch.png" alt="Graph Ops Counterfactual Arena showing candidate evidence, deterministic rejection reasons, and a verified winner.">
-          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-evidence-frontier.png" alt="Graph Ops Evidence Frontier showing ranked next-evidence hypotheses and a locked experiment control.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-0.44-live-dashboard.png" alt="FactoryLine 0.44 Graph Ops dashboard showing a waiting-for-human assembly and evidence-backed next actions.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg" alt="FactoryLine AI Proof controls in IntelliJ IDEA for proofs, assemblies, receipts, Change Lists, workspace analysis, and the local meter.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg" alt="FactoryLine AI Proof completing a successful local First Proof in IntelliJ IDEA.">
           <article class="card"><span>First local run</span><h3>Run First Proof</h3><p>Run one local command in a disposable sandbox. The healthy control passes; the hollow negative control is caught and bound to a privacy-safe Proof Card.</p><p><a href="#first-run">Run the demo →</a> · <a href="https://github.com/zrk222/code-factory/blob/main/docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md">Marketplace kit</a></p></article>
         </div>
+      </div>
+    </section>
+
+    <section id="personal-case">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Observed creator use</div>
+          <h2>One 60-day case, with the estimate separated from the evidence.</h2>
+          <p>Local Codex metadata identified 25 FactoryLine-related tasks, 133 completed turns, 2,710 command runs, 785 MCP or app calls, and 555 file-change events. A transparent counterfactual model estimates 30–110 hours of gross manual-equivalent capacity over 60 days after a 50% overlap haircut. This is a one-user case, not a benchmark or guaranteed ROI; net savings must subtract tool cost and human oversight.</p>
+          <div class="actions">
+            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/OUTCOMES_MODEL.md">Inspect the assumptions</a>
+          </div>
+        </div>
+        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/code-factory-60-day-personal-case-study.png" alt="Code Factory 60-day personal case study separating observed local Codex metadata from a modeled capacity range.">
       </div>
     </section>
 
@@ -311,7 +343,7 @@ factory proofs plan proofs.json --changed src/app.py \
           <div class="actions">
             <a class="button" href="https://pypi.org/project/factoryline-code-factory/">Run your first local proof</a>
             <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md">See actual Factory Studio</a>
-            <a class="button" href="https://plugins.jetbrains.com/plugin/33009-factoryline">Explore FactoryLine for JetBrains</a>
+            <a class="button" href="https://plugins.jetbrains.com/plugin/33009-factoryline-ai-proof">Explore FactoryLine for JetBrains</a>
           </div>
         </div>
         <pre><code>pip install factoryline-code-factory
@@ -330,7 +362,7 @@ factory studio --root .\my-mvp
         </div>
         <pre><code>Marketplace count: check the current listing
 Unique installs: not exposed by the listing
-0.8.4 Marketplace update: pending approval; 0.8.6 remains a GitHub release artifact until that review clears
+0.8.17 Marketplace update: under review
 
 Never substitute CI or repository traffic for installs.</code></pre>
       </div>
@@ -339,15 +371,18 @@ Never substitute CI or repository traffic for installs.</code></pre>
     <section>
       <div class="shell">
         <div class="section-head">
-          <h2>Actual product captures, not a simulated dashboard.</h2>
-          <p>Use the product surfaces above to inspect the outcome-first MVP path and the current Graph Ops proof state.</p>
+          <h2>Current product evidence, including the creator's own case.</h2>
+          <p>Inspect the live 0.44 operations surface, the real JetBrains workflow, and a bounded 60-day personal-use example.</p>
         </div>
         <div class="gallery">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-0.44-live-dashboard.png" alt="Current FactoryLine 0.44 Graph Ops dashboard.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg" alt="Current FactoryLine AI Proof IntelliJ workflow in action.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/code-factory-60-day-personal-case-study.png" alt="One-user 60-day Code Factory case study with observed metadata and modeled capacity clearly separated.">
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/factoryline-logo-480.png" alt="Current FactoryLine blue logo with a green verification check.">
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factory-studio-mvp-1280x800.png" alt="Actual Factory Studio for a local outcome-first MVP.">
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-studio-1280x800.png" alt="Actual Factory Studio Graph Ops view with proof counts and next action.">
         </div>
-        <p class="boundary">Actual product capture set. It shows product behavior, not measured time, token, cost, productivity, conversion, Marketplace approval, or production-readiness evidence. <a href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md">Open the visual policy →</a></p>
+        <p class="boundary">Actual product capture set. The interface captures show actual product behavior. The case-study image separates observed metadata from an assumption-based capacity model; it is not universal productivity, cash-savings, conversion, Marketplace approval, or production-readiness evidence. <a href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md">Open the visual policy →</a></p>
       </div>
     </section>
 
@@ -363,7 +398,7 @@ Never substitute CI or repository traffic for installs.</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.44.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.44.0">Release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.44.3 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.44.3">Release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

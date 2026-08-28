@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "name": "forgeline_intent_receipt_integrity_contract",
+      "kind": "python",
+      "run": "from pathlib import Path; source=Path('factoryline/graph_ops.py').read_text(encoding='utf-8'); page=Path('factoryline/graph_ops.html').read_text(encoding='utf-8'); required=['REQ_INTENT_BINDING_VERIFY','REQ_INTENT_BINDING_FAIL_CLOSED','REQ_INTENT_BINDING_FACTS','REQ_INTENT_BINDING_UI','provenance_status','observed_forge_receipt_sha256','GRAPH_OPS_INTENT_ADAPTER_MISMATCH','Receipt binding mismatch','GRAPH_OPS_INTENT_BINDING_NO_INNERHTML']; assert all(item in source+page for item in required) and 'innerHTML' not in page",
+      "expect_exit": 0,
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    }
+  ]
+}
