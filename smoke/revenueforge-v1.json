@@ -1,0 +1,23 @@
+{
+  "checks": [
+    {
+      "name": "revenueforge_contract",
+      "kind": "python",
+      "run": "from pathlib import Path\nsource=Path('factoryline/revenueforge.py').read_text(encoding='utf-8')\nrequired=['REVENUEFORGE_MANIFEST_VALIDATED','REVENUEFORGE_BUNDLE_WRITTEN','REVENUEFORGE_SERVER_SCAFFOLD_WRITTEN','REVENUEFORGE_PAYWALL_SCAFFOLD_WRITTEN','REVENUEFORGE_BENCHMARK_WITHHELD']\nassert all(item in source for item in required)\nassert 'requests.post' not in source and '\"app_store_connect_write\": True' not in source\n",
+      "expect_exit": 0,
+      "timeout_s": 30,
+      "must_fail_on_stub": true,
+      "covers": ["REQ-RF-001", "REQ-RF-002", "REQ-RF-003", "REQ-RF-004", "REQ-RF-005", "REQ-RF-007", "REQ-RF-009", "REQ-RF-010"]
+    },
+    {
+      "name": "revenueforge_behavior",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_revenueforge.py','tests/test_revenueforge_cli.py'])\nassert result==0\nprint('REVENUEFORGE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "REVENUEFORGE_PASS",
+      "timeout_s": 120,
+      "must_fail_on_stub": true,
+      "covers": ["REQ-RF-006", "REQ-RF-008"]
+    }
+  ]
+}

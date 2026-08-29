@@ -104,6 +104,13 @@ from .proof_review_workflow import (
     verify_quick_review,
     verify_trajectory,
 )
+from .revenueforge import (
+    RevenueForgeError,
+    benchmark_cell,
+    build_revenue_bundle,
+    plan_growth,
+    validate_products,
+)
 from .developer_memory import developer_memory_brief
 from .intent_ledger import IntentLedgerError, capture_intent_ledger, inspect_intent_ledger
 from .judgment import JudgmentError, judgment_status, promote_capsule, propose_capsule, reconsider_capsule, safety_case
@@ -1295,6 +1302,27 @@ def main(argv=None) -> int:
     proof_review_card_verify = proof_review_sub.add_parser("card-verify", help="verify a proof card offline")
     proof_review_card_verify.add_argument("card")
     proof_review_card_verify.add_argument("--json", action="store_true")
+
+    revenue = sub.add_parser("revenue", help="validate and generate human-governed iOS monetization artifacts")
+    revenue_sub = revenue.add_subparsers(required=True, dest="revenue_cmd")
+    revenue_validate = revenue_sub.add_parser("validate", help="validate products.yaml and deterministic disclosure gates")
+    revenue_validate.add_argument("--root", default=".")
+    revenue_validate.add_argument("--products", required=True)
+    revenue_validate.add_argument("--json", action="store_true")
+    revenue_build = revenue_sub.add_parser("build", help="generate RevenueKit, paywall, entitlement-server, and evidence scaffolds")
+    revenue_build.add_argument("--root", default=".")
+    revenue_build.add_argument("--products", required=True)
+    revenue_build.add_argument("--out-dir", default=".factory/revenueforge/default")
+    revenue_build.add_argument("--json", action="store_true")
+    revenue_growth = revenue_sub.add_parser("growth-plan", help="compile provider-write-free Phase 8 growth operations")
+    revenue_growth.add_argument("--root", default=".")
+    revenue_growth.add_argument("--products", required=True)
+    revenue_growth.add_argument("--growth", required=True)
+    revenue_growth.add_argument("--out")
+    revenue_growth.add_argument("--json", action="store_true")
+    revenue_benchmark = revenue_sub.add_parser("benchmark", help="publish a benchmark cell only at k >= 20 distinct apps")
+    revenue_benchmark.add_argument("--records", required=True)
+    revenue_benchmark.add_argument("--json", action="store_true")
 
     intent = sub.add_parser("intent", help="capture or inspect a human-confirmed, local Change List behavioral contract")
     intent_sub = intent.add_subparsers(required=True, dest="intent_cmd")
@@ -3645,6 +3673,37 @@ def main(argv=None) -> int:
         if a.proof_review_cmd in {"verify", "trajectory-verify", "card-verify"} and not payload.get("ok"):
             return 1
         return 0
+    if a.cmd == "revenue":
+        try:
+            root = Path(getattr(a, "root", ".")).resolve()
+            if a.revenue_cmd == "validate":
+                payload = validate_products(root, Path(a.products))
+            elif a.revenue_cmd == "build":
+                payload = build_revenue_bundle(root, Path(a.products), Path(a.out_dir))
+            elif a.revenue_cmd == "growth-plan":
+                payload = plan_growth(root, Path(a.products), Path(a.growth))
+                if a.out:
+                    out = Path(a.out)
+                    out = out.resolve() if out.is_absolute() else (root / out).resolve()
+                    out.relative_to(root)
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                    payload = {**payload, "path": str(out)}
+            else:
+                records = json.loads(Path(a.records).read_text(encoding="utf-8-sig"))
+                payload = benchmark_cell(records)
+        except (RevenueForgeError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            error = {"schema": "factory.revenueforge.error.v1", "marker": "REVENUEFORGE_REFUSED", "code": getattr(exc, "code", "REVENUEFORGE_INPUT_INVALID"), "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"revenue {a.revenue_cmd} refused: {error['code']}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(payload.get("marker", "REVENUEFORGE_OK"))
+            if payload.get("receipt_sha256"):
+                print(f"receipt     : {payload['receipt_sha256']}")
+            print("authority   : no App Store write, offer send, experiment promotion, review publication, deployment, or credential access")
+        return 0 if payload.get("ok", True) else 1
     if a.cmd == "intent":
         root = Path(a.root)
         try:

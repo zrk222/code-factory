@@ -1,0 +1,11 @@
+experiments:
+  - id: onboarding-value
+    treatments:
+      - id: benefit-led
+      - id: proof-led
+custom_product_pages:
+  - id: teams
+    audience: engineering teams
+offers:
+  - id: win-back-30
+    cohort: lapsed-30-days

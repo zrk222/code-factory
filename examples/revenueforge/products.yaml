@@ -1,0 +1,26 @@
+app:
+  name: Example App
+  bundle_id: com.example.app
+products:
+  - id: com.example.pro.monthly
+    display_name: Pro Monthly
+    type: auto_renewable
+    duration: P1M
+    group: pro
+    entitlements: [pro]
+    offers:
+      - id: seven-day-trial
+        type: free_trial
+        duration: P1W
+paywall:
+  value_before_price: true
+  price_and_duration_before_cta: true
+  single_primary_cta: true
+  restore_purchases: true
+  patterns: []
+legal:
+  privacy_policy_url: https://example.com/privacy
+  terms_url: https://example.com/terms
+privacy:
+  purchase_history_linked: true
+  purpose: app_functionality

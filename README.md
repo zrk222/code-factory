@@ -218,6 +218,10 @@ the evidence behind prior work. Graph Ops can replay only redacted, current,
 independently promoted metadata; it does not store private source, prompts,
 embeddings, or transcripts, and it cannot execute a repair.
 
+## Revenue-ready iOS scaffolds
+
+`factory revenue build` turns one reviewed `products.yaml` into StoreKit 2, a transparent SwiftUI paywall, an Apple-JWS-verifying entitlement-server scaffold, privacy/review artifacts, and a local evidence page. App Store writes, pricing, experiments, offers, publication, and credentials stay human-controlled. See [RevenueForge](docs/REVENUEFORGE.md).
+
 ## Install
 
 ```powershell
