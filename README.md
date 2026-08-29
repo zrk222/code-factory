@@ -41,6 +41,9 @@ receipt and a privacy-safe Proof Card; it does not assess or change your project
   and signed terms exist.
 
 When you need more than the first proof, open the [advanced workflow guide](docs/OVERVIEW.md).
+For one agent-neutral human review path, use [`factory proof-review`](docs/PROOF_REVIEW_WORKFLOW.md)
+to seal intent, audit trajectory evidence, route the change, learn confirmed
+regressions, inspect the team inbox, and export a tamper-evident Proof Card.
 To create a contained starter later, run
 `factory mvp "Build an approval tracker" --root .`.
 That starter is never called production-ready until the relevant proof exists.

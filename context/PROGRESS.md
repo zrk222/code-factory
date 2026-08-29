@@ -471,3 +471,5 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-25 05:55] GATE plan journey-proof-engine-v1 approver=human tasks=1 sha=652ecafb3c96ec63
 - [2026-08-25 06:12] GATE spec journey-proof-engine-v1 approver=human strict=True sha=2153e64a5da6f827
 - [2026-08-25 06:12] GATE plan journey-proof-engine-v1 approver=human tasks=1 sha=2153e64a5da6f827
+- [2026-08-29 16:59] GATE spec proof-review-workflow-v1 approver=human strict=True sha=faf72dc4598a70f3
+- [2026-08-29 17:01] GATE plan proof-review-workflow-v1 approver=human tasks=8 sha=faf72dc4598a70f3

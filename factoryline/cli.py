@@ -91,6 +91,19 @@ from .continuous_proof import (
     continuous_proof_history,
     verify_continuous_proof,
 )
+from .proof_review_workflow import (
+    ProofReviewError,
+    create_intent_contract,
+    create_proof_card,
+    create_quick_review,
+    install_hook_pack,
+    promote_regression,
+    prove_trajectory,
+    team_proof_inbox,
+    verify_proof_card,
+    verify_quick_review,
+    verify_trajectory,
+)
 from .developer_memory import developer_memory_brief
 from .intent_ledger import IntentLedgerError, capture_intent_ledger, inspect_intent_ledger
 from .judgment import JudgmentError, judgment_status, promote_capsule, propose_capsule, reconsider_capsule, safety_case
@@ -1226,6 +1239,62 @@ def main(argv=None) -> int:
     proof_ops_history = proof_ops_sub.add_parser("history", help="aggregate verified local proof routes without user or savings inference")
     proof_ops_history.add_argument("--root", default=".")
     proof_ops_history.add_argument("--json", action="store_true")
+
+    proof_review = sub.add_parser("proof-review", help="seal intent, review agent work, and route one human-controlled proof workflow")
+    proof_review_sub = proof_review.add_subparsers(required=True, dest="proof_review_cmd")
+    proof_review_contract = proof_review_sub.add_parser("contract", help="seal one complete, named-human-confirmed intent contract")
+    proof_review_contract.add_argument("--root", default=".")
+    proof_review_contract.add_argument("--id", required=True)
+    proof_review_contract.add_argument("--draft", required=True)
+    proof_review_contract.add_argument("--confirmed-by", required=True)
+    proof_review_contract.add_argument("--json", action="store_true")
+    proof_review_quick = proof_review_sub.add_parser("quick", help="join intent and current evidence into a four-route review")
+    proof_review_quick.add_argument("--root", default=".")
+    proof_review_quick.add_argument("--id", required=True)
+    proof_review_quick.add_argument("--contract", required=True)
+    proof_review_quick.add_argument("--changed", action="append", required=True)
+    proof_review_quick.add_argument("--session")
+    proof_review_quick.add_argument("--trajectory")
+    proof_review_quick.add_argument("--repair-scope")
+    proof_review_quick.add_argument("--repair-patch")
+    proof_review_quick.add_argument("--prior-receipt")
+    proof_review_quick.add_argument("--session-phase", choices=["change", "post_repair"], default="change")
+    proof_review_quick.add_argument("--json", action="store_true")
+    proof_review_verify = proof_review_sub.add_parser("verify", help="verify a proof review and every bound receipt")
+    proof_review_verify.add_argument("review")
+    proof_review_verify.add_argument("--root", default=".")
+    proof_review_verify.add_argument("--json", action="store_true")
+    proof_review_hooks = proof_review_sub.add_parser("hooks", help="write five reviewable agent-hook templates without installing them")
+    proof_review_hooks.add_argument("--root", default=".")
+    proof_review_hooks.add_argument("--json", action="store_true")
+    proof_review_trajectory = proof_review_sub.add_parser("trajectory", help="seal and independently audit a bounded agent trajectory")
+    proof_review_trajectory.add_argument("--root", default=".")
+    proof_review_trajectory.add_argument("--id", required=True)
+    proof_review_trajectory.add_argument("--trace", required=True)
+    proof_review_trajectory.add_argument("--policy", required=True)
+    proof_review_trajectory.add_argument("--json", action="store_true")
+    proof_review_trajectory_verify = proof_review_sub.add_parser("trajectory-verify", help="verify a trajectory proof and its bound inputs")
+    proof_review_trajectory_verify.add_argument("trajectory")
+    proof_review_trajectory_verify.add_argument("--root", default=".")
+    proof_review_trajectory_verify.add_argument("--json", action="store_true")
+    proof_review_learn = proof_review_sub.add_parser("learn", help="promote one confirmed causal failure into an immutable regression capsule")
+    proof_review_learn.add_argument("--root", default=".")
+    proof_review_learn.add_argument("--id", required=True)
+    proof_review_learn.add_argument("--review", required=True)
+    proof_review_learn.add_argument("--confirmed-by", required=True)
+    proof_review_learn.add_argument("--title", required=True)
+    proof_review_learn.add_argument("--json", action="store_true")
+    proof_review_inbox = proof_review_sub.add_parser("inbox", help="read the bounded team proof inbox")
+    proof_review_inbox.add_argument("--root", default=".")
+    proof_review_inbox.add_argument("--json", action="store_true")
+    proof_review_card = proof_review_sub.add_parser("card", help="export an offline-verifiable public-safe proof card")
+    proof_review_card.add_argument("--root", default=".")
+    proof_review_card.add_argument("--id", required=True)
+    proof_review_card.add_argument("--review", required=True)
+    proof_review_card.add_argument("--json", action="store_true")
+    proof_review_card_verify = proof_review_sub.add_parser("card-verify", help="verify a proof card offline")
+    proof_review_card_verify.add_argument("card")
+    proof_review_card_verify.add_argument("--json", action="store_true")
 
     intent = sub.add_parser("intent", help="capture or inspect a human-confirmed, local Change List behavioral contract")
     intent_sub = intent.add_subparsers(required=True, dest="intent_cmd")
@@ -3522,6 +3591,58 @@ def main(argv=None) -> int:
             print(f"latest route     : {(payload['latest'] or {}).get('route', 'none')}")
             print("claim boundary   : records are not unique users; no savings are inferred")
         if a.proof_ops_cmd == "verify" and not payload["ok"]:
+            return 1
+        return 0
+    if a.cmd == "proof-review":
+        root = Path(getattr(a, "root", "."))
+        try:
+            if a.proof_review_cmd == "contract":
+                payload = create_intent_contract(root, a.id, Path(a.draft), a.confirmed_by)
+            elif a.proof_review_cmd == "quick":
+                payload = create_quick_review(
+                    root, a.id, Path(a.contract), a.changed,
+                    session_path=Path(a.session) if a.session else None,
+                    trajectory_path=Path(a.trajectory) if a.trajectory else None,
+                    repair_scope_path=Path(a.repair_scope) if a.repair_scope else None,
+                    repair_patch_path=Path(a.repair_patch) if a.repair_patch else None,
+                    prior_receipt_path=Path(a.prior_receipt) if a.prior_receipt else None,
+                    session_phase=a.session_phase,
+                )
+            elif a.proof_review_cmd == "verify":
+                payload = verify_quick_review(root, Path(a.review))
+            elif a.proof_review_cmd == "hooks":
+                payload = install_hook_pack(root)
+            elif a.proof_review_cmd == "trajectory":
+                payload = prove_trajectory(root, Path(a.trace), Path(a.policy), a.id)
+            elif a.proof_review_cmd == "trajectory-verify":
+                payload = verify_trajectory(root, Path(a.trajectory))
+            elif a.proof_review_cmd == "learn":
+                payload = promote_regression(root, Path(a.review), a.id, a.confirmed_by, a.title)
+            elif a.proof_review_cmd == "inbox":
+                payload = team_proof_inbox(root)
+            elif a.proof_review_cmd == "card":
+                payload = create_proof_card(root, Path(a.review), a.id)
+            else:
+                payload = verify_proof_card(Path(a.card))
+        except (ProofReviewError, OSError) as exc:
+            error = {
+                "schema": "factory.proof-review.error.v1",
+                "marker": "PROOF_REVIEW_REFUSED",
+                "code": getattr(exc, "code", "PROOF_REVIEW_INPUT_UNAVAILABLE"),
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"proof-review {a.proof_review_cmd} refused: {error['code']}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"{payload.get('marker', 'PROOF_REVIEW_OK')}")
+            if payload.get("route"):
+                print(f"route       : {payload['route']}")
+            if payload.get("artifact"):
+                print(f"artifact    : {payload['artifact']}")
+            print("authority   : human review remains required; no execution, approval, merge, publication, deployment, credential, connector, or network action")
+        if a.proof_review_cmd in {"verify", "trajectory-verify", "card-verify"} and not payload.get("ok"):
             return 1
         return 0
     if a.cmd == "intent":
