@@ -1,0 +1,29 @@
+feature: continuous-proof-operations-v1
+version: "1.0"
+intent: "Unify intent, change, observed-session, and repair evidence into one fail-closed local operations record without granting approval authority."
+requirements:
+  - id: REQ_CPO_BINDINGS
+    description: "Every intent, session, repair, and review input is hash-bound and workspace-contained."
+    invariant: "REQ_CPO_BINDINGS"
+    checks: ["factory.continuous-proof.v1", "intent", "sha256", "changed_paths", "review_sha256"]
+  - id: REQ_CPO_ROUTING
+    description: "Missing, failed, repaired, and ready evidence produce closed deterministic routes."
+    invariant: "REQ_CPO_ROUTING"
+    checks: ["evidence_required", "human_required", "reverification_required", "review_ready"]
+  - id: REQ_CPO_VERIFY
+    description: "Receipt or bound-input drift fails verification closed."
+    invariant: "REQ_CPO_VERIFY"
+    checks: ["CONTINUOUS_PROOF_VERIFIED", "CONTINUOUS_PROOF_INVALID", "CONTINUOUS_PROOF_STALE"]
+  - id: REQ_CPO_AUTHORITY
+    description: "Continuous Proof Operations never executes, repairs, approves, merges, or releases."
+    invariant: "REQ_CPO_AUTHORITY"
+    checks: ["authority", "execution", "approval", "patch_apply", "merge", "deployment"]
+  - id: REQ_CPO_GRAPH
+    description: "Graph Ops reports bounded verified history without granting new authority."
+    invariant: "REQ_CPO_GRAPH"
+    checks: ["continuous_proof", "GRAPH_OPS_CONTINUOUS_PROOF_READ_ONLY"]
+gates:
+  - type: test
+    command: "py -3.11 -m pytest -q tests/test_continuous_proof.py tests/test_change_review.py tests/test_graph_ops.py"
+  - type: smoke
+    command: "py -3.11 -c \"from factoryline.continuous_proof import CONTINUOUS_PROOF_SCHEMA; assert CONTINUOUS_PROOF_SCHEMA == 'factory.continuous-proof.v1'\""

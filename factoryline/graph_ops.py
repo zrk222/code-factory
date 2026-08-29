@@ -33,6 +33,7 @@ from .combine import combine_projection
 from .judgment import judgment_projection
 from .external_evidence import ExternalEvidenceError, verify_external_runtime_receipt
 from .journey_proof import journey_proof_status
+from .continuous_proof import continuous_proof_projection
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -1791,6 +1792,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     external_evidence = _append_external_evidence(state, workspace)
     journey_proofs = _append_journey_proofs(state, workspace)
     intent_traces = _append_intent_traces(state, workspace)
+    continuous_proof = continuous_proof_projection(workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
@@ -1798,12 +1800,17 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["journey_proof_count"] = journey_proofs["count"]
     facts["journey_proof_admissible_count"] = journey_proofs["admissible_count"]
     facts["journey_proof_invalid_count"] = journey_proofs["invalid_count"]
+    facts["continuous_proof_count"] = continuous_proof["count"]
+    facts["continuous_proof_invalid_count"] = continuous_proof["invalid_count"]
+    facts["continuous_proof_latest_route"] = (continuous_proof["latest"] or {}).get("route")
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
     markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     if journey_proofs["count"]:
         markers = sorted({*markers, "JOURNEY_STATUS_READ_ONLY", "GRAPH_OPS_JOURNEY_PROOF_READ_ONLY"})
+    if continuous_proof["count"] or continuous_proof["invalid_count"]:
+        markers = sorted({*markers, "CONTINUOUS_PROOF_HISTORY_READ_ONLY", "GRAPH_OPS_CONTINUOUS_PROOF_READ_ONLY"})
     base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
@@ -1839,6 +1846,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "admissions": admissions,
         "agent_supervision": agent_supervision,
         "judgment": judgment,
+        "continuous_proof": continuous_proof,
     }
     return {**core, "base_graph_sha256": base_graph_sha256, "graph_sha256": _sha(core), "mermaid": _mermaid(projected_nodes, projected_edges)}
 

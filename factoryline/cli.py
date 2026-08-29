@@ -85,6 +85,12 @@ from .proofsearch import ProofSearchError, create_proofsearch_plan, evaluate_pro
 from .evidence_frontier import EvidenceFrontierError, plan_evidence_frontier, verify_evidence_frontier
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
+from .continuous_proof import (
+    ContinuousProofError,
+    assess_continuous_proof,
+    continuous_proof_history,
+    verify_continuous_proof,
+)
 from .developer_memory import developer_memory_brief
 from .intent_ledger import IntentLedgerError, capture_intent_ledger, inspect_intent_ledger
 from .judgment import JudgmentError, judgment_status, promote_capsule, propose_capsule, reconsider_capsule, safety_case
@@ -1198,6 +1204,28 @@ def main(argv=None) -> int:
     change_review.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
     change_review.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
     change_review.add_argument("--json", action="store_true")
+
+    proof_ops = sub.add_parser("proof-ops", help="join intent, change, observed-session, and repair evidence into one local record")
+    proof_ops_sub = proof_ops.add_subparsers(required=True, dest="proof_ops_cmd")
+    proof_ops_assess = proof_ops_sub.add_parser("assess", help="write one fail-closed Continuous Proof Operations record without execution")
+    proof_ops_assess.add_argument("--root", default=".")
+    proof_ops_assess.add_argument("--workflow-id", required=True)
+    proof_ops_assess.add_argument("--intent", required=True, help="workspace-contained human-authored intent artifact")
+    proof_ops_assess.add_argument("--changed", action="append", required=True, help="exact workspace-relative changed path; repeat as needed")
+    proof_ops_assess.add_argument("--session", help="optional workspace-contained observed-session receipt")
+    proof_ops_assess.add_argument("--session-phase", choices=["change", "post_repair"], default="change")
+    proof_ops_assess.add_argument("--repair-scope", help="optional workspace-contained sealed repair scope; requires --repair-patch")
+    proof_ops_assess.add_argument("--repair-patch", help="optional workspace-contained textual patch; requires --repair-scope")
+    proof_ops_assess.add_argument("--prior-receipt", help="prior scoped-repair record for a post-repair verification cycle")
+    proof_ops_assess.add_argument("--out-dir", help="optional workspace-contained artifact directory")
+    proof_ops_assess.add_argument("--json", action="store_true")
+    proof_ops_verify = proof_ops_sub.add_parser("verify", help="verify one Continuous Proof Operations receipt and all bound bytes")
+    proof_ops_verify.add_argument("receipt")
+    proof_ops_verify.add_argument("--root", default=".")
+    proof_ops_verify.add_argument("--json", action="store_true")
+    proof_ops_history = proof_ops_sub.add_parser("history", help="aggregate verified local proof routes without user or savings inference")
+    proof_ops_history.add_argument("--root", default=".")
+    proof_ops_history.add_argument("--json", action="store_true")
 
     intent = sub.add_parser("intent", help="capture or inspect a human-confirmed, local Change List behavioral contract")
     intent_sub = intent.add_subparsers(required=True, dest="intent_cmd")
@@ -3446,6 +3474,55 @@ def main(argv=None) -> int:
             if review.get("artifacts"):
                 print(f"packet      : {review['artifacts']['paths']['markdown']}")
             print("authority   : no execution, merge, publication, deployment, or credential access")
+        return 0
+    if a.cmd == "proof-ops":
+        try:
+            if a.proof_ops_cmd == "assess":
+                payload = assess_continuous_proof(
+                    Path(a.root),
+                    a.workflow_id,
+                    Path(a.intent),
+                    a.changed,
+                    session_path=Path(a.session) if a.session else None,
+                    session_phase=a.session_phase,
+                    repair_scope_path=Path(a.repair_scope) if a.repair_scope else None,
+                    repair_patch_path=Path(a.repair_patch) if a.repair_patch else None,
+                    prior_receipt_path=Path(a.prior_receipt) if a.prior_receipt else None,
+                    out_dir=Path(a.out_dir) if a.out_dir else None,
+                )
+            elif a.proof_ops_cmd == "verify":
+                payload = verify_continuous_proof(Path(a.root), Path(a.receipt))
+            else:
+                payload = continuous_proof_history(Path(a.root))
+        except (ContinuousProofError, OSError) as exc:
+            error = {
+                "schema": "factory.continuous-proof.error.v1",
+                "marker": "CONTINUOUS_PROOF_REFUSED",
+                "code": getattr(exc, "code", "CONTINUOUS_PROOF_INPUT_UNAVAILABLE"),
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"proof-ops {a.proof_ops_cmd} refused: {error['code']}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        elif a.proof_ops_cmd == "assess":
+            print("factory continuous proof operations")
+            print("=" * 44)
+            print(f"route       : {payload['route']}")
+            print(f"next action : {payload['next_action']['action']}")
+            print(f"receipt     : {payload['artifacts']['json']}")
+            print("authority   : no execution, patch apply, approval, merge, publication, deployment, credential, connector, or network action")
+        elif a.proof_ops_cmd == "verify":
+            print(f"{payload['marker']} {payload.get('path', '')}")
+        else:
+            print("factory continuous proof history (read-only)")
+            print("=" * 44)
+            print(f"verified records : {payload['verified_record_count']}")
+            print(f"invalid or stale : {payload['invalid_or_stale_count']}")
+            print(f"latest route     : {(payload['latest'] or {}).get('route', 'none')}")
+            print("claim boundary   : records are not unique users; no savings are inferred")
+        if a.proof_ops_cmd == "verify" and not payload["ok"]:
+            return 1
         return 0
     if a.cmd == "intent":
         root = Path(a.root)

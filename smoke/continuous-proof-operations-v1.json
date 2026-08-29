@@ -1,0 +1,23 @@
+{
+  "checks": [
+    {
+      "name": "continuous_proof_contract",
+      "kind": "python",
+      "run": "from pathlib import Path; source=Path('factoryline/continuous_proof.py').read_text(encoding='utf-8'); required=['factory.continuous-proof.v1','evidence_required','human_required','reverification_required','review_ready','CONTINUOUS_PROOF_STALE','CONTINUOUS_PROOF_HISTORY_READ_ONLY']; assert all(item in source for item in required); assert 'subprocess' not in source and '\"approval\": True' not in source",
+      "expect_exit": 0,
+      "timeout_s": 30,
+      "must_fail_on_stub": true,
+      "covers": ["REQ_CPO_BINDINGS", "REQ_CPO_ROUTING", "REQ_CPO_VERIFY", "REQ_CPO_AUTHORITY"]
+    },
+    {
+      "name": "continuous_proof_behavior",
+      "kind": "python",
+      "run": "import pytest; result=pytest.main(['-q','tests/test_continuous_proof.py']); assert result==0; print('CONTINUOUS_PROOF_BEHAVIOR_PASS')",
+      "expect_exit": 0,
+      "expect_stdout": "CONTINUOUS_PROOF_BEHAVIOR_PASS",
+      "timeout_s": 120,
+      "must_fail_on_stub": true,
+      "covers": ["REQ_CPO_GRAPH"]
+    }
+  ]
+}
