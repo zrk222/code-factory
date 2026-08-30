@@ -11,7 +11,15 @@ hollow negative control caught in a disposable sandbox, then open
 `factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
-**New in 0.8.12:** Unified Graph Ops now shows SaaS Reality receipts: whether
+**New in 0.8.13:** AppForge + SaaS Mission Control turns a confirmed app story
+into a visible review path and checks 30 exact-build Apple policy and prior
+rejection classes before submission. Credential references—not raw secrets—can
+be handed to a supervised agent for evidence preparation; final TestFlight/App
+Review submission stays human-authorized. The workflow is designed to save
+avoidable rework/waiting time and minimize rejection risk, not guarantee Apple
+approval.
+
+Unified Graph Ops also shows SaaS Reality receipts: whether
 OAuth/OIDC identity, tenant authorization, checkout, verified webhook,
 entitlement, feature access, and revocation agree. The core works across
 standards-compliant providers, keeps unknowns blocked, rejects raw credentials,
@@ -103,7 +111,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.8.12.vsix
+code --install-extension factoryline-vscode-0.8.13.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

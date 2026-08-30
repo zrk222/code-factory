@@ -1,5 +1,17 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.20 - 2026-08-30
+
+- Add AppForge App Review readiness to the existing local proof workflow: exact
+  candidate binding, 30 Apple policy/rejection-regression gates, and explicit
+  required/not-applicable classification for conditional rules.
+- Surface AppForge/SaaS Mission Control in Graph Ops with a Nanna story path,
+  Prestige-oriented hierarchy, credential references instead of raw secrets,
+  and a supervised-agent preparation manifest.
+- Keep TestFlight upload and final App Review submission locked behind a
+  separate named, expiring human authorization. The gate minimizes avoidable
+  rejection risk; it does not guarantee Apple approval.
+
 ## 0.8.19 - 2026-08-30
 
 - Add native **Verify SaaS journey** and **View SaaS status** options plus the

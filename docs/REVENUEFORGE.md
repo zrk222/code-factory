@@ -13,6 +13,7 @@ factory revenue policy-watch --root . --registry apple-policy-registry.json --sn
 factory revenue memory-promote --root . --entry approved-lesson.json --out .factory/revenueforge/memory/restore-lesson.json --json
 factory revenue memory-query --root . --app-id com.example.app --journey restore --json
 factory revenue appforge-design --root . --brief appforge-design-brief.json --out-dir .factory/appforge/design --json
+factory revenue app-review-gate --root . --contract app-review-contract.json --evidence app-review-evidence.json --out .factory/appforge/app-review.json --json
 ```
 
 One `products.yaml` drives:
@@ -44,6 +45,10 @@ Graph Ops shows these receipts read-only. It offers no button that can purchase,
 `appforge-design` makes the human's audience, job, desired emotion, brand direction, and screen goals the source of truth. It writes an iOS storyboard plus a reusable design-director skill spanning seven review disciplines: visual direction, accessibility, SwiftUI design, motion, gestures, performance, and color psychology. A Nanna narrative spine organizes each experience through mission, tension, guidance, agency, transformation, and celebration, while deterministic guardrails prohibit storytelling from hiding price, consequence, system state, cancellation, or recovery.
 
 The output is a design and review contract, not a rendered app or an accessibility/performance/App Review claim. Device traces, assistive-technology task evidence, and human visual approval remain required.
+
+### App Review rejection-regression gate
+
+`app-review-gate` converts prior real failure classes into a reusable, sanitized stop-ship check. It binds observations to one bundle/version/build/commit and blocks when required device, commerce, design, metadata, privacy, legal, safety, reviewer-access, or export evidence is false, missing, or not a literal boolean `true`. Conditional Apple rules must be classified as required or explicitly not applicable with a named reviewer and rationale; they cannot disappear through omission. This helps improve app design and minimize avoidable App Store rejection risk because source-level correctness can no longer stand in for current-build reviewer-path evidence. It does **not** guarantee Apple approval and never uploads to TestFlight or submits for review.
 
 ## Fleet privacy
 

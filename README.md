@@ -38,6 +38,13 @@ receipt and a privacy-safe Proof Card; it does not assess or change your project
   from OAuth/OIDC identity and tenant access through checkout, verified webhook,
   entitlement, feature access, and revocation. Missing or contradictory evidence
   stays blocked, and the provider remains untouched.
+- **App builder:** use `factory revenue appforge-design` to turn confirmed user
+  intent into a story-led iOS storyboard, then run `factory revenue
+  app-review-gate` before submission. Thirty exact-build policy and regression
+  gates surface avoidable purchase, restore, iPad, screenshot, privacy,
+  accessibility, metadata, reviewer-access, and export gaps while there is still
+  time to fix them. It is designed to save days of review/rework waiting and
+  minimize avoidable rejection risk; it cannot guarantee Apple approval.
 - **Platform or assurance team:** evaluate local policy gates, evidence packets,
   expiring exceptions, and tenant boundaries in a controlled pilot. The free core
   is community-supported on a best-effort basis; the proposed enterprise support
@@ -45,6 +52,8 @@ receipt and a privacy-safe Proof Card; it does not assess or change your project
   and signed terms exist.
 
 When you need more than the first proof, open the [advanced workflow guide](docs/OVERVIEW.md).
+App and SaaS builders can open the standalone [AppForge App Review Gate guide](docs/APPFORGE_APP_REVIEW_GATE.md),
+or use the same receipts inside Code Factory Graph Ops, MCP, WebMCP, and supported IDE adapters.
 For one agent-neutral human review path, use [`factory proof-review`](docs/PROOF_REVIEW_WORKFLOW.md)
 to seal intent, audit trajectory evidence, route the change, learn confirmed
 regressions, inspect the team inbox, and export a tamper-evident Proof Card.
@@ -394,7 +403,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [0.45.0 release notes](docs/RELEASE_NOTES_0.45.0.md),
+- See the [0.45.1 release notes](docs/RELEASE_NOTES_0.45.1.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 
