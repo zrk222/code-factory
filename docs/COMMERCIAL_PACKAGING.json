@@ -1,5 +1,5 @@
 {
-  "schema": "factory.commercial-packaging.v1",
+  "schema": "factory.commercial-packaging.v2",
   "governance": {
     "classification": "human_controlled",
     "commercial_activation_authority": [
@@ -29,6 +29,33 @@
       ],
       "boundary": "Local proof remains free. It does not grant managed hosting, human review, delivery authority, or a compliance certification."
     },
+    "proof_pro": {
+      "state_marker": "COMMERCIAL_PROOF_PRO_SCHEDULED",
+      "availability": "scheduled_not_active",
+      "purchasable": false,
+      "pricing": {
+        "currency": "USD",
+        "monthly": 9,
+        "annual": 90,
+        "founding_monthly": 5.95,
+        "founding_annual": 60,
+        "founding_status": "grandfathered_early_adopter_offer"
+      },
+      "intended_outcome": "Advanced local proof, governed memory, IDE workflows, and supervised repair while the developer retains approval and release authority."
+    },
+    "appforge_builder": {
+      "state_marker": "COMMERCIAL_APPFORGE_BUILDER_SCHEDULED",
+      "availability": "scheduled_not_active",
+      "purchasable": false,
+      "pricing": {
+        "currency": "USD",
+        "monthly": 24,
+        "annual": 240,
+        "hosted_execution": "metered_separately"
+      },
+      "intended_outcome": "Proof Pro plus AppForge storyboards, design contracts, SaaS promise-to-permission proof, and Junie-compatible supervised missions.",
+      "boundary": "BYOK and local verification are subscription capabilities; model tokens, hosted agents, cloud builds, rendering, device services, and provider fees are not unlimited subscription usage."
+    },
     "team_proof_hub": {
       "state_marker": "COMMERCIAL_TEAM_NOT_SELLABLE",
       "availability": "design_partner_only",
@@ -37,8 +64,9 @@
         "state_marker": "COMMERCIAL_TEAM_PRICE_PROPOSED",
         "status": "proposed",
         "currency": "USD",
-        "range_per_active_pr_author_month": [12, 15],
-        "minimum_active_pr_authors": 5
+        "annual_commit_per_active_contributor_month": 20,
+        "monthly_per_active_contributor": 24,
+        "minimum_active_contributors": 3
       },
       "intended_outcome": "Shared proof history, team policy bundles, approval routing, and review-visible Proof Debt without replacing the team's merge authority.",
       "existing_foundations": [
@@ -59,8 +87,9 @@
       "availability": "discovery_only",
       "purchasable": false,
       "pricing": {
-        "status": "not_set",
-        "model": "annual_pilot_or_contract_only_after_separate_approval"
+        "status": "design_partner_hypothesis",
+        "model": "annual_pilot_or_contract_only_after_separate_approval",
+        "annual_design_partner_range_usd": [6000, 15000]
       },
       "intended_outcome": "A customer-specific assurance deployment with identity, evidence, approval, retention, and support boundaries agreed in writing.",
       "not_claimed": [

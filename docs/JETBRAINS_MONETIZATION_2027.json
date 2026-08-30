@@ -19,10 +19,29 @@
     "free_through": "2026-12-31T23:59:59-05:00",
     "paid_from": "2027-01-01",
     "model": "freemium",
-    "monthly_price_usd": 5.95,
-    "monthly_price_status": "owner_approved",
-    "annual_price_usd": 60.0,
-    "annual_price_status": "owner_approved",
+    "founding_proof_pro": {
+      "monthly_price_usd": 5.95,
+      "annual_price_usd": 60.0,
+      "status": "grandfathered_early_adopter_offer_not_active"
+    },
+    "proof_pro": {
+      "monthly_price_usd": 9.0,
+      "annual_price_usd": 90.0,
+      "status": "scheduled_not_active"
+    },
+    "appforge_builder": {
+      "monthly_price_usd": 24.0,
+      "annual_price_usd": 240.0,
+      "status": "scheduled_not_active",
+      "includes": "Proof Pro plus AppForge design contracts, SaaS proof, and supervised Junie handoff",
+      "hosted_execution": "metered_separately"
+    },
+    "team_assurance": {
+      "annual_commit_per_active_contributor_month_usd": 20.0,
+      "monthly_per_active_contributor_usd": 24.0,
+      "minimum_active_contributors": 3,
+      "status": "design_partner_hypothesis_not_active"
+    },
     "trial_days": 30,
     "trial_status": "planned",
     "taxes_and_currency_conversion": "calculated_by_JetBrains_at_checkout"
@@ -38,7 +57,7 @@
   },
   "feature_boundary": {
     "through_2026_12_31": "all_0_8_16_features_free",
-    "from_2027_01_01": "free_core_remains_available; licensed_entitlements_are_limited_to_optional_memory_and_enterprise_assurance_features",
+    "from_2027_01_01": "free_core_remains_available; founding Proof Pro may be grandfathered; standard Proof Pro, AppForge Builder, and Team Assurance remain subject to separate activation and Marketplace-compatible entitlement review",
     "source_license": "MIT OR Apache-2.0 remains unchanged",
     "privacy": "no new telemetry, source upload, credential storage, signing, or release authority"
   },

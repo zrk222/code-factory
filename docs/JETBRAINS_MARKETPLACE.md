@@ -21,7 +21,7 @@ submitting or replacing anything pending.
 - **Getting started:** `Tools | FactoryLine | Run First Proof`
 
 **Category position:** FactoryLine is an independent proof layer after AI coding
-and alongside static analysis. Junie can build; Qodana can inspect code,
+and alongside static analysis. Junie or Copilot can build; Qodana or SonarQube can inspect code,
 coverage, and configured thresholds; FactoryLine challenges whether a test and
 the supplied run evidence could actually reject a broken result. It does not
 replace, control, or imply JetBrains endorsement of either product.
@@ -115,3 +115,4 @@ python scripts/jetbrains_marketplace_measurement.py --json
 Without Marketplace impressions or page views, download conversion and causal
 uplift remain unavailable. Never substitute repository traffic or CI runs for
 Marketplace acquisition data.
+**Use your preferred coding agent and analyzer—FactoryLine independently decides whether their green result deserves trust.**

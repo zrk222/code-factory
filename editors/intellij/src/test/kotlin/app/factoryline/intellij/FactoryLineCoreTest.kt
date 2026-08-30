@@ -22,6 +22,17 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun aiAgentProofMissionKeepsJunieSupervisedAndVerificationIndependent() {
+        val mission = buildAiAgentProofMission("Scope: abc123\nSealed paths: 2")
+
+        assertTrue(mission.contains("Use this sealed local scope with Junie or another AI coding agent."))
+        assertTrue(mission.contains("Stop and ask before expanding scope."))
+        assertTrue(mission.contains("Do not delete, skip, weaken, or replace a failing test"))
+        assertTrue(mission.contains("FactoryLine will independently review"))
+        assertTrue(mission.endsWith("Scope: abc123\nSealed paths: 2"))
+    }
+
+    @Test
     fun saasRealityStatusIsProviderNeutralReadOnlyAndWorkspaceBound() {
         val root = Files.createTempDirectory("factoryline-saas-reality")
         assertEquals(listOf("saas", "status", "--root", root.toString(), "--json"), FactoryLineCommands.saasStatus(root))
@@ -241,6 +252,23 @@ class FactoryLineCoreTest {
             ),
             FactoryLineCommands.repairCandidate(root, scope, patch, outDir),
         )
+    }
+
+    @Test
+    fun proofAdapterAndHandshakeCommandsAreExplicitWorkspaceBoundAndSecretFree() {
+        val root = Files.createTempDirectory("factoryline-proof-adapter")
+        val scope = root.resolve(".factory/repair-sandboxes/scope.json")
+        val sarif = root.resolve("reports/sonar.sarif")
+        val e2e = root.resolve("receipts/e2e.json")
+
+        assertEquals(
+            listOf("mcp", "install", "--root", root.toString(), "--client", "copilot", "--confirmation", "INSTALL Copilot MCP", "--json"),
+            FactoryLineCommands.mcpInstall(root, "copilot"),
+        )
+        val command = FactoryLineCommands.jetbrainsHandshake(root, scope, listOf("src/service.py"), sarif, "sonarqube", e2e)
+        assertTrue(command.containsAll(listOf("jetbrains", "handshake", "--analysis-sarif", sarif.toString(), "--analysis-provider", "sonarqube", "--e2e-receipt", e2e.toString())))
+        assertTrue(command.containsAll(listOf("--changed", "src/service.py", "--scope", scope.toString())))
+        assertFalse(command.any { it.contains("token", ignoreCase = true) || it.contains("secret", ignoreCase = true) })
     }
 
     @Test

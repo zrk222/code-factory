@@ -1768,6 +1768,9 @@ def _append_admission_packets(state: dict[str, Any], root: Path) -> dict[str, in
 
 def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     """Compile a bounded graph snapshot from existing local files without writes."""
+    # Keep the optional handshake projection lazy: intent inspection reaches
+    # Change Review, which imports Graph Ops for impact analysis.
+    from .jetbrains_handshake import jetbrains_handshake_projection
     workspace = Path(root).resolve()
     state: dict[str, Any] = {
         "nodes": {}, "edges": [], "edge_keys": set(), "errors": [], "truncated": False,
@@ -1801,6 +1804,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     revenueforge = revenueforge_projection(workspace)
     appforge = appforge_design_projection(workspace)
     saas_proof = saas_proof_projection(workspace)
+    jetbrains_handshake = jetbrains_handshake_projection(workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
@@ -1821,6 +1825,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["appforge_design_invalid_count"] = appforge["invalid_count"]
     facts["saas_proof_current_count"] = saas_proof["current_count"]
     facts["saas_proof_invalid_count"] = saas_proof["invalid_count"]
+    facts["jetbrains_handshake_state"] = jetbrains_handshake["state"]
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
@@ -1837,6 +1842,8 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers = sorted({*markers, "GRAPH_OPS_APPFORGE_READ_ONLY"})
     if saas_proof["current_count"] or saas_proof["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_SAAS_PROOF_READ_ONLY"})
+    if jetbrains_handshake["state"] != "empty":
+        markers = sorted({*markers, "GRAPH_OPS_JETBRAINS_HANDSHAKE_READ_ONLY"})
     base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
@@ -1877,6 +1884,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "revenueforge": revenueforge,
         "appforge": appforge,
         "saas_proof": saas_proof,
+        "jetbrains_handshake": jetbrains_handshake,
     }
     return {**core, "base_graph_sha256": base_graph_sha256, "graph_sha256": _sha(core), "mermaid": _mermaid(projected_nodes, projected_edges)}
 

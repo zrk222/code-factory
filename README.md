@@ -329,10 +329,12 @@ The same local proof surface is discoverable in the [Official MCP Registry](docs
 as `io.github.zrk222/code-factory`; registry setup starts the public PyPI
 package over local stdio and never creates a hosted service or write authority.
 
-FactoryLine's core local proof workflow remains free. The owner-approved future
-JetBrains Freemium plan starts **January 1, 2027**, subject to Marketplace and
-activation gates: **$5.95 USD per named seat/month** or **$60 USD per named seat/year**
-for optional Memory and Enterprise Assurance entitlements. It is not
+FactoryLine's core local proof workflow remains free. The planned JetBrains
+Freemium transition starts **January 1, 2027**, subject to Marketplace and
+activation gates. Early adopters may retain **Founding Proof Pro at $5.95
+USD/month or $60 USD/year**; standard Proof Pro is planned at **$9/month or
+$90/year**, and AppForge Builder at **$24/month or $240/year**. Team Assurance
+is a separate $20-per-active-contributor annual-commit hypothesis. None is
 active today; no checkout, entitlement, or license enforcement exists. See the
 [Marketplace control-room guide](docs/JETBRAINS_CONTROL_ROOM.md) for the exact
 feature boundary and approval gates.
@@ -345,9 +347,10 @@ core are unchanged. See the [GitHub per-seat plan](docs/GITHUB_MONETIZATION_2026
 
 For Open VSX, the extension and local proof core remain free. All capabilities
 shipped before the transition are free through **December 14, 2026**. From
-**December 15, 2026**, optional hosted Personal Memory is scheduled at **$4.95
-USD/month**, and Team Assurance at **$5.95 USD per named seat/month** or **$60
-USD per named seat/year**, subject to explicit activation gates. See the
+**December 15, 2026**, Founding Proof Pro may remain **$5.95/month or $60/year**
+for early adopters; standard Proof Pro is planned at **$9/month or $90/year**,
+AppForge Builder at **$24/month or $240/year**, and Team Assurance at **$20 per
+active contributor/month annually or $24 monthly**, subject to explicit activation gates. See the
 [Open VSX service plan](docs/OPEN_VSX_MONETIZATION_2026.md).
 
 ## The proof boundary

@@ -11,7 +11,7 @@ Start with **Tools > FactoryLine > Run First Proof**, then run
 starting state until product-specific proof exists.
 
 FactoryLine is the independent proof layer after an AI coding agent and beside
-static analysis. Junie can plan and implement; Qodana can report inspections,
+static analysis. Junie or Copilot can plan and implement; Qodana or SonarQube can report inspections,
 coverage, and quality thresholds; FactoryLine asks a different question:
 could the test and supplied run evidence actually reject a broken result? It
 does not replace, control, or imply endorsement by either JetBrains product.
@@ -32,7 +32,9 @@ does not replace, control, or imply endorsement by either JetBrains product.
 - `FactoryLine: Review This File` runs the same analysis with an explicit active-editor path, so a developer can exclude unrelated local work from the review scope.
 - `FactoryLine: Save Review Handoff` writes the exact review JSON, Markdown, and Mermaid map below `.factory/change-reviews/` only after a second workspace confirmation. It is a local handoff packet, not an approval or an automatic repair.
 - `FactoryLine: Prepare Verified Repair Sandbox` selects one native Change List, seals its exact project paths and measured bytes in a local Scope Passport, then permits an explicit textual candidate-patch check. It never calls an AI runner, estimates token/credit savings, applies a patch, runs a test, or commits.
-- The Repair Sandbox can copy its current local proof context for a manual AI Chat paste, plus a local stdio MCP configuration. Neither action configures AI, uploads source, consumes AI credits, or grants execution authority.
+- The Repair Sandbox can copy a sealed **AI Agent Proof Mission** for a manual agent paste, install a secret-free project Junie MCP entry or GitHub Copilot proof agent, then route the returned native Change List and Qodana or SonarQube SARIF into independent Proof Review. The mission forbids silent scope expansion and weakening a failing test merely to get green. None of these actions starts AI, reads a chat, uploads source, consumes AI credits, or grants execution authority.
+
+**Use your preferred coding agent and analyzer—FactoryLine independently decides whether their green result deserves trust.**
 - `FactoryLine: Open Latest Receipt` shows the newest JSON receipt below `.factory/` or `receipts/`.
 - `FactoryLine: Check Latest Receipt Signature State` runs `factory receipt status` on that receipt. It reports signature presence or `UNSIGNED`; it does not claim signer identity.
 - `FactoryLine: Open Local Factory Studio` opens the confirmed loopback target compiler.

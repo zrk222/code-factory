@@ -200,6 +200,31 @@ object FactoryLineCommands {
         "--out", out.toString(), "--json",
     )
 
+    fun mcpInstall(root: Path, client: String): List<String> {
+        require(client in setOf("junie", "copilot"))
+        val label = if (client == "junie") "Junie" else "Copilot"
+        return listOf("mcp", "install", "--root", root.toString(), "--client", client, "--confirmation", "INSTALL $label MCP", "--json")
+    }
+
+    fun jetbrainsHandshake(
+        root: Path,
+        scope: Path,
+        changedPaths: List<String>,
+        analysisSarif: Path,
+        analysisProvider: String = "auto",
+        e2eReceipt: Path? = null,
+    ): List<String> {
+        require(changedPaths.isNotEmpty())
+        require(analysisProvider in setOf("auto", "qodana", "sonarqube"))
+        return buildList {
+            addAll(listOf("jetbrains", "handshake", "--root", root.toString(), "--scope", scope.toString()))
+            changedPaths.forEach { addAll(listOf("--changed", it)) }
+            addAll(listOf("--analysis-sarif", analysisSarif.toString(), "--analysis-provider", analysisProvider))
+            e2eReceipt?.let { addAll(listOf("--e2e-receipt", it.toString())) }
+            addAll(listOf("--out", root.resolve(".factory/jetbrains-handshake/latest.json").toString(), "--json"))
+        }
+    }
+
     fun missionGraph(operation: MissionGraphOperation, mission: Path, root: Path): List<String> {
         require(operation !in setOf(MissionGraphOperation.EVENT, MissionGraphOperation.ROUTE))
         return listOf("langgraph", operation.command, mission.toString(), "--root", root.toString(), "--json")
@@ -531,6 +556,35 @@ object FactoryLineRunner {
         val root = project.basePath?.let(Path::of)
             ?: return CommandResult("Open Paired Savings Report", emptyList(), null, false, "Blocked: the project has no local workspace path.")
         return execute(project, "Open Paired Savings Report", FactoryLineCommands.savings(root))
+    }
+
+    fun mcpInstall(project: Project, client: String): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Install Proof Adapter", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        return execute(project, "Install ${client.replaceFirstChar { it.uppercase() }} Proof Adapter", FactoryLineCommands.mcpInstall(root, client))
+    }
+
+    fun jetbrainsHandshake(
+        project: Project,
+        scope: Path,
+        changedPaths: List<String>,
+        analysisSarif: Path,
+        analysisProvider: String,
+        e2eReceipt: Path?,
+    ): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Verify Agent + Analyzer", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        val boundedScope = WorkspacePath.resolve(root, scope.toString())
+            ?: return CommandResult("Verify Agent + Analyzer", emptyList(), null, false, "Blocked: the scope packet must stay inside the project.")
+        val boundedSarif = WorkspacePath.resolve(root, analysisSarif.toString())
+            ?: return CommandResult("Verify Agent + Analyzer", emptyList(), null, false, "Blocked: the SARIF report must stay inside the project.")
+        val boundedE2e = e2eReceipt?.let { WorkspacePath.resolve(root, it.toString()) }
+        if (e2eReceipt != null && boundedE2e == null) {
+            return CommandResult("Verify Agent + Analyzer", emptyList(), null, false, "Blocked: the E2E receipt must stay inside the project.")
+        }
+        return execute(project, "Verify Agent + Analyzer", FactoryLineCommands.jetbrainsHandshake(
+            root, boundedScope, changedPaths, boundedSarif, analysisProvider, boundedE2e,
+        ))
     }
 
     fun saasStatus(project: Project): CommandResult {

@@ -121,6 +121,13 @@ from .revenue_evidence import (
 )
 from .appforge_design import compile_appforge_design
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
+from .jetbrains_handshake import (
+    JetBrainsHandshakeError,
+    build_agent_proof_mission,
+    evaluate_jetbrains_handshake,
+    jetbrains_handshake_projection,
+    write_jetbrains_handshake,
+)
 from .developer_memory import developer_memory_brief
 from .intent_ledger import IntentLedgerError, capture_intent_ledger, inspect_intent_ledger
 from .judgment import JudgmentError, judgment_status, promote_capsule, propose_capsule, reconsider_capsule, safety_case
@@ -1487,6 +1494,30 @@ def main(argv=None) -> int:
     repair_candidate.add_argument("--out-dir", help="explicit workspace-contained directory for local candidate artifacts")
     repair_candidate.add_argument("--json", action="store_true")
 
+    jetbrains = sub.add_parser("jetbrains", help="join a sealed agent mission, Qodana or SonarQube SARIF, and non-hollow proof without provider execution")
+    jetbrains_sub = jetbrains.add_subparsers(required=True, dest="jetbrains_cmd")
+    jetbrains_mission = jetbrains_sub.add_parser("mission", help="render one Junie-compatible proof mission from a sealed repair scope")
+    jetbrains_mission.add_argument("--root", default=".")
+    jetbrains_mission.add_argument("--scope", required=True)
+    jetbrains_mission.add_argument("--changed", action="append", default=[])
+    jetbrains_mission.add_argument("--json", action="store_true")
+    jetbrains_handshake = jetbrains_sub.add_parser("handshake", help="cross-check returned paths, analyzer SARIF, intent, and optional E2E proof")
+    jetbrains_handshake.add_argument("--root", default=".")
+    jetbrains_handshake.add_argument("--scope", required=True)
+    jetbrains_handshake.add_argument("--changed", action="append", required=True)
+    analysis_input = jetbrains_handshake.add_mutually_exclusive_group(required=True)
+    analysis_input.add_argument("--analysis-sarif", help="workspace-local Qodana or SonarQube SARIF 2.1.0 report")
+    analysis_input.add_argument("--qodana-sarif", help="compatibility alias for --analysis-sarif with provider qodana")
+    jetbrains_handshake.add_argument("--analysis-provider", choices=["auto", "qodana", "sonarqube"], default="auto")
+    jetbrains_handshake.add_argument("--e2e-receipt")
+    jetbrains_handshake.add_argument("--max-new-errors", type=int, default=0)
+    jetbrains_handshake.add_argument("--max-new-warnings", type=int, default=0)
+    jetbrains_handshake.add_argument("--out", default=".factory/jetbrains-handshake/latest.json")
+    jetbrains_handshake.add_argument("--json", action="store_true")
+    jetbrains_status = jetbrains_sub.add_parser("status", help="read the latest hash-valid local JetBrains handshake receipt")
+    jetbrains_status.add_argument("--root", default=".")
+    jetbrains_status.add_argument("--json", action="store_true")
+
     release = sub.add_parser("release", help="inspect local release workflow boundaries without publishing")
     release_sub = release.add_subparsers(required=True, dest="release_cmd")
     release_integrity_parser = release_sub.add_parser("integrity", help="verify release workflow fan-in and protected-gate topology")
@@ -1500,8 +1531,13 @@ def main(argv=None) -> int:
     mcp_status.add_argument("--json", action="store_true")
     mcp_config = mcp_sub.add_parser("config", help="render copy-only setup for a local stdio MCP client")
     mcp_config.add_argument("--root", default=".")
-    mcp_config.add_argument("--client", choices=["generic", "cursor", "opencode", "codex"], default="generic")
+    mcp_config.add_argument("--client", choices=["generic", "cursor", "opencode", "codex", "junie", "copilot"], default="generic")
     mcp_config.add_argument("--json", action="store_true")
+    mcp_install = mcp_sub.add_parser("install", help="install one explicit, secret-free project MCP entry")
+    mcp_install.add_argument("--root", default=".")
+    mcp_install.add_argument("--client", choices=["junie", "copilot"], required=True)
+    mcp_install.add_argument("--confirmation", required=True)
+    mcp_install.add_argument("--json", action="store_true")
     mcp_serve = mcp_sub.add_parser("serve", help="serve newline-delimited JSON-RPC over stdio only")
     mcp_serve.add_argument("--root", default=".")
 
@@ -4134,9 +4170,34 @@ def main(argv=None) -> int:
         else:
             print(render_release_integrity(result))
         return 0 if result["ok"] else 1
+    if a.cmd == "jetbrains":
+        root = Path(a.root).resolve()
+        try:
+            if a.jetbrains_cmd == "mission":
+                payload = build_agent_proof_mission(root, Path(a.scope), a.changed or None)
+            elif a.jetbrains_cmd == "status":
+                payload = jetbrains_handshake_projection(root)
+            else:
+                analysis_path = a.qodana_sarif or a.analysis_sarif
+                analysis_provider = "qodana" if a.qodana_sarif else a.analysis_provider
+                payload = evaluate_jetbrains_handshake(
+                    root, Path(a.scope), a.changed, Path(analysis_path),
+                    Path(a.e2e_receipt) if a.e2e_receipt else None,
+                    analysis_provider=analysis_provider,
+                    max_new_errors=a.max_new_errors,
+                    max_new_warnings=a.max_new_warnings,
+                )
+                write_jetbrains_handshake(root, payload, Path(a.out))
+        except (JetBrainsHandshakeError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            code = getattr(exc, "code", "JETBRAINS_HANDSHAKE_INPUT_INVALID")
+            error = {"schema": "factory.jetbrains-proof-handshake.error.v1", "marker": "JETBRAINS_PROOF_HANDSHAKE_REFUSED", "code": code, "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"jetbrains {a.jetbrains_cmd} refused: {code}: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(payload, indent=2, sort_keys=True) if a.json else payload.get("mission_text", payload.get("marker", "JETBRAINS_PROOF_HANDSHAKE_OK")))
+        return 1 if a.jetbrains_cmd == "handshake" and payload["verdict"] != "ready_for_human_review" else 0
     if a.cmd == "mcp":
         from .mcp import McpError, mcp_status, serve_stdio
-        from .mcp_setup import McpSetupError, mcp_connection_config
+        from .mcp_setup import McpSetupError, install_project_mcp_config, mcp_connection_config
 
         try:
             if a.mcp_cmd == "status":
@@ -4164,6 +4225,10 @@ def main(argv=None) -> int:
                         print(f"copy command : {payload['command_line']}")
                     else:
                         print(json.dumps(payload["config"], indent=2))
+                return 0
+            if a.mcp_cmd == "install":
+                payload = install_project_mcp_config(Path(a.root), a.client, a.confirmation)
+                print(json.dumps(payload, indent=2, sort_keys=True) if a.json else f"Factory MCP {payload['state']}: {payload['target']}")
                 return 0
             return serve_stdio(Path(a.root))
         except (McpError, McpSetupError) as exc:

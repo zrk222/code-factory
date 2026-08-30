@@ -15,7 +15,7 @@ def _packaging() -> dict:
 def test_commercial_packaging_marks_only_free_core_as_available():
     packaging = _packaging()
 
-    assert packaging["schema"] == "factory.commercial-packaging.v1"
+    assert packaging["schema"] == "factory.commercial-packaging.v2"
     assert packaging["governance"] == {
         "classification": "human_controlled",
         "commercial_activation_authority": ["product_owner", "chosen_billing_or_contracting_system"],
@@ -40,8 +40,9 @@ def test_commercial_packaging_marks_only_free_core_as_available():
         "state_marker": "COMMERCIAL_TEAM_PRICE_PROPOSED",
         "status": "proposed",
         "currency": "USD",
-        "range_per_active_pr_author_month": [12, 15],
-        "minimum_active_pr_authors": 5,
+        "annual_commit_per_active_contributor_month": 20,
+        "monthly_per_active_contributor": 24,
+        "minimum_active_contributors": 3,
     }
     assert tiers["enterprise_assurance"]["availability"] == "discovery_only"
     assert tiers["enterprise_assurance"]["state_marker"] == "COMMERCIAL_ENTERPRISE_DISCOVERY_ONLY"
@@ -130,8 +131,8 @@ def test_github_per_seat_plan_is_scheduled_but_not_active_or_enforced():
     assert "feature-by-feature availability matrix" in guide
     assert "not active yet" in guide
     assert "GitHub repository metadata cannot collect payment" in guide
-    assert "$5.95 USD per named seat/month" in readme
-    assert "$60 USD per named seat/year" in readme
+    assert "Founding Proof Pro at $5.95" in readme
+    assert "standard Proof Pro is planned at **$9/month" in readme
 
 
 def test_open_vsx_services_are_scheduled_without_paywalling_the_extension():
@@ -151,9 +152,10 @@ def test_open_vsx_services_are_scheduled_without_paywalling_the_extension():
         "optional_service_offers_may_start": "2026-12-15T00:00:00-05:00",
         "timezone": "America/Toronto",
     }
-    assert plan["offers"]["personal_memory"]["price_usd_month"] == 4.95
-    assert plan["offers"]["team_assurance"]["price_usd_named_seat_month"] == 5.95
-    assert plan["offers"]["team_assurance"]["price_usd_named_seat_year"] == 60.0
+    assert plan["offers"]["proof_pro"]["price_usd_month"] == 9.0
+    assert plan["offers"]["proof_pro"]["founding_price_usd_month"] == 5.95
+    assert plan["offers"]["appforge_builder"]["price_usd_month"] == 24.0
+    assert plan["offers"]["team_assurance"]["monthly_price_usd_active_contributor"] == 24.0
     assert len(plan["activation_gates"]) == 6
     assert all(gate["status"] == "pending_human" and gate["evidence"] is None for gate in plan["activation_gates"])
     assert plan["authority"] == {

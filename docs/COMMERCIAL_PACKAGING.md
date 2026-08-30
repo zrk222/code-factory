@@ -21,9 +21,10 @@ The structured source of truth is
 owner-approved 2027 decision; this guide does not change its price, release
 state, or Marketplace authority.
 
-The separate [GitHub per-seat plan](GITHUB_MONETIZATION_2026.md) is free through
-December 31, 2026 and schedules a **$5.95 USD per named seat per month or $60 USD per named seat per year** offer
-from January 1, 2027. It is not a live checkout, entitlement, or repository
+The separate [GitHub plan](GITHUB_MONETIZATION_2026.md) is free through
+December 31, 2026. From January 1, 2027, **$5.95 USD/month or $60 USD/year is
+preserved as a grandfathered Founding Proof Pro offer**; the standard planning
+price is **$9 USD/month or $90 USD/year**. It is not a live checkout, entitlement, or repository
 access restriction; GitHub repository metadata cannot provide those functions.
 It is framed as a customer-managed **GitHub Assurance Seat**: commit-bound proof
 review, visible Proof Debt, policy and exception records, and exportable
@@ -31,15 +32,19 @@ evidence—not a charge for source access or an unverified enterprise promise.
 
 The separate [Open VSX service plan](OPEN_VSX_MONETIZATION_2026.md) keeps the
 registry extension and local proof core free. All shipped capabilities remain
-free through December 14, 2026; optional Personal Memory ($4.95/month) and Team
-Assurance ($5.95 per named seat/month or $60/year) may start December 15 only
-after six explicit commercial activation gates are evidenced.
+free through December 14, 2026. Optional Proof Pro is planned at $9/month or
+$90/year, AppForge Builder at $24/month or $240/year, and Team Assurance at
+$20 per active contributor/month on an annual commitment or $24 monthly. The
+$5.95/$60 Founding Proof Pro price is grandfathered. No offer may start until
+the explicit commercial activation gates are evidenced.
 
 ## The package boundary
 
 | Package | Who it helps | Availability | What it includes | What it does not promise |
 | --- | --- | --- | --- | --- |
 | Free Core | Individual developers and open-source teams | Available | Local MVP assembly, PRD Grill, CDTE, Graph Ops, receipts, proof review, E2E proof gate, local MCP inspection | Managed hosting, human review, a compliance certification, or release authority |
+| Proof Pro | Individual developers who need continuity and deeper proof operations | Scheduled; not purchasable | Advanced proof, governed memory, IDE workflows, and supervised repair | Hosted agent/model usage, approval, merge, or deployment authority |
+| AppForge Builder | SaaS and app builders | Scheduled; not purchasable | Proof Pro, AppForge storyboards/design contracts, SaaS proof, and supervised Junie missions | Unlimited model, build, render, device, or provider consumption |
 | Team Proof Hub | Teams that need one shared proof history | Design-partner only; not purchasable | Proposed shared evidence history, team policy bundles, approval routing, and review-visible Proof Debt | A customer-facing service until onboarding, support, retention, and billing are delivered |
 | Enterprise Assurance | Organizations with customer-specific assurance needs | Discovery only; not purchasable | Proposed deployment and operating boundary for identity, evidence, approvals, retention, and support | SOC 2, SSO/SCIM, external KMS, SLA, or managed-service availability |
 | Managed Proof Runner | Teams that need isolated verification execution | Not offered | Future usage-based runner only after isolation and operating controls are proven | Any current hosted execution, credential handling, or egress guarantee |
@@ -82,8 +87,9 @@ operating layer around proof that a local repository cannot provide by itself:
 - a work surface for comparing what was declared, verified, deferred, or
   explicitly overridden.
 
-The suggested future range is **USD 12-15 per active PR author per month**,
-with a proposed five-author minimum. This is a planning hypothesis, not an
+The suggested future price is **USD 20 per active contributor per month on an
+annual commitment, or USD 24 monthly**, with a proposed three-contributor
+minimum. This is a planning hypothesis, not an
 active price, invoice, trial, or purchase offer. It must be tested with real
 partners against the value and operating cost before any launch decision.
 
@@ -128,7 +134,9 @@ need a defined identity, evidence, approval, retention, and support boundary.
 It should begin as a paid implementation pilot or annual contract only after a
 separate design, security review, deployment decision, and commercial approval.
 
-It is intentionally not priced today. The repository's enterprise foundations
+The current design-partner hypothesis is **USD 6,000-15,000 per year**, only
+after a scoped deployment and support agreement. This is not a public purchase
+offer. The repository's enterprise foundations
 are useful implementation evidence, but they are not evidence of managed
 availability or certification. The exact current-versus-future split lives in
 [Enterprise 1.0](ENTERPRISE_1_0.md) and [Enterprise PR Assurance]

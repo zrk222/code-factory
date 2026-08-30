@@ -31,6 +31,11 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "title": "Read SaaS promise-to-permission status",
         "description": "Read bounded provider-neutral OAuth/OIDC-to-entitlement status already visible on this page. It never contacts or mutates a provider.",
     },
+    {
+        "name": "factory.jetbrains_handshake_status",
+        "title": "Read agent and analyzer proof handshake",
+        "description": "Read the latest bounded coding-agent and Qodana-or-SonarQube handshake already visible on this page. It never runs or approves an agent, analyzer, or test.",
+    },
 )
 
 

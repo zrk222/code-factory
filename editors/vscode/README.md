@@ -19,8 +19,10 @@ and never contacts or mutates the provider.
 
 The Open VSX extension and local proof core remain free. Every capability
 shipped before the transition is free through December 14, 2026. Beginning
-December 15, optional hosted Personal Memory ($4.95/month) and Team Assurance
-($5.95 per named seat/month or $60/year) may be offered separately; downloading
+December 15, Founding Proof Pro may remain $5.95/month or $60/year for early
+adopters; standard Proof Pro is planned at $9/month or $90/year, AppForge
+Builder at $24/month or $240/year, and Team Assurance at $20 per active
+contributor/month annually or $24 monthly. Hosted execution is metered separately; downloading
 the extension and using local CLI, MCP, Studio, Graph Ops, receipts, and proof
 gates remain free. See the [Open VSX service plan](../../docs/OPEN_VSX_MONETIZATION_2026.md).
 

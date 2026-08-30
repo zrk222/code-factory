@@ -396,9 +396,11 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     active_xml = (ROOT / "editors" / "intellij" / "src" / "main" / "resources" / "META-INF" / "plugin.xml").read_text(encoding="utf-8")
     staged_xml = (ROOT / "editors" / "intellij" / "monetization" / "plugin-product-descriptor-2027.xml").read_text(encoding="utf-8")
 
-    assert plan["offer"]["monthly_price_usd"] == 5.95
-    assert plan["offer"]["annual_price_usd"] == 60.0
-    assert plan["offer"]["monthly_price_status"] == "owner_approved"
+    assert plan["offer"]["founding_proof_pro"]["monthly_price_usd"] == 5.95
+    assert plan["offer"]["founding_proof_pro"]["annual_price_usd"] == 60.0
+    assert plan["offer"]["proof_pro"]["monthly_price_usd"] == 9.0
+    assert plan["offer"]["proof_pro"]["annual_price_usd"] == 90.0
+    assert plan["offer"]["appforge_builder"]["monthly_price_usd"] == 24.0
     assert plan["offer"]["paid_from"] == "2027-01-01"
     assert plan["plugin"]["current_free_version"] == "0.8.19"
     assert plan["paid_descriptor"] == {
@@ -415,7 +417,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     assert "Optional paid features are not active in this Marketplace build" in active_xml
     assert "star Code Factory" not in active_xml
     assert not (ROOT / "editors" / "intellij" / "src" / "main" / "kotlin" / "app" / "factoryline" / "intellij" / "FactoryLineGitHubStarPrompt.kt").exists()
-    assert "$5.95 USD per named seat/month" in readme
+    assert "Founding Proof Pro at $5.95" in readme
     assert 'code="PFACTORYLINE"' in staged_xml
     assert 'release-date="20270101"' in staged_xml
     assert 'release-version="20271"' in staged_xml

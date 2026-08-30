@@ -61,6 +61,9 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.revenue_memory",
         "factory.appforge_status",
         "factory.saas_status",
+        "factory.agent_proof_mission",
+        "factory.jetbrains_handshake",
+        "factory.jetbrains_handshake_status",
     ]
     assert status["resources"] == ["factory://status", "factory://graph"]
     assert all(value is False for value in status["authority"].values())

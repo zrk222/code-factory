@@ -13,19 +13,35 @@
     "timezone": "America/Toronto"
   },
   "offers": {
-    "personal_memory": {
-      "price_usd_month": 4.95,
+    "proof_pro": {
+      "price_usd_month": 9.0,
+      "price_usd_year": 90.0,
+      "founding_price_usd_month": 5.95,
+      "founding_price_usd_year": 60.0,
       "billing_basis": "one individual account",
       "scope": [
         "optional hosted proof-aware memory continuity",
         "cross-workspace evidence recall within the user's authorized scope",
-        "retention and export controls"
+        "retention and export controls",
+        "advanced proof and supervised repair workflows"
+      ]
+    },
+    "appforge_builder": {
+      "price_usd_month": 24.0,
+      "price_usd_year": 240.0,
+      "billing_basis": "one builder account; hosted execution metered separately",
+      "scope": [
+        "Proof Pro",
+        "AppForge storyboards and design contracts",
+        "SaaS promise-to-permission proof",
+        "Junie-compatible supervised missions"
       ]
     },
     "team_assurance": {
-      "price_usd_named_seat_month": 5.95,
-      "price_usd_named_seat_year": 60.0,
-      "billing_basis": "named team seat",
+      "annual_commit_price_usd_active_contributor_month": 20.0,
+      "monthly_price_usd_active_contributor": 24.0,
+      "minimum_active_contributors": 3,
+      "billing_basis": "active contributor",
       "scope": [
         "shared proof history",
         "team policy and approval routing",
