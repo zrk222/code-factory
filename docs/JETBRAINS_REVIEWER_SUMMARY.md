@@ -4,6 +4,21 @@ This is a concise map from common IDE and Marketplace review concerns to the
 candidate's shipped behavior and local evidence. It describes the candidate;
 it is not a claim of Marketplace approval or a diagnosis of an IDE.
 
+## The one-minute reviewer story
+
+A developer signs in successfully, pays successfully, and still lands in the
+wrong tenant without the feature they bought. Each screen looked green; the
+journey was broken between screens. FactoryLine 0.8.19 gives that developer two
+plain choices inside the IDE: **Verify SaaS journey** from reviewed, local JSON
+evidence, or **View SaaS status** from the latest receipt. It then shows what is
+proven, what conflicts, and what is still unknown—without receiving a token,
+contacting a provider, changing an entitlement, or claiming the release is safe.
+
+That is the candidate's purpose: make the gap visible while the developer still
+has control. The same supervision boundary applies to IDE-health observations,
+AI-authored diffs, intent, and engineering decisions. A human always chooses
+whether to run the local command and what to do with its evidence.
+
 | Review concern / user impact | FactoryLine response | Proof or reference |
 | --- | --- | --- |
 | SaaS login, payment, and feature access can silently disagree across providers. | **SaaS Reality** offers explicit **Verify SaaS journey** and **View SaaS status** controls. Verification uses workspace-local contract/evidence JSON and writes a hash-bound local receipt covering OAuth/OIDC issuer/audience, tenant/role binding, checkout, verified webhook, entitlement, access, and revocation. Unknowns block green. It never contacts a provider or handles credentials. | `factoryline/saas_proof.py`; `tests/test_saas_proof.py`; `FactoryLineCommands.saasVerify`; `FactoryLineCommands.saasStatus`; `FactoryLineCoreTest`; `docs/SAAS_PROOF.md`. |
@@ -25,3 +40,9 @@ upload project source, store API keys, silently invoke a model, sign an
 artifact, approve a change, merge, publish, deploy, or replace human release
 authority. The Marketplace manual review team remains the authority for
 approval timing and outcome.
+
+**Fast reviewer path:** install the ZIP, open **View | Tool Windows |
+FactoryLine**, confirm that **Verify SaaS journey** requests two project-local
+JSON files and a second execution confirmation, then use **View SaaS status**
+to inspect the local receipt. No provider account or network connection is
+needed for this review path.
