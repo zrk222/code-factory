@@ -1,8 +1,8 @@
 {
   "title": "Code Factory: Proof-by-Sabotage Software Factory",
-  "description": "Your AI can say the test passed. Code Factory asks whether the test could ever have failed. Solo developers start with one local proof; teams bind the real diff, intent, independent checks, and receipts instead of trusting an agent's narrative. Version 0.45.0 adds SaaS Reality: provider-neutral OAuth/OIDC identity, tenant authorization, checkout, verified webhook, entitlement, feature access, and revocation evidence with unknowns blocked. It also unifies Proof Review, RevenueForge, AppForge design contracts, evidence memory, enterprise operations, deterministic policy compilation, Codex metadata integrity, Graph Ops, MCP, WebMCP, IDE adapters, resume parity for sealed LangGraph transition lineages, and an offline-verifiable Survival Card. The published savings illustration is a 60-day personal-use case, not a benchmark, guaranteed ROI, or verified cash saving.\n\nSupplied local observations are not provider certification, payment settlement, production proof, security or compliance certification, or release authority.\n\nDual licensed under MIT or Apache-2.0.",
-  "version": "0.45.0",
-  "publication_date": "2026-08-29",
+  "description": "Your AI can say the test passed. Code Factory asks whether the test could ever have failed. Solo developers start with one local proof; teams bind the real diff, intent, independent checks, and receipts instead of trusting an agent's narrative. Version 0.45.1 adds a deterministic AppForge App Review evidence gate: 30 policy and release-risk checks bind the exact app build to required evidence, preserve unknowns, and keep final submission under named human control. The Graph Ops mission-control storyboard turns that review into a visible mission, tension, guidance, agency, transformation, and ready handoff. The workflow is designed to reduce avoidable App Review rework and waiting time; it does not guarantee approval or claim a measured rejection-rate reduction.\n\nSupplied local observations are not provider certification, payment settlement, production proof, security or compliance certification, or release authority.\n\nDual licensed under MIT or Apache-2.0.",
+  "version": "0.45.1",
+  "publication_date": "2026-08-30",
   "creators": [
     {
       "name": "Katz, Richard"

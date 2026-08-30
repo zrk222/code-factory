@@ -120,6 +120,7 @@ from .revenue_evidence import (
     watch_policy_drift,
 )
 from .appforge_design import compile_appforge_design
+from .app_review_gate import verify_app_review_readiness
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
 from .jetbrains_handshake import (
     JetBrainsHandshakeError,
@@ -1379,6 +1380,12 @@ def main(argv=None) -> int:
     revenue_design.add_argument("--brief", required=True)
     revenue_design.add_argument("--out-dir", default=".factory/appforge/design")
     revenue_design.add_argument("--json", action="store_true")
+    revenue_app_review = revenue_sub.add_parser("app-review-gate", help="fail closed on exact-build Apple policy and rejection-regression evidence gaps")
+    revenue_app_review.add_argument("--root", default=".")
+    revenue_app_review.add_argument("--contract", required=True)
+    revenue_app_review.add_argument("--evidence", required=True)
+    revenue_app_review.add_argument("--out", default=".factory/appforge/app-review.json")
+    revenue_app_review.add_argument("--json", action="store_true")
 
     saas = sub.add_parser("saas", help="verify provider-neutral SaaS identity, billing, entitlement, and revocation evidence")
     saas_sub = saas.add_subparsers(required=True, dest="saas_cmd")
@@ -3954,6 +3961,8 @@ def main(argv=None) -> int:
                 payload = promote_evidence_memory(root, Path(a.entry), Path(a.out))
             elif a.revenue_cmd == "memory-query":
                 payload = query_evidence_memory(root, a.app_id, a.journey, a.at)
+            elif a.revenue_cmd == "app-review-gate":
+                payload = verify_app_review_readiness(root, Path(a.contract), Path(a.evidence), Path(a.out))
             else:
                 payload = compile_appforge_design(root, Path(a.brief), Path(a.out_dir))
         except (RevenueForgeError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:

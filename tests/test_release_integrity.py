@@ -128,7 +128,7 @@ def test_release_integrity_rejects_huggingface_metadata_that_would_fail_remotely
     readme = root / "deploy" / "huggingface" / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-                "short_description: One local command shows whether a test can actually fail.",
+                "short_description: Catch hollow AI tests and App Store evidence gaps.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",

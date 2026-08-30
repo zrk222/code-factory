@@ -8,6 +8,7 @@ import json
 
 from .revenueforge import AUTHORITY, RevenueForgeError
 from .revenue_evidence import _atomic_json, _local, _read_json, _seal
+from .app_review_gate import app_review_gate_projection
 
 
 SCHEMA = "factory.appforge.design-director.v1"
@@ -61,6 +62,7 @@ def appforge_design_projection(root: Path) -> dict[str, Any]:
         "current_count": current,
         "invalid_count": invalid,
         "latest": latest,
+        "app_review": app_review_gate_projection(workspace),
         "authority": {**AUTHORITY, "design_intent_override": False, "app_store_claim_publish": False},
         "claim_boundary": "local design-receipt projection; not rendered UI, device proof, accessibility certification, performance proof, or App Review approval",
     }
@@ -115,6 +117,7 @@ def _design_gates(storyboards: list[dict[str, Any]], brief: dict[str, Any]) -> d
         "dark_mode_required": True,
         "performance_claims_require_trace": True,
         "app_store_claims_require_task_matrix": True,
+        "app_review_rejection_regression_gate_required": True,
     }
 
 

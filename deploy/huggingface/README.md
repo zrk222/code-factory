@@ -20,7 +20,7 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: One local command shows whether a test can actually fail.
+short_description: Catch hollow AI tests and App Store evidence gaps.
 ---
 
 # Code Factory
@@ -40,6 +40,9 @@ receive a local receipt. It does not upload or change your project.
 - **Senior developer or team:** wrap an admitted agent run, record its exact
   file delta, run declared validators, and review hashes and bounded facts—not
   retained prompts or raw model output.
+- **App or SaaS builder:** storyboard the intended experience, verify identity
+  through revocation, and run 30 exact-build Apple policy/rejection-regression
+  gates before submission. Missing and unclassified evidence stays blocked.
 - **Platform or assurance team:** evaluate policy gates, evidence packets,
   expiring exceptions, and tenant boundaries in a controlled pilot. Code Factory
   is beta software, not an SLA, compliance certification, customer-reference,
@@ -66,6 +69,11 @@ Read the [Teams and Enterprise Operations Manual](https://github.com/zrk222/code
 for role boundaries and the optional [Prestige Design Review](https://github.com/zrk222/code-factory/blob/main/docs/PRESTIGE_DESIGN.md)
 for a purpose-led UI review lane. Neither feature certifies conversion,
 accessibility, or production readiness.
+
+The standalone [AppForge App Review Gate](https://github.com/zrk222/code-factory/blob/main/docs/APPFORGE_APP_REVIEW_GATE.md)
+is designed to save avoidable review/rework waiting time by catching purchase,
+restore, iPad, screenshot, reviewer-access, privacy, metadata, accessibility,
+and export gaps before submission. It does not guarantee Apple approval.
 
 **For a specific risky behavior:** use the supervised
 [Gauntlet](https://github.com/zrk222/code-factory/blob/main/docs/GAUNTLET.md)

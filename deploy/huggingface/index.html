@@ -294,6 +294,24 @@ factory graph ops --root .\my-mvp --json</code></pre>
       </div>
     </section>
 
+    <section id="appforge-review">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">AppForge · catch the review gap early</div>
+          <h2>Improve your app before Apple finds the missing proof.</h2>
+          <p>Move from a story-led iOS storyboard to 30 exact-build checks spanning completeness, purchases and restore, iPad navigation, authentic screenshots, accessibility, privacy, metadata, reviewer access, and export compliance. Conditional rules must be explicitly required or not applicable with a named reviewer—omission never becomes green.</p>
+          <p>AppForge is designed to save avoidable rework and days of review waiting by surfacing preventable gaps before submission. It does not guarantee Apple approval.</p>
+          <div class="actions"><a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/APPFORGE_APP_REVIEW_GATE.md">Open the AppForge gate</a></div>
+        </div>
+        <pre><code>factory revenue appforge-design --root . \
+  --brief appforge-design-brief.json --json
+
+factory revenue app-review-gate --root . \
+  --contract app-review-contract.json \
+  --evidence app-review-evidence.json --json</code></pre>
+      </div>
+    </section>
+
     <section>
       <div class="shell proof">
         <div>

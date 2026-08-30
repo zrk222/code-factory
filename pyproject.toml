@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.45.0"
-description = "Catch AI-generated tests that could never fail with one local proof command."
+version = "0.45.1"
+description = "Catch hollow AI tests and App Store evidence gaps before review."
 authors = [
   { name = "Richard Katz" },
   { email = "rkatz22@gmail.com" },

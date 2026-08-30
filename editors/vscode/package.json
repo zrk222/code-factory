@@ -1,8 +1,8 @@
 {
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
-  "description": "Catch hollow AI tests and inspect provider-neutral SaaS access proof locally.",
-  "version": "0.8.12",
+  "description": "Catch hollow AI tests, SaaS access drift, and App Store evidence gaps locally.",
+  "version": "0.8.13",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
