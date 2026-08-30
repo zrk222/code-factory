@@ -15,6 +15,15 @@ from factoryline.revenueforge import (
     revenueforge_projection,
     validate_products,
 )
+from factoryline.revenue_evidence import (
+    FAILURE_SCENARIOS,
+    evaluate_failure_matrix,
+    promote_evidence_memory,
+    query_evidence_memory,
+    replay_purchase_journey,
+    sync_testflight_evidence,
+    watch_policy_drift,
+)
 
 
 def manifest() -> dict:
@@ -31,6 +40,11 @@ def manifest() -> dict:
 def write_yaml(path: Path, value: dict) -> Path:
     """Write test YAML and return its path."""
     path.write_text(yaml.safe_dump(value, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def write_json(path: Path, value: object) -> Path:
+    path.write_text(json.dumps(value, indent=2), encoding="utf-8")
     return path
 
 
@@ -133,3 +147,82 @@ def test_paths_cannot_escape_workspace(tmp_path: Path) -> None:
     with pytest.raises(RevenueForgeError) as error:
         build_revenue_bundle(tmp_path, source, tmp_path.parent / "outside")
     assert error.value.code == "REVENUEFORGE_PATH_REJECTED"
+
+
+def test_purchase_replay_requires_complete_verified_ordered_journey(tmp_path: Path) -> None:
+    products = write_yaml(tmp_path / "products.yaml", manifest())
+    types = ["paywall_presented", "purchase_started", "transaction_verified", "server_notification_verified", "entitlement_active", "app_restarted", "entitlement_restored"]
+    events = []
+    for sequence, event_type in enumerate(types, 1):
+        events.append({"id": f"e{sequence}", "sequence": sequence, "type": event_type, "product_id": "com.example.pro.monthly", "verified": True, "entitlement": "pro"})
+    source = write_json(tmp_path / "events.json", {"build": {"id": "42", "bundle_id": "com.example.app", "environment": "testflight"}, "events": events})
+    result = replay_purchase_journey(tmp_path, products, source, Path(".factory/revenueforge/example/replay.json"))
+    assert result["verdict"] == "matched"
+    assert result["summary"] == {"matched": 7, "mismatch": 0, "unknown": 0}
+    assert result["action_summary"].startswith("Compare one sandbox")
+    events[2]["verified"] = False
+    source = write_json(tmp_path / "events.json", {"build": {"id": "42", "bundle_id": "com.example.app", "environment": "testflight"}, "events": events})
+    result = replay_purchase_journey(tmp_path, products, source, Path(".factory/revenueforge/example/replay.json"))
+    assert result["verdict"] == "blocked"
+    assert result["summary"]["mismatch"] == 1
+
+
+def test_testflight_inbox_redacts_identity_and_groups_journey(tmp_path: Path) -> None:
+    feedback = {"items": [
+        {"id": "abc", "build_id": "42", "kind": "feedback", "comment": "Restore did not unlock access", "tester_email": "private@example.com", "device_family": "iPhone", "os_version": "19.0", "app_version": "1.0"},
+        {"id": "abc", "build_id": "42", "kind": "feedback", "comment": "duplicate"},
+        {"id": "crash", "build_id": "42", "kind": "crash", "summary": "Crash after purchase"},
+    ]}
+    result = sync_testflight_evidence(tmp_path, write_json(tmp_path / "feedback.json", feedback), Path(".factory/revenueforge/example/testflight-inbox.json"))
+    assert len(result["items"]) == 2
+    assert result["groups"]["restore"] == 1
+    assert all("tester_email" not in item for item in result["items"])
+    assert "de-identified" in result["action_summary"]
+
+
+def test_failure_matrix_never_promotes_unknown_to_pass(tmp_path: Path) -> None:
+    products = write_yaml(tmp_path / "products.yaml", manifest())
+    incomplete = write_json(tmp_path / "matrix.json", {"scenarios": {"cancel": {"observed": True, "passed": True}}})
+    result = evaluate_failure_matrix(tmp_path, products, incomplete, Path(".factory/revenueforge/example/failure-matrix.json"))
+    assert result["verdict"] == "blocked"
+    assert result["summary"] == {"pass": 1, "fail": 0, "unknown": 9}
+    assert "ten monetization failure paths" in result["action_summary"]
+    complete = {name: {"observed": True, "passed": True, "evidence_ref": f"test:{name}"} for name in FAILURE_SCENARIOS}
+    result = evaluate_failure_matrix(tmp_path, products, write_json(tmp_path / "matrix.json", {"scenarios": complete}), Path(".factory/revenueforge/example/failure-matrix.json"))
+    assert result["verdict"] == "pass"
+
+
+def test_policy_watch_invalidates_only_impacted_rules(tmp_path: Path) -> None:
+    impact = [{"rule_id": "subscription-disclosure", "apps": ["com.example.app"], "artifacts": ["DSPaywall.swift"]}]
+    baseline = {"sources": [{"id": "subscriptions", "url": "https://developer.apple.com/app-store/subscriptions/", "retrieved_at": "2026-08-29", "sha256": "a" * 64, "impacts": impact}, {"id": "testflight", "url": "https://developer.apple.com/testflight/", "retrieved_at": "2026-08-29", "sha256": "b" * 64, "impacts": [{"rule_id": "beta-feedback", "apps": [], "artifacts": ["inbox"]}]}]}
+    current = json.loads(json.dumps(baseline))
+    current["sources"][0]["sha256"] = "c" * 64
+    result = watch_policy_drift(tmp_path, write_json(tmp_path / "registry.json", baseline), write_json(tmp_path / "snapshot.json", current), Path(".factory/revenueforge/example/policy-drift.json"))
+    assert result["verdict"] == "reassessment_required"
+    assert result["affected"]["rules"] == ["subscription-disclosure"]
+    assert result["affected"]["apps"] == ["com.example.app"]
+    assert "human reassessment" in result["action_summary"]
+
+
+def test_graph_projection_reads_all_revenue_evidence_receipts(tmp_path: Path) -> None:
+    products = write_yaml(tmp_path / "products.yaml", manifest())
+    build_revenue_bundle(tmp_path, products, Path(".factory/revenueforge/example"))
+    scenarios = {name: {"observed": True, "passed": True} for name in FAILURE_SCENARIOS}
+    evaluate_failure_matrix(tmp_path, products, write_json(tmp_path / "matrix.json", {"scenarios": scenarios}), Path(".factory/revenueforge/example/failure-matrix.json"))
+    projection = revenueforge_projection(tmp_path)
+    assert projection["evidence"]["matrix"]["count"] == 1
+    assert projection["evidence"]["matrix"]["latest"]["verdict"] == "pass"
+
+
+def test_evidence_memory_requires_sealed_receipt_and_quarantines_contradictions(tmp_path: Path) -> None:
+    products = write_yaml(tmp_path / "products.yaml", manifest())
+    scenarios = {name: {"observed": True, "passed": True} for name in FAILURE_SCENARIOS}
+    matrix = evaluate_failure_matrix(tmp_path, products, write_json(tmp_path / "matrix.json", {"scenarios": scenarios}), Path(".factory/revenueforge/example/failure-matrix.json"))
+    for index, decision in enumerate(("retry restore", "do not retry restore"), 1):
+        entry = {"app_id": "com.example.app", "journey": "restore", "decision": decision, "resolution": "show an explicit recovery path", "approved_by": "reviewer", "expires_at": "2027-01-01T00:00:00Z", "evidence_receipts": [matrix["path"]]}
+        promote_evidence_memory(tmp_path, write_json(tmp_path / f"entry-{index}.json", entry), Path(f".factory/revenueforge/memory/{index}.json"))
+    result = query_evidence_memory(tmp_path, "com.example.app", "restore", "2026-08-29T00:00:00Z")
+    assert result["status"] == "quarantined"
+    assert result["matches"] == []
+    assert result["next_action"] == "human contradiction review"
+    assert "quarantine contradictory decisions" in result["action_summary"]

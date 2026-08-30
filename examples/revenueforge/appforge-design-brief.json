@@ -1,0 +1,35 @@
+{
+  "app_name": "Signal Ledger",
+  "audience": "independent professionals",
+  "primary_job": "understand and act on recurring income changes",
+  "desired_emotion": "calm control",
+  "brand": {
+    "primary_intent": "trust",
+    "accent_intent": "confident progress"
+  },
+  "prohibited_patterns": [
+    "hidden_cancel",
+    "gesture_only_action",
+    "color_only_status"
+  ],
+  "screens": [
+    {
+      "id": "overview",
+      "user_goal": "see what changed and why",
+      "emotional_job": "orient without alarm",
+      "primary_action": "review the change"
+    },
+    {
+      "id": "decision",
+      "user_goal": "compare safe next actions",
+      "emotional_job": "feel informed agency",
+      "primary_action": "approve one action"
+    },
+    {
+      "id": "confirmation",
+      "user_goal": "verify the outcome and recovery path",
+      "emotional_job": "finish with confidence",
+      "primary_action": "view evidence"
+    }
+  ]
+}

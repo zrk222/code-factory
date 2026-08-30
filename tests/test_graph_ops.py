@@ -484,6 +484,13 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert 'id="team-seats"' in page
     assert 'fetch("/api/developer-memory"' in page
     assert "renderDeveloperMemory(payload)" in page
+    assert 'id="webmcp-status"' in page
+    assert "FACTORY_WEBMCP_GRAPH_SUMMARY" in page
+    assert "FACTORY_WEBMCP_REVENUE_STATUS" in page
+    assert "FACTORY_WEBMCP_APPFORGE_STATUS" in page
+    assert 'annotations:{readOnlyHint:true,untrustedContentHint:true}' in page
+    assert 'typeof context.registerTool!=="function"' in page
+    assert "registerFactoryWebMcp();load();loadDeveloperMemory();" in page
     assert "Engineering Judgment · human-promoted contracts" in page
     assert 'id="judgment-panel"' in page
     assert 'id="judgment-cards"' in page

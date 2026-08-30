@@ -117,6 +117,9 @@ network transport, or mutation authority.
 | `factory.agent_license_status` | Current expiry-bound, local Earned Autonomy evidence for declared agents; never authenticates identity, records a run, issues a license, raises autonomy, or starts an agent | Read only |
 | `factory.combine_status` | Existing locally verified Combine scoreboards for completed governed runs; never launches a candidate or creates a vendor-quality claim | Read only |
 | `factory.workspace_advisor` | Bounded local workspace shape and path-only Remote/WSL preflight; no report artifacts are written through MCP | Read only |
+| `factory.revenue_status` | Current hash-verified RevenueForge receipts and fail-closed purchase, TestFlight, failure-matrix, policy-drift, and memory evidence state | Read only |
+| `factory.revenue_memory` | Exact-app, exact-journey, expiry-aware approved evidence-memory guidance; never substitutes prior evidence for the current build | Read only |
+| `factory.appforge_status` | Current hash-verified AppForge design contracts and storyboard state; never renders, approves, submits, or deploys an app | Read only |
 | `factory://status` | The same status payload | Read only |
 | `factory://graph` | The same Graph Ops payload | Read only |
 

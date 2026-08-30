@@ -111,6 +111,15 @@ from .revenueforge import (
     plan_growth,
     validate_products,
 )
+from .revenue_evidence import (
+    evaluate_failure_matrix,
+    promote_evidence_memory,
+    query_evidence_memory,
+    replay_purchase_journey,
+    sync_testflight_evidence,
+    watch_policy_drift,
+)
+from .appforge_design import compile_appforge_design
 from .developer_memory import developer_memory_brief
 from .intent_ledger import IntentLedgerError, capture_intent_ledger, inspect_intent_ledger
 from .judgment import JudgmentError, judgment_status, promote_capsule, propose_capsule, reconsider_capsule, safety_case
@@ -1323,6 +1332,45 @@ def main(argv=None) -> int:
     revenue_benchmark = revenue_sub.add_parser("benchmark", help="publish a benchmark cell only at k >= 20 distinct apps")
     revenue_benchmark.add_argument("--records", required=True)
     revenue_benchmark.add_argument("--json", action="store_true")
+    revenue_replay = revenue_sub.add_parser("replay", help="compare build-bound purchase observations with the required lifecycle")
+    revenue_replay.add_argument("--root", default=".")
+    revenue_replay.add_argument("--products", required=True)
+    revenue_replay.add_argument("--events", required=True)
+    revenue_replay.add_argument("--out", default=".factory/revenueforge/default/replay.json")
+    revenue_replay.add_argument("--json", action="store_true")
+    revenue_testflight = revenue_sub.add_parser("testflight-sync", help="normalize an authorized local TestFlight feedback export")
+    revenue_testflight.add_argument("--root", default=".")
+    revenue_testflight.add_argument("--feedback", required=True)
+    revenue_testflight.add_argument("--out", default=".factory/revenueforge/default/testflight-inbox.json")
+    revenue_testflight.add_argument("--json", action="store_true")
+    revenue_matrix = revenue_sub.add_parser("failure-matrix", help="fail closed across observed monetization negative paths")
+    revenue_matrix.add_argument("--root", default=".")
+    revenue_matrix.add_argument("--products", required=True)
+    revenue_matrix.add_argument("--evidence", required=True)
+    revenue_matrix.add_argument("--out", default=".factory/revenueforge/default/failure-matrix.json")
+    revenue_matrix.add_argument("--json", action="store_true")
+    revenue_policy = revenue_sub.add_parser("policy-watch", help="compare hash-bound official Apple policy snapshots")
+    revenue_policy.add_argument("--root", default=".")
+    revenue_policy.add_argument("--registry", required=True)
+    revenue_policy.add_argument("--snapshot", required=True)
+    revenue_policy.add_argument("--out", default=".factory/revenueforge/default/policy-drift.json")
+    revenue_policy.add_argument("--json", action="store_true")
+    revenue_memory_promote = revenue_sub.add_parser("memory-promote", help="promote one human-approved receipt-backed operational lesson")
+    revenue_memory_promote.add_argument("--root", default=".")
+    revenue_memory_promote.add_argument("--entry", required=True)
+    revenue_memory_promote.add_argument("--out", required=True)
+    revenue_memory_promote.add_argument("--json", action="store_true")
+    revenue_memory_query = revenue_sub.add_parser("memory-query", help="retrieve exact-app unexpired evidence lessons")
+    revenue_memory_query.add_argument("--root", default=".")
+    revenue_memory_query.add_argument("--app-id", required=True)
+    revenue_memory_query.add_argument("--journey", required=True)
+    revenue_memory_query.add_argument("--at")
+    revenue_memory_query.add_argument("--json", action="store_true")
+    revenue_design = revenue_sub.add_parser("appforge-design", help="compile user intent into a story-led seven-discipline iOS design workspace")
+    revenue_design.add_argument("--root", default=".")
+    revenue_design.add_argument("--brief", required=True)
+    revenue_design.add_argument("--out-dir", default=".factory/appforge/design")
+    revenue_design.add_argument("--json", action="store_true")
 
     intent = sub.add_parser("intent", help="capture or inspect a human-confirmed, local Change List behavioral contract")
     intent_sub = intent.add_subparsers(required=True, dest="intent_cmd")
@@ -3689,9 +3737,23 @@ def main(argv=None) -> int:
                     out.parent.mkdir(parents=True, exist_ok=True)
                     out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
                     payload = {**payload, "path": str(out)}
-            else:
+            elif a.revenue_cmd == "benchmark":
                 records = json.loads(Path(a.records).read_text(encoding="utf-8-sig"))
                 payload = benchmark_cell(records)
+            elif a.revenue_cmd == "replay":
+                payload = replay_purchase_journey(root, Path(a.products), Path(a.events), Path(a.out))
+            elif a.revenue_cmd == "testflight-sync":
+                payload = sync_testflight_evidence(root, Path(a.feedback), Path(a.out))
+            elif a.revenue_cmd == "failure-matrix":
+                payload = evaluate_failure_matrix(root, Path(a.products), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "policy-watch":
+                payload = watch_policy_drift(root, Path(a.registry), Path(a.snapshot), Path(a.out))
+            elif a.revenue_cmd == "memory-promote":
+                payload = promote_evidence_memory(root, Path(a.entry), Path(a.out))
+            elif a.revenue_cmd == "memory-query":
+                payload = query_evidence_memory(root, a.app_id, a.journey, a.at)
+            else:
+                payload = compile_appforge_design(root, Path(a.brief), Path(a.out_dir))
         except (RevenueForgeError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             error = {"schema": "factory.revenueforge.error.v1", "marker": "REVENUEFORGE_REFUSED", "code": getattr(exc, "code", "REVENUEFORGE_INPUT_INVALID"), "message": str(exc)}
             print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"revenue {a.revenue_cmd} refused: {error['code']}: {exc}", file=sys.stderr)

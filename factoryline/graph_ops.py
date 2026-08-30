@@ -36,6 +36,7 @@ from .journey_proof import journey_proof_status
 from .continuous_proof import continuous_proof_projection
 from .proof_review_workflow import proof_review_projection
 from .revenueforge import revenueforge_projection
+from .appforge_design import appforge_design_projection
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -1797,6 +1798,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     continuous_proof = continuous_proof_projection(workspace)
     proof_review = proof_review_projection(workspace)
     revenueforge = revenueforge_projection(workspace)
+    appforge = appforge_design_projection(workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
@@ -1813,6 +1815,8 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["proof_review_next_route"] = (proof_review["next_item"] or {}).get("route")
     facts["revenueforge_current_count"] = revenueforge["current_count"]
     facts["revenueforge_invalid_count"] = revenueforge["invalid_count"]
+    facts["appforge_design_current_count"] = appforge["current_count"]
+    facts["appforge_design_invalid_count"] = appforge["invalid_count"]
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
@@ -1825,6 +1829,8 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers = sorted({*markers, "GRAPH_OPS_PROOF_REVIEW_READ_ONLY", "TEAM_PROOF_INBOX_READ_ONLY"})
     if revenueforge["current_count"] or revenueforge["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_REVENUEFORGE_READ_ONLY"})
+    if appforge["current_count"] or appforge["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_APPFORGE_READ_ONLY"})
     base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
@@ -1863,6 +1869,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "continuous_proof": continuous_proof,
         "proof_review": proof_review,
         "revenueforge": revenueforge,
+        "appforge": appforge,
     }
     return {**core, "base_graph_sha256": base_graph_sha256, "graph_sha256": _sha(core), "mermaid": _mermaid(projected_nodes, projected_edges)}
 

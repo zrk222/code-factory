@@ -1,0 +1,89 @@
+name: revenueforge-evidence-v2
+language: python
+modules:
+  - name: revenue_evidence
+    path: factoryline/revenue_evidence.py
+    language: python
+    functions:
+      - name: replay_purchase_journey
+        args: [root, products_path, events_path, out]
+        returns: dict
+      - name: sync_testflight_evidence
+        args: [root, feedback_path, out]
+        returns: dict
+      - name: evaluate_failure_matrix
+        args: [root, products_path, evidence_path, out]
+        returns: dict
+      - name: watch_policy_drift
+        args: [root, registry_path, snapshot_path, out]
+        returns: dict
+      - name: revenue_evidence_projection
+        args: [root]
+        returns: dict
+      - name: promote_evidence_memory
+        args: [root, entry_path, out]
+        returns: dict
+      - name: query_evidence_memory
+        args: [root, app_id, journey, at]
+        returns: dict
+  - name: appforge_design
+    path: factoryline/appforge_design.py
+    language: python
+    functions:
+      - name: compile_appforge_design
+        args: [root, brief_path, out_dir]
+        returns: dict
+      - name: appforge_design_projection
+        args: [root]
+        returns: dict
+  - name: mcp
+    path: factoryline/mcp.py
+    language: python
+    functions:
+      - name: mcp_status
+        args: [root]
+        returns: dict
+  - name: webmcp
+    path: factoryline/webmcp.py
+    language: python
+    functions:
+      - name: webmcp_manifest
+        args: []
+        returns: dict
+dependencies:
+  - from: revenue_evidence
+    to: revenueforge
+  - from: appforge_design
+    to: revenue_evidence
+  - from: appforge_design
+    to: revenueforge
+  - from: mcp
+    to: revenue_evidence
+  - from: mcp
+    to: appforge_design
+  - from: graph_ops
+    to: appforge_design
+invariants:
+  - name: evidence_has_no_provider_writes
+    forbid_pattern: "(requests\\.(post|put|patch|delete|get)|httpx\\.(post|put|patch|delete|get)|urlopen\\()"
+    scopes:
+      - module: revenue_evidence
+        symbol: sync_testflight_evidence
+        max_lines: 70
+  - name: evidence_has_no_green_unknown
+    forbid_pattern: "verdict\\s*=\\s*\"pass\"\\s+if\\s+counts\\[\"unknown\"\\]"
+    scopes:
+      - module: revenue_evidence
+        symbol: evaluate_failure_matrix
+        max_lines: 50
+  - name: webmcp_has_no_network_or_credentials
+    forbid_pattern: "(fetch\\(|XMLHttpRequest|navigator\\.credentials)"
+    scopes:
+      - module: webmcp
+        symbol: webmcp_manifest
+        max_lines: 45
+gates:
+  - name: revenue_evidence_tests
+    command: "python -m pytest -q tests/test_revenueforge.py tests/test_revenueforge_cli.py"
+  - name: mcp_webmcp_tests
+    command: "python -m pytest -q tests/test_mcp.py tests/test_webmcp.py tests/test_appforge_design.py tests/test_graph_ops.py"

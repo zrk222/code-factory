@@ -220,7 +220,7 @@ embeddings, or transcripts, and it cannot execute a repair.
 
 ## Revenue-ready iOS scaffolds
 
-`factory revenue build` turns one reviewed `products.yaml` into StoreKit 2, a transparent SwiftUI paywall, an Apple-JWS-verifying entitlement-server scaffold, privacy/review artifacts, and a local evidence page. App Store writes, pricing, experiments, offers, publication, and credentials stay human-controlled. See [RevenueForge](docs/REVENUEFORGE.md).
+`factory revenue build` turns one reviewed `products.yaml` into StoreKit 2, a transparent SwiftUI paywall, an Apple-JWS-verifying entitlement-server scaffold, privacy/review artifacts, and a local evidence page. Then `replay`, `testflight-sync`, `failure-matrix`, and `policy-watch` expose where observed purchase behavior, beta feedback, negative paths, or policy sources diverge—without turning unknowns green. Evidence Memory carries human-approved, receipt-backed lessons into the next exact-app journey while expiring stale knowledge and quarantining contradictions. IDEs and coding agents can inspect the same local facts through MCP; compatible browser agents can inspect bounded Graph Ops status through progressive WebMCP. App Store writes, pricing, experiments, offers, publication, and credentials stay human-controlled. See [RevenueForge](docs/REVENUEFORGE.md), the [plain-language Expertise/AppForge operating guide](docs/EXPERTISE_APPFORGE_E2E.md), and the [MCP/WebMCP handoff](docs/MCP_WEBMCP.md).
 
 ## Install
 

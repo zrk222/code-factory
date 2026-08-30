@@ -1,0 +1,11 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "revenueforge-evidence-v2",
+  "sealed_hash": "fb9a9bad84838623118aa0addd7c8db09aa2512202fe24b897138a9a805a7737",
+  "coherence_score": 100,
+  "source": "specs/revenueforge-evidence-v2.md",
+  "intent": "Turn authorized local SaaS and iOS operational evidence into bounded, reviewable proof and expose it safely to IDE agents and supported browsers without granting external authority.",
+  "assumptions": [
+    "Assumes MCP and WebMCP preserve the authenticated human boundary and never grant provider, credential, execution, approval, publication, deployment, or connector authority."
+  ]
+}

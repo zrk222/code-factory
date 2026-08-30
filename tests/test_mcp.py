@@ -57,6 +57,9 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.agent_license_status",
         "factory.combine_status",
         "factory.workspace_advisor",
+        "factory.revenue_status",
+        "factory.revenue_memory",
+        "factory.appforge_status",
     ]
     assert status["resources"] == ["factory://status", "factory://graph"]
     assert all(value is False for value in status["authority"].values())
@@ -159,6 +162,32 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     }, tmp_path)
     assert resource["result"]["marker"] == "MCP_RESOURCES_PARITY"
     assert json.loads(resource["result"]["contents"][0]["text"]) == graph_ops_snapshot(tmp_path)
+    assert _files(tmp_path) == before
+
+
+def test_mcp_revenue_appforge_and_memory_tools_are_read_only(tmp_path: Path):
+    before = _files(tmp_path)
+    revenue = _content(dispatch({
+        "jsonrpc": "2.0", "id": 80, "method": "tools/call",
+        "params": {"name": "factory.revenue_status"},
+    }, tmp_path))
+    assert revenue["marker"] == "MCP_REVENUEFORGE_READ_ONLY"
+    assert revenue["status"]["marker"] == "GRAPH_OPS_REVENUEFORGE_READ_ONLY"
+
+    memory = _content(dispatch({
+        "jsonrpc": "2.0", "id": 81, "method": "tools/call",
+        "params": {"name": "factory.revenue_memory", "arguments": {"app_id": "example.app", "journey": "purchase"}},
+    }, tmp_path))
+    assert memory["marker"] == "MCP_REVENUEFORGE_MEMORY_READ_ONLY"
+    assert memory["status"]["status"] == "empty"
+
+    appforge = _content(dispatch({
+        "jsonrpc": "2.0", "id": 82, "method": "tools/call",
+        "params": {"name": "factory.appforge_status"},
+    }, tmp_path))
+    assert appforge["marker"] == "MCP_APPFORGE_READ_ONLY"
+    assert appforge["status"]["marker"] == "APPFORGE_DESIGN_READ_ONLY"
+    assert all(value is False for value in appforge["status"]["authority"].values())
     assert _files(tmp_path) == before
 
 

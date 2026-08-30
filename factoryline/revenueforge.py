@@ -391,4 +391,6 @@ def revenueforge_projection(root: Path) -> dict[str, Any]:
             latest = value
         else:
             invalid += 1
-    return {"marker": "GRAPH_OPS_REVENUEFORGE_READ_ONLY", "current_count": current, "invalid_count": invalid, "latest": latest, "authority": AUTHORITY}
+    from .revenue_evidence import revenue_evidence_projection
+    evidence = revenue_evidence_projection(workspace)
+    return {"marker": "GRAPH_OPS_REVENUEFORGE_READ_ONLY", "current_count": current, "invalid_count": invalid + evidence["invalid_count"], "latest": latest, "evidence": evidence, "authority": AUTHORITY}

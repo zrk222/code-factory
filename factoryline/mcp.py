@@ -24,6 +24,9 @@ from .gauntlet import gauntlet_status
 from .agent_license import AgentLicenseError, derive_license, license_projection, normalize_agent_identity
 from .combine import combine_projection
 from .workspace_advisor import inspect_workspace
+from .revenueforge import RevenueForgeError, revenueforge_projection
+from .revenue_evidence import query_evidence_memory
+from .appforge_design import appforge_design_projection
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -346,6 +349,33 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.workspace_advisor",
             "description": "Measure bounded local workspace shape and a path-only Remote/WSL preflight. It does not query the IDE, connect remotely, change caches, indexes, inspections, or settings, and is not a performance diagnosis.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.revenue_status",
+            "description": "Return hash-verified local RevenueForge build and evidence status. It never contacts Apple, changes pricing, replies to testers, or publishes.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.revenue_memory",
+            "description": "Return unexpired, exact-app Evidence Memory guidance for one journey and quarantine contradictions. Prior evidence never proves the current build.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "app_id": {"type": "string", "minLength": 1, "maxLength": 160},
+                    "journey": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "at": {"type": "string", "format": "date-time", "maxLength": 40},
+                },
+                "required": ["app_id", "journey"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_status",
+            "description": "Return hash-verified local AppForge design-contract status. It never creates, approves, renders, or releases a design.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -826,6 +856,52 @@ def _combine_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _revenue_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.revenue_status accepts no arguments")
+    return {
+        "marker": "MCP_REVENUEFORGE_READ_ONLY",
+        "action_summary": "Read current local RevenueForge receipts and surface mismatches or unknowns; no provider action ran.",
+        "status": revenueforge_projection(root),
+        "scope": "Read-only local projection; no Apple request, credential access, pricing, offer, reply, publication, deployment, or approval action ran.",
+    }
+
+
+def _revenue_memory(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"app_id", "journey", "at"} or not {"app_id", "journey"} <= set(arguments):
+        raise McpError("factory.revenue_memory requires app_id and journey and accepts optional at")
+    app_id = arguments["app_id"]
+    journey = arguments["journey"]
+    at = arguments.get("at")
+    if not isinstance(app_id, str) or not app_id.strip() or len(app_id) > 160:
+        raise McpError("app_id must be a non-empty string of at most 160 characters")
+    if not isinstance(journey, str) or not journey.strip() or len(journey) > 80:
+        raise McpError("journey must be a non-empty string of at most 80 characters")
+    if at is not None and (not isinstance(at, str) or not at.strip() or len(at) > 40):
+        raise McpError("at must be an ISO-8601 string of at most 40 characters")
+    try:
+        status = query_evidence_memory(root, app_id, journey, at)
+    except RevenueForgeError as exc:
+        raise McpError(str(exc), exc.code) from exc
+    return {
+        "marker": "MCP_REVENUEFORGE_MEMORY_READ_ONLY",
+        "action_summary": "Retrieve exact-app, unexpired prior lessons and quarantine contradictions; require fresh evidence for the current build.",
+        "status": status,
+        "scope": "Read-only exact-scope guidance; no memory promotion, cross-tenant reuse, proof execution, provider action, or approval ran.",
+    }
+
+
+def _appforge_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_READ_ONLY",
+        "action_summary": "Read hash-verified local AppForge design receipts and preserve human design and release authority.",
+        "status": appforge_design_projection(root),
+        "scope": "Read-only local design projection; no design creation, intent override, render, App Store write, publication, deployment, or approval ran.",
+    }
+
+
 def _tool_call(root: Path, params: object) -> dict[str, object]:
     if not isinstance(params, dict) or set(params) - {"name", "arguments"}:
         raise McpError("tools/call requires name and optional arguments")
@@ -892,6 +968,12 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_combine_status(root, arguments))
     if name == "factory.workspace_advisor":
         return _content(_workspace_advisor(root, arguments))
+    if name == "factory.revenue_status":
+        return _content(_revenue_status(root, arguments))
+    if name == "factory.revenue_memory":
+        return _content(_revenue_memory(root, arguments))
+    if name == "factory.appforge_status":
+        return _content(_appforge_status(root, arguments))
     raise McpError("unknown MCP tool")
 
 
