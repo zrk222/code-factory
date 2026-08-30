@@ -34,6 +34,10 @@ receipt and a privacy-safe Proof Card; it does not assess or change your project
   DeepSeek, or other local agent run. Code Factory records the exact file delta,
   runs the validators your team declared, and stores hashes and bounded facts—not
   prompts or raw model output—so reviewers can compare the claim with the change.
+- **SaaS builder:** use `factory saas verify` to follow one customer promise
+  from OAuth/OIDC identity and tenant access through checkout, verified webhook,
+  entitlement, feature access, and revocation. Missing or contradictory evidence
+  stays blocked, and the provider remains untouched.
 - **Platform or assurance team:** evaluate local policy gates, evidence packets,
   expiring exceptions, and tenant boundaries in a controlled pilot. The free core
   is community-supported on a best-effort basis; the proposed enterprise support
@@ -220,7 +224,7 @@ embeddings, or transcripts, and it cannot execute a repair.
 
 ## Revenue-ready iOS scaffolds
 
-`factory revenue build` turns one reviewed `products.yaml` into StoreKit 2, a transparent SwiftUI paywall, an Apple-JWS-verifying entitlement-server scaffold, privacy/review artifacts, and a local evidence page. Then `replay`, `testflight-sync`, `failure-matrix`, and `policy-watch` expose where observed purchase behavior, beta feedback, negative paths, or policy sources diverge—without turning unknowns green. Evidence Memory carries human-approved, receipt-backed lessons into the next exact-app journey while expiring stale knowledge and quarantining contradictions. IDEs and coding agents can inspect the same local facts through MCP; compatible browser agents can inspect bounded Graph Ops status through progressive WebMCP. App Store writes, pricing, experiments, offers, publication, and credentials stay human-controlled. See [RevenueForge](docs/REVENUEFORGE.md), the [plain-language Expertise/AppForge operating guide](docs/EXPERTISE_APPFORGE_E2E.md), and the [MCP/WebMCP handoff](docs/MCP_WEBMCP.md).
+`factory revenue build` turns one reviewed `products.yaml` into StoreKit 2, a transparent SwiftUI paywall, an Apple-JWS-verifying entitlement-server scaffold, privacy/review artifacts, and a local evidence page. Then `replay`, `testflight-sync`, `failure-matrix`, and `policy-watch` expose where observed purchase behavior, beta feedback, negative paths, or policy sources diverge—without turning unknowns green. Evidence Memory carries human-approved, receipt-backed lessons into the next exact-app journey while expiring stale knowledge and quarantining contradictions. IDEs and coding agents can inspect the same local facts through MCP; compatible browser agents can inspect bounded Graph Ops status through progressive WebMCP. App Store writes, pricing, experiments, offers, publication, and credentials stay human-controlled. See [RevenueForge](docs/REVENUEFORGE.md) and the [MCP/WebMCP handoff](docs/MCP_WEBMCP.md).
 
 ## Install
 
@@ -254,6 +258,7 @@ developers can find it. This optional link only opens the repository.
 | Draft the first Gauntlet promises | [`factory gauntlet draft`](docs/EVIDENCE_SUPPLY_LINE.md) | Inert structure-derived candidates, with unsupported HTTP commands explicitly withheld |
 | Prepare a bounded Team pilot | [`factory team-pilot readiness`](docs/TEAM_PILOT_LAUNCH.md) | Hash-bound, customer-managed readiness evidence for owner review—not a checkout or service activation |
 | Operate a team evidence workspace | [`factory ops`](docs/ENTERPRISE_OPERATIONS.md) | Tenant-bound identities, immutable evidence, explicit runner posture, fresh required checks, outcome telemetry, and seven-gate SLA readiness—without merge, deploy, billing, SSO, or contract authority |
+| Prove SaaS access matches the promise | [`factory saas verify`](docs/SAAS_PROOF.md) | Provider-neutral OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, access, and revocation evidence—with unknowns blocked |
 | Add evidence to a GitHub PR | [`factory github proof-review`](docs/GITHUB_PROOF_REVIEW.md) | One neutral Check and stable proof walkthrough, tied to the head commit |
 | Prove a LangGraph resume path | [`factory langgraph replay-verify`](docs/LANGGRAPH_ASSURANCE.md) | Hash-only parity, duplicate-effect and parallel-write safeguards, plus a shareable incident capsule |
 | Detect policy drift before a human merge | [`factory github assurance-dossier`](docs/GITHUB_ASSURANCE_DOSSIER.md) | Deterministic supplied-policy comparison, named expiring exceptions, and a merge-evidence packet |
@@ -386,7 +391,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.44.4.md),
+- See the [0.45.0 release notes](docs/RELEASE_NOTES_0.45.0.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

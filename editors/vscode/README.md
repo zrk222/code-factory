@@ -11,6 +11,12 @@ hollow negative control caught in a disposable sandbox, then open
 `factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
+**New in 0.8.12:** Unified Graph Ops now shows SaaS Reality receipts: whether
+OAuth/OIDC identity, tenant authorization, checkout, verified webhook,
+entitlement, feature access, and revocation agree. The core works across
+standards-compliant providers, keeps unknowns blocked, rejects raw credentials,
+and never contacts or mutates the provider.
+
 The Open VSX extension and local proof core remain free. Every capability
 shipped before the transition is free through December 14, 2026. Beginning
 December 15, optional hosted Personal Memory ($4.95/month) and Team Assurance
@@ -95,7 +101,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.8.11.vsix
+code --install-extension factoryline-vscode-0.8.12.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

@@ -1,0 +1,8 @@
+{
+  "schema": "factory.capability-envelope.v1",
+  "id": "saas-promise-proof-v1",
+  "summary": "Provider-neutral identity-to-entitlement verification over supplied local observations.",
+  "authority": {"execution": false, "approval": false, "publication": false, "deployment": false, "billing": false, "credential": false},
+  "inputs": ["factory.saas-proof.contract.v1", "factory.saas-proof.evidence.v1"],
+  "outputs": ["factory.saas-proof.receipt.v1"]
+}

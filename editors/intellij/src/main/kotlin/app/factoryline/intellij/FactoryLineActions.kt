@@ -81,6 +81,18 @@ object FactoryLineController {
         }
     }
 
+    fun inspectSaasReality(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect local SaaS Reality receipts")) return
+        runBackground(project, "Inspect SaaS Reality") { FactoryLineRunner.saasStatus(project) }
+    }
+
+    fun verifySaasReality(project: Project) {
+        val contract = workspacePath(project, "Reviewed SaaS promise contract JSON") ?: return
+        val evidence = workspacePath(project, "Observed SaaS journey evidence JSON") ?: return
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Verify the selected SaaS journey and write a local receipt")) return
+        runBackground(project, "Verify SaaS Journey") { FactoryLineRunner.saasVerify(project, contract, evidence) }
+    }
+
     fun saveWorkspaceAdvisorReport(project: Project) {
         val root = project.basePath?.let(Path::of) ?: run {
             Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")

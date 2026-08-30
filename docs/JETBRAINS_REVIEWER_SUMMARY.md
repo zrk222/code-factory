@@ -1,4 +1,4 @@
-# FactoryLine 0.8.16 — JetBrains reviewer summary
+# FactoryLine 0.8.19 — JetBrains reviewer summary
 
 This is a concise map from common IDE and Marketplace review concerns to the
 candidate's shipped behavior and local evidence. It describes the candidate;
@@ -6,6 +6,7 @@ it is not a claim of Marketplace approval or a diagnosis of an IDE.
 
 | Review concern / user impact | FactoryLine response | Proof or reference |
 | --- | --- | --- |
+| SaaS login, payment, and feature access can silently disagree across providers. | **SaaS Reality** offers explicit **Verify SaaS journey** and **View SaaS status** controls. Verification uses workspace-local contract/evidence JSON and writes a hash-bound local receipt covering OAuth/OIDC issuer/audience, tenant/role binding, checkout, verified webhook, entitlement, access, and revocation. Unknowns block green. It never contacts a provider or handles credentials. | `factoryline/saas_proof.py`; `tests/test_saas_proof.py`; `FactoryLineCommands.saasVerify`; `FactoryLineCommands.saasStatus`; `FactoryLineCoreTest`; `docs/SAAS_PROOF.md`. |
 | A slow or frozen-feeling IDE leads to guesswork and risky cache or setting changes. | **Guardian Core** is the first FactoryLine tab. It records at most 20 in-memory aggregate samples over a short local window: heap use, process CPU when available, indexing state, and EDT delay. It exposes an observation timeline and navigation-only review routes. | `FactoryLineGuardian.kt`; `FactoryLineCoreTest.guardian*`; `docs/JETBRAINS_GUARDIAN_CORE.md`. |
 | A plugin can overstate performance or blame another plugin without evidence. | Guardian reports thresholds and transitions only. It never identifies root cause, ranks plugins, predicts duration, changes heap/caches/indexes/settings, or applies a fix. | Guardian assessment copy and tests; `docs/JETBRAINS_GUARDIAN_CORE.md`. |
 | AI-authored or teammate code can look complete while its tests prove little. | Existing **Proof Review**, **Intent Ledger**, **Index Continuity**, and **Workspace Advisor** routes keep review facts separate from a human decision. Guardian opens their tabs; it does not run a CLI command from those routes. | `FactoryLineToolWindow.kt`, `FactoryLineActions.kt`, `plugin.xml`; route unit test in `FactoryLineCoreTest`. |
@@ -19,7 +20,7 @@ it is not a claim of Marketplace approval or a diagnosis of an IDE.
 
 ## Candidate boundary
 
-FactoryLine 0.8.16 is a local, supervised JetBrains adapter. It does not
+FactoryLine 0.8.19 is a local, supervised JetBrains adapter. It does not
 upload project source, store API keys, silently invoke a model, sign an
 artifact, approve a change, merge, publish, deploy, or replace human release
 authority. The Marketplace manual review team remains the authority for

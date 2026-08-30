@@ -1,31 +1,31 @@
 # Release Channels
 
-Code Factory v0.44.4 publishes one verified source state through channel-specific
+Code Factory v0.45.0 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.44.4`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.44.4` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.45.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.45.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code / Open VSX | `factoryline-vscode-0.8.11.vsix` | GitHub release bundle; protected `openvsx.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX and public Open VSX version |
-| JetBrains | `factoryline-intellij-0.8.17.zip` | Public plugin 33009 update submitted through the authenticated Marketplace editor | Installable ZIP or public plugin/version page after moderation |
+| VS Code / Open VSX | `factoryline-vscode-0.8.12.vsix` | GitHub release bundle; protected `openvsx.yml` publishes an immutable, verified VSIX when its scoped publisher credential is configured | Installable VSIX and public Open VSX version |
+| JetBrains | `factoryline-intellij-0.8.19.zip` | Public plugin 33009 update submitted through the authenticated Marketplace editor | Installable ZIP or public plugin/version page after moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured.
 
-### 0.44.4 Intent and metadata integrity
+### 0.45.0 SaaS Reality and unified proof operations
 
-This patch adds a shared lexical intent boundary across intake and proof
-surfaces, binds Gauntlet outcomes to their original promise and Reality
-evidence, and adds complete-file Codex metadata auditing. Historical metadata
-that lacks negative proof or external authority remains review-required; it is
-not rewritten into success.
+This release adds provider-neutral OAuth/OIDC identity-to-entitlement proof and
+unifies Proof Review, RevenueForge, AppForge design contracts, Evidence Memory,
+enterprise operations, deterministic policy compilation, Codex metadata
+integrity, Graph Ops, MCP, WebMCP, and IDE adapters. Unknown evidence remains
+blocked; private provider implementations are not included.
 
 ### 0.44.3 Journey proof and audited healing
 
@@ -118,7 +118,7 @@ does not invoke LangGraph, mutate checkpoints, replay effects, establish
 production resilience, or estimate savings.
 
 JetBrains Marketplace publication remains blocked while any submitted update is
-pending Marketplace approval. Do not dispatch the 0.8.16 candidate until the
+pending Marketplace approval. Do not dispatch the 0.8.19 candidate until the
 Marketplace status gate reports clear.
 
 ### 0.42.0 Declared Change Profile and Senior Attention
@@ -130,7 +130,7 @@ inspecting source semantics; it cannot infer intent, promote/waive a decision,
 run evidence, repair code, approve, merge, publish, deploy, sign, message, or
 access credentials.
 
-### 0.8.16 Guardian Core + Engineering Judgment candidate
+### 0.8.19 Guardian Core + Engineering Judgment candidate
 
 The JetBrains-only candidate adds bounded local Guardian Core observations plus
 the conventional Change Profile handoff for selected Change Lists. It shows

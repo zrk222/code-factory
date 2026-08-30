@@ -1,0 +1,30 @@
+{
+  "checks": [
+    {
+      "name": "saas_proof_lifecycle_and_hostile_boundaries",
+      "kind": "python",
+      "run": "import subprocess\nresult=subprocess.run(['python','-m','pytest','-q','tests/test_saas_proof.py'],capture_output=True,text=True,timeout=120,check=False)\nassert result.returncode==0,result.stdout+result.stderr\nassert '5 passed' in result.stdout\n",
+      "covers": [
+        "SAAS_PROMISE_PERMISSION_VERIFIED",
+        "SAAS_PROMISE_PERMISSION_BLOCKED",
+        "SAAS_PROOF_SECRET_REJECTED",
+        "SAAS_PROOF_PKCE_REQUIRED",
+        "SAAS_PROOF_ISSUER_INVALID",
+        "SAAS_PROOF_CROSS_IDENTITY_OR_TENANT_JOURNEY",
+        "SAAS_PROOF_STALE_ENTITLEMENT"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "saas_proof_read_only_surfaces",
+      "kind": "python",
+      "run": "import subprocess\nresult=subprocess.run(['python','-m','pytest','-q','tests/test_mcp.py','tests/test_webmcp.py','tests/test_graph_ops.py'],capture_output=True,text=True,timeout=180,check=False)\nassert result.returncode==0,result.stdout+result.stderr\n",
+      "covers": [
+        "SAAS_PROOF_READ_ONLY",
+        "FACTORY_WEBMCP_PROGRESSIVE_READ_ONLY",
+        "SAAS_PROOF_PUBLIC_PRIVATE_SEPARATED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

@@ -26,6 +26,11 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "title": "Read design evidence status",
         "description": "Read bounded AppForge design-receipt status already visible on this page. It never creates, approves, renders, or releases a design.",
     },
+    {
+        "name": "factory.saas_status",
+        "title": "Read SaaS promise-to-permission status",
+        "description": "Read bounded provider-neutral OAuth/OIDC-to-entitlement status already visible on this page. It never contacts or mutates a provider.",
+    },
 )
 
 

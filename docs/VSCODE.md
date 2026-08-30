@@ -10,10 +10,10 @@ release. The JetBrains adapter is documented separately in
 
 ## Install
 
-1. Install FactoryLine: `pip install factoryline-code-factory==0.44.4`.
+1. Install FactoryLine: `pip install factoryline-code-factory==0.45.0`.
 2. Download a `factoryline-vscode-*.vsix` release asset, or build it from
    `editors/vscode` with `npm ci` then `npm run package`.
-3. Run `code --install-extension factoryline-vscode-0.8.11.vsix`.
+3. Run `code --install-extension factoryline-vscode-0.8.12.vsix`.
 
 Durable mission graphs and secret-free BYOK routing are available from the
 workspace through the local `factory langgraph` and `factory provider`

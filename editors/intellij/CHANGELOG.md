@@ -1,5 +1,16 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.19 - 2026-08-30
+
+- Add native **Verify SaaS journey** and **View SaaS status** options plus the
+  matching Unified Graph Ops panel; verification accepts only workspace-local
+  contract/evidence files and requires explicit confirmation.
+  for provider-neutral OAuth/OIDC identity-to-entitlement receipts.
+- Keep the feature local, read-only, confirmation-gated, and free of provider,
+  credential, billing, entitlement, deployment, or approval authority.
+- Carry the combined Proof Review, RevenueForge, AppForge, enterprise
+  operations, policy, and metadata-integrity summaries into the release.
+
 ## 0.8.16 - 2026-08-21
 
 - Make the Engineering Judgment Safety Case actionable for a selected Change

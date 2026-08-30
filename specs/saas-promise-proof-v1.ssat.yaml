@@ -1,0 +1,34 @@
+name: saas-promise-proof-v1
+modules:
+  - name: saas_proof
+    path: factoryline/saas_proof.py
+    imports: []
+    functions:
+      - name: verify_saas_proof
+        args: ["root: Path", "contract_path: Path", "evidence_path: Path", "out: Path"]
+        returns: "dict[str, Any]"
+        doc: "Verify supplied identity billing entitlement and revocation evidence without provider access."
+      - name: saas_proof_projection
+        args: ["root: Path"]
+        returns: "dict[str, Any]"
+        doc: "Project only hash-valid local SaaS proof receipt metadata."
+dependencies: []
+invariants:
+  - name: provider_network_access_forbidden
+    forbid_pattern: "requests[.]|httpx[.]|urllib[.]request|socket[.]"
+    scopes:
+      - module: saas_proof
+        symbol: verify_saas_proof
+        max_lines: 1000
+  - name: provider_write_authority_forbidden
+    forbid_pattern: "(identity_provider_write|entitlement_write)[\"']?\\s*:\\s*True"
+    scopes:
+      - module: saas_proof
+        symbol: verify_saas_proof
+        max_lines: 1000
+  - name: private_expertise_surface_forbidden
+    forbid_pattern: "Expertise[.]ai|my[.]expertise[.]ai"
+    scopes:
+      - module: saas_proof
+        symbol: verify_saas_proof
+        max_lines: 1000

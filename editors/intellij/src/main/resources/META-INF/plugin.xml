@@ -5,7 +5,7 @@
     <description><![CDATA[
         <p><strong>Your IDE feels slow. Your AI code looks fine. Check both with evidence before you spend another hour guessing.</strong></p>
         <p><strong>FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains.</strong> Record a short local health window, review what was observed, inspect an AI or teammate diff, and choose the next safe human review step—without uploading source or changing IDE settings.</p>
-        <p><strong>New in 0.8.16 — Senior Attention, not another vague warning:</strong> inspect repository-tracked decisions, then route one selected Change List using an optional human-declared Change Profile. It makes a new architecture boundary, missing proof, or review-due decision explicit without guessing from source. It is local, read-only, confirmation-gated, and never promotes a decision, executes a repair, or approves a release.</p>
+        <p><strong>New in 0.8.19 — SaaS Reality:</strong> inspect whether OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation agree across Clerk, Auth0, Okta, Entra, Cognito, Supabase, Firebase, or another standards-compliant provider. The native status action and Graph Ops view read hash-verified local receipts; they never contact a provider, access credentials, change billing, grant access, deploy, or approve a release.</p>
         <p><strong>In 60 seconds:</strong> inspect an outcome, fuzzy PRD, or risky diff; challenge whether a test can actually reject the failure it claims to cover; then see the current proof gap before a human decides what may be applied.</p>
         <p><strong>Start now:</strong> open <strong>Tools | FactoryLine | Run First Proof</strong>, confirm the workspace, then inspect the local result. Generate an MVP when you need one; a starter is never called production-ready before relevant evidence exists.</p>
         <h3>What this solves</h3>
@@ -64,6 +64,7 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
+            <li>Add SaaS Reality: one provider-neutral, hash-verified local status for OAuth/OIDC identity, tenant/role authorization, checkout, webhook, entitlement, access, and revocation. Unknowns block green; the plugin never contacts or mutates a provider.</li>
             <li>Add declared Change Profiles to Engineering Judgment: selected Change Lists can expose a named new change kind, deterministic Senior Attention route, and review-due or successor drift. FactoryLine never infers source semantics or approves a change.</li>
             <li>Add Guardian Core as the first tool-window tab: it summarizes a bounded, local, in-memory IDE-health sample window and exposes navigation-only review routes. Guardian does not diagnose a cause, rank plugins, change IDE settings, or apply a repair.</li>
             <li>Add IDE Health Flight Recorder and Index Continuity Guard: bounded in-memory aggregate runtime samples plus explicit local structural baseline/compare evidence. Both are observation-only; neither changes IDE settings, caches, indexes, plugins, project files, or remote state, and neither claims a causal diagnosis or duration prediction.</li>

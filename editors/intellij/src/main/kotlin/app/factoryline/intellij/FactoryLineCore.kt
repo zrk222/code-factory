@@ -191,6 +191,15 @@ object FactoryLineCommands {
     fun savings(root: Path): List<String> =
         listOf("savings", "report", "--root", root.toString(), "--json")
 
+    fun saasStatus(root: Path): List<String> =
+        listOf("saas", "status", "--root", root.toString(), "--json")
+
+    fun saasVerify(root: Path, contract: Path, evidence: Path, out: Path): List<String> = listOf(
+        "saas", "verify", "--root", root.toString(),
+        "--contract", contract.toString(), "--evidence", evidence.toString(),
+        "--out", out.toString(), "--json",
+    )
+
     fun missionGraph(operation: MissionGraphOperation, mission: Path, root: Path): List<String> {
         require(operation !in setOf(MissionGraphOperation.EVENT, MissionGraphOperation.ROUTE))
         return listOf("langgraph", operation.command, mission.toString(), "--root", root.toString(), "--json")
@@ -522,6 +531,26 @@ object FactoryLineRunner {
         val root = project.basePath?.let(Path::of)
             ?: return CommandResult("Open Paired Savings Report", emptyList(), null, false, "Blocked: the project has no local workspace path.")
         return execute(project, "Open Paired Savings Report", FactoryLineCommands.savings(root))
+    }
+
+    fun saasStatus(project: Project): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Inspect SaaS Reality", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        return execute(project, "Inspect SaaS Reality", FactoryLineCommands.saasStatus(root))
+    }
+
+    fun saasVerify(project: Project, contract: Path, evidence: Path): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Verify SaaS Journey", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        val boundedContract = WorkspacePath.resolve(root, contract.toString())
+            ?: return CommandResult("Verify SaaS Journey", emptyList(), null, false, "Blocked: the promise contract must stay inside the project.")
+        val boundedEvidence = WorkspacePath.resolve(root, evidence.toString())
+            ?: return CommandResult("Verify SaaS Journey", emptyList(), null, false, "Blocked: the observed evidence must stay inside the project.")
+        if (!Files.isRegularFile(boundedContract) || !Files.isRegularFile(boundedEvidence)) {
+            return CommandResult("Verify SaaS Journey", emptyList(), null, false, "Blocked: choose existing contract and evidence JSON files.")
+        }
+        val out = root.resolve(".factory/saas-proof/latest.json")
+        return execute(project, "Verify SaaS Journey", FactoryLineCommands.saasVerify(root, boundedContract, boundedEvidence, out))
     }
 
     fun runMissionGraph(project: Project, operation: MissionGraphOperation, mission: Path): CommandResult {

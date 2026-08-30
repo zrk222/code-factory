@@ -27,6 +27,7 @@ from .workspace_advisor import inspect_workspace
 from .revenueforge import RevenueForgeError, revenueforge_projection
 from .revenue_evidence import query_evidence_memory
 from .appforge_design import appforge_design_projection
+from .saas_proof import saas_proof_projection
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -376,6 +377,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.appforge_status",
             "description": "Return hash-verified local AppForge design-contract status. It never creates, approves, renders, or releases a design.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.saas_status",
+            "description": "Return hash-verified local, provider-neutral OAuth/OIDC-to-entitlement proof status. It never contacts an identity, billing, or deployment provider.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -902,6 +909,17 @@ def _appforge_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _saas_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.saas_status accepts no arguments")
+    return {
+        "marker": "MCP_SAAS_PROOF_READ_ONLY",
+        "action_summary": "Read hash-valid local identity-to-entitlement proof status; no provider request or mutation ran.",
+        "status": saas_proof_projection(root),
+        "scope": "Read-only local receipt metadata; not OAuth provider certification, payment settlement, production proof, legal advice, or deploy authority.",
+    }
+
+
 def _tool_call(root: Path, params: object) -> dict[str, object]:
     if not isinstance(params, dict) or set(params) - {"name", "arguments"}:
         raise McpError("tools/call requires name and optional arguments")
@@ -974,6 +992,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_revenue_memory(root, arguments))
     if name == "factory.appforge_status":
         return _content(_appforge_status(root, arguments))
+    if name == "factory.saas_status":
+        return _content(_saas_status(root, arguments))
     raise McpError("unknown MCP tool")
 
 

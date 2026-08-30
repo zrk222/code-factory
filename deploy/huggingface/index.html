@@ -277,6 +277,23 @@ factory graph ops --root .\my-mvp --json</code></pre>
       </div>
     </section>
 
+    <section id="saas-reality">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">SaaS Reality · provider-neutral local proof</div>
+          <h2>Did the customer who paid receive the right access?</h2>
+          <p>A successful login is not authorization, and a successful checkout is not entitlement proof. Code Factory follows supplied local evidence from OAuth/OIDC identity and tenant role through checkout, verified webhook, entitlement, feature access, and revocation. It works across standards-compliant providers, keeps unknowns blocked, rejects raw credentials, and never contacts or mutates the provider.</p>
+          <div class="actions">
+            <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/SAAS_PROOF.md">Review the SaaS proof contract</a>
+          </div>
+        </div>
+        <pre><code>factory saas verify --root . \
+  --contract saas-contract.json \
+  --evidence observed-events.json \
+  --json</code></pre>
+      </div>
+    </section>
+
     <section>
       <div class="shell proof">
         <div>
@@ -362,7 +379,7 @@ factory studio --root .\my-mvp
         </div>
         <pre><code>Marketplace count: check the current listing
 Unique installs: not exposed by the listing
-0.8.17 Marketplace update: under review
+0.8.19 Marketplace update: candidate pending submission and review
 
 Never substitute CI or repository traffic for installs.</code></pre>
       </div>
@@ -398,7 +415,7 @@ Never substitute CI or repository traffic for installs.</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.44.4 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.44.4">Release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.45.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.45.0">Release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

@@ -22,6 +22,23 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun saasRealityStatusIsProviderNeutralReadOnlyAndWorkspaceBound() {
+        val root = Files.createTempDirectory("factoryline-saas-reality")
+        assertEquals(listOf("saas", "status", "--root", root.toString(), "--json"), FactoryLineCommands.saasStatus(root))
+        val contract = root.resolve("saas-contract.json")
+        val evidence = root.resolve("observed-events.json")
+        val out = root.resolve(".factory/saas-proof/latest.json")
+        assertEquals(
+            listOf(
+                "saas", "verify", "--root", root.toString(),
+                "--contract", contract.toString(), "--evidence", evidence.toString(),
+                "--out", out.toString(), "--json",
+            ),
+            FactoryLineCommands.saasVerify(root, contract, evidence, out),
+        )
+    }
+
+    @Test
     fun workspaceAdvisorIsExplicitWorkspaceBoundAndWritesOnlyWhenRequested() {
         val root = Files.createTempDirectory("factoryline-workspace-advisor")
         val outDir = root.resolve(".factory/workspace-advice")

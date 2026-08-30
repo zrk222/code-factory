@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.45.0 - 2026-08-29
+
+- Add SaaS Reality, a provider-neutral OAuth/OIDC promise-to-permission proof
+  joining identity, tenant/role authorization, checkout, verified webhook,
+  entitlement, feature access, and revocation. Unknown or contradictory
+  observations block the receipt; raw credentials are rejected.
+- Expose SaaS proof status through CLI, Unified Graph Ops, local stdio MCP,
+  progressive WebMCP, and FactoryLine for JetBrains without provider write,
+  billing, deployment, approval, or credential authority.
+- Merge Proof Review, RevenueForge, AppForge design contracts, Evidence Memory,
+  enterprise operations, policy compilation, Codex metadata integrity, and the
+  prior 0.44.4 intent-quality safeguards into one release line.
+- Advance the VS Code/Open VSX adapter to 0.8.12 and the JetBrains adapter to
+  0.8.19 with matching public summaries.
+
 ## Unreleased
 
 ## 0.44.4 - 2026-08-27

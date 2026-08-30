@@ -1,7 +1,7 @@
 # Current product visuals
 
 This is the approved public visual set for FactoryLine 0.44 and FactoryLine AI
-Proof 0.8.17 across the current Code Factory listing,
+Proof 0.8.19 across the current Code Factory listing,
 GitHub social preview handoff, Hugging Face product page, and explanatory
 community posts. Product surfaces use actual local product captures and the
 current FactoryLine identity asset—never
@@ -31,14 +31,14 @@ Use only as a one-user case study. The observed metadata and modeled capacity
 range are visually separated; neither is a universal benchmark or guaranteed
 ROI claim.
 
-## 4. FactoryLine AI Proof 0.8.17: complete IDE controls
+## 4. FactoryLine AI Proof 0.8.19: complete IDE controls
 
 ![FactoryLine AI Proof controls in IntelliJ IDEA for first proof, assemblies, receipts, changed-proof analysis, Change Lists, workspace analysis, and the local meter](assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg)
 
 Use for the JetBrains capability story: the current control surface shows the
 complete local workflow without implying that every action has already run.
 
-## 5. FactoryLine AI Proof 0.8.17: local IDE proof
+## 5. FactoryLine AI Proof 0.8.19: local IDE proof
 
 ![FactoryLine AI Proof running a successful local First Proof on FactoryLine 0.44 inside IntelliJ IDEA](assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg)
 
