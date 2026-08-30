@@ -1,4 +1,11 @@
 import org.jetbrains.intellij.platform.gradle.extensions.intellijPlatform
+import org.gradle.api.JavaVersion
+
+val requiredBuildJava = JavaVersion.VERSION_21
+check(JavaVersion.current() == requiredBuildJava) {
+    "FactoryLine IntelliJ release builds require JDK 21 exactly; " +
+        "detected Java ${JavaVersion.current()}. Set JAVA_HOME to a JDK 21 installation before running Gradle."
+}
 
 rootProject.name = "factoryline-intellij"
 
