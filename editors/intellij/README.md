@@ -10,6 +10,12 @@ Start with **Tools > FactoryLine > Run First Proof**, then run
 `factory mvp "Build an approval tracker" --root .`. A starter remains a
 starting state until product-specific proof exists.
 
+FactoryLine is the independent proof layer after an AI coding agent and beside
+static analysis. Junie can plan and implement; Qodana can report inspections,
+coverage, and quality thresholds; FactoryLine asks a different question:
+could the test and supplied run evidence actually reject a broken result? It
+does not replace, control, or imply endorsement by either JetBrains product.
+
 ## What It Does
 
 - `FactoryLine: Run Spec-to-Ship Assembly` runs `factory assemble <feature> --root <project>`.

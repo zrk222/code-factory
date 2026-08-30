@@ -20,6 +20,12 @@ submitting or replacing anything pending.
 - **License:** repository `MIT OR Apache-2.0` terms
 - **Getting started:** `Tools | FactoryLine | Run First Proof`
 
+**Category position:** FactoryLine is an independent proof layer after AI coding
+and alongside static analysis. Junie can build; Qodana can inspect code,
+coverage, and configured thresholds; FactoryLine challenges whether a test and
+the supplied run evidence could actually reject a broken result. It does not
+replace, control, or imply JetBrains endorsement of either product.
+
 The name stays distinct from the existing Marketplace product named Code Factory.
 The first sentence is short enough to carry the full preview outcome. The packaged
 descriptor is the source of truth for the full description and change notes.
