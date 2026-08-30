@@ -42,7 +42,7 @@ def test_plugin_skill_and_workflow_keep_execution_and_release_authority_human_co
     assert "Do not authorize or execute repairs" in skill
     assert "pull_request_target" not in workflow
     assert "contents: read" in workflow
-    assert "zrk222/code-factory@v0.44.3" in workflow
+    assert "zrk222/code-factory@v0.45.0" in workflow
     assert "write" not in workflow
 
 

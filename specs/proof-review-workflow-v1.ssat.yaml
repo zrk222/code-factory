@@ -1,0 +1,79 @@
+name: proof-review-workflow-v1
+language: python
+modules:
+  - name: proof_review_workflow
+    path: factoryline/proof_review_workflow.py
+    language: python
+    functions:
+      - name: create_intent_contract
+        args: [root, contract_id, draft_path, confirmed_by]
+        returns: dict
+      - name: prove_trajectory
+        args: [root, trace_path, policy_path, trajectory_id]
+        returns: dict
+      - name: create_quick_review
+        args: [root, review_id, contract_path, changed]
+        returns: dict
+      - name: promote_regression
+        args: [root, review_path, capsule_id, confirmed_by, title]
+        returns: dict
+      - name: team_proof_inbox
+        args: [root]
+        returns: dict
+      - name: install_hook_pack
+        args: [root]
+        returns: dict
+      - name: create_proof_card
+        args: [root, review_path, card_id]
+        returns: dict
+      - name: proof_review_projection
+        args: [root]
+        returns: dict
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    language: python
+    functions:
+      - name: graph_ops_snapshot
+        args: [root]
+        returns: dict
+dependencies:
+  - from: proof_review_workflow
+    to: continuous_proof
+  - from: graph_ops
+    to: proof_review_workflow
+invariants:
+  - name: review_core_has_no_execution_or_network_authority
+    forbid_pattern: "requests\\.|httpx\\.|urllib\\.|socket\\.|subprocess\\.|\\b(?:execute|merge|deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: proof_review_workflow
+        symbol: create_intent_contract
+        max_lines: 80
+      - module: proof_review_workflow
+        symbol: prove_trajectory
+        max_lines: 130
+      - module: proof_review_workflow
+        symbol: create_quick_review
+        max_lines: 100
+      - module: proof_review_workflow
+        symbol: promote_regression
+        max_lines: 80
+      - module: proof_review_workflow
+        symbol: team_proof_inbox
+        max_lines: 80
+      - module: proof_review_workflow
+        symbol: create_proof_card
+        max_lines: 80
+  - name: inbox_projection_is_read_only
+    forbid_pattern: "write_(?:text|bytes)\\(|mkdir\\(|replace\\(|_atomic\\("
+    scopes:
+      - module: proof_review_workflow
+        symbol: team_proof_inbox
+        max_lines: 80
+      - module: proof_review_workflow
+        symbol: proof_review_projection
+        max_lines: 30
+gates:
+  - name: proof_review_contract
+    command: "python -m pytest -q tests/test_proof_review_workflow.py"
+  - name: proof_review_regression
+    command: "python -m pytest -q tests/test_proof_review_workflow.py tests/test_continuous_proof.py tests/test_graph_ops.py tests/test_studio.py"

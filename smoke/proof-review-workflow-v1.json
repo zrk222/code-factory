@@ -1,0 +1,23 @@
+{
+  "checks": [
+    {
+      "name": "proof_review_contract",
+      "kind": "python",
+      "run": "from pathlib import Path\nsource=Path('factoryline/proof_review_workflow.py').read_text(encoding='utf-8')\nrequired=['INTENT_CONTRACT_CONFIRMED','FIVE_MINUTE_PROOF_REVIEW_RECORDED','AGENT_HOOK_PACK_WRITTEN','REGRESSION_CAPSULE_PROMOTED','TEAM_PROOF_INBOX_READ_ONLY','AGENT_TRAJECTORY_PROVED','SHAREABLE_PROOF_CARD_EXPORTED']\nassert all(item in source for item in required)\nassert 'subprocess' not in source and '\"approval\": True' not in source and '\"network\": True' not in source\n",
+      "expect_exit": 0,
+      "timeout_s": 30,
+      "must_fail_on_stub": true,
+      "covers": ["REQ-PR-001", "REQ-PR-002", "REQ-PR-003", "REQ-PR-004", "REQ-PR-005", "REQ-PR-006", "REQ-PR-007", "REQ-PR-009"]
+    },
+    {
+      "name": "proof_review_behavior",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_proof_review_workflow.py','tests/test_continuous_proof.py'])\nassert result==0\nprint('PROOF_REVIEW_WORKFLOW_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "PROOF_REVIEW_WORKFLOW_PASS",
+      "timeout_s": 120,
+      "must_fail_on_stub": true,
+      "covers": ["REQ-PR-008", "REQ-PR-010"]
+    }
+  ]
+}

@@ -11,6 +11,7 @@ from factoryline.enterprise_receipts import generate_key_material
 from factoryline.cli import main
 from factoryline.gauntlet import (
     GauntletError,
+    _card_from_core,
     admit_gauntlet,
     challenge_survival_card,
     compile_gauntlet_proposal,
@@ -250,6 +251,19 @@ def test_survival_card_rejects_tamper_and_optional_dsse_binds_exact_card_hash(tm
     )
     verified = verify_survival_card(card_path, envelope_path=envelope, trust_root_path=Path(material["trust_root"]))
     assert verified["signature"]["verification"] == "offline_dsse_ed25519"
+
+
+def test_survival_card_rejects_resealed_promise_reality_mismatch(tmp_path: Path) -> None:
+    proposal_path = _proposal(tmp_path)
+    result = run_gauntlet(tmp_path, proposal_path, _admission(tmp_path, proposal_path))
+    card = result["card"]
+    core = {key: value for key, value in card.items() if key not in {"card_sha256", "card_markdown", "card_svg"}}
+    core["outcomes"][0]["promise"]["statement"] = "A different promise is being tested."
+    forged = _card_from_core(core)
+    with pytest.raises(GauntletError) as exc:
+        validate_survival_card(forged)
+    assert exc.value.code == "SURVIVAL_CARD_INVALID"
+    assert "Reality Check promise" in str(exc.value)
 
 
 def test_gauntlet_status_is_read_only_and_projects_existing_card(tmp_path: Path) -> None:

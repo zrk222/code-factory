@@ -111,3 +111,10 @@ def test_intake_rejects_unshortlisted_framework_and_secret_like_decisions(tmp_pa
         confirm_intake(tmp_path, Path(grilled["path"]), "jetbrains-plugin", "A reviewer has a receipt outcome.", "A receipt is visible from the CLI.", "local_only", "owner", "A bounded reason.")
     with pytest.raises(ProductMissionError, match="INTAKE_DECISION_INVALID"):
         confirm_intake(tmp_path, Path(grilled["path"]), "python-service", "sk-abcdefghijklmnop", "A receipt is visible from the CLI.", "local_only", "owner", "A bounded reason.")
+
+
+def test_intake_rejects_vague_intent_and_non_observable_acceptance_before_writing(tmp_path: Path):
+    grilled = grill_intake(_prd(tmp_path), tmp_path)
+    with pytest.raises(ProductMissionError, match="INTAKE_INTENT_UNCLEAR"):
+        confirm_intake(tmp_path, Path(grilled["path"]), "python-service", "Make it better for users.", "The task works.", "local_only", "owner", "A bounded reason.")
+    assert not (tmp_path / ".factory" / "intake-confirmations").exists()

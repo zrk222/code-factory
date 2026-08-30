@@ -22,6 +22,34 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun aiAgentProofMissionKeepsJunieSupervisedAndVerificationIndependent() {
+        val mission = buildAiAgentProofMission("Scope: abc123\nSealed paths: 2")
+
+        assertTrue(mission.contains("Use this sealed local scope with Junie or another AI coding agent."))
+        assertTrue(mission.contains("Stop and ask before expanding scope."))
+        assertTrue(mission.contains("Do not delete, skip, weaken, or replace a failing test"))
+        assertTrue(mission.contains("FactoryLine will independently review"))
+        assertTrue(mission.endsWith("Scope: abc123\nSealed paths: 2"))
+    }
+
+    @Test
+    fun saasRealityStatusIsProviderNeutralReadOnlyAndWorkspaceBound() {
+        val root = Files.createTempDirectory("factoryline-saas-reality")
+        assertEquals(listOf("saas", "status", "--root", root.toString(), "--json"), FactoryLineCommands.saasStatus(root))
+        val contract = root.resolve("saas-contract.json")
+        val evidence = root.resolve("observed-events.json")
+        val out = root.resolve(".factory/saas-proof/latest.json")
+        assertEquals(
+            listOf(
+                "saas", "verify", "--root", root.toString(),
+                "--contract", contract.toString(), "--evidence", evidence.toString(),
+                "--out", out.toString(), "--json",
+            ),
+            FactoryLineCommands.saasVerify(root, contract, evidence, out),
+        )
+    }
+
+    @Test
     fun workspaceAdvisorIsExplicitWorkspaceBoundAndWritesOnlyWhenRequested() {
         val root = Files.createTempDirectory("factoryline-workspace-advisor")
         val outDir = root.resolve(".factory/workspace-advice")
@@ -224,6 +252,23 @@ class FactoryLineCoreTest {
             ),
             FactoryLineCommands.repairCandidate(root, scope, patch, outDir),
         )
+    }
+
+    @Test
+    fun proofAdapterAndHandshakeCommandsAreExplicitWorkspaceBoundAndSecretFree() {
+        val root = Files.createTempDirectory("factoryline-proof-adapter")
+        val scope = root.resolve(".factory/repair-sandboxes/scope.json")
+        val sarif = root.resolve("reports/sonar.sarif")
+        val e2e = root.resolve("receipts/e2e.json")
+
+        assertEquals(
+            listOf("mcp", "install", "--root", root.toString(), "--client", "copilot", "--confirmation", "INSTALL Copilot MCP", "--json"),
+            FactoryLineCommands.mcpInstall(root, "copilot"),
+        )
+        val command = FactoryLineCommands.jetbrainsHandshake(root, scope, listOf("src/service.py"), sarif, "sonarqube", e2e)
+        assertTrue(command.containsAll(listOf("jetbrains", "handshake", "--analysis-sarif", sarif.toString(), "--analysis-provider", "sonarqube", "--e2e-receipt", e2e.toString())))
+        assertTrue(command.containsAll(listOf("--changed", "src/service.py", "--scope", scope.toString())))
+        assertFalse(command.any { it.contains("token", ignoreCase = true) || it.contains("secret", ignoreCase = true) })
     }
 
     @Test

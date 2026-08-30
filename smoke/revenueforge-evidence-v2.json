@@ -1,0 +1,26 @@
+{
+  "checks": [
+    {
+      "name": "revenueforge_appforge_mcp_webmcp_behavior",
+      "kind": "python",
+      "run": "import json, tempfile, yaml\nfrom pathlib import Path\nfrom factoryline.appforge_design import compile_appforge_design\nfrom factoryline.mcp import mcp_status\nfrom factoryline.revenue_evidence import FAILURE_SCENARIOS, evaluate_failure_matrix, promote_evidence_memory, query_evidence_memory, replay_purchase_journey, sync_testflight_evidence, watch_policy_drift\nfrom factoryline.webmcp import webmcp_manifest\nwith tempfile.TemporaryDirectory() as raw:\n    root = Path(raw)\n    def write_json(name, value):\n        path = root / name; path.write_text(json.dumps(value), encoding='utf-8'); return path\n    manifest = {'app': {'name': 'Example', 'bundle_id': 'com.example.app'}, 'products': [{'id': 'com.example.pro.monthly', 'display_name': 'Pro', 'type': 'auto_renewable', 'duration': 'P1M', 'group': 'pro', 'entitlements': ['pro']}], 'paywall': {'value_before_price': True, 'price_and_duration_before_cta': True, 'single_primary_cta': True, 'restore_purchases': True, 'patterns': []}, 'legal': {'privacy_policy_url': 'https://example.com/privacy', 'terms_url': 'https://example.com/terms'}, 'privacy': {'purchase_history_linked': True, 'purpose': 'app_functionality'}}\n    products = root / 'products.yaml'; products.write_text(yaml.safe_dump(manifest), encoding='utf-8')\n    kinds = ['paywall_presented','purchase_started','transaction_verified','server_notification_verified','entitlement_active','app_restarted','entitlement_restored']\n    events = [{'id': f'e{i}', 'sequence': i, 'type': kind, 'product_id': 'com.example.pro.monthly', 'verified': True, 'entitlement': 'pro'} for i, kind in enumerate(kinds, 1)]\n    replay = replay_purchase_journey(root, products, write_json('events.json', {'build': {'id': '42', 'bundle_id': 'com.example.app', 'environment': 'testflight'}, 'events': events}), Path('.factory/revenueforge/example/replay.json'))\n    inbox = sync_testflight_evidence(root, write_json('feedback.json', {'items': [{'id': 'f1', 'build_id': '42', 'kind': 'feedback', 'summary': 'Restore worked'}]}), Path('.factory/revenueforge/example/testflight-inbox.json'))\n    matrix = evaluate_failure_matrix(root, products, write_json('matrix.json', {'scenarios': {name: {'observed': True, 'passed': True, 'evidence_ref': name} for name in FAILURE_SCENARIOS}}), Path('.factory/revenueforge/example/failure-matrix.json'))\n    source = {'id': 'review', 'url': 'https://developer.apple.com/app-store/review/guidelines/', 'sha256': 'a' * 64, 'retrieved_at': '2026-08-29T00:00:00Z', 'impacts': [{'rule_id': '3.1.1', 'apps': ['com.example.app'], 'artifacts': ['paywall']}]}\n    drift = watch_policy_drift(root, write_json('policy-base.json', {'sources': [source]}), write_json('policy-now.json', {'sources': [source]}), Path('.factory/revenueforge/example/policy-drift.json'))\n    entry = {'app_id': 'com.example.app', 'journey': 'purchase', 'decision': 'keep', 'resolution': 'verified lifecycle', 'approved_by': 'Reviewer', 'expires_at': '2099-01-01T00:00:00Z', 'evidence_receipts': ['.factory/revenueforge/example/replay.json']}\n    memory = promote_evidence_memory(root, write_json('memory-entry.json', entry), Path('.factory/revenueforge/memory/purchase.json'))\n    recalled = query_evidence_memory(root, 'com.example.app', 'purchase', '2026-08-29T00:00:00Z')\n    brief = {'app_name': 'Example', 'audience': 'teams', 'primary_job': 'understand access', 'desired_emotion': 'calm control', 'screens': [{'id': 'home', 'user_goal': 'see access'}]}\n    design = compile_appforge_design(root, write_json('brief.json', brief), Path('.factory/appforge/design'))\n    mcp = mcp_status(root); web = webmcp_manifest()\n    assert replay['verdict'] == 'matched' and inbox['marker'] == 'REVENUEFORGE_TESTFLIGHT_EVIDENCE_SYNCED' and matrix['verdict'] == 'pass'\n    assert drift['verdict'] == 'current' and memory['marker'] == 'REVENUEFORGE_EVIDENCE_MEMORY_PROMOTED' and recalled['status'] == 'available'\n    assert design['marker'] == 'APPFORGE_DESIGN_WORKSPACE_WRITTEN' and 'factory.appforge_status' in mcp['tools']\n    assert len(web['tools']) == 4 and all(tool['annotations']['readOnlyHint'] for tool in web['tools'])\nprint('REVENUEFORGE_EVIDENCE_V2_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "REVENUEFORGE_EVIDENCE_V2_SMOKE_PASS",
+      "timeout_s": 180,
+      "covers": [
+        "REQ-RFE-001",
+        "REQ-RFE-002",
+        "REQ-RFE-003",
+        "REQ-RFE-004",
+        "REQ-RFE-005",
+        "REQ-RFE-006",
+        "REQ-RFE-007",
+        "REQ-RFE-008",
+        "REQ-RFE-009",
+        "REQ-RFE-010",
+        "REQ-RFE-011"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

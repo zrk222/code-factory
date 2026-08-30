@@ -2,11 +2,12 @@
 
 ## Decision record
 
-FactoryLine's local proof core remains free. An optional **Freemium** Marketplace
-entitlement is planned for **January 1, 2027** at exactly **USD 5.95 per named
-seat per month** or **USD 60 per named seat per year**. These owner-approved
-prices are not current Marketplace prices and must not be shown as active before
-JetBrains approves the Freemium release.
+FactoryLine's local proof core remains free. Optional **Freemium** Marketplace
+tiers are planned for **January 1, 2027**. Founding Proof Pro is grandfathered
+at **USD 5.95/month or USD 60/year**; standard Proof Pro is planned at
+**USD 9/month or USD 90/year**; AppForge Builder is planned at **USD 24/month
+or USD 240/year**, with hosted execution metered separately. These future prices
+are not active and must not be shown as current before JetBrains approval.
 
 The free core remains available after launch. Only optional Memory and Enterprise
 Assurance features in the planned `2027.1.0` Marketplace build require either an
@@ -23,9 +24,10 @@ sales, banking, Product Code registration, or Marketplace approval.
 Use this text on the Marketplace listing, README, release notes, and upgrade FAQ:
 
 > **The local proof core stays free.** Subject to Marketplace approval,
-> FactoryLine AI Proof adds optional Memory and Enterprise Assurance entitlements
-> on January 1, 2027 at **$5.95 USD per named seat per month** or **$60 USD per
-> named seat per year**. New users will receive a planned 30-day trial. The
+> FactoryLine AI Proof adds optional paid tiers on January 1, 2027. Founding
+> Proof Pro remains **$5.95/month or $60/year** for eligible early adopters;
+> standard Proof Pro is planned at **$9/month or $90/year**, and AppForge Builder
+> at **$24/month or $240/year**. New users will receive a planned 30-day trial. The
 > open-source repository remains available; only the optional 2027.1.0
 > entitlement requires a valid trial or paid license. This change adds no
 > telemetry, source upload, credential storage, signing authority, or automatic
@@ -40,8 +42,9 @@ actually approves.
 
 | Field | Launch value | State |
 |---|---:|---|
-| Monthly price | USD 5.95 per named seat | owner-approved |
-| Annual price | USD 60 per named seat | owner-approved |
+| Founding Proof Pro | USD 5.95/month or USD 60/year | grandfathered; not active |
+| Standard Proof Pro | USD 9/month or USD 90/year | scheduled; not active |
+| AppForge Builder | USD 24/month or USD 240/year | scheduled; hosted execution separate |
 | Effective date | 2027-01-01 | owner-approved |
 | Trial | 30 days | planned; confirm in Sales Info |
 | Community programs | not selected | annual billing is available; eligibility remains a separate decision |

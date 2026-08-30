@@ -20,6 +20,12 @@ submitting or replacing anything pending.
 - **License:** repository `MIT OR Apache-2.0` terms
 - **Getting started:** `Tools | FactoryLine | Run First Proof`
 
+**Category position:** FactoryLine is an independent proof layer after AI coding
+and alongside static analysis. Junie or Copilot can build; Qodana or SonarQube can inspect code,
+coverage, and configured thresholds; FactoryLine challenges whether a test and
+the supplied run evidence could actually reject a broken result. It does not
+replace, control, or imply JetBrains endorsement of either product.
+
 The name stays distinct from the existing Marketplace product named Code Factory.
 The first sentence is short enough to carry the full preview outcome. The packaged
 descriptor is the source of truth for the full description and change notes.
@@ -67,7 +73,7 @@ that maps each local claim to its guardrail and source-level or package-level
 evidence. Marketplace account-side requirements and manual moderation remain
 external gates, never local claims.
 
-Use the strict [0.8.16 compliance checklist](JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_16.md)
+Use the strict [0.8.19 compliance checklist](JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_19.md)
 before a dispatch, and keep post-approval discovery/review work inside the
 prepared, policy-compliant [growth plan](JETBRAINS_POST_RELEASE_GROWTH.md).
 
@@ -79,7 +85,7 @@ prepared, policy-compliant [growth plan](JETBRAINS_POST_RELEASE_GROWTH.md).
    must return `MARKETPLACE_UPDATE_CLEAR`.
 2. Merge the tested release commit to `main`.
 3. Create the immutable tag matching the plugin version, currently
-   `jetbrains-v0.8.16` after the remaining Marketplace metadata review is clear.
+   `jetbrains-v0.8.19` after the remaining Marketplace metadata review is clear.
 4. Run **Publish JetBrains Marketplace plugin** with that tag and the intended
    channel. The `JETBRAINS_MARKETPLACE_TOKEN` remains scoped to the protected
    `jetbrains-marketplace` environment.
@@ -109,3 +115,4 @@ python scripts/jetbrains_marketplace_measurement.py --json
 Without Marketplace impressions or page views, download conversion and causal
 uplift remain unavailable. Never substitute repository traffic or CI runs for
 Marketplace acquisition data.
+**Use your preferred coding agent and analyzer—FactoryLine independently decides whether their green result deserves trust.**

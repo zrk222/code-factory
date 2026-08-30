@@ -81,6 +81,18 @@ object FactoryLineController {
         }
     }
 
+    fun inspectSaasReality(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect local SaaS Reality receipts")) return
+        runBackground(project, "Inspect SaaS Reality") { FactoryLineRunner.saasStatus(project) }
+    }
+
+    fun verifySaasReality(project: Project) {
+        val contract = workspacePath(project, "Reviewed SaaS promise contract JSON") ?: return
+        val evidence = workspacePath(project, "Observed SaaS journey evidence JSON") ?: return
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Verify the selected SaaS journey and write a local receipt")) return
+        runBackground(project, "Verify SaaS Journey") { FactoryLineRunner.saasVerify(project, contract, evidence) }
+    }
+
     fun saveWorkspaceAdvisorReport(project: Project) {
         val root = project.basePath?.let(Path::of) ?: run {
             Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
@@ -336,6 +348,45 @@ object FactoryLineController {
         val outDir = root.resolve(".factory").resolve("repair-sandboxes")
         runBackground(project, "Prepare Repair Scope", onCompleted = { FactoryLinePanels.showRepairSandbox(project, it) }) {
             FactoryLineRunner.repairScope(project, selected.name, selected.paths, outDir)
+        }
+    }
+
+    fun installProofAdapter(project: Project, client: String) {
+        val label = if (client == "junie") "Junie MCP" else "Copilot Proof Agent"
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Install $label")) return
+        runBackground(project, "Install $label") { FactoryLineRunner.mcpInstall(project, client) }
+    }
+
+    fun verifyAgentAndAnalyzer(project: Project, scope: RepairScopeSummary?) {
+        val selectedScope = scope ?: run {
+            Messages.showInfoMessage(project, "Prepare a trusted Change List scope before verifying an agent result.", "FactoryLine Proof Handshake")
+            return
+        }
+        val root = project.basePath?.let(Path::of) ?: return
+        val scopePath = selectedScope.artifactPaths.firstOrNull { it.endsWith(".json", ignoreCase = true) }
+            ?.let { WorkspacePath.resolve(root, it) } ?: run {
+                Messages.showErrorDialog(project, "The selected scope has no project-contained JSON packet.", "FactoryLine Proof Handshake")
+                return
+            }
+        val sarifValue = Messages.showInputDialog(project, "Qodana or SonarQube SARIF 2.1.0 path (inside this workspace):", "FactoryLine: Verify Agent + Analyzer", null)
+            ?.trim() ?: return
+        val sarif = WorkspacePath.resolve(root, sarifValue)
+        if (sarif == null || !Files.isRegularFile(sarif)) {
+            Messages.showErrorDialog(project, "The SARIF report must be an existing regular file inside the workspace.", "FactoryLine Proof Handshake")
+            return
+        }
+        val providerIndex = Messages.showDialog(project, "Choose the report source. Auto accepts a uniquely recognized Qodana or SonarQube driver.", "FactoryLine: Analysis Evidence", arrayOf("Auto detect", "Qodana", "SonarQube"), 0, Messages.getQuestionIcon())
+        if (providerIndex < 0) return
+        val provider = listOf("auto", "qodana", "sonarqube")[providerIndex]
+        val e2eValue = Messages.showInputDialog(project, "Optional E2E receipt path (leave blank to report it as unknown):", "FactoryLine: Optional E2E Evidence", null)?.trim().orEmpty()
+        val e2e = if (e2eValue.isBlank()) null else WorkspacePath.resolve(root, e2eValue)
+        if (e2eValue.isNotBlank() && (e2e == null || !Files.isRegularFile(e2e))) {
+            Messages.showErrorDialog(project, "The E2E receipt must be an existing regular file inside the workspace.", "FactoryLine Proof Handshake")
+            return
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Verify Agent + Analyzer")) return
+        runBackground(project, "Verify Agent + Analyzer") {
+            FactoryLineRunner.jetbrainsHandshake(project, scopePath, selectedScope.paths, sarif, provider, e2e)
         }
     }
 

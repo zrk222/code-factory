@@ -11,10 +11,18 @@ hollow negative control caught in a disposable sandbox, then open
 `factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
+**New in 0.8.12:** Unified Graph Ops now shows SaaS Reality receipts: whether
+OAuth/OIDC identity, tenant authorization, checkout, verified webhook,
+entitlement, feature access, and revocation agree. The core works across
+standards-compliant providers, keeps unknowns blocked, rejects raw credentials,
+and never contacts or mutates the provider.
+
 The Open VSX extension and local proof core remain free. Every capability
 shipped before the transition is free through December 14, 2026. Beginning
-December 15, optional hosted Personal Memory ($4.95/month) and Team Assurance
-($5.95 per named seat/month or $60/year) may be offered separately; downloading
+December 15, Founding Proof Pro may remain $5.95/month or $60/year for early
+adopters; standard Proof Pro is planned at $9/month or $90/year, AppForge
+Builder at $24/month or $240/year, and Team Assurance at $20 per active
+contributor/month annually or $24 monthly. Hosted execution is metered separately; downloading
 the extension and using local CLI, MCP, Studio, Graph Ops, receipts, and proof
 gates remain free. See the [Open VSX service plan](../../docs/OPEN_VSX_MONETIZATION_2026.md).
 
@@ -79,7 +87,7 @@ coders, the practical target is less context reconstruction and fewer false
 "done" states. For engineers, it is reviewable proof beside the diff. For
 teams and enterprises, it is repeatable evidence with explicit human authority.
 
-![Code Factory 60-day personal case study](https://raw.githubusercontent.com/zrk222/code-factory/v0.44.3/docs/assets/marketplace/code-factory-60-day-personal-case-study.png)
+![Code Factory 60-day personal case study](https://raw.githubusercontent.com/zrk222/code-factory/v0.44.4/docs/assets/marketplace/code-factory-60-day-personal-case-study.png)
 
 ## Install
 
@@ -95,7 +103,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.8.11.vsix
+code --install-extension factoryline-vscode-0.8.12.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

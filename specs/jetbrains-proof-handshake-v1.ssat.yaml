@@ -1,0 +1,26 @@
+name: jetbrains-proof-handshake-v1
+language: python
+modules:
+  - name: jetbrains_handshake
+    path: factoryline/jetbrains_handshake.py
+    functions:
+      - name: build_agent_proof_mission
+        args: ["root: Path", "scope_path: Path", "changed_paths: list[str]"]
+        returns: dict
+      - name: evaluate_jetbrains_handshake
+        args: ["root: Path", "scope_path: Path", "changed_paths: list[str]", "analysis_sarif: Path", "e2e_receipt: Path | None", "max_new_errors: int", "max_new_warnings: int", "analysis_provider: str"]
+        returns: dict
+dependencies:
+  - from: jetbrains_handshake
+    to: repair_sandbox
+  - from: jetbrains_handshake
+    to: intent_ledger
+  - from: jetbrains_handshake
+    to: e2e_proof
+invariants:
+  - name: handshake_never_invokes_providers_or_changes_source
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|patch_apply|source_modify"
+    scopes:
+      - module: jetbrains_handshake
+        symbol: evaluate_jetbrains_handshake
+        max_lines: 180

@@ -1,8 +1,8 @@
 {
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
-  "description": "Catch AI-generated tests that could never fail. Review code with local proof.",
-  "version": "0.8.11",
+  "description": "Catch hollow AI tests and inspect provider-neutral SaaS access proof locally.",
+  "version": "0.8.12",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {

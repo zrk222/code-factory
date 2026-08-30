@@ -85,6 +85,49 @@ from .proofsearch import ProofSearchError, create_proofsearch_plan, evaluate_pro
 from .evidence_frontier import EvidenceFrontierError, plan_evidence_frontier, verify_evidence_frontier
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
+from .continuous_proof import (
+    ContinuousProofError,
+    assess_continuous_proof,
+    continuous_proof_history,
+    verify_continuous_proof,
+)
+from .proof_review_workflow import (
+    ProofReviewError,
+    create_intent_contract,
+    create_proof_card,
+    create_quick_review,
+    install_hook_pack,
+    promote_regression,
+    prove_trajectory,
+    team_proof_inbox,
+    verify_proof_card,
+    verify_quick_review,
+    verify_trajectory,
+)
+from .revenueforge import (
+    RevenueForgeError,
+    benchmark_cell,
+    build_revenue_bundle,
+    plan_growth,
+    validate_products,
+)
+from .revenue_evidence import (
+    evaluate_failure_matrix,
+    promote_evidence_memory,
+    query_evidence_memory,
+    replay_purchase_journey,
+    sync_testflight_evidence,
+    watch_policy_drift,
+)
+from .appforge_design import compile_appforge_design
+from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
+from .jetbrains_handshake import (
+    JetBrainsHandshakeError,
+    build_agent_proof_mission,
+    evaluate_jetbrains_handshake,
+    jetbrains_handshake_projection,
+    write_jetbrains_handshake,
+)
 from .developer_memory import developer_memory_brief
 from .intent_ledger import IntentLedgerError, capture_intent_ledger, inspect_intent_ledger
 from .judgment import JudgmentError, judgment_status, promote_capsule, propose_capsule, reconsider_capsule, safety_case
@@ -1199,6 +1242,156 @@ def main(argv=None) -> int:
     change_review.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
     change_review.add_argument("--json", action="store_true")
 
+    proof_ops = sub.add_parser("proof-ops", help="join intent, change, observed-session, and repair evidence into one local record")
+    proof_ops_sub = proof_ops.add_subparsers(required=True, dest="proof_ops_cmd")
+    proof_ops_assess = proof_ops_sub.add_parser("assess", help="write one fail-closed Continuous Proof Operations record without execution")
+    proof_ops_assess.add_argument("--root", default=".")
+    proof_ops_assess.add_argument("--workflow-id", required=True)
+    proof_ops_assess.add_argument("--intent", required=True, help="workspace-contained human-authored intent artifact")
+    proof_ops_assess.add_argument("--changed", action="append", required=True, help="exact workspace-relative changed path; repeat as needed")
+    proof_ops_assess.add_argument("--session", help="optional workspace-contained observed-session receipt")
+    proof_ops_assess.add_argument("--session-phase", choices=["change", "post_repair"], default="change")
+    proof_ops_assess.add_argument("--repair-scope", help="optional workspace-contained sealed repair scope; requires --repair-patch")
+    proof_ops_assess.add_argument("--repair-patch", help="optional workspace-contained textual patch; requires --repair-scope")
+    proof_ops_assess.add_argument("--prior-receipt", help="prior scoped-repair record for a post-repair verification cycle")
+    proof_ops_assess.add_argument("--out-dir", help="optional workspace-contained artifact directory")
+    proof_ops_assess.add_argument("--json", action="store_true")
+    proof_ops_verify = proof_ops_sub.add_parser("verify", help="verify one Continuous Proof Operations receipt and all bound bytes")
+    proof_ops_verify.add_argument("receipt")
+    proof_ops_verify.add_argument("--root", default=".")
+    proof_ops_verify.add_argument("--json", action="store_true")
+    proof_ops_history = proof_ops_sub.add_parser("history", help="aggregate verified local proof routes without user or savings inference")
+    proof_ops_history.add_argument("--root", default=".")
+    proof_ops_history.add_argument("--json", action="store_true")
+
+    proof_review = sub.add_parser("proof-review", help="seal intent, review agent work, and route one human-controlled proof workflow")
+    proof_review_sub = proof_review.add_subparsers(required=True, dest="proof_review_cmd")
+    proof_review_contract = proof_review_sub.add_parser("contract", help="seal one complete, named-human-confirmed intent contract")
+    proof_review_contract.add_argument("--root", default=".")
+    proof_review_contract.add_argument("--id", required=True)
+    proof_review_contract.add_argument("--draft", required=True)
+    proof_review_contract.add_argument("--confirmed-by", required=True)
+    proof_review_contract.add_argument("--json", action="store_true")
+    proof_review_quick = proof_review_sub.add_parser("quick", help="join intent and current evidence into a four-route review")
+    proof_review_quick.add_argument("--root", default=".")
+    proof_review_quick.add_argument("--id", required=True)
+    proof_review_quick.add_argument("--contract", required=True)
+    proof_review_quick.add_argument("--changed", action="append", required=True)
+    proof_review_quick.add_argument("--session")
+    proof_review_quick.add_argument("--trajectory")
+    proof_review_quick.add_argument("--repair-scope")
+    proof_review_quick.add_argument("--repair-patch")
+    proof_review_quick.add_argument("--prior-receipt")
+    proof_review_quick.add_argument("--session-phase", choices=["change", "post_repair"], default="change")
+    proof_review_quick.add_argument("--json", action="store_true")
+    proof_review_verify = proof_review_sub.add_parser("verify", help="verify a proof review and every bound receipt")
+    proof_review_verify.add_argument("review")
+    proof_review_verify.add_argument("--root", default=".")
+    proof_review_verify.add_argument("--json", action="store_true")
+    proof_review_hooks = proof_review_sub.add_parser("hooks", help="write five reviewable agent-hook templates without installing them")
+    proof_review_hooks.add_argument("--root", default=".")
+    proof_review_hooks.add_argument("--json", action="store_true")
+    proof_review_trajectory = proof_review_sub.add_parser("trajectory", help="seal and independently audit a bounded agent trajectory")
+    proof_review_trajectory.add_argument("--root", default=".")
+    proof_review_trajectory.add_argument("--id", required=True)
+    proof_review_trajectory.add_argument("--trace", required=True)
+    proof_review_trajectory.add_argument("--policy", required=True)
+    proof_review_trajectory.add_argument("--json", action="store_true")
+    proof_review_trajectory_verify = proof_review_sub.add_parser("trajectory-verify", help="verify a trajectory proof and its bound inputs")
+    proof_review_trajectory_verify.add_argument("trajectory")
+    proof_review_trajectory_verify.add_argument("--root", default=".")
+    proof_review_trajectory_verify.add_argument("--json", action="store_true")
+    proof_review_learn = proof_review_sub.add_parser("learn", help="promote one confirmed causal failure into an immutable regression capsule")
+    proof_review_learn.add_argument("--root", default=".")
+    proof_review_learn.add_argument("--id", required=True)
+    proof_review_learn.add_argument("--review", required=True)
+    proof_review_learn.add_argument("--confirmed-by", required=True)
+    proof_review_learn.add_argument("--title", required=True)
+    proof_review_learn.add_argument("--json", action="store_true")
+    proof_review_inbox = proof_review_sub.add_parser("inbox", help="read the bounded team proof inbox")
+    proof_review_inbox.add_argument("--root", default=".")
+    proof_review_inbox.add_argument("--json", action="store_true")
+    proof_review_card = proof_review_sub.add_parser("card", help="export an offline-verifiable public-safe proof card")
+    proof_review_card.add_argument("--root", default=".")
+    proof_review_card.add_argument("--id", required=True)
+    proof_review_card.add_argument("--review", required=True)
+    proof_review_card.add_argument("--json", action="store_true")
+    proof_review_card_verify = proof_review_sub.add_parser("card-verify", help="verify a proof card offline")
+    proof_review_card_verify.add_argument("card")
+    proof_review_card_verify.add_argument("--json", action="store_true")
+
+    revenue = sub.add_parser("revenue", help="validate and generate human-governed iOS monetization artifacts")
+    revenue_sub = revenue.add_subparsers(required=True, dest="revenue_cmd")
+    revenue_validate = revenue_sub.add_parser("validate", help="validate products.yaml and deterministic disclosure gates")
+    revenue_validate.add_argument("--root", default=".")
+    revenue_validate.add_argument("--products", required=True)
+    revenue_validate.add_argument("--json", action="store_true")
+    revenue_build = revenue_sub.add_parser("build", help="generate RevenueKit, paywall, entitlement-server, and evidence scaffolds")
+    revenue_build.add_argument("--root", default=".")
+    revenue_build.add_argument("--products", required=True)
+    revenue_build.add_argument("--out-dir", default=".factory/revenueforge/default")
+    revenue_build.add_argument("--json", action="store_true")
+    revenue_growth = revenue_sub.add_parser("growth-plan", help="compile provider-write-free Phase 8 growth operations")
+    revenue_growth.add_argument("--root", default=".")
+    revenue_growth.add_argument("--products", required=True)
+    revenue_growth.add_argument("--growth", required=True)
+    revenue_growth.add_argument("--out")
+    revenue_growth.add_argument("--json", action="store_true")
+    revenue_benchmark = revenue_sub.add_parser("benchmark", help="publish a benchmark cell only at k >= 20 distinct apps")
+    revenue_benchmark.add_argument("--records", required=True)
+    revenue_benchmark.add_argument("--json", action="store_true")
+    revenue_replay = revenue_sub.add_parser("replay", help="compare build-bound purchase observations with the required lifecycle")
+    revenue_replay.add_argument("--root", default=".")
+    revenue_replay.add_argument("--products", required=True)
+    revenue_replay.add_argument("--events", required=True)
+    revenue_replay.add_argument("--out", default=".factory/revenueforge/default/replay.json")
+    revenue_replay.add_argument("--json", action="store_true")
+    revenue_testflight = revenue_sub.add_parser("testflight-sync", help="normalize an authorized local TestFlight feedback export")
+    revenue_testflight.add_argument("--root", default=".")
+    revenue_testflight.add_argument("--feedback", required=True)
+    revenue_testflight.add_argument("--out", default=".factory/revenueforge/default/testflight-inbox.json")
+    revenue_testflight.add_argument("--json", action="store_true")
+    revenue_matrix = revenue_sub.add_parser("failure-matrix", help="fail closed across observed monetization negative paths")
+    revenue_matrix.add_argument("--root", default=".")
+    revenue_matrix.add_argument("--products", required=True)
+    revenue_matrix.add_argument("--evidence", required=True)
+    revenue_matrix.add_argument("--out", default=".factory/revenueforge/default/failure-matrix.json")
+    revenue_matrix.add_argument("--json", action="store_true")
+    revenue_policy = revenue_sub.add_parser("policy-watch", help="compare hash-bound official Apple policy snapshots")
+    revenue_policy.add_argument("--root", default=".")
+    revenue_policy.add_argument("--registry", required=True)
+    revenue_policy.add_argument("--snapshot", required=True)
+    revenue_policy.add_argument("--out", default=".factory/revenueforge/default/policy-drift.json")
+    revenue_policy.add_argument("--json", action="store_true")
+    revenue_memory_promote = revenue_sub.add_parser("memory-promote", help="promote one human-approved receipt-backed operational lesson")
+    revenue_memory_promote.add_argument("--root", default=".")
+    revenue_memory_promote.add_argument("--entry", required=True)
+    revenue_memory_promote.add_argument("--out", required=True)
+    revenue_memory_promote.add_argument("--json", action="store_true")
+    revenue_memory_query = revenue_sub.add_parser("memory-query", help="retrieve exact-app unexpired evidence lessons")
+    revenue_memory_query.add_argument("--root", default=".")
+    revenue_memory_query.add_argument("--app-id", required=True)
+    revenue_memory_query.add_argument("--journey", required=True)
+    revenue_memory_query.add_argument("--at")
+    revenue_memory_query.add_argument("--json", action="store_true")
+    revenue_design = revenue_sub.add_parser("appforge-design", help="compile user intent into a story-led seven-discipline iOS design workspace")
+    revenue_design.add_argument("--root", default=".")
+    revenue_design.add_argument("--brief", required=True)
+    revenue_design.add_argument("--out-dir", default=".factory/appforge/design")
+    revenue_design.add_argument("--json", action="store_true")
+
+    saas = sub.add_parser("saas", help="verify provider-neutral SaaS identity, billing, entitlement, and revocation evidence")
+    saas_sub = saas.add_subparsers(required=True, dest="saas_cmd")
+    saas_verify = saas_sub.add_parser("verify", help="compare local OAuth/OIDC and entitlement observations with a reviewed promise contract")
+    saas_verify.add_argument("--root", default=".")
+    saas_verify.add_argument("--contract", required=True)
+    saas_verify.add_argument("--evidence", required=True)
+    saas_verify.add_argument("--out", default=".factory/saas-proof/latest.json")
+    saas_verify.add_argument("--json", action="store_true")
+    saas_status = saas_sub.add_parser("status", help="read hash-valid local SaaS proof receipt status")
+    saas_status.add_argument("--root", default=".")
+    saas_status.add_argument("--json", action="store_true")
+
     intent = sub.add_parser("intent", help="capture or inspect a human-confirmed, local Change List behavioral contract")
     intent_sub = intent.add_subparsers(required=True, dest="intent_cmd")
     intent_capture = intent_sub.add_parser("capture", help="write one explicitly confirmed local Intent Ledger record; no source or Change List change")
@@ -1301,6 +1494,30 @@ def main(argv=None) -> int:
     repair_candidate.add_argument("--out-dir", help="explicit workspace-contained directory for local candidate artifacts")
     repair_candidate.add_argument("--json", action="store_true")
 
+    jetbrains = sub.add_parser("jetbrains", help="join a sealed agent mission, Qodana or SonarQube SARIF, and non-hollow proof without provider execution")
+    jetbrains_sub = jetbrains.add_subparsers(required=True, dest="jetbrains_cmd")
+    jetbrains_mission = jetbrains_sub.add_parser("mission", help="render one Junie-compatible proof mission from a sealed repair scope")
+    jetbrains_mission.add_argument("--root", default=".")
+    jetbrains_mission.add_argument("--scope", required=True)
+    jetbrains_mission.add_argument("--changed", action="append", default=[])
+    jetbrains_mission.add_argument("--json", action="store_true")
+    jetbrains_handshake = jetbrains_sub.add_parser("handshake", help="cross-check returned paths, analyzer SARIF, intent, and optional E2E proof")
+    jetbrains_handshake.add_argument("--root", default=".")
+    jetbrains_handshake.add_argument("--scope", required=True)
+    jetbrains_handshake.add_argument("--changed", action="append", required=True)
+    analysis_input = jetbrains_handshake.add_mutually_exclusive_group(required=True)
+    analysis_input.add_argument("--analysis-sarif", help="workspace-local Qodana or SonarQube SARIF 2.1.0 report")
+    analysis_input.add_argument("--qodana-sarif", help="compatibility alias for --analysis-sarif with provider qodana")
+    jetbrains_handshake.add_argument("--analysis-provider", choices=["auto", "qodana", "sonarqube"], default="auto")
+    jetbrains_handshake.add_argument("--e2e-receipt")
+    jetbrains_handshake.add_argument("--max-new-errors", type=int, default=0)
+    jetbrains_handshake.add_argument("--max-new-warnings", type=int, default=0)
+    jetbrains_handshake.add_argument("--out", default=".factory/jetbrains-handshake/latest.json")
+    jetbrains_handshake.add_argument("--json", action="store_true")
+    jetbrains_status = jetbrains_sub.add_parser("status", help="read the latest hash-valid local JetBrains handshake receipt")
+    jetbrains_status.add_argument("--root", default=".")
+    jetbrains_status.add_argument("--json", action="store_true")
+
     release = sub.add_parser("release", help="inspect local release workflow boundaries without publishing")
     release_sub = release.add_subparsers(required=True, dest="release_cmd")
     release_integrity_parser = release_sub.add_parser("integrity", help="verify release workflow fan-in and protected-gate topology")
@@ -1314,8 +1531,13 @@ def main(argv=None) -> int:
     mcp_status.add_argument("--json", action="store_true")
     mcp_config = mcp_sub.add_parser("config", help="render copy-only setup for a local stdio MCP client")
     mcp_config.add_argument("--root", default=".")
-    mcp_config.add_argument("--client", choices=["generic", "cursor", "opencode", "codex"], default="generic")
+    mcp_config.add_argument("--client", choices=["generic", "cursor", "opencode", "codex", "junie", "copilot"], default="generic")
     mcp_config.add_argument("--json", action="store_true")
+    mcp_install = mcp_sub.add_parser("install", help="install one explicit, secret-free project MCP entry")
+    mcp_install.add_argument("--root", default=".")
+    mcp_install.add_argument("--client", choices=["junie", "copilot"], required=True)
+    mcp_install.add_argument("--confirmation", required=True)
+    mcp_install.add_argument("--json", action="store_true")
     mcp_serve = mcp_sub.add_parser("serve", help="serve newline-delimited JSON-RPC over stdio only")
     mcp_serve.add_argument("--root", default=".")
 
@@ -1416,6 +1638,86 @@ def main(argv=None) -> int:
     telemetry_inventory_parser = telemetry_sub.add_parser("inventory", help="emit a privacy-safe reconciled inventory")
     telemetry_inventory_parser.add_argument("--root", default=".")
     telemetry_inventory_parser.add_argument("--json", action="store_true")
+
+    ops = sub.add_parser("ops", help="run the local enterprise operations golden path")
+    ops_sub = ops.add_subparsers(dest="ops_cmd", required=True)
+    ops_init = ops_sub.add_parser("init", help="initialize a tenant-bound evidence and operations workspace")
+    ops_init.add_argument("--root", default=".")
+    ops_init.add_argument("--tenant", required=True)
+    ops_init.add_argument("--owner", required=True)
+    ops_init.add_argument("--retention-days", type=int, default=90)
+    ops_init.add_argument("--force", action="store_true")
+    ops_init.add_argument("--json", action="store_true")
+    ops_status = ops_sub.add_parser("status", help="show evidence, identity, runner, outcome, SLA, and next-action state")
+    ops_status.add_argument("--root", default=".")
+    ops_status.add_argument("--json", action="store_true")
+    ops_identity = ops_sub.add_parser("identity", help="provision, suspend, or revoke a local identity")
+    ops_identity.add_argument("subject")
+    ops_identity.add_argument("--root", default=".")
+    ops_identity.add_argument("--tenant", required=True)
+    ops_identity.add_argument("--role", required=True)
+    ops_identity.add_argument("--status", default="active", choices=["active", "suspended", "revoked"])
+    ops_identity.add_argument("--actor", required=True)
+    ops_identity.add_argument("--json", action="store_true")
+    ops_evidence = ops_sub.add_parser("evidence", help="record one immutable tenant evidence payload")
+    ops_evidence.add_argument("payload", help="JSON evidence object path")
+    ops_evidence.add_argument("--root", default=".")
+    ops_evidence.add_argument("--tenant", required=True)
+    ops_evidence.add_argument("--subject", required=True)
+    ops_evidence.add_argument("--evidence-id")
+    ops_evidence.add_argument("--json", action="store_true")
+    ops_export = ops_sub.add_parser("export", help="export aggregate-safe evidence metadata")
+    ops_export.add_argument("--root", default=".")
+    ops_export.add_argument("--out", required=True)
+    ops_export.add_argument("--json", action="store_true")
+    ops_run = ops_sub.add_parser("run", help="run one bounded proof argv with explicit isolation posture")
+    ops_run.add_argument("--root", default=".")
+    ops_run.add_argument("--backend", choices=["docker", "process"], default="docker")
+    ops_run.add_argument("--command", nargs="+")
+    ops_run.add_argument("--command-json", help="JSON argv list; use this when an argument begins with '-' ")
+    ops_run.add_argument("--timeout-seconds", type=int, default=120)
+    ops_run.add_argument("--output-limit", type=int, default=65536)
+    ops_run.add_argument("--allow-process-boundary", action="store_true")
+    ops_run.add_argument("--json", action="store_true")
+    ops_checks = ops_sub.add_parser("checks", help="evaluate required proof checks for changed paths")
+    ops_checks.add_argument("--root", default=".")
+    ops_checks.add_argument("--changed", action="append", required=True)
+    ops_checks.add_argument("--proof", action="append", default=[])
+    ops_checks.add_argument("--json", action="store_true")
+    ops_outcome = ops_sub.add_parser("outcome", help="append one allowlisted deployment or incident outcome")
+    ops_outcome.add_argument("--root", default=".")
+    ops_outcome.add_argument("--tenant", required=True)
+    ops_outcome.add_argument("--subject", required=True)
+    ops_outcome.add_argument("--service", required=True)
+    ops_outcome.add_argument("--environment", required=True)
+    ops_outcome.add_argument("--result", required=True)
+    ops_outcome.add_argument("--duration-ms", required=True, type=int)
+    ops_outcome.add_argument("--deployed", action="store_true")
+    ops_outcome.add_argument("--incident", action="store_true")
+    ops_outcome.add_argument("--rollback", action="store_true")
+    ops_outcome.add_argument("--json", action="store_true")
+    ops_summary = ops_sub.add_parser("summary", help="summarize hash-linked outcome telemetry")
+    ops_summary.add_argument("--root", default=".")
+    ops_summary.add_argument("--json", action="store_true")
+    ops_otel = ops_sub.add_parser("otel", help="export aggregate-safe outcome telemetry in OTLP-shaped JSON")
+    ops_otel.add_argument("--root", default=".")
+    ops_otel.add_argument("--out", required=True)
+    ops_otel.add_argument("--json", action="store_true")
+    ops_sla = ops_sub.add_parser("sla", help="evaluate seven evidence gates without activating an SLA")
+    ops_sla.add_argument("--root", default=".")
+    ops_sla.add_argument("--manifest")
+    ops_sla.add_argument("--out")
+    ops_sla.add_argument("--json", action="store_true")
+    ops_policy = ops_sub.add_parser("policy", help="compile explicit policy rules into deterministic checks")
+    ops_policy.add_argument("policy", help="factory.policy.v1 JSON path")
+    ops_policy.add_argument("--root", default=".")
+    ops_policy.add_argument("--out", help="workspace-contained compiled manifest path")
+    ops_policy.add_argument("--json", action="store_true")
+    ops_metadata = ops_sub.add_parser("metadata", help="audit local Codex/workflow metadata for unbound or contradictory claims")
+    ops_metadata.add_argument("--root", default=".")
+    ops_metadata.add_argument("--path", action="append", help="workspace-contained metadata file or directory; repeatable")
+    ops_metadata.add_argument("--out", help="workspace-contained metadata audit receipt path")
+    ops_metadata.add_argument("--json", action="store_true")
 
     verifier = sub.add_parser(
         "verifier",
@@ -1823,6 +2125,79 @@ def main(argv=None) -> int:
     version = sub.add_parser("version", help="show package provenance")
     version.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
+
+    if a.cmd == "ops":
+        from .enterprise_ops import (
+            EnterpriseOpsError,
+            evaluate_required_checks,
+            evaluate_sla,
+            export_evidence,
+            export_otel,
+            initialize_workspace,
+            outcome_summary,
+            provision_identity,
+            put_evidence,
+            record_outcome,
+            run_proof,
+            verify_workspace,
+            workspace_status,
+        )
+        from .policy_compiler import PolicyCompileError, write_compiled_policy
+        from .codex_metadata import MetadataAuditError, write_metadata_audit
+        try:
+            root = Path(a.root)
+            if a.ops_cmd == "init":
+                result = initialize_workspace(root, a.tenant, a.owner, retention_days=a.retention_days, force=a.force)
+            elif a.ops_cmd == "status":
+                result = workspace_status(root)
+            elif a.ops_cmd == "identity":
+                result = provision_identity(root, a.tenant, a.subject, a.role, actor=a.actor, status=a.status)
+            elif a.ops_cmd == "evidence":
+                payload = json.loads(Path(a.payload).read_text(encoding="utf-8"))
+                result = put_evidence(root, a.tenant, a.subject, payload, evidence_id=a.evidence_id)
+            elif a.ops_cmd == "export":
+                result = export_evidence(root, Path(a.out))
+            elif a.ops_cmd == "run":
+                command = json.loads(a.command_json) if a.command_json else a.command
+                result = run_proof(root, command, backend=a.backend, timeout_seconds=a.timeout_seconds, output_limit=a.output_limit, allow_process_boundary=a.allow_process_boundary)
+            elif a.ops_cmd == "checks":
+                result = evaluate_required_checks(root, a.changed, proof_receipts=a.proof)
+            elif a.ops_cmd == "outcome":
+                result = record_outcome(root, a.tenant, a.subject, service=a.service, environment=a.environment, result=a.result, duration_ms=a.duration_ms, deployed=a.deployed, incident=a.incident, rollback=a.rollback)
+            elif a.ops_cmd == "summary":
+                result = outcome_summary(root)
+            elif a.ops_cmd == "otel":
+                result = export_otel(root, Path(a.out))
+            elif a.ops_cmd == "sla":
+                result = evaluate_sla(root, Path(a.manifest) if a.manifest else None, out=Path(a.out) if a.out else None)
+            elif a.ops_cmd == "policy":
+                result = write_compiled_policy(root, Path(a.policy), Path(a.out) if a.out else None)
+            elif a.ops_cmd == "metadata":
+                selected = [Path(item) for item in a.path] if a.path else None
+                result = write_metadata_audit(root, selected, Path(a.out) if a.out else None)
+            else:
+                result = verify_workspace(root)
+        except (EnterpriseOpsError, PolicyCompileError, MetadataAuditError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            error = {"schema": "factory.enterprise-ops.error.v1", "marker": "EOPS_FAIL_CLOSED", "status": "failed", "code": getattr(exc, "code", "E_OPS_INPUT"), "message": getattr(exc, "message", str(exc))}
+            print(json.dumps(error, indent=2, sort_keys=True), file=sys.stderr)
+            return 2
+        if getattr(a, "json", False):
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        if a.ops_cmd == "run":
+            return 0 if result.get("status") == "passed" else 1
+        if a.ops_cmd == "checks":
+            return 0 if result.get("decision") == "READY_FOR_HUMAN_REVIEW" else 1
+        if a.ops_cmd == "sla":
+            return 0 if result.get("status") == "READY_FOR_CONTRACT" else 1
+        if a.ops_cmd == "policy":
+            return 0 if result.get("status") == "COMPILED" else 1
+        if a.ops_cmd == "metadata":
+            return 0 if result.get("status") == "VERIFIED" else 1
+        if a.ops_cmd in {"summary", "otel", "export"}:
+            return 0 if result.get("integrity", {}).get("valid", True) else 1
+        return 0
 
     if a.cmd is None:
         return _home()
@@ -3447,6 +3822,166 @@ def main(argv=None) -> int:
                 print(f"packet      : {review['artifacts']['paths']['markdown']}")
             print("authority   : no execution, merge, publication, deployment, or credential access")
         return 0
+    if a.cmd == "proof-ops":
+        try:
+            if a.proof_ops_cmd == "assess":
+                payload = assess_continuous_proof(
+                    Path(a.root),
+                    a.workflow_id,
+                    Path(a.intent),
+                    a.changed,
+                    session_path=Path(a.session) if a.session else None,
+                    session_phase=a.session_phase,
+                    repair_scope_path=Path(a.repair_scope) if a.repair_scope else None,
+                    repair_patch_path=Path(a.repair_patch) if a.repair_patch else None,
+                    prior_receipt_path=Path(a.prior_receipt) if a.prior_receipt else None,
+                    out_dir=Path(a.out_dir) if a.out_dir else None,
+                )
+            elif a.proof_ops_cmd == "verify":
+                payload = verify_continuous_proof(Path(a.root), Path(a.receipt))
+            else:
+                payload = continuous_proof_history(Path(a.root))
+        except (ContinuousProofError, OSError) as exc:
+            error = {
+                "schema": "factory.continuous-proof.error.v1",
+                "marker": "CONTINUOUS_PROOF_REFUSED",
+                "code": getattr(exc, "code", "CONTINUOUS_PROOF_INPUT_UNAVAILABLE"),
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"proof-ops {a.proof_ops_cmd} refused: {error['code']}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        elif a.proof_ops_cmd == "assess":
+            print("factory continuous proof operations")
+            print("=" * 44)
+            print(f"route       : {payload['route']}")
+            print(f"next action : {payload['next_action']['action']}")
+            print(f"receipt     : {payload['artifacts']['json']}")
+            print("authority   : no execution, patch apply, approval, merge, publication, deployment, credential, connector, or network action")
+        elif a.proof_ops_cmd == "verify":
+            print(f"{payload['marker']} {payload.get('path', '')}")
+        else:
+            print("factory continuous proof history (read-only)")
+            print("=" * 44)
+            print(f"verified records : {payload['verified_record_count']}")
+            print(f"invalid or stale : {payload['invalid_or_stale_count']}")
+            print(f"latest route     : {(payload['latest'] or {}).get('route', 'none')}")
+            print("claim boundary   : records are not unique users; no savings are inferred")
+        if a.proof_ops_cmd == "verify" and not payload["ok"]:
+            return 1
+        return 0
+    if a.cmd == "proof-review":
+        root = Path(getattr(a, "root", "."))
+        try:
+            if a.proof_review_cmd == "contract":
+                payload = create_intent_contract(root, a.id, Path(a.draft), a.confirmed_by)
+            elif a.proof_review_cmd == "quick":
+                payload = create_quick_review(
+                    root, a.id, Path(a.contract), a.changed,
+                    session_path=Path(a.session) if a.session else None,
+                    trajectory_path=Path(a.trajectory) if a.trajectory else None,
+                    repair_scope_path=Path(a.repair_scope) if a.repair_scope else None,
+                    repair_patch_path=Path(a.repair_patch) if a.repair_patch else None,
+                    prior_receipt_path=Path(a.prior_receipt) if a.prior_receipt else None,
+                    session_phase=a.session_phase,
+                )
+            elif a.proof_review_cmd == "verify":
+                payload = verify_quick_review(root, Path(a.review))
+            elif a.proof_review_cmd == "hooks":
+                payload = install_hook_pack(root)
+            elif a.proof_review_cmd == "trajectory":
+                payload = prove_trajectory(root, Path(a.trace), Path(a.policy), a.id)
+            elif a.proof_review_cmd == "trajectory-verify":
+                payload = verify_trajectory(root, Path(a.trajectory))
+            elif a.proof_review_cmd == "learn":
+                payload = promote_regression(root, Path(a.review), a.id, a.confirmed_by, a.title)
+            elif a.proof_review_cmd == "inbox":
+                payload = team_proof_inbox(root)
+            elif a.proof_review_cmd == "card":
+                payload = create_proof_card(root, Path(a.review), a.id)
+            else:
+                payload = verify_proof_card(Path(a.card))
+        except (ProofReviewError, OSError) as exc:
+            error = {
+                "schema": "factory.proof-review.error.v1",
+                "marker": "PROOF_REVIEW_REFUSED",
+                "code": getattr(exc, "code", "PROOF_REVIEW_INPUT_UNAVAILABLE"),
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"proof-review {a.proof_review_cmd} refused: {error['code']}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"{payload.get('marker', 'PROOF_REVIEW_OK')}")
+            if payload.get("route"):
+                print(f"route       : {payload['route']}")
+            if payload.get("artifact"):
+                print(f"artifact    : {payload['artifact']}")
+            print("authority   : human review remains required; no execution, approval, merge, publication, deployment, credential, connector, or network action")
+        if a.proof_review_cmd in {"verify", "trajectory-verify", "card-verify"} and not payload.get("ok"):
+            return 1
+        return 0
+    if a.cmd == "revenue":
+        try:
+            root = Path(getattr(a, "root", ".")).resolve()
+            if a.revenue_cmd == "validate":
+                payload = validate_products(root, Path(a.products))
+            elif a.revenue_cmd == "build":
+                payload = build_revenue_bundle(root, Path(a.products), Path(a.out_dir))
+            elif a.revenue_cmd == "growth-plan":
+                payload = plan_growth(root, Path(a.products), Path(a.growth))
+                if a.out:
+                    out = Path(a.out)
+                    out = out.resolve() if out.is_absolute() else (root / out).resolve()
+                    out.relative_to(root)
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                    payload = {**payload, "path": str(out)}
+            elif a.revenue_cmd == "benchmark":
+                records = json.loads(Path(a.records).read_text(encoding="utf-8-sig"))
+                payload = benchmark_cell(records)
+            elif a.revenue_cmd == "replay":
+                payload = replay_purchase_journey(root, Path(a.products), Path(a.events), Path(a.out))
+            elif a.revenue_cmd == "testflight-sync":
+                payload = sync_testflight_evidence(root, Path(a.feedback), Path(a.out))
+            elif a.revenue_cmd == "failure-matrix":
+                payload = evaluate_failure_matrix(root, Path(a.products), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "policy-watch":
+                payload = watch_policy_drift(root, Path(a.registry), Path(a.snapshot), Path(a.out))
+            elif a.revenue_cmd == "memory-promote":
+                payload = promote_evidence_memory(root, Path(a.entry), Path(a.out))
+            elif a.revenue_cmd == "memory-query":
+                payload = query_evidence_memory(root, a.app_id, a.journey, a.at)
+            else:
+                payload = compile_appforge_design(root, Path(a.brief), Path(a.out_dir))
+        except (RevenueForgeError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            error = {"schema": "factory.revenueforge.error.v1", "marker": "REVENUEFORGE_REFUSED", "code": getattr(exc, "code", "REVENUEFORGE_INPUT_INVALID"), "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"revenue {a.revenue_cmd} refused: {error['code']}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(payload.get("marker", "REVENUEFORGE_OK"))
+            if payload.get("receipt_sha256"):
+                print(f"receipt     : {payload['receipt_sha256']}")
+            print("authority   : no App Store write, offer send, experiment promotion, review publication, deployment, or credential access")
+        return 0 if payload.get("ok", True) else 1
+    if a.cmd == "saas":
+        root = Path(a.root).resolve()
+        try:
+            payload = (
+                verify_saas_proof(root, Path(a.contract), Path(a.evidence), Path(a.out))
+                if a.saas_cmd == "verify"
+                else saas_proof_projection(root)
+            )
+        except (SaasProofError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            error = {"schema": "factory.saas-proof.error.v1", "marker": "SAAS_PROOF_REFUSED", "code": getattr(exc, "code", "SAAS_PROOF_INPUT_INVALID"), "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"saas {a.saas_cmd} refused: {error['code']}: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(payload, indent=2, sort_keys=True) if a.json else payload.get("marker", "SAAS_PROOF_OK"))
+        return 0 if a.saas_cmd == "status" or payload.get("verdict") == "verified" else 1
     if a.cmd == "intent":
         root = Path(a.root)
         try:
@@ -3635,9 +4170,34 @@ def main(argv=None) -> int:
         else:
             print(render_release_integrity(result))
         return 0 if result["ok"] else 1
+    if a.cmd == "jetbrains":
+        root = Path(a.root).resolve()
+        try:
+            if a.jetbrains_cmd == "mission":
+                payload = build_agent_proof_mission(root, Path(a.scope), a.changed or None)
+            elif a.jetbrains_cmd == "status":
+                payload = jetbrains_handshake_projection(root)
+            else:
+                analysis_path = a.qodana_sarif or a.analysis_sarif
+                analysis_provider = "qodana" if a.qodana_sarif else a.analysis_provider
+                payload = evaluate_jetbrains_handshake(
+                    root, Path(a.scope), a.changed, Path(analysis_path),
+                    Path(a.e2e_receipt) if a.e2e_receipt else None,
+                    analysis_provider=analysis_provider,
+                    max_new_errors=a.max_new_errors,
+                    max_new_warnings=a.max_new_warnings,
+                )
+                write_jetbrains_handshake(root, payload, Path(a.out))
+        except (JetBrainsHandshakeError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            code = getattr(exc, "code", "JETBRAINS_HANDSHAKE_INPUT_INVALID")
+            error = {"schema": "factory.jetbrains-proof-handshake.error.v1", "marker": "JETBRAINS_PROOF_HANDSHAKE_REFUSED", "code": code, "message": str(exc)}
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"jetbrains {a.jetbrains_cmd} refused: {code}: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(payload, indent=2, sort_keys=True) if a.json else payload.get("mission_text", payload.get("marker", "JETBRAINS_PROOF_HANDSHAKE_OK")))
+        return 1 if a.jetbrains_cmd == "handshake" and payload["verdict"] != "ready_for_human_review" else 0
     if a.cmd == "mcp":
         from .mcp import McpError, mcp_status, serve_stdio
-        from .mcp_setup import McpSetupError, mcp_connection_config
+        from .mcp_setup import McpSetupError, install_project_mcp_config, mcp_connection_config
 
         try:
             if a.mcp_cmd == "status":
@@ -3665,6 +4225,10 @@ def main(argv=None) -> int:
                         print(f"copy command : {payload['command_line']}")
                     else:
                         print(json.dumps(payload["config"], indent=2))
+                return 0
+            if a.mcp_cmd == "install":
+                payload = install_project_mcp_config(Path(a.root), a.client, a.confirmation)
+                print(json.dumps(payload, indent=2, sort_keys=True) if a.json else f"Factory MCP {payload['state']}: {payload['target']}")
                 return 0
             return serve_stdio(Path(a.root))
         except (McpError, McpSetupError) as exc:

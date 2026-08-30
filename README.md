@@ -34,6 +34,10 @@ receipt and a privacy-safe Proof Card; it does not assess or change your project
   DeepSeek, or other local agent run. Code Factory records the exact file delta,
   runs the validators your team declared, and stores hashes and bounded facts—not
   prompts or raw model output—so reviewers can compare the claim with the change.
+- **SaaS builder:** use `factory saas verify` to follow one customer promise
+  from OAuth/OIDC identity and tenant access through checkout, verified webhook,
+  entitlement, feature access, and revocation. Missing or contradictory evidence
+  stays blocked, and the provider remains untouched.
 - **Platform or assurance team:** evaluate local policy gates, evidence packets,
   expiring exceptions, and tenant boundaries in a controlled pilot. The free core
   is community-supported on a best-effort basis; the proposed enterprise support
@@ -41,6 +45,9 @@ receipt and a privacy-safe Proof Card; it does not assess or change your project
   and signed terms exist.
 
 When you need more than the first proof, open the [advanced workflow guide](docs/OVERVIEW.md).
+For one agent-neutral human review path, use [`factory proof-review`](docs/PROOF_REVIEW_WORKFLOW.md)
+to seal intent, audit trajectory evidence, route the change, learn confirmed
+regressions, inspect the team inbox, and export a tamper-evident Proof Card.
 To create a contained starter later, run
 `factory mvp "Build an approval tracker" --root .`.
 That starter is never called production-ready until the relevant proof exists.
@@ -215,6 +222,10 @@ the evidence behind prior work. Graph Ops can replay only redacted, current,
 independently promoted metadata; it does not store private source, prompts,
 embeddings, or transcripts, and it cannot execute a repair.
 
+## Revenue-ready iOS scaffolds
+
+`factory revenue build` turns one reviewed `products.yaml` into StoreKit 2, a transparent SwiftUI paywall, an Apple-JWS-verifying entitlement-server scaffold, privacy/review artifacts, and a local evidence page. Then `replay`, `testflight-sync`, `failure-matrix`, and `policy-watch` expose where observed purchase behavior, beta feedback, negative paths, or policy sources diverge—without turning unknowns green. Evidence Memory carries human-approved, receipt-backed lessons into the next exact-app journey while expiring stale knowledge and quarantining contradictions. IDEs and coding agents can inspect the same local facts through MCP; compatible browser agents can inspect bounded Graph Ops status through progressive WebMCP. App Store writes, pricing, experiments, offers, publication, and credentials stay human-controlled. See [RevenueForge](docs/REVENUEFORGE.md) and the [MCP/WebMCP handoff](docs/MCP_WEBMCP.md).
+
 ## Install
 
 ```powershell
@@ -246,6 +257,8 @@ developers can find it. This optional link only opens the repository.
 | Capture an agent run without copying its prompt | [`factory wrap`](docs/EVIDENCE_SUPPLY_LINE.md) | A pre-admitted, hash-bound delta and independent-validator receipt that feeds Agent License |
 | Draft the first Gauntlet promises | [`factory gauntlet draft`](docs/EVIDENCE_SUPPLY_LINE.md) | Inert structure-derived candidates, with unsupported HTTP commands explicitly withheld |
 | Prepare a bounded Team pilot | [`factory team-pilot readiness`](docs/TEAM_PILOT_LAUNCH.md) | Hash-bound, customer-managed readiness evidence for owner review—not a checkout or service activation |
+| Operate a team evidence workspace | [`factory ops`](docs/ENTERPRISE_OPERATIONS.md) | Tenant-bound identities, immutable evidence, explicit runner posture, fresh required checks, outcome telemetry, and seven-gate SLA readiness—without merge, deploy, billing, SSO, or contract authority |
+| Prove SaaS access matches the promise | [`factory saas verify`](docs/SAAS_PROOF.md) | Provider-neutral OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, access, and revocation evidence—with unknowns blocked |
 | Add evidence to a GitHub PR | [`factory github proof-review`](docs/GITHUB_PROOF_REVIEW.md) | One neutral Check and stable proof walkthrough, tied to the head commit |
 | Prove a LangGraph resume path | [`factory langgraph replay-verify`](docs/LANGGRAPH_ASSURANCE.md) | Hash-only parity, duplicate-effect and parallel-write safeguards, plus a shareable incident capsule |
 | Detect policy drift before a human merge | [`factory github assurance-dossier`](docs/GITHUB_ASSURANCE_DOSSIER.md) | Deterministic supplied-policy comparison, named expiring exceptions, and a merge-evidence packet |
@@ -316,10 +329,12 @@ The same local proof surface is discoverable in the [Official MCP Registry](docs
 as `io.github.zrk222/code-factory`; registry setup starts the public PyPI
 package over local stdio and never creates a hosted service or write authority.
 
-FactoryLine's core local proof workflow remains free. The owner-approved future
-JetBrains Freemium plan starts **January 1, 2027**, subject to Marketplace and
-activation gates: **$5.95 USD per named seat/month** or **$60 USD per named seat/year**
-for optional Memory and Enterprise Assurance entitlements. It is not
+FactoryLine's core local proof workflow remains free. The planned JetBrains
+Freemium transition starts **January 1, 2027**, subject to Marketplace and
+activation gates. Early adopters may retain **Founding Proof Pro at $5.95
+USD/month or $60 USD/year**; standard Proof Pro is planned at **$9/month or
+$90/year**, and AppForge Builder at **$24/month or $240/year**. Team Assurance
+is a separate $20-per-active-contributor annual-commit hypothesis. None is
 active today; no checkout, entitlement, or license enforcement exists. See the
 [Marketplace control-room guide](docs/JETBRAINS_CONTROL_ROOM.md) for the exact
 feature boundary and approval gates.
@@ -332,9 +347,10 @@ core are unchanged. See the [GitHub per-seat plan](docs/GITHUB_MONETIZATION_2026
 
 For Open VSX, the extension and local proof core remain free. All capabilities
 shipped before the transition are free through **December 14, 2026**. From
-**December 15, 2026**, optional hosted Personal Memory is scheduled at **$4.95
-USD/month**, and Team Assurance at **$5.95 USD per named seat/month** or **$60
-USD per named seat/year**, subject to explicit activation gates. See the
+**December 15, 2026**, Founding Proof Pro may remain **$5.95/month or $60/year**
+for early adopters; standard Proof Pro is planned at **$9/month or $90/year**,
+AppForge Builder at **$24/month or $240/year**, and Team Assurance at **$20 per
+active contributor/month annually or $24 monthly**, subject to explicit activation gates. See the
 [Open VSX service plan](docs/OPEN_VSX_MONETIZATION_2026.md).
 
 ## The proof boundary
@@ -378,7 +394,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [release notes](docs/RELEASE_NOTES_0.44.3.md),
+- See the [0.45.0 release notes](docs/RELEASE_NOTES_0.45.0.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

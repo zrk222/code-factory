@@ -60,6 +60,18 @@ def test_capture_rejects_missing_exact_confirmation_without_writing(tmp_path: Pa
     assert _files(tmp_path) == before
 
 
+def test_capture_rejects_vague_promise_even_with_exact_confirmation(tmp_path: Path) -> None:
+    with pytest.raises(IntentLedgerError) as exc:
+        capture_intent_ledger(
+            tmp_path, change_list="Billing cancellation", changed=["app/billing.py"], confirmed_by="Ada",
+            promise="Make it better.", non_goal="No historical migration.",
+            failure_case="A cancelled account receiving an invoice fails.",
+            confirmation="CAPTURE Billing cancellation",
+        )
+    assert exc.value.code == "INTENT_LEDGER_INTENT_UNCLEAR"
+    assert not (tmp_path / ".factory" / "intent-ledgers").exists()
+
+
 def test_inspection_is_read_only_and_returns_uncontracted_without_inventing_intent(tmp_path: Path) -> None:
     before = _files(tmp_path)
     inspection = inspect_intent_ledger(tmp_path, change_list="Billing cancellation", changed=["app/billing.py"])

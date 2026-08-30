@@ -12,6 +12,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .intent_quality import IntentQualityError, require_clear
+
 
 COUNTEREXAMPLE_SOURCE_SCHEMA = "factory.counterexample-source.v1"
 COUNTEREXAMPLE_PLAN_SCHEMA = "factory.counterexample-plan.v1"
@@ -72,6 +74,15 @@ def _text(value: object, field: str, *, limit: int = 480, identifier: bool = Fal
     return result
 
 
+def _clear_requirement(value: str, field: str) -> str:
+    """Keep AI-authored requirement prose out of negative-proof plans when vague."""
+    try:
+        require_clear(value, field=field, require_action=True)
+    except IntentQualityError as exc:
+        raise CounterexampleError("COUNTEREXAMPLE_INTENT_UNCLEAR", f"{field}: {exc.message}") from exc
+    return value
+
+
 def _validated_requirement(item: object, index: int, seen: set[str]) -> dict[str, Any]:
     if not isinstance(item, dict) or set(item) != {"id", "statement", "risk_tags"}:
         raise CounterexampleError("COUNTEREXAMPLE_SOURCE_INVALID", f"requirements[{index}] must contain exactly id, statement, and risk_tags")
@@ -84,7 +95,8 @@ def _validated_requirement(item: object, index: int, seen: set[str]) -> dict[str
         raise CounterexampleError("COUNTEREXAMPLE_SOURCE_INVALID", f"requirements[{index}].risk_tags must contain 1 through 6 supported tags")
     if any(not isinstance(tag, str) or tag not in _TAGS for tag in tags) or len(set(tags)) != len(tags):
         raise CounterexampleError("COUNTEREXAMPLE_SOURCE_INVALID", f"requirements[{index}].risk_tags must be unique supported tags")
-    return {"id": requirement_id, "statement": _text(item.get("statement"), f"requirements[{index}].statement"), "risk_tags": sorted(tags)}
+    statement = _text(item.get("statement"), f"requirements[{index}].statement")
+    return {"id": requirement_id, "statement": _clear_requirement(statement, f"requirements[{index}].statement"), "risk_tags": sorted(tags)}
 
 
 def validate_counterexample_source(value: object) -> dict[str, Any]:

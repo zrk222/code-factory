@@ -18,6 +18,7 @@ from typing import Any
 
 from .continuity import ContinuityError, ContinuityPrincipal, recall_continuity_metadata_read_only
 from .e2e_proof import E2EProofError, public_e2e_proof_receipt, validate_e2e_proof_manifest, validate_e2e_proof_receipt, verify_e2e_proof
+from .intent_quality import IntentQualityError, require_clear
 from .reality_check import RealityCheckError, validate_reality_check_manifest
 
 
@@ -110,6 +111,15 @@ def _text(value: object, field: str, *, identifier: bool = False, limit: int = 6
     if identifier and not _ID.fullmatch(result):
         raise GauntletError("GAUNTLET_SOURCE_INVALID", f"{field} has an unsupported identifier")
     return result
+
+
+def _clear_intent(value: str, field: str) -> str:
+    """Keep unresolved Gauntlet promises from becoming proof obligations."""
+    try:
+        require_clear(value, field=field, require_action=True)
+    except IntentQualityError as exc:
+        raise GauntletError("GAUNTLET_INTENT_UNCLEAR", f"{field}: {exc.message}") from exc
+    return value
 
 
 def _compound_identifier(value: object, field: str) -> str:
@@ -281,9 +291,10 @@ def _source(root: Path, source_path: Path) -> tuple[dict[str, Any], Path, str, s
                 "summary": _text(case.get("summary"), f"promises[{index}].sabotage_cases[{case_index}].summary"),
                 "e2e_manifest": _relative_text(root, case.get("e2e_manifest"), f"promises[{index}].sabotage_cases[{case_index}].e2e_manifest").as_posix(),
             })
+        statement = _text(item.get("statement"), f"promises[{index}].statement")
         normalized.append({
             "id": promise_id,
-            "statement": _text(item.get("statement"), f"promises[{index}].statement"),
+            "statement": _clear_intent(statement, f"promises[{index}].statement"),
             "reality_manifest": _relative_text(root, item.get("reality_manifest"), f"promises[{index}].reality_manifest").as_posix(),
             "sabotage_cases": sorted(normalized_cases, key=lambda entry: entry["id"]),
         })
@@ -733,9 +744,15 @@ def _validate_outcome(outcome: object) -> tuple[str, str]:
     promise = outcome.get("promise")
     if not isinstance(promise, dict) or set(promise) != {"id", "statement"}:
         raise GauntletError("SURVIVAL_CARD_INVALID", "card outcome promise is invalid")
-    _text(promise.get("id"), "outcome promise id", identifier=True)
-    _text(promise.get("statement"), "outcome promise statement")
-    _hash_binding(outcome.get("reality"), {"path", "sha256", "promise", "failure_case"}, "outcome Reality Check")
+    promise_id = _text(promise.get("id"), "outcome promise id", identifier=True)
+    promise_statement = _clear_intent(_text(promise.get("statement"), "outcome promise statement"), "outcome promise statement")
+    if not proposal_id.startswith(f"{promise_id}--"):
+        raise GauntletError("SURVIVAL_CARD_INVALID", "card outcome promise id is not bound to its proposal id")
+    reality = _hash_binding(outcome.get("reality"), {"path", "sha256", "promise", "failure_case"}, "outcome Reality Check")
+    if reality["promise"] != promise_statement:
+        raise GauntletError("SURVIVAL_CARD_INVALID", "card outcome promise differs from its Reality Check promise")
+    _clear_intent(reality["promise"], "outcome Reality Check promise")
+    _clear_intent(reality["failure_case"], "outcome Reality Check failure_case")
     sabotage = outcome.get("sabotage")
     if not isinstance(sabotage, dict) or set(sabotage) != {"id", "risk_tag", "mutation", "summary"} or sabotage.get("risk_tag") not in _RISK_TAGS or sabotage.get("mutation") != _MUTATIONS[sabotage["risk_tag"]]:
         raise GauntletError("SURVIVAL_CARD_INVALID", "card outcome sabotage is invalid")

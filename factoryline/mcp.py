@@ -24,6 +24,11 @@ from .gauntlet import gauntlet_status
 from .agent_license import AgentLicenseError, derive_license, license_projection, normalize_agent_identity
 from .combine import combine_projection
 from .workspace_advisor import inspect_workspace
+from .revenueforge import RevenueForgeError, revenueforge_projection
+from .revenue_evidence import query_evidence_memory
+from .appforge_design import appforge_design_projection
+from .saas_proof import saas_proof_projection
+from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -346,6 +351,79 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.workspace_advisor",
             "description": "Measure bounded local workspace shape and a path-only Remote/WSL preflight. It does not query the IDE, connect remotely, change caches, indexes, inspections, or settings, and is not a performance diagnosis.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.revenue_status",
+            "description": "Return hash-verified local RevenueForge build and evidence status. It never contacts Apple, changes pricing, replies to testers, or publishes.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.revenue_memory",
+            "description": "Return unexpired, exact-app Evidence Memory guidance for one journey and quarantine contradictions. Prior evidence never proves the current build.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "app_id": {"type": "string", "minLength": 1, "maxLength": 160},
+                    "journey": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "at": {"type": "string", "format": "date-time", "maxLength": 40},
+                },
+                "required": ["app_id", "journey"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_status",
+            "description": "Return hash-verified local AppForge design-contract status. It never creates, approves, renders, or releases a design.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.saas_status",
+            "description": "Return hash-verified local, provider-neutral OAuth/OIDC-to-entitlement proof status. It never contacts an identity, billing, or deployment provider.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.agent_proof_mission",
+            "description": "Render a sealed Junie-compatible proof mission from an existing repair scope. It never starts or configures an agent.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "scope": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "changed_paths": {"type": "array", "minItems": 1, "maxItems": 200, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                },
+                "required": ["scope"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.jetbrains_handshake",
+            "description": "Cross-check returned paths, Qodana or SonarQube SARIF, intent, and optional non-hollow E2E evidence without running any provider or test.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "scope": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "changed_paths": {"type": "array", "minItems": 1, "maxItems": 200, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                    "analysis_sarif": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "analysis_provider": {"type": "string", "enum": ["auto", "qodana", "sonarqube"], "default": "auto"},
+                    "qodana_sarif": {"type": "string", "minLength": 1, "maxLength": 512, "description": "Compatibility alias for analysis_sarif with provider qodana."},
+                    "e2e_receipt": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "max_new_errors": {"type": "integer", "minimum": 0, "default": 0},
+                    "max_new_warnings": {"type": "integer", "minimum": 0, "default": 0},
+                },
+                "required": ["scope", "changed_paths"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.jetbrains_handshake_status",
+            "description": "Read the latest hash-valid local agent-analyzer-FactoryLine handshake receipt. It never reruns or approves it.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -826,6 +904,101 @@ def _combine_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _revenue_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.revenue_status accepts no arguments")
+    return {
+        "marker": "MCP_REVENUEFORGE_READ_ONLY",
+        "action_summary": "Read current local RevenueForge receipts and surface mismatches or unknowns; no provider action ran.",
+        "status": revenueforge_projection(root),
+        "scope": "Read-only local projection; no Apple request, credential access, pricing, offer, reply, publication, deployment, or approval action ran.",
+    }
+
+
+def _revenue_memory(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"app_id", "journey", "at"} or not {"app_id", "journey"} <= set(arguments):
+        raise McpError("factory.revenue_memory requires app_id and journey and accepts optional at")
+    app_id = arguments["app_id"]
+    journey = arguments["journey"]
+    at = arguments.get("at")
+    if not isinstance(app_id, str) or not app_id.strip() or len(app_id) > 160:
+        raise McpError("app_id must be a non-empty string of at most 160 characters")
+    if not isinstance(journey, str) or not journey.strip() or len(journey) > 80:
+        raise McpError("journey must be a non-empty string of at most 80 characters")
+    if at is not None and (not isinstance(at, str) or not at.strip() or len(at) > 40):
+        raise McpError("at must be an ISO-8601 string of at most 40 characters")
+    try:
+        status = query_evidence_memory(root, app_id, journey, at)
+    except RevenueForgeError as exc:
+        raise McpError(str(exc), exc.code) from exc
+    return {
+        "marker": "MCP_REVENUEFORGE_MEMORY_READ_ONLY",
+        "action_summary": "Retrieve exact-app, unexpired prior lessons and quarantine contradictions; require fresh evidence for the current build.",
+        "status": status,
+        "scope": "Read-only exact-scope guidance; no memory promotion, cross-tenant reuse, proof execution, provider action, or approval ran.",
+    }
+
+
+def _appforge_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_READ_ONLY",
+        "action_summary": "Read hash-verified local AppForge design receipts and preserve human design and release authority.",
+        "status": appforge_design_projection(root),
+        "scope": "Read-only local design projection; no design creation, intent override, render, App Store write, publication, deployment, or approval ran.",
+    }
+
+
+def _saas_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.saas_status accepts no arguments")
+    return {
+        "marker": "MCP_SAAS_PROOF_READ_ONLY",
+        "action_summary": "Read hash-valid local identity-to-entitlement proof status; no provider request or mutation ran.",
+        "status": saas_proof_projection(root),
+        "scope": "Read-only local receipt metadata; not OAuth provider certification, payment settlement, production proof, legal advice, or deploy authority.",
+    }
+
+
+def _agent_proof_mission(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"scope", "changed_paths"} or "scope" not in arguments:
+        raise McpError("factory.agent_proof_mission requires scope and accepts optional changed_paths")
+    try:
+        mission = build_agent_proof_mission(root, Path(arguments["scope"]), arguments.get("changed_paths"))
+    except (JetBrainsHandshakeError, TypeError) as exc:
+        raise McpError(str(exc), getattr(exc, "code", "MCP_INVALID_PARAMS_REJECTED")) from exc
+    return {"marker": "MCP_AGENT_PROOF_MISSION_READ_ONLY", "mission": mission, "scope": "No agent, Qodana, test, source write, approval, credential, or network action ran."}
+
+
+def _jetbrains_handshake(root: Path, arguments: object) -> dict[str, object]:
+    required = {"scope", "changed_paths"}
+    allowed = required | {"analysis_sarif", "analysis_provider", "qodana_sarif", "e2e_receipt", "max_new_errors", "max_new_warnings"}
+    if not isinstance(arguments, dict) or set(arguments) - allowed or not required <= set(arguments):
+        raise McpError("factory.jetbrains_handshake requires scope and changed_paths plus one analysis SARIF path")
+    analysis_sarif = arguments.get("analysis_sarif")
+    qodana_sarif = arguments.get("qodana_sarif")
+    if bool(analysis_sarif) == bool(qodana_sarif):
+        raise McpError("factory.jetbrains_handshake requires exactly one of analysis_sarif or qodana_sarif")
+    provider = "qodana" if qodana_sarif else arguments.get("analysis_provider", "auto")
+    try:
+        result = evaluate_jetbrains_handshake(
+            root, Path(arguments["scope"]), arguments["changed_paths"], Path(qodana_sarif or analysis_sarif),
+            Path(arguments["e2e_receipt"]) if arguments.get("e2e_receipt") else None,
+            analysis_provider=provider,
+            max_new_errors=arguments.get("max_new_errors", 0), max_new_warnings=arguments.get("max_new_warnings", 0),
+        )
+    except (JetBrainsHandshakeError, TypeError) as exc:
+        raise McpError(str(exc), getattr(exc, "code", "MCP_INVALID_PARAMS_REJECTED")) from exc
+    return {"marker": "MCP_JETBRAINS_HANDSHAKE_READ_ONLY", "handshake": result, "scope": "No agent, analyzer, test, receipt write, approval, credential, or network action ran."}
+
+
+def _jetbrains_handshake_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.jetbrains_handshake_status accepts no arguments")
+    return {"marker": "MCP_JETBRAINS_HANDSHAKE_STATUS_READ_ONLY", "status": jetbrains_handshake_projection(root), "scope": "Latest local receipt metadata only; no evidence was rerun or approved."}
+
+
 def _tool_call(root: Path, params: object) -> dict[str, object]:
     if not isinstance(params, dict) or set(params) - {"name", "arguments"}:
         raise McpError("tools/call requires name and optional arguments")
@@ -892,6 +1065,20 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_combine_status(root, arguments))
     if name == "factory.workspace_advisor":
         return _content(_workspace_advisor(root, arguments))
+    if name == "factory.revenue_status":
+        return _content(_revenue_status(root, arguments))
+    if name == "factory.revenue_memory":
+        return _content(_revenue_memory(root, arguments))
+    if name == "factory.appforge_status":
+        return _content(_appforge_status(root, arguments))
+    if name == "factory.saas_status":
+        return _content(_saas_status(root, arguments))
+    if name == "factory.agent_proof_mission":
+        return _content(_agent_proof_mission(root, arguments))
+    if name == "factory.jetbrains_handshake":
+        return _content(_jetbrains_handshake(root, arguments))
+    if name == "factory.jetbrains_handshake_status":
+        return _content(_jetbrains_handshake_status(root, arguments))
     raise McpError("unknown MCP tool")
 
 

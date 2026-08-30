@@ -10,11 +10,18 @@ Every capability shipped before the commercial transition is free through
 **December 14, 2026 at 11:59:59 PM Eastern time**. Beginning **December 15,
 2026**, Code Factory may offer two optional services outside the registry:
 
-- **Personal Memory — $4.95 USD/month:** hosted proof-aware continuity,
-  authorized cross-workspace evidence recall, and retention/export controls.
-- **Team Assurance — $5.95 USD per named seat/month or $60 USD per named
-  seat/year:** shared proof history, policy and approval routing, governed
-  exceptions, and evidence exports.
+- **Proof Pro — $9 USD/month or $90 USD/year:** advanced proof, hosted
+  proof-aware continuity, authorized cross-workspace evidence recall, and
+  retention/export controls. Early adopters may retain the grandfathered
+  $5.95/month or $60/year Founding Proof Pro price.
+- **AppForge Builder — $24 USD/month or $240 USD/year:** Proof Pro plus
+  AppForge storyboards and design contracts, SaaS promise-to-permission proof,
+  and supervised Junie-compatible missions. Hosted model, build, render,
+  device, and provider usage is metered separately.
+- **Team Assurance — $20 USD per active contributor/month with an annual
+  commitment, or $24 monthly (three-contributor minimum):** shared proof
+  history, policy and approval routing, governed exceptions, and evidence
+  exports.
 
 These prices do not apply to downloading the extension, running local IDE
 commands, the local CLI or MCP server, local Studio or Graph Ops, or local

@@ -296,6 +296,24 @@ def verify_repair_scope(scope: dict[str, Any], root: Path) -> dict[str, Any]:
     return {**scope, "scope_id": f"repair-scope-{supplied[:12]}"}
 
 
+def validate_repair_scope_envelope(scope: dict[str, Any]) -> dict[str, Any]:
+    """Validate the sealed scope envelope without requiring pre-agent file bytes.
+
+    This is the post-agent handoff validator: the envelope remains hash-bound,
+    while the returned workspace is expected to differ from its pre-agent
+    baselines. Path admission is evaluated separately against the sealed list.
+    """
+    core = _scope_core(scope)
+    supplied = _scope_digest(scope, core)
+    paths = core.get("paths")
+    if not isinstance(paths, list) or not paths:
+        raise RepairSandboxError("REPAIR_SCOPE_INVALID", "scope paths must be a non-empty list")
+    seen: set[str] = set()
+    normalized = [_scope_baseline(item, seen) for item in paths]
+    _verify_context_budget(core["context_budget"], normalized)
+    return {**scope, "scope_id": f"repair-scope-{supplied[:12]}"}
+
+
 def _scope_mermaid(scope: dict[str, Any]) -> str:
     lines = ["flowchart LR", '  S["Sealed Change List scope"]']
     for index, item in enumerate(scope["paths"], 1):

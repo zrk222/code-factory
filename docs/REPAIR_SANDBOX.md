@@ -7,8 +7,9 @@ automatic apply path.
 ```text
 Native Change List
   -> Scope Passport (exact paths, current hashes, measured context bytes)
-  -> external supervised candidate patch
-  -> FactoryLine path-scope check
+  -> Proof Mission pasted into Junie or another AI coding agent
+  -> returned Change List or external supervised candidate patch
+  -> FactoryLine intent, hollow-test, and path-scope review
   -> independent verifier evidence
   -> human reviews and applies in the IDE
 ```
@@ -18,6 +19,21 @@ plausible patch while silently absorbing unrelated work, touching release or
 infrastructure files, or leaving no durable explanation of what was in scope.
 FactoryLine makes the scope and the handoff inspectable without pretending that
 the patch is correct.
+
+## Junie + FactoryLine: the connected proof loop
+
+Junie helps you build. FactoryLine helps you know whether the build and its
+tests deserve trust. After preparing the Scope Passport, choose **Copy Proof
+Mission for AI agent** and paste the compact contract into Junie. The mission
+names the sealed paths, forbids weakening a failing test just to get green, and
+asks the agent to return changed paths, tests, failures, and unknowns.
+
+When Junie finishes, choose **Review returned Change List**. FactoryLine opens
+its existing local Proof Review over the actual workspace delta. It does not
+trust the agent's completion claim, and it does not grant Junie permission,
+start it, read its chat, or imply JetBrains endorsement. Teams can use the same
+loop with any coding agent; the local stdio MCP configuration remains available
+for clients that support it.
 
 ## Prepare a Scope Passport
 

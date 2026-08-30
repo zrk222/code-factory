@@ -143,6 +143,21 @@ data class RepairSandboxUnavailable(val message: String, val rawOutput: String) 
     }
 }
 
+internal fun buildAiAgentProofMission(brief: String): String = buildString {
+    appendLine("FactoryLine AI Agent Proof Mission")
+    appendLine("Use this sealed local scope with Junie or another AI coding agent.")
+    appendLine()
+    appendLine("Working contract:")
+    appendLine("- Preserve the stated intent, non-goals, and negative case.")
+    appendLine("- Change only the sealed paths. Stop and ask before expanding scope.")
+    appendLine("- Do not delete, skip, weaken, or replace a failing test merely to make the run green.")
+    appendLine("- Return the exact changed paths, tests run, failures, and remaining unknowns.")
+    appendLine("- Do not claim approval or production readiness. FactoryLine will independently review the returned Change List and evidence.")
+    appendLine()
+    appendLine("Sealed proof context:")
+    append(brief)
+}
+
 class FactoryLineRepairSandboxPanel(private val project: Project) : JPanel(BorderLayout(0, 8)) {
     private val status = JLabel("Seal one Change List before a supervised repair candidate enters review.")
     private val summary = JBTextArea().apply {
@@ -152,9 +167,9 @@ class FactoryLineRepairSandboxPanel(private val project: Project) : JPanel(Borde
         text = """
             Verified Repair Sandbox
 
-            Select one native Change List to create a hash-bound Scope Passport. Then validate a textual candidate patch from a supervised external runner. FactoryLine verifies only that its paths remain in scope and makes the independent verifier and human apply steps explicit.
+            Select one native Change List to create a hash-bound Scope Passport. Copy its Proof Mission into Junie or another AI coding agent, then bring the returned Change List back to Proof Review. FactoryLine verifies only local scope and supplied evidence; the independent verifier and human apply steps remain explicit.
 
-            This is designed for professional teams: unrelated work stays out of the repair context, scope drift is blocked, and applying a patch remains an IDE-owned human decision.
+            Junie helps you build. FactoryLine helps you know whether the build and its tests deserve trust. No agent is contacted or granted authority by this panel.
         """.trimIndent()
     }
     private val raw = JBTextArea().apply { isEditable = false; lineWrap = false }
@@ -170,8 +185,13 @@ class FactoryLineRepairSandboxPanel(private val project: Project) : JPanel(Borde
             add(JButton("Open selected scope file").apply { addActionListener { openSelectedScopePath() } })
             add(JButton("Open candidate patch").apply { addActionListener { openCandidatePatch() } })
             add(JButton("Copy team brief").apply { addActionListener { copyBrief() } })
-            add(JButton("Copy proof context for AI Chat").apply { addActionListener { copyAiContext() } })
-            add(JButton("Copy local MCP config").apply { addActionListener { copyMcpConfig() } })
+            add(JButton("Copy Proof Mission for AI agent").apply { addActionListener { copyAiContext() } })
+            add(JButton("Review returned Change List").apply { addActionListener { FactoryLineController.reviewCurrentDiff(project) } })
+            add(JButton("Install Junie MCP").apply { addActionListener { FactoryLineController.installProofAdapter(project, "junie") } })
+            add(JButton("Install Copilot Proof Agent").apply { addActionListener { FactoryLineController.installProofAdapter(project, "copilot") } })
+            add(JButton("Verify agent + analyzer").apply { addActionListener { FactoryLineController.verifyAgentAndAnalyzer(project, latestScope) } })
+            add(JButton("Open Graph Ops").apply { addActionListener { FactoryLineController.openStudio(project, graphMode = true) } })
+            add(JButton("Copy generic MCP config").apply { addActionListener { copyMcpConfig() } })
         }
         val pathsPanel = JPanel(BorderLayout(0, 4)).apply {
             add(JLabel("Sealed Change List paths"), BorderLayout.NORTH)
@@ -258,14 +278,9 @@ class FactoryLineRepairSandboxPanel(private val project: Project) : JPanel(Borde
             status.text = "Prepare a trusted scope or candidate before copying proof context."
             return
         }
-        val context = buildString {
-            appendLine("FactoryLine local proof context")
-            appendLine("Use these facts as review context. Do not treat them as approval, production readiness, or permission to edit, run, commit, publish, deploy, or send anything.")
-            appendLine()
-            append(brief)
-        }
+        val context = buildAiAgentProofMission(brief)
         CopyPasteManager.getInstance().setContents(StringSelection(context))
-        status.text = "Copied local proof context for a manual AI Chat paste. No AI service was contacted."
+        status.text = "Copied a sealed Proof Mission for a manual Junie or AI-agent paste. No AI service was contacted."
     }
 
     private fun copyMcpConfig() {

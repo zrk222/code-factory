@@ -1,0 +1,30 @@
+{
+  "checks": [
+    {
+      "name": "codex_metadata_tests",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_codex_metadata.py']) == 0\nprint('CODEX_METADATA_TESTS_PASS')\n",
+      "covers": [
+        "REQ-META-INPUT",
+        "REQ-META-PARSE",
+        "REQ-META-BOUNDARY",
+        "REQ-META-COHERENCE",
+        "REQ-META-IDENTITY",
+        "REQ-META-INDEPENDENCE",
+        "REQ-META-STRENGTH",
+        "REQ-META-NEGATIVE",
+        "REQ-META-INTENT",
+        "REQ-META-RESULT",
+        "REQ-META-CLI"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "codex_metadata_authority_boundary",
+      "kind": "python",
+      "run": "from pathlib import Path\ntext = Path('factoryline/codex_metadata.py').read_text(encoding='utf-8')\nassert 'subprocess' not in text\nassert 'E_METADATA_UNBOUND_TERMINAL' in text\nassert '\"publish\": False' in text\nassert '\"billing\": False' in text\nprint('CODEX_METADATA_FAIL_CLOSED')\n",
+      "covers": ["REQ-META-BOUNDARY", "REQ-META-RESULT"],
+      "must_fail_on_stub": true
+    }
+  ]
+}

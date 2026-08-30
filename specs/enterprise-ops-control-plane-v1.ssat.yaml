@@ -1,0 +1,68 @@
+name: enterprise-ops-control-plane-v1
+language: python
+modules:
+  - name: enterprise_ops
+    path: factoryline/enterprise_ops.py
+    functions:
+      - name: initialize_workspace
+        args: ["root: Path", "tenant_id: str", "owner: str"]
+        returns: "dict[str, Any]"
+      - name: provision_identity
+        args: ["root: Path", "tenant_id: str", "subject: str", "role: str"]
+        returns: "dict[str, Any]"
+      - name: put_evidence
+        args: ["root: Path", "tenant_id: str", "subject: str", "payload: dict[str, Any]"]
+        returns: "dict[str, Any]"
+      - name: verify_workspace
+        args: ["root: Path", "tenant_id: str | None"]
+        returns: "dict[str, Any]"
+      - name: run_proof
+        args: ["root: Path", "command: list[str]"]
+        returns: "dict[str, Any]"
+      - name: evaluate_required_checks
+        args: ["root: Path", "changed_paths: Iterable[str]"]
+        returns: "dict[str, Any]"
+      - name: record_outcome
+        args: ["root: Path", "tenant_id: str", "subject: str"]
+        returns: "dict[str, Any]"
+      - name: evaluate_sla
+        args: ["root: Path", "manifest: Path | None"]
+        returns: "dict[str, Any]"
+      - name: workspace_status
+        args: ["root: Path"]
+        returns: "dict[str, Any]"
+dependencies: []
+invariants:
+  - name: no_network_authority_in_workspace_or_checks
+    forbid_pattern: "\\b(?:requests|urllib|httpx|socket|os\\.system)\\b"
+    scopes:
+      - module: enterprise_ops
+        symbol: initialize_workspace
+        max_lines: 120
+      - module: enterprise_ops
+        symbol: provision_identity
+        max_lines: 120
+      - module: enterprise_ops
+        symbol: put_evidence
+        max_lines: 120
+      - module: enterprise_ops
+        symbol: verify_workspace
+        max_lines: 120
+      - module: enterprise_ops
+        symbol: evaluate_required_checks
+        max_lines: 120
+      - module: enterprise_ops
+        symbol: record_outcome
+        max_lines: 120
+      - module: enterprise_ops
+        symbol: evaluate_sla
+        max_lines: 120
+      - module: enterprise_ops
+        symbol: workspace_status
+        max_lines: 120
+  - name: runner_has_no_shell_string_execution
+    forbid_pattern: "shell\\s*=\\s*True|os\\.system|subprocess\\.Popen\\([^\\n]*shell\\s*=\\s*True"
+    scopes:
+      - module: enterprise_ops
+        symbol: run_proof
+        max_lines: 120

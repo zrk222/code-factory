@@ -1,0 +1,39 @@
+name: revenueforge-v1
+language: python
+modules:
+  - name: revenueforge
+    path: factoryline/revenueforge.py
+    language: python
+    functions:
+      - name: validate_products
+        args: [root, products_path]
+        returns: dict
+      - name: build_revenue_bundle
+        args: [root, products_path, out_dir]
+        returns: dict
+      - name: plan_growth
+        args: [root, products_path, growth_path]
+        returns: dict
+      - name: benchmark_cell
+        args: [records]
+        returns: dict
+      - name: revenueforge_projection
+        args: [root]
+        returns: dict
+dependencies: []
+invariants:
+  - name: revenueforge_has_no_provider_write_authority
+    forbid_pattern: "(requests\\.(post|put|patch|delete)|httpx\\.(post|put|patch|delete)|urlopen\\()"
+    scopes:
+      - module: revenueforge
+        symbol: build_revenue_bundle
+        max_lines: 80
+  - name: revenueforge_has_no_embedded_credentials
+    forbid_pattern: "(API_KEY|PRIVATE_KEY|ASC_TOKEN|issuer_secret)"
+    scopes:
+      - module: revenueforge
+        symbol: validate_products
+        max_lines: 80
+gates:
+  - name: revenueforge_tests
+    command: "python -m pytest -q tests/test_revenueforge.py tests/test_revenueforge_cli.py"
