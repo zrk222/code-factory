@@ -17,6 +17,7 @@ import time
 from typing import Any
 
 from .change_review import ChangeReviewError, review_change
+from .intent_quality import IntentQualityError, require_clear
 
 
 INTENT_LEDGER_SCHEMA = "factory.intent-ledger.v1"
@@ -69,6 +70,15 @@ def _text(value: object, field: str, *, maximum: int = MAX_TEXT) -> str:
     if not result or len(result) > maximum:
         raise IntentLedgerError("INTENT_LEDGER_INPUT_INVALID", f"{field} must contain 1 through {maximum} characters")
     return result
+
+
+def _clear_intent(value: str, field: str, *, require_action: bool = True) -> str:
+    """Reject unresolved or vague intent before it becomes a ledger fact."""
+    try:
+        require_clear(value, field=field, require_action=require_action)
+        return value
+    except IntentQualityError as exc:
+        raise IntentLedgerError("INTENT_LEDGER_INTENT_UNCLEAR", f"{field}: {exc.message}") from exc
 
 
 def _changed_path(value: object) -> str:
@@ -149,6 +159,9 @@ def validate_intent_ledger_record(value: object) -> dict[str, Any]:
     if not isinstance(intent, dict) or set(intent) != {"promise", "non_goal", "failure_case"}:
         raise IntentLedgerError("INTENT_LEDGER_INVALID", "Intent Ledger intent must contain exactly promise, non_goal, and failure_case")
     normalized_intent = {field: _text(intent.get(field), f"intent.{field}") for field in ("promise", "non_goal", "failure_case")}
+    _clear_intent(normalized_intent["promise"], "intent.promise")
+    _clear_intent(normalized_intent["non_goal"], "intent.non_goal", require_action=False)
+    _clear_intent(normalized_intent["failure_case"], "intent.failure_case")
     confirmed_by = _text(value.get("confirmed_by"), "confirmed_by", maximum=MAX_CHANGE_LIST_NAME)
     captured_at = value.get("captured_at")
     if not isinstance(captured_at, str):
@@ -210,9 +223,9 @@ def capture_intent_ledger(
         change_list=selected_change_list,
         changed_paths=paths,
         confirmed_by=_text(confirmed_by, "confirmed_by", maximum=MAX_CHANGE_LIST_NAME),
-        promise=_text(promise, "promise"),
-        non_goal=_text(non_goal, "non_goal"),
-        failure_case=_text(failure_case, "failure_case"),
+        promise=_clear_intent(_text(promise, "promise"), "promise"),
+        non_goal=_clear_intent(_text(non_goal, "non_goal"), "non_goal", require_action=False),
+        failure_case=_clear_intent(_text(failure_case, "failure_case"), "failure_case"),
         captured_at=timestamp,
     )
     record = {**core, "ledger_sha256": _sha(core)}

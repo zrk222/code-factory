@@ -21,6 +21,7 @@ import tempfile
 from typing import Any
 
 from .product_missions import ProductMissionError, analyze_product_text
+from .intent_quality import IntentQualityError, require_clear
 
 
 INTAKE_GRILL_SCHEMA = "factory.intake-grill.v1"
@@ -162,6 +163,14 @@ def _text(value: str, field: str, *, minimum: int = 8, maximum: int = MAX_TEXT) 
     if not minimum <= len(cleaned) <= maximum or "\x00" in cleaned or _SECRET.search(cleaned):
         raise ProductMissionError("INTAKE_DECISION_INVALID", f"{field} must contain {minimum}-{maximum} non-secret characters")
     return cleaned
+
+
+def _clear_decision(value: str, field: str, *, observable: bool = False) -> str:
+    """Reject unresolved or non-observable AI-authored decision text."""
+    try:
+        return require_clear(value, field=field, require_action=True, require_observable=observable)
+    except IntentQualityError as exc:
+        raise ProductMissionError("INTAKE_INTENT_UNCLEAR", f"{field}: {exc.message}") from exc
 
 
 def _frameworks(text: str) -> list[dict[str, Any]]:
@@ -335,10 +344,14 @@ def confirm_intake(root: Path, intake_path: Path, framework: str, intent: str, a
     if external_effects not in _EXTERNAL_EFFECTS:
         raise ProductMissionError("INTAKE_EXTERNAL_EFFECTS_INVALID", "external_effects must be local_only or human_controlled")
     approver = _text(approved_by, "approved_by", minimum=2, maximum=120)
+    intent_value = _text(intent, "intent")
+    acceptance_value = _text(acceptance, "acceptance")
+    _clear_decision(intent_value, "intent")
+    _clear_decision(acceptance_value, "acceptance", observable=True)
     decision = {
         "framework": framework,
-        "intent": _text(intent, "intent"),
-        "acceptance": _text(acceptance, "acceptance"),
+        "intent": intent_value,
+        "acceptance": acceptance_value,
         "external_effects": external_effects,
         "approved_by": approver,
         "rationale": _text(rationale, "rationale"),
@@ -352,7 +365,7 @@ def confirm_intake(root: Path, intake_path: Path, framework: str, intent: str, a
         "intake": {"path": intake_relative, "intake_sha256": intake["intake_sha256"]},
         "source": {"sha256": source["sha256"], "bytes": source["bytes"]},
         "decision": decision,
-        "markers": ["INTAKE_CONFIRMATION_SOURCE_BOUND", "INTAKE_NAMED_HUMAN_BOUND", "INTAKE_REEVALUATION_EXPLICIT", "INTAKE_ZERO_EXECUTION_AUTHORITY"],
+        "markers": ["INTAKE_CONFIRMATION_SOURCE_BOUND", "INTAKE_NAMED_HUMAN_BOUND", "INTAKE_INTENT_CLARITY_CHECKED", "INTAKE_ACCEPTANCE_OBSERVABLE_CHECKED", "INTAKE_REEVALUATION_EXPLICIT", "INTAKE_ZERO_EXECUTION_AUTHORITY"],
         "authority": _AUTHORITY,
     }
     default = workspace / ".factory" / "intake-confirmations" / intake["project"] / f"{source['sha256']}.json"
@@ -375,6 +388,12 @@ def _confirmation_base_errors(confirmation: dict[str, Any]) -> tuple[list[str], 
         errors.append("decision fields invalid")
     elif decision.get("external_effects") not in _EXTERNAL_EFFECTS:
         errors.append("external effects invalid")
+    if decision is not None:
+        try:
+            _clear_decision(decision.get("intent"), "intent")
+            _clear_decision(decision.get("acceptance"), "acceptance", observable=True)
+        except (ProductMissionError, TypeError) as exc:
+            errors.append(str(exc))
     return errors, decision if isinstance(decision, dict) else None
 
 

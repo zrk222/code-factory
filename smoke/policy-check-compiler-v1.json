@@ -1,0 +1,25 @@
+{
+  "checks": [
+    {
+      "name": "policy_compiler_tests",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_policy_compiler.py']) == 0\nprint('POLICY_COMPILER_TESTS_PASS')\n",
+      "covers": [
+        "REQ-POLICY-INPUT",
+        "REQ-POLICY-MANIFEST",
+        "REQ-POLICY-RULES",
+        "REQ-POLICY-GATES",
+        "REQ-POLICY-FAIL-CLOSED",
+        "REQ-POLICY-CLI"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "policy_compiler_authority_boundary",
+      "kind": "python",
+      "run": "from pathlib import Path\ntext = Path('factoryline/policy_compiler.py').read_text(encoding='utf-8')\nassert 'subprocess' not in text\nassert 'E_POLICY_PATH_ESCAPE' in text\nassert '\"execute\": False' in text\nassert '\"billing\": False' in text\nprint('POLICY_COMPILER_FAIL_CLOSED')\n",
+      "covers": ["REQ-POLICY-INPUT", "REQ-POLICY-FAIL-CLOSED"],
+      "must_fail_on_stub": true
+    }
+  ]
+}

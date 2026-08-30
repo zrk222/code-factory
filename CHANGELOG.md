@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.44.4 - 2026-08-27
+
+- Add one shared intent-quality boundary across Intake Grill, Intent Ledger,
+  Reality Check, Counterexample, and Gauntlet. Placeholder, vague, and
+  non-observable intent is rejected before proof work begins; Gauntlet outcomes
+  must also remain bound to the original promise and Reality evidence.
+- Add deterministic Codex metadata integrity auditing with complete-file hashes,
+  structured claim checks, and explicit review-required findings for historical
+  records. It never upgrades local metadata into provider or release authority.
+- Retain the 0.44.3 Journey Reality, Failure Capsules, Proof-Gated Healing, and
+  independent agent-audit behavior in this patch release.
+
 ## 0.44.3 - 2026-08-25
 
 - Add Journey Reality, a deterministic comparison between declared and observed

@@ -1,13 +1,13 @@
 # Release Channels
 
-Code Factory v0.44.3 publishes one verified source state through channel-specific
+Code Factory v0.44.4 publishes one verified source state through channel-specific
 adapters. A successful GitHub release is not evidence that every moderated
 listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.44.3`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.44.3` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.44.4`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.44.4` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
@@ -18,6 +18,14 @@ listing has accepted the artifact.
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured.
+
+### 0.44.4 Intent and metadata integrity
+
+This patch adds a shared lexical intent boundary across intake and proof
+surfaces, binds Gauntlet outcomes to their original promise and Reality
+evidence, and adds complete-file Codex metadata auditing. Historical metadata
+that lacks negative proof or external authority remains review-required; it is
+not rewritten into success.
 
 ### 0.44.3 Journey proof and audited healing
 

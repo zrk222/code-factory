@@ -49,6 +49,16 @@ def test_validate_reality_check_manifest_requires_approved_behavior_contract(tmp
     assert validated["e2e_manifest"]["path"] == "approval.e2e.json"
 
 
+def test_reality_check_rejects_unresolved_behavior_intent(tmp_path: Path) -> None:
+    manifest = _write(tmp_path)
+    value = json.loads(manifest.read_text(encoding="utf-8"))
+    value["behavior"]["promise"] = "Make it better."
+    manifest.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(RealityCheckError) as exc:
+        validate_reality_check_manifest(tmp_path, manifest)
+    assert exc.value.code == "REALITY_CHECK_INTENT_UNCLEAR"
+
+
 def test_inspect_reality_intent_reports_deep_positive_and_negative_coverage_without_execution(tmp_path: Path) -> None:
     inspection = inspect_reality_intent(tmp_path, _write(tmp_path))
     assert inspection["marker"] == "REALITY_INTENT_CONTRACT_READY"

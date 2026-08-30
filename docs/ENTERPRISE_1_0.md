@@ -60,12 +60,15 @@ The following foundations are shipped in FactoryLine 0.22.0:
 | Plane | Shipped foundation | Not claimed yet |
 | --- | --- | --- |
 | Enterprise trust | Receipt v2, DSSE/Ed25519, identity metadata, policy binding, revocation, offline verification | Sigstore-backed enterprise key lifecycle or centralized trust service |
-| Control | Tenant-scoped SQLite evidence; supervised PostgreSQL tenant lifecycle; forced RLS; per-tenant OIDC/JWKS verification; atomic directory-group roles; GitHub App installation binding; runtime-only secret references; hash-linked audit; read-only operator console; durable mission graphs; secret-free IDE-aware BYOK routing | SCIM/SAML enrollment, managed HA/DR, external KMS, hosted evidence retention service, additional SCM providers, provider execution adapters |
-| Assurance | Evidence graph, risk DAG, process-boundary runner, SBOM/VEX-shaped artifacts, policy mutation, digest-only challenge manifest | Kernel/container isolation, complete SBOM discovery, remote private challenge service |
-| Operations | Measured spans, canary/rollback decisions, vulnerability receipts, metadata-only connector envelopes | OpenTelemetry export, SIEM/ticket delivery, ticket lifecycle automation |
+| Control | Tenant-scoped SQLite evidence; supervised PostgreSQL tenant lifecycle; forced RLS; per-tenant OIDC/JWKS verification; atomic directory-group roles; GitHub App installation binding; runtime-only secret references; hash-linked audit; read-only operator console; durable mission graphs; secret-free IDE-aware BYOK routing; local `factory ops` identity lifecycle and evidence workspace | SCIM/SAML enrollment, managed HA/DR, external KMS, hosted evidence retention service, additional SCM providers, provider execution adapters |
+| Assurance | Evidence graph, risk DAG, process-boundary runner, explicit Docker proof runner with read-only/no-network/resource flags, SBOM/VEX-shaped artifacts, policy mutation, digest-only challenge manifest | Kernel-enforced guarantees beyond the Docker backend, complete SBOM discovery, remote private challenge service |
+| Operations | Measured spans, canary/rollback decisions, vulnerability receipts, metadata-only connector envelopes, hash-linked outcome ledger, OTLP-shaped export, required-check evaluator, seven-gate SLA readiness report, novice-friendly golden status | Managed SIEM/ticket delivery, ticket lifecycle automation, staffed contractual SLA, managed execution service |
 | Compliance | Versioned baseline packs and OSCAL-shaped assessment exports | Complete standard coverage, auditor validation, certification |
 | Privacy | Merkle selective disclosure and backend status guards | BBS credentials and zkVM proofs until reviewed backends are installed and integrated |
 
 Public claims must come from released commands, receipts, CI runs, or generated
 artifacts. A deployable supervised reference is not a managed hosted enterprise
-service, and a baseline control mapping is not a compliance certification.
+service, and a baseline control mapping is not a compliance certification. The
+`factory ops` process backend is explicitly not isolated; only an available
+Docker backend receives the isolated label, and SLA readiness remains inactive
+until the activation evidence in [`SUPPORT_SLA.md`](SUPPORT_SLA.md) exists.

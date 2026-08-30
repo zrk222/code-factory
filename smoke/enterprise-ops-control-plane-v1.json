@@ -1,0 +1,28 @@
+{
+  "checks": [
+    {
+      "name": "enterprise_ops_core_receipts_and_boundaries",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_enterprise_ops.py']) == 0\nprint('EOPS_CORE_TESTS_PASS')\n",
+      "covers": [
+        "EOPS_EVIDENCE_READY",
+        "EOPS_IDENTITY_READY",
+        "EOPS_RUNNER_READY",
+        "EOPS_CHECK_READY",
+        "EOPS_OUTCOME_READY",
+        "EOPS_SLA_READY"
+      ],
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "enterprise_ops_authority_remains_fail_closed",
+      "kind": "python",
+      "run": "from pathlib import Path\ntext = Path('factoryline/enterprise_ops.py').read_text(encoding='utf-8')\nassert 'subprocess' not in text\nassert '\"merge\": False' in text\nassert 'E_RUNNER_ISOLATION_REQUIRED' in text\nassert 'sla_activation' in text\nprint('EOPS_FAIL_CLOSED')\n",
+      "covers": [
+        "EOPS_GOLDEN_READY",
+        "EOPS_FAIL_CLOSED"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

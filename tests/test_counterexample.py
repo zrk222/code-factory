@@ -4,8 +4,10 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from factoryline.cli import main
-from factoryline.counterexample import compile_counterexample_plan, verify_counterexample_plan, write_counterexample_plan
+from factoryline.counterexample import CounterexampleError, compile_counterexample_plan, verify_counterexample_plan, write_counterexample_plan
 
 
 def _digest(value: object) -> str:
@@ -80,3 +82,14 @@ def test_counterexample_cli_writes_only_explicit_output_and_verifies(tmp_path: P
     assert out.is_file()
     assert main(["counterexample", "verify", str(out.relative_to(tmp_path)), "--root", str(tmp_path), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["marker"] == "COUNTEREXAMPLE_PLAN_VERIFIED"
+
+
+def test_counterexample_rejects_vague_requirement_before_planning(tmp_path: Path):
+    source = tmp_path / "specs" / "approval.counterexamples.json"
+    source.parent.mkdir()
+    value = _source()
+    value["requirements"][0]["statement"] = "Make it better."
+    source.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(CounterexampleError) as exc:
+        compile_counterexample_plan(tmp_path, source)
+    assert exc.value.code == "COUNTEREXAMPLE_INTENT_UNCLEAR"
