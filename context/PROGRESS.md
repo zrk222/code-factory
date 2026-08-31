@@ -502,3 +502,6 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-30 05:23] GATE plan jetbrains-proof-handshake-v1 approver=human tasks=4 sha=110114184ae76f40
 - [2026-08-30 05:24] GATE spec jetbrains-proof-handshake-v1 approver=human strict=True sha=91f5d694843df562
 - [2026-08-30 05:24] GATE plan jetbrains-proof-handshake-v1 approver=human tasks=4 sha=91f5d694843df562
+- [2026-08-31 13:09] GATE spec appforge-evidence-kit-v1 approver=human strict=True sha=cd495801cf0f7116
+- [2026-08-31 13:11] GATE spec appforge-evidence-kit-v1 approver=human strict=True sha=cd495801cf0f7116
+- [2026-08-31 13:14] GATE spec appforge-evidence-kit-v1 approver=human strict=True sha=cd495801cf0f7116

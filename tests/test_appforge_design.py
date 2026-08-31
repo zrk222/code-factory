@@ -31,6 +31,7 @@ def test_compiles_story_led_seven_discipline_workspace(tmp_path: Path) -> None:
     assert projection["current_count"] == 1
     assert projection["invalid_count"] == 0
     assert projection["latest"]["receipt_sha256"] == result["receipt_sha256"]
+    assert projection["init"]["marker"] == "APPFORGE_INIT_READ_ONLY"
     assert all(value is False for value in projection["authority"].values())
 
 

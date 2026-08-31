@@ -11,6 +11,7 @@ from .revenue_evidence import _atomic_json, _local, _read_json, _seal
 from .app_review_gate import app_review_gate_projection
 from .appforge_quality_audit import quality_audit_projection
 from .appforge_submission_assurance import submission_assurance_projection
+from .appforge_evidence_kit import appforge_init_projection
 
 
 SCHEMA = "factory.appforge.design-director.v1"
@@ -64,6 +65,7 @@ def appforge_design_projection(root: Path) -> dict[str, Any]:
         "current_count": current,
         "invalid_count": invalid,
         "latest": latest,
+        "init": appforge_init_projection(workspace),
         "app_review": app_review_gate_projection(workspace),
         "quality_audit": quality_audit_projection(workspace),
         "submission_assurance": submission_assurance_projection(workspace),

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.45.1"
+version = "0.45.2"
 description = "Catch hollow AI tests and App Store evidence gaps before review."
 authors = [
   { name = "Richard Katz" },

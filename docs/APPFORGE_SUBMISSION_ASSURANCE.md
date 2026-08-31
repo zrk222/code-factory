@@ -111,3 +111,5 @@ minimum; it is a product-quality policy, not an Apple minimum.
 Do not place credentials, review logins, personal data, raw test logs, or
 unredacted screenshots in these JSON receipts. Store those separately under an
 access-controlled release process and include only content hashes here.
+For a novice-friendly, candidate-bound setup workspace before collecting real
+evidence, start with [AppForge Evidence Kit](APPFORGE_EVIDENCE_KIT.md).

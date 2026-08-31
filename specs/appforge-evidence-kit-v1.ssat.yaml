@@ -1,0 +1,21 @@
+schema: factory.ssat.v1
+system: appforge-evidence-kit-v1
+version: 1
+governance: human_controlled
+components:
+  - name: evidence_kit
+    path: factoryline/appforge_evidence_kit.py
+    provides:
+      - name: create_evidence_kit
+        inputs: [release_candidate, user_design_input, out_dir]
+        outputs: [candidate_bound_templates, worklist, sealed_receipt]
+invariants:
+  - Generated templates are not passing evidence.
+  - Every generated contract has the exact supplied candidate.
+  - User design input remains hash-bound across Store media and quality templates.
+  - Raw credentials, device execution, Apple upload, submission, and approval claims are outside the component boundary.
+  - Existing kit files are never overwritten.
+edges: []
+gates:
+  - command: python -m pytest -q tests/test_appforge_evidence_kit.py tests/test_appforge_submission_assurance.py
+    expected: pass

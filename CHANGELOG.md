@@ -17,6 +17,18 @@
 
 ## Unreleased
 
+## 0.45.2 - 2026-08-31
+
+- Add `factory revenue appforge-init`: a plain-language, user-supplied mission
+  and exact-candidate starting point for AppForge. It writes only local
+  candidate, user-design-input, design-brief, and next-action files.
+- Add `factory revenue evidence-kit`: candidate-bound, deliberately incomplete
+  App Review, Store media, UX/full-stack, and assurance templates plus a
+  worklist for ten iPhone and three 13-inch iPad journeys.
+- Surface AppForge Init status in Graph Ops and WebMCP. The UI offers a
+  copyable local Init command but never represents it as a device run, a
+  credential flow, TestFlight activity, App Review submission, or approval.
+
 ## 0.44.4 - 2026-08-27
 
 - Add one shared intent-quality boundary across Intake Grill, Intent Ledger,

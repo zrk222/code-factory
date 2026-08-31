@@ -1823,6 +1823,8 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["revenueforge_invalid_count"] = revenueforge["invalid_count"]
     facts["appforge_design_current_count"] = appforge["current_count"]
     facts["appforge_design_invalid_count"] = appforge["invalid_count"]
+    facts["appforge_init_current_count"] = appforge["init"]["current_count"]
+    facts["appforge_init_invalid_count"] = appforge["init"]["invalid_count"]
     facts["appforge_quality_audit_current_count"] = appforge["quality_audit"]["current_count"]
     facts["appforge_quality_audit_invalid_count"] = appforge["quality_audit"]["invalid_count"]
     facts["appforge_submission_assurance_current_count"] = appforge["submission_assurance"]["current_count"]

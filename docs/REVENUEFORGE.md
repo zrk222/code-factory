@@ -44,6 +44,10 @@ Graph Ops shows these receipts read-only. It offers no button that can purchase,
 
 `appforge-design` makes the human's audience, job, desired emotion, brand direction, and screen goals the source of truth. It writes an iOS storyboard plus a reusable design-director skill spanning seven review disciplines: visual direction, accessibility, SwiftUI design, motion, gestures, performance, and color psychology. A Nanna narrative spine organizes each experience through mission, tension, guidance, agency, transformation, and celebration, while deterministic guardrails prohibit storytelling from hiding price, consequence, system state, cancellation, or recovery.
 
+## AppForge Evidence Kit
+
+`factory revenue evidence-kit` turns one exact candidate plus the approved user-design input into a plain-language worklist and deliberately incomplete, candidate-bound evidence templates. This reduces setup friction without treating placeholders, source code, or agent assertions as proof. See [AppForge Evidence Kit](APPFORGE_EVIDENCE_KIT.md).
+
 The output is a design and review contract, not a rendered app or an accessibility/performance/App Review claim. Device traces, assistive-technology task evidence, and human visual approval remain required.
 
 ### App Review rejection-regression gate
