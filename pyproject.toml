@@ -60,6 +60,7 @@ classifiers = [
 dependencies = [
   "cryptography>=42,<50",
   "PyYAML>=6,<7",
+  "reportlab>=4,<5",
   "tomli>=2.0; python_version < '3.11'",
 ]
 

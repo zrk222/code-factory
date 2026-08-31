@@ -121,6 +121,9 @@ from .revenue_evidence import (
 )
 from .appforge_design import compile_appforge_design
 from .app_review_gate import verify_app_review_readiness
+from .appforge_store_media import StoreMediaError, verify_store_media
+from .appforge_submission_assurance import verify_submission_assurance
+from .appforge_quality_audit import verify_quality_audit
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
 from .jetbrains_handshake import (
     JetBrainsHandshakeError,
@@ -1386,6 +1389,28 @@ def main(argv=None) -> int:
     revenue_app_review.add_argument("--evidence", required=True)
     revenue_app_review.add_argument("--out", default=".factory/appforge/app-review.json")
     revenue_app_review.add_argument("--json", action="store_true")
+    revenue_store_media = revenue_sub.add_parser("store-media-gate", help="verify hash-bound iOS Store media against an exact candidate and storyboard journey contract")
+    revenue_store_media.add_argument("--root", default=".")
+    revenue_store_media.add_argument("--contract", required=True)
+    revenue_store_media.add_argument("--evidence", required=True)
+    revenue_store_media.add_argument("--out", default=".factory/appforge/store-media.json")
+    revenue_store_media.add_argument("--json", action="store_true")
+    revenue_quality_audit = revenue_sub.add_parser("quality-audit", help="strictly verify user-design, iOS accessibility, UI/UX, and full-stack evidence for one candidate")
+    revenue_quality_audit.add_argument("--root", default=".")
+    revenue_quality_audit.add_argument("--contract", required=True)
+    revenue_quality_audit.add_argument("--evidence", required=True)
+    revenue_quality_audit.add_argument("--out", default=".factory/appforge/quality-audit.json")
+    revenue_quality_audit.add_argument("--json", action="store_true")
+    revenue_submission_assurance = revenue_sub.add_parser("submission-assurance", help="produce final iOS Markdown and PDF checklist only after exact-candidate local gates pass")
+    revenue_submission_assurance.add_argument("--root", default=".")
+    revenue_submission_assurance.add_argument("--contract", required=True)
+    revenue_submission_assurance.add_argument("--app-review", required=True)
+    revenue_submission_assurance.add_argument("--store-media", required=True)
+    revenue_submission_assurance.add_argument("--saas-proof", required=True)
+    revenue_submission_assurance.add_argument("--quality-audit", required=True)
+    revenue_submission_assurance.add_argument("--out", default=".factory/appforge/submission-assurance.json")
+    revenue_submission_assurance.add_argument("--report-dir", default=".factory/appforge/reports")
+    revenue_submission_assurance.add_argument("--json", action="store_true")
 
     saas = sub.add_parser("saas", help="verify provider-neutral SaaS identity, billing, entitlement, and revocation evidence")
     saas_sub = saas.add_subparsers(required=True, dest="saas_cmd")
@@ -3963,9 +3988,15 @@ def main(argv=None) -> int:
                 payload = query_evidence_memory(root, a.app_id, a.journey, a.at)
             elif a.revenue_cmd == "app-review-gate":
                 payload = verify_app_review_readiness(root, Path(a.contract), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "store-media-gate":
+                payload = verify_store_media(root, Path(a.contract), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "quality-audit":
+                payload = verify_quality_audit(root, Path(a.contract), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "submission-assurance":
+                payload = verify_submission_assurance(root, Path(a.contract), Path(a.app_review), Path(a.store_media), Path(a.saas_proof), Path(a.quality_audit), Path(a.out), Path(a.report_dir))
             else:
                 payload = compile_appforge_design(root, Path(a.brief), Path(a.out_dir))
-        except (RevenueForgeError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        except (RevenueForgeError, StoreMediaError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             error = {"schema": "factory.revenueforge.error.v1", "marker": "REVENUEFORGE_REFUSED", "code": getattr(exc, "code", "REVENUEFORGE_INPUT_INVALID"), "message": str(exc)}
             print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"revenue {a.revenue_cmd} refused: {error['code']}: {exc}", file=sys.stderr)
             return 2

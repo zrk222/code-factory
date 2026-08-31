@@ -6,6 +6,10 @@ AppForge catches evidence gaps that can cost days of App Review waiting and rewo
 
 It is available as a standalone local command and as an integrated Code Factory/AppForge receipt visible through Graph Ops, MCP, and WebMCP.
 
+For a full local candidate dossier - including hash-bound Store media, strict
+design/accessibility/full-stack evidence, SaaS lifecycle proof, and a final
+Markdown/PDF checklist - use [AppForge Submission Assurance](APPFORGE_SUBMISSION_ASSURANCE.md).
+
 ```bash
 factory revenue app-review-gate \
   --root . \

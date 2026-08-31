@@ -944,7 +944,7 @@ def _appforge_status(root: Path, arguments: object) -> dict[str, object]:
         raise McpError("factory.appforge_status accepts no arguments")
     return {
         "marker": "MCP_APPFORGE_READ_ONLY",
-        "action_summary": "Read hash-verified local AppForge design receipts and preserve human design and release authority.",
+        "action_summary": "Read hash-verified local AppForge design, strict quality-audit, and submission-dossier receipts while preserving human design and release authority.",
         "status": appforge_design_projection(root),
         "scope": "Read-only local design projection; no design creation, intent override, render, App Store write, publication, deployment, or approval ran.",
     }
