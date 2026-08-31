@@ -26,6 +26,7 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         val indexContinuity = FactoryLineIndexContinuityPanel(project)
         val intentLedger = FactoryLineIntentLedgerPanel(project)
         val judgment = FactoryLineJudgmentPanel(project)
+        val appForge = FactoryLineAppForgePanel(project)
         project.putUserData(FactoryLinePanels.guardianKey, guardian)
         project.putUserData(FactoryLinePanels.key, panel)
         project.putUserData(FactoryLinePanels.proofReviewKey, proofReview)
@@ -35,6 +36,7 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         project.putUserData(FactoryLinePanels.indexContinuityKey, indexContinuity)
         project.putUserData(FactoryLinePanels.intentLedgerKey, intentLedger)
         project.putUserData(FactoryLinePanels.judgmentKey, judgment)
+        project.putUserData(FactoryLinePanels.appForgeKey, appForge)
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(guardian, "Guardian", false)
         )
@@ -62,6 +64,9 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(judgment, "Engineering Judgment", false)
         )
+        toolWindow.contentManager.addContent(
+            ContentFactory.getInstance().createContent(appForge, "AppForge", false)
+        )
     }
 }
 
@@ -86,6 +91,7 @@ class FactoryLinePanel(private val project: Project) : JPanel(BorderLayout(0, 8)
             add(JButton("Unified Graph Ops").apply { addActionListener { FactoryLineController.openStudio(project, graphMode = true) } })
             add(JButton("Verify SaaS journey").apply { addActionListener { FactoryLineController.verifySaasReality(project) } })
             add(JButton("View SaaS status").apply { addActionListener { FactoryLineController.inspectSaasReality(project) } })
+            add(JButton("Open AppForge Mission Control").apply { addActionListener { FactoryLineController.inspectAppForge(project) } })
             add(JButton("Product missions").apply { addActionListener { FactoryLineController.openStudio(project, productMode = true) } })
             add(JButton("Mission operations").apply { addActionListener { FactoryLineController.missionOperations(project) } })
             add(JButton("Open latest receipt").apply { addActionListener { FactoryLineController.openLatestReceipt(project) } })
@@ -142,6 +148,7 @@ object FactoryLinePanels {
     val indexContinuityKey: Key<FactoryLineIndexContinuityPanel> = Key.create("app.factoryline.intellij.indexContinuity")
     val intentLedgerKey: Key<FactoryLineIntentLedgerPanel> = Key.create("app.factoryline.intellij.intentLedger")
     val judgmentKey: Key<FactoryLineJudgmentPanel> = Key.create("app.factoryline.intellij.judgment")
+    val appForgeKey: Key<FactoryLineAppForgePanel> = Key.create("app.factoryline.intellij.appforge")
 
     fun show(project: Project, result: CommandResult) {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
@@ -246,6 +253,16 @@ object FactoryLinePanels {
             ApplicationManager.getApplication().invokeLater {
                 toolWindow.contentManager.findContent("Engineering Judgment")?.let { toolWindow.contentManager.setSelectedContent(it) }
                 project.getUserData(judgmentKey)?.show(result)
+            }
+        }
+    }
+
+    fun showAppForge(project: Project, result: CommandResult) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater {
+                toolWindow.contentManager.findContent("AppForge")?.let { toolWindow.contentManager.setSelectedContent(it) }
+                project.getUserData(appForgeKey)?.show(result)
             }
         }
     }

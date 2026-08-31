@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from factoryline.appforge_evidence_kit import CANDIDATE_SCHEMA, appforge_init_projection, create_evidence_kit, initialize_appforge
+from factoryline.cli import main
 from factoryline.revenueforge import RevenueForgeError
 
 
@@ -66,3 +67,12 @@ def test_appforge_init_captures_user_mission_without_claiming_evidence(tmp_path:
     projection = appforge_init_projection(tmp_path)
     assert projection["current_count"] == 1
     assert projection["latest"]["candidate"]["build_number"] == "100"
+
+
+def test_appforge_status_is_a_read_only_projection_for_ide_adapters(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["revenue", "appforge-status", "--root", str(tmp_path), "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["schema"] == "factory.appforge.design-projection.v1"
+    assert result["marker"] == "APPFORGE_DESIGN_READ_ONLY"
+    assert result["current_count"] == 0
+    assert all(value is False for value in result["authority"].values())

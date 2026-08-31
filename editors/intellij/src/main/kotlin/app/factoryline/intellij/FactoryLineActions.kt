@@ -86,6 +86,13 @@ object FactoryLineController {
         runBackground(project, "Inspect SaaS Reality") { FactoryLineRunner.saasStatus(project) }
     }
 
+    fun inspectAppForge(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect local AppForge Mission Control receipts")) return
+        runBackground(project, "Inspect AppForge Mission Control", onCompleted = { FactoryLinePanels.showAppForge(project, it) }) {
+            FactoryLineRunner.appforgeStatus(project)
+        }
+    }
+
     fun verifySaasReality(project: Project) {
         val contract = workspacePath(project, "Reviewed SaaS promise contract JSON") ?: return
         val evidence = workspacePath(project, "Observed SaaS journey evidence JSON") ?: return
@@ -675,6 +682,12 @@ class OpenIdeHealthAction : FactoryLineAction() {
 class OpenGuardianAction : FactoryLineAction() {
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { FactoryLineController.openGuardian(it) }
+    }
+}
+
+class OpenAppForgeAction : FactoryLineAction() {
+    override fun actionPerformed(event: AnActionEvent) {
+        event.project?.let { FactoryLineController.inspectAppForge(it) }
     }
 }
 

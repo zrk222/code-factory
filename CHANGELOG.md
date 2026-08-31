@@ -17,6 +17,19 @@
 
 ## Unreleased
 
+## 0.45.3 - 2026-08-31
+
+- Add the AppForge Mission Control bridge to FactoryLine for JetBrains. It reads
+  a hash-verified local AppForge design and submission story, including user
+  design input, storyboard, quality/audit state, and dossier state; it never
+  reads credentials, uploads media, starts TestFlight, or submits to Apple.
+- Explain the practical AppForge story consistently across public surfaces:
+  enter the review queue with the required evidence connected first, to avoid
+  preventable rework and repeat waiting cycles. Apple approval remains an
+  external decision and is never guaranteed.
+- Align the LangGraph marketplace manifests and public-release metadata with
+  the 0.45.3 runtime.
+
 ## 0.45.2 - 2026-08-31
 
 - Add `factory revenue appforge-init`: a plain-language, user-supplied mission

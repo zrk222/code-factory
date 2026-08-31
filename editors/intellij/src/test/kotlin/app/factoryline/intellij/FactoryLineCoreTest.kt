@@ -50,6 +50,22 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun appForgeMissionControlReadsOnlyHashVerifiedLocalStatus() {
+        val root = Files.createTempDirectory("factoryline-appforge")
+
+        assertEquals(
+            listOf("revenue", "appforge-status", "--root", root.toString(), "--json"),
+            FactoryLineCommands.appforgeStatus(root),
+        )
+        val summary = AppForgeSummary.fromJson(
+            """{"schema":"factory.appforge.design-projection.v1","current_count":1,"invalid_count":0,"init":{"current_count":1},"app_review":{"current_count":1},"quality_audit":{"current_count":1},"submission_assurance":{"current_count":1},"claim_boundary":"local receipts only"}""",
+        )
+        assertNotNull(summary)
+        assertTrue(summary.brief().contains("days-long repeat review cycles"))
+        assertTrue(summary.brief().contains("cannot guarantee Apple approval"))
+    }
+
+    @Test
     fun workspaceAdvisorIsExplicitWorkspaceBoundAndWritesOnlyWhenRequested() {
         val root = Files.createTempDirectory("factoryline-workspace-advisor")
         val outDir = root.resolve(".factory/workspace-advice")
@@ -210,6 +226,8 @@ class FactoryLineCoreTest {
         assertTrue(descriptor.contains("<depends>com.intellij.modules.vcs</depends>"))
         assertTrue(descriptor.contains("id=\"app.factoryline.intellij.openGuardian\""))
         assertTrue(descriptor.contains("class=\"app.factoryline.intellij.OpenGuardianAction\""))
+        assertTrue(descriptor.contains("id=\"app.factoryline.intellij.openAppForge\""))
+        assertTrue(descriptor.contains("class=\"app.factoryline.intellij.OpenAppForgeAction\""))
     }
 
     @Test

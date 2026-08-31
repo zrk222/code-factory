@@ -1,5 +1,15 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.21 - 2026-08-31
+
+- Add an IDE-native **AppForge Mission Control** tab and action. It reads only
+  hash-verified local AppForge Init, design, App Review, strict quality-audit,
+  and submission-dossier status, then routes a developer to local Graph Ops.
+- Make the practical App Review story visible in the IDE: catch a missing
+  candidate-specific receipt before entering another review queue, so teams can
+  avoid preventable rework and repeat waiting cycles. It cannot upload media,
+  access credentials, start TestFlight, submit to Apple, or guarantee approval.
+
 ## 0.8.20 - 2026-08-30
 
 - Add AppForge App Review readiness to the existing local proof workflow: exact

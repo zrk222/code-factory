@@ -505,3 +505,4 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-31 13:09] GATE spec appforge-evidence-kit-v1 approver=human strict=True sha=cd495801cf0f7116
 - [2026-08-31 13:11] GATE spec appforge-evidence-kit-v1 approver=human strict=True sha=cd495801cf0f7116
 - [2026-08-31 13:14] GATE spec appforge-evidence-kit-v1 approver=human strict=True sha=cd495801cf0f7116
+- [2026-08-31 13:19] GATE spec jetbrains-proof-handshake-v1 approver=human strict=True sha=91f5d694843df562

@@ -6,7 +6,7 @@
         <p><strong>Your IDE feels slow. Your AI code looks fine. Check both with evidence before you spend another hour guessing.</strong></p>
         <p><strong>FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains.</strong> Record a short local health window, review what was observed, inspect an AI or teammate diff, and choose the next safe human review step—without uploading source or changing IDE settings.</p>
         <p><strong>Use your preferred coding agent and analyzer—FactoryLine independently decides whether their green result deserves trust.</strong> Install a project-scoped Junie MCP entry or Copilot proof agent, then bind its returned Change List to recognized Qodana or SonarQube SARIF and optional E2E evidence. FactoryLine does not replace, control, or imply endorsement by those products.</p>
-        <p><strong>New in 0.8.20 — AppForge Review Readiness:</strong> move from a story-led iOS storyboard to 30 exact-build Apple policy and rejection-regression checks for completeness, purchases, restore, iPad paths, authentic screenshots, accessibility, privacy, metadata, reviewer access, and export compliance. Mission Control uses credential references rather than raw secrets and may prepare a supervised-agent packet; final TestFlight/App Review authority remains human-owned. This is designed to save rework and minimize avoidable rejection risk, not guarantee Apple approval.</p>
+        <p><strong>New in 0.8.21 — AppForge Mission Control:</strong> before an iOS team enters another App Review queue, it can inspect the exact candidate's local evidence story: user design input, storyboard, iPhone/iPad media, accessibility and full-stack checks, SaaS journey, and submission dossier. The tab makes missing proof visible while there is still time to fix it, which can avoid preventable rework and days-long repeat review cycles. It uses credential references rather than raw secrets and may prepare a supervised-agent packet; final TestFlight/App Review authority remains human-owned. It minimizes avoidable rejection risk; it cannot guarantee Apple approval.</p>
         <p><strong>SaaS Reality:</strong> inspect whether OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation agree across Clerk, Auth0, Okta, Entra, Cognito, Supabase, Firebase, or another standards-compliant provider. The native status action and Graph Ops view read hash-verified local receipts; they never contact a provider, access credentials, change billing, grant access, deploy, or approve a release.</p>
         <p><strong>In 60 seconds:</strong> inspect an outcome, fuzzy PRD, or risky diff; challenge whether a test can actually reject the failure it claims to cover; then see the current proof gap before a human decides what may be applied.</p>
         <p><strong>Start now:</strong> open <strong>Tools | FactoryLine | Run First Proof</strong>, confirm the workspace, then inspect the local result. Generate an MVP when you need one; a starter is never called production-ready before relevant evidence exists.</p>
@@ -171,6 +171,10 @@
                     class="app.factoryline.intellij.OpenGuardianAction"
                     text="Open Guardian Core"
                     description="Review local IDE observations and open safe proof routes without executing a command"/>
+            <action id="app.factoryline.intellij.openAppForge"
+                    class="app.factoryline.intellij.OpenAppForgeAction"
+                    text="Open AppForge Mission Control"
+                    description="Inspect local iOS design and submission evidence without accessing credentials or submitting to Apple"/>
             <action id="app.factoryline.intellij.captureIndexContinuityBaseline"
                     class="app.factoryline.intellij.CaptureIndexContinuityBaselineAction"
                     text="Capture Index Continuity Baseline"

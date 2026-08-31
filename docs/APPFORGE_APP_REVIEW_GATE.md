@@ -1,8 +1,19 @@
 # AppForge App Review Gate
 
-## Ten-second value
+## The review-queue story
 
-AppForge catches evidence gaps that can cost days of App Review waiting and rework: a purchase flow that was only source-checked, a restore path never exercised on the selected build, an iPad dead end, stale screenshots, incomplete review access, or privacy and metadata that no longer match runtime behavior.
+You have one selected build and a review queue that may take days to come back
+around. The avoidable failure is discovering after submission that the real
+restore path was never exercised, the iPad path ends early, screenshots no
+longer match the build, reviewer access is incomplete, or privacy and metadata
+drifted from runtime behavior.
+
+AppForge makes those candidate-bound evidence gaps visible before the human
+chooses to enter the queue. It keeps the user’s design intent and storyboard in
+the review story, then joins real iPhone/iPad media, strict quality evidence,
+SaaS journey evidence, and the App Review worklist into one local dossier.
+That can avoid preventable rework and days-long repeat review cycles; it does
+not promise Apple approval or replace a human release decision.
 
 It is available as a standalone local command and as an integrated Code Factory/AppForge receipt visible through Graph Ops, MCP, and WebMCP.
 

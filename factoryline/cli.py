@@ -119,7 +119,7 @@ from .revenue_evidence import (
     sync_testflight_evidence,
     watch_policy_drift,
 )
-from .appforge_design import compile_appforge_design
+from .appforge_design import appforge_design_projection, compile_appforge_design
 from .app_review_gate import verify_app_review_readiness
 from .appforge_store_media import StoreMediaError, verify_store_media
 from .appforge_submission_assurance import verify_submission_assurance
@@ -1402,6 +1402,9 @@ def main(argv=None) -> int:
     revenue_appforge_init.add_argument("--primary-job", required=True)
     revenue_appforge_init.add_argument("--desired-emotion", required=True)
     revenue_appforge_init.add_argument("--json", action="store_true")
+    revenue_appforge_status = revenue_sub.add_parser("appforge-status", help="read hash-verified local AppForge mission, design, quality, and submission-dossier status")
+    revenue_appforge_status.add_argument("--root", default=".")
+    revenue_appforge_status.add_argument("--json", action="store_true")
     revenue_app_review = revenue_sub.add_parser("app-review-gate", help="fail closed on exact-build Apple policy and rejection-regression evidence gaps")
     revenue_app_review.add_argument("--root", default=".")
     revenue_app_review.add_argument("--contract", required=True)
@@ -4017,6 +4020,8 @@ def main(argv=None) -> int:
                 payload = create_evidence_kit(root, Path(a.candidate), Path(a.design_input), Path(a.out_dir))
             elif a.revenue_cmd == "appforge-init":
                 payload = initialize_appforge(root, Path(a.out_dir), app_name=a.app_name, bundle_identifier=a.bundle_identifier, version=a.version, build_number=a.build_number, source_commit=a.source_commit, audience=a.audience, primary_job=a.primary_job, desired_emotion=a.desired_emotion)
+            elif a.revenue_cmd == "appforge-status":
+                payload = appforge_design_projection(root)
             else:
                 payload = compile_appforge_design(root, Path(a.brief), Path(a.out_dir))
         except (RevenueForgeError, StoreMediaError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
