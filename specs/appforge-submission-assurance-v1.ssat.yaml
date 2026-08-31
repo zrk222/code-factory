@@ -1,0 +1,33 @@
+schema: factory.ssat.v1
+system: appforge-submission-assurance-v1
+boundary:
+  in_scope:
+    - local hash-bound iOS candidate evidence
+    - strict store media validation
+    - user-design-aware UI UX accessibility and full-stack audit evidence
+    - local Markdown and PDF readiness dossier
+  out_of_scope:
+    - physical device execution
+    - App Store Connect writes
+    - TestFlight upload
+    - App Review submission
+    - Apple certification or approval claims
+trust_boundaries:
+  - name: release_candidate
+    rule: every receipt must declare the same bundle identifier version build number and source commit
+  - name: private_evidence
+    rule: receipts contain only paths and digests, never credentials or raw private logs
+  - name: apple_authority
+    rule: Apple policy interpretation and approval remain external human and Apple decisions
+invariants:
+  - final Markdown and PDF are emitted only after every required hash-valid receipt passes
+  - user design input and storyboard review are explicitly bound to quality evidence
+  - missing conditional applicability blocks instead of silently skipping a release risk
+  - evidence artifacts must remain in the workspace and match their SHA-256 digests
+governance:
+  autonomy: supervised
+  human_controls:
+    - user-design review confirmation
+    - conditional applicability classification
+    - physical-device and accessibility evidence collection
+    - external upload and submission authorization

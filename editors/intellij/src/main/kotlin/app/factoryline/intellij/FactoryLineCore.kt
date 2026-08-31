@@ -194,6 +194,9 @@ object FactoryLineCommands {
     fun saasStatus(root: Path): List<String> =
         listOf("saas", "status", "--root", root.toString(), "--json")
 
+    fun appforgeStatus(root: Path): List<String> =
+        listOf("revenue", "appforge-status", "--root", root.toString(), "--json")
+
     fun saasVerify(root: Path, contract: Path, evidence: Path, out: Path): List<String> = listOf(
         "saas", "verify", "--root", root.toString(),
         "--contract", contract.toString(), "--evidence", evidence.toString(),
@@ -591,6 +594,12 @@ object FactoryLineRunner {
         val root = project.basePath?.let(Path::of)
             ?: return CommandResult("Inspect SaaS Reality", emptyList(), null, false, "Blocked: the project has no local workspace path.")
         return execute(project, "Inspect SaaS Reality", FactoryLineCommands.saasStatus(root))
+    }
+
+    fun appforgeStatus(project: Project): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Inspect AppForge Mission Control", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        return execute(project, "Inspect AppForge Mission Control", FactoryLineCommands.appforgeStatus(root))
     }
 
     fun saasVerify(project: Project, contract: Path, evidence: Path): CommandResult {

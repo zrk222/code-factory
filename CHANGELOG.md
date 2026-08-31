@@ -17,6 +17,31 @@
 
 ## Unreleased
 
+## 0.45.3 - 2026-08-31
+
+- Add the AppForge Mission Control bridge to FactoryLine for JetBrains. It reads
+  a hash-verified local AppForge design and submission story, including user
+  design input, storyboard, quality/audit state, and dossier state; it never
+  reads credentials, uploads media, starts TestFlight, or submits to Apple.
+- Explain the practical AppForge story consistently across public surfaces:
+  enter the review queue with the required evidence connected first, to avoid
+  preventable rework and repeat waiting cycles. Apple approval remains an
+  external decision and is never guaranteed.
+- Align the LangGraph marketplace manifests and public-release metadata with
+  the 0.45.3 runtime.
+
+## 0.45.2 - 2026-08-31
+
+- Add `factory revenue appforge-init`: a plain-language, user-supplied mission
+  and exact-candidate starting point for AppForge. It writes only local
+  candidate, user-design-input, design-brief, and next-action files.
+- Add `factory revenue evidence-kit`: candidate-bound, deliberately incomplete
+  App Review, Store media, UX/full-stack, and assurance templates plus a
+  worklist for ten iPhone and three 13-inch iPad journeys.
+- Surface AppForge Init status in Graph Ops and WebMCP. The UI offers a
+  copyable local Init command but never represents it as a device run, a
+  credential flow, TestFlight activity, App Review submission, or approval.
+
 ## 0.44.4 - 2026-08-27
 
 - Add one shared intent-quality boundary across Intake Grill, Intent Ledger,

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.21 - 2026-08-31
+
+- Add the AppForge Mission Control story to the local extension surface: bind
+  user design input, storyboard, quality evidence, and the App Review dossier
+  before the queue rather than discovering missing evidence in it.
+- Keep the boundary explicit: FactoryLine can reduce avoidable rework and
+  repeated waiting cycles, but it does not access credentials, submit to Apple,
+  or guarantee approval.
+
 ## 0.8.0 - 2026-08-07
 
 - Surface the 0.25.0 contradiction gate: conflicts detected before the

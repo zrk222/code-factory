@@ -50,6 +50,39 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun appForgeMissionControlReadsOnlyHashVerifiedLocalStatus() {
+        val root = Files.createTempDirectory("factoryline-appforge")
+
+        assertEquals(
+            listOf("revenue", "appforge-status", "--root", root.toString(), "--json"),
+            FactoryLineCommands.appforgeStatus(root),
+        )
+        val summary = AppForgeSummary.fromJson(
+            """{"schema":"factory.appforge.design-projection.v1","current_count":1,"invalid_count":0,"init":{"current_count":1},"app_review":{"current_count":1},"quality_audit":{"current_count":1},"submission_assurance":{"current_count":1},"claim_boundary":"local receipts only"}""",
+        )
+        assertNotNull(summary)
+        assertTrue(summary.brief().contains("days-long repeat review cycles"))
+        assertTrue(summary.brief().contains("cannot guarantee Apple approval"))
+    }
+
+    @Test
+    fun appForgeNestedReceiptFieldsCannotShadowTheProjection() {
+        // CLI emits sorted keys, so nested app_review fields precede root schema/counts.
+        val raw = """{"app_review":{"schema":"nested","current_count":9,"claim_boundary":"nested"},"claim_boundary":"root boundary","current_count":2,"init":{"current_count":3},"invalid_count":1,"quality_audit":{"current_count":4},"schema":"factory.appforge.design-projection.v1","submission_assurance":{"current_count":5}}"""
+        val summary = assertNotNull(AppForgeSummary.fromJson(raw))
+        assertEquals("2", summary.currentCount)
+        assertEquals("1", summary.invalidCount)
+        assertEquals("9", summary.appReviewCount)
+        assertEquals("3", summary.initCount)
+        assertEquals("4", summary.qualityCount)
+        assertEquals("5", summary.submissionCount)
+        assertEquals("root boundary", summary.claimBoundary)
+        assertNull(AppForgeSummary.fromJson(raw.replace("\"current_count\":2", "\"current_count\":-2")))
+        assertNull(AppForgeSummary.fromJson(raw.replace("\"schema\":\"factory.appforge.design-projection.v1\"", "\"schema\":\"unknown\"")))
+        assertNull(AppForgeSummary.fromJson("[]"))
+    }
+
+    @Test
     fun workspaceAdvisorIsExplicitWorkspaceBoundAndWritesOnlyWhenRequested() {
         val root = Files.createTempDirectory("factoryline-workspace-advisor")
         val outDir = root.resolve(".factory/workspace-advice")
@@ -210,6 +243,8 @@ class FactoryLineCoreTest {
         assertTrue(descriptor.contains("<depends>com.intellij.modules.vcs</depends>"))
         assertTrue(descriptor.contains("id=\"app.factoryline.intellij.openGuardian\""))
         assertTrue(descriptor.contains("class=\"app.factoryline.intellij.OpenGuardianAction\""))
+        assertTrue(descriptor.contains("id=\"app.factoryline.intellij.openAppForge\""))
+        assertTrue(descriptor.contains("class=\"app.factoryline.intellij.OpenAppForgeAction\""))
     }
 
     @Test

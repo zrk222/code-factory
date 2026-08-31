@@ -24,6 +24,7 @@ ALLOWED_PROTOCOLS = {"oidc", "oauth2"}
 ALLOWED_FLOWS = {"authorization_code_pkce", "client_credentials"}
 SENSITIVE_KEYS = {"token", "access_token", "refresh_token", "id_token", "secret", "password", "authorization", "cookie", "code_verifier"}
 REQUIRED_EVENTS = ("auth_success", "authorization_bound", "checkout_completed", "webhook_verified", "entitlement_granted", "feature_access")
+RELEASE_CANDIDATE_KEYS = ("bundle_identifier", "version", "build_number", "source_commit")
 
 
 class SaasProofError(ValueError):
@@ -82,6 +83,20 @@ def _text(value: object, field: str) -> str:
     return result
 
 
+def _release_candidate(value: object, field: str) -> dict[str, str] | None:
+    """Normalize an optional mobile release candidate without widening old proofs.
+
+    SaaS proof remains useful for non-mobile systems.  When a candidate is
+    declared, however, it is an exact, four-part binding and the paired
+    evidence must declare the identical candidate.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise SaasProofError("SAAS_PROOF_RELEASE_CANDIDATE_INVALID", f"{field} must be an object")
+    return {key: _text(value.get(key), f"{field}.{key}") for key in RELEASE_CANDIDATE_KEYS}
+
+
 def _contract(value: dict[str, Any]) -> dict[str, Any]:
     provider = value.get("provider")
     claims = provider.get("claims") if isinstance(provider, dict) else None
@@ -117,7 +132,12 @@ def _contract(value: dict[str, Any]) -> dict[str, Any]:
             raise SaasProofError("SAAS_PROOF_CONTRACT_INVALID", "promise ids must be unique")
         ids.add(item["id"])
         normalized.append(item)
-    return {"app_id": _text(value.get("app_id"), "app_id"), "provider": normalized_provider, "promises": normalized}
+    return {
+        "app_id": _text(value.get("app_id"), "app_id"),
+        "provider": normalized_provider,
+        "promises": normalized,
+        "release_candidate": _release_candidate(value.get("release_candidate"), "contract.release_candidate"),
+    }
 
 
 def _events(value: dict[str, Any]) -> list[dict[str, Any]]:
@@ -200,6 +220,12 @@ def verify_saas_proof(root: Path, contract_path: Path, evidence_path: Path, out:
     if _text(raw_evidence.get("app_id"), "evidence.app_id") != contract["app_id"]:
         raise SaasProofError("SAAS_PROOF_APP_BINDING_INVALID", "contract and evidence app_id must match")
     build_id = _text(raw_evidence.get("build_id"), "evidence.build_id")
+    evidence_candidate = _release_candidate(raw_evidence.get("release_candidate"), "evidence.release_candidate")
+    if evidence_candidate != contract["release_candidate"]:
+        raise SaasProofError(
+            "SAAS_PROOF_RELEASE_CANDIDATE_BINDING_INVALID",
+            "contract and evidence release_candidate must both be absent or exactly match",
+        )
     events = _events(raw_evidence)
     grouped = defaultdict(list)
     for event in events:
@@ -211,7 +237,8 @@ def verify_saas_proof(root: Path, contract_path: Path, evidence_path: Path, out:
     core = {
         "schema": RECEIPT_SCHEMA, "marker": "SAAS_PROMISE_PERMISSION_VERIFIED" if verdict == "verified" else "SAAS_PROMISE_PERMISSION_BLOCKED",
         "action_summary": "Compare supplied OAuth/OIDC, checkout, webhook, entitlement, access, and revocation observations with the reviewed SaaS promise contract; do not contact or mutate any provider.",
-        "verdict": verdict, "app_id": contract["app_id"], "build_id": build_id, "provider": contract["provider"],
+        "verdict": verdict, "app_id": contract["app_id"], "build_id": build_id,
+        "release_candidate": contract["release_candidate"], "provider": contract["provider"],
         "contract_sha256": hashlib.sha256(contract_source.read_bytes()).hexdigest(), "evidence_sha256": hashlib.sha256(evidence_source.read_bytes()).hexdigest(),
         "gates": gates, "summary": {"passed": counts["passed"], "failed": counts["failed"], "unknown": counts["unknown"], "findings": len(findings)},
         "findings": findings, "authority": AUTHORITY,

@@ -11,7 +11,7 @@ hollow negative control caught in a disposable sandbox, then open
 `factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
-**New in 0.8.13:** AppForge + SaaS Mission Control turns a confirmed app story
+**New in 0.8.21:** AppForge Mission Control turns a confirmed app story
 into a visible review path and checks 30 exact-build Apple policy and prior
 rejection classes before submission. Credential references—not raw secrets—can
 be handed to a supervised agent for evidence preparation; final TestFlight/App
@@ -111,7 +111,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.8.13.vsix
+code --install-extension factoryline-vscode-0.8.21.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

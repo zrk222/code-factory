@@ -1823,6 +1823,12 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["revenueforge_invalid_count"] = revenueforge["invalid_count"]
     facts["appforge_design_current_count"] = appforge["current_count"]
     facts["appforge_design_invalid_count"] = appforge["invalid_count"]
+    facts["appforge_init_current_count"] = appforge["init"]["current_count"]
+    facts["appforge_init_invalid_count"] = appforge["init"]["invalid_count"]
+    facts["appforge_quality_audit_current_count"] = appforge["quality_audit"]["current_count"]
+    facts["appforge_quality_audit_invalid_count"] = appforge["quality_audit"]["invalid_count"]
+    facts["appforge_submission_assurance_current_count"] = appforge["submission_assurance"]["current_count"]
+    facts["appforge_submission_assurance_invalid_count"] = appforge["submission_assurance"]["invalid_count"]
     facts["saas_proof_current_count"] = saas_proof["current_count"]
     facts["saas_proof_invalid_count"] = saas_proof["invalid_count"]
     facts["jetbrains_handshake_state"] = jetbrains_handshake["state"]
@@ -1838,7 +1844,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers = sorted({*markers, "GRAPH_OPS_PROOF_REVIEW_READ_ONLY", "TEAM_PROOF_INBOX_READ_ONLY"})
     if revenueforge["current_count"] or revenueforge["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_REVENUEFORGE_READ_ONLY"})
-    if appforge["current_count"] or appforge["invalid_count"]:
+    if appforge["current_count"] or appforge["invalid_count"] or appforge["quality_audit"]["current_count"] or appforge["quality_audit"]["invalid_count"] or appforge["submission_assurance"]["current_count"] or appforge["submission_assurance"]["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_APPFORGE_READ_ONLY"})
     if saas_proof["current_count"] or saas_proof["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_SAAS_PROOF_READ_ONLY"})

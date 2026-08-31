@@ -295,10 +295,10 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.45.1"
+    assert project["version"] == "0.45.3"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.8.13"
-    assert 'version = "0.8.20"' in gradle
+    assert vscode["version"] == "0.8.21"
+    assert 'version = "0.8.21"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -311,7 +311,7 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
     assert "Your IDE feels slow. Your AI code looks fine." in plugin_xml
     assert "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains." in plugin_xml
-    assert "New in 0.8.20 — AppForge Review Readiness" in plugin_xml
+    assert "New in 0.8.21 — AppForge Mission Control" in plugin_xml
     assert "OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation" in plugin_xml
     assert "Tools | FactoryLine | Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
@@ -320,6 +320,8 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "Unified Graph Ops" in plugin_xml
     assert 'id="app.factoryline.intellij.openGuardian"' in plugin_xml
     assert "Open Guardian Core" in plugin_xml
+    assert 'id="app.factoryline.intellij.openAppForge"' in plugin_xml
+    assert "Open AppForge Mission Control" in plugin_xml
     assert "Use FactoryLine when you want to" in plugin_xml
     assert "Turn an outcome into a buildable starting point" in plugin_xml
     assert "Review AI or teammate changes with evidence" in plugin_xml
@@ -402,7 +404,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     assert plan["offer"]["proof_pro"]["annual_price_usd"] == 90.0
     assert plan["offer"]["appforge_builder"]["monthly_price_usd"] == 24.0
     assert plan["offer"]["paid_from"] == "2027-01-01"
-    assert plan["plugin"]["current_free_version"] == "0.8.20"
+    assert plan["plugin"]["current_free_version"] == "0.8.21"
     assert plan["paid_descriptor"] == {
         "product_code": "PFACTORYLINE",
         "product_code_status": "proposed_not_registered",
@@ -474,7 +476,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["access_right"] == "open"
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
-    assert metadata["version"] == "0.45.1"
+    assert metadata["version"] == "0.45.3"
     assert metadata["publication_date"] == "2026-08-30"
     assert "deterministic AppForge App Review evidence gate" in metadata["description"]
     assert "30 policy and release-risk checks" in metadata["description"]

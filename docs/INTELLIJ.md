@@ -133,7 +133,7 @@ candidate files.
 1. Install FactoryLine:
 
    ```powershell
-   pip install factoryline-code-factory==0.45.1
+   pip install factoryline-code-factory==0.45.3
    ```
 
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for

@@ -61,6 +61,25 @@ To create a contained starter later, run
 `factory mvp "Build an approval tracker" --root .`.
 That starter is never called production-ready until the relevant proof exists.
 
+### AppForge: make the review queue the last surprise, not the first
+
+You have a build, a launch date, and a review queue that can take days to come
+back around. The costly failure is often not a crash—it is discovering after
+submission that the selected build has no exercised restore path, an iPad dead
+end, unrepresentative screenshots, an accessibility gap, or reviewer access
+that does not match the app.
+
+AppForge turns that uncertainty into a local, candidate-bound worklist. Start
+with the user’s design direction, keep a story-led storyboard, then bind real
+iPhone/iPad media, App Review checks, quality evidence, SaaS journey evidence,
+and a final Markdown/PDF dossier to the same build. In JetBrains, **AppForge
+Mission Control** makes the missing lane visible before a human decides to
+enter the queue.
+
+That can prevent avoidable rework and repeat review cycles; it does not submit
+to Apple, access credentials, replace TestFlight, provide legal advice, or
+guarantee approval. Start with the [AppForge Evidence Kit](docs/APPFORGE_EVIDENCE_KIT.md).
+
 ## Support posture
 
 The open-source core is free. Community support runs through public GitHub issues
@@ -403,7 +422,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [0.45.1 release notes](docs/RELEASE_NOTES_0.45.1.md),
+- See the [0.45.3 release notes](docs/RELEASE_NOTES_0.45.3.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

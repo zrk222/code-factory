@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.45.1"
+version = "0.45.3"
 description = "Catch hollow AI tests and App Store evidence gaps before review."
 authors = [
   { name = "Richard Katz" },
@@ -60,6 +60,7 @@ classifiers = [
 dependencies = [
   "cryptography>=42,<50",
   "PyYAML>=6,<7",
+  "reportlab>=4,<5",
   "tomli>=2.0; python_version < '3.11'",
 ]
 

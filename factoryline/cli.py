@@ -119,8 +119,12 @@ from .revenue_evidence import (
     sync_testflight_evidence,
     watch_policy_drift,
 )
-from .appforge_design import compile_appforge_design
+from .appforge_design import appforge_design_projection, compile_appforge_design
 from .app_review_gate import verify_app_review_readiness
+from .appforge_store_media import StoreMediaError, verify_store_media
+from .appforge_submission_assurance import verify_submission_assurance
+from .appforge_quality_audit import verify_quality_audit
+from .appforge_evidence_kit import create_evidence_kit, initialize_appforge
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
 from .jetbrains_handshake import (
     JetBrainsHandshakeError,
@@ -1380,12 +1384,55 @@ def main(argv=None) -> int:
     revenue_design.add_argument("--brief", required=True)
     revenue_design.add_argument("--out-dir", default=".factory/appforge/design")
     revenue_design.add_argument("--json", action="store_true")
+    revenue_evidence_kit = revenue_sub.add_parser("evidence-kit", help="create a candidate-bound, non-passing AppForge iOS evidence workspace and novice worklist")
+    revenue_evidence_kit.add_argument("--root", default=".")
+    revenue_evidence_kit.add_argument("--candidate", required=True)
+    revenue_evidence_kit.add_argument("--design-input", required=True)
+    revenue_evidence_kit.add_argument("--out-dir", required=True)
+    revenue_evidence_kit.add_argument("--json", action="store_true")
+    revenue_appforge_init = revenue_sub.add_parser("appforge-init", help="capture a user-supplied AppForge mission and exact candidate before design or evidence collection")
+    revenue_appforge_init.add_argument("--root", default=".")
+    revenue_appforge_init.add_argument("--out-dir", required=True)
+    revenue_appforge_init.add_argument("--app-name", required=True)
+    revenue_appforge_init.add_argument("--bundle-identifier", required=True)
+    revenue_appforge_init.add_argument("--version", required=True)
+    revenue_appforge_init.add_argument("--build-number", required=True)
+    revenue_appforge_init.add_argument("--source-commit", required=True)
+    revenue_appforge_init.add_argument("--audience", required=True)
+    revenue_appforge_init.add_argument("--primary-job", required=True)
+    revenue_appforge_init.add_argument("--desired-emotion", required=True)
+    revenue_appforge_init.add_argument("--json", action="store_true")
+    revenue_appforge_status = revenue_sub.add_parser("appforge-status", help="read hash-verified local AppForge mission, design, quality, and submission-dossier status")
+    revenue_appforge_status.add_argument("--root", default=".")
+    revenue_appforge_status.add_argument("--json", action="store_true")
     revenue_app_review = revenue_sub.add_parser("app-review-gate", help="fail closed on exact-build Apple policy and rejection-regression evidence gaps")
     revenue_app_review.add_argument("--root", default=".")
     revenue_app_review.add_argument("--contract", required=True)
     revenue_app_review.add_argument("--evidence", required=True)
     revenue_app_review.add_argument("--out", default=".factory/appforge/app-review.json")
     revenue_app_review.add_argument("--json", action="store_true")
+    revenue_store_media = revenue_sub.add_parser("store-media-gate", help="verify hash-bound iOS Store media against an exact candidate and storyboard journey contract")
+    revenue_store_media.add_argument("--root", default=".")
+    revenue_store_media.add_argument("--contract", required=True)
+    revenue_store_media.add_argument("--evidence", required=True)
+    revenue_store_media.add_argument("--out", default=".factory/appforge/store-media.json")
+    revenue_store_media.add_argument("--json", action="store_true")
+    revenue_quality_audit = revenue_sub.add_parser("quality-audit", help="strictly verify user-design, iOS accessibility, UI/UX, and full-stack evidence for one candidate")
+    revenue_quality_audit.add_argument("--root", default=".")
+    revenue_quality_audit.add_argument("--contract", required=True)
+    revenue_quality_audit.add_argument("--evidence", required=True)
+    revenue_quality_audit.add_argument("--out", default=".factory/appforge/quality-audit.json")
+    revenue_quality_audit.add_argument("--json", action="store_true")
+    revenue_submission_assurance = revenue_sub.add_parser("submission-assurance", help="produce final iOS Markdown and PDF checklist only after exact-candidate local gates pass")
+    revenue_submission_assurance.add_argument("--root", default=".")
+    revenue_submission_assurance.add_argument("--contract", required=True)
+    revenue_submission_assurance.add_argument("--app-review", required=True)
+    revenue_submission_assurance.add_argument("--store-media", required=True)
+    revenue_submission_assurance.add_argument("--saas-proof", required=True)
+    revenue_submission_assurance.add_argument("--quality-audit", required=True)
+    revenue_submission_assurance.add_argument("--out", default=".factory/appforge/submission-assurance.json")
+    revenue_submission_assurance.add_argument("--report-dir", default=".factory/appforge/reports")
+    revenue_submission_assurance.add_argument("--json", action="store_true")
 
     saas = sub.add_parser("saas", help="verify provider-neutral SaaS identity, billing, entitlement, and revocation evidence")
     saas_sub = saas.add_subparsers(required=True, dest="saas_cmd")
@@ -3963,9 +4010,21 @@ def main(argv=None) -> int:
                 payload = query_evidence_memory(root, a.app_id, a.journey, a.at)
             elif a.revenue_cmd == "app-review-gate":
                 payload = verify_app_review_readiness(root, Path(a.contract), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "store-media-gate":
+                payload = verify_store_media(root, Path(a.contract), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "quality-audit":
+                payload = verify_quality_audit(root, Path(a.contract), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "submission-assurance":
+                payload = verify_submission_assurance(root, Path(a.contract), Path(a.app_review), Path(a.store_media), Path(a.saas_proof), Path(a.quality_audit), Path(a.out), Path(a.report_dir))
+            elif a.revenue_cmd == "evidence-kit":
+                payload = create_evidence_kit(root, Path(a.candidate), Path(a.design_input), Path(a.out_dir))
+            elif a.revenue_cmd == "appforge-init":
+                payload = initialize_appforge(root, Path(a.out_dir), app_name=a.app_name, bundle_identifier=a.bundle_identifier, version=a.version, build_number=a.build_number, source_commit=a.source_commit, audience=a.audience, primary_job=a.primary_job, desired_emotion=a.desired_emotion)
+            elif a.revenue_cmd == "appforge-status":
+                payload = appforge_design_projection(root)
             else:
                 payload = compile_appforge_design(root, Path(a.brief), Path(a.out_dir))
-        except (RevenueForgeError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        except (RevenueForgeError, StoreMediaError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             error = {"schema": "factory.revenueforge.error.v1", "marker": "REVENUEFORGE_REFUSED", "code": getattr(exc, "code", "REVENUEFORGE_INPUT_INVALID"), "message": str(exc)}
             print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"revenue {a.revenue_cmd} refused: {error['code']}: {exc}", file=sys.stderr)
             return 2
