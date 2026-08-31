@@ -117,9 +117,10 @@ GitHub Action that writes the same Proof Card from pre-recorded receipts. It
 does not invoke LangGraph, mutate checkpoints, replay effects, establish
 production resilience, or estimate savings.
 
-JetBrains Marketplace publication remains externally gated while the submitted
-0.8.19 update is pending Marketplace approval. Do not dispatch the prepared
-0.8.21 successor until the Marketplace status gate reports clear.
+On August 31, 2026, the public Marketplace API reported 0.8.20 approved and
+listed, no unapproved binary update, and an open upload slot. Listing metadata
+was still pending review. The prepared 0.8.21 successor must pass the live
+binary-slot gate again in the protected publication workflow.
 
 ### 0.42.0 Declared Change Profile and Senior Attention
 

@@ -3,6 +3,8 @@ package app.factoryline.intellij
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import javax.swing.JButton
@@ -38,19 +40,27 @@ data class AppForgeSummary(
         private const val SCHEMA = "factory.appforge.design-projection.v1"
 
         fun fromJson(rawJson: String): AppForgeSummary? {
-            if (JsonFields.string(rawJson, "schema") != SCHEMA) return null
-            val init = JsonFields.container(rawJson, "init", '{', '}') ?: return null
-            val appReview = JsonFields.container(rawJson, "app_review", '{', '}') ?: return null
-            val quality = JsonFields.container(rawJson, "quality_audit", '{', '}') ?: return null
-            val submission = JsonFields.container(rawJson, "submission_assurance", '{', '}') ?: return null
+            val root = runCatching { JsonParser.parseString(rawJson).asJsonObject }.getOrNull() ?: return null
+            fun string(value: JsonObject, key: String): String? = value.get(key)?.let {
+                if (it.isJsonPrimitive && it.asJsonPrimitive.isString) it.asString else null
+            }
+            fun count(value: JsonObject, key: String): String? = value.get(key)?.let {
+                if (it.isJsonPrimitive && it.asJsonPrimitive.isNumber && it.toString().matches(Regex("0|[1-9][0-9]*"))) it.toString() else null
+            }
+            fun section(key: String): JsonObject? = root.get(key)?.let { if (it.isJsonObject) it.asJsonObject else null }
+            if (string(root, "schema") != SCHEMA) return null
+            val init = section("init") ?: return null
+            val appReview = section("app_review") ?: return null
+            val quality = section("quality_audit") ?: return null
+            val submission = section("submission_assurance") ?: return null
             return AppForgeSummary(
-                currentCount = JsonFields.number(rawJson, "current_count") ?: return null,
-                invalidCount = JsonFields.number(rawJson, "invalid_count") ?: return null,
-                initCount = JsonFields.number(init, "current_count") ?: return null,
-                appReviewCount = JsonFields.number(appReview, "current_count") ?: return null,
-                qualityCount = JsonFields.number(quality, "current_count") ?: return null,
-                submissionCount = JsonFields.number(submission, "current_count") ?: return null,
-                claimBoundary = JsonFields.string(rawJson, "claim_boundary") ?: return null,
+                currentCount = count(root, "current_count") ?: return null,
+                invalidCount = count(root, "invalid_count") ?: return null,
+                initCount = count(init, "current_count") ?: return null,
+                appReviewCount = count(appReview, "current_count") ?: return null,
+                qualityCount = count(quality, "current_count") ?: return null,
+                submissionCount = count(submission, "current_count") ?: return null,
+                claimBoundary = string(root, "claim_boundary") ?: return null,
                 rawJson = rawJson,
             )
         }
