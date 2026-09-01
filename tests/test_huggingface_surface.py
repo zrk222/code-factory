@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -81,6 +82,12 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "factory journey heal-verify" in page
     assert "positive proof passes" in page
     assert "negative control fails" in page
+
+    external_anchors = re.findall(r'<a\b[^>]*href="https://[^>]+>', page)
+    assert external_anchors
+    for anchor in external_anchors:
+        assert 'target="_blank"' in anchor
+        assert 'rel="noopener noreferrer"' in anchor
 
 
 def test_huggingface_workflow_uses_secret_and_scoped_source_directory() -> None:
