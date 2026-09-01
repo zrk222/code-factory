@@ -34,6 +34,11 @@ receipt and a privacy-safe Proof Card; it does not assess or change your project
   DeepSeek, or other local agent run. Code Factory records the exact file delta,
   runs the validators your team declared, and stores hashes and bounded facts—not
   prompts or raw model output—so reviewers can compare the claim with the change.
+- **Team supervising agents:** use `factory oracle init` to bind the original
+  intent, approved gates, negative cases, and independent challenge plan before
+  an agent works. Oracle Firewall blocks a weakened oracle from masquerading as
+  a successful build and exposes the source-to-decision chain in Graph Ops,
+  FactoryLine, and read-only MCP.
 - **SaaS builder:** use `factory saas verify` to follow one customer promise
   from OAuth/OIDC identity and tenant access through checkout, verified webhook,
   entitlement, feature access, and revocation. Missing or contradictory evidence
@@ -54,6 +59,8 @@ receipt and a privacy-safe Proof Card; it does not assess or change your project
 When you need more than the first proof, open the [advanced workflow guide](docs/OVERVIEW.md).
 App and SaaS builders can open the standalone [AppForge App Review Gate guide](docs/APPFORGE_APP_REVIEW_GATE.md),
 or use the same receipts inside Code Factory Graph Ops, MCP, WebMCP, and supported IDE adapters.
+For a contract that keeps a coding agent from rewriting its own definition of
+done, see [Oracle Firewall](docs/ORACLE_FIREWALL.md).
 For one agent-neutral human review path, use [`factory proof-review`](docs/PROOF_REVIEW_WORKFLOW.md)
 to seal intent, audit trajectory evidence, route the change, learn confirmed
 regressions, inspect the team inbox, and export a tamper-evident Proof Card.
@@ -78,7 +85,7 @@ enter the queue.
 
 That can prevent avoidable rework and repeat review cycles; it does not submit
 to Apple, access credentials, replace TestFlight, provide legal advice, or
-guarantee approval. Start with the [AppForge Evidence Kit](docs/APPFORGE_EVIDENCE_KIT.md).
+guarantee approval. Start with the [AppForge Evidence Kit](docs/APPFORGE_EVIDENCE_KIT.md), then use the credential-free [EAS handoff preflight](docs/APPFORGE_EAS.md) before a separately authorized build or submission.
 
 ## Support posture
 

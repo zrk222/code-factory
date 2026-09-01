@@ -60,6 +60,9 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.revenue_status",
         "factory.revenue_memory",
         "factory.appforge_status",
+        "factory.oracle_firewall_status",
+        "factory.codex_metadata_audit",
+        "factory.appforge_oracle_status",
         "factory.saas_status",
         "factory.agent_proof_mission",
         "factory.jetbrains_handshake",
@@ -70,7 +73,6 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
 
 
 def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
-    before = _files(tmp_path)
     initialized = dispatch({
         "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": MCP_PROTOCOL_VERSION},
     }, tmp_path)
@@ -106,6 +108,17 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     }, tmp_path))
     assert summary["marker"] == "MCP_GRAPH_OPS_PARITY"
     assert summary["summary"]["graph_sha256"] == graph_ops_snapshot(tmp_path)["graph_sha256"]
+
+    metadata = tmp_path / "run.json"
+    metadata.write_text(json.dumps({"status": "complete", "intent_id": "mission-1"}), encoding="utf-8")
+    before = _files(tmp_path)
+    audit = _content(dispatch({
+        "jsonrpc": "2.0", "id": 31, "method": "tools/call",
+        "params": {"name": "factory.codex_metadata_audit", "arguments": {"paths": ["run.json"]}},
+    }, tmp_path))
+    assert audit["marker"] == "MCP_CODEX_METADATA_AUDIT_READ_ONLY"
+    assert audit["audit"]["status"] == "REVIEW_REQUIRED"
+    assert audit["scope"].startswith("Read-only local metadata integrity")
 
     impact = _content(dispatch({
         "jsonrpc": "2.0", "id": 4, "method": "tools/call",
@@ -192,6 +205,18 @@ def test_mcp_revenue_appforge_saas_and_memory_tools_are_read_only(tmp_path: Path
     assert appforge["marker"] == "MCP_APPFORGE_READ_ONLY"
     assert appforge["status"]["marker"] == "APPFORGE_DESIGN_READ_ONLY"
     assert all(value is False for value in appforge["status"]["authority"].values())
+    oracle = _content(dispatch({
+        "jsonrpc": "2.0", "id": 821, "method": "tools/call",
+        "params": {"name": "factory.oracle_firewall_status"},
+    }, tmp_path))
+    assert oracle["marker"] == "MCP_ORACLE_FIREWALL_READ_ONLY"
+    assert oracle["status"]["marker"] == "ORACLE_FIREWALL_READ_ONLY"
+    appforge_oracle = _content(dispatch({
+        "jsonrpc": "2.0", "id": 822, "method": "tools/call",
+        "params": {"name": "factory.appforge_oracle_status"},
+    }, tmp_path))
+    assert appforge_oracle["marker"] == "MCP_APPFORGE_ORACLE_READ_ONLY"
+    assert appforge_oracle["status"]["marker"] == "APPFORGE_ORACLE_AUTHORITY_READ_ONLY"
     saas = _content(dispatch({
         "jsonrpc": "2.0", "id": 83, "method": "tools/call",
         "params": {"name": "factory.saas_status"},

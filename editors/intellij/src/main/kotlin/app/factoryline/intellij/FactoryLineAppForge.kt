@@ -23,16 +23,17 @@ data class AppForgeSummary(
     val appReviewCount: String,
     val qualityCount: String,
     val submissionCount: String,
+    val oracleAuthorityCount: String,
     val claimBoundary: String,
     val rawJson: String,
 ) {
     fun brief(): String = buildString {
         appendLine("AppForge Mission Control")
         appendLine("Hash-valid design receipts: $currentCount; invalid receipts: $invalidCount")
-        appendLine("Mission captures: $initCount | App Review gates: $appReviewCount | Strict quality audits: $qualityCount | Submission dossiers: $submissionCount")
+        appendLine("Mission captures: $initCount | App Review gates: $appReviewCount | Strict quality audits: $qualityCount | Submission dossiers: $submissionCount | candidate-bound Oracle authority: $oracleAuthorityCount")
         appendLine()
         appendLine("Before the next App Review queue, inspect what is actually bound to this exact candidate: the user design input, storyboard, real media journeys, strict quality evidence, SaaS proof, and final dossier.")
-        appendLine("A missing receipt is a visible work item, not a green guess. This can avoid preventable rework and the days-long repeat review cycles that follow it; it cannot guarantee Apple approval.")
+        appendLine("A missing receipt is a visible work item, not a green guess. Candidate-bound Oracle authority links approved policy sources and the sealed intent contract to the submission dossier. This can avoid preventable rework and the days-long repeat review cycles that follow it; it cannot guarantee Apple approval.")
         append("Boundary: $claimBoundary")
     }
 
@@ -53,6 +54,7 @@ data class AppForgeSummary(
             val appReview = section("app_review") ?: return null
             val quality = section("quality_audit") ?: return null
             val submission = section("submission_assurance") ?: return null
+            val oracleAuthority = section("oracle_authority") ?: return null
             return AppForgeSummary(
                 currentCount = count(root, "current_count") ?: return null,
                 invalidCount = count(root, "invalid_count") ?: return null,
@@ -60,6 +62,7 @@ data class AppForgeSummary(
                 appReviewCount = count(appReview, "current_count") ?: return null,
                 qualityCount = count(quality, "current_count") ?: return null,
                 submissionCount = count(submission, "current_count") ?: return null,
+                oracleAuthorityCount = count(oracleAuthority, "current_count") ?: return null,
                 claimBoundary = string(root, "claim_boundary") ?: return null,
                 rawJson = rawJson,
             )

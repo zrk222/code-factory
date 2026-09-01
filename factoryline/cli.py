@@ -125,6 +125,20 @@ from .appforge_store_media import StoreMediaError, verify_store_media
 from .appforge_submission_assurance import verify_submission_assurance
 from .appforge_quality_audit import verify_quality_audit
 from .appforge_evidence_kit import create_evidence_kit, initialize_appforge
+from .appforge_oracle import verify_appforge_oracle_authority
+from .appforge_eas import verify_eas_preflight
+from .oracle_firewall import (
+    OracleFirewallError,
+    capture_intent_handoff,
+    compare_oracle_contracts,
+    compile_oracle_challenge,
+    initialize_oracle_firewall,
+    oracle_firewall_projection,
+    record_oracle_incident,
+    seal_oracle_contract,
+    verify_oracle_challenge_result,
+    verify_oracle_contract,
+)
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
 from .jetbrains_handshake import (
     JetBrainsHandshakeError,
@@ -1208,6 +1222,62 @@ def main(argv=None) -> int:
     admission_verify.add_argument("--root", default=".")
     admission_verify.add_argument("--json", action="store_true")
 
+    oracle = sub.add_parser("oracle", help="seal and independently challenge the definition of done before a coding run")
+    oracle_sub = oracle.add_subparsers(required=True, dest="oracle_cmd")
+    oracle_init = oracle_sub.add_parser("init", help="create a full, intentionally incomplete source-bound Oracle Firewall workspace")
+    oracle_init.add_argument("--root", default=".")
+    oracle_init.add_argument("--out-dir", required=True)
+    oracle_init.add_argument("--source", required=True)
+    oracle_init.add_argument("--agent", required=True, help="agent identity JSON file")
+    oracle_init.add_argument("--id", required=True)
+    oracle_init.add_argument("--scope", action="append", required=True, help="workspace-relative scope path; repeat as needed")
+    oracle_init.add_argument("--appforge", action="store_true", help="also add the AppForge policy-and-candidate authority template")
+    oracle_init.add_argument("--json", action="store_true")
+    oracle_handoff = oracle_sub.add_parser("handoff", help="capture exact original user intent bytes from a declared handing-off agent")
+    oracle_handoff.add_argument("--root", default=".")
+    oracle_handoff.add_argument("--source", required=True)
+    oracle_handoff.add_argument("--agent", required=True, help="agent identity JSON file")
+    oracle_handoff.add_argument("--id", required=True)
+    oracle_handoff.add_argument("--out")
+    oracle_handoff.add_argument("--json", action="store_true")
+    oracle_seal = oracle_sub.add_parser("seal", help="seal a provenance-bound Oracle Contract from approved local input")
+    oracle_seal.add_argument("--root", default=".")
+    oracle_seal.add_argument("--input", required=True)
+    oracle_seal.add_argument("--out", required=True)
+    oracle_seal.add_argument("--json", action="store_true")
+    oracle_verify = oracle_sub.add_parser("verify", help="verify a sealed Oracle Contract and its bound sources")
+    oracle_verify.add_argument("contract")
+    oracle_verify.add_argument("--root", default=".")
+    oracle_verify.add_argument("--json", action="store_true")
+    oracle_diff = oracle_sub.add_parser("diff", help="fail closed when a successor weakens the prior oracle")
+    oracle_diff.add_argument("--root", default=".")
+    oracle_diff.add_argument("--prior", required=True)
+    oracle_diff.add_argument("--candidate", required=True)
+    oracle_diff.add_argument("--out")
+    oracle_diff.add_argument("--json", action="store_true")
+    oracle_challenge = oracle_sub.add_parser("challenge", help="compile or verify an independent implementation-targeted challenge lane")
+    oracle_challenge_sub = oracle_challenge.add_subparsers(required=True, dest="oracle_challenge_cmd")
+    oracle_challenge_compile = oracle_challenge_sub.add_parser("compile", help="compile independent counterfactual cases from a sealed contract")
+    oracle_challenge_compile.add_argument("--root", default=".")
+    oracle_challenge_compile.add_argument("--contract", required=True)
+    oracle_challenge_compile.add_argument("--out")
+    oracle_challenge_compile.add_argument("--json", action="store_true")
+    oracle_challenge_verify = oracle_challenge_sub.add_parser("verify", help="verify a challenge result against the exact plan")
+    oracle_challenge_verify.add_argument("--root", default=".")
+    oracle_challenge_verify.add_argument("--plan", required=True)
+    oracle_challenge_verify.add_argument("--result", required=True)
+    oracle_challenge_verify.add_argument("--json", action="store_true")
+    oracle_incident = oracle_sub.add_parser("incident", help="record a demoting oracle-weakening incident for a declared agent")
+    oracle_incident.add_argument("--root", default=".")
+    oracle_incident.add_argument("--agent", required=True, help="agent identity JSON file")
+    oracle_incident.add_argument("--contract", required=True)
+    oracle_incident.add_argument("--drift", required=True)
+    oracle_incident.add_argument("--out")
+    oracle_incident.add_argument("--json", action="store_true")
+    oracle_status = oracle_sub.add_parser("status", help="read local Oracle Firewall status without changing any artifact")
+    oracle_status.add_argument("--root", default=".")
+    oracle_status.add_argument("--json", action="store_true")
+
     proofsearch = sub.add_parser("proofsearch", help="compare hash-bound repair candidates without applying them")
     proofsearch_sub = proofsearch.add_subparsers(required=True, dest="proofsearch_cmd")
     proofsearch_plan = proofsearch_sub.add_parser("plan", help="seal one graph divergence and its exact proof-impact slice")
@@ -1430,9 +1500,23 @@ def main(argv=None) -> int:
     revenue_submission_assurance.add_argument("--store-media", required=True)
     revenue_submission_assurance.add_argument("--saas-proof", required=True)
     revenue_submission_assurance.add_argument("--quality-audit", required=True)
+    revenue_submission_assurance.add_argument("--oracle-authority", help="optional source-bound AppForge Oracle authority file; required when contract marks it required")
     revenue_submission_assurance.add_argument("--out", default=".factory/appforge/submission-assurance.json")
     revenue_submission_assurance.add_argument("--report-dir", default=".factory/appforge/reports")
     revenue_submission_assurance.add_argument("--json", action="store_true")
+    revenue_appforge_oracle = revenue_sub.add_parser("appforge-oracle", help="verify source-bound AppForge candidate, policy, and gate authority without an Apple action")
+    revenue_appforge_oracle.add_argument("--root", default=".")
+    revenue_appforge_oracle.add_argument("--authority", required=True)
+    revenue_appforge_oracle.add_argument("--out")
+    revenue_appforge_oracle.add_argument("--json", action="store_true")
+    revenue_appforge_eas = revenue_sub.add_parser("appforge-eas", help="validate a candidate-bound EAS profile handoff without reading credentials or submitting to Apple")
+    revenue_appforge_eas.add_argument("--root", default=".")
+    revenue_appforge_eas.add_argument("--candidate", required=True)
+    revenue_appforge_eas.add_argument("--eas-json", required=True)
+    revenue_appforge_eas.add_argument("--build-profile", required=True)
+    revenue_appforge_eas.add_argument("--submit-profile", required=True)
+    revenue_appforge_eas.add_argument("--out")
+    revenue_appforge_eas.add_argument("--json", action="store_true")
 
     saas = sub.add_parser("saas", help="verify provider-neutral SaaS identity, billing, entitlement, and revocation evidence")
     saas_sub = saas.add_subparsers(required=True, dest="saas_cmd")
@@ -2558,6 +2642,43 @@ def main(argv=None) -> int:
             print(json.dumps(result, indent=2, sort_keys=True))
         elif code == 0:
             print(f"admission: {result.get('marker', result.get('verdict'))}")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
+    if a.cmd == "oracle":
+        root = Path(a.root).resolve()
+        try:
+            if a.oracle_cmd == "init":
+                agent = json.loads((root / a.agent).read_text(encoding="utf-8-sig"))
+                result = initialize_oracle_firewall(root, Path(a.out_dir), Path(a.source), agent, a.id, a.scope, appforge=a.appforge)
+            elif a.oracle_cmd == "handoff":
+                agent = json.loads((root / a.agent).read_text(encoding="utf-8-sig"))
+                result = capture_intent_handoff(root, Path(a.source), agent, a.id, Path(a.out) if a.out else None)
+            elif a.oracle_cmd == "seal":
+                result = seal_oracle_contract(root, Path(a.input), Path(a.out))
+            elif a.oracle_cmd == "verify":
+                result = verify_oracle_contract(root, Path(a.contract))
+            elif a.oracle_cmd == "diff":
+                result = compare_oracle_contracts(root, Path(a.prior), Path(a.candidate), Path(a.out) if a.out else None)
+            elif a.oracle_cmd == "challenge":
+                if a.oracle_challenge_cmd == "compile":
+                    result = compile_oracle_challenge(root, Path(a.contract), Path(a.out) if a.out else None)
+                else:
+                    result = verify_oracle_challenge_result(root, Path(a.plan), Path(a.result))
+            elif a.oracle_cmd == "incident":
+                agent = json.loads((root / a.agent).read_text(encoding="utf-8-sig"))
+                result = record_oracle_incident(root, agent, Path(a.contract), Path(a.drift), Path(a.out) if a.out else None)
+            else:
+                result = oracle_firewall_projection(root)
+            code = 0 if result.get("ok", True) and result.get("verdict") != "BLOCKED" else 1
+        except (OracleFirewallError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.oracle-firewall.error.v1", "marker": "ORACLE_FIREWALL_REFUSED", "code": getattr(exc, "code", "ORACLE_INPUT_INVALID"), "message": str(exc)}
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            print(result.get("marker", "ORACLE_FIREWALL_OK"))
+            print("authority   : local integrity and read-only supervision only; no candidate mutation, approval, release, credential, or network action")
         else:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
         return code
@@ -4015,7 +4136,11 @@ def main(argv=None) -> int:
             elif a.revenue_cmd == "quality-audit":
                 payload = verify_quality_audit(root, Path(a.contract), Path(a.evidence), Path(a.out))
             elif a.revenue_cmd == "submission-assurance":
-                payload = verify_submission_assurance(root, Path(a.contract), Path(a.app_review), Path(a.store_media), Path(a.saas_proof), Path(a.quality_audit), Path(a.out), Path(a.report_dir))
+                payload = verify_submission_assurance(root, Path(a.contract), Path(a.app_review), Path(a.store_media), Path(a.saas_proof), Path(a.quality_audit), Path(a.out), Path(a.report_dir), Path(a.oracle_authority) if a.oracle_authority else None)
+            elif a.revenue_cmd == "appforge-oracle":
+                payload = verify_appforge_oracle_authority(root, Path(a.authority), out=Path(a.out) if a.out else None)
+            elif a.revenue_cmd == "appforge-eas":
+                payload = verify_eas_preflight(root, Path(a.candidate), Path(a.eas_json), a.build_profile, a.submit_profile, out=Path(a.out) if a.out else None)
             elif a.revenue_cmd == "evidence-kit":
                 payload = create_evidence_kit(root, Path(a.candidate), Path(a.design_input), Path(a.out_dir))
             elif a.revenue_cmd == "appforge-init":

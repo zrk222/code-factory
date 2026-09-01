@@ -98,6 +98,22 @@ disposition, merge, publish, deploy, sign, send a message, access a credential,
 or grant a connector. The authoritative Product Mission ledger, proof receipts,
 and trace verifiers remain separate.
 
+## Oracle Firewall: proof of the oracle
+
+Graph Ops projects a local **Oracle Firewall** lane when sealed contracts
+exist. It connects the original source, approved obligation, forbidden
+behavior, gate, declared test, challenge evidence, and decision without making
+the graph an authority source. A semantic relaxation—such as a lowered
+threshold, removed negative case, added exception, or provenance downgrade—is
+shown as `E_ORACLE_WEAKENING` and the fact-derived next action becomes review,
+not repair or release.
+
+The Oracle Firewall panel can copy the explicit `factory oracle init` command
+and validate only the loaded status shape. Its apparent approval control is
+disabled: Graph Ops cannot approve intent, seal a successor contract, mutate a
+candidate, execute a challenge, or promote a release. See
+[Oracle Firewall](ORACLE_FIREWALL.md).
+
 ## Portfolio Flight Plan and sealed admission
 
 The **Portfolio Flight Plan** makes the existing Graph Ops dependencies useful

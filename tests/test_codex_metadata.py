@@ -141,6 +141,24 @@ def test_orphan_active_and_workspace_mismatch_are_visible(tmp_path: Path):
     assert "E_METADATA_WORKSPACE_MISMATCH" in codes
 
 
+def test_active_policy_constraints_are_not_misclassified_as_live_execution(tmp_path: Path):
+    path = tmp_path / "policy.json"
+    path.write_text(
+        json.dumps({
+            "active_policy": {
+                "constraints": {"parser": {"status": "active", "prevented": 4}},
+            },
+            "version": 1,
+        }),
+        encoding="utf-8",
+    )
+
+    result = audit_metadata(tmp_path, [path])
+
+    assert result["status"] == "VERIFIED"
+    assert not any(item["code"] == "E_METADATA_ORPHAN_ACTIVE" for item in result["findings"])
+
+
 def test_markdown_claims_without_receipts_are_review_required(tmp_path: Path):
     path = tmp_path / "progress.md"
     path.write_text("Status: published to PyPI\nstatus=active\nall_green=true\n", encoding="utf-8")

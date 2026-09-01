@@ -15,6 +15,10 @@ Run `factory mcp serve --root .` from the workspace and connect the stdio proces
 - `factory.revenue_status` — hash-verified RevenueForge build and evidence state.
 - `factory.revenue_memory` — exact-app, unexpired prior guidance with contradiction quarantine.
 - `factory.appforge_status` — hash-verified AppForge design-contract state.
+- `factory.oracle_firewall_status` — sealed Oracle Firewall provenance, drift,
+  independent challenge, and incident facts.
+- `factory.appforge_oracle_status` — candidate-bound AppForge policy authority
+  facts.
 
 Every tool has a strict JSON input schema, a deterministic name, and read-only annotations. Provider credentials and external writes stay outside the server.
 
@@ -26,6 +30,8 @@ Graph Ops progressively registers four browser tools through `document.modelCont
 2. `factory.next_action`
 3. `factory.revenue_status`
 4. `factory.appforge_status`
+5. `factory.oracle_firewall_status`
+6. `factory.appforge_oracle_status`
 
 The handlers read only the most recent authenticated snapshot already loaded by the page. They do not make a second request, invoke an execution control, or return the complete graph. Outputs are deliberately bounded and marked read-only plus untrusted-content because project-controlled labels are data, not agent instructions.
 

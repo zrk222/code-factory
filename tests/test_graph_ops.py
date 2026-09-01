@@ -488,6 +488,8 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "FACTORY_WEBMCP_GRAPH_SUMMARY" in page
     assert "FACTORY_WEBMCP_REVENUE_STATUS" in page
     assert "FACTORY_WEBMCP_APPFORGE_STATUS" in page
+    assert "FACTORY_WEBMCP_ORACLE_FIREWALL_STATUS" in page
+    assert "FACTORY_WEBMCP_APPFORGE_ORACLE_STATUS" in page
     assert "FACTORY_WEBMCP_SAAS_PROOF_STATUS" in page
     assert "GRAPH_OPS_SAAS_PROOF_READ_ONLY" in page
     assert 'annotations:{readOnlyHint:true,untrustedContentHint:true}' in page
@@ -579,6 +581,16 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "GRAPH_OPS_PORTFOLIO_ADMISSION_READ_ONLY" in page
     assert "renderPortfolio(payload)" in page
     assert "Graph Ops cannot execute a wave" in page
+    assert 'id="oracle-firewall-panel"' in page
+    assert "Oracle Firewall · Shadow Oracle Loop" in page
+    assert "Proof of the Oracle chain" in page
+    assert "E_ORACLE_WEAKENING" in page
+    assert 'id="copy-oracle-init"' in page
+    assert 'id="validate-oracle-boundary"' in page
+    assert 'id="authorize-oracle-change"' in page
+    assert "renderOracleFirewall(payload)" in page
+    assert "factory.oracle_firewall_status" in page
+    assert "factory.appforge_oracle_status" in page
 
 
 def test_graph_ops_projects_sealed_admission_without_changing_its_base_graph(tmp_path: Path):

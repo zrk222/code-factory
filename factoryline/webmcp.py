@@ -27,6 +27,16 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "description": "Read bounded AppForge design-receipt status already visible on this page. It never creates, approves, renders, or releases a design.",
     },
     {
+        "name": "factory.oracle_firewall_status",
+        "title": "Read sealed intent and gate authority",
+        "description": "Read bounded Oracle Firewall facts already visible on this page. It never changes a contract, candidate, agent, or release.",
+    },
+    {
+        "name": "factory.appforge_oracle_status",
+        "title": "Read AppForge policy authority",
+        "description": "Read candidate-bound AppForge authority state already visible on this page. It never contacts Apple or changes a submission.",
+    },
+    {
         "name": "factory.saas_status",
         "title": "Read SaaS promise-to-permission status",
         "description": "Read bounded provider-neutral OAuth/OIDC-to-entitlement status already visible on this page. It never contacts or mutates a provider.",

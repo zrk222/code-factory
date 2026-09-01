@@ -37,6 +37,7 @@ from .continuous_proof import continuous_proof_projection
 from .proof_review_workflow import proof_review_projection
 from .revenueforge import revenueforge_projection
 from .appforge_design import appforge_design_projection
+from .oracle_firewall import oracle_firewall_projection, verify_oracle_contract
 from .saas_proof import saas_proof_projection
 
 
@@ -1031,6 +1032,70 @@ def _append_counterexamples(state: dict[str, Any], root: Path) -> dict[str, int]
     return facts
 
 
+def _append_oracle_firewall(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project the source-to-decision oracle chain without changing any input."""
+    facts = {"contract_count": 0, "current_count": 0, "blocked_drift_count": 0, "challenge_count": 0, "incident_count": 0, "invalid_count": 0}
+    projection = oracle_firewall_projection(root)
+    facts["blocked_drift_count"] = int(projection.get("blocked_drift_count", 0))
+    facts["challenge_count"] = int(projection.get("challenge_count", 0))
+    facts["incident_count"] = int(projection.get("incident_count", 0))
+    facts["invalid_count"] = int(projection.get("invalid_count", 0))
+    for summary in projection.get("contracts", []):
+        if not isinstance(summary, dict) or not isinstance(summary.get("path"), str):
+            continue
+        checked = verify_oracle_contract(root, Path(summary["path"]))
+        contract = checked.get("contract") if isinstance(checked.get("contract"), dict) else None
+        if contract is None:
+            facts["invalid_count"] += 1
+            continue
+        digest = str(contract.get("contract_sha256") or summary.get("sha256") or "contract")
+        status = "current" if checked.get("ok") else "stale"
+        decision_id = f"oracle-decision:{digest[:24]}"
+        _node(
+            state, node_id=decision_id, kind="oracle_decision", label=f"Oracle contract {contract.get('id', digest[:12])}",
+            source=summary["path"], status=status,
+            facts={"contract_sha256": digest, "approved_by": contract.get("approved_by"), "approval_rationale": contract.get("approval_rationale"), "marker": contract.get("marker"), "authority": contract.get("authority", _AUTHORITY), "execution": False},
+        )
+        facts["contract_count"] += 1
+        facts["current_count"] += int(status == "current")
+        sources = {item.get("id"): item for item in contract.get("sources", []) if isinstance(item, dict)}
+        rule_nodes: dict[str, list[str]] = {"requirements": [], "forbidden_behaviors": [], "gates": [], "tests": []}
+        for group, kind, label in (("requirements", "oracle_obligation", "obligation"), ("forbidden_behaviors", "oracle_forbidden", "forbidden"), ("gates", "oracle_gate", "gate"), ("tests", "oracle_test", "test")):
+            for rule in contract.get("rules", {}).get(group, []):
+                if not isinstance(rule, dict):
+                    continue
+                rule_id = str(rule.get("id") or "rule")
+                node_id = f"oracle-{label}:{digest[:16]}:{rule_id}"
+                source_id = rule.get("source_id")
+                source = sources.get(source_id) if isinstance(source_id, str) else None
+                _node(state, node_id=node_id, kind=kind, label=f"{label} · {rule_id}", source=summary["path"], status="advisory" if rule.get("effect") == "advisory" else "approved", facts={"statement": rule.get("statement"), "origin": rule.get("origin"), "effect": rule.get("effect"), "source_id": source_id, "source_sha256": source.get("sha256") if isinstance(source, dict) else None, "critical": rule.get("critical"), "authority": _AUTHORITY, "execution": False})
+                source_node = f"oracle-source:{digest[:16]}:{source_id}"
+                if source_node not in state["nodes"]:
+                    _node(state, node_id=source_node, kind="oracle_source", label=f"source · {source_id}", source=source.get("path", summary["path"]) if isinstance(source, dict) else summary["path"], status="bound" if source else "missing", facts={"source_id": source_id, "origin": source.get("origin") if isinstance(source, dict) else None, "sha256": source.get("sha256") if isinstance(source, dict) else None, "authority": _AUTHORITY, "execution": False})
+                _edge(state, source_node, node_id, "authorizes")
+                rule_nodes[group].append(node_id)
+        for requirement in rule_nodes["requirements"]:
+            for forbidden in rule_nodes["forbidden_behaviors"]:
+                _edge(state, requirement, forbidden, "forbids")
+        for forbidden in rule_nodes["forbidden_behaviors"]:
+            for gate in rule_nodes["gates"]:
+                _edge(state, forbidden, gate, "guards")
+        for gate in rule_nodes["gates"]:
+            for test in rule_nodes["tests"]:
+                _edge(state, gate, test, "is_checked_by")
+        evidence_id = f"oracle-evidence:{digest[:24]}"
+        _node(state, node_id=evidence_id, kind="oracle_evidence", label="independent challenge evidence", source=".factory/oracles/challenges", status="pending" if not projection.get("challenge_count") else "planned", facts={"contract_sha256": digest, "challenge_count": projection.get("challenge_count", 0), "target": "implementation", "authority": _AUTHORITY, "execution": False})
+        for test in rule_nodes["tests"]:
+            _edge(state, test, evidence_id, "requires_evidence")
+        _edge(state, evidence_id, decision_id, "informs")
+    for blocked in projection.get("blocked_drifts", []):
+        if not isinstance(blocked, dict):
+            continue
+        drift_id = f"oracle-drift:{str(blocked.get('sha256') or 'blocked')[:24]}"
+        _node(state, node_id=drift_id, kind="oracle_drift", label="Oracle weakening blocked", source=str(blocked.get("path") or ".factory/oracles/drifts"), status="blocked", facts={"marker": blocked.get("marker"), "verdict": blocked.get("verdict"), "drift_sha256": blocked.get("sha256"), "authority": _AUTHORITY, "execution": False})
+    return facts
+
+
 def _append_guardrail_evaluations(state: dict[str, Any], root: Path) -> dict[str, int]:
     """Project hash-bound redacted guardrail evaluations, never query a ledger."""
     facts = {"count": 0, "active_count": 0, "withheld_count": 0, "invalid_count": 0}
@@ -1503,6 +1568,10 @@ def _external_runtime_triage(facts: dict[str, int]) -> tuple[str, str] | None:
 
 
 def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
+    if facts.get("oracle_blocked_drift_count", 0) > 0:
+        return "review_oracle_weakening", "A proposed gate, scenario, threshold, test, or exception weakens the sealed definition of done. Keep work paused until a named human reviews a separately sealed successor contract."
+    if facts.get("oracle_invalid_count", 0) > 0:
+        return "repair_oracle_integrity", "An Oracle Firewall artifact is invalid or stale. Do not rely on autonomous admission or AppForge authority until its exact source binding is current."
     if facts["external_runtime_invalid_count"] > 0:
         return "refresh_external_runtime_evidence", "An imported external runtime receipt is stale or invalid; re-import the bounded runner bundle before relying on its observations."
     if facts.get("intent_trace_binding_mismatch_count", 0) > 0:
@@ -1579,7 +1648,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
                     frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> dict[str, int]:
+                    counterexamples: dict[str, int], oracle_firewall: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -1618,6 +1687,12 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "counterexample_verified_count": counterexamples["verified_count"],
         "counterexample_hollow_count": counterexamples["hollow_count"],
         "counterexample_invalid_count": counterexamples["invalid_count"],
+        "oracle_contract_count": oracle_firewall["contract_count"],
+        "oracle_current_contract_count": oracle_firewall["current_count"],
+        "oracle_blocked_drift_count": oracle_firewall["blocked_drift_count"],
+        "oracle_challenge_count": oracle_firewall["challenge_count"],
+        "oracle_incident_count": oracle_firewall["incident_count"],
+        "oracle_invalid_count": oracle_firewall["invalid_count"],
         "guardrail_evaluation_count": guardrails["count"],
         "guardrail_active_count": guardrails["active_count"],
         "guardrail_withheld_count": guardrails["withheld_count"],
@@ -1672,7 +1747,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
                       proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> list[str]:
+                      counterexamples: dict[str, int], oracle_firewall: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -1705,6 +1780,10 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_CONTINUITY_METADATA_READ_ONLY")
     if counterexamples["count"]:
         markers.append("GRAPH_OPS_COUNTEREXAMPLE_PROOFS_READ_ONLY")
+    if oracle_firewall["contract_count"]:
+        markers.append("GRAPH_OPS_ORACLE_FIREWALL_READ_ONLY")
+    if oracle_firewall["blocked_drift_count"]:
+        markers.append("GRAPH_OPS_ORACLE_WEAKENING_BLOCKED")
     if guardrails["count"]:
         markers.append("GRAPH_OPS_GUARDRAIL_EVALUATIONS_REDACTED")
     if resilience["count"]:
@@ -1790,6 +1869,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     assurance = _append_github_assurance_dossiers(state, workspace)
     continuity = _append_continuity(state, workspace)
     counterexamples = _append_counterexamples(state, workspace)
+    oracle_firewall = _append_oracle_firewall(state, workspace)
     guardrails = _append_guardrail_evaluations(state, workspace)
     resilience = _append_resilience_plans(state, workspace)
     proof_deltas = _append_proof_deltas(state, workspace)
@@ -1808,7 +1888,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
-    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
+    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, oracle_firewall, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     facts["journey_proof_count"] = journey_proofs["count"]
     facts["journey_proof_admissible_count"] = journey_proofs["admissible_count"]
     facts["journey_proof_invalid_count"] = journey_proofs["invalid_count"]
@@ -1829,13 +1909,15 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["appforge_quality_audit_invalid_count"] = appforge["quality_audit"]["invalid_count"]
     facts["appforge_submission_assurance_current_count"] = appforge["submission_assurance"]["current_count"]
     facts["appforge_submission_assurance_invalid_count"] = appforge["submission_assurance"]["invalid_count"]
+    facts["appforge_oracle_authority_current_count"] = appforge["oracle_authority"]["current_count"]
+    facts["appforge_oracle_authority_invalid_count"] = appforge["oracle_authority"]["invalid_count"]
     facts["saas_proof_current_count"] = saas_proof["current_count"]
     facts["saas_proof_invalid_count"] = saas_proof["invalid_count"]
     facts["jetbrains_handshake_state"] = jetbrains_handshake["state"]
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
-    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
+    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, oracle_firewall, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     if journey_proofs["count"]:
         markers = sorted({*markers, "JOURNEY_STATUS_READ_ONLY", "GRAPH_OPS_JOURNEY_PROOF_READ_ONLY"})
     if continuous_proof["count"] or continuous_proof["invalid_count"]:
@@ -1844,7 +1926,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers = sorted({*markers, "GRAPH_OPS_PROOF_REVIEW_READ_ONLY", "TEAM_PROOF_INBOX_READ_ONLY"})
     if revenueforge["current_count"] or revenueforge["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_REVENUEFORGE_READ_ONLY"})
-    if appforge["current_count"] or appforge["invalid_count"] or appforge["quality_audit"]["current_count"] or appforge["quality_audit"]["invalid_count"] or appforge["submission_assurance"]["current_count"] or appforge["submission_assurance"]["invalid_count"]:
+    if appforge["current_count"] or appforge["invalid_count"] or appforge["quality_audit"]["current_count"] or appforge["quality_audit"]["invalid_count"] or appforge["submission_assurance"]["current_count"] or appforge["submission_assurance"]["invalid_count"] or appforge["oracle_authority"]["current_count"] or appforge["oracle_authority"]["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_APPFORGE_READ_ONLY"})
     if saas_proof["current_count"] or saas_proof["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_SAAS_PROOF_READ_ONLY"})
@@ -1889,6 +1971,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "proof_review": proof_review,
         "revenueforge": revenueforge,
         "appforge": appforge,
+        "oracle_firewall": oracle_firewall,
         "saas_proof": saas_proof,
         "jetbrains_handshake": jetbrains_handshake,
     }

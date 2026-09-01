@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from factoryline.agent_license import derive_license
+from factoryline.oracle_firewall import (
+    OracleFirewallError,
+    capture_intent_handoff,
+    compare_oracle_contracts,
+    compile_oracle_challenge,
+    initialize_oracle_firewall,
+    oracle_firewall_projection,
+    record_oracle_incident,
+    seal_oracle_contract,
+    verify_intent_handoff,
+    verify_oracle_challenge_result,
+    verify_oracle_contract,
+)
+
+
+AGENT = {"schema": "factory.agent-identity.v1", "subject": "worker-alpha", "provider": "local", "model": "model-a"}
+
+
+def _write(path: Path, value: object) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2), encoding="utf-8")
+    return path
+
+
+def _handoff(root: Path) -> Path:
+    intent = root / "briefs" / "original-intent.md"
+    intent.parent.mkdir(parents=True, exist_ok=True)
+    intent.write_text("Users must be able to restore a subscription without a new purchase.\n", encoding="utf-8")
+    result = capture_intent_handoff(root, intent, AGENT, "ios-intake", Path(".factory/oracles/handoffs/ios-intake.json"))
+    return root / result["path"]
+
+
+def _input(root: Path, handoff: Path, *, threshold: int = 95, include_negative: bool = True, exception_effect: str = "advisory") -> Path:
+    rules = {
+        "requirements": [{"id": "restore", "statement": "Restore succeeds for an entitled account.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True}],
+        "forbidden_behaviors": [{"id": "double-charge", "statement": "A restore must not create another charge.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True}],
+        "gates": [{"id": "restore-rate", "statement": "Restore evidence rate is at least the approved floor.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True, "comparison": "gte", "value": threshold}],
+        "exceptions": [{"id": "offline-note", "statement": "Offline handling remains advisory until a named decision is recorded.", "origin": "human_confirmed", "effect": exception_effect, "source_id": "original-intent", "critical": False}],
+        "negative_cases": ([{"id": "expired-entitlement", "statement": "An expired entitlement must not restore paid access.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True}] if include_negative else [{"id": "new-negative", "statement": "A new non-equivalent negative case cannot replace the required case.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True}]),
+        "invariants": [{"id": "candidate-bound", "statement": "Evidence must bind to the exact submitted candidate.", "origin": "trusted_source", "effect": "blocking", "source_id": "original-intent", "critical": True}],
+        "tests": [{"id": "restore-flow", "statement": "The restore flow must fail when implementation accepts expired access.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True, "path": "tests/test_restore.py"}],
+    }
+    payload = {"schema": "factory.oracle-contract-input.v1", "id": "ios-restore", "version": 1, "approved_by": "Release Owner", "approval_rationale": "The product owner reviewed the original intent and the strict restore safety boundary.", "scope_paths": ["."], "handoff": handoff.relative_to(root).as_posix(), "sources": [], **rules}
+    return _write(root / "oracle-input.json", payload)
+
+
+def _contract(root: Path, *, out: str = ".factory/oracles/contracts/original.json", **kwargs: object) -> Path:
+    handoff = _handoff(root)
+    source = _input(root, handoff, **kwargs)
+    return root / seal_oracle_contract(root, source, Path(out))["path"]
+
+
+def test_handoff_or_contract_seals_exact_original_intent_and_rejects_agent_authority(tmp_path: Path) -> None:
+    contract = _contract(tmp_path)
+    verified = verify_oracle_contract(tmp_path, contract)
+    handoff = verify_intent_handoff(tmp_path, tmp_path / ".factory/oracles/handoffs/ios-intake.json")
+
+    assert handoff["ok"] is True
+    assert verified["ok"] is True
+    assert verified["contract"]["handoff"]["original_intent"]["sha256"] == hashlib.sha256((tmp_path / "briefs/original-intent.md").read_bytes()).hexdigest()
+
+    source = _input(tmp_path, tmp_path / ".factory/oracles/handoffs/ios-intake.json")
+    candidate = json.loads(source.read_text(encoding="utf-8"))
+    candidate["gates"][0]["origin"] = "agent_proposed"
+    _write(source, candidate)
+    with pytest.raises(OracleFirewallError) as raised:
+        seal_oracle_contract(tmp_path, source, Path(".factory/oracles/contracts/agent-gate.json"))
+    assert raised.value.code == "ORACLE_PROVENANCE_INVALID"
+
+
+def test_drift_blocks_threshold_lowering_and_removed_negative_case_with_source_justification(tmp_path: Path) -> None:
+    prior = _contract(tmp_path, out=".factory/oracles/contracts/prior.json")
+    handoff = tmp_path / ".factory/oracles/handoffs/ios-intake.json"
+    source = _input(tmp_path, handoff, threshold=90, include_negative=False)
+    candidate = tmp_path / seal_oracle_contract(tmp_path, source, Path(".factory/oracles/contracts/candidate.json"))["path"]
+    drift = compare_oracle_contracts(tmp_path, prior, candidate, Path(".factory/oracles/drifts/latest.json"))
+
+    assert drift["marker"] == "E_ORACLE_WEAKENING"
+    assert drift["verdict"] == "BLOCKED"
+    assert {item["code"] for item in drift["findings"]} >= {"threshold_lowered", "negative_case_removed"}
+    assert all(item["justification"]["approved_by"] == "Release Owner" for item in drift["findings"])
+
+
+def test_shadow_oracle_challenge_is_implementation_targeted_and_fails_on_survivor(tmp_path: Path) -> None:
+    contract = _contract(tmp_path)
+    plan = compile_oracle_challenge(tmp_path, contract, Path(".factory/oracles/challenges/restore.json"))
+    result = _write(tmp_path / "challenge-result.json", {"schema": "factory.oracle-challenge-result.v1", "challenge_sha256": plan["challenge_sha256"], "worker_subject": "worker-alpha", "verifier_subject": "verifier-beta", "target": "implementation", "cases": [{"id": item["id"], "outcome": "survived" if index == 0 else "killed"} for index, item in enumerate(plan["cases"])]})
+
+    checked = verify_oracle_challenge_result(tmp_path, tmp_path / plan["path"], result)
+
+    assert checked["ok"] is False
+    assert checked["marker"] == "ORACLE_CHALLENGE_FAILED"
+    assert checked["surviving_cases"]
+    gate = next(item for item in plan["cases"] if item["id"] == "gates:restore-rate")
+    assert [item["relation"] for item in gate["boundary_cases"]] == ["below", "at", "above"]
+
+
+def test_oracle_incident_demotes_declared_agent_and_projects_read_only_status(tmp_path: Path) -> None:
+    prior = _contract(tmp_path, out=".factory/oracles/contracts/prior.json")
+    handoff = tmp_path / ".factory/oracles/handoffs/ios-intake.json"
+    candidate = tmp_path / seal_oracle_contract(tmp_path, _input(tmp_path, handoff, threshold=90), Path(".factory/oracles/contracts/candidate.json"))["path"]
+    drift = compare_oracle_contracts(tmp_path, prior, candidate, Path(".factory/oracles/drifts/blocked.json"))
+    incident = record_oracle_incident(tmp_path, AGENT, prior, tmp_path / drift["path"])
+    license_value = derive_license(tmp_path, AGENT)
+    projection = oracle_firewall_projection(tmp_path)
+
+    assert incident["marker"] == "ORACLE_AUTONOMY_DEMOTED"
+    assert license_value["tier"] == "human_controlled"
+    assert license_value["reason"] == "ORACLE_WEAKENING_DEMOTION"
+    assert projection["blocked_drift_count"] == 1
+    assert all(value is False for value in projection["authority"].values())
+
+
+def test_full_init_creates_deliberately_incomplete_appforge_authority_workspace(tmp_path: Path) -> None:
+    source = tmp_path / "original.md"
+    source.write_text("The user wants accessible subscription restore and a clear review path.", encoding="utf-8")
+
+    result = initialize_oracle_firewall(tmp_path, Path(".factory/oracles/init/ios"), source, AGENT, "ios-release", ["."], appforge=True)
+    workspace = tmp_path / ".factory/oracles/init/ios"
+
+    assert result["marker"] == "ORACLE_FIREWALL_INIT_READY"
+    assert json.loads((workspace / "oracle-contract-input.json").read_text(encoding="utf-8"))["requirements"] == []
+    assert (workspace / "appforge-policy-authority-template.json").is_file()
+    assert "does not approve" in (workspace / "NEXT_STEPS.md").read_text(encoding="utf-8")

@@ -27,6 +27,7 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         val intentLedger = FactoryLineIntentLedgerPanel(project)
         val judgment = FactoryLineJudgmentPanel(project)
         val appForge = FactoryLineAppForgePanel(project)
+        val oracle = FactoryLineOraclePanel(project)
         project.putUserData(FactoryLinePanels.guardianKey, guardian)
         project.putUserData(FactoryLinePanels.key, panel)
         project.putUserData(FactoryLinePanels.proofReviewKey, proofReview)
@@ -37,6 +38,7 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         project.putUserData(FactoryLinePanels.intentLedgerKey, intentLedger)
         project.putUserData(FactoryLinePanels.judgmentKey, judgment)
         project.putUserData(FactoryLinePanels.appForgeKey, appForge)
+        project.putUserData(FactoryLinePanels.oracleKey, oracle)
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(guardian, "Guardian", false)
         )
@@ -66,6 +68,9 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         )
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(appForge, "AppForge", false)
+        )
+        toolWindow.contentManager.addContent(
+            ContentFactory.getInstance().createContent(oracle, "Oracle", false)
         )
     }
 }
@@ -149,6 +154,7 @@ object FactoryLinePanels {
     val intentLedgerKey: Key<FactoryLineIntentLedgerPanel> = Key.create("app.factoryline.intellij.intentLedger")
     val judgmentKey: Key<FactoryLineJudgmentPanel> = Key.create("app.factoryline.intellij.judgment")
     val appForgeKey: Key<FactoryLineAppForgePanel> = Key.create("app.factoryline.intellij.appforge")
+    val oracleKey: Key<FactoryLineOraclePanel> = Key.create("app.factoryline.intellij.oracle")
 
     fun show(project: Project, result: CommandResult) {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
@@ -263,6 +269,16 @@ object FactoryLinePanels {
             ApplicationManager.getApplication().invokeLater {
                 toolWindow.contentManager.findContent("AppForge")?.let { toolWindow.contentManager.setSelectedContent(it) }
                 project.getUserData(appForgeKey)?.show(result)
+            }
+        }
+    }
+
+    fun showOracleFirewall(project: Project, result: CommandResult) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater {
+                toolWindow.contentManager.findContent("Oracle")?.let { toolWindow.contentManager.setSelectedContent(it) }
+                project.getUserData(oracleKey)?.show(result)
             }
         }
     }

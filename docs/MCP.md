@@ -120,6 +120,9 @@ network transport, or mutation authority.
 | `factory.revenue_status` | Current hash-verified RevenueForge receipts and fail-closed purchase, TestFlight, failure-matrix, policy-drift, and memory evidence state | Read only |
 | `factory.revenue_memory` | Exact-app, exact-journey, expiry-aware approved evidence-memory guidance; never substitutes prior evidence for the current build | Read only |
 | `factory.appforge_status` | Current hash-verified AppForge design contracts and storyboard state; never renders, approves, submits, or deploys an app | Read only |
+| `factory.oracle_firewall_status` | Sealed source-to-decision Oracle Firewall contracts, weakening reports, independent challenge receipts, and incidents; never seals, approves, challenges, repairs, or releases work | Read only |
+| `factory.appforge_oracle_status` | Candidate-bound AppForge Oracle authority receipts; never changes policy sources, media, reviewers, TestFlight, or App Store Connect | Read only |
+| `factory.codex_metadata_audit` | Privacy-safe workspace metadata audit of declared local run-state files; never imports prompts, tool output, credentials, provider history, or home-directory Codex records | Read only |
 | `factory://status` | The same status payload | Read only |
 | `factory://graph` | The same Graph Ops payload | Read only |
 
@@ -151,6 +154,15 @@ or connector authority.
 the local filesystem and path context. It does not query an IDE, connect to
 WSL/Gateway/Docker/SSH, or change heap, caches, indexes, inspections, or
 settings. See [Workspace Load Advisor](WORKSPACE_ADVISOR.md).
+
+`factory.codex_metadata_audit` is deliberately narrower than a conversation
+export. It reads only explicit workspace-relative paths (or the bounded local
+defaults) and evaluates run provenance such as revision, task/intent hash,
+scope, command/test receipt, stop reason, and verifier outcome. Private chat
+text, credentials, raw tool output, and records outside the selected workspace
+are not accepted as authority evidence. Historical state files can be reported
+as unbound history, but cannot become live gate proof. See
+[Oracle Firewall](ORACLE_FIREWALL.md).
 
 Tool and resource payloads are canonical UTF-8 JSON embedded in MCP text
 content. The graph and impact tools directly call the same native functions as

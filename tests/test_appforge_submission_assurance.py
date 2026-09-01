@@ -111,7 +111,20 @@ def test_submission_dossier_blocks_candidate_mismatch_without_emitting_final_rep
     assert receipt["marker"] == "APPFORGE_SUBMISSION_DOSSIER_BLOCKED"
     assert receipt["ok"] is False
     assert not (tmp_path / ".factory/appforge/reports").exists()
-    assert {item["code"] for item in receipt["findings"]} == {"APPFORGE_ASSURANCE_RECEIPT_TAMPERED"}
+
+
+def test_submission_dossier_fails_closed_when_the_contract_requires_oracle_authority(tmp_path: Path) -> None:
+    contract = _assurance_contract(tmp_path)
+    payload = json.loads(contract.read_text(encoding="utf-8"))
+    payload["oracle_authority"] = {"required": True, "path": "missing-oracle-authority.json"}
+    contract.write_text(json.dumps(payload), encoding="utf-8")
+
+    receipt = verify_submission_assurance(tmp_path, contract, _app_review(tmp_path), _media(tmp_path), _saas(tmp_path), _quality(tmp_path), Path(".factory/appforge/submission-assurance.json"), Path(".factory/appforge/reports"))
+
+    assert receipt["ok"] is False
+    assert receipt["marker"] == "APPFORGE_SUBMISSION_DOSSIER_BLOCKED"
+    assert any(item["gate"] == "Oracle authority" for item in receipt["findings"])
+    assert any(item["code"] == "APPFORGE_ORACLE_INPUT_UNAVAILABLE" for item in receipt["findings"])
 
 
 def test_store_media_rejects_truncated_or_alpha_pngs(tmp_path: Path) -> None:

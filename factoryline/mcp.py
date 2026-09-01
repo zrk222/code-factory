@@ -27,6 +27,9 @@ from .workspace_advisor import inspect_workspace
 from .revenueforge import RevenueForgeError, revenueforge_projection
 from .revenue_evidence import query_evidence_memory
 from .appforge_design import appforge_design_projection
+from .appforge_oracle import appforge_oracle_projection
+from .oracle_firewall import oracle_firewall_projection
+from .codex_metadata import MetadataAuditError, audit_metadata
 from .saas_proof import saas_proof_projection
 from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
 
@@ -70,6 +73,8 @@ _RECEIPT_ROOTS = (
     Path(".factory/combines"),
     Path(".factory/intent-ledgers"),
     Path(".factory/journey-proof"),
+    Path(".factory/oracles"),
+    Path(".factory/appforge"),
 )
 
 
@@ -378,6 +383,30 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.appforge_status",
             "description": "Return hash-verified local AppForge design-contract status. It never creates, approves, renders, or releases a design.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.oracle_firewall_status",
+            "description": "Read sealed original-intent handoffs, provenance contracts, independent challenge plans, and blocked weakening facts. It never alters an oracle, code, agent, or release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.codex_metadata_audit",
+            "description": "Audit selected local Codex/workflow metadata for unbound terminal claims, stale execution status, missing intent, or self-attested gates. It never reads provider state or mutates a receipt.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "paths": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                },
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_oracle_status",
+            "description": "Read candidate-bound AppForge policy and user-intent authority receipts. It never contacts Apple, changes a candidate, or claims review readiness.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -950,6 +979,46 @@ def _appforge_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _oracle_firewall_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.oracle_firewall_status accepts no arguments")
+    return {
+        "marker": "MCP_ORACLE_FIREWALL_READ_ONLY",
+        "action_summary": "Read local source-to-decision facts, preserve blocked oracle weakening, and expose no mutation or approval surface.",
+        "status": oracle_firewall_projection(root),
+        "scope": "Read-only local proof-of-the-oracle projection; no contract sealing, candidate mutation, challenge execution, agent action, approval, or provider action ran.",
+    }
+
+
+def _codex_metadata_audit(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"paths"}:
+        raise McpError("factory.codex_metadata_audit accepts optional paths only")
+    supplied = arguments.get("paths")
+    if supplied is not None and (not isinstance(supplied, list) or not 1 <= len(supplied) <= 8 or not all(isinstance(item, str) and item.strip() and len(item) <= 512 for item in supplied)):
+        raise McpError("paths must contain 1-8 non-empty workspace-relative paths")
+    try:
+        audit = audit_metadata(root, [Path(item) for item in supplied] if supplied is not None else None)
+    except MetadataAuditError as exc:
+        raise McpError(exc.message, exc.code) from exc
+    return {
+        "marker": "MCP_CODEX_METADATA_AUDIT_READ_ONLY",
+        "action_summary": "Hash selected local run metadata and surface unbound terminal claims, stale or orphaned run state, missing intent bindings, and self-attested gates without importing prompts, tool output, credentials, or provider state.",
+        "audit": audit,
+        "scope": "Read-only local metadata integrity only; no prompt body, credential, provider state, execution, approval, or release authority is exposed or granted.",
+    }
+
+
+def _appforge_oracle_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_oracle_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_ORACLE_READ_ONLY",
+        "action_summary": "Read candidate-bound AppForge authority receipts and surface missing policy or human-source controls without asserting App Review readiness.",
+        "status": appforge_oracle_projection(root),
+        "scope": "Read-only local authority metadata; no Apple request, credential access, TestFlight action, App Review submission, or approval claim ran.",
+    }
+
+
 def _saas_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.saas_status accepts no arguments")
@@ -1071,6 +1140,12 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_revenue_memory(root, arguments))
     if name == "factory.appforge_status":
         return _content(_appforge_status(root, arguments))
+    if name == "factory.oracle_firewall_status":
+        return _content(_oracle_firewall_status(root, arguments))
+    if name == "factory.codex_metadata_audit":
+        return _content(_codex_metadata_audit(root, arguments))
+    if name == "factory.appforge_oracle_status":
+        return _content(_appforge_oracle_status(root, arguments))
     if name == "factory.saas_status":
         return _content(_saas_status(root, arguments))
     if name == "factory.agent_proof_mission":

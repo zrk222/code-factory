@@ -93,6 +93,13 @@ object FactoryLineController {
         }
     }
 
+    fun inspectOracleFirewall(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect local Oracle Firewall receipts")) return
+        runBackground(project, "Inspect Oracle Firewall", onCompleted = { FactoryLinePanels.showOracleFirewall(project, it) }) {
+            FactoryLineRunner.oracleFirewallStatus(project)
+        }
+    }
+
     fun verifySaasReality(project: Project) {
         val contract = workspacePath(project, "Reviewed SaaS promise contract JSON") ?: return
         val evidence = workspacePath(project, "Observed SaaS journey evidence JSON") ?: return
