@@ -32,6 +32,11 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "description": "Read bounded Oracle Firewall facts already visible on this page. It never changes a contract, candidate, agent, or release.",
     },
     {
+        "name": "factory.atomic_status",
+        "title": "Read imported Atomic mechanics",
+        "description": "Read bounded Atomic DAG, scoped handoff, checkpoint, and source-precondition facts already visible on this page. It never runs Atomic, resumes a checkpoint, or approves work.",
+    },
+    {
         "name": "factory.appforge_oracle_status",
         "title": "Read AppForge policy authority",
         "description": "Read candidate-bound AppForge authority state already visible on this page. It never contacts Apple or changes a submission.",

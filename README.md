@@ -146,6 +146,12 @@ managed-service guarantee.
   independent validators, and records the result for Agent License and Combine.
   It stores hashes and bounded facts—not prompts or raw output—and observes the
   process without pretending to sandbox it.
+- **Verify an explicit agent workflow without adopting its runtime.** Use
+  [`factory atomic import`](docs/ATOMIC_PROOF_ADAPTER.md) to bind a secret-free
+  exported stage DAG, scoped handoffs, checkpoint facts, and immutable source
+  preconditions to a current Oracle Contract. Graph Ops, MCP, and WebMCP show
+  the receipt read-only; Code Factory never starts Atomic, resumes a checkpoint,
+  or treats a declared workflow as release authority.
 - **Keep decisions from becoming tribal knowledge.** Use `factory judgment` to
   track a human-promoted design decision with exact paths, a named owner,
   review date, and hash-bound proof obligations. A Change Safety Case routes
@@ -429,7 +435,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [0.45.3 release notes](docs/RELEASE_NOTES_0.45.3.md),
+- See the [0.45.4 release notes](docs/RELEASE_NOTES_0.45.4.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

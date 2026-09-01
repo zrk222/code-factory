@@ -590,6 +590,12 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert 'id="authorize-oracle-change"' in page
     assert "renderOracleFirewall(payload)" in page
     assert "factory.oracle_firewall_status" in page
+    assert 'id="atomic-proof-panel"' in page
+    assert 'id="copy-atomic-verify"' in page
+    assert "factory atomic verify" in page
+    assert "Atomic mechanics · independent proof bridge" in page
+    assert "renderAtomicProofAdapter(payload)" in page
+    assert "ATOMIC_MCP_READ_ONLY" in page
     assert "factory.appforge_oracle_status" in page
 
 

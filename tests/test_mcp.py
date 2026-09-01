@@ -61,6 +61,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.revenue_memory",
         "factory.appforge_status",
         "factory.oracle_firewall_status",
+        "factory.atomic_status",
         "factory.codex_metadata_audit",
         "factory.appforge_oracle_status",
         "factory.saas_status",
@@ -82,7 +83,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {"name": "code-factory", "version": "0.45.3"},
+                "serverInfo": {"name": "code-factory", "version": "0.45.4"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }
@@ -211,6 +212,13 @@ def test_mcp_revenue_appforge_saas_and_memory_tools_are_read_only(tmp_path: Path
     }, tmp_path))
     assert oracle["marker"] == "MCP_ORACLE_FIREWALL_READ_ONLY"
     assert oracle["status"]["marker"] == "ORACLE_FIREWALL_READ_ONLY"
+    atomic = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8211, "method": "tools/call",
+        "params": {"name": "factory.atomic_status"},
+    }, tmp_path))
+    assert atomic["marker"] == "ATOMIC_MCP_READ_ONLY"
+    assert atomic["status"]["marker"] == "ATOMIC_MCP_READ_ONLY"
+    assert all(value is False for value in atomic["status"]["authority"].values())
     appforge_oracle = _content(dispatch({
         "jsonrpc": "2.0", "id": 822, "method": "tools/call",
         "params": {"name": "factory.appforge_oracle_status"},

@@ -20,7 +20,7 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Catch hollow AI tests and App Store evidence gaps.
+short_description: Verify AI tests, app evidence, and agent workflow drift.
 ---
 
 # Code Factory
@@ -40,6 +40,10 @@ receive a local receipt. It does not upload or change your project.
 - **Senior developer or team:** wrap an admitted agent run, record its exact
   file delta, run declared validators, and review hashes and bounded facts—not
   retained prompts or raw model output.
+- **Agent workflow team:** import an explicit workflow envelope and verify its
+  typed DAG, scoped handoffs, checkpoint continuity, source bytes, resume
+  lineage, and sealed intent binding without giving the workflow release
+  authority.
 - **App or SaaS builder:** storyboard the intended experience, verify identity
   through revocation, and run 30 exact-build Apple policy/rejection-regression
   gates before submission. Missing and unclassified evidence stays blocked.
@@ -64,6 +68,9 @@ receive a local receipt. It does not upload or change your project.
 - **"A review has comments but no common proof picture."** Graph Ops and the
   local MCP surface project receipts, Proof Debt, and one next action without
   enabling merge, release, deployment, source upload, or credential access.
+- **"The final agent claim is green, but its workflow may have drifted."** The
+  Atomic Proof Adapter rejects cycles, undeclared handoffs, scope escape,
+  changed source bytes, and resume drift; it does not execute the workflow.
 
 Read the [Teams and Enterprise Operations Manual](https://github.com/zrk222/code-factory/blob/main/docs/ENTERPRISE_TEAMS_OPERATIONS.md)
 for role boundaries and the optional [Prestige Design Review](https://github.com/zrk222/code-factory/blob/main/docs/PRESTIGE_DESIGN.md)
@@ -83,7 +90,7 @@ declared cases; it is not a production-readiness or release certificate.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.41.0` is archived under the repository's stable Zenodo concept DOI at
+Release `v0.45.4` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21381405).
 
 ### New: declared Senior Attention before review

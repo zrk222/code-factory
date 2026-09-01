@@ -38,6 +38,7 @@ from .proof_review_workflow import proof_review_projection
 from .revenueforge import revenueforge_projection
 from .appforge_design import appforge_design_projection
 from .oracle_firewall import oracle_firewall_projection, verify_oracle_contract
+from .atomic_proof_adapter import atomic_proof_projection, verify_atomic_receipt
 from .saas_proof import saas_proof_projection
 
 
@@ -1096,6 +1097,65 @@ def _append_oracle_firewall(state: dict[str, Any], root: Path) -> dict[str, int]
     return facts
 
 
+def _append_atomic_proof_adapter(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project imported Atomic mechanics as evidence, never as runtime control."""
+    projection = atomic_proof_projection(root)
+    facts = {
+        "receipt_count": int(projection.get("receipt_count", 0)),
+        "bound_count": int(projection.get("bound_count", 0)),
+        "resumed_count": int(projection.get("resumed_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
+        "latest": projection.get("latest"),
+        "authority": projection.get("authority", _AUTHORITY),
+    }
+    for summary in projection.get("receipts", []):
+        if not isinstance(summary, dict) or not isinstance(summary.get("path"), str):
+            continue
+        checked = verify_atomic_receipt(root, Path(summary["path"]))
+        if not checked.get("ok"):
+            facts["invalid_count"] += 1
+            continue
+        receipt = checked["receipt"]
+        digest = str(receipt.get("receipt_sha256") or summary.get("receipt_sha256") or "atomic")
+        oracle = receipt.get("oracle", {}) if isinstance(receipt.get("oracle"), dict) else {}
+        workflow = receipt.get("workflow", {}) if isinstance(receipt.get("workflow"), dict) else {}
+        run = receipt.get("run", {}) if isinstance(receipt.get("run"), dict) else {}
+        contract_digest = str(oracle.get("contract_sha256") or "unbound")
+        contract_id = f"atomic-contract:{contract_digest[:24]}"
+        workflow_id = f"atomic-workflow:{digest[:24]}"
+        run_id = f"atomic-run:{digest[:24]}"
+        _node(state, node_id=contract_id, kind="atomic_contract", label=f"Atomic contract {contract_digest[:12]}", source=str(oracle.get("path") or summary["path"]), status="bound", facts={"contract_sha256": contract_digest, "authority": _AUTHORITY, "execution": False})
+        _node(state, node_id=workflow_id, kind="atomic_workflow", label=f"Atomic DAG {workflow.get('id', digest[:12])}", source=summary["path"], status="declared", facts={"definition_sha256": workflow.get("definition_sha256"), "topology_sha256": workflow.get("topology_sha256"), "authority": _AUTHORITY, "execution": False})
+        _node(state, node_id=run_id, kind="atomic_run", label=f"Atomic run {run.get('id', digest[:12])}", source=summary["path"], status=str(run.get("status") or "unknown"), facts={"receipt_sha256": digest, "declared_isolation": receipt.get("isolation", {}).get("declared_mode") if isinstance(receipt.get("isolation"), dict) else None, "resumed": receipt.get("resume") is not None, "authority": _AUTHORITY, "execution": False})
+        _edge(state, contract_id, workflow_id, "authorizes")
+        _edge(state, workflow_id, run_id, "declares")
+        stage_nodes: dict[str, str] = {}
+        for stage in receipt.get("stages", []):
+            if not isinstance(stage, dict) or not isinstance(stage.get("id"), str):
+                continue
+            stage_id = f"atomic-stage:{digest[:16]}:{stage['id']}"
+            stage_nodes[stage["id"]] = stage_id
+            checkpoint = stage.get("checkpoint", {}) if isinstance(stage.get("checkpoint"), dict) else {}
+            _node(state, node_id=stage_id, kind="atomic_stage", label=f"Atomic {stage.get('kind', 'stage')} · {stage['id']}", source=summary["path"], status=str(stage.get("status") or "unknown"), facts={"scope_paths": stage.get("scope_paths", []), "capabilities": stage.get("capabilities", []), "checkpoint_id": checkpoint.get("id"), "checkpoint_sha256": checkpoint.get("sha256"), "artifact_sha256": stage.get("artifact_sha256"), "tool_manifest_sha256": stage.get("tool_manifest_sha256"), "source_preconditions": stage.get("source_preconditions", []), "authority": _AUTHORITY, "execution": False})
+            _edge(state, run_id, stage_id, "contains")
+        for handoff in receipt.get("handoffs", []):
+            if not isinstance(handoff, dict) or not isinstance(handoff.get("id"), str):
+                continue
+            handoff_id = f"atomic-handoff:{digest[:16]}:{handoff['id']}"
+            _node(state, node_id=handoff_id, kind="atomic_handoff", label=f"Atomic handoff {handoff['id']}", source=summary["path"], status="bound", facts={"capability": handoff.get("capability"), "scope_paths": handoff.get("scope_paths", []), "artifact_sha256": handoff.get("artifact_sha256"), "tool_manifest_sha256": handoff.get("tool_manifest_sha256"), "source_preconditions_sha256": handoff.get("source_preconditions_sha256"), "authority": _AUTHORITY, "execution": False})
+            source = stage_nodes.get(handoff.get("from_stage"))
+            target = stage_nodes.get(handoff.get("to_stage"))
+            if source:
+                _edge(state, source, handoff_id, "hands_off")
+            if target:
+                _edge(state, handoff_id, target, "scoped_to")
+    for path in projection.get("invalid", []):
+        if not isinstance(path, str):
+            continue
+        _node(state, node_id=f"atomic-invalid:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}", kind="atomic_receipt", label="Atomic receipt invalid", source=path, status="invalid", facts={"authority": _AUTHORITY, "execution": False})
+    return facts
+
+
 def _append_guardrail_evaluations(state: dict[str, Any], root: Path) -> dict[str, int]:
     """Project hash-bound redacted guardrail evaluations, never query a ledger."""
     facts = {"count": 0, "active_count": 0, "withheld_count": 0, "invalid_count": 0}
@@ -1648,7 +1708,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
                     frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                    counterexamples: dict[str, int], oracle_firewall: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> dict[str, int]:
+                    counterexamples: dict[str, int], oracle_firewall: dict[str, int], atomic_proof_adapter: dict[str, Any], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -1693,6 +1753,10 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "oracle_challenge_count": oracle_firewall["challenge_count"],
         "oracle_incident_count": oracle_firewall["incident_count"],
         "oracle_invalid_count": oracle_firewall["invalid_count"],
+        "atomic_receipt_count": atomic_proof_adapter["receipt_count"],
+        "atomic_bound_count": atomic_proof_adapter["bound_count"],
+        "atomic_resumed_count": atomic_proof_adapter["resumed_count"],
+        "atomic_invalid_count": atomic_proof_adapter["invalid_count"],
         "guardrail_evaluation_count": guardrails["count"],
         "guardrail_active_count": guardrails["active_count"],
         "guardrail_withheld_count": guardrails["withheld_count"],
@@ -1747,7 +1811,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
                       proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                      counterexamples: dict[str, int], oracle_firewall: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> list[str]:
+                      counterexamples: dict[str, int], oracle_firewall: dict[str, int], atomic_proof_adapter: dict[str, Any], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -1784,6 +1848,10 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_ORACLE_FIREWALL_READ_ONLY")
     if oracle_firewall["blocked_drift_count"]:
         markers.append("GRAPH_OPS_ORACLE_WEAKENING_BLOCKED")
+    if atomic_proof_adapter["receipt_count"] or atomic_proof_adapter["invalid_count"]:
+        markers.append("GRAPH_OPS_ATOMIC_PROOF_ADAPTER_READ_ONLY")
+    if atomic_proof_adapter["invalid_count"]:
+        markers.append("GRAPH_OPS_ATOMIC_PROOF_ADAPTER_INVALID")
     if guardrails["count"]:
         markers.append("GRAPH_OPS_GUARDRAIL_EVALUATIONS_REDACTED")
     if resilience["count"]:
@@ -1870,6 +1938,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     continuity = _append_continuity(state, workspace)
     counterexamples = _append_counterexamples(state, workspace)
     oracle_firewall = _append_oracle_firewall(state, workspace)
+    atomic_proof_adapter = _append_atomic_proof_adapter(state, workspace)
     guardrails = _append_guardrail_evaluations(state, workspace)
     resilience = _append_resilience_plans(state, workspace)
     proof_deltas = _append_proof_deltas(state, workspace)
@@ -1888,7 +1957,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
-    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, oracle_firewall, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
+    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, oracle_firewall, atomic_proof_adapter, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     facts["journey_proof_count"] = journey_proofs["count"]
     facts["journey_proof_admissible_count"] = journey_proofs["admissible_count"]
     facts["journey_proof_invalid_count"] = journey_proofs["invalid_count"]
@@ -1917,7 +1986,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
-    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, oracle_firewall, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
+    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, oracle_firewall, atomic_proof_adapter, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     if journey_proofs["count"]:
         markers = sorted({*markers, "JOURNEY_STATUS_READ_ONLY", "GRAPH_OPS_JOURNEY_PROOF_READ_ONLY"})
     if continuous_proof["count"] or continuous_proof["invalid_count"]:
@@ -1972,6 +2041,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "revenueforge": revenueforge,
         "appforge": appforge,
         "oracle_firewall": oracle_firewall,
+        "atomic_proof_adapter": atomic_proof_adapter,
         "saas_proof": saas_proof,
         "jetbrains_handshake": jetbrains_handshake,
     }

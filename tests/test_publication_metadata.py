@@ -91,7 +91,7 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     assert "starter is never called production-ready" in readme
     assert "offline-verifiable Survival Card" in readme
     assert "factory gauntlet" in readme
-    assert vscode_package["description"] == "Catch hollow AI tests, SaaS access drift, and App Store evidence gaps locally."
+    assert vscode_package["description"] == "Verify AI tests, app evidence, and agent-workflow drift locally before release."
     assert {"mvp", "mcp", "graph-ops", "proof-debt", "ai-governance", "design-review", "ui-quality"}.issubset(vscode_package["keywords"])
     for content in (vscode_readme, intellij_readme):
         assert value in content
@@ -295,10 +295,10 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.45.3"
+    assert project["version"] == "0.45.4"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.8.21"
-    assert 'version = "0.8.21"' in gradle
+    assert vscode["version"] == "0.8.22"
+    assert 'version = "0.8.22"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -311,7 +311,7 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
     assert "Your IDE feels slow. Your AI code looks fine." in plugin_xml
     assert "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains." in plugin_xml
-    assert "New in 0.8.21 — AppForge Mission Control" in plugin_xml
+    assert "New in 0.8.22 — Atomic Proof Adapter" in plugin_xml
     assert "OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation" in plugin_xml
     assert "Tools | FactoryLine | Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
@@ -404,7 +404,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     assert plan["offer"]["proof_pro"]["annual_price_usd"] == 90.0
     assert plan["offer"]["appforge_builder"]["monthly_price_usd"] == 24.0
     assert plan["offer"]["paid_from"] == "2027-01-01"
-    assert plan["plugin"]["current_free_version"] == "0.8.21"
+    assert plan["plugin"]["current_free_version"] == "0.8.22"
     assert plan["paid_descriptor"] == {
         "product_code": "PFACTORYLINE",
         "product_code_status": "proposed_not_registered",
@@ -476,8 +476,8 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["access_right"] == "open"
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
-    assert metadata["version"] == "0.45.3"
-    assert metadata["publication_date"] == "2026-08-30"
+    assert metadata["version"] == "0.45.4"
+    assert metadata["publication_date"] == "2026-09-02"
     assert "deterministic AppForge App Review evidence gate" in metadata["description"]
     assert "30 policy and release-risk checks" in metadata["description"]
     assert "named human control" in metadata["description"]

@@ -17,6 +17,21 @@
 
 ## Unreleased
 
+## 0.45.4 - 2026-09-02
+
+- Add the Atomic Proof Adapter: import an explicit external workflow as
+  evidence, verify its typed acyclic graph, stage capabilities, scoped
+  handoffs, checkpoints, source preconditions, and resume lineage, then bind
+  the result to the current Oracle Contract.
+- Reject workflow cycles, undeclared handoffs, scope escape, changed source
+  bytes, hidden checkpoint drift, and autonomous runs whose isolation is not
+  independently verified. Imported declarations never become release or
+  execution authority.
+- Surface the verified workflow and its authority boundary in Graph Ops, the
+  CLI, local MCP, and progressive WebMCP. The adapter remains read-only and
+  does not execute Atomic, run shell commands, approve, repair, merge, publish,
+  or deploy.
+
 ## 0.45.3 - 2026-08-31
 
 - Add the AppForge Mission Control bridge to FactoryLine for JetBrains. It reads

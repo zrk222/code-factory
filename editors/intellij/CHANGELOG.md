@@ -1,5 +1,13 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.8.22 - 2026-09-02
+
+- Add Atomic Proof Adapter facts to Unified Graph Ops so JetBrains users can
+  inspect an externally orchestrated workflow's typed stages, scoped handoffs,
+  checkpoint continuity, source preconditions, and Oracle Contract binding.
+- Make imported authority explicit: FactoryLine does not execute or resume the
+  workflow and does not approve, apply, merge, publish, or deploy its output.
+
 ## 0.8.21 - 2026-08-31
 
 - Add an IDE-native **AppForge Mission Control** tab and action. It reads only

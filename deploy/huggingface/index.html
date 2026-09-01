@@ -312,6 +312,21 @@ factory revenue app-review-gate --root . \
       </div>
     </section>
 
+    <section id="atomic-proof">
+      <div class="shell proof">
+        <div>
+          <div class="eyebrow">Agent workflows · verify the path</div>
+          <h2>Keep the workflow. Independently verify every handoff.</h2>
+          <p>Import a secret-free workflow envelope and check its typed stage graph, scoped capabilities and handoffs, checkpoint continuity, exact source bytes, resume lineage, and sealed intent binding. Code Factory rejects drift without starting the workflow or inheriting its authority.</p>
+          <div class="actions"><a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/ATOMIC_PROOF_ADAPTER.md">Review the proof contract</a></div>
+        </div>
+        <pre><code>factory atomic import --root . \
+  --envelope .factory/atomic/run-envelope.json --json
+
+factory atomic status --root . --json</code></pre>
+      </div>
+    </section>
+
     <section>
       <div class="shell proof">
         <div>
@@ -433,7 +448,7 @@ Never substitute CI or repository traffic for installs.</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory v0.45.0 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.45.0">Release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
+    <footer><span>Code Factory v0.45.4 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.45.4">Release</a> · <a href="https://doi.org/10.5281/zenodo.21381405">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

@@ -34,6 +34,11 @@ known, what is missing, and the one fact-derived next action.
   Graph Ops facts, impact, and next action without execution or external
   authority. Every generated starter also includes a deterministic Mermaid
   output map.
+- **Turns explicit agent workflows into independently reviewable evidence.**
+  The Atomic Proof Adapter verifies a typed acyclic stage graph, scoped
+  capabilities and handoffs, checkpoints, source preconditions, and resume
+  lineage before binding the result to the current Oracle Contract. It imports
+  evidence only; it does not execute the workflow or inherit its authority.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.
@@ -89,7 +94,7 @@ known, what is missing, and the one fact-derived next action.
 ## Typical path
 
 ```powershell
-pip install factoryline-code-factory==0.45.3
+pip install factoryline-code-factory==0.45.4
 factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid

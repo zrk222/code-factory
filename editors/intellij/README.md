@@ -16,6 +16,12 @@ coverage, and quality thresholds; FactoryLine asks a different question:
 could the test and supplied run evidence actually reject a broken result? It
 does not replace, control, or imply endorsement by either JetBrains product.
 
+**New in 0.8.22:** Unified Graph Ops can display a verified Atomic Proof
+Adapter receipt: explicit stages, scoped handoffs, checkpoints, immutable
+source preconditions, resume lineage, and Oracle Contract binding. The adapter
+is read-only and cannot execute or resume the workflow, approve a change, apply
+a repair, merge, publish, or deploy.
+
 ## What It Does
 
 - `FactoryLine: Run Spec-to-Ship Assembly` runs `factory assemble <feature> --root <project>`.
@@ -112,7 +118,7 @@ facts, and their review scope is never a root-cause or repair claim. See
 
 ## Install
 
-1. Install `factoryline-code-factory==0.45.3` into the Python environment that
+1. Install `factoryline-code-factory==0.45.4` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the

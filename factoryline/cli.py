@@ -139,6 +139,7 @@ from .oracle_firewall import (
     verify_oracle_challenge_result,
     verify_oracle_contract,
 )
+from .atomic_proof_adapter import AtomicProofAdapterError, atomic_proof_projection, import_atomic_run, verify_atomic_receipt
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
 from .jetbrains_handshake import (
     JetBrainsHandshakeError,
@@ -1277,6 +1278,21 @@ def main(argv=None) -> int:
     oracle_status = oracle_sub.add_parser("status", help="read local Oracle Firewall status without changing any artifact")
     oracle_status.add_argument("--root", default=".")
     oracle_status.add_argument("--json", action="store_true")
+
+    atomic = sub.add_parser("atomic", help="bind a hash-only Atomic workflow export to a sealed Oracle Contract without executing Atomic")
+    atomic_sub = atomic.add_subparsers(required=True, dest="atomic_cmd")
+    atomic_import = atomic_sub.add_parser("import", help="validate and store one immutable local Atomic mechanics receipt")
+    atomic_import.add_argument("--root", default=".")
+    atomic_import.add_argument("--envelope", required=True, help="workspace-relative factory.atomic-run-envelope.v1 JSON")
+    atomic_import.add_argument("--out", help="workspace-relative immutable receipt path")
+    atomic_import.add_argument("--json", action="store_true")
+    atomic_verify = atomic_sub.add_parser("verify", help="verify one imported Atomic mechanics receipt and its current Oracle binding")
+    atomic_verify.add_argument("receipt")
+    atomic_verify.add_argument("--root", default=".")
+    atomic_verify.add_argument("--json", action="store_true")
+    atomic_status = atomic_sub.add_parser("status", help="read bounded imported Atomic mechanics facts without changing a receipt")
+    atomic_status.add_argument("--root", default=".")
+    atomic_status.add_argument("--json", action="store_true")
 
     proofsearch = sub.add_parser("proofsearch", help="compare hash-bound repair candidates without applying them")
     proofsearch_sub = proofsearch.add_subparsers(required=True, dest="proofsearch_cmd")
@@ -2681,6 +2697,24 @@ def main(argv=None) -> int:
             print("authority   : local integrity and read-only supervision only; no candidate mutation, approval, release, credential, or network action")
         else:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
+    if a.cmd == "atomic":
+        root = Path(a.root).resolve()
+        try:
+            if a.atomic_cmd == "import":
+                result = import_atomic_run(root, Path(a.envelope), Path(a.out) if a.out else None)
+            elif a.atomic_cmd == "verify":
+                result = verify_atomic_receipt(root, Path(a.receipt))
+            else:
+                result = atomic_proof_projection(root)
+            code = 0 if result.get("ok", True) and int(result.get("invalid_count", 0)) == 0 else 1
+        except (AtomicProofAdapterError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.atomic-proof-adapter.error.v1", "marker": "ATOMIC_INPUT_REJECTED", "code": getattr(exc, "code", "E_ATOMIC_ENVELOPE_SCHEMA"), "message": str(exc)}
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
         return code
     if a.cmd == "pack":
         try:

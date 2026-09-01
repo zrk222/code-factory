@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.22 - 2026-09-02
+
+- Add read-only Atomic workflow proof to Graph Ops: verify the supplied stage
+  graph, scoped handoffs, checkpoint continuity, source bytes, and resume
+  lineage before treating the workflow as evidence.
+- Keep the authority boundary visible. FactoryLine never starts or resumes the
+  external workflow and never turns its declarations into approval, merge, or
+  release authority.
+
 ## 0.8.21 - 2026-08-31
 
 - Add the AppForge Mission Control story to the local extension surface: bind

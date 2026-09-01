@@ -10,6 +10,7 @@ def test_webmcp_manifest_is_deterministic_read_only_and_progressive() -> None:
     assert [item["name"] for item in first["tools"]] == [item["name"] for item in WEBMCP_TOOLS]
     assert "factory.saas_status" in [item["name"] for item in first["tools"]]
     assert "factory.oracle_firewall_status" in [item["name"] for item in first["tools"]]
+    assert "factory.atomic_status" in [item["name"] for item in first["tools"]]
     assert "factory.appforge_oracle_status" in [item["name"] for item in first["tools"]]
     assert "factory.jetbrains_handshake_status" in [item["name"] for item in first["tools"]]
     assert all(item["inputSchema"]["additionalProperties"] is False for item in first["tools"])

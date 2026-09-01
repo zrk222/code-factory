@@ -29,6 +29,7 @@ from .revenue_evidence import query_evidence_memory
 from .appforge_design import appforge_design_projection
 from .appforge_oracle import appforge_oracle_projection
 from .oracle_firewall import oracle_firewall_projection
+from .atomic_proof_adapter import atomic_proof_projection
 from .codex_metadata import MetadataAuditError, audit_metadata
 from .saas_proof import saas_proof_projection
 from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
@@ -389,6 +390,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.oracle_firewall_status",
             "description": "Read sealed original-intent handoffs, provenance contracts, independent challenge plans, and blocked weakening facts. It never alters an oracle, code, agent, or release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.atomic_status",
+            "description": "Read imported Atomic workflow DAG, capability handoff, checkpoint, and source-precondition facts bound to a sealed Oracle Contract. It never invokes Atomic, resumes a checkpoint, or grants authority.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -990,6 +997,17 @@ def _oracle_firewall_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _atomic_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.atomic_status accepts no arguments")
+    return {
+        "marker": "ATOMIC_MCP_READ_ONLY",
+        "action_summary": "Read local Atomic mechanics receipts only; retain the Oracle Contract, declared scope, and zero authority boundary.",
+        "status": atomic_proof_projection(root),
+        "scope": "Read-only imported evidence. No Atomic runtime, intercom message, checkpoint resume, code mutation, approval, provider call, or release action ran.",
+    }
+
+
 def _codex_metadata_audit(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) - {"paths"}:
         raise McpError("factory.codex_metadata_audit accepts optional paths only")
@@ -1142,6 +1160,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_appforge_status(root, arguments))
     if name == "factory.oracle_firewall_status":
         return _content(_oracle_firewall_status(root, arguments))
+    if name == "factory.atomic_status":
+        return _content(_atomic_status(root, arguments))
     if name == "factory.codex_metadata_audit":
         return _content(_codex_metadata_audit(root, arguments))
     if name == "factory.appforge_oracle_status":
