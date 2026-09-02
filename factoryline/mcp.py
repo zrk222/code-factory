@@ -29,6 +29,7 @@ from .revenue_evidence import query_evidence_memory
 from .appforge_design import appforge_design_projection
 from .appforge_oracle import appforge_oracle_projection
 from .oracle_firewall import oracle_firewall_projection
+from .semantic_authority import semantic_authority_projection
 from .atomic_proof_adapter import atomic_proof_projection
 from .agent_proof_bridge import AgentProofBridgeError, agent_handoff_brief, agent_proof_projection
 from .proof_worklog import proof_worklog_projection
@@ -81,6 +82,7 @@ _RECEIPT_ROOTS = (
     Path(".factory/intent-ledgers"),
     Path(".factory/journey-proof"),
     Path(".factory/oracles"),
+    Path(".factory/semantic-authority"),
     Path(".factory/appforge"),
     Path(".factory/operations-control"),
     Path(".factory/lifecycle"),
@@ -399,6 +401,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.oracle_firewall_status",
             "description": "Read sealed original-intent handoffs, provenance contracts, independent challenge plans, and blocked weakening facts. It never alters an oracle, code, agent, or release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.semantic_authority_status",
+            "description": "Read hash-sealed agent handoffs, expiring scoped leases, and local admission receipts. It never sends a message, calls a tool, grants authority, or executes work.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1053,6 +1061,17 @@ def _oracle_firewall_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _semantic_authority_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.semantic_authority_status accepts no arguments")
+    return {
+        "marker": "MCP_SEMANTIC_AUTHORITY_READ_ONLY",
+        "action_summary": "Read sealed context-bound handoffs, expiring least-privilege leases, and local decision receipts without treating a message as permission.",
+        "status": semantic_authority_projection(root),
+        "scope": "Read-only local proof projection. It does not validate open-ended semantics, authenticate a real-world identity, run a sandbox, invoke a tool, execute code, approve work, or contact a provider.",
+    }
+
+
 def _atomic_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.atomic_status accepts no arguments")
@@ -1292,6 +1311,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_appforge_status(root, arguments))
     if name == "factory.oracle_firewall_status":
         return _content(_oracle_firewall_status(root, arguments))
+    if name == "factory.semantic_authority_status":
+        return _content(_semantic_authority_status(root, arguments))
     if name == "factory.atomic_status":
         return _content(_atomic_status(root, arguments))
     if name == "factory.operations_control_status":

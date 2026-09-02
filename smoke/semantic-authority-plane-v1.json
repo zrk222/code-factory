@@ -1,0 +1,13 @@
+{
+  "checks": [
+    {
+      "name": "semantic_authority_rejects_scope_escape_and_replay",
+      "kind": "command",
+      "run": "python -m pytest -q tests/test_semantic_authority.py",
+      "expect_exit": 0,
+      "expect_stdout": "4 passed",
+      "timeout_s": 45,
+      "must_fail_on_stub": true
+    }
+  ]
+}

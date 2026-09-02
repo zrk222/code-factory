@@ -38,6 +38,7 @@ from .proof_review_workflow import proof_review_projection
 from .revenueforge import revenueforge_projection
 from .appforge_design import appforge_design_projection
 from .oracle_firewall import oracle_firewall_projection, verify_oracle_contract
+from .semantic_authority import semantic_authority_projection
 from .atomic_proof_adapter import atomic_proof_projection, verify_atomic_receipt
 from .agent_proof_bridge import agent_proof_projection, verify_agent_proof
 from .proof_worklog import proof_worklog_projection
@@ -1103,6 +1104,60 @@ def _append_oracle_firewall(state: dict[str, Any], root: Path) -> dict[str, int]
     return facts
 
 
+def _append_semantic_authority(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project typed handoffs and expiring leases; never treat them as execution."""
+    projection = semantic_authority_projection(root)
+    facts = {
+        "handoff_count": int(projection.get("handoff_count", 0)),
+        "current_handoff_count": int(projection.get("current_handoff_count", 0)),
+        "lease_count": int(projection.get("lease_count", 0)),
+        "active_lease_count": int(projection.get("active_lease_count", 0)),
+        "expired_lease_count": int(projection.get("expired_lease_count", 0)),
+        "decision_count": int(projection.get("decision_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
+        "known_count": 0, "unknown_count": 0, "uncertain_count": 0, "blocking_unknown_count": 0, "capability_limit_count": 0,
+        "authority": projection.get("authority", _AUTHORITY),
+    }
+    handoffs: dict[str, str] = {}
+    leases: dict[str, str] = {}
+    for item in projection.get("handoffs", []):
+        if not isinstance(item, dict) or not item.get("ok"):
+            continue
+        digest = str(item.get("sha256") or "handoff")
+        facts["known_count"] += int(item.get("known_count", 0))
+        facts["unknown_count"] += int(item.get("unknown_count", 0))
+        facts["uncertain_count"] += int(item.get("uncertain_count", 0))
+        facts["blocking_unknown_count"] += int(item.get("blocking_unknown_count", 0))
+        facts["capability_limit_count"] += int(item.get("capability_limit_count", 0))
+        node_id = f"semantic-handoff:{digest[:24]}"
+        handoffs[digest] = node_id
+        contract_digest = str(item.get("contract_sha256") or "")
+        _node(state, node_id=node_id, kind="semantic_handoff", label=f"Semantic handoff {item.get('id', digest[:12])}", source=str(item.get("path") or ".factory/semantic-authority/handoffs"), status="current", facts={"handoff_sha256": digest, "context_urn": item.get("context_urn"), "contract_sha256": contract_digest, "authority": _AUTHORITY, "execution": False})
+        if contract_digest:
+            _edge(state, f"oracle-decision:{contract_digest[:24]}", node_id, "constrains")
+    for item in projection.get("leases", []):
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("sha256") or "lease")
+        node_id = f"semantic-lease:{digest[:24]}"
+        leases[digest] = node_id
+        status = "active" if item.get("ok") else "expired" if item.get("code") == "SEMANTIC_LEASE_EXPIRED" else "invalid"
+        _node(state, node_id=node_id, kind="authority_lease", label=f"Authority lease {item.get('id', digest[:12])}", source=str(item.get("path") or ".factory/semantic-authority/leases"), status=status, facts={"lease_sha256": digest, "context_urn": item.get("context_urn"), "contract_sha256": item.get("contract_sha256"), "authority": _AUTHORITY, "execution": False})
+        contract_digest = str(item.get("contract_sha256") or "")
+        if contract_digest:
+            _edge(state, f"oracle-decision:{contract_digest[:24]}", node_id, "bounds")
+    for item in projection.get("decisions", []):
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("sha256") or "decision")
+        node_id = f"semantic-decision:{digest[:24]}"
+        _node(state, node_id=node_id, kind="semantic_decision", label=f"Constrained action {item.get('action_id', digest[:12])}", source=str(item.get("path") or ".factory/semantic-authority/decisions"), status="recorded", facts={"decision_sha256": digest, "action": item.get("action"), "authority": _AUTHORITY, "execution": False})
+        lease_node = leases.get(str(item.get("lease_sha256") or ""))
+        if lease_node:
+            _edge(state, lease_node, node_id, "admits")
+    return facts
+
+
 def _append_atomic_proof_adapter(state: dict[str, Any], root: Path) -> dict[str, Any]:
     """Project imported Atomic mechanics as evidence, never as runtime control."""
     projection = atomic_proof_projection(root)
@@ -1170,6 +1225,7 @@ def _append_agent_proof_bridge(state: dict[str, Any], root: Path) -> dict[str, A
         "bound_count": int(projection.get("bound_count", 0)),
         "resumed_count": int(projection.get("resumed_count", 0)),
         "visual_evidence_count": int(projection.get("visual_evidence_count", 0)),
+        "semantic_authority_bound_count": int(projection.get("semantic_authority_bound_count", 0)),
         "invalid_count": int(projection.get("invalid_count", 0)),
         "providers": projection.get("providers", {}), "latest": projection.get("latest"),
         "authority": projection.get("authority", _AUTHORITY),
@@ -1791,6 +1847,10 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "review_oracle_weakening", "A proposed gate, scenario, threshold, test, or exception weakens the sealed definition of done. Keep work paused until a named human reviews a separately sealed successor contract."
     if facts.get("oracle_invalid_count", 0) > 0:
         return "repair_oracle_integrity", "An Oracle Firewall artifact is invalid or stale. Do not rely on autonomous admission or AppForge authority until its exact source binding is current."
+    if facts.get("semantic_authority_expired_lease_count", 0) > 0:
+        return "renew_semantic_authority", "An agent lease expired. Keep the handoff constrained and obtain a fresh named approval rather than extending or replaying the prior lease."
+    if facts.get("semantic_authority_invalid_count", 0) > 0:
+        return "repair_semantic_authority", "A semantic handoff, lease, or decision receipt is invalid. Do not rely on it for a runner admission until the sealed Oracle binding is repaired."
     if facts["external_runtime_invalid_count"] > 0:
         return "refresh_external_runtime_evidence", "An imported external runtime receipt is stale or invalid; re-import the bounded runner bundle before relying on its observations."
     if facts.get("intent_trace_binding_mismatch_count", 0) > 0:
@@ -1920,6 +1980,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "agent_bridge_bound_count": agent_proof_bridge["bound_count"],
         "agent_bridge_resumed_count": agent_proof_bridge["resumed_count"],
         "agent_bridge_visual_evidence_count": agent_proof_bridge["visual_evidence_count"],
+        "agent_bridge_semantic_authority_bound_count": agent_proof_bridge["semantic_authority_bound_count"],
         "agent_bridge_invalid_count": agent_proof_bridge["invalid_count"],
         "proof_worklog_draft_count": proof_worklogs["draft_count"],
         "proof_worklog_invalid_count": proof_worklogs["invalid_count"],
@@ -2112,6 +2173,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     continuity = _append_continuity(state, workspace)
     counterexamples = _append_counterexamples(state, workspace)
     oracle_firewall = _append_oracle_firewall(state, workspace)
+    semantic_authority = _append_semantic_authority(state, workspace)
     atomic_proof_adapter = _append_atomic_proof_adapter(state, workspace)
     agent_proof_bridge = _append_agent_proof_bridge(state, workspace)
     proof_worklogs = _append_proof_worklogs(state, workspace)
@@ -2139,6 +2201,17 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
     facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, oracle_firewall, atomic_proof_adapter, agent_proof_bridge, proof_worklogs, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     facts["journey_proof_count"] = journey_proofs["count"]
+    facts["semantic_handoff_count"] = semantic_authority["handoff_count"]
+    facts["semantic_handoff_current_count"] = semantic_authority["current_handoff_count"]
+    facts["semantic_authority_lease_count"] = semantic_authority["lease_count"]
+    facts["semantic_authority_active_lease_count"] = semantic_authority["active_lease_count"]
+    facts["semantic_authority_expired_lease_count"] = semantic_authority["expired_lease_count"]
+    facts["semantic_authority_decision_count"] = semantic_authority["decision_count"]
+    facts["semantic_authority_invalid_count"] = semantic_authority["invalid_count"]
+    facts["semantic_known_count"] = semantic_authority["known_count"]
+    facts["semantic_unknown_count"] = semantic_authority["unknown_count"]
+    facts["semantic_uncertain_count"] = semantic_authority["uncertain_count"]
+    facts["semantic_blocking_unknown_count"] = semantic_authority["blocking_unknown_count"]
     facts["journey_proof_admissible_count"] = journey_proofs["admissible_count"]
     facts["journey_proof_invalid_count"] = journey_proofs["invalid_count"]
     facts["continuous_proof_count"] = continuous_proof["count"]
@@ -2191,6 +2264,10 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers = sorted({*markers, "GRAPH_OPS_SAAS_PROOF_READ_ONLY"})
     if jetbrains_handshake["state"] != "empty":
         markers = sorted({*markers, "GRAPH_OPS_JETBRAINS_HANDSHAKE_READ_ONLY"})
+    if semantic_authority["handoff_count"] or semantic_authority["lease_count"] or semantic_authority["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_SEMANTIC_AUTHORITY_READ_ONLY"})
+    if semantic_authority["expired_lease_count"] or semantic_authority["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_SEMANTIC_AUTHORITY_REVIEW_REQUIRED"})
     if operations_control["receipt_count"] or operations_control["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_OPERATIONS_CONTROL_READ_ONLY"})
     if lifecycle["run_count"] or lifecycle["invalid_count"]:
@@ -2237,6 +2314,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "revenueforge": revenueforge,
         "appforge": appforge,
         "oracle_firewall": oracle_firewall,
+        "semantic_authority": semantic_authority,
         "atomic_proof_adapter": atomic_proof_adapter,
         "agent_proof_bridge": agent_proof_bridge,
         "proof_worklogs": proof_worklogs,

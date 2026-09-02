@@ -584,12 +584,18 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert 'id="oracle-firewall-panel"' in page
     assert "Oracle Firewall · Shadow Oracle Loop" in page
     assert "Proof of the Oracle chain" in page
+    assert "Proof chain: source → obligation → forbidden behavior → gate → test → evidence → decision." in page
     assert "E_ORACLE_WEAKENING" in page
     assert 'id="copy-oracle-init"' in page
     assert 'id="validate-oracle-boundary"' in page
     assert 'id="authorize-oracle-change"' in page
     assert "renderOracleFirewall(payload)" in page
     assert "factory.oracle_firewall_status" in page
+    assert 'id="semantic-authority-panel"' in page
+    assert "A message is not permission." in page
+    assert "SEMANTIC_HANDOFF_PROOF_VISIBLE" in page
+    assert "renderSemanticAuthority(payload)" in page
+    assert "factory.semantic_authority_status" in page
     assert 'id="atomic-proof-panel"' in page
     assert 'id="copy-atomic-verify"' in page
     assert "factory atomic verify" in page

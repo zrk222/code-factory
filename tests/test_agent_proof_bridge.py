@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -19,6 +20,7 @@ from factoryline.agent_proof_bridge import (
 )
 from factoryline.graph_ops import graph_ops_snapshot
 from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
+from factoryline.semantic_authority import seal_authority_lease, seal_semantic_handoff
 
 
 AGENT = {"schema": "factory.agent-identity.v1", "subject": "portable-worker", "provider": "declared", "model": "declared-model"}
@@ -107,6 +109,24 @@ def _import(root: Path, envelope: dict[str, object], filename: str = "envelope.j
     return import_agent_proof(root, source.relative_to(root))
 
 
+def _semantic_binding(root: Path, suffix: str = "bridge") -> dict[str, str]:
+    contract = _contract(root)
+    contract_value = json.loads(contract.read_text(encoding="utf-8"))
+    handoff_input = _write(root / "semantic-handoff-input.json", {
+        "schema": "factory.semantic-handoff-input.v1", "id": "bridge-handoff", "oracle_contract": contract.relative_to(root).as_posix(), "sender": AGENT, "receiver": AGENT,
+        "performative": "REQUEST", "goal": "Inspect the exact checkout evidence envelope.", "context_urn": "urn:factory:checkout:v1", "context_source_id": "original-intent", "scope_paths": ["src"], "allowed_actions": ["inspect"],
+        "epistemic": {"known": [{"id": "intent", "statement": "The source-bound contract forbids private-data exposure.", "source_id": "original-intent"}], "unknown": [{"id": "provider", "statement": "Provider runtime state is not in the local receipt.", "impact": "No provider claim.", "blocking": True}], "uncertain": [{"id": "sandbox", "statement": "Declared isolation is not verified sandbox proof.", "impact": "Keep runtime proof separate."}], "capability_limits": ["This local envelope reader cannot call the provider or release code."]},
+    })
+    handoff = seal_semantic_handoff(root, handoff_input, Path(f".factory/semantic-authority/handoffs/{suffix}.json"))
+    lease_input = _write(root / "semantic-lease-input.json", {
+        "schema": "factory.authority-lease-input.v1", "id": "bridge-lease", "handoff": handoff["path"], "delegatee": AGENT, "scope_paths": ["src"], "allowed_actions": ["inspect"],
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).replace(microsecond=0).isoformat().replace("+00:00", "Z"), "approval_origin": "human_confirmed", "approved_by": "Release Owner", "rationale": "Bound evidence intake only.",
+    })
+    lease = seal_authority_lease(root, lease_input, Path(f".factory/semantic-authority/leases/{suffix}.json"))
+    assert lease["handoff"]["oracle_contract_sha256"] == contract_value["contract_sha256"]
+    return {"lease_path": lease["path"], "lease_sha256": lease["lease_sha256"], "action_id": "inspect-envelope", "action": "inspect", "context_urn": "urn:factory:checkout:v1"}
+
+
 @pytest.mark.parametrize("provider", ["eve", "junie", "grok_build", "coderabbit", "devin", "generic"])
 def test_profiles_bind_hash_only_portable_evidence(provider: str, tmp_path: Path) -> None:
     receipt = _import(tmp_path, _envelope(tmp_path, provider=provider))
@@ -130,6 +150,22 @@ def test_graph_ops_projects_agent_bridge_as_read_only_handoff_evidence(tmp_path:
     kinds = {node["kind"] for node in snapshot["nodes"]}
     assert {"agent_contract", "agent_provider", "agent_workflow", "agent_run", "agent_evidence"} <= kinds
     assert all(node["facts"]["authority"]["execution"] is False for node in snapshot["nodes"] if node["kind"].startswith("agent_"))
+
+
+def test_agent_bridge_can_bind_imported_evidence_to_an_active_semantic_lease(tmp_path: Path) -> None:
+    envelope = _envelope(tmp_path, provider="junie")
+    envelope["semantic_authority"] = _semantic_binding(tmp_path)
+    receipt = _import(tmp_path, envelope)
+    assert receipt["semantic_authority"]["bound"] is True
+    assert agent_proof_projection(tmp_path)["semantic_authority_bound_count"] == 1
+
+    invalid = _envelope(tmp_path, provider="junie", run_id="invalid")
+    binding = _semantic_binding(tmp_path, "invalid")
+    binding["action"] = "repair"
+    invalid["semantic_authority"] = binding
+    with pytest.raises(AgentProofBridgeError) as rejected:
+        _import(tmp_path, invalid, "invalid-semantic.json")
+    assert rejected.value.code == "E_AGENT_BRIDGE_SEMANTIC_AUTHORITY"
 
 
 def test_bridge_fails_closed_for_private_content_scope_and_visual_proof_gaps(tmp_path: Path) -> None:

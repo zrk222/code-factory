@@ -20,6 +20,7 @@ from typing import Any
 
 from .agent_license import AgentLicenseError, normalize_agent_identity
 from .oracle_firewall import OracleFirewallError, admission_oracle_decision, verify_oracle_contract
+from .semantic_authority import SemanticAuthorityError, verify_semantic_binding
 from .protocol_enums import (
     AgentCapability,
     AgentProvider,
@@ -345,8 +346,8 @@ def import_agent_proof(root: Path, envelope_path: Path, out: Path | None = None)
         _canonical(envelope)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise AgentProofBridgeError("E_AGENT_BRIDGE_SCHEMA", "envelope must be canonical UTF-8 JSON") from exc
-    allowed = {"schema", "envelope_id", "provider", "run_id", "status", "agent", "autonomy", "isolation", "scope_paths", "surface", "oracle", "workflow", "source_preconditions", "evidence_pairs", "provider_receipt", "resume"}
-    entry = _exact(envelope, allowed, "envelope", required=allowed - {"resume"})
+    allowed = {"schema", "envelope_id", "provider", "run_id", "status", "agent", "autonomy", "isolation", "scope_paths", "surface", "oracle", "workflow", "source_preconditions", "evidence_pairs", "provider_receipt", "resume", "semantic_authority"}
+    entry = _exact(envelope, allowed, "envelope", required=allowed - {"resume", "semantic_authority"})
     if entry.get("schema") != ENVELOPE_SCHEMA or entry.get("provider") not in _PROVIDERS or entry.get("status") not in _STATUS:
         raise AgentProofBridgeError("E_AGENT_BRIDGE_SCHEMA", "envelope schema, provider, or status is unsupported")
     provider, run_id = entry["provider"], _identifier(entry["run_id"], "run_id")
@@ -370,6 +371,10 @@ def import_agent_proof(root: Path, envelope_path: Path, out: Path | None = None)
     contract_scope = list(checked_contract["contract"]["scope_paths"])
     if any(not _scope_allows(contract_scope, path) for path in scope):
         raise AgentProofBridgeError("E_AGENT_BRIDGE_SCOPE_ESCAPE", "declared agent scope is outside the sealed Oracle scope")
+    try:
+        semantic = ({"bound": False, "claim_boundary": "No semantic authority binding was supplied; this provider envelope remains Oracle-bound evidence only."} if entry.get("semantic_authority") is None else {"bound": True, **verify_semantic_binding(workspace, entry["semantic_authority"], agent, scope)})
+    except SemanticAuthorityError as exc:
+        raise AgentProofBridgeError("E_AGENT_BRIDGE_SEMANTIC_AUTHORITY", str(exc)) from exc
     preconditions = _source_preconditions(workspace, entry["source_preconditions"], contract_scope)
     workflow = _workflow(entry["workflow"])
     evidence = _evidence(workspace, entry["evidence_pairs"], entry["surface"] == "visual")
@@ -391,6 +396,7 @@ def import_agent_proof(root: Path, envelope_path: Path, out: Path | None = None)
         "autonomy": entry["autonomy"],
         "isolation": {"declared_mode": entry["isolation"], "verified": False, "claim_boundary": "A declared host boundary is not sandbox, identity, or provider-runtime proof."},
         "oracle": {"path": checked_contract["path"], "contract_sha256": contract_sha, "admission": admission},
+        "semantic_authority": semantic,
         "scope_paths": scope,
         "surface": entry["surface"],
         "workflow": workflow,
@@ -441,13 +447,14 @@ def agent_proof_projection(root: Path) -> dict[str, Any]:
             "contract_sha256": receipt["oracle"]["contract_sha256"], "workflow_id": receipt["workflow"]["id"],
             "stage_count": len(receipt["workflow"]["nodes"]), "evidence_pair_count": len(receipt["evidence_pairs"]),
             "visual": receipt["surface"] == "visual", "resumed": receipt.get("resume") is not None,
+            "semantic_authority_bound": bool(receipt.get("semantic_authority", {}).get("bound")) if isinstance(receipt.get("semantic_authority"), dict) else False,
             "receipt_sha256": receipt["receipt_sha256"],
         })
     receipts.sort(key=lambda item: item["path"])
     provider_counts = {provider: sum(item["provider"] == provider for item in receipts) for provider in sorted(_PROVIDERS)}
     return {
         "schema": PROJECTION_SCHEMA, "marker": MCP_MARKER, "receipt_count": len(receipts), "bound_count": len(receipts),
-        "resumed_count": sum(int(item["resumed"]) for item in receipts), "visual_evidence_count": sum(int(item["visual"]) for item in receipts),
+        "resumed_count": sum(int(item["resumed"]) for item in receipts), "visual_evidence_count": sum(int(item["visual"]) for item in receipts), "semantic_authority_bound_count": sum(int(item["semantic_authority_bound"]) for item in receipts),
         "invalid_count": len(invalid), "providers": provider_counts, "latest": receipts[-1] if receipts else None,
         "receipts": receipts[-20:], "invalid": invalid[:100], "authority": dict(AUTHORITY),
         "claim_boundary": "Read-only local provider-bridge facts. No agent, provider, sandbox, checkpoint, deployment, approval, repair, credential, connector, or release action ran.",

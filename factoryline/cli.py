@@ -139,6 +139,16 @@ from .oracle_firewall import (
     verify_oracle_challenge_result,
     verify_oracle_contract,
 )
+from .semantic_authority import (
+    SemanticAuthorityError,
+    authorize_semantic_action,
+    record_semantic_action_decision,
+    seal_authority_lease,
+    seal_semantic_handoff,
+    semantic_authority_projection,
+    verify_authority_lease,
+    verify_semantic_handoff,
+)
 from .atomic_proof_adapter import AtomicProofAdapterError, atomic_envelope_template, atomic_proof_projection, import_atomic_run, verify_atomic_receipt
 from .agent_proof_bridge import AgentProofBridgeError, agent_handoff_brief, agent_proof_projection, import_agent_proof, provider_template, verify_agent_proof
 from .proof_worklog import ProofWorklogError, create_proof_worklog, proof_worklog_projection, verify_proof_worklog
@@ -1287,6 +1297,38 @@ def main(argv=None) -> int:
     oracle_status = oracle_sub.add_parser("status", help="read local Oracle Firewall status without changing any artifact")
     oracle_status.add_argument("--root", default=".")
     oracle_status.add_argument("--json", action="store_true")
+
+    semantic = sub.add_parser("semantic-authority", help="seal typed handoffs and expiring local authority leases without executing a runner")
+    semantic_sub = semantic.add_subparsers(required=True, dest="semantic_cmd")
+    semantic_handoff = semantic_sub.add_parser("handoff", help="seal a source-bound goal, context, epistemic declaration, scope, and action envelope")
+    semantic_handoff.add_argument("--root", default=".")
+    semantic_handoff.add_argument("--input", required=True)
+    semantic_handoff.add_argument("--out", required=True)
+    semantic_handoff.add_argument("--json", action="store_true")
+    semantic_lease = semantic_sub.add_parser("lease", help="issue a short-lived, least-privilege local lease from one sealed handoff")
+    semantic_lease.add_argument("--root", default=".")
+    semantic_lease.add_argument("--input", required=True)
+    semantic_lease.add_argument("--out", required=True)
+    semantic_lease.add_argument("--json", action="store_true")
+    semantic_verify = semantic_sub.add_parser("verify", help="verify a handoff or lease without sending, executing, or approving anything")
+    semantic_verify.add_argument("kind", choices=["handoff", "lease"])
+    semantic_verify.add_argument("path")
+    semantic_verify.add_argument("--root", default=".")
+    semantic_verify.add_argument("--json", action="store_true")
+    semantic_check = semantic_sub.add_parser("check", help="evaluate one supplied action request against a current local lease")
+    semantic_check.add_argument("--root", default=".")
+    semantic_check.add_argument("--lease", required=True)
+    semantic_check.add_argument("--request", required=True)
+    semantic_check.add_argument("--json", action="store_true")
+    semantic_record = semantic_sub.add_parser("record", help="record one replay-safe local admission decision; this never executes the request")
+    semantic_record.add_argument("--root", default=".")
+    semantic_record.add_argument("--lease", required=True)
+    semantic_record.add_argument("--request", required=True)
+    semantic_record.add_argument("--out", required=True)
+    semantic_record.add_argument("--json", action="store_true")
+    semantic_status = semantic_sub.add_parser("status", help="read local handoff/lease/decision facts without mutation")
+    semantic_status.add_argument("--root", default=".")
+    semantic_status.add_argument("--json", action="store_true")
 
     atomic = sub.add_parser("atomic", help="bind a hash-only Atomic workflow export to a sealed Oracle Contract without executing Atomic")
     atomic_sub = atomic.add_subparsers(required=True, dest="atomic_cmd")
@@ -2817,6 +2859,33 @@ def main(argv=None) -> int:
         elif code == 0:
             print(result.get("marker", "ORACLE_FIREWALL_OK"))
             print("authority   : local integrity and read-only supervision only; no candidate mutation, approval, release, credential, or network action")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
+    if a.cmd == "semantic-authority":
+        root = Path(a.root).resolve()
+        try:
+            if a.semantic_cmd == "handoff":
+                result = seal_semantic_handoff(root, Path(a.input), Path(a.out))
+            elif a.semantic_cmd == "lease":
+                result = seal_authority_lease(root, Path(a.input), Path(a.out))
+            elif a.semantic_cmd == "verify":
+                result = verify_semantic_handoff(root, Path(a.path)) if a.kind == "handoff" else verify_authority_lease(root, Path(a.path))
+            elif a.semantic_cmd == "check":
+                result = authorize_semantic_action(root, Path(a.lease), json.loads((root / a.request).read_text(encoding="utf-8-sig")))
+            elif a.semantic_cmd == "record":
+                result = record_semantic_action_decision(root, Path(a.lease), json.loads((root / a.request).read_text(encoding="utf-8-sig")), Path(a.out))
+            else:
+                result = semantic_authority_projection(root)
+            code = 0 if result.get("ok", result.get("allowed", True)) else 1
+        except (SemanticAuthorityError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.semantic-authority.error.v1", "marker": "SEMANTIC_AUTHORITY_REFUSED", "code": getattr(exc, "code", "SEMANTIC_INPUT_INVALID"), "message": str(exc)}
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            print(result.get("marker", "SEMANTIC_AUTHORITY_READ_ONLY"))
+            print("authority   : sealed local constraints only; no message, tool, sandbox, candidate, approval, release, credential, or network action")
         else:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
         return code
