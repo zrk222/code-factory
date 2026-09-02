@@ -1004,6 +1004,35 @@ def main(argv=None) -> int:
     revocations.add_argument("--identity", required=True)
     revocations.add_argument("--issuer", required=True)
     revocations.add_argument("--out", required=True)
+    enforcement_identity = enterprise_sub.add_parser("workload-identity-seal", help="sign a local workload identity reference document")
+    enforcement_identity.add_argument("payload")
+    enforcement_identity.add_argument("--private-key", required=True)
+    enforcement_identity.add_argument("--keyid", required=True)
+    enforcement_identity.add_argument("--identity", required=True)
+    enforcement_identity.add_argument("--issuer", required=True)
+    enforcement_identity.add_argument("--out", required=True)
+    enforcement_policy = enterprise_sub.add_parser("enforcement-policy-seal", help="sign a tenant-bound PEP reference policy")
+    enforcement_policy.add_argument("payload")
+    enforcement_policy.add_argument("--private-key", required=True)
+    enforcement_policy.add_argument("--keyid", required=True)
+    enforcement_policy.add_argument("--identity", required=True)
+    enforcement_policy.add_argument("--issuer", required=True)
+    enforcement_policy.add_argument("--out", required=True)
+    enforcement_revocations = enterprise_sub.add_parser("workload-revocations-seal", help="sign workload identity revocations")
+    enforcement_revocations.add_argument("entries")
+    enforcement_revocations.add_argument("--private-key", required=True)
+    enforcement_revocations.add_argument("--keyid", required=True)
+    enforcement_revocations.add_argument("--identity", required=True)
+    enforcement_revocations.add_argument("--issuer", required=True)
+    enforcement_revocations.add_argument("--out", required=True)
+    enforcement_authorize = enterprise_sub.add_parser("authorize", help="record a local non-executing enterprise PEP reference decision")
+    enforcement_authorize.add_argument("request")
+    enforcement_authorize.add_argument("--root", default=".")
+    enforcement_authorize.add_argument("--workload-identity", required=True)
+    enforcement_authorize.add_argument("--policy", required=True)
+    enforcement_authorize.add_argument("--trust-root", required=True)
+    enforcement_authorize.add_argument("--workload-revocations")
+    enforcement_authorize.add_argument("--out", required=True)
 
     s = sub.add_parser("control", help="manage local tenant-scoped evidence and approvals")
     control_sub = s.add_subparsers(required=True, dest="control_cmd")
@@ -4845,6 +4874,13 @@ def main(argv=None) -> int:
             sign_revocations,
             verify_receipt_v2,
         )
+        from .enterprise_enforcement import (
+            EnterpriseEnforcementError,
+            record_enterprise_decision,
+            sign_enforcement_policy,
+            sign_workload_identity,
+            sign_workload_revocations,
+        )
         try:
             if a.enterprise_cmd == "keygen":
                 result = generate_key_material(
@@ -4879,7 +4915,7 @@ def main(argv=None) -> int:
                     out=Path(a.out),
                 )
                 result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
-            else:
+            elif a.enterprise_cmd == "revocations-sign":
                 entries = json.loads(Path(a.entries).read_text(encoding="utf-8"))
                 signed = sign_revocations(
                     entries,
@@ -4890,8 +4926,26 @@ def main(argv=None) -> int:
                     out=Path(a.out),
                 )
                 result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
-        except (EnterpriseReceiptError, json.JSONDecodeError, OSError) as exc:
-            if isinstance(exc, EnterpriseReceiptError):
+            elif a.enterprise_cmd == "workload-identity-seal":
+                payload = json.loads(Path(a.payload).read_text(encoding="utf-8"))
+                signed = sign_workload_identity(payload, private_key_path=Path(a.private_key), keyid=a.keyid, identity=a.identity, issuer=a.issuer, out=Path(a.out))
+                result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
+            elif a.enterprise_cmd == "enforcement-policy-seal":
+                payload = json.loads(Path(a.payload).read_text(encoding="utf-8"))
+                signed = sign_enforcement_policy(payload, private_key_path=Path(a.private_key), keyid=a.keyid, identity=a.identity, issuer=a.issuer, out=Path(a.out))
+                result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
+            elif a.enterprise_cmd == "workload-revocations-seal":
+                entries = json.loads(Path(a.entries).read_text(encoding="utf-8"))
+                signed = sign_workload_revocations(entries, private_key_path=Path(a.private_key), keyid=a.keyid, identity=a.identity, issuer=a.issuer, out=Path(a.out))
+                result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
+            else:
+                request = json.loads(Path(a.request).read_text(encoding="utf-8"))
+                result = record_enterprise_decision(
+                    Path(a.root), request, Path(a.out), workload_identity_path=Path(a.workload_identity), policy_path=Path(a.policy),
+                    trust_root_path=Path(a.trust_root), revocations_path=Path(a.workload_revocations) if a.workload_revocations else None,
+                )
+        except (EnterpriseReceiptError, EnterpriseEnforcementError, json.JSONDecodeError, OSError) as exc:
+            if isinstance(exc, (EnterpriseReceiptError, EnterpriseEnforcementError)):
                 error = {"code": exc.code, "message": exc.message}
             else:
                 error = {"code": "E_INPUT", "message": str(exc)}

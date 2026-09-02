@@ -39,6 +39,7 @@ from .revenueforge import revenueforge_projection
 from .appforge_design import appforge_design_projection
 from .oracle_firewall import oracle_firewall_projection, verify_oracle_contract
 from .semantic_authority import semantic_authority_projection
+from .enterprise_enforcement import enterprise_enforcement_projection
 from .atomic_proof_adapter import atomic_proof_projection, verify_atomic_receipt
 from .agent_proof_bridge import agent_proof_projection, verify_agent_proof
 from .proof_worklog import proof_worklog_projection
@@ -1158,6 +1159,24 @@ def _append_semantic_authority(state: dict[str, Any], root: Path) -> dict[str, A
     return facts
 
 
+def _append_enterprise_enforcement(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project local PEP-reference decisions without treating them as execution."""
+    projection = enterprise_enforcement_projection(root)
+    facts = {
+        "decision_count": int(projection.get("decision_count", 0)),
+        "admitted_count": int(projection.get("admitted_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
+        "authority": projection.get("authority", _AUTHORITY),
+    }
+    for item in projection.get("decisions", []):
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("decision_sha256") or "enterprise-decision")
+        node_id = f"enterprise-pep:{digest[:24]}"
+        _node(state, node_id=node_id, kind="enterprise_pep_reference", label=f"Enterprise PEP reference {item.get('action_id', digest[:12])}", source=str(item.get("path") or ".factory/enterprise-enforcement/decisions"), status="admitted", facts={"decision_sha256": digest, "action_class": item.get("action_class"), "semantic_authority_status": item.get("semantic_authority_status"), "revocation_status": item.get("revocation_status"), "authority": _AUTHORITY, "execution": False})
+    return facts
+
+
 def _append_atomic_proof_adapter(state: dict[str, Any], root: Path) -> dict[str, Any]:
     """Project imported Atomic mechanics as evidence, never as runtime control."""
     projection = atomic_proof_projection(root)
@@ -2174,6 +2193,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     counterexamples = _append_counterexamples(state, workspace)
     oracle_firewall = _append_oracle_firewall(state, workspace)
     semantic_authority = _append_semantic_authority(state, workspace)
+    enterprise_enforcement = _append_enterprise_enforcement(state, workspace)
     atomic_proof_adapter = _append_atomic_proof_adapter(state, workspace)
     agent_proof_bridge = _append_agent_proof_bridge(state, workspace)
     proof_worklogs = _append_proof_worklogs(state, workspace)
@@ -2212,6 +2232,9 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["semantic_unknown_count"] = semantic_authority["unknown_count"]
     facts["semantic_uncertain_count"] = semantic_authority["uncertain_count"]
     facts["semantic_blocking_unknown_count"] = semantic_authority["blocking_unknown_count"]
+    facts["enterprise_enforcement_decision_count"] = enterprise_enforcement["decision_count"]
+    facts["enterprise_enforcement_admitted_count"] = enterprise_enforcement["admitted_count"]
+    facts["enterprise_enforcement_invalid_count"] = enterprise_enforcement["invalid_count"]
     facts["journey_proof_admissible_count"] = journey_proofs["admissible_count"]
     facts["journey_proof_invalid_count"] = journey_proofs["invalid_count"]
     facts["continuous_proof_count"] = continuous_proof["count"]
@@ -2268,6 +2291,10 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers = sorted({*markers, "GRAPH_OPS_SEMANTIC_AUTHORITY_READ_ONLY"})
     if semantic_authority["expired_lease_count"] or semantic_authority["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_SEMANTIC_AUTHORITY_REVIEW_REQUIRED"})
+    if enterprise_enforcement["decision_count"] or enterprise_enforcement["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_ENFORCEMENT_READ_ONLY"})
+    if enterprise_enforcement["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_ENFORCEMENT_REVIEW_REQUIRED"})
     if operations_control["receipt_count"] or operations_control["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_OPERATIONS_CONTROL_READ_ONLY"})
     if lifecycle["run_count"] or lifecycle["invalid_count"]:
@@ -2315,6 +2342,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "appforge": appforge,
         "oracle_firewall": oracle_firewall,
         "semantic_authority": semantic_authority,
+        "enterprise_enforcement": enterprise_enforcement,
         "atomic_proof_adapter": atomic_proof_adapter,
         "agent_proof_bridge": agent_proof_bridge,
         "proof_worklogs": proof_worklogs,

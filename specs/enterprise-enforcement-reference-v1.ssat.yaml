@@ -1,0 +1,60 @@
+name: enterprise-enforcement-reference-v1
+language: python
+modules:
+  - name: enterprise_enforcement
+    path: factoryline/enterprise_enforcement.py
+    functions:
+      - name: validate_workload_identity
+        args: [payload]
+        returns: dict[str, Any]
+      - name: verify_workload_identity
+        args: [path]
+        returns: dict[str, Any]
+      - name: authorize_enterprise_action
+        args: [root, request]
+        returns: dict[str, Any]
+      - name: record_enterprise_decision
+        args: [root, request, output]
+        returns: dict[str, Any]
+      - name: enterprise_enforcement_projection
+        args: [root]
+        returns: dict[str, Any]
+  - name: enterprise_receipts
+    path: factoryline/enterprise_receipts.py
+    functions:
+      - name: verify_signed_document
+        args: [path]
+        returns: dict
+  - name: semantic_authority
+    path: factoryline/semantic_authority.py
+    functions:
+      - name: verify_semantic_binding
+        args: [root, binding, actor, scope_paths]
+        returns: dict[str, Any]
+dependencies:
+  - from: enterprise_enforcement
+    to: enterprise_receipts
+  - from: enterprise_enforcement
+    to: semantic_authority
+invariants:
+  - name: admission_never_executes
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system|Popen\\("
+    scopes:
+      - module: enterprise_enforcement
+        symbol: authorize_enterprise_action
+        max_lines: 90
+      - module: enterprise_enforcement
+        symbol: record_enterprise_decision
+        max_lines: 45
+  - name: admission_never_invokes_runtime
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system|Popen\\("
+    scopes:
+      - module: enterprise_enforcement
+        symbol: authorize_enterprise_action
+        max_lines: 90
+tests:
+  - path: tests/test_enterprise_enforcement.py
+    command: py -3.11 -m pytest -q tests/test_enterprise_enforcement.py
+  - path: tests/test_enterprise_receipts.py
+    command: py -3.11 -m pytest -q tests/test_enterprise_receipts.py
+schema: factory.ssat.v1

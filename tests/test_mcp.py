@@ -62,6 +62,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.appforge_status",
         "factory.oracle_firewall_status",
         "factory.semantic_authority_status",
+        "factory.enterprise_enforcement_status",
         "factory.atomic_status",
         "factory.operations_control_status",
         "factory.lifecycle_status",
@@ -227,6 +228,13 @@ def test_mcp_revenue_appforge_saas_and_memory_tools_are_read_only(tmp_path: Path
     assert semantic["marker"] == "MCP_SEMANTIC_AUTHORITY_READ_ONLY"
     assert semantic["status"]["marker"] == "SEMANTIC_AUTHORITY_READ_ONLY"
     assert all(value is False for value in semantic["status"]["authority"].values())
+    enterprise = _content(dispatch({
+        "jsonrpc": "2.0", "id": 82101, "method": "tools/call",
+        "params": {"name": "factory.enterprise_enforcement_status"},
+    }, tmp_path))
+    assert enterprise["marker"] == "MCP_ENTERPRISE_ENFORCEMENT_READ_ONLY"
+    assert enterprise["status"]["marker"] == "ENTERPRISE_ENFORCEMENT_READ_ONLY"
+    assert all(value is False for value in enterprise["status"]["authority"].values())
     atomic = _content(dispatch({
         "jsonrpc": "2.0", "id": 8211, "method": "tools/call",
         "params": {"name": "factory.atomic_status"},

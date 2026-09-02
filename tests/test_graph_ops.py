@@ -596,6 +596,11 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "SEMANTIC_HANDOFF_PROOF_VISIBLE" in page
     assert "renderSemanticAuthority(payload)" in page
     assert "factory.semantic_authority_status" in page
+    assert 'id="enterprise-enforcement-panel"' in page
+    assert "An admitted receipt is not an executed action." in page
+    assert "ENTERPRISE_PEP_REFERENCE_VISIBLE" in page
+    assert "renderEnterpriseEnforcement(payload)" in page
+    assert "enterprise_pep_reference" in page
     assert 'id="atomic-proof-panel"' in page
     assert 'id="copy-atomic-verify"' in page
     assert "factory atomic verify" in page

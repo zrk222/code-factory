@@ -119,6 +119,14 @@ def _timestamp(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _validate_optional_digest(payload: dict, field: str) -> None:
+    if field not in payload:
+        return
+    value = payload[field]
+    if not isinstance(value, str) or len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value.lower()):
+        raise EnterpriseReceiptError("E_INVALID_RECEIPT", f"{field} must be a SHA-256 hex digest")
+
+
 def validate_receipt_v2(payload: dict) -> dict:
     """Validate a Receipt v2 payload or raise EnterpriseReceiptError with a stable code."""
     required = {"schema", "module", "stage", "feature", "ok", "tenant_id", "run_id", "ts"}
@@ -134,8 +142,7 @@ def validate_receipt_v2(payload: dict) -> dict:
         raise EnterpriseReceiptError("E_INVALID_RECEIPT", "ok must be boolean")
     _timestamp(payload["ts"])
     for field in ("policy_sha256", "subject_sha256"):
-        if field in payload and (not isinstance(payload[field], str) or len(payload[field]) != 64 or any(ch not in "0123456789abcdef" for ch in payload[field].lower())):
-            raise EnterpriseReceiptError("E_INVALID_RECEIPT", f"{field} must be a SHA-256 hex digest")
+        _validate_optional_digest(payload, field)
     return payload
 
 
@@ -260,6 +267,32 @@ def _verify_signed_document(path: Path, *, payload_type: str, schema: str, trust
     if payload.get("schema") != schema:
         raise EnterpriseReceiptError("E_INVALID_PAYLOAD", f"expected {schema}")
     return payload, signature
+
+
+def verify_signed_document(
+    path: Path,
+    *,
+    payload_type: str,
+    schema: str,
+    trust_root_path: Path,
+) -> dict:
+    """Verify one typed DSSE document against an explicit offline trust root.
+
+    This is deliberately a narrow cryptographic primitive for higher-level
+    enterprise policy modules.  It authenticates the document signer against
+    the supplied local trust root; it does not perform OIDC federation,
+    network key discovery, authorization, or runtime enforcement.
+    """
+    trust_root = _validate_trust_root(_read_json(Path(trust_root_path)))
+    payload, signature = _verify_signed_document(
+        Path(path), payload_type=payload_type, schema=schema, trust_root=trust_root
+    )
+    return {
+        "payload": payload,
+        "signature": signature,
+        "payload_sha256": _sha256(_canonical(payload)),
+        "verification": "offline_dsse_ed25519",
+    }
 
 
 def _revoked(revocations: dict, *, keyid: str, identity: str, receipt_ts: datetime) -> bool:

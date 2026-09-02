@@ -512,3 +512,6 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-01 16:37] GATE plan atomic-proof-adapter-v1 approver=human tasks=5 sha=495a2cc2a01cfcf2
 
 - [2026-09-02 17:14] GATE spec semantic-authority-plane-v1 approver=human strict=True sha=6afb387b185d8193
+
+- [2026-09-02 17:37] GATE spec enterprise-enforcement-reference-v1 approver=human strict=True sha=22798a5b1e2d7d6b
+- [2026-09-02 17:40] GATE spec enterprise-enforcement-reference-v1 approver=human strict=True sha=22798a5b1e2d7d6b

@@ -270,6 +270,7 @@ def seal_semantic_handoff(root: Path, input_path: Path, out: Path) -> dict[str, 
 
 
 def verify_semantic_handoff(root: Path, path: Path) -> dict[str, Any]:
+    """Verify a sealed local handoff and its current Oracle Contract binding."""
     workspace = Path(root).resolve()
     try:
         value, source = _read_json(workspace, path, HANDOFF_SCHEMA)
@@ -318,6 +319,7 @@ def seal_authority_lease(root: Path, input_path: Path, out: Path) -> dict[str, A
 
 
 def verify_authority_lease(root: Path, path: Path) -> dict[str, Any]:
+    """Verify a hash-valid, current lease without treating it as external authority."""
     workspace = Path(root).resolve()
     try:
         lease, source = _read_json(workspace, path, LEASE_SCHEMA)
@@ -383,6 +385,7 @@ def verify_semantic_binding(root: Path, binding: object, actor: object, scope_pa
 
 
 def record_semantic_action_decision(root: Path, lease_path: Path, request: object, out: Path) -> dict[str, Any]:
+    """Record one replay-safe local admission result without running the requested action."""
     workspace = Path(root).resolve()
     decision = authorize_semantic_action(workspace, lease_path, request)
     if not decision.get("allowed"):

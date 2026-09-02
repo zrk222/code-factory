@@ -1,0 +1,13 @@
+{
+  "checks": [
+    {
+      "name": "enterprise_reference_rejects_identity_policy_and_replay_bypasses",
+      "kind": "command",
+      "run": "python -m pytest -q tests/test_enterprise_enforcement.py",
+      "expect_exit": 0,
+      "expect_stdout": "4 passed",
+      "timeout_s": 60,
+      "must_fail_on_stub": true
+    }
+  ]
+}

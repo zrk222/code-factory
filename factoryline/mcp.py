@@ -30,6 +30,7 @@ from .appforge_design import appforge_design_projection
 from .appforge_oracle import appforge_oracle_projection
 from .oracle_firewall import oracle_firewall_projection
 from .semantic_authority import semantic_authority_projection
+from .enterprise_enforcement import enterprise_enforcement_projection
 from .atomic_proof_adapter import atomic_proof_projection
 from .agent_proof_bridge import AgentProofBridgeError, agent_handoff_brief, agent_proof_projection
 from .proof_worklog import proof_worklog_projection
@@ -83,6 +84,7 @@ _RECEIPT_ROOTS = (
     Path(".factory/journey-proof"),
     Path(".factory/oracles"),
     Path(".factory/semantic-authority"),
+    Path(".factory/enterprise-enforcement"),
     Path(".factory/appforge"),
     Path(".factory/operations-control"),
     Path(".factory/lifecycle"),
@@ -407,6 +409,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.semantic_authority_status",
             "description": "Read hash-sealed agent handoffs, expiring scoped leases, and local admission receipts. It never sends a message, calls a tool, grants authority, or executes work.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.enterprise_enforcement_status",
+            "description": "Read signed local workload-policy admission reference receipts. It does not authenticate a cloud workload, execute a tool, or enforce a network boundary.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1072,6 +1080,17 @@ def _semantic_authority_status(root: Path, arguments: object) -> dict[str, objec
     }
 
 
+def _enterprise_enforcement_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.enterprise_enforcement_status accepts no arguments")
+    return {
+        "marker": "MCP_ENTERPRISE_ENFORCEMENT_READ_ONLY",
+        "action_summary": "Read local signed workload/policy admission reference decisions without treating an admitted receipt as execution or a production deployment control.",
+        "status": enterprise_enforcement_projection(root),
+        "scope": "Read-only local PEP-reference projection. It does not perform OIDC federation, identify a live workload, invoke a tool, enforce an Envoy/eBPF/container boundary, approve work, or contact a provider.",
+    }
+
+
 def _atomic_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.atomic_status accepts no arguments")
@@ -1313,6 +1332,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_oracle_firewall_status(root, arguments))
     if name == "factory.semantic_authority_status":
         return _content(_semantic_authority_status(root, arguments))
+    if name == "factory.enterprise_enforcement_status":
+        return _content(_enterprise_enforcement_status(root, arguments))
     if name == "factory.atomic_status":
         return _content(_atomic_status(root, arguments))
     if name == "factory.operations_control_status":

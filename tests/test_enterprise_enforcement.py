@@ -1,0 +1,134 @@
+from __future__ import annotations
+
+from datetime import timedelta
+import json
+from pathlib import Path
+
+import pytest
+
+from factoryline.enterprise_enforcement import (
+    EnterpriseEnforcementError,
+    authorize_enterprise_action,
+    enterprise_enforcement_projection,
+    record_enterprise_decision,
+    sign_enforcement_policy,
+    sign_workload_identity,
+    sign_workload_revocations,
+)
+from factoryline.enterprise_receipts import generate_key_material
+from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
+from factoryline.semantic_authority import _now, seal_authority_lease, seal_semantic_handoff
+
+
+AGENT = {"schema": "factory.agent-identity.v1", "subject": "enterprise-worker", "provider": "local", "model": "model-a"}
+
+
+def _write(path: Path, value: object) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2), encoding="utf-8")
+    return path
+
+
+def _keys(root: Path) -> dict:
+    return generate_key_material(out_dir=root / "keys", keyid="enterprise-ci", identity="https://example.test/workflows/proof", issuer="https://issuer.example.test")
+
+
+def _semantic_binding(root: Path) -> dict:
+    intent = root / "intent.md"
+    intent.write_text("A restore must never create a second purchase.", encoding="utf-8")
+    planner = {"schema": "factory.agent-identity.v1", "subject": "planner", "provider": "local", "model": "model-a"}
+    handoff = capture_intent_handoff(root, intent, planner, "intake", Path(".factory/oracles/handoffs/enterprise.json"))
+    contract_input = _write(root / "contract-input.json", {
+        "schema": "factory.oracle-contract-input.v1", "id": "enterprise-restore", "version": 1, "approved_by": "Owner", "approval_rationale": "Bind restore safety before a worker tests it.", "scope_paths": ["."], "handoff": handoff["path"], "sources": [],
+        "requirements": [{"id": "restore", "statement": "Restore requires an entitlement.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True}],
+        "forbidden_behaviors": [{"id": "charge", "statement": "Restore never purchases.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True}],
+        "gates": [{"id": "evidence", "statement": "Evidence exists.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True, "comparison": "present", "value": True}],
+        "exceptions": [{"id": "offline", "statement": "Offline evidence is advisory only.", "origin": "human_confirmed", "effect": "advisory", "source_id": "original-intent", "critical": False}], "negative_cases": [{"id": "expired", "statement": "Expired access is denied.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True}],
+        "invariants": [{"id": "candidate", "statement": "Evidence binds the candidate.", "origin": "trusted_source", "effect": "blocking", "source_id": "original-intent", "critical": True}],
+        "tests": [{"id": "restore-test", "statement": "The negative case fails.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True, "path": "tests/test_restore.py"}],
+    })
+    contract = root / seal_oracle_contract(root, contract_input, Path(".factory/oracles/contracts/enterprise-restore.json"))["path"]
+    semantic_input = _write(root / "semantic-input.json", {
+        "schema": "factory.semantic-handoff-input.v1", "id": "enterprise-proof", "oracle_contract": contract.relative_to(root).as_posix(), "sender": planner, "receiver": AGENT,
+        "performative": "REQUEST", "goal": "Test the restore safety contract.", "context_urn": "urn:factory:enterprise-restore:v1", "context_source_id": "original-intent", "scope_paths": ["tests"], "allowed_actions": ["test"], "sensitivities": [],
+        "epistemic": {"known": [{"id": "intent", "statement": "The sealed intent forbids a second purchase.", "source_id": "original-intent"}], "unknown": [{"id": "provider", "statement": "Live provider state is unavailable.", "impact": "Do not claim production behavior.", "blocking": True}], "uncertain": [{"id": "parity", "statement": "Sandbox parity is uncertain.", "impact": "Runtime evidence remains required."}], "capability_limits": ["No provider or release access."]},
+    })
+    semantic = root / seal_semantic_handoff(root, semantic_input, Path(".factory/semantic-authority/handoffs/enterprise.json"))["path"]
+    lease_input = _write(root / "lease-input.json", {
+        "schema": "factory.authority-lease-input.v1", "id": "enterprise-worker", "handoff": semantic.relative_to(root).as_posix(), "delegatee": AGENT, "scope_paths": ["tests"], "allowed_actions": ["test"], "expires_at": (_now() + timedelta(minutes=20)).isoformat().replace("+00:00", "Z"), "approval_origin": "human_confirmed", "approved_by": "Owner", "rationale": "Bound enterprise test admission.",
+    })
+    lease = root / seal_authority_lease(root, lease_input, Path(".factory/semantic-authority/leases/enterprise.json"))["path"]
+    lease_value = json.loads(lease.read_text(encoding="utf-8"))
+    return {"lease_path": lease.relative_to(root).as_posix(), "lease_sha256": lease_value["lease_sha256"], "action_id": "enterprise-restore-test", "action": "test", "context_urn": "urn:factory:enterprise-restore:v1"}
+
+
+def _materials(root: Path, *, require_semantic_lease: bool = True) -> tuple[dict, Path, Path, dict]:
+    keys = _keys(root)
+    starts = _now()
+    identity = {
+        "schema": "factory.workload-identity.v1", "tenant_id": "tenant-a", "workload_id": "proof-runner", "subject": "repo:example/app", "audience": "factoryline.enterprise", "issued_at": starts.isoformat().replace("+00:00", "Z"), "expires_at": (starts + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"), "agent": AGENT, "allowed_action_classes": ["test"],
+    }
+    policy = {
+        "schema": "factory.enforcement-policy.v1", "policy_id": "repo-proof", "version": "1", "tenant_id": "tenant-a", "audience": "factoryline.enterprise", "allowed_action_classes": ["test"], "allowed_scope_paths": ["tests"], "require_semantic_lease": require_semantic_lease,
+    }
+    identity_path, policy_path = root / "identity.dsse.json", root / "policy.dsse.json"
+    sign_workload_identity(identity, private_key_path=Path(keys["private_key"]), keyid=keys["keyid"], identity=keys["identity"], issuer=keys["issuer"], out=identity_path)
+    sign_enforcement_policy(policy, private_key_path=Path(keys["private_key"]), keyid=keys["keyid"], identity=keys["identity"], issuer=keys["issuer"], out=policy_path)
+    request = {"tenant_id": "tenant-a", "workload_id": "proof-runner", "subject": "repo:example/app", "audience": "factoryline.enterprise", "action_id": "enterprise-restore-test", "action_class": "test", "scope_paths": ["tests"], "oracle_contract_sha256": "a" * 64}
+    return keys, identity_path, policy_path, request
+
+
+def test_enterprise_reference_admits_only_exact_signed_identity_policy_and_lease(tmp_path: Path) -> None:
+    keys, identity, policy, request = _materials(tmp_path)
+    request["semantic_authority"] = _semantic_binding(tmp_path)
+    decision = authorize_enterprise_action(tmp_path, request, workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]))
+    assert decision["marker"] == "ENTERPRISE_PEP_REFERENCE_ADMITTED"
+    assert decision["admitted"] is True
+    assert decision["semantic_authority_status"] == "VERIFIED"
+    assert all(value is False for value in decision["authority"].values())
+    assert "did not execute a tool" in decision["claim_boundary"]
+
+
+def test_enterprise_reference_rejects_cross_tenant_scope_and_lease_absence(tmp_path: Path) -> None:
+    keys, identity, policy, request = _materials(tmp_path)
+    with pytest.raises(EnterpriseEnforcementError, match="E_SEMANTIC_LEASE_REQUIRED"):
+        authorize_enterprise_action(tmp_path, request, workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]))
+    request["semantic_authority"] = _semantic_binding(tmp_path)
+    request["tenant_id"] = "other"
+    with pytest.raises(EnterpriseEnforcementError, match="E_WORKLOAD_BINDING"):
+        authorize_enterprise_action(tmp_path, request, workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]))
+    request["tenant_id"] = "tenant-a"
+    request["scope_paths"] = ["src"]
+    with pytest.raises(EnterpriseEnforcementError, match="E_SCOPE_ESCAPE"):
+        authorize_enterprise_action(tmp_path, request, workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]))
+
+
+def test_workload_revocation_and_decision_replay_fail_closed(tmp_path: Path) -> None:
+    keys, identity, policy, request = _materials(tmp_path)
+    request["semantic_authority"] = _semantic_binding(tmp_path)
+    recorded = record_enterprise_decision(tmp_path, request, Path(".factory/enterprise-enforcement/decisions/first.json"), workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]))
+    assert recorded["path"].endswith("first.json")
+    with pytest.raises(EnterpriseEnforcementError, match="E_ENFORCEMENT_REPLAY"):
+        record_enterprise_decision(tmp_path, request, Path(".factory/enterprise-enforcement/decisions/replay.json"), workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]))
+    projection = enterprise_enforcement_projection(tmp_path)
+    assert projection["admitted_count"] == 1
+    revocations = tmp_path / "workload-revocations.dsse.json"
+    sign_workload_revocations([{"tenant_id": "tenant-a", "workload_id": "proof-runner", "subject": "repo:example/app", "revoked_at": (_now() - timedelta(minutes=1)).isoformat().replace("+00:00", "Z"), "reason": "compromised"}], private_key_path=Path(keys["private_key"]), keyid=keys["keyid"], identity=keys["identity"], issuer=keys["issuer"], out=revocations)
+    with pytest.raises(EnterpriseEnforcementError, match="E_WORKLOAD_REVOKED"):
+        authorize_enterprise_action(tmp_path, request, workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]), revocations_path=revocations)
+
+
+def test_enterprise_cli_seals_and_records_reference_decision(tmp_path: Path, capsys) -> None:
+    from factoryline.cli import main
+
+    keys, _, _, request = _materials(tmp_path, require_semantic_lease=False)
+    request_path = _write(tmp_path / "request.json", request)
+    issued_at = _now()
+    identity_payload = _write(tmp_path / "identity.json", {"schema": "factory.workload-identity.v1", "tenant_id": "tenant-a", "workload_id": "proof-runner", "subject": "repo:example/app", "audience": "factoryline.enterprise", "issued_at": issued_at.isoformat().replace("+00:00", "Z"), "expires_at": (issued_at + timedelta(minutes=15)).isoformat().replace("+00:00", "Z"), "agent": AGENT, "allowed_action_classes": ["test"]})
+    policy_payload = _write(tmp_path / "policy.json", {"schema": "factory.enforcement-policy.v1", "policy_id": "repo-proof", "version": "1", "tenant_id": "tenant-a", "audience": "factoryline.enterprise", "allowed_action_classes": ["test"], "allowed_scope_paths": ["tests"], "require_semantic_lease": False})
+    identity_out, policy_out = tmp_path / "cli-identity.dsse.json", tmp_path / "cli-policy.dsse.json"
+    common = ["--private-key", keys["private_key"], "--keyid", keys["keyid"], "--identity", keys["identity"], "--issuer", keys["issuer"]]
+    assert main(["enterprise", "workload-identity-seal", str(identity_payload), *common, "--out", str(identity_out)]) == 0
+    assert main(["enterprise", "enforcement-policy-seal", str(policy_payload), *common, "--out", str(policy_out)]) == 0
+    assert main(["enterprise", "authorize", str(request_path), "--root", str(tmp_path), "--workload-identity", str(identity_out), "--policy", str(policy_out), "--trust-root", keys["trust_root"], "--out", ".factory/enterprise-enforcement/decisions/cli.json"]) == 0
+    assert '"admitted": true' in capsys.readouterr().out
