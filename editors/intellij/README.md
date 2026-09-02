@@ -4,8 +4,10 @@ FactoryLine for JetBrains IDEs keeps the local proof loop next to the project. I
 runs an explicit FactoryLine command, then displays the command result and the
 newest local JSON receipt in a tool window.
 
-**Catch AI-generated tests that could never fail — before review.** Inspect the
-proof path in the IDE, then open **Graph Ops** to see the next evidence gap.
+**Your AI change is green. Can its test actually fail? Find out before
+review.** FactoryLine addresses that common JetBrains workflow gap by showing
+the proof path in the IDE, then opening **Graph Ops** to the next evidence gap.
+Catch AI-generated tests that could never fail — before review.
 Start with **Tools > FactoryLine > Run First Proof**, then run
 `factory mvp "Build an approval tracker" --root .`. A starter remains a
 starting state until product-specific proof exists.
@@ -17,9 +19,10 @@ could the test and supplied run evidence actually reject a broken result? It
 does not replace, control, or imply endorsement by either JetBrains product.
 
 **New in 0.9.0:** Unified Graph Ops can display a verified Agent Proof Bridge
-receipt from Eve, Junie, Grok Build, or a generic client: explicit DAG stages,
-sealed scope, source preconditions, real before/after artifacts, checkpoints,
-resume lineage, and Oracle Contract binding. The bridge is read-only and cannot
+receipt from Eve, Junie, Grok Build, CodeRabbit, Devin, or a generic client:
+explicit DAG stages, sealed scope, source preconditions, real before/after
+artifacts, declared tool/checkpoint hashes, resume lineage, and Oracle Contract
+binding. The bridge is read-only and cannot
 execute or resume an agent, post a worklog, approve a change, apply a repair,
 merge, publish, or deploy.
 
