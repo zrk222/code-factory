@@ -1,8 +1,8 @@
 {
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
-  "description": "Verify AI tests, app evidence, and agent-workflow drift locally before release.",
-  "version": "0.9.0",
+  "description": "Start with First Proof: find AI tests that cannot fail, then keep agent and app-release evidence reviewable.",
+  "version": "0.9.1",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
