@@ -33,6 +33,7 @@ ORIGINS = AuthorityOrigin.values()
 AUTHORITY_ORIGINS = frozenset({AuthorityOrigin.HUMAN_CONFIRMED.value, AuthorityOrigin.TRUSTED_SOURCE.value})
 EFFECTS = RuleEffect.values()
 RULE_GROUPS = ("requirements", "forbidden_behaviors", "gates", "exceptions", "negative_cases", "invariants", "tests")
+SEMANTIC_RULE_FIELDS = ("statement", "source_id", "critical", "effect", "origin")
 IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,95}$")
 AUTHORITY = {
     "execution": False, "approval": False, "repair": False, "merge": False,
@@ -425,8 +426,15 @@ def _weakening(previous: dict[str, Any], candidate: dict[str, Any]) -> list[dict
                 findings.append({"code": "gate_effect_relaxed", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
             if prior.get("origin") in AUTHORITY_ORIGINS and later.get("origin") not in AUTHORITY_ORIGINS:
                 findings.append({"code": "provenance_downgraded", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
-            if group in {"negative_cases", "tests"} and (prior.get("statement") != later.get("statement") or prior.get("path") != later.get("path")):
-                findings.append({"code": "negative_proof_rewritten" if group == "negative_cases" else "test_rewritten", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
+            semantic_fields = list(SEMANTIC_RULE_FIELDS)
+            if group == "gates":
+                semantic_fields.extend(("comparison", "value"))
+            if group == "tests":
+                semantic_fields.append("path")
+            changed_fields = [field for field in semantic_fields if prior.get(field) != later.get(field)]
+            if changed_fields:
+                code = "negative_proof_rewritten" if group == "negative_cases" else "test_rewritten" if group == "tests" else "blocking_rule_rewritten"
+                findings.append({"code": code, "group": group, "rule_id": rule_id, "before": prior, "after": later, "changed_fields": changed_fields, "justification": _source_justification(candidate, later)})
             if group == "gates":
                 prior_value, later_value = prior.get("value"), later.get("value")
                 comparison = prior.get("comparison")

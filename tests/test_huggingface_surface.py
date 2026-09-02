@@ -24,7 +24,7 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     )
     assert len(short_description) <= 60
     assert "factoryline-code-factory" in page
-    assert "github.com/zrk222/code-factory/releases/tag/v0.46.0" in page
+    assert "github.com/zrk222/code-factory/releases/tag/v0.46.1" in page
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "Actual product capture set" in page
     assert '<meta name="viewport"' in page

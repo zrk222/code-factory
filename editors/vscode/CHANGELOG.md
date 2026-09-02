@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.2 - 2026-09-02
+
+- Ship the Oracle Firewall hardening behind FactoryLine: same-ID edits to a
+  blocking or release rule's meaning, source binding, provenance, criticality,
+  effect, or gate semantics now produce a review-blocking drift receipt.
+- Keep AppForge Oracle evidence path-bound and hash-verifiable in the local
+  submission dossier; this remains local evidence, not Apple authority.
+
 ## 0.9.0 - 2026-09-02
 
 - Add provider-neutral Agent Proof Bridge status to the local proof surface:

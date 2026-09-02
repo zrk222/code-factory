@@ -17,6 +17,17 @@
 
 ## Unreleased
 
+## 0.46.1 - 2026-09-02
+
+- Harden the Oracle Firewall against same-ID semantic rewrites: blocking and
+  release rules now fail closed when their statement, source binding,
+  criticality, origin, effect, or gate semantics change.
+- Keep Proof Worklog drafts faithful to sealed contracts by reading approved
+  obligations and forbidden behaviors from the sealed `rules` object.
+- Bind each AppForge submission-dossier Oracle audit entry to an immutable,
+  hash-valid derived authority receipt, while retaining the input source path
+  and byte digest separately for traceability.
+
 ## 0.46.0 - 2026-09-02
 
 - Add an evidence-only Agent Proof Bridge for Eve, Junie, Grok Build, and

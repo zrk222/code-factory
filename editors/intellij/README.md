@@ -18,7 +18,11 @@ coverage, and quality thresholds; FactoryLine asks a different question:
 could the test and supplied run evidence actually reject a broken result? It
 does not replace, control, or imply endorsement by either JetBrains product.
 
-**New in 0.9.0:** Unified Graph Ops can display a verified Agent Proof Bridge
+**New in 0.9.1:** Unified Graph Ops now fails closed on same-ID semantic
+rewrites of blocking/release Oracle rules and keeps AppForge authority receipts
+path-to-digest verifiable.
+
+**Also in 0.9.0:** Unified Graph Ops can display a verified Agent Proof Bridge
 receipt from Eve, Junie, Grok Build, CodeRabbit, Devin, or a generic client:
 explicit DAG stages, sealed scope, source preconditions, real before/after
 artifacts, declared tool/checkpoint hashes, resume lineage, and Oracle Contract
@@ -122,7 +126,7 @@ facts, and their review scope is never a root-cause or repair claim. See
 
 ## Install
 
-1. Install `factoryline-code-factory==0.46.0` into the Python environment that
+1. Install `factoryline-code-factory==0.46.1` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the

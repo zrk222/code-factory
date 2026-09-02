@@ -90,8 +90,9 @@ def _text(item: object, fallback: str) -> str:
 def _draft_text(contract: dict[str, Any], agent: dict[str, Any], atomic: dict[str, Any]) -> tuple[str, list[str]]:
     contract_id = str(contract.get("id", "sealed-contract"))
     scope = ", ".join(contract.get("scope_paths", [])) or "no declared scope"
-    requirements = [_text(item, "Approved obligation") for item in contract.get("requirements", [])[:3]]
-    forbidden = [_text(item, "Forbidden behavior") for item in contract.get("forbidden_behaviors", [])[:2]]
+    rules = contract.get("rules", {})
+    requirements = [_text(item, "Approved obligation") for item in rules.get("requirements", [])[:3]] if isinstance(rules, dict) else []
+    forbidden = [_text(item, "Forbidden behavior") for item in rules.get("forbidden_behaviors", [])[:2]] if isinstance(rules, dict) else []
     lines = [
         f"# Proof review: {contract_id}",
         "",

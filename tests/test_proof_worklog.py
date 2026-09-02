@@ -45,6 +45,8 @@ def test_worklog_is_bound_to_current_contract_and_never_claims_external_post(tmp
     assert draft["marker"] == MARKER
     assert draft["review_required"] is True
     assert "has not been posted" in draft["markdown"]
+    assert "Valid checkout completes." in draft["markdown"]
+    assert "Private account data is never exposed." in draft["markdown"]
     assert all(value is False for value in draft["authority"].values())
     assert verify_proof_worklog(tmp_path, Path(draft["path"]))["ok"] is True
     projection = proof_worklog_projection(tmp_path)

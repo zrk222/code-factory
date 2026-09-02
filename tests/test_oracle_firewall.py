@@ -90,6 +90,25 @@ def test_drift_blocks_threshold_lowering_and_removed_negative_case_with_source_j
     assert all(item["justification"]["approved_by"] == "Release Owner" for item in drift["findings"])
 
 
+def test_drift_blocks_same_id_semantic_rewrites_for_every_blocking_rule_class(tmp_path: Path) -> None:
+    prior = _contract(tmp_path, out=".factory/oracles/contracts/prior.json")
+    source = _input(tmp_path, tmp_path / ".factory/oracles/handoffs/ios-intake.json")
+    candidate_input = json.loads(source.read_text(encoding="utf-8"))
+    candidate_input["requirements"][0]["statement"] = "Restore may fail for an entitled account."
+    candidate_input["forbidden_behaviors"][0]["statement"] = "A restore may create another charge."
+    candidate_input["invariants"][0]["statement"] = "Evidence may bind to a different candidate."
+    candidate_input["gates"][0]["statement"] = "Restore evidence is optional."
+    _write(source, candidate_input)
+    candidate = tmp_path / seal_oracle_contract(tmp_path, source, Path(".factory/oracles/contracts/candidate.json"))["path"]
+
+    drift = compare_oracle_contracts(tmp_path, prior, candidate)
+
+    rewritten = [item for item in drift["findings"] if item["code"] == "blocking_rule_rewritten"]
+    assert drift["marker"] == "E_ORACLE_WEAKENING"
+    assert {item["group"] for item in rewritten} >= {"requirements", "forbidden_behaviors", "invariants", "gates"}
+    assert all("statement" in item["changed_fields"] for item in rewritten)
+
+
 def test_shadow_oracle_challenge_is_implementation_targeted_and_fails_on_survivor(tmp_path: Path) -> None:
     contract = _contract(tmp_path)
     plan = compile_oracle_challenge(tmp_path, contract, Path(".factory/oracles/challenges/restore.json"))

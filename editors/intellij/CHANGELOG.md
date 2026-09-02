@@ -1,5 +1,14 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.9.1 - 2026-09-02
+
+- Harden the local Oracle Firewall facts shown in Unified Graph Ops. Semantic
+  rewrites of existing blocking/release obligations now fail closed even when
+  their rule IDs stay the same.
+- Keep AppForge dossier evidence traceable from each displayed receipt path to
+  its matching digest. FactoryLine still provides no App Store action or
+  approval authority.
+
 ## 0.9.0 - 2026-09-02
 
 - Add the Agent Proof Bridge to Unified Graph Ops: inspect hash-bound Eve,
