@@ -39,6 +39,12 @@ receipt and a privacy-safe Proof Card; it does not assess or change your project
   an agent works. Oracle Firewall blocks a weakened oracle from masquerading as
   a successful build and exposes the source-to-decision chain in Graph Ops,
   FactoryLine, and read-only MCP.
+- **Team or enterprise control plane:** bind a reviewed local operating
+  envelope, explicit session trace, exact consequence-aware repair packet,
+  pinned multi-repo sequence, and optional approved domain vocabulary. Graph
+  Ops and MCP expose the same facts; agents remain supervised and cannot change
+  intent, thresholds, scope, approval, Git state, credentials, or release.
+  See the [Control Plane guide](docs/CONTROL_PLANE.md).
 - **SaaS builder:** use `factory saas verify` to follow one customer promise
   from OAuth/OIDC identity and tenant access through checkout, verified webhook,
   entitlement, feature access, and revocation. Missing or contradictory evidence
@@ -435,7 +441,8 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [0.45.4 release notes](docs/RELEASE_NOTES_0.45.4.md),
+- See the [0.46.0 core release notes](docs/RELEASE_NOTES_0.46.0.md), the
+  [grilling ladder](docs/GRILLING_LADDER.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

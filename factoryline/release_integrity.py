@@ -149,9 +149,15 @@ def _python_package_data_check(root: Path) -> dict[str, Any]:
     project = _read_source(root, "pyproject.toml")
     passed = (
         "include-package-data = false" in project
-        and 'factoryline = ["builtin_packs/**/*", "data/*.json", "hosted_console.html", "graph_ops.html"]' in project
+        and 'factoryline = ["builtin_packs/**/*.json", "builtin_packs/**/*.yaml", "data/*.json", "hosted_console.html", "graph_ops.html"]' in project
+        and '[tool.setuptools.exclude-package-data]' in project
+        and 'factoryline = ["**/__pycache__/*", "**/*.py[cod]"]' in project
     )
-    return _check("PYTHON_PACKAGE_DATA_EXPLICIT", passed, "wheel package data is explicit instead of inferred from source directories")
+    return _check(
+        "PYTHON_PACKAGE_DATA_EXPLICIT",
+        passed,
+        "wheel package data is explicit, source formats are allowlisted, and bytecode is excluded",
+    )
 
 
 def _checks(root: Path) -> list[dict[str, Any]]:

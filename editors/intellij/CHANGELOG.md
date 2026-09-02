@@ -1,5 +1,15 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.9.0 - 2026-09-02
+
+- Add the Agent Proof Bridge to Unified Graph Ops: inspect hash-bound Eve,
+  Junie, Grok Build, or generic handoff evidence against the current Oracle
+  Contract, including DAG topology, scope, source preconditions, and real
+  before/after artifacts.
+- Surface review-required local Proof Worklog drafts without a tracker or chat
+  connector. FactoryLine cannot start an agent, post a worklog, or turn a
+  declaration into approval or release authority.
+
 ## 0.8.22 - 2026-09-02
 
 - Add Atomic Proof Adapter facts to Unified Graph Ops so JetBrains users can

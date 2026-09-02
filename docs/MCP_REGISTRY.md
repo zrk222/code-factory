@@ -2,7 +2,7 @@
 
 Code Factory is published to the Official MCP Registry as
 `io.github.zrk222/code-factory`. The registry package entry uses the public
-PyPI distribution `factoryline-code-factory==0.45.4` and starts the existing
+PyPI distribution `factoryline-code-factory==0.46.0` and starts the existing
 local stdio adapter through `uvx`:
 
 **Use it to give an AI coding client read-only facts about declared intent,
@@ -10,7 +10,7 @@ test challenges, Graph Ops, and review evidence—without handing that client
 write or release authority.**
 
 ```text
-uvx --from factoryline-code-factory==0.45.4 factory mcp serve
+uvx --from factoryline-code-factory==0.46.0 factory mcp serve
 ```
 
 The server needs a workspace root. Configure that explicit path in a client
@@ -25,7 +25,9 @@ factory mcp config --client generic --root C:\work\my-mvp --json
 The server returns bounded, deterministic local facts: Graph Ops, path-scoped
 proof impact, receipts, verifier and contradiction status, source-bound Intake
 and Proof-Delta status, existing Gauntlet Survival Card status, a redacted
-Developer Memory Brief, and hash-only LangGraph assurance facts. It never uploads source,
+Developer Memory Brief, hash-only LangGraph assurance facts, and the shared
+Control Plane status (Oracle Firewall, Operations Control, Session Trace, and
+Proof-gated Repair Loop). It never uploads source,
 starts a worker, runs a graph, writes files, executes a repair, approves work,
 publishes, deploys, signs, sends a message, or accesses credentials.
 

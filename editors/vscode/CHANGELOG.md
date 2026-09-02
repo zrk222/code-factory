@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0 - 2026-09-02
+
+- Add provider-neutral Agent Proof Bridge status to the local proof surface:
+  hash-bound DAG, Oracle scope, source preconditions, and before/after evidence
+  can be inspected without operating an external agent.
+- Add review-required local Proof Worklog drafts from sealed evidence. The
+  extension never posts externally or grants approval, merge, or release power.
+
 ## 0.8.22 - 2026-09-02
 
 - Add read-only Atomic workflow proof to Graph Ops: verify the supplied stage

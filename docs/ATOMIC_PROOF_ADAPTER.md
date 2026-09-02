@@ -64,12 +64,17 @@ source-precondition hash, artifact hash, tool-manifest hash, and contract hash.
 1. Capture the original request and seal an Oracle Contract before agent work.
 2. Have a team-owned exporter produce a bounded
    `factory.atomic-run-envelope.v1` JSON file containing only identifiers,
-   hashes, scope paths, stage facts, handoff facts, and checkpoint facts.
+   hashes, scope paths, stage facts, handoff facts, and checkpoint facts. A
+   connected agent can start from the exact secret-free shape below; the
+   template does not create a configuration, contact Atomic, or authorize a
+   run.
 3. Import the export locally.
 4. Inspect Graph Ops or status tools. Separately decide whether any work should
    run, resume, merge, or release.
 
 ```powershell
+factory atomic template --json
+
 factory atomic import `
   --root . `
   --envelope .factory\exports\atomic-run.json `
@@ -92,6 +97,11 @@ MCP and WebMCP expose `factory.atomic_status`. The payload carries
 `ATOMIC_MCP_READ_ONLY` and every authority flag remains false. It can help an
 assistant explain what the local evidence says, but it cannot operate the
 workflow or alter a contract.
+
+For non-Atomic agent runtimes, use `factory agent-bridge template --provider
+generic --json`; the Agent Proof Bridge applies the same sealed-intent and
+hash-bound evidence boundary while preserving the provider's own control
+plane.
 
 ## What this adds beyond a green run
 

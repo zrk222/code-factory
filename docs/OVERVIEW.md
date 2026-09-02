@@ -39,6 +39,12 @@ known, what is missing, and the one fact-derived next action.
   capabilities and handoffs, checkpoints, source preconditions, and resume
   lineage before binding the result to the current Oracle Contract. It imports
   evidence only; it does not execute the workflow or inherit its authority.
+- **Keeps teams and agents on one visible control plane.** Operations Control,
+  Session Trace, Proof-gated Repair Loop, pinned multi-repo coordination, and
+  an optional human-approved Domain Ontology make the exact evidence chain
+  visible in Graph Ops and read-only MCP. Humans retain approval; an agent
+  cannot weaken intent, alter thresholds, self-approve a repair, or change a
+  repository through this surface. See [Control Plane](CONTROL_PLANE.md).
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.
@@ -94,7 +100,7 @@ known, what is missing, and the one fact-derived next action.
 ## Typical path
 
 ```powershell
-pip install factoryline-code-factory==0.45.4
+pip install factoryline-code-factory==0.46.0
 factory mvp "Build an approval tracker" --root .
 factory studio --root .
 factory graph ops --root . --mermaid

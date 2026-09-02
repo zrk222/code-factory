@@ -65,7 +65,7 @@ def test_python_wheel_data_is_explicit_and_does_not_depend_on_package_discovery(
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
     assert "include-package-data = false" in project
-    assert 'factoryline = ["builtin_packs/**/*", "data/*.json", "hosted_console.html", "graph_ops.html"]' in project
+    assert 'factoryline = ["builtin_packs/**/*.json", "builtin_packs/**/*.yaml", "data/*.json", "hosted_console.html", "graph_ops.html"]' in project
 
 
 def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
@@ -295,12 +295,22 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.45.4"
+    assert project["version"] == "0.46.0"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.8.22"
-    assert 'version = "0.8.22"' in gradle
+    assert vscode["version"] == "0.9.0"
+    assert 'version = "0.9.0"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
+
+
+def test_wheel_resources_are_specific_and_generated_bytecode_is_excluded():
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert '"builtin_packs/**/*"' not in project
+    assert '"builtin_packs/**/*.json"' in project
+    assert '"builtin_packs/**/*.yaml"' in project
+    assert "[tool.setuptools.exclude-package-data]" in project
+    assert '"**/__pycache__/*"' in project
 
 
 def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
@@ -311,7 +321,7 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
     assert "Your IDE feels slow. Your AI code looks fine." in plugin_xml
     assert "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains." in plugin_xml
-    assert "New in 0.8.22 — Atomic Proof Adapter" in plugin_xml
+    assert "New in 0.9.0 — Agent Proof Bridge" in plugin_xml
     assert "OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation" in plugin_xml
     assert "Tools | FactoryLine | Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
@@ -404,7 +414,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
     assert plan["offer"]["proof_pro"]["annual_price_usd"] == 90.0
     assert plan["offer"]["appforge_builder"]["monthly_price_usd"] == 24.0
     assert plan["offer"]["paid_from"] == "2027-01-01"
-    assert plan["plugin"]["current_free_version"] == "0.8.22"
+    assert plan["plugin"]["current_free_version"] == "0.9.0"
     assert plan["paid_descriptor"] == {
         "product_code": "PFACTORYLINE",
         "product_code_status": "proposed_not_registered",
@@ -476,8 +486,10 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["access_right"] == "open"
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
-    assert metadata["version"] == "0.45.4"
+    assert metadata["version"] == "0.46.0"
     assert metadata["publication_date"] == "2026-09-02"
+    assert "read-only Agent Proof Bridge" in metadata["description"]
+    assert "Proof Worklog" in metadata["description"]
     assert "deterministic AppForge App Review evidence gate" in metadata["description"]
     assert "30 policy and release-risk checks" in metadata["description"]
     assert "named human control" in metadata["description"]

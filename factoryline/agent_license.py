@@ -16,6 +16,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .protocol_enums import AutonomyLevel
+
 from .attribution import FailureClass
 
 
@@ -39,7 +41,11 @@ SEVERE_FAILURES = frozenset({
     FailureClass.SCOPE_ESCAPE.value,
     FailureClass.ORACLE_WEAKENING.value,
 })
-AUTONOMY_RANK = {"human_controlled": 0, "supervised": 1, "autonomous": 2}
+AUTONOMY_RANK = {
+    AutonomyLevel.HUMAN_CONTROLLED.value: 0,
+    AutonomyLevel.SUPERVISED.value: 1,
+    AutonomyLevel.AUTONOMOUS.value: 2,
+}
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,159}$")
 _TASK_IDENTIFIER = re.compile(r"^[a-z][a-z0-9-]{0,95}$")
 _AUTHORITY = {

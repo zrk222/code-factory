@@ -37,6 +37,26 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "description": "Read bounded Atomic DAG, scoped handoff, checkpoint, and source-precondition facts already visible on this page. It never runs Atomic, resumes a checkpoint, or approves work.",
     },
     {
+        "name": "factory.operations_control_status",
+        "title": "Read operating envelope",
+        "description": "Read bounded local isolation, reproduction, change-envelope, proof-tier, architecture-zone, and coordination facts. It never starts work.",
+    },
+    {
+        "name": "factory.lifecycle_status",
+        "title": "Read session trace",
+        "description": "Read hash-linked local harness session traces already visible on this page. It never resumes a session or grants authority.",
+    },
+    {
+        "name": "factory.repair_loop_status",
+        "title": "Read proof-gated repair loop",
+        "description": "Read exact failure, consequence, candidate, and independent re-check packet facts. It never attempts a repair.",
+    },
+    {
+        "name": "factory.mission_control_status",
+        "title": "Read human and agent mission control",
+        "description": "Read one bounded, hash-linked supervision view. It never grants approval, execution, repair, merge, publication, deployment, or credential access.",
+    },
+    {
         "name": "factory.appforge_oracle_status",
         "title": "Read AppForge policy authority",
         "description": "Read candidate-bound AppForge authority state already visible on this page. It never contacts Apple or changes a submission.",

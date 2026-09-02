@@ -11,7 +11,7 @@ Install the published package in the same environment that the client can
 launch, then verify the workspace boundary:
 
 ```powershell
-python -m pip install factoryline-code-factory==0.45.4
+python -m pip install factoryline-code-factory==0.46.0
 factory mcp status --root C:\work\my-mvp --json
 factory mcp config --client generic --root C:\work\my-mvp --json
 ```
@@ -188,15 +188,31 @@ client cannot use it to compile a command from prose, admit or rerun a batch,
 apply a repair, or turn a card into a release decision. See
 [Gauntlet](GAUNTLET.md) for the separate human-controlled CLI path.
 
-## AI code-review tools
+## CodeRabbit and Devin handoffs
 
-The MCP server stays independent of hosted review vendors. If a team uses
-CodeRabbit or another AI code-review product, keep its suggestions in that
-product's review surface and use the optional
-[GitHub Proof Review](GITHUB_PROOF_REVIEW.md) workflow for FactoryLine's
-deterministic changed-scope, proof-gap, and next-action packet. No provider
-credential, AI comment, or model judgment is imported into a FactoryLine
-receipt.
+Code Factory does not log in to CodeRabbit or Devin, retain their credentials,
+start a session, request a review, create a PR, or accept either provider's
+verdict as a release decision. It can instead bind a **human-exported,
+hash-only** handoff to the sealed Oracle Contract through the Agent Proof
+Bridge:
+
+```powershell
+factory agent-bridge template --provider coderabbit --json
+factory agent-bridge template --provider devin --json
+```
+
+For CodeRabbit, the reviewed local envelope records the structured-agent
+review-output digest, base/head commits, review mode, and declared finding
+count. For Devin, it records the task/result and permission-profile digests
+plus base/head commits. In both cases, source preconditions, before/after
+evidence, a sealed scope, and an independent Code Factory challenge lane still
+apply. A provider finding becomes a reviewable input—not an approved repair,
+waiver, merge, or release.
+
+Use `factory mission-control status --json` or
+`factory.mission_control_status` over MCP to compare the same local facts the
+human sees in Graph Ops. This preserves an explicit human/agent handoff rather
+than a hidden autonomous path.
 
 ## Support boundary
 

@@ -20,6 +20,7 @@ from typing import Any
 
 from .agent_license import AgentLicenseError, normalize_agent_identity
 from .oracle_firewall import OracleFirewallError, admission_oracle_decision, verify_oracle_contract
+from .protocol_enums import AgentCapability, AgentRunStatus, AutonomyLevel, IsolationBoundary, WorkflowNodeKind
 
 
 ENVELOPE_SCHEMA = "factory.atomic-run-envelope.v1"
@@ -32,11 +33,11 @@ MAX_BYTES = 1_048_576
 MAX_ITEMS = 128
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_STAGE_KINDS = frozenset({"planner", "worker", "reviewer", "validator", "approval"})
-_STAGE_STATUS = frozenset({"completed", "paused", "blocked", "failed"})
-_AUTONOMY = frozenset({"human_controlled", "supervised", "autonomous"})
-_ISOLATION = frozenset({"declared_worktree", "declared_container", "declared_vm", "declared_remote", "unverified"})
-_CAPABILITIES = frozenset({"read_workspace", "write_workspace", "verify", "review", "approve", "handoff"})
+_STAGE_KINDS = WorkflowNodeKind.values()
+_STAGE_STATUS = AgentRunStatus.values()
+_AUTONOMY = AutonomyLevel.values()
+_ISOLATION = IsolationBoundary.values()
+_CAPABILITIES = AgentCapability.values()
 AUTHORITY = {
     "execution": False,
     "approval": False,
@@ -460,6 +461,59 @@ def verify_atomic_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:
         return {"ok": True, "marker": "ATOMIC_RECEIPT_VALID", "receipt": receipt, "path": path.relative_to(workspace).as_posix(), "authority": dict(AUTHORITY)}
     except AtomicProofAdapterError as exc:
         return {"ok": False, "marker": "ATOMIC_RECEIPT_INVALID", "reason": exc.code, "authority": dict(AUTHORITY)}
+
+
+def atomic_envelope_template() -> dict[str, Any]:
+    """Return a secret-free Atomic handoff shape without creating a run or config."""
+    digest = "replace-with-lowercase-sha256"
+    return {
+        "schema": "factory.atomic-envelope-template.v1",
+        "envelope_schema": ENVELOPE_SCHEMA,
+        "envelope": {
+            "schema": ENVELOPE_SCHEMA,
+            "envelope_id": "replace-with-safe-envelope-id",
+            "run_id": "replace-with-safe-run-id",
+            "status": "completed",
+            "agent": {
+                "schema": "factory.agent-identity.v1",
+                "subject": "replace-with-declared-agent-id",
+                "provider": "atomic-exporter",
+                "model": "replace-with-declared-model-id",
+            },
+            "autonomy": "supervised",
+            "isolation": "declared_worktree",
+            "oracle": {"contract_path": ".factory/oracles/contracts/current.json", "contract_sha256": digest},
+            "workflow": {
+                "id": "replace-with-workflow-id",
+                "definition_sha256": digest,
+                "topology_sha256": digest,
+                "nodes": [
+                    {"id": "plan", "kind": "planner"},
+                    {"id": "build", "kind": "worker"},
+                    {"id": "verify", "kind": "validator"},
+                ],
+                "edges": [{"from": "plan", "to": "build"}, {"from": "build", "to": "verify"}],
+            },
+            "stages": [
+                {
+                    "id": "plan",
+                    "kind": "planner",
+                    "status": "completed",
+                    "scope_paths": ["replace-with-approved-scope"],
+                    "capabilities": ["read_workspace", "handoff"],
+                    "input_sha256": digest,
+                    "output_sha256": digest,
+                    "artifact_sha256": digest,
+                    "tool_manifest_sha256": digest,
+                    "checkpoint": {"id": "replace-with-checkpoint-id", "sha256": digest},
+                    "source_preconditions": [{"path": "replace-with-existing-source-path", "sha256": digest}],
+                }
+            ],
+            "handoffs": [],
+        },
+        "authority": dict(AUTHORITY),
+        "claim_boundary": "Template only. Replace placeholders with reviewed local identifiers and digests. Never add prompts, source bodies, URLs, credentials, provider tokens, tool output bodies, or execution instructions.",
+    }
 
 
 def atomic_proof_projection(root: Path) -> dict[str, Any]:

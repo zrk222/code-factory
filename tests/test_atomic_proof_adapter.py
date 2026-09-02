@@ -11,6 +11,7 @@ from factoryline.atomic_proof_adapter import (
     BOUND_MARKER,
     MCP_MARKER,
     AtomicProofAdapterError,
+    atomic_envelope_template,
     atomic_proof_projection,
     import_atomic_run,
     verify_atomic_receipt,
@@ -153,6 +154,19 @@ def _envelope(root: Path, *, run_id: str = "atomic-run-1") -> tuple[dict[str, ob
 def _import(root: Path, envelope: dict[str, object], *, filename: str = "atomic-envelope.json") -> dict[str, object]:
     path = _write(root / filename, envelope)
     return import_atomic_run(root, path.relative_to(root))
+
+
+def test_template_gives_connected_agents_a_secret_free_handoff_shape() -> None:
+    template = atomic_envelope_template()
+
+    assert template["schema"] == "factory.atomic-envelope-template.v1"
+    assert template["envelope_schema"] == "factory.atomic-run-envelope.v1"
+    assert template["authority"] == {key: False for key in template["authority"]}
+    assert set(template["envelope"]) == {
+        "schema", "envelope_id", "run_id", "status", "agent", "autonomy", "isolation",
+        "oracle", "workflow", "stages", "handoffs",
+    }
+    assert "credentials" in template["claim_boundary"]
 
 
 def test_import_binds_typed_dag_handoffs_checkpoints_and_read_only_projection(tmp_path: Path) -> None:

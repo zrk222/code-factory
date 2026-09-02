@@ -62,6 +62,13 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.appforge_status",
         "factory.oracle_firewall_status",
         "factory.atomic_status",
+        "factory.operations_control_status",
+        "factory.lifecycle_status",
+        "factory.repair_loop_status",
+        "factory.mission_control_status",
+        "factory.agent_bridge_status",
+        "factory.agent_handoff_brief",
+        "factory.proof_worklog_status",
         "factory.codex_metadata_audit",
         "factory.appforge_oracle_status",
         "factory.saas_status",
@@ -83,7 +90,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {"name": "code-factory", "version": "0.45.4"},
+                "serverInfo": {"name": "code-factory", "version": "0.46.0"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }

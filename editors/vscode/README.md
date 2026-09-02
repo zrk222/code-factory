@@ -11,11 +11,11 @@ hollow negative control caught in a disposable sandbox, then open
 `factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
-**New in 0.8.22:** the Atomic Proof Adapter makes an externally orchestrated
-agent workflow inspectable in Graph Ops. It verifies the supplied typed stage
-graph, scoped handoffs, checkpoint continuity, source bytes, resume lineage,
-and current Oracle Contract binding without starting the workflow or inheriting
-its authority.
+**New in 0.9.0:** the Agent Proof Bridge makes an Eve, Junie, Grok Build, or
+generic handoff inspectable in Graph Ops. It verifies the typed DAG, sealed
+scope, source preconditions, real before/after artifacts, declared checkpoint
+continuity, and current Oracle Contract binding. It never starts or resumes an
+agent, posts a worklog, or inherits agent authority.
 
 AppForge Mission Control turns a confirmed app story
 into a visible review path and checks 30 exact-build Apple policy and prior
@@ -117,7 +117,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.8.22.vsix
+code --install-extension factoryline-vscode-0.9.0.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

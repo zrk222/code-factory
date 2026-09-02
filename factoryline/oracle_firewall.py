@@ -17,6 +17,7 @@ import tempfile
 from typing import Any
 
 from .agent_license import normalize_agent_identity
+from .protocol_enums import AuthorityOrigin, RuleEffect
 
 
 HANDOFF_SCHEMA = "factory.intent-handoff.v1"
@@ -28,9 +29,9 @@ CHALLENGE_RESULT_SCHEMA = "factory.oracle-challenge-result.v1"
 INCIDENT_SCHEMA = "factory.oracle-incident.v1"
 PROJECTION_SCHEMA = "factory.oracle-firewall-projection.v1"
 MAX_BYTES = 1_048_576
-ORIGINS = frozenset({"human_confirmed", "trusted_source", "observed_production", "agent_proposed"})
-AUTHORITY_ORIGINS = frozenset({"human_confirmed", "trusted_source"})
-EFFECTS = frozenset({"advisory", "blocking", "release"})
+ORIGINS = AuthorityOrigin.values()
+AUTHORITY_ORIGINS = frozenset({AuthorityOrigin.HUMAN_CONFIRMED.value, AuthorityOrigin.TRUSTED_SOURCE.value})
+EFFECTS = RuleEffect.values()
 RULE_GROUPS = ("requirements", "forbidden_behaviors", "gates", "exceptions", "negative_cases", "invariants", "tests")
 IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,95}$")
 AUTHORITY = {

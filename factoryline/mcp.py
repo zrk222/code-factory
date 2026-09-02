@@ -30,6 +30,12 @@ from .appforge_design import appforge_design_projection
 from .appforge_oracle import appforge_oracle_projection
 from .oracle_firewall import oracle_firewall_projection
 from .atomic_proof_adapter import atomic_proof_projection
+from .agent_proof_bridge import AgentProofBridgeError, agent_handoff_brief, agent_proof_projection
+from .proof_worklog import proof_worklog_projection
+from .operations_control import operations_control_projection
+from .lifecycle_ledger import lifecycle_projection
+from .repair_loop import repair_loop_projection
+from .mission_control_status import mission_control_status
 from .codex_metadata import MetadataAuditError, audit_metadata
 from .saas_proof import saas_proof_projection
 from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
@@ -76,6 +82,9 @@ _RECEIPT_ROOTS = (
     Path(".factory/journey-proof"),
     Path(".factory/oracles"),
     Path(".factory/appforge"),
+    Path(".factory/operations-control"),
+    Path(".factory/lifecycle"),
+    Path(".factory/repair-loops"),
 )
 
 
@@ -396,6 +405,53 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.atomic_status",
             "description": "Read imported Atomic workflow DAG, capability handoff, checkpoint, and source-precondition facts bound to a sealed Oracle Contract. It never invokes Atomic, resumes a checkpoint, or grants authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.operations_control_status",
+            "description": "Read local verified-isolation, repro-budget, change-envelope, proof-tier, architecture-zone, and coordination receipt facts. It never creates a worktree, dispatches a task, or approves work.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.lifecycle_status",
+            "description": "Read local hash-linked harness lifecycle summaries. It does not broadcast, contact an agent, resume a run, or grant authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.repair_loop_status",
+            "description": "Read exact failure, human-authored consequence, candidate, and independent re-check packet facts. It never executes a repair or approves work.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.mission_control_status",
+            "description": "Read one bounded human/agent control-plane status built from local intent, operations, session, and repair evidence. It never grants authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.agent_bridge_status",
+            "description": "Read imported Eve, Junie, Grok Build, CodeRabbit, Devin, or generic hash-only handoff receipts bound to a sealed Oracle Contract. It never starts an agent, contacts a provider, resumes a checkpoint, or grants authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.agent_handoff_brief",
+            "description": "Render one current sealed Oracle Contract for an agent and supervising human. It never starts an agent or changes intent.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"contract": {"type": "string", "minLength": 1, "maxLength": 512}},
+                "required": ["contract"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.proof_worklog_status",
+            "description": "Read local, review-required proof worklog drafts. It never posts to a tracker, chat, repository, or service.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1008,6 +1064,82 @@ def _atomic_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _operations_control_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.operations_control_status accepts no arguments")
+    return {
+        "marker": "OPS_CONTROL_MCP_READ_ONLY",
+        "action_summary": "Read local operational-precondition receipts without creating a worktree, running a reproduction, dispatching an agent, or changing a release decision.",
+        "status": operations_control_projection(root),
+        "scope": "Read-only local operations facts. No execution, provider call, approval, repair, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _lifecycle_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.lifecycle_status accepts no arguments")
+    return {
+        "marker": "LIFECYCLE_MCP_READ_ONLY",
+        "action_summary": "Read hash-linked local harness lifecycle facts while preserving the sealed intent and zero-authority boundary.",
+        "status": lifecycle_projection(root),
+        "scope": "Read-only local lifecycle facts. No task dispatch, broadcast, agent resume, execution, approval, provider, credential, connector, or release action ran.",
+    }
+
+
+def _repair_loop_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.repair_loop_status accepts no arguments")
+    return {
+        "marker": "REPAIR_LOOP_MCP_READ_ONLY",
+        "action_summary": "Read exact issue-to-consequence-to-independent-recheck packets without attempting the candidate or changing any decision.",
+        "status": repair_loop_projection(root),
+        "scope": "Read-only local repair-loop facts. No repair, agent, provider, approval, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _mission_control_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.mission_control_status accepts no arguments")
+    return {
+        "marker": "MISSION_CONTROL_MCP_READ_ONLY",
+        "action_summary": "Read the shared human and agent control-plane state without granting an agent, human, or provider any action authority.",
+        "status": mission_control_status(root),
+        "scope": "Read-only local control-plane facts. No agent execution, repair, approval, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _agent_bridge_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.agent_bridge_status accepts no arguments")
+    return {
+        "marker": "AGENT_PROOF_MCP_READ_ONLY",
+        "action_summary": "Read locally bound provider-neutral agent proof facts while retaining the sealed Oracle Contract and zero-authority boundary.",
+        "status": agent_proof_projection(root),
+        "scope": "Read-only imported evidence. No Eve, Junie, Grok Build, Vercel, IDE, model, checkpoint, code, approval, provider, credential, or release action ran.",
+    }
+
+
+def _agent_handoff_brief(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) != {"contract"} or not isinstance(arguments.get("contract"), str) or not arguments["contract"].strip() or len(arguments["contract"]) > 512:
+        raise McpError("factory.agent_handoff_brief requires one workspace-relative contract path")
+    try:
+        brief = agent_handoff_brief(root, Path(arguments["contract"]))
+    except AgentProofBridgeError as exc:
+        raise McpError(str(exc), exc.code) from exc
+    return {"marker": "AGENT_HANDOFF_BRIEF_MCP_READ_ONLY", "action_summary": "Read the sealed original-intent contract shared by worker and reviewer without sending it to a provider or changing it.", "brief": brief}
+
+
+def _proof_worklog_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.proof_worklog_status accepts no arguments")
+    return {
+        "marker": "PROOF_WORKLOG_MCP_READ_ONLY",
+        "action_summary": "Read local review-required worklog drafts from sealed contracts and receipt summaries without posting or messaging anyone.",
+        "status": proof_worklog_projection(root),
+        "scope": "Read-only local draft evidence. No ticket, pull request, chat message, release note, provider, credential, approval, or deployment action ran.",
+    }
+
+
 def _codex_metadata_audit(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) - {"paths"}:
         raise McpError("factory.codex_metadata_audit accepts optional paths only")
@@ -1162,6 +1294,20 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_oracle_firewall_status(root, arguments))
     if name == "factory.atomic_status":
         return _content(_atomic_status(root, arguments))
+    if name == "factory.operations_control_status":
+        return _content(_operations_control_status(root, arguments))
+    if name == "factory.lifecycle_status":
+        return _content(_lifecycle_status(root, arguments))
+    if name == "factory.repair_loop_status":
+        return _content(_repair_loop_status(root, arguments))
+    if name == "factory.mission_control_status":
+        return _content(_mission_control_status(root, arguments))
+    if name == "factory.agent_bridge_status":
+        return _content(_agent_bridge_status(root, arguments))
+    if name == "factory.agent_handoff_brief":
+        return _content(_agent_handoff_brief(root, arguments))
+    if name == "factory.proof_worklog_status":
+        return _content(_proof_worklog_status(root, arguments))
     if name == "factory.codex_metadata_audit":
         return _content(_codex_metadata_audit(root, arguments))
     if name == "factory.appforge_oracle_status":

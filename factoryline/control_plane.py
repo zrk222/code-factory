@@ -1,9 +1,7 @@
-"""Local-first control-plane primitives for tenant-scoped factory evidence.
+"""Local-first tenant-scoped evidence control-plane primitives.
 
-This module is intentionally dependency-free.  It is the policy boundary that
-hosted API and SCM adapters must call; it is not itself an identity provider or
-multi-tenant network service.  SQLite gives the local verifier a durable,
-inspectable store while the audit table provides a tamper-evident event chain.
+This persistent SQLite store remains the policy boundary for hosted and SCM
+adapters.  It is distinct from the read-only mission-control summary.
 """
 from __future__ import annotations
 
@@ -49,19 +47,13 @@ ROLE_ACTIONS: dict[str, frozenset[str]] = {
     "viewer": frozenset({"evidence.read", "evidence.list", "audit.verify"}),
     "operator": frozenset({"evidence.read", "evidence.list", "evidence.write", "approval.request", "audit.verify"}),
     "approver": frozenset({"evidence.read", "evidence.list", "approval.decide", "audit.verify"}),
-    "admin": frozenset({
-        "evidence.read", "evidence.list", "evidence.write", "approval.request",
-        "approval.decide", "audit.verify",
-    }),
-    "platform_admin": frozenset({
-        "evidence.read", "evidence.list", "evidence.write", "approval.request",
-        "approval.decide", "audit.verify",
-    }),
+    "admin": frozenset({"evidence.read", "evidence.list", "evidence.write", "approval.request", "approval.decide", "audit.verify"}),
+    "platform_admin": frozenset({"evidence.read", "evidence.list", "evidence.write", "approval.request", "approval.decide", "audit.verify"}),
 }
 
 
 def canonical_json(value: Any) -> bytes:
-    """Serialize a control-plane value into signature-stable canonical JSON bytes."""
+    """Serialize a JSON-compatible value into stable bytes for evidence hashing."""
     try:
         return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     except (TypeError, ValueError) as exc:
@@ -69,7 +61,7 @@ def canonical_json(value: Any) -> bytes:
 
 
 def sha256(value: bytes) -> str:
-    """Return the full lowercase SHA-256 digest for the supplied bytes."""
+    """Return the lowercase SHA-256 digest that binds the supplied byte string."""
     return hashlib.sha256(value).hexdigest()
 
 
@@ -78,7 +70,7 @@ def _now() -> str:
 
 
 def authorize(principal: Principal, action: str, tenant_id: str) -> None:
-    """Authorize an action before any tenant-scoped store access occurs."""
+    """Fail closed unless a tenant-scoped principal owns the requested action."""
     if not tenant_id.strip():
         raise ControlPlaneError("E_TENANT_REQUIRED", "resource tenant_id is required")
     allowed = frozenset().union(*(ROLE_ACTIONS.get(role, frozenset()) for role in principal.roles))
@@ -108,57 +100,36 @@ class EvidenceStore:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS evidence (
-                    evidence_id TEXT PRIMARY KEY,
-                    tenant_id TEXT NOT NULL,
-                    payload_json TEXT NOT NULL,
-                    payload_sha256 TEXT NOT NULL,
-                    schema TEXT NOT NULL,
-                    subject_digest TEXT,
-                    policy_digest TEXT,
-                    verdict TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    inserted_by TEXT NOT NULL
+                  evidence_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
+                  payload_json TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
+                  schema TEXT NOT NULL, subject_digest TEXT, policy_digest TEXT,
+                  verdict TEXT NOT NULL, created_at TEXT NOT NULL, inserted_by TEXT NOT NULL
                 );
-                CREATE INDEX IF NOT EXISTS evidence_tenant_created
-                    ON evidence(tenant_id, created_at, evidence_id);
+                CREATE INDEX IF NOT EXISTS evidence_tenant_created ON evidence(tenant_id, created_at, evidence_id);
                 CREATE TABLE IF NOT EXISTS approvals (
-                    approval_id TEXT PRIMARY KEY,
-                    tenant_id TEXT NOT NULL,
-                    evidence_id TEXT NOT NULL REFERENCES evidence(evidence_id),
-                    requester TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    requested_at TEXT NOT NULL,
-                    decided_at TEXT,
-                    approver TEXT,
-                    decision_reason TEXT
+                  approval_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
+                  evidence_id TEXT NOT NULL REFERENCES evidence(evidence_id), requester TEXT NOT NULL,
+                  reason TEXT NOT NULL, status TEXT NOT NULL, requested_at TEXT NOT NULL,
+                  decided_at TEXT, approver TEXT, decision_reason TEXT
                 );
-                CREATE INDEX IF NOT EXISTS approvals_tenant_status
-                    ON approvals(tenant_id, status, requested_at, approval_id);
+                CREATE INDEX IF NOT EXISTS approvals_tenant_status ON approvals(tenant_id, status, requested_at, approval_id);
                 CREATE TABLE IF NOT EXISTS audit_events (
-                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tenant_id TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    actor TEXT NOT NULL,
-                    resource_id TEXT NOT NULL,
-                    payload_json TEXT NOT NULL,
-                    previous_hash TEXT NOT NULL,
-                    event_hash TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                  sequence INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL,
+                  action TEXT NOT NULL, actor TEXT NOT NULL, resource_id TEXT NOT NULL,
+                  payload_json TEXT NOT NULL, previous_hash TEXT NOT NULL,
+                  event_hash TEXT NOT NULL, created_at TEXT NOT NULL
                 );
-                CREATE INDEX IF NOT EXISTS audit_tenant_sequence
-                    ON audit_events(tenant_id, sequence);
+                CREATE INDEX IF NOT EXISTS audit_tenant_sequence ON audit_events(tenant_id, sequence);
                 """
             )
 
     @staticmethod
     def _row_payload(row: sqlite3.Row) -> dict[str, Any]:
-        payload = json.loads(row["payload_json"])
         return {
             "schema": EVIDENCE_SCHEMA,
             "evidence_id": row["evidence_id"],
             "tenant_id": row["tenant_id"],
-            "payload": payload,
+            "payload": json.loads(row["payload_json"]),
             "payload_sha256": row["payload_sha256"],
             "subject_digest": row["subject_digest"],
             "policy_digest": row["policy_digest"],
@@ -167,46 +138,21 @@ class EvidenceStore:
             "inserted_by": row["inserted_by"],
         }
 
-    def _audit(
-        self,
-        db: sqlite3.Connection,
-        *,
-        tenant_id: str,
-        action: str,
-        actor: str,
-        resource_id: str,
-        payload: dict[str, Any],
-    ) -> None:
+    def _audit(self, db: sqlite3.Connection, *, tenant_id: str, action: str, actor: str, resource_id: str, payload: dict[str, Any]) -> None:
         created_at = _now()
         payload_json = canonical_json(payload).decode("utf-8")
-        previous = db.execute(
-            "SELECT event_hash FROM audit_events WHERE tenant_id = ? ORDER BY sequence DESC LIMIT 1",
-            (tenant_id,),
-        ).fetchone()
+        previous = db.execute("SELECT event_hash FROM audit_events WHERE tenant_id = ? ORDER BY sequence DESC LIMIT 1", (tenant_id,)).fetchone()
         previous_hash = previous["event_hash"] if previous else ""
         db.execute(
-            """INSERT INTO audit_events
-               (tenant_id, action, actor, resource_id, payload_json, previous_hash, event_hash, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            "INSERT INTO audit_events (tenant_id, action, actor, resource_id, payload_json, previous_hash, event_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (tenant_id, action, actor, resource_id, payload_json, previous_hash, "pending", created_at),
         )
         sequence = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
-        event = {
-            "schema": AUDIT_SCHEMA,
-            "sequence": sequence,
-            "tenant_id": tenant_id,
-            "action": action,
-            "actor": actor,
-            "resource_id": resource_id,
-            "payload": payload,
-            "previous_hash": previous_hash,
-            "created_at": created_at,
-        }
-        event_hash = sha256(canonical_json(event))
-        db.execute("UPDATE audit_events SET event_hash = ? WHERE sequence = ?", (event_hash, sequence))
+        event = {"schema": AUDIT_SCHEMA, "sequence": sequence, "tenant_id": tenant_id, "action": action, "actor": actor, "resource_id": resource_id, "payload": payload, "previous_hash": previous_hash, "created_at": created_at}
+        db.execute("UPDATE audit_events SET event_hash = ? WHERE sequence = ?", (sha256(canonical_json(event)), sequence))
 
     def put(self, principal: Principal, payload: dict[str, Any], *, evidence_id: str | None = None) -> dict[str, Any]:
-        """Store tenant evidence and append its authorization event to the audit chain."""
+        """Persist immutable tenant evidence and append its writer to the audit chain."""
         if not isinstance(payload, dict):
             raise ControlPlaneError("E_INVALID_EVIDENCE", "evidence payload must be a JSON object")
         tenant_id = str(payload.get("tenant_id", ""))
@@ -214,11 +160,10 @@ class EvidenceStore:
         schema = str(payload.get("schema", ""))
         if not schema.startswith("factory."):
             raise ControlPlaneError("E_INVALID_EVIDENCE", "evidence schema must start with factory.")
-        verdict = str(payload.get("verdict", payload.get("ok", "UNKNOWN")))
         evidence_id = evidence_id or uuid.uuid4().hex
         payload_bytes = canonical_json(payload)
-        digest = sha256(payload_bytes)
-        created_at = _now()
+        digest, created_at = sha256(payload_bytes), _now()
+        verdict = str(payload.get("verdict", payload.get("ok", "UNKNOWN")))
         with self._connect() as db:
             existing = db.execute("SELECT * FROM evidence WHERE evidence_id = ?", (evidence_id,)).fetchone()
             if existing:
@@ -226,90 +171,51 @@ class EvidenceStore:
                     raise ControlPlaneError("E_EVIDENCE_IMMUTABLE", "evidence id is already bound to different content")
                 return self._row_payload(existing)
             db.execute(
-                """INSERT INTO evidence
-                   (evidence_id, tenant_id, payload_json, payload_sha256, schema, subject_digest,
-                    policy_digest, verdict, created_at, inserted_by)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    evidence_id, tenant_id, payload_bytes.decode("utf-8"), digest, schema,
-                    payload.get("subject_digest"), payload.get("policy_sha256", payload.get("policy_digest")),
-                    verdict, created_at, principal.subject,
-                ),
+                "INSERT INTO evidence (evidence_id, tenant_id, payload_json, payload_sha256, schema, subject_digest, policy_digest, verdict, created_at, inserted_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (evidence_id, tenant_id, payload_bytes.decode("utf-8"), digest, schema, payload.get("subject_digest"), payload.get("policy_sha256", payload.get("policy_digest")), verdict, created_at, principal.subject),
             )
-            self._audit(db, tenant_id=tenant_id, action="evidence.write", actor=principal.subject,
-                        resource_id=evidence_id, payload={"payload_sha256": digest, "verdict": verdict})
-            row = db.execute("SELECT * FROM evidence WHERE evidence_id = ?", (evidence_id,)).fetchone()
-            return self._row_payload(row)
+            self._audit(db, tenant_id=tenant_id, action="evidence.write", actor=principal.subject, resource_id=evidence_id, payload={"payload_sha256": digest, "verdict": verdict})
+            return self._row_payload(db.execute("SELECT * FROM evidence WHERE evidence_id = ?", (evidence_id,)).fetchone())
 
     def get(self, principal: Principal, tenant_id: str, evidence_id: str) -> dict[str, Any]:
-        """Return one authorized tenant evidence record or raise a specific control error."""
+        """Return exactly one evidence record after tenant and role authorization."""
         authorize(principal, "evidence.read", tenant_id)
         with self._connect() as db:
-            row = db.execute(
-                "SELECT * FROM evidence WHERE evidence_id = ? AND tenant_id = ?",
-                (evidence_id, tenant_id),
-            ).fetchone()
+            row = db.execute("SELECT * FROM evidence WHERE evidence_id = ? AND tenant_id = ?", (evidence_id, tenant_id)).fetchone()
             if not row:
                 raise ControlPlaneError("E_NOT_FOUND", "evidence not found")
             return self._row_payload(row)
 
     def list(self, principal: Principal, tenant_id: str) -> list[dict[str, Any]]:
-        """List evidence visible to the principal within exactly one tenant boundary."""
+        """List only the evidence records visible inside the requested tenant boundary."""
         authorize(principal, "evidence.list", tenant_id)
         with self._connect() as db:
-            rows = db.execute(
-                "SELECT * FROM evidence WHERE tenant_id = ? ORDER BY created_at, evidence_id",
-                (tenant_id,),
-            ).fetchall()
-            return [self._row_payload(row) for row in rows]
+            return [self._row_payload(row) for row in db.execute("SELECT * FROM evidence WHERE tenant_id = ? ORDER BY created_at, evidence_id", (tenant_id,)).fetchall()]
 
     def request_approval(self, principal: Principal, tenant_id: str, evidence_id: str, reason: str) -> dict[str, Any]:
-        """Create a pending approval request bound to existing evidence and its tenant."""
+        """Create a review-required approval record bound to existing tenant evidence."""
         authorize(principal, "approval.request", tenant_id)
         if not reason.strip():
             raise ControlPlaneError("E_REASON_REQUIRED", "approval reason is required")
         with self._connect() as db:
-            evidence = db.execute(
-                "SELECT evidence_id FROM evidence WHERE evidence_id = ? AND tenant_id = ?",
-                (evidence_id, tenant_id),
-            ).fetchone()
-            if not evidence:
+            if not db.execute("SELECT evidence_id FROM evidence WHERE evidence_id = ? AND tenant_id = ?", (evidence_id, tenant_id)).fetchone():
                 raise ControlPlaneError("E_NOT_FOUND", "evidence not found")
-            approval_id = uuid.uuid4().hex
-            requested_at = _now()
-            db.execute(
-                """INSERT INTO approvals
-                   (approval_id, tenant_id, evidence_id, requester, reason, status, requested_at)
-                   VALUES (?, ?, ?, ?, ?, 'pending', ?)""",
-                (approval_id, tenant_id, evidence_id, principal.subject, reason.strip(), requested_at),
-            )
-            self._audit(db, tenant_id=tenant_id, action="approval.request", actor=principal.subject,
-                        resource_id=approval_id, payload={"evidence_id": evidence_id, "reason": reason.strip()})
-            # Read inside the same transaction; a second connection cannot see
-            # the request until this context commits.
+            approval_id, requested_at = uuid.uuid4().hex, _now()
+            db.execute("INSERT INTO approvals (approval_id, tenant_id, evidence_id, requester, reason, status, requested_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)", (approval_id, tenant_id, evidence_id, principal.subject, reason.strip(), requested_at))
+            self._audit(db, tenant_id=tenant_id, action="approval.request", actor=principal.subject, resource_id=approval_id, payload={"evidence_id": evidence_id, "reason": reason.strip()})
             return dict(db.execute("SELECT * FROM approvals WHERE approval_id = ?", (approval_id,)).fetchone())
 
     def get_approval(self, principal: Principal, tenant_id: str, approval_id: str, *, allow_requester: bool = False) -> dict[str, Any]:
-        """Return an approval after enforcing reviewer or explicitly allowed requester access."""
+        """Read one tenant approval request without changing its review state."""
         authorize(principal, "evidence.read", tenant_id)
         with self._connect() as db:
-            row = db.execute(
-                "SELECT * FROM approvals WHERE approval_id = ? AND tenant_id = ?",
-                (approval_id, tenant_id),
-            ).fetchone()
+            row = db.execute("SELECT * FROM approvals WHERE approval_id = ? AND tenant_id = ?", (approval_id, tenant_id)).fetchone()
             if not row:
                 raise ControlPlaneError("E_NOT_FOUND", "approval request not found")
             return dict(row)
 
-    def decide_approval(
-        self,
-        principal: Principal,
-        tenant_id: str,
-        approval_id: str,
-        decision: str,
-        reason: str,
-    ) -> dict[str, Any]:
-        """Record one terminal approval decision and reject unauthorized or replayed decisions."""
+    def decide_approval(self, principal: Principal, tenant_id: str, approval_id: str, decision: str, reason: str) -> dict[str, Any]:
+        """Record one authorized, non-self terminal decision in the audit chain."""
         authorize(principal, "approval.decide", tenant_id)
         decision = decision.strip().lower()
         if decision not in {"approved", "rejected"}:
@@ -317,36 +223,23 @@ class EvidenceStore:
         if not reason.strip():
             raise ControlPlaneError("E_REASON_REQUIRED", "decision reason is required")
         with self._connect() as db:
-            row = db.execute(
-                "SELECT * FROM approvals WHERE approval_id = ? AND tenant_id = ?",
-                (approval_id, tenant_id),
-            ).fetchone()
+            row = db.execute("SELECT * FROM approvals WHERE approval_id = ? AND tenant_id = ?", (approval_id, tenant_id)).fetchone()
             if not row:
                 raise ControlPlaneError("E_NOT_FOUND", "approval request not found")
             if row["status"] != "pending":
                 raise ControlPlaneError("E_ALREADY_DECIDED", "approval request has already been decided")
             if row["requester"] == principal.subject:
                 raise ControlPlaneError("E_SELF_APPROVAL", "requester cannot approve its own request")
-            decided_at = _now()
-            db.execute(
-                """UPDATE approvals SET status = ?, decided_at = ?, approver = ?, decision_reason = ?
-                   WHERE approval_id = ? AND tenant_id = ? AND status = 'pending'""",
-                (decision, decided_at, principal.subject, reason.strip(), approval_id, tenant_id),
-            )
-            self._audit(db, tenant_id=tenant_id, action="approval.decide", actor=principal.subject,
-                        resource_id=approval_id, payload={"decision": decision, "reason": reason.strip()})
+            db.execute("UPDATE approvals SET status = ?, decided_at = ?, approver = ?, decision_reason = ? WHERE approval_id = ? AND tenant_id = ? AND status = 'pending'", (decision, _now(), principal.subject, reason.strip(), approval_id, tenant_id))
+            self._audit(db, tenant_id=tenant_id, action="approval.decide", actor=principal.subject, resource_id=approval_id, payload={"decision": decision, "reason": reason.strip()})
             return dict(db.execute("SELECT * FROM approvals WHERE approval_id = ?", (approval_id,)).fetchone())
 
     def verify_audit(self, principal: Principal, tenant_id: str) -> dict[str, Any]:
-        """Verify the tenant audit hash chain and report every detected integrity failure."""
+        """Verify all hash links in one authorized tenant audit trail."""
         authorize(principal, "audit.verify", tenant_id)
         with self._connect() as db:
-            rows = db.execute(
-                "SELECT * FROM audit_events WHERE tenant_id = ? ORDER BY sequence",
-                (tenant_id,),
-            ).fetchall()
-        previous = ""
-        errors: list[str] = []
+            rows = db.execute("SELECT * FROM audit_events WHERE tenant_id = ? ORDER BY sequence", (tenant_id,)).fetchall()
+        previous, errors = "", []
         for row in rows:
             if row["previous_hash"] != previous:
                 errors.append(f"sequence {row['sequence']}: previous hash mismatch")
@@ -356,30 +249,13 @@ class EvidenceStore:
                 errors.append(f"sequence {row['sequence']}: invalid payload JSON")
                 previous = row["event_hash"]
                 continue
-            event = {
-                "schema": AUDIT_SCHEMA,
-                "sequence": row["sequence"],
-                "tenant_id": row["tenant_id"],
-                "action": row["action"],
-                "actor": row["actor"],
-                "resource_id": row["resource_id"],
-                "payload": payload,
-                "previous_hash": row["previous_hash"],
-                "created_at": row["created_at"],
-            }
+            event = {"schema": AUDIT_SCHEMA, "sequence": row["sequence"], "tenant_id": row["tenant_id"], "action": row["action"], "actor": row["actor"], "resource_id": row["resource_id"], "payload": payload, "previous_hash": row["previous_hash"], "created_at": row["created_at"]}
             if sha256(canonical_json(event)) != row["event_hash"]:
                 errors.append(f"sequence {row['sequence']}: event hash mismatch")
             previous = row["event_hash"]
-        return {
-            "schema": CONTROL_PLANE_SCHEMA,
-            "tenant_id": tenant_id,
-            "audit_schema": AUDIT_SCHEMA,
-            "events": len(rows),
-            "valid": not errors,
-            "errors": errors,
-        }
+        return {"schema": CONTROL_PLANE_SCHEMA, "tenant_id": tenant_id, "audit_schema": AUDIT_SCHEMA, "events": len(rows), "valid": not errors, "errors": errors}
 
 
 def principal_from_args(subject: str, tenant_id: str, roles: Iterable[str]) -> Principal:
-    """Construct a normalized principal from trusted command-line identity arguments."""
+    """Normalize trusted command-line identity fields into an immutable principal."""
     return Principal(subject=subject, tenant_id=tenant_id, roles=tuple(sorted({role.strip() for role in roles if role.strip()})))

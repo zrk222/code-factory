@@ -90,7 +90,7 @@ declared cases; it is not a production-readiness or release certificate.
 
 The canonical Python package is
 [`factoryline-code-factory`](https://pypi.org/project/factoryline-code-factory/).
-Release `v0.45.4` is archived under the repository's stable Zenodo concept DOI at
+Core release `v0.46.0` is archived under the repository's stable Zenodo concept DOI at
 [Zenodo](https://doi.org/10.5281/zenodo.21381405).
 
 ### New: declared Senior Attention before review

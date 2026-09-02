@@ -139,7 +139,16 @@ from .oracle_firewall import (
     verify_oracle_challenge_result,
     verify_oracle_contract,
 )
-from .atomic_proof_adapter import AtomicProofAdapterError, atomic_proof_projection, import_atomic_run, verify_atomic_receipt
+from .atomic_proof_adapter import AtomicProofAdapterError, atomic_envelope_template, atomic_proof_projection, import_atomic_run, verify_atomic_receipt
+from .agent_proof_bridge import AgentProofBridgeError, agent_handoff_brief, agent_proof_projection, import_agent_proof, provider_template, verify_agent_proof
+from .proof_worklog import ProofWorklogError, create_proof_worklog, proof_worklog_projection, verify_proof_worklog
+from .operations_control import OperationsControlError, assess_operations_control, operations_control_projection, operations_control_template
+from .lifecycle_ledger import LifecycleLedgerError, lifecycle_projection, lifecycle_template, record_lifecycle_event
+from .service_boundaries import ServiceBoundaryError, check_service_boundaries, service_boundary_template
+from .repair_loop import RepairLoopError, assess_repair_loop, repair_loop_projection, repair_loop_template
+from .repo_coordination import RepoCoordinationError, coordinate_repositories, repo_coordination_template
+from .domain_ontology import DomainOntologyError, domain_ontology_template, validate_domain_ontology
+from .mission_control_status import mission_control_status
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
 from .jetbrains_handshake import (
     JetBrainsHandshakeError,
@@ -1293,6 +1302,119 @@ def main(argv=None) -> int:
     atomic_status = atomic_sub.add_parser("status", help="read bounded imported Atomic mechanics facts without changing a receipt")
     atomic_status.add_argument("--root", default=".")
     atomic_status.add_argument("--json", action="store_true")
+    atomic_template = atomic_sub.add_parser("template", help="render a secret-free Atomic handoff template without starting Atomic or writing a configuration")
+    atomic_template.add_argument("--json", action="store_true")
+
+    agent_bridge = sub.add_parser("agent-bridge", help="bind a hash-only Eve, Junie, Grok Build, or generic agent export to a sealed Oracle Contract without contacting a provider")
+    agent_bridge_sub = agent_bridge.add_subparsers(required=True, dest="agent_bridge_cmd")
+    agent_bridge_import = agent_bridge_sub.add_parser("import", help="validate and store one immutable provider-neutral agent proof receipt")
+    agent_bridge_import.add_argument("--root", default=".")
+    agent_bridge_import.add_argument("--envelope", required=True, help="workspace-relative factory.agent-proof-envelope.v1 JSON")
+    agent_bridge_import.add_argument("--out", help="workspace-relative immutable receipt path")
+    agent_bridge_import.add_argument("--json", action="store_true")
+    agent_bridge_verify = agent_bridge_sub.add_parser("verify", help="verify one imported agent proof receipt and current Oracle binding")
+    agent_bridge_verify.add_argument("receipt")
+    agent_bridge_verify.add_argument("--root", default=".")
+    agent_bridge_verify.add_argument("--json", action="store_true")
+    agent_bridge_status = agent_bridge_sub.add_parser("status", help="read bounded provider-bridge facts without contacting a provider")
+    agent_bridge_status.add_argument("--root", default=".")
+    agent_bridge_status.add_argument("--json", action="store_true")
+    agent_bridge_template = agent_bridge_sub.add_parser("template", help="render a secret-free provider envelope template without writing a provider configuration")
+    agent_bridge_template.add_argument("--provider", required=True, choices=["eve", "junie", "grok_build", "coderabbit", "devin", "generic"])
+    agent_bridge_template.add_argument("--json", action="store_true")
+    agent_bridge_mission = agent_bridge_sub.add_parser("mission", help="render the sealed original intent for a worker and human reviewer without contacting a provider")
+    agent_bridge_mission.add_argument("--root", default=".")
+    agent_bridge_mission.add_argument("--contract", required=True, help="workspace-relative current sealed Oracle Contract")
+    agent_bridge_mission.add_argument("--json", action="store_true")
+
+    operations_control = sub.add_parser("operations-control", help="bind verified isolation, repro budgets, change envelopes, proof tiers, architecture zones, and local repository heads without dispatching work")
+    operations_control_sub = operations_control.add_subparsers(required=True, dest="operations_control_cmd")
+    operations_control_template_parser = operations_control_sub.add_parser("template", help="render a secret-free operations-control manifest template")
+    operations_control_template_parser.add_argument("--json", action="store_true")
+    operations_control_assess = operations_control_sub.add_parser("assess", help="write one fail-closed local operations-control receipt")
+    operations_control_assess.add_argument("--root", default=".")
+    operations_control_assess.add_argument("--manifest", required=True, help="workspace-relative factory.operations-control-manifest.v1 JSON")
+    operations_control_assess.add_argument("--out", help="workspace-relative output below .factory/operations-control")
+    operations_control_assess.add_argument("--json", action="store_true")
+    operations_control_status = operations_control_sub.add_parser("status", help="read local operations-control receipt summaries")
+    operations_control_status.add_argument("--root", default=".")
+    operations_control_status.add_argument("--json", action="store_true")
+
+    lifecycle = sub.add_parser("lifecycle", help="record or inspect local hash-linked harness lifecycle facts without dispatching an agent")
+    lifecycle_sub = lifecycle.add_subparsers(required=True, dest="lifecycle_cmd")
+    lifecycle_template_parser = lifecycle_sub.add_parser("template", help="render a secret-free lifecycle event template")
+    lifecycle_template_parser.add_argument("--json", action="store_true")
+    lifecycle_record = lifecycle_sub.add_parser("record", help="append one hash-linked local lifecycle event")
+    lifecycle_record.add_argument("--root", default=".")
+    lifecycle_record.add_argument("--event", required=True, help="workspace-relative factory.lifecycle-event.v1 JSON")
+    lifecycle_record.add_argument("--out", help="workspace-relative output below .factory/lifecycle")
+    lifecycle_record.add_argument("--json", action="store_true")
+    lifecycle_status = lifecycle_sub.add_parser("status", help="read local lifecycle run summaries")
+    lifecycle_status.add_argument("--root", default=".")
+    lifecycle_status.add_argument("--json", action="store_true")
+
+    service_boundary = sub.add_parser("service-boundary", help="check declared action, service, adapter, and core boundaries for changed source without rewriting code")
+    service_boundary_sub = service_boundary.add_subparsers(required=True, dest="service_boundary_cmd")
+    service_boundary_template_parser = service_boundary_sub.add_parser("template", help="render a secret-free service-boundary manifest template")
+    service_boundary_template_parser.add_argument("--json", action="store_true")
+    service_boundary_check = service_boundary_sub.add_parser("check", help="classify changed source and fail closed on declared boundary violations")
+    service_boundary_check.add_argument("--root", default=".")
+    service_boundary_check.add_argument("--manifest", required=True, help="workspace-relative factory.service-boundary-manifest.v1 JSON")
+    service_boundary_check.add_argument("--changed", required=True, action="append", help="workspace-relative changed source path; repeat as needed")
+    service_boundary_check.add_argument("--json", action="store_true")
+
+    repair_loop = sub.add_parser("repair-loop", help="bind one exact failure, consequence assessment, candidate, independent re-check, and named human review without attempting a repair")
+    repair_loop_sub = repair_loop.add_subparsers(required=True, dest="repair_loop_cmd")
+    repair_loop_template_parser = repair_loop_sub.add_parser("template", help="render a secret-free proof-gated repair-loop manifest template")
+    repair_loop_template_parser.add_argument("--json", action="store_true")
+    repair_loop_assess = repair_loop_sub.add_parser("assess", help="write one immutable local repair-loop packet after binding all supplied evidence")
+    repair_loop_assess.add_argument("--root", default=".")
+    repair_loop_assess.add_argument("--manifest", required=True, help="workspace-relative factory.repair-loop-manifest.v1 JSON")
+    repair_loop_assess.add_argument("--out", help="workspace-relative output below .factory/repair-loops")
+    repair_loop_assess.add_argument("--json", action="store_true")
+    repair_loop_status = repair_loop_sub.add_parser("status", help="read bounded local repair-loop packets without running any candidate")
+    repair_loop_status.add_argument("--root", default=".")
+    repair_loop_status.add_argument("--json", action="store_true")
+
+    repo_coordinate = sub.add_parser("repo-coordinate", help="inspect a pinned multi-repository dependency order without changing any repository")
+    repo_coordinate_sub = repo_coordinate.add_subparsers(required=True, dest="repo_coordinate_cmd")
+    repo_coordinate_template_parser = repo_coordinate_sub.add_parser("template", help="render a secret-free multi-repository coordination manifest template")
+    repo_coordinate_template_parser.add_argument("--json", action="store_true")
+    repo_coordinate_plan = repo_coordinate_sub.add_parser("plan", help="derive a fail-closed sequential plan from pinned local Git heads")
+    repo_coordinate_plan.add_argument("--root", default=".")
+    repo_coordinate_plan.add_argument("--manifest", required=True, help="workspace-relative factory.repo-coordination-manifest.v1 JSON")
+    repo_coordinate_plan.add_argument("--json", action="store_true")
+
+    ontology = sub.add_parser("ontology", help="validate an explicitly human-approved domain vocabulary without inferring or mutating intent")
+    ontology_sub = ontology.add_subparsers(required=True, dest="ontology_cmd")
+    ontology_template_parser = ontology_sub.add_parser("template", help="render a domain-ontology template")
+    ontology_template_parser.add_argument("--json", action="store_true")
+    ontology_validate = ontology_sub.add_parser("validate", help="fail closed when referenced concepts are not in the approved ontology")
+    ontology_validate.add_argument("--root", default=".")
+    ontology_validate.add_argument("--ontology", required=True, help="workspace-relative factory.domain-ontology.v1 JSON")
+    ontology_validate.add_argument("--concept", required=True, action="append", help="referenced domain concept id; repeat as needed")
+    ontology_validate.add_argument("--json", action="store_true")
+
+    mission_control = sub.add_parser("mission-control", help="read one unified, zero-authority human and agent evidence status")
+    mission_control_sub = mission_control.add_subparsers(required=True, dest="mission_control_cmd")
+    mission_control_status_parser = mission_control_sub.add_parser("status", help="read local mission-control facts without granting authority")
+    mission_control_status_parser.add_argument("--root", default=".")
+    mission_control_status_parser.add_argument("--json", action="store_true")
+
+    worklog = sub.add_parser("worklog", help="draft a local review-required update from one sealed Oracle Contract; never posts externally")
+    worklog_sub = worklog.add_subparsers(required=True, dest="worklog_cmd")
+    worklog_draft = worklog_sub.add_parser("draft", help="write one immutable local proof worklog draft")
+    worklog_draft.add_argument("--root", default=".")
+    worklog_draft.add_argument("--contract", required=True, help="workspace-relative current sealed Oracle Contract")
+    worklog_draft.add_argument("--out", help="workspace-relative immutable local draft path")
+    worklog_draft.add_argument("--json", action="store_true")
+    worklog_verify = worklog_sub.add_parser("verify", help="verify one local proof worklog draft and current Oracle binding")
+    worklog_verify.add_argument("draft")
+    worklog_verify.add_argument("--root", default=".")
+    worklog_verify.add_argument("--json", action="store_true")
+    worklog_status = worklog_sub.add_parser("status", help="read bounded local proof worklog facts without posting anything")
+    worklog_status.add_argument("--root", default=".")
+    worklog_status.add_argument("--json", action="store_true")
 
     proofsearch = sub.add_parser("proofsearch", help="compare hash-bound repair candidates without applying them")
     proofsearch_sub = proofsearch.add_subparsers(required=True, dest="proofsearch_cmd")
@@ -2699,12 +2821,14 @@ def main(argv=None) -> int:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
         return code
     if a.cmd == "atomic":
-        root = Path(a.root).resolve()
+        root = Path(getattr(a, "root", ".")).resolve()
         try:
             if a.atomic_cmd == "import":
                 result = import_atomic_run(root, Path(a.envelope), Path(a.out) if a.out else None)
             elif a.atomic_cmd == "verify":
                 result = verify_atomic_receipt(root, Path(a.receipt))
+            elif a.atomic_cmd == "template":
+                result = atomic_envelope_template()
             else:
                 result = atomic_proof_projection(root)
             code = 0 if result.get("ok", True) and int(result.get("invalid_count", 0)) == 0 else 1
@@ -2715,6 +2839,122 @@ def main(argv=None) -> int:
             print(json.dumps(result, indent=2, sort_keys=True))
         else:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "agent-bridge":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            if a.agent_bridge_cmd == "import":
+                result = import_agent_proof(root, Path(a.envelope), Path(a.out) if a.out else None)
+            elif a.agent_bridge_cmd == "verify":
+                result = verify_agent_proof(root, Path(a.receipt))
+            elif a.agent_bridge_cmd == "template":
+                result = provider_template(a.provider)
+            elif a.agent_bridge_cmd == "mission":
+                result = agent_handoff_brief(root, Path(a.contract))
+            else:
+                result = agent_proof_projection(root)
+            code = 0 if result.get("ok", True) and int(result.get("invalid_count", 0)) == 0 else 1
+        except (AgentProofBridgeError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.agent-proof-bridge.error.v1", "marker": "AGENT_PROOF_INPUT_REJECTED", "code": getattr(exc, "code", "E_AGENT_BRIDGE_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True) if a.json else json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "operations-control":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            if a.operations_control_cmd == "template":
+                result = operations_control_template()
+            elif a.operations_control_cmd == "assess":
+                result = assess_operations_control(root, Path(a.manifest), Path(a.out) if a.out else None)
+            else:
+                result = operations_control_projection(root)
+            code = 0 if a.operations_control_cmd == "template" or (result.get("marker") in {"OPS_CONTROL_READY", "OPS_CONTROL_READ_ONLY"} and int(result.get("invalid_count", 0)) == 0) else 1
+        except (OperationsControlError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.operations-control.error.v1", "marker": "OPS_CONTROL_INPUT_REJECTED", "code": getattr(exc, "code", "E_OPS_CONTROL_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "lifecycle":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            if a.lifecycle_cmd == "template":
+                result = lifecycle_template()
+            elif a.lifecycle_cmd == "record":
+                result = record_lifecycle_event(root, Path(a.event), Path(a.out) if a.out else None)
+            else:
+                result = lifecycle_projection(root)
+            code = 0 if a.lifecycle_cmd == "template" or (result.get("marker") in {"LIFECYCLE_EVENT_RECORDED", "LIFECYCLE_READ_ONLY"} and int(result.get("invalid_count", 0)) == 0) else 1
+        except (LifecycleLedgerError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.lifecycle.error.v1", "marker": "LIFECYCLE_INPUT_REJECTED", "code": getattr(exc, "code", "E_LIFECYCLE_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "service-boundary":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            if a.service_boundary_cmd == "template":
+                result = service_boundary_template()
+            else:
+                result = check_service_boundaries(root, Path(a.manifest), a.changed)
+            code = 0 if a.service_boundary_cmd == "template" or result.get("marker") in {"SERVICE_BOUNDARY_READY"} else 1
+        except (ServiceBoundaryError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.service-boundary.error.v1", "marker": "SERVICE_BOUNDARY_INPUT_REJECTED", "code": getattr(exc, "code", "E_SERVICE_BOUNDARY_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "repair-loop":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            if a.repair_loop_cmd == "template":
+                result = repair_loop_template()
+            elif a.repair_loop_cmd == "assess":
+                result = assess_repair_loop(root, Path(a.manifest), Path(a.out) if a.out else None)
+            else:
+                result = repair_loop_projection(root)
+            code = 0 if a.repair_loop_cmd == "template" or (result.get("marker") in {"REPAIR_LOOP_READY", "REPAIR_LOOP_READ_ONLY"} and int(result.get("invalid_count", 0)) == 0) else 1
+        except (RepairLoopError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.repair-loop.error.v1", "marker": "REPAIR_LOOP_INPUT_REJECTED", "code": getattr(exc, "code", "E_REPAIR_LOOP_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "repo-coordinate":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            result = repo_coordination_template() if a.repo_coordinate_cmd == "template" else coordinate_repositories(root, Path(a.manifest))
+            code = 0 if a.repo_coordinate_cmd == "template" or result.get("marker") == "REPO_COORDINATION_READY" else 1
+        except (RepoCoordinationError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.repo-coordination.error.v1", "marker": "REPO_COORDINATION_INPUT_REJECTED", "code": getattr(exc, "code", "E_REPO_COORDINATION_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "ontology":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            result = domain_ontology_template() if a.ontology_cmd == "template" else validate_domain_ontology(root, Path(a.ontology), a.concept)
+            code = 0 if a.ontology_cmd == "template" or result.get("marker") == "ONTOLOGY_READY" else 1
+        except (DomainOntologyError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.domain-ontology.error.v1", "marker": "ONTOLOGY_INPUT_REJECTED", "code": getattr(exc, "code", "E_ONTOLOGY_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "mission-control":
+        result = mission_control_status(Path(a.root).resolve())
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    if a.cmd == "worklog":
+        root = Path(a.root).resolve()
+        try:
+            if a.worklog_cmd == "draft":
+                result = create_proof_worklog(root, Path(a.contract), Path(a.out) if a.out else None)
+            elif a.worklog_cmd == "verify":
+                result = verify_proof_worklog(root, Path(a.draft))
+            else:
+                result = proof_worklog_projection(root)
+            code = 0 if result.get("ok", True) and int(result.get("invalid_count", 0)) == 0 else 1
+        except (ProofWorklogError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.proof-worklog.error.v1", "marker": "PROOF_WORKLOG_INPUT_REJECTED", "code": getattr(exc, "code", "E_PROOF_WORKLOG_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
         return code
     if a.cmd == "pack":
         try:

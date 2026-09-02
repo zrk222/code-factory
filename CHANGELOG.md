@@ -17,6 +17,19 @@
 
 ## Unreleased
 
+## 0.46.0 - 2026-09-02
+
+- Add an evidence-only Agent Proof Bridge for Eve, Junie, Grok Build, and
+  generic clients. It verifies a typed acyclic workflow DAG, sealed scope,
+  source-byte preconditions, real before/after artifacts, declared checkpoints,
+  and current Oracle Contract binding without contacting or operating an agent.
+- Add review-required Proof Worklogs: concise local drafts made from sealed
+  obligations and valid receipt summaries. They never post to a tracker, chat,
+  repository, or external service.
+- Project both the portable handoff and review draft boundaries into Graph Ops,
+  the CLI, and local stdio MCP. A changed contract invalidates the derived
+  evidence; neither feature can alter gates, exceptions, approval, or release.
+
 ## 0.45.4 - 2026-09-02
 
 - Add the Atomic Proof Adapter: import an explicit external workflow as

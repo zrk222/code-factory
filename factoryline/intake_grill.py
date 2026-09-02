@@ -205,12 +205,30 @@ def _question_tree(shortlist: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "depends_on": ["Q-INTENT"],
         },
         {
-            "id": "Q-EXTERNAL-EFFECTS", "order": 40, "status": "decision_required",
+            "id": "Q-FORBIDDEN", "order": 40, "status": "decision_required",
+            "prompt": "What must never happen, even if the primary outcome appears to succeed?",
+            "depends_on": ["Q-INTENT"],
+            "evidence": "Record a user, safety, data, authority, or scope boundary. It becomes a forbidden behavior in the sealed Oracle Contract, not an agent-supplied test tolerance.",
+        },
+        {
+            "id": "Q-NEGATIVE-CASE", "order": 50, "status": "decision_required",
+            "prompt": "Which counterexample must fail or be refused to prove the boundary is real?",
+            "depends_on": ["Q-FORBIDDEN", "Q-ACCEPTANCE"],
+            "evidence": "Name one observable negative case. The independent challenge lane mutates the implementation against this contract; it does not let the worker rewrite the oracle.",
+        },
+        {
+            "id": "Q-EXTERNAL-EFFECTS", "order": 60, "status": "decision_required",
             "prompt": "Will the mission remain local-only, or does any publish, deploy, message, credential, connector, payment, or irreversible effect require a human-controlled boundary?",
             "choices": sorted(_EXTERNAL_EFFECTS), "depends_on": ["Q-INTENT"],
         },
         {
-            "id": "Q-RE-EVALUATE", "order": 50, "status": "optional",
+            "id": "Q-PR-REVIEW", "order": 70, "status": "decision_required",
+            "prompt": "What exact diff, reviewer, and independent evidence must be present before this change can be reviewed?",
+            "depends_on": ["Q-ACCEPTANCE", "Q-NEGATIVE-CASE"],
+            "evidence": "The PR stage compares the sealed contract to the observed diff and receipt set. A green worker-authored test suite alone is insufficient.",
+        },
+        {
+            "id": "Q-RE-EVALUATE", "order": 80, "status": "optional",
             "prompt": "What fact would require this framework or intent decision to be revisited?",
             "depends_on": ["Q-FRAMEWORK", "Q-INTENT"],
         },
@@ -236,7 +254,7 @@ def _markdown(receipt: dict[str, Any]) -> str:
         lines.extend(["**Answer:**", ">", ""])
     lines.extend([
         "## Next step", "",
-        "A named human records the selected framework, exact intent, observable acceptance evidence, and external-effects posture with `factory intake confirm`. Bind that confirmation during `factory product compile --intake ...` before creating a mission.", "",
+        "A named human records the selected framework, exact intent, observable acceptance evidence, and external-effects posture with `factory intake confirm`. Before code, seal the intent as an Oracle Contract with the forbidden behavior, negative case, source hashes, and approved gate values. Before merge, use Proof Review to bind the observed diff and independent evidence back to that contract. Bind the intake confirmation during `factory product compile --intake ...` before creating a mission.", "",
     ])
     return "\n".join(lines)
 
