@@ -1,0 +1,57 @@
+name: runtime-assurance-six-lanes-v1
+language: python
+modules:
+  - name: runtime_audit_contract
+    path: factoryline/runtime_audit_contract.py
+    functions:
+      - name: verify_runtime_audit_plan
+        args: [path, trust_root_path, trust_root_sha256, workspace_root, environment_digest]
+        returns: dict
+  - name: runtime_audit_runner
+    path: factoryline/runtime_audit_runner.py
+    functions:
+      - name: run_runtime_audit_plan
+        args: [plan, workspace_root, output_root]
+        returns: dict
+  - name: runtime_audit_policy
+    path: factoryline/runtime_audit_policy.py
+    functions:
+      - name: validate_lane_policy
+        args: [kind, config]
+        returns: None
+  - name: runtime_audit_process
+    path: factoryline/runtime_audit_process.py
+    functions:
+      - name: run_bounded_command
+        args: [argv, cwd, timeout_seconds, scratch]
+        returns: dict
+  - name: runtime_audit
+    path: factoryline/runtime_audit.py
+    functions:
+      - name: evaluate_runtime_audit
+        args: [plan, executions, workspace_root]
+        returns: dict
+dependencies:
+  - from: runtime_audit_runner
+    to: runtime_audit_contract
+  - from: runtime_audit
+    to: runtime_audit_contract
+  - from: runtime_audit
+    to: runtime_audit_runner
+  - from: runtime_audit_runner
+    to: runtime_audit_process
+  - from: runtime_audit_contract
+    to: runtime_audit_policy
+invariants:
+  - name: contract_has_no_execution_authority
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:exec|eval|deploy|publish|sign)\\s*\\("
+    scopes:
+      - module: runtime_audit_contract
+        symbol: verify_runtime_audit_plan
+        max_lines: 240
+  - name: evaluation_has_no_execution_authority
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:exec|eval|deploy|publish|sign)\\s*\\("
+    scopes:
+      - module: runtime_audit
+        symbol: evaluate_runtime_audit
+        max_lines: 180

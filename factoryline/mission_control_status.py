@@ -13,6 +13,7 @@ from .lifecycle_ledger import lifecycle_projection
 from .operations_control import operations_control_projection
 from .oracle_firewall import oracle_firewall_projection
 from .repair_loop import repair_loop_projection
+from .runtime_audit import runtime_audit_status
 from .protocol_enums import MissionControlState
 
 
@@ -38,6 +39,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
     operations = operations_control_projection(workspace)
     lifecycle = lifecycle_projection(workspace)
     repairs = repair_loop_projection(workspace)
+    runtime = runtime_audit_status(workspace)
     blockers = {
         "oracle_invalid": int(oracle.get("invalid_count", 0)),
         "oracle_weakening": int(oracle.get("blocked_drift_count", 0)),
@@ -45,6 +47,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
         "operations_invalid": int(operations.get("invalid_count", 0)),
         "lifecycle_invalid": int(lifecycle.get("invalid_count", 0)),
         "repair_invalid": int(repairs.get("invalid_count", 0)),
+        "runtime_assurance_blocked": int(runtime.get("state") in {"BLOCKED", "INCOMPLETE"}),
     }
     blocked = any(blockers.values())
     human_required = (
@@ -82,6 +85,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
                 "operations_receipt",
                 "session_trace",
                 "repair_loop_packet",
+                "runtime_assurance_receipt",
             ],
             "may_not": [
                 "alter_intent",
@@ -103,6 +107,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
             "operations": operations,
             "lifecycle": lifecycle,
             "repair_loops": repairs,
+            "runtime_assurance": runtime,
         },
         "authority": dict(AUTHORITY),
         "claim_boundary": (

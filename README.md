@@ -52,6 +52,13 @@ enterprise controls remain available in the [advanced workflow guide](docs/OVERV
 only when their trigger applies. AppForge is an optional mobile-delivery
 capability; it surfaces avoidable gaps but cannot guarantee store approval.
 
+For a release-bound service change, use the [six-lane runtime assurance workflow](docs/RUNTIME_ASSURANCE.md).
+It coordinates stateful invariants, tenant isolation, fault recovery, consumer
+compatibility, database migration, and equivalent-load performance/resource
+checks under one signed plan. Every failed lane returns the consequence,
+evidence digest, exact replay, and next repair. A six-lane pass means ready for
+human review—not approved for release.
+
 Do not take the word *verified* on faith. The [Capability Evidence Map](docs/CAPABILITY_EVIDENCE.md)
 separates the locally verified core, controlled-pilot workflows, reference
 enterprise controls, and candidate-bound mobile preflight—and links each claim

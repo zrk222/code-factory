@@ -48,6 +48,7 @@ from .operations_control import operations_control_projection
 from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
 from .mission_control_status import mission_control_status
+from .runtime_audit import runtime_audit_status
 from .codex_metadata import MetadataAuditError, audit_metadata
 from .saas_proof import saas_proof_projection
 from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
@@ -456,6 +457,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.mission_control_status",
             "description": "Read one bounded human/agent control-plane status built from local intent, operations, session, and repair evidence. It never grants authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.runtime_audit_status",
+            "description": "Read the latest self-hash-verified six-lane runtime assurance result and actionable findings. It never runs an audit or grants release authority.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1215,6 +1222,17 @@ def _mission_control_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _runtime_audit_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.runtime_audit_status accepts no arguments")
+    return {
+        "marker": "RUNTIME_AUDIT_MCP_READ_ONLY",
+        "action_summary": "Read six senior-engineering audit lanes, their exact findings, consequences, evidence digests, and next repairs.",
+        "status": runtime_audit_status(root),
+        "scope": "Read-only local receipt facts; no audit, service, database, load test, repair, approval, or release action ran.",
+    }
+
+
 def _agent_bridge_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.agent_bridge_status accepts no arguments")
@@ -1514,6 +1532,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_repair_loop_status(root, arguments))
     if name == "factory.mission_control_status":
         return _content(_mission_control_status(root, arguments))
+    if name == "factory.runtime_audit_status":
+        return _content(_runtime_audit_status(root, arguments))
     if name == "factory.agent_bridge_status":
         return _content(_agent_bridge_status(root, arguments))
     if name == "factory.agent_handoff_brief":

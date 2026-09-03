@@ -24,6 +24,8 @@
 - **Team Policy Packs:** Keeps policy ownership human/trusted-source controlled, versioned, and mapped to explicit gates. Agent-owned policy cannot become the baseline.
 - **SpecLine to ForgeLine promotion:** Execution promotion is sealed to the approved intent digest and only the capability gates selected for that work. AppForge stays optional and activates only for explicit mobile delivery.
 - **AppForge delivery integrity:** For explicit iOS/App Store work, requirements and capture evidence must be candidate-bound, explicit, native-build classified, and hash-reconciled. This is a capability pack, not the default Code Factory path.
+- **Six-lane runtime assurance:** One signed plan now coordinates stateful invariants, tenant isolation, concurrency/recovery, consumer contracts, migration integrity, and performance/resource retention. Known-bad controls must fail, agent-proposed thresholds stay advisory, and every visible result includes a consequence and next repair.
+- **Actionable Mission Control:** FactoryLine, CLI, and MCP show the same six lane states and evidence digests. Missing engines, missing observations, stale contracts, profiler gaps, and tampered receipts remain incomplete or blocked rather than becoming green.
 
 ## Truth boundary
 

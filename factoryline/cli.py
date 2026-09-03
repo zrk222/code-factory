@@ -176,6 +176,9 @@ from .repair_loop import RepairLoopError, assess_repair_loop, repair_loop_projec
 from .repo_coordination import RepoCoordinationError, coordinate_repositories, repo_coordination_template
 from .domain_ontology import DomainOntologyError, domain_ontology_template, validate_domain_ontology
 from .mission_control_status import mission_control_status
+from .runtime_audit import execute_runtime_audit, runtime_audit_status
+from .runtime_audit_common import RuntimeAuditError
+from .runtime_audit_contract import verify_runtime_audit_plan
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
 from .jetbrains_handshake import (
     JetBrainsHandshakeError,
@@ -1525,6 +1528,22 @@ def main(argv=None) -> int:
     mission_control_status_parser = mission_control_sub.add_parser("status", help="read local mission-control facts without granting authority")
     mission_control_status_parser.add_argument("--root", default=".")
     mission_control_status_parser.add_argument("--json", action="store_true")
+
+    runtime_audit = sub.add_parser("runtime-audit", help="run or inspect six signed senior-engineering audit lanes")
+    runtime_audit_sub = runtime_audit.add_subparsers(required=True, dest="runtime_audit_cmd")
+    for action in ("inspect", "run"):
+        command = runtime_audit_sub.add_parser(action, help=f"{action} one signed runtime audit plan")
+        command.add_argument("plan")
+        command.add_argument("--root", default=".")
+        command.add_argument("--trust-root", required=True)
+        command.add_argument("--trust-root-sha256", required=True)
+        command.add_argument("--environment-sha256", required=True)
+        if action == "run":
+            command.add_argument("--out", default=".factory/runtime-audits")
+        command.add_argument("--json", action="store_true")
+    runtime_status = runtime_audit_sub.add_parser("status", help="read the latest self-hash-verified local runtime audit receipt")
+    runtime_status.add_argument("--root", default=".")
+    runtime_status.add_argument("--json", action="store_true")
 
     worklog = sub.add_parser("worklog", help="draft a local review-required update from one sealed Oracle Contract; never posts externally")
     worklog_sub = worklog.add_subparsers(required=True, dest="worklog_cmd")
@@ -3178,6 +3197,24 @@ def main(argv=None) -> int:
         result = mission_control_status(Path(a.root).resolve())
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
+    if a.cmd == "runtime-audit":
+        root = Path(a.root).resolve()
+        try:
+            if a.runtime_audit_cmd == "status":
+                result = runtime_audit_status(root)
+                code = 0 if result["state"] in {"NOT_RUN", "READY_FOR_HUMAN_REVIEW"} else 1
+            elif a.runtime_audit_cmd == "inspect":
+                result = verify_runtime_audit_plan(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root, a.environment_sha256)
+                result = {**result, "plan": {"id": result["plan"]["id"], "candidate_sha256": result["plan"]["candidate_sha256"], "lanes": [item["kind"] for item in result["plan"]["lanes"]]}, "action_summary": "Verified the signed audit authority and exact six-lane execution contract; no command ran."}
+                code = 0
+            else:
+                result = execute_runtime_audit(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root, a.environment_sha256, Path(a.out))
+                code = 0 if result["receipt"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
+        except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
+            result = {"schema": "factory.runtime-audit.error.v1", "code": getattr(exc, "code", "E_RUNTIME_AUDIT"), "message": str(exc), "authority": "none"}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
+        return code
     if a.cmd == "worklog":
         root = Path(a.root).resolve()
         try:

@@ -556,3 +556,11 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-03 16:14] GATE plan capability-evidence-audit-v1 approver=human tasks=7 sha=9a88018196d2f6d6
 - [2026-09-03 16:33] GATE spec code-review-audits-v1 approver=human strict=True sha=fac809ba0a6d9ece
 - [2026-09-03 16:33] GATE plan code-review-audits-v1 approver=human tasks=4 sha=fac809ba0a6d9ece
+- [2026-09-03 16:56] GATE spec runtime-assurance-six-lanes-v1 approver=human strict=True sha=2fc2c1cdd43466af
+- [2026-09-03 16:56] GATE plan runtime-assurance-six-lanes-v1 approver=human tasks=11 sha=2fc2c1cdd43466af
+- [2026-09-03 17:29] GATE spec runtime-assurance-six-lanes-v1 approver=human strict=True sha=c6fc2bd09e582d3e
+- [2026-09-03 17:30] GATE plan runtime-assurance-six-lanes-v1 approver=human tasks=12 sha=c6fc2bd09e582d3e
+- [2026-09-03 17:30] GATE spec runtime-assurance-six-lanes-v1 approver=human strict=True sha=c6fc2bd09e582d3e
+- [2026-09-03 17:30] GATE plan runtime-assurance-six-lanes-v1 approver=human tasks=12 sha=c6fc2bd09e582d3e
+- [2026-09-03 17:41] GATE spec runtime-assurance-six-lanes-v1 approver=human strict=True sha=8aa3a404029f982e
+- [2026-09-03 17:41] GATE plan runtime-assurance-six-lanes-v1 approver=human tasks=12 sha=8aa3a404029f982e
