@@ -19,6 +19,8 @@ Run `factory mcp serve --root .` from the workspace and connect the stdio proces
   independent challenge, and incident facts.
 - `factory.appforge_oracle_status` — candidate-bound AppForge policy authority
   facts.
+- `factory.appforge_device_reality_status` — sealed device-intent and
+  supervised-capture receipt facts; never starts a device transport.
 
 Every tool has a strict JSON input schema, a deterministic name, and read-only annotations. Provider credentials and external writes stay outside the server.
 
@@ -32,6 +34,7 @@ Graph Ops progressively registers four browser tools through `document.modelCont
 4. `factory.appforge_status`
 5. `factory.oracle_firewall_status`
 6. `factory.appforge_oracle_status`
+7. `factory.appforge_device_reality_status`
 
 The handlers read only the most recent authenticated snapshot already loaded by the page. They do not make a second request, invoke an execution control, or return the complete graph. Outputs are deliberately bounded and marked read-only plus untrusted-content because project-controlled labels are data, not agent instructions.
 

@@ -31,10 +31,14 @@ def test_evidence_kit_binds_templates_to_one_candidate_and_user_design_input(tmp
     media = json.loads((kit / "store-media-contract.json").read_text(encoding="utf-8"))
     quality = json.loads((kit / "quality-contract.json").read_text(encoding="utf-8"))
     evidence = json.loads((kit / "quality-evidence.json").read_text(encoding="utf-8"))
+    device_journeys = json.loads((kit / "device-reality-journeys.json").read_text(encoding="utf-8"))
+    device_evidence = json.loads((kit / "device-reality-evidence.json").read_text(encoding="utf-8"))
     assert media["candidate"] == quality["candidate"] == receipt["candidate"]
     assert media["intent_sha256"] == quality["user_design_input_sha256"] == receipt["user_design_input"]["sha256"]
     assert [item["min_count"] for item in media["media_sets"]] == [10, 3]
     assert evidence["design_review"]["user_design_input_considered"] is False
+    assert len(device_journeys["required_journeys"]) == 13
+    assert device_evidence["user_design_input_sha256"] == receipt["user_design_input"]["sha256"]
     assert "credentials" in (kit / "README.md").read_text(encoding="utf-8").lower()
 
 

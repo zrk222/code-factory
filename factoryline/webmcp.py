@@ -62,6 +62,11 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "description": "Read candidate-bound AppForge authority state already visible on this page. It never contacts Apple or changes a submission.",
     },
     {
+        "name": "factory.appforge_device_reality_status",
+        "title": "Read supervised device evidence",
+        "description": "Read sealed AppForge Device Reality intent and supervised-capture state already visible on this page. It never starts Phone Harness, controls a device, accesses credentials, or contacts Apple.",
+    },
+    {
         "name": "factory.saas_status",
         "title": "Read SaaS promise-to-permission status",
         "description": "Read bounded provider-neutral OAuth/OIDC-to-entitlement status already visible on this page. It never contacts or mutates a provider.",

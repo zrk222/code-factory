@@ -2277,6 +2277,8 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["appforge_submission_assurance_invalid_count"] = appforge["submission_assurance"]["invalid_count"]
     facts["appforge_oracle_authority_current_count"] = appforge["oracle_authority"]["current_count"]
     facts["appforge_oracle_authority_invalid_count"] = appforge["oracle_authority"]["invalid_count"]
+    facts["appforge_device_reality_current_count"] = appforge["device_reality"]["current_count"]
+    facts["appforge_device_reality_invalid_count"] = appforge["device_reality"]["invalid_count"]
     facts["saas_proof_current_count"] = saas_proof["current_count"]
     facts["saas_proof_invalid_count"] = saas_proof["invalid_count"]
     facts["jetbrains_handshake_state"] = jetbrains_handshake["state"]
@@ -2302,7 +2304,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers = sorted({*markers, "GRAPH_OPS_PROOF_REVIEW_READ_ONLY", "TEAM_PROOF_INBOX_READ_ONLY"})
     if revenueforge["current_count"] or revenueforge["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_REVENUEFORGE_READ_ONLY"})
-    if appforge["current_count"] or appforge["invalid_count"] or appforge["quality_audit"]["current_count"] or appforge["quality_audit"]["invalid_count"] or appforge["submission_assurance"]["current_count"] or appforge["submission_assurance"]["invalid_count"] or appforge["oracle_authority"]["current_count"] or appforge["oracle_authority"]["invalid_count"]:
+    if appforge["current_count"] or appforge["invalid_count"] or appforge["quality_audit"]["current_count"] or appforge["quality_audit"]["invalid_count"] or appforge["submission_assurance"]["current_count"] or appforge["submission_assurance"]["invalid_count"] or appforge["oracle_authority"]["current_count"] or appforge["oracle_authority"]["invalid_count"] or appforge["device_reality"]["current_count"] or appforge["device_reality"]["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_APPFORGE_READ_ONLY"})
     if saas_proof["current_count"] or saas_proof["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_SAAS_PROOF_READ_ONLY"})

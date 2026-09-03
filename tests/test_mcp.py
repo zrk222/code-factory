@@ -73,6 +73,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.proof_worklog_status",
         "factory.codex_metadata_audit",
         "factory.appforge_oracle_status",
+        "factory.appforge_device_reality_status",
         "factory.saas_status",
         "factory.agent_proof_mission",
         "factory.jetbrains_handshake",
@@ -250,6 +251,12 @@ def test_mcp_revenue_appforge_saas_and_memory_tools_are_read_only(tmp_path: Path
     }, tmp_path))
     assert appforge_oracle["marker"] == "MCP_APPFORGE_ORACLE_READ_ONLY"
     assert appforge_oracle["status"]["marker"] == "APPFORGE_ORACLE_AUTHORITY_READ_ONLY"
+    device_reality = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8221, "method": "tools/call",
+        "params": {"name": "factory.appforge_device_reality_status"},
+    }, tmp_path))
+    assert device_reality["marker"] == "MCP_APPFORGE_DEVICE_REALITY_READ_ONLY"
+    assert device_reality["status"]["marker"] == "APPFORGE_DEVICE_REALITY_READ_ONLY"
     saas = _content(dispatch({
         "jsonrpc": "2.0", "id": 83, "method": "tools/call",
         "params": {"name": "factory.saas_status"},

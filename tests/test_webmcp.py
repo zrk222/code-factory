@@ -12,6 +12,7 @@ def test_webmcp_manifest_is_deterministic_read_only_and_progressive() -> None:
     assert "factory.oracle_firewall_status" in [item["name"] for item in first["tools"]]
     assert "factory.atomic_status" in [item["name"] for item in first["tools"]]
     assert "factory.appforge_oracle_status" in [item["name"] for item in first["tools"]]
+    assert "factory.appforge_device_reality_status" in [item["name"] for item in first["tools"]]
     assert "factory.jetbrains_handshake_status" in [item["name"] for item in first["tools"]]
     assert all(item["inputSchema"]["additionalProperties"] is False for item in first["tools"])
     assert all(item["annotations"] == {"readOnlyHint": True, "untrustedContentHint": True} for item in first["tools"])

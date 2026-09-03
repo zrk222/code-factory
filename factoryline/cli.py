@@ -127,6 +127,7 @@ from .appforge_quality_audit import verify_quality_audit
 from .appforge_evidence_kit import create_evidence_kit, initialize_appforge
 from .appforge_oracle import verify_appforge_oracle_authority
 from .appforge_eas import verify_eas_preflight
+from .appforge_device_reality import create_device_reality_intent_envelope, verify_device_reality
 from .oracle_firewall import (
     OracleFirewallError,
     capture_intent_handoff,
@@ -1722,6 +1723,20 @@ def main(argv=None) -> int:
     revenue_appforge_oracle.add_argument("--authority", required=True)
     revenue_appforge_oracle.add_argument("--out")
     revenue_appforge_oracle.add_argument("--json", action="store_true")
+    revenue_device_intent = revenue_sub.add_parser("device-reality-intent", help="seal supervised real-device journeys to source-bound AppForge intent without operating a device")
+    revenue_device_intent.add_argument("--root", default=".")
+    revenue_device_intent.add_argument("--oracle-authority", required=True)
+    revenue_device_intent.add_argument("--design-input", required=True)
+    revenue_device_intent.add_argument("--journeys", required=True, help="JSON file containing a required_journeys array")
+    revenue_device_intent.add_argument("--transport", action="append", required=True, choices=("manual_physical_device", "phone_harness"))
+    revenue_device_intent.add_argument("--out", required=True)
+    revenue_device_intent.add_argument("--json", action="store_true")
+    revenue_device_reality = revenue_sub.add_parser("device-reality-gate", help="verify supervised device evidence against a sealed AppForge intent envelope; never operates a device")
+    revenue_device_reality.add_argument("--root", default=".")
+    revenue_device_reality.add_argument("--intent-envelope", required=True)
+    revenue_device_reality.add_argument("--evidence", required=True)
+    revenue_device_reality.add_argument("--out", default=".factory/appforge/device-reality.json")
+    revenue_device_reality.add_argument("--json", action="store_true")
     revenue_appforge_eas = revenue_sub.add_parser("appforge-eas", help="validate a candidate-bound EAS profile handoff without reading credentials or submitting to Apple")
     revenue_appforge_eas.add_argument("--root", default=".")
     revenue_appforge_eas.add_argument("--candidate", required=True)
@@ -4515,6 +4530,16 @@ def main(argv=None) -> int:
                 payload = verify_submission_assurance(root, Path(a.contract), Path(a.app_review), Path(a.store_media), Path(a.saas_proof), Path(a.quality_audit), Path(a.out), Path(a.report_dir), Path(a.oracle_authority) if a.oracle_authority else None)
             elif a.revenue_cmd == "appforge-oracle":
                 payload = verify_appforge_oracle_authority(root, Path(a.authority), out=Path(a.out) if a.out else None)
+            elif a.revenue_cmd == "device-reality-intent":
+                journey_path = Path(a.journeys).resolve() if Path(a.journeys).is_absolute() else (root / Path(a.journeys)).resolve()
+                journey_path.relative_to(root)
+                if not journey_path.is_file() or journey_path.stat().st_size > 1_048_576:
+                    raise RevenueForgeError("APPFORGE_DEVICE_REALITY_INPUT_UNAVAILABLE", "journeys input must be a regular workspace JSON file up to 1 MiB")
+                journeys_input = json.loads(journey_path.read_text(encoding="utf-8-sig"))
+                journeys = journeys_input.get("required_journeys") if isinstance(journeys_input, dict) else journeys_input
+                payload = create_device_reality_intent_envelope(root, Path(a.oracle_authority), Path(a.design_input), journeys, a.transport, Path(a.out))
+            elif a.revenue_cmd == "device-reality-gate":
+                payload = verify_device_reality(root, Path(a.intent_envelope), Path(a.evidence), Path(a.out))
             elif a.revenue_cmd == "appforge-eas":
                 payload = verify_eas_preflight(root, Path(a.candidate), Path(a.eas_json), a.build_profile, a.submit_profile, out=Path(a.out) if a.out else None)
             elif a.revenue_cmd == "evidence-kit":

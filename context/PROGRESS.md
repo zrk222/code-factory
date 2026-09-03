@@ -528,3 +528,9 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-03 01:40] GATE plan enterprise-runner-freshness-v1 approver=human tasks=3 sha=2ef993e3fc7d66b5
 - [2026-09-03 01:44] GATE spec enterprise-runner-freshness-v1 approver=human strict=True sha=52fbf054946155f0
 - [2026-09-03 01:44] GATE plan enterprise-runner-freshness-v1 approver=human tasks=3 sha=52fbf054946155f0
+- [2026-09-03 01:58] GATE spec appforge-device-reality-v1 approver=human strict=True sha=4cf6e6f473418599
+- [2026-09-03 01:58] GATE plan appforge-device-reality-v1 approver=human tasks=4 sha=4cf6e6f473418599
+- [2026-09-03 02:14] GATE spec appforge-device-reality-v1 approver=human strict=True sha=f4c2e316cbe41378
+- [2026-09-03 02:14] GATE plan appforge-device-reality-v1 approver=human tasks=4 sha=f4c2e316cbe41378
+- [2026-09-03 02:19] GATE spec appforge-device-reality-v1 approver=human strict=True sha=70d14605a3da40dd
+- [2026-09-03 02:19] GATE plan appforge-device-reality-v1 approver=human tasks=4 sha=70d14605a3da40dd

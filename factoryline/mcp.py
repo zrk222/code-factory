@@ -28,6 +28,7 @@ from .revenueforge import RevenueForgeError, revenueforge_projection
 from .revenue_evidence import query_evidence_memory
 from .appforge_design import appforge_design_projection
 from .appforge_oracle import appforge_oracle_projection
+from .appforge_device_reality import device_reality_projection
 from .oracle_firewall import oracle_firewall_projection
 from .semantic_authority import semantic_authority_projection
 from .enterprise_enforcement import enterprise_enforcement_projection
@@ -486,6 +487,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.appforge_oracle_status",
             "description": "Read candidate-bound AppForge policy and user-intent authority receipts. It never contacts Apple, changes a candidate, or claims review readiness.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_device_reality_status",
+            "description": "Read sealed AppForge Device Reality intent and supervised-capture receipts. It never starts Phone Harness, controls a device, accesses credentials, or contacts Apple.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1207,6 +1214,17 @@ def _appforge_oracle_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _appforge_device_reality_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_device_reality_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_DEVICE_REALITY_READ_ONLY",
+        "action_summary": "Read hash-verified sealed device-intent and supervised-capture receipts without starting a device harness or changing a candidate.",
+        "status": device_reality_projection(root),
+        "scope": "Read-only local evidence status; no Phone Harness execution, device control, credential access, App Store write, submission, or approval ran.",
+    }
+
+
 def _saas_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.saas_status accepts no arguments")
@@ -1354,6 +1372,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_codex_metadata_audit(root, arguments))
     if name == "factory.appforge_oracle_status":
         return _content(_appforge_oracle_status(root, arguments))
+    if name == "factory.appforge_device_reality_status":
+        return _content(_appforge_device_reality_status(root, arguments))
     if name == "factory.saas_status":
         return _content(_saas_status(root, arguments))
     if name == "factory.agent_proof_mission":
