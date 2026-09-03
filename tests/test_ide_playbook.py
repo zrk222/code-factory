@@ -5,4 +5,6 @@ def test_playbook_keeps_appforge_optional_and_external_agents_supervised():
     assert playbook["default_path"] == ["start", "prove", "challenge", "trace", "handoff"]
     assert playbook["external_agent_ingress"]["protocols"] == ["A2A", "MCP"]
     assert playbook["external_agent_ingress"]["default_mode"] == "supervised"
+    assert "Mission: current intent, scope, owner, and autonomy mode" in playbook["ui_contract"]["panels"]
+    assert "risk_or_unknown" in playbook["ui_contract"]["action_card_required"]
     assert "AppForge activates only for explicit mobile delivery scope." in playbook["rules"]
