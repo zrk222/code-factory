@@ -111,9 +111,9 @@ def coordinate_repositories(root: Path, manifest_path: Path) -> dict[str, Any]:
             break
         for row in sorted(ready, key=lambda item: item["id"]):
             repo = _inside(workspace, row["path"])
-            actual = _git(repo, "rev-parse", "HEAD")
             if _git(repo, "rev-parse", "--is-inside-work-tree") != "true":
                 raise RepoCoordinationError("E_REPO_COORDINATION_GIT", f"{row['id']} is not a Git worktree")
+            actual = _git(repo, "rev-parse", "HEAD")
             status = "ready" if actual == row["expected_head_sha"] else "blocked"
             if status == "blocked":
                 findings.append({"code": "REPO_COORDINATION_HEAD_DRIFT", "severity": "blocking", "repository": row["id"], "expected_head_sha": row["expected_head_sha"], "observed_head_sha": actual, "message": "Pinned repository head differs; refresh human-reviewed coordination before sequential work."})

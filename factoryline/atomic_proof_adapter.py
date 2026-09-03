@@ -15,7 +15,6 @@ import json
 import os
 from pathlib import Path
 import re
-import tempfile
 from typing import Any
 
 from .agent_license import AgentLicenseError, normalize_agent_identity
@@ -91,12 +90,12 @@ def _inside(root: Path, value: object, field: str, *, exists: bool) -> Path:
         raise AtomicProofAdapterError("E_ATOMIC_ENVELOPE_SCHEMA", f"{field} must be a non-empty workspace-relative path")
     supplied = Path(value.replace("\\", "/"))
     if supplied.is_absolute() or ".." in supplied.parts:
-        raise AtomicProofAdapterError("ATOMIC_INPUT_REJECTED", f"{field} must remain beneath the workspace")
+        raise AtomicProofAdapterError("E_ATOMIC_SCOPE_ESCAPE", f"{field} must remain beneath the workspace")
     target = (root / supplied).resolve()
     try:
         target.relative_to(root)
     except ValueError as exc:
-        raise AtomicProofAdapterError("ATOMIC_INPUT_REJECTED", f"{field} must remain beneath the workspace") from exc
+        raise AtomicProofAdapterError("E_ATOMIC_SCOPE_ESCAPE", f"{field} must remain beneath the workspace") from exc
     if exists and not target.is_file():
         raise AtomicProofAdapterError("E_ATOMIC_EVIDENCE_UNVERIFIED", f"{field} must name an existing workspace file")
     return target
@@ -107,7 +106,7 @@ def _path(value: object, field: str) -> str:
         raise AtomicProofAdapterError("E_ATOMIC_ENVELOPE_SCHEMA", f"{field} must be a non-empty workspace-relative path")
     path = Path(value.replace("\\", "/"))
     if path.is_absolute() or ".." in path.parts:
-        raise AtomicProofAdapterError("ATOMIC_INPUT_REJECTED", f"{field} must be workspace-relative without parent traversal")
+        raise AtomicProofAdapterError("E_ATOMIC_SCOPE_ESCAPE", f"{field} must be workspace-relative without parent traversal")
     return path.as_posix().rstrip("/") or "."
 
 
@@ -335,6 +334,8 @@ def _resume(value: object, root: Path, run_id: str, workflow: dict[str, Any], co
         raise AtomicProofAdapterError("E_ATOMIC_RESUME_DIVERGENCE", "resume checkpoint is unavailable in the bound runs")
     if prior_stage.get("checkpoint", {}).get("sha256") != checkpoint_sha or current_stage["checkpoint"]["sha256"] != checkpoint_sha:
         raise AtomicProofAdapterError("E_ATOMIC_RESUME_DIVERGENCE", "resume checkpoint hash diverges")
+    if prior_stage.get("id") != current_stage["id"]:
+        raise AtomicProofAdapterError("E_ATOMIC_RESUME_DIVERGENCE", "resume checkpoint stage identity diverges")
     if prior_stage.get("tool_manifest_sha256") != current_stage["tool_manifest_sha256"] or prior_stage.get("source_preconditions") != current_stage["source_preconditions"]:
         raise AtomicProofAdapterError("E_ATOMIC_RESUME_DIVERGENCE", "resume tool or source-precondition binding diverges")
     return {"prior_receipt": _path(resume["prior_receipt"], "resume.prior_receipt"), "prior_run_id": receipt["run"]["id"], "checkpoint_id": checkpoint_id, "checkpoint_sha256": checkpoint_sha, "recovery_action": "human_reviewed_fork"}
@@ -345,7 +346,10 @@ def _handoff_history(root: Path, workflow_id: str, handoffs: list[dict[str, Any]
     if not expected:
         return
     directory = root / ".factory" / "atomic"
-    for path in sorted(directory.glob("*.json"))[:200]:
+    candidates = sorted(directory.glob("*.json"))
+    if len(candidates) > 200:
+        raise AtomicProofAdapterError("E_ATOMIC_HISTORY_TRUNCATED", "Atomic receipt history exceeds the bounded comparison limit; archive prior receipts before importing")
+    for path in candidates:
         try:
             value = json.loads(path.read_text(encoding="utf-8-sig"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
@@ -362,16 +366,19 @@ def _handoff_history(root: Path, workflow_id: str, handoffs: list[dict[str, Any]
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
+    """Create a new immutable receipt without replacing an existing destination."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+    except FileExistsError as exc:
+        raise AtomicProofAdapterError("E_ATOMIC_EVIDENCE_UNVERIFIED", "output receipt already exists; choose a new immutable path") from exc
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
             handle.write("\n")
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def import_atomic_run(root: Path, envelope_path: Path, out: Path | None = None) -> dict[str, Any]:
@@ -507,7 +514,33 @@ def atomic_envelope_template() -> dict[str, Any]:
                     "tool_manifest_sha256": digest,
                     "checkpoint": {"id": "replace-with-checkpoint-id", "sha256": digest},
                     "source_preconditions": [{"path": "replace-with-existing-source-path", "sha256": digest}],
-                }
+                },
+                {
+                    "id": "build",
+                    "kind": "worker",
+                    "status": "completed",
+                    "scope_paths": ["replace-with-approved-scope"],
+                    "capabilities": ["read_workspace", "write_workspace", "handoff"],
+                    "input_sha256": digest,
+                    "output_sha256": digest,
+                    "artifact_sha256": digest,
+                    "tool_manifest_sha256": digest,
+                    "checkpoint": {"id": "replace-with-build-checkpoint-id", "sha256": digest},
+                    "source_preconditions": [{"path": "replace-with-existing-source-path", "sha256": digest}],
+                },
+                {
+                    "id": "verify",
+                    "kind": "validator",
+                    "status": "completed",
+                    "scope_paths": ["replace-with-approved-scope"],
+                    "capabilities": ["read_workspace", "verify", "handoff"],
+                    "input_sha256": digest,
+                    "output_sha256": digest,
+                    "artifact_sha256": digest,
+                    "tool_manifest_sha256": digest,
+                    "checkpoint": {"id": "replace-with-verify-checkpoint-id", "sha256": digest},
+                    "source_preconditions": [{"path": "replace-with-existing-source-path", "sha256": digest}],
+                },
             ],
             "handoffs": [],
         },
@@ -521,7 +554,9 @@ def atomic_proof_projection(root: Path) -> dict[str, Any]:
     workspace = Path(root).resolve()
     receipts: list[dict[str, Any]] = []
     invalid: list[str] = []
-    for path in sorted((workspace / ".factory" / "atomic").glob("*.json"))[:200]:
+    all_paths = sorted((workspace / ".factory" / "atomic").glob("*.json"))
+    scanned = all_paths[:200]
+    for path in scanned:
         checked = verify_atomic_receipt(workspace, path.relative_to(workspace))
         if not checked.get("ok"):
             invalid.append(path.relative_to(workspace).as_posix())
@@ -543,6 +578,9 @@ def atomic_proof_projection(root: Path) -> dict[str, Any]:
         "schema": PROJECTION_SCHEMA,
         "marker": MCP_MARKER,
         "receipt_count": len(receipts),
+        "scanned_count": len(scanned),
+        "total_receipt_count": len(all_paths),
+        "truncated": len(all_paths) > len(scanned),
         "bound_count": len(receipts),
         "resumed_count": sum(int(item["resumed"]) for item in receipts),
         "invalid_count": len(invalid),

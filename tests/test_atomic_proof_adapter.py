@@ -166,6 +166,7 @@ def test_template_gives_connected_agents_a_secret_free_handoff_shape() -> None:
         "schema", "envelope_id", "run_id", "status", "agent", "autonomy", "isolation",
         "oracle", "workflow", "stages", "handoffs",
     }
+    assert [stage["id"] for stage in template["envelope"]["stages"]] == ["plan", "build", "verify"]
     assert "credentials" in template["claim_boundary"]
 
 
@@ -257,6 +258,32 @@ def test_import_requires_hash_equal_checkpoint_for_human_reviewed_resume(tmp_pat
     with pytest.raises(AtomicProofAdapterError) as raised:
         _import(tmp_path, divergent, filename="divergent.json")
     assert raised.value.code == "E_ATOMIC_RESUME_DIVERGENCE"
+
+
+def test_import_rejects_resume_when_a_checkpoint_moves_to_a_different_stage(tmp_path: Path) -> None:
+    first, _ = _envelope(tmp_path, run_id="atomic-run-1")
+    first_receipt = _import(tmp_path, first, filename="first.json")
+    resumed, _ = _envelope(tmp_path, run_id="atomic-run-2")
+    prior_plan = next(stage for stage in first["stages"] if stage["id"] == "plan")
+    current_plan = next(stage for stage in resumed["stages"] if stage["id"] == "plan")
+    current_build = next(stage for stage in resumed["stages"] if stage["id"] == "build")
+    current_plan["checkpoint"] = {"id": "checkpoint-replaced-plan", "sha256": _digest("checkpoint-replaced-plan")}
+    current_build["checkpoint"] = copy.deepcopy(prior_plan["checkpoint"])
+    resumed["resume"] = {"prior_receipt": first_receipt["path"], "prior_run_id": "atomic-run-1", "checkpoint_id": prior_plan["checkpoint"]["id"], "checkpoint_sha256": prior_plan["checkpoint"]["sha256"]}
+    with pytest.raises(AtomicProofAdapterError) as raised:
+        _import(tmp_path, resumed, filename="moved-stage.json")
+    assert raised.value.code == "E_ATOMIC_RESUME_DIVERGENCE"
+
+
+def test_import_fails_closed_when_atomic_history_exceeds_its_comparison_bound(tmp_path: Path) -> None:
+    envelope, _ = _envelope(tmp_path)
+    history = tmp_path / ".factory" / "atomic"
+    history.mkdir(parents=True)
+    for index in range(201):
+        (history / f"history-{index:03}.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(AtomicProofAdapterError) as raised:
+        _import(tmp_path, envelope)
+    assert raised.value.code == "E_ATOMIC_HISTORY_TRUNCATED"
 
 
 def test_adapter_has_no_runtime_or_network_dependency(tmp_path: Path) -> None:

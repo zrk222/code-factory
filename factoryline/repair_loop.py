@@ -27,6 +27,7 @@ MAX_BYTES = 1_048_576
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
 _SEVERITIES = RepairSeverity.values()
+_SEVERITY_RANK = tuple(member.value for member in RepairSeverity)
 _CONSEQUENCES = RepairConsequence.values()
 AUTHORITY = {"execution": False, "approval": False, "repair": False, "merge": False, "publication": False, "deployment": False, "signing": False, "messaging": False, "credential": False, "connector": False}
 
@@ -201,7 +202,7 @@ def repair_loop_projection(root: Path) -> dict[str, Any]:
                 core = {key: value[key] for key in value if key != "receipt_sha256"}
                 if value.get("schema") != RECEIPT_SCHEMA or value.get("receipt_sha256") != _sha(core):
                     raise ValueError("invalid receipt")
-                receipts.append({"id": value["id"], "path": path.relative_to(workspace).as_posix(), "receipt_sha256": value["receipt_sha256"], "failure_code": value["issue"]["failure_code"], "consequence_count": len(value["consequences"]), "highest_severity": max((item["severity"] for item in value["consequences"]), key=lambda item: ("low", "medium", "high", "critical").index(item)), "reviewer": value["human_review"]["reviewer"], "oracle_contract_sha256": value["oracle"]["contract_sha256"]})
+                receipts.append({"id": value["id"], "path": path.relative_to(workspace).as_posix(), "receipt_sha256": value["receipt_sha256"], "failure_code": value["issue"]["failure_code"], "consequence_count": len(value["consequences"]), "highest_severity": max((item["severity"] for item in value["consequences"]), key=_SEVERITY_RANK.index), "reviewer": value["human_review"]["reviewer"], "oracle_contract_sha256": value["oracle"]["contract_sha256"]})
             except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
                 invalid.append(path.relative_to(workspace).as_posix())
     receipts.sort(key=lambda item: (item["id"], item["receipt_sha256"]))

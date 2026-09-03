@@ -125,7 +125,7 @@ def create_proof_worklog(root: Path, contract_path: Path, out: Path | None = Non
     if not checked.get("ok"):
         raise ProofWorklogError("E_PROOF_WORKLOG_UNBOUND_INTENT", "worklog requires one current sealed Oracle Contract")
     contract = checked.get("contract")
-    if not isinstance(contract, dict) or not isinstance(contract.get("contract_sha256"), str):
+    if not isinstance(contract, dict) or not isinstance(contract.get("id"), str) or not contract["id"].strip() or not isinstance(contract.get("contract_sha256"), str):
         raise ProofWorklogError("E_PROOF_WORKLOG_UNBOUND_INTENT", "sealed Oracle Contract is incomplete")
     agent, atomic = agent_proof_projection(workspace), atomic_proof_projection(workspace)
     markdown, obligations = _draft_text(contract, agent, atomic)
@@ -134,7 +134,7 @@ def create_proof_worklog(root: Path, contract_path: Path, out: Path | None = Non
         "marker": MARKER,
         "created_at": _now(),
         "contract": {
-            "id": contract.get("id"),
+            "id": contract["id"],
             "path": contract_file.relative_to(workspace).as_posix(),
             "contract_sha256": contract["contract_sha256"],
             "scope_paths": list(contract.get("scope_paths", [])),

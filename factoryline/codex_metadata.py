@@ -368,17 +368,21 @@ def audit_metadata(root: Path, paths: list[Path] | None = None) -> dict[str, Any
     for path in files:
         relative = _display(workspace, path)
         try:
+            size = path.stat().st_size
+        except OSError as exc:
+            findings.append(_finding("E_METADATA_INPUT_INVALID", relative, "file", f"unable to inspect metadata: {exc}"))
+            continue
+        if size > MAX_FILE_BYTES:
+            findings.append(_finding("E_METADATA_TOO_LARGE", relative, "file", f"metadata file exceeds {MAX_FILE_BYTES} bytes"))
+            inspected.append({"path": relative, "bytes": size, "sha256": None, "format": "oversize"})
+            continue
+        try:
             raw = path.read_bytes()
         except OSError as exc:
             findings.append(_finding("E_METADATA_INPUT_INVALID", relative, "file", f"unable to read metadata: {exc}"))
             continue
         digest = hashlib.sha256(raw).hexdigest()
         entry: dict[str, Any] = {"path": relative, "bytes": len(raw), "sha256": digest}
-        if len(raw) > MAX_FILE_BYTES:
-            findings.append(_finding("E_METADATA_TOO_LARGE", relative, "file", f"metadata file exceeds {MAX_FILE_BYTES} bytes"))
-            entry["format"] = "oversize"
-            inspected.append(entry)
-            continue
         suffix = path.suffix.lower()
         entry["format"] = suffix.lstrip(".") or "none"
         try:
