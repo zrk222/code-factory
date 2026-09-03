@@ -1042,10 +1042,11 @@ def _append_counterexamples(state: dict[str, Any], root: Path) -> dict[str, int]
     return facts
 
 
-def _append_oracle_firewall(state: dict[str, Any], root: Path) -> dict[str, int]:
+def _append_oracle_firewall(state: dict[str, Any], root: Path, projection: dict | None = None) -> dict[str, int]:
     """Project the source-to-decision oracle chain without changing any input."""
     facts = {"contract_count": 0, "current_count": 0, "blocked_drift_count": 0, "challenge_count": 0, "incident_count": 0, "invalid_count": 0}
-    projection = oracle_firewall_projection(root)
+    if projection is None:
+        projection = oracle_firewall_projection(root)
     facts["blocked_drift_count"] = int(projection.get("blocked_drift_count", 0))
     facts["challenge_count"] = int(projection.get("challenge_count", 0))
     facts["incident_count"] = int(projection.get("incident_count", 0))
@@ -1367,9 +1368,10 @@ def _append_proof_worklogs(state: dict[str, Any], root: Path) -> dict[str, Any]:
     return facts
 
 
-def _append_operations_controls(state: dict[str, Any], root: Path) -> dict[str, Any]:
+def _append_operations_controls(state: dict[str, Any], root: Path, projection: dict | None = None) -> dict[str, Any]:
     """Project fail-closed operating envelopes without starting any work."""
-    projection = operations_control_projection(root)
+    if projection is None:
+        projection = operations_control_projection(root)
     facts = {
         "receipt_count": int(projection.get("receipt_count", 0)),
         "ready_count": int(projection.get("ready_count", 0)),
@@ -1395,9 +1397,10 @@ def _append_operations_controls(state: dict[str, Any], root: Path) -> dict[str, 
     return facts
 
 
-def _append_lifecycle_events(state: dict[str, Any], root: Path) -> dict[str, Any]:
+def _append_lifecycle_events(state: dict[str, Any], root: Path, projection: dict | None = None) -> dict[str, Any]:
     """Project hash-linked agent/session events; they remain declared local facts."""
-    projection = lifecycle_projection(root)
+    if projection is None:
+        projection = lifecycle_projection(root)
     facts = {
         "run_count": int(projection.get("run_count", 0)),
         "review_required_count": int(projection.get("review_required_count", 0)),
@@ -1422,9 +1425,10 @@ def _append_lifecycle_events(state: dict[str, Any], root: Path) -> dict[str, Any
     return facts
 
 
-def _append_repair_loops(state: dict[str, Any], root: Path) -> dict[str, Any]:
+def _append_repair_loops(state: dict[str, Any], root: Path, projection: dict | None = None) -> dict[str, Any]:
     """Project repair packets as review evidence, never a self-healing engine."""
-    projection = repair_loop_projection(root)
+    if projection is None:
+        projection = repair_loop_projection(root)
     facts = {"receipt_count": int(projection.get("receipt_count", 0)), "invalid_count": int(projection.get("invalid_count", 0)), "latest": projection.get("latest"), "authority": projection.get("authority", _AUTHORITY)}
     for summary in projection.get("receipts", []):
         if not isinstance(summary, dict):
@@ -2244,16 +2248,18 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     assurance = _append_github_assurance_dossiers(state, workspace)
     continuity = _append_continuity(state, workspace)
     counterexamples = _append_counterexamples(state, workspace)
-    oracle_firewall = _append_oracle_firewall(state, workspace)
+    mission_control = mission_control_status(workspace)
+    shared = mission_control["evidence"]
+    oracle_firewall = _append_oracle_firewall(state, workspace, shared["oracle"])
     proof_continuity = _append_proof_continuity(state, workspace)
     semantic_authority = _append_semantic_authority(state, workspace)
     enterprise_enforcement = _append_enterprise_enforcement(state, workspace)
     atomic_proof_adapter = _append_atomic_proof_adapter(state, workspace)
     agent_proof_bridge = _append_agent_proof_bridge(state, workspace)
     proof_worklogs = _append_proof_worklogs(state, workspace)
-    operations_control = _append_operations_controls(state, workspace)
-    lifecycle = _append_lifecycle_events(state, workspace)
-    repair_loops = _append_repair_loops(state, workspace)
+    operations_control = _append_operations_controls(state, workspace, shared["operations"])
+    lifecycle = _append_lifecycle_events(state, workspace, shared["lifecycle"])
+    repair_loops = _append_repair_loops(state, workspace, shared["repair_loops"])
     guardrails = _append_guardrail_evaluations(state, workspace)
     resilience = _append_resilience_plans(state, workspace)
     proof_deltas = _append_proof_deltas(state, workspace)
@@ -2269,7 +2275,6 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     appforge = appforge_design_projection(workspace)
     saas_proof = saas_proof_projection(workspace)
     jetbrains_handshake = jetbrains_handshake_projection(workspace)
-    mission_control = mission_control_status(workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))

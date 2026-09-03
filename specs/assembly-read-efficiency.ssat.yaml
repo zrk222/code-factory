@@ -1,0 +1,19 @@
+name: assembly-read-efficiency
+language: python
+modules:
+  - name: mission_control_status
+    path: factoryline/mission_control_status.py
+    functions:
+      - name: mission_control_status
+        args: [root]
+        returns: dict
+      - name: mission_control_profile
+        args: [root]
+        returns: dict
+invariants:
+  - name: profile_cannot_execute_or_publish
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|\\b(?:exec|eval|publish|deploy)\\s*\\("
+    scopes:
+      - module: mission_control_status
+        symbol: mission_control_profile
+        max_lines: 30

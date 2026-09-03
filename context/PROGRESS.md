@@ -564,3 +564,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-03 17:30] GATE plan runtime-assurance-six-lanes-v1 approver=human tasks=12 sha=c6fc2bd09e582d3e
 - [2026-09-03 17:41] GATE spec runtime-assurance-six-lanes-v1 approver=human strict=True sha=8aa3a404029f982e
 - [2026-09-03 17:41] GATE plan runtime-assurance-six-lanes-v1 approver=human tasks=12 sha=8aa3a404029f982e
+- [2026-09-03 18:18] GATE spec assembly-read-efficiency approver=agent_prepared_for_user_review strict=True sha=8d6c9f7132b9ec36
+- [2026-09-03 18:18] GATE plan assembly-read-efficiency approver=agent_prepared_for_user_review tasks=3 sha=8d6c9f7132b9ec36
+- [2026-09-03 18:24] GATE spec assembly-read-efficiency approver=agent_prepared_for_user_review strict=True sha=3786481a606ced37
+- [2026-09-03 18:24] GATE plan assembly-read-efficiency approver=agent_prepared_for_user_review tasks=3 sha=3786481a606ced37

@@ -175,7 +175,7 @@ from .service_boundaries import ServiceBoundaryError, check_service_boundaries, 
 from .repair_loop import RepairLoopError, assess_repair_loop, repair_loop_projection, repair_loop_template
 from .repo_coordination import RepoCoordinationError, coordinate_repositories, repo_coordination_template
 from .domain_ontology import DomainOntologyError, domain_ontology_template, validate_domain_ontology
-from .mission_control_status import mission_control_status
+from .mission_control_status import mission_control_status, mission_control_profile
 from .runtime_audit import execute_runtime_audit, runtime_audit_status
 from .runtime_audit_common import RuntimeAuditError
 from .runtime_audit_contract import verify_runtime_audit_plan
@@ -1528,6 +1528,9 @@ def main(argv=None) -> int:
     mission_control_status_parser = mission_control_sub.add_parser("status", help="read local mission-control facts without granting authority")
     mission_control_status_parser.add_argument("--root", default=".")
     mission_control_status_parser.add_argument("--json", action="store_true")
+    mission_control_profile_parser = mission_control_sub.add_parser("profile", help="measure local evidence readers with body-free fingerprints")
+    mission_control_profile_parser.add_argument("--root", default=".")
+    mission_control_profile_parser.add_argument("--json", action="store_true")
 
     runtime_audit = sub.add_parser("runtime-audit", help="run or inspect six signed senior-engineering audit lanes")
     runtime_audit_sub = runtime_audit.add_subparsers(required=True, dest="runtime_audit_cmd")
@@ -3194,7 +3197,8 @@ def main(argv=None) -> int:
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
         return code
     if a.cmd == "mission-control":
-        result = mission_control_status(Path(a.root).resolve())
+        reader = mission_control_profile if a.mission_control_cmd == "profile" else mission_control_status
+        result = reader(Path(a.root).resolve())
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
     if a.cmd == "runtime-audit":
