@@ -105,6 +105,16 @@ def test_fastlane_capture_contract_seals_sources_and_exact_story_coverage(tmp_pa
     assert graph["facts"]["appforge_fastlane_capture_invalid_count"] == 0
 
 
+def test_fastlane_capture_contract_never_overwrites_sealed_receipt(tmp_path: Path) -> None:
+    candidate, candidate_path = _candidate(tmp_path); matrix, story, scenes = _receipts(tmp_path, candidate)
+    _fastlane_sources(tmp_path, ["01-Home", "02-Workspace"])
+    out = Path(".factory/appforge/fastlane-capture.json")
+    create_fastlane_capture_contract(tmp_path, candidate_path, matrix, story, _contract(tmp_path, candidate, matrix, story, scenes), out)
+
+    with pytest.raises(RevenueForgeError, match="destination already exists"):
+        create_fastlane_capture_contract(tmp_path, candidate_path, matrix, story, _contract(tmp_path, candidate, matrix, story, scenes), out)
+
+
 def test_fastlane_capture_contract_cli_writes_only_local_receipt(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     candidate, candidate_path = _candidate(tmp_path); matrix, story, scenes = _receipts(tmp_path, candidate)
     _fastlane_sources(tmp_path, ["01-Home", "02-Workspace"]); contract = _contract(tmp_path, candidate, matrix, story, scenes)

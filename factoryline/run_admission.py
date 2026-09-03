@@ -319,7 +319,25 @@ def verify_admission(root: Path, packet_path: Path) -> dict[str, Any]:
     request_error = _request_binding_is_current(workspace, packet, passport_path)
     if request_error:
         return _blocked(request_error)
+    # A packet is only an immutable snapshot if its derived license cap is also
+    # re-derived at consumption time.  Otherwise an agent could keep a packet
+    # after a demotion or a scope reduction and present yesterday's authority.
+    passport = _load(passport_path)
+    stored_license = packet.get("agent_license")
+    try:
+        current_license = admission_license_decision(workspace, passport, packet.get("request", {}))
+    except AgentLicenseError as exc:
+        return _blocked(exc.code)
+    if isinstance(stored_license, dict):
+        if not isinstance(current_license, dict):
+            return _blocked("agent_license_binding_invalid")
+        for field in ("license_sha256", "tier", "allowed_paths", "expires_at", "identity_provenance"):
+            if stored_license.get(field) != current_license.get(field):
+                return _blocked("agent_license_binding_invalid")
     oracle = packet.get("oracle")
+    requested_autonomy = str(passport.get("autonomy") or "human_controlled")
+    if requested_autonomy == "autonomous" and isinstance(current_license, dict) and current_license.get("tier") == "autonomous" and not isinstance(oracle, dict):
+        return _blocked("ORACLE_CONTRACT_REQUIRED")
     if isinstance(oracle, dict):
         try:
             decision = admission_oracle_decision(

@@ -230,6 +230,35 @@ def _binding_findings(envelope: dict[str, Any], evidence: dict[str, Any], candid
     return [{"code": code, "detail": detail} for passed, code, detail in checks if not passed]
 
 
+def _current_intent_binding_findings(workspace: Path, envelope: dict[str, Any], candidate: dict[str, str]) -> list[dict[str, str]]:
+    """Make an old envelope unusable after any source-of-authority changes."""
+    findings: list[dict[str, str]] = []
+    try:
+        design = _local(workspace, Path(_text(envelope["user_design_input"].get("path"), "envelope.user_design_input.path", limit=512)))
+        if _file_sha(design) != _digest(envelope["user_design_input"].get("sha256"), "envelope.user_design_input.sha256"):
+            findings.append({"code": "APPFORGE_DEVICE_REALITY_DESIGN_SOURCE_STALE", "detail": "reviewed user design input changed after the intent envelope was sealed"})
+    except (KeyError, TypeError, RevenueForgeError, OSError):
+        findings.append({"code": "APPFORGE_DEVICE_REALITY_DESIGN_SOURCE_INVALID", "detail": "reviewed user design input cannot be revalidated"})
+    try:
+        authority = envelope["oracle_authority"]
+        authority_path = _local(workspace, Path(_text(authority.get("path"), "envelope.oracle_authority.path", limit=512)))
+        if _file_sha(authority_path) != _digest(authority.get("sha256"), "envelope.oracle_authority.sha256"):
+            findings.append({"code": "APPFORGE_DEVICE_REALITY_ORACLE_AUTHORITY_STALE", "detail": "Oracle authority changed after the intent envelope was sealed"})
+        derived = verify_appforge_oracle_authority(workspace, authority_path, candidate=candidate)
+        if not derived.get("ok") or derived.get("receipt_sha256") != authority.get("receipt_sha256"):
+            findings.append({"code": "APPFORGE_DEVICE_REALITY_ORACLE_AUTHORITY_STALE", "detail": "current Oracle authority no longer matches the sealed authority receipt"})
+    except (KeyError, TypeError, RevenueForgeError, OSError, ValueError):
+        findings.append({"code": "APPFORGE_DEVICE_REALITY_ORACLE_AUTHORITY_INVALID", "detail": "Oracle authority cannot be revalidated"})
+    try:
+        contract = envelope["oracle_contract"]
+        result = verify_oracle_contract(workspace, Path(_text(contract.get("path"), "envelope.oracle_contract.path", limit=512)))
+        if not result.get("ok") or result.get("contract", {}).get("contract_sha256") != contract.get("contract_sha256"):
+            findings.append({"code": "APPFORGE_DEVICE_REALITY_ORACLE_CONTRACT_STALE", "detail": "Oracle contract no longer matches the sealed intent envelope"})
+    except (KeyError, TypeError, RevenueForgeError, OSError, ValueError):
+        findings.append({"code": "APPFORGE_DEVICE_REALITY_ORACLE_CONTRACT_INVALID", "detail": "Oracle contract cannot be revalidated"})
+    return findings
+
+
 def _supervision_and_transport(envelope: dict[str, Any], evidence: dict[str, Any]) -> tuple[dict[str, Any] | None, str, list[dict[str, str]]]:
     findings: list[dict[str, str]] = []
     supervision = evidence.get("supervision")
@@ -274,6 +303,7 @@ def verify_device_reality(root: Path, envelope_path: Path, evidence_path: Path, 
     evidence, evidence_source = _read(workspace, evidence_path, EVIDENCE_SCHEMA)
     candidate = _candidate(envelope.get("candidate"), "envelope.candidate")
     findings = _binding_findings(envelope, evidence, candidate)
+    findings.extend(_current_intent_binding_findings(workspace, envelope, candidate))
     supervision, transport_kind, authority_findings = _supervision_and_transport(envelope, evidence)
     captures, capture_findings = _capture_evidence(workspace, envelope, evidence, transport_kind)
     findings.extend(authority_findings)

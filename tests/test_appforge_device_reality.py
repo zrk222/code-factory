@@ -118,6 +118,16 @@ def test_device_reality_fails_closed_on_scope_or_supervision_weakening(tmp_path:
     assert {item["code"] for item in receipt["findings"]} >= {"APPFORGE_DEVICE_REALITY_SUPERVISION_REQUIRED", "APPFORGE_DEVICE_REALITY_JOURNEYS_INCOMPLETE"}
 
 
+def test_device_reality_blocks_when_sealed_design_source_changes(tmp_path: Path) -> None:
+    envelope = _envelope(tmp_path)
+    (tmp_path / "user-design.md").write_text("The worker weakened the reviewed design after sealing.", encoding="utf-8")
+
+    receipt = verify_device_reality(tmp_path, Path(envelope["path"]), _evidence(tmp_path, envelope), Path(".factory/appforge/stale-design.json"))
+
+    assert receipt["ok"] is False
+    assert "APPFORGE_DEVICE_REALITY_DESIGN_SOURCE_STALE" in {item["code"] for item in receipt["findings"]}
+
+
 def test_device_reality_cli_seals_then_verifies_only_workspace_scoped_inputs(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     authority = _authority(tmp_path)
     design = tmp_path / "design.md"

@@ -259,7 +259,10 @@ def create_fastlane_capture_contract(root: Path, candidate_path: Path, surface_m
         "claim_boundary": "Static local configuration and source binding only. The contract, hashing, audit, receipt, CLI, Graph Ops, and MCP status are Windows-operable. It does not establish that Xcode, simulators, devices, Fastlane, UI tests, accessibility, raw captures, frames, screenshots, Store media, TestFlight, App Review, or Apple approval work. Framing is presentation-only and cannot substantiate a product claim; output must be reviewed against the sealed storefront story separately.",
     }
     receipt = {**core, "receipt_sha256": _sha(core)}
-    target = _local(workspace, out_path, exists=False); _atomic(target, receipt)
+    target = _local(workspace, out_path, exists=False)
+    if target.exists():
+        raise RevenueForgeError("APPFORGE_FASTLANE_CAPTURE_OUTPUT_EXISTS", "sealed capture receipt destination already exists")
+    _atomic(target, receipt)
     return {**receipt, "path": target.relative_to(workspace).as_posix()}
 
 

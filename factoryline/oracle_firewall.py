@@ -446,7 +446,10 @@ def _weakening(previous: dict[str, Any], candidate: dict[str, Any]) -> list[dict
                     findings.append({"code": "gate_semantics_changed", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
         if group == "exceptions":
             for rule_id, later in candidate_rules.items():
-                if rule_id not in prior_rules and later.get("effect") != "advisory":
+                # Any new exception changes the oracle.  Calling it advisory
+                # cannot make it invisible: advisory exceptions can be used to
+                # train a later weakening or suppress a human's review signal.
+                if rule_id not in prior_rules:
                     findings.append({"code": "exception_added", "group": group, "rule_id": rule_id, "before": None, "after": later, "justification": _source_justification(candidate, later)})
     return findings
 
