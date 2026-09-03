@@ -1,0 +1,14 @@
+"""Vendor-neutral, low-vocabulary onboarding map for IDEs and coding agents."""
+from __future__ import annotations
+from typing import Any
+
+PLAYBOOK = (
+ {"id":"start","when":"Before changing code or when intent is unclear.","use":"Intake Grill + SpecLine","outcome":"reviewable intent, forbidden outcomes, and approved gates","next":"factory.intake_status"},
+ {"id":"prove","when":"After an agent changes implementation or tests.","use":"First Proof + Oracle Firewall","outcome":"tests challenged and oracle weakening surfaced","next":"factory.verifier_status"},
+ {"id":"challenge","when":"A change is risky, autonomous, or release-bound.","use":"Gauntlet + independent challenge lane","outcome":"counterfactual cases without changing production code","next":"factory.gauntlet_status"},
+ {"id":"trace","when":"A reviewer asks why a change is allowed.","use":"Proof Continuity + Graph Ops","outcome":"source to obligation to gate to evidence","next":"factory.proof_continuity_status"},
+ {"id":"handoff","when":"An IDE agent hands work to another agent or human.","use":"Agent Proof Bridge + ForgeLine","outcome":"bounded handoff with scope, evidence, and next action","next":"factory.agent_handoff_brief"},
+ {"id":"deliver_mobile","when":"The work explicitly includes iOS/App Store delivery.","use":"AppForge capability pack","outcome":"candidate-bound delivery gates","next":"factory.appforge_submission_integrity_status"},
+)
+def ide_playbook() -> dict[str, Any]:
+ return {"schema":"factory.ide-agent-playbook.v1","marker":"FACTORY_IDE_AGENT_PLAYBOOK_READ_ONLY","action_summary":"Give IDEs and coding agents a short plain-language map of when to use each Code Factory capability before action.","default_path":["start","prove","challenge","trace","handoff"],"capability_packs":list(PLAYBOOK),"external_agent_ingress":{"protocols":["A2A","MCP"],"required_envelope_fields":["agent_identity","issuer","intent_digest","scope","allowed_capabilities","issued_at","expires_at","nonce"],"admission_rules":["Verify the signed, time-limited envelope before exposing a capability.","Reject an unknown, expired, replayed, or scope-expanded request.","Treat agent-proposed gates as advisory until a human-confirmed or trusted-source rule approves them.","Return the same playbook and next-safe-action receipt to every admitted agent."],"default_mode":"supervised","elevation":"human-approved, task-scoped, and expiring"},"rules":["Use plain problem language first; module names are optional labels.","Never let an agent select or weaken its own blocking gate.","AppForge activates only for explicit mobile delivery scope.","Each step returns evidence and one next safe action; none grants execution or release authority."],"authority":{"execution":False,"agent_control":False,"release":False,"credential_access":False},"claim_boundary":"Read-only guide, not automatic routing, A2A admission, agent execution, IDE control, or approval."}

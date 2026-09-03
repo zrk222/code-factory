@@ -24,6 +24,7 @@ from .gauntlet import gauntlet_status
 from .agent_license import AgentLicenseError, derive_license, license_projection, normalize_agent_identity
 from .combine import combine_projection
 from .workspace_advisor import inspect_workspace
+from .ide_playbook import ide_playbook
 from .revenueforge import RevenueForgeError, revenueforge_projection
 from .revenue_evidence import query_evidence_memory
 from .appforge_design import appforge_design_projection
@@ -381,6 +382,7 @@ def _tool_definitions() -> list[dict[str, object]]:
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
+        {"name": "factory.ide_playbook", "description": "Read the plain-language Code Factory operating map for IDEs and coding agents. It never controls an IDE or runs an agent.", "inputSchema": no_args, "annotations": _READ_ONLY_ANNOTATIONS},
         {
             "name": "factory.revenue_status",
             "description": "Return hash-verified local RevenueForge build and evidence status. It never contacts Apple, changes pricing, replies to testers, or publishes.",
@@ -1067,6 +1069,10 @@ def _combine_status(root: Path, arguments: object) -> dict[str, object]:
         "scope": "Read-only local comparison of verified governed events; no agent command, score estimation, repair, approval, publication, deployment, or credential action ran.",
     }
 
+def _ide_playbook(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}: raise McpError("factory.ide_playbook accepts no arguments")
+    return ide_playbook()
+
 
 def _revenue_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
@@ -1466,6 +1472,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_combine_status(root, arguments))
     if name == "factory.workspace_advisor":
         return _content(_workspace_advisor(root, arguments))
+    if name == "factory.ide_playbook":
+        return _content(_ide_playbook(root, arguments))
     if name == "factory.revenue_status":
         return _content(_revenue_status(root, arguments))
     if name == "factory.revenue_memory":

@@ -57,6 +57,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.agent_license_status",
         "factory.combine_status",
         "factory.workspace_advisor",
+        "factory.ide_playbook",
         "factory.revenue_status",
         "factory.revenue_memory",
         "factory.appforge_status",
