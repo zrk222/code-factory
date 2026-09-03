@@ -96,6 +96,24 @@ struct HomeView: View { var body: some View { Text(String(UIScreen.main.bounds.w
     assert {"APPFORGE_NATIVE_FIXED_SCREEN_GEOMETRY", "APPFORGE_NATIVE_ADAPTIVE_API_MISSING", "APPFORGE_NATIVE_ICON_LABEL_REVIEW_REQUIRED"} <= codes
 
 
+def test_native_surface_blocks_when_required_accessibility_signals_are_absent(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path)
+    source = _source(tmp_path, "import SwiftUI\nstruct HomeView: View { var body: some View { NavigationSplitView { Text(\"Menu\") } detail: { Text(\"Home\") } } }\n")
+    contract = _contract(tmp_path, source)
+    receipt = verify_native_surface(tmp_path, candidate, contract, _evidence(tmp_path, contract), Path(".factory/appforge/native-surface.json"))
+    assert receipt["ok"] is False
+    assert sum(item["code"] == "APPFORGE_NATIVE_ACCESSIBILITY_SIGNAL_MISSING" for item in receipt["findings"]) == 3
+
+
+def test_native_surface_preserves_an_existing_immutable_receipt(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path); source = _source(tmp_path); contract = _contract(tmp_path, source); evidence = _evidence(tmp_path, contract)
+    output = Path(".factory/appforge/native-surface.json")
+    verify_native_surface(tmp_path, candidate, contract, evidence, output)
+    with pytest.raises(RevenueForgeError) as raised:
+        verify_native_surface(tmp_path, candidate, contract, evidence, output)
+    assert raised.value.code == "APPFORGE_NATIVE_SURFACE_OUTPUT_COLLISION"
+
+
 def test_native_surface_rejects_tampered_contract_binding_and_cli_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     candidate = _candidate(tmp_path)
     source = _source(tmp_path)

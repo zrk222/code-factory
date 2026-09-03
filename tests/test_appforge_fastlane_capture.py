@@ -137,6 +137,30 @@ def test_fastlane_capture_contract_fails_closed_on_unsafe_lane_or_weak_config(tm
     assert raised.value.code == code
 
 
+@pytest.mark.parametrize("source", [
+    'password = "value"',
+    'api_key("value")',
+    'ENV["MATCH_PASSWORD"]',
+])
+def test_fastlane_capture_contract_rejects_credential_like_ruby_forms(tmp_path: Path, source: str) -> None:
+    candidate, candidate_path = _candidate(tmp_path); matrix, story, scenes = _receipts(tmp_path, candidate)
+    _fastlane_sources(tmp_path, ["01-Home", "02-Workspace"])
+    fastfile = tmp_path / "fastlane" / "Fastfile"
+    fastfile.write_text(fastfile.read_text(encoding="utf-8").replace("capture_screenshots", f"capture_screenshots\n  {source}"), encoding="utf-8")
+    with pytest.raises(RevenueForgeError) as raised:
+        create_fastlane_capture_contract(tmp_path, candidate_path, matrix, story, _contract(tmp_path, candidate, matrix, story, scenes), Path(".factory/appforge/secret.json"))
+    assert raised.value.code == "APPFORGE_FASTLANE_CAPTURE_SECRET_IN_SOURCE"
+
+
+def test_fastlane_capture_contract_detects_unsafe_action_after_nested_block(tmp_path: Path) -> None:
+    candidate, candidate_path = _candidate(tmp_path,); matrix, story, scenes = _receipts(tmp_path, candidate)
+    _fastlane_sources(tmp_path, ["01-Home", "02-Workspace"])
+    (tmp_path / "fastlane" / "Fastfile").write_text("lane :appforge_capture do\n  if true\n    capture_screenshots\n  end\n  upload_to_app_store\nend\n", encoding="utf-8")
+    with pytest.raises(RevenueForgeError) as raised:
+        create_fastlane_capture_contract(tmp_path, candidate_path, matrix, story, _contract(tmp_path, candidate, matrix, story, scenes), Path(".factory/appforge/nested-unsafe.json"))
+    assert raised.value.code == "APPFORGE_FASTLANE_CAPTURE_LANE_INVALID"
+
+
 def test_fastlane_capture_contract_allows_only_reviewed_framefile_lane(tmp_path: Path) -> None:
     candidate, candidate_path = _candidate(tmp_path); matrix, story, scenes = _receipts(tmp_path, candidate)
     _fastlane_sources(tmp_path, ["01-Home", "02-Workspace"], framing="reviewed_framefile")

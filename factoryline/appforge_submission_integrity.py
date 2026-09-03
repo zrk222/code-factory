@@ -77,8 +77,12 @@ def submission_integrity_projection(root: Path) -> dict[str, Any]:
     if base.exists():
         for path in sorted(base.rglob("*submission-integrity*.json"))[:100]:
             try:
-                value = json.loads(path.read_text(encoding="utf-8")); supplied = value.get("receipt_sha256")
-                if isinstance(value, dict) and value.get("schema") == RECEIPT_SCHEMA and isinstance(supplied, str) and _sha({k: v for k, v in value.items() if k != "receipt_sha256"}) == supplied: current.append({"path": path.relative_to(workspace).as_posix(), "marker": value.get("marker"), "receipt_sha256": supplied, "coverage": value.get("coverage"), "finding_count": len(value.get("findings", []))})
+                value = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(value, dict):
+                    invalid.append(path.relative_to(workspace).as_posix())
+                    continue
+                supplied = value.get("receipt_sha256")
+                if value.get("schema") == RECEIPT_SCHEMA and isinstance(supplied, str) and _sha({k: v for k, v in value.items() if k != "receipt_sha256"}) == supplied: current.append({"path": path.relative_to(workspace).as_posix(), "marker": value.get("marker"), "receipt_sha256": supplied, "coverage": value.get("coverage"), "finding_count": len(value.get("findings", []))})
                 else: invalid.append(path.relative_to(workspace).as_posix())
             except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError): invalid.append(path.relative_to(workspace).as_posix())
     return {"schema": "factory.appforge.submission-integrity-projection.v1", "marker": "APPFORGE_SUBMISSION_INTEGRITY_READ_ONLY", "current_count": len(current), "invalid_count": len(invalid), "latest": current[-1] if current else None, "invalid": invalid, "authority": {**AUTHORITY, "execution": False, "apple_access": False, "apple_approval_claim": False}, "claim_boundary": "Read-only local requirement-integrity status; not a capture, device, TestFlight, App Review, or Apple approval result."}

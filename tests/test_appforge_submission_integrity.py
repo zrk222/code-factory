@@ -25,6 +25,11 @@ def test_submission_integrity_requires_explicit_native_candidate_bound_10_plus_3
     assert receipt["ok"] is True and receipt["coverage"]["iphone"]["actual"] == 10 and receipt["coverage"]["ipad_13"]["actual"] == 3
     assert submission_integrity_projection(tmp_path)["current_count"] == 1
 
+def test_submission_integrity_projection_skips_non_object_json(tmp_path: Path) -> None:
+    path = tmp_path / ".factory" / "appforge" / "bad-submission-integrity.json"; path.parent.mkdir(parents=True); path.write_text("[]", encoding="utf-8")
+    projection = submission_integrity_projection(tmp_path)
+    assert projection["current_count"] == 0 and projection["invalid_count"] == 1
+
 def test_submission_integrity_blocks_loose_or_collateral_requirements_with_repairs(tmp_path: Path) -> None:
     candidate_path, candidate = _candidate(tmp_path); value = _contract(candidate)
     value["requirements"] = value["requirements"][:-1]; value["requirements"][0]["steps"] = []; value["requirements"][1]["evidence_class"] = "web_preview"

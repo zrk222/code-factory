@@ -180,6 +180,14 @@ def _scan(root: Path, sources: list[Path], contract: dict[str, Any]) -> tuple[li
         findings.append({"code": "APPFORGE_NATIVE_FIXED_SCREEN_GEOMETRY", "detail": f"source references non-adaptive screen geometry: {', '.join(forbidden)}"})
     if "ipad" in contract["platforms"] and not any(api in all_text for api in ADAPTIVE_APIS):
         findings.append({"code": "APPFORGE_NATIVE_ADAPTIVE_API_MISSING", "detail": "iPad support has no recognized adaptive SwiftUI API in the sealed sources"})
+    accessibility_signals = {
+        "dynamic_type": any(signal in all_text for signal in ("dynamicTypeSize", "DynamicTypeSize")),
+        "reduce_motion": "accessibilityReduceMotion" in all_text,
+        "reduce_transparency": "accessibilityReduceTransparency" in all_text,
+    }
+    for name, observed in accessibility_signals.items():
+        if contract["accessibility"][name] and not observed:
+            findings.append({"code": "APPFORGE_NATIVE_ACCESSIBILITY_SIGNAL_MISSING", "detail": f"sealed source has no recognized {name} accessibility signal"})
     glass_count = all_text.count("glassEffect(")
     if glass_count > contract["materials"]["max_custom_glass_controls"]:
         findings.append({"code": "APPFORGE_NATIVE_GLASS_OVERUSE", "detail": f"sealed source declares {glass_count} custom glass effects; contract allows {contract['materials']['max_custom_glass_controls']}"})
@@ -230,6 +238,8 @@ def verify_native_surface(root: Path, candidate_path: Path, contract_path: Path,
     }
     result["receipt_sha256"] = _sha(result)
     destination = _local(workspace, out_path, exists=False)
+    if destination.exists():
+        raise RevenueForgeError("APPFORGE_NATIVE_SURFACE_OUTPUT_COLLISION", "receipt output path already exists")
     _atomic(destination, result)
     return {**result, "path": destination.relative_to(workspace).as_posix()}
 

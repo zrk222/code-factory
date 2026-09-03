@@ -94,14 +94,36 @@ def _read_text(root: Path, path_value: object, field: str) -> tuple[Path, str]:
 
 
 def _source_has_secret(text: str) -> bool:
-    return bool(re.search(r"(?im)^\s*[^#\n]*(?:" + "|".join(_SECRET_HINTS) + r")[^:\n]*:\s*\S+", text))
+    """Reject inline credential values or environment references from capture-only sources."""
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].lower()
+        if not any(hint in line for hint in _SECRET_HINTS):
+            continue
+        if re.search(r"(?:\b(?:token|password|secret|private_?key|api_?key|credential)\b\s*(?::|=|\())|\benv\s*\[", line):
+            return True
+    return False
 
 
 def _lane_body(fastfile: str, lane: str) -> str:
-    match = re.search(rf"(?ms)^\s*lane\s*:\s*{re.escape(lane)}\s+do\b(.*?)^\s*end\s*$", fastfile)
-    if not match:
-        raise RevenueForgeError("APPFORGE_FASTLANE_CAPTURE_LANE_INVALID", "Fastfile must contain the declared capture-only lane")
-    return match.group(1)
+    header = re.compile(rf"^\s*lane\s*:\s*{re.escape(lane)}\s+do\b")
+    starts = re.compile(r"\b(?:do|if|unless|case|begin|while|until|for|def|class|module)\b")
+    ends = re.compile(r"\bend\b")
+    lines = fastfile.splitlines()
+    for index, line in enumerate(lines):
+        if not header.search(line):
+            continue
+        depth = 1
+        body: list[str] = []
+        for candidate in lines[index + 1:]:
+            code = candidate.split("#", 1)[0]
+            depth += len(starts.findall(code)) - len(ends.findall(code))
+            if depth == 0:
+                return "\n".join(body)
+            if depth < 0:
+                break
+            body.append(candidate)
+        break
+    raise RevenueForgeError("APPFORGE_FASTLANE_CAPTURE_LANE_INVALID", "Fastfile must contain one balanced declared capture-only lane")
 
 
 def _validate_snapfile(text: str) -> dict[str, bool]:
