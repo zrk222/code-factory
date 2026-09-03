@@ -29,6 +29,7 @@ from .revenue_evidence import query_evidence_memory
 from .appforge_design import appforge_design_projection
 from .appforge_oracle import appforge_oracle_projection
 from .appforge_device_reality import device_reality_projection
+from .appforge_release_rehearsal import release_rehearsal_projection
 from .oracle_firewall import oracle_firewall_projection
 from .semantic_authority import semantic_authority_projection
 from .enterprise_enforcement import enterprise_enforcement_projection
@@ -493,6 +494,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.appforge_device_reality_status",
             "description": "Read sealed AppForge Device Reality intent and supervised-capture receipts. It never starts Phone Harness, controls a device, accesses credentials, or contacts Apple.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_release_rehearsal_status",
+            "description": "Read local candidate-bound Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot rehearsal receipts. It never invokes a provider, accesses credentials, uploads a build, contacts Apple, or submits a release.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1225,6 +1232,17 @@ def _appforge_device_reality_status(root: Path, arguments: object) -> dict[str, 
     }
 
 
+def _appforge_release_rehearsal_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_release_rehearsal_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_RELEASE_REHEARSAL_READ_ONLY",
+        "action_summary": "Read hash-verified candidate-bound AppForge release rehearsals without invoking Fastlane, ASC CLI, credentials, Apple, upload, or submission.",
+        "status": release_rehearsal_projection(root),
+        "scope": "Read-only local rehearsal metadata; not archive, export, upload, processing, tester delivery, beta review, App Review, or approval evidence.",
+    }
+
+
 def _saas_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.saas_status accepts no arguments")
@@ -1374,6 +1392,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_appforge_oracle_status(root, arguments))
     if name == "factory.appforge_device_reality_status":
         return _content(_appforge_device_reality_status(root, arguments))
+    if name == "factory.appforge_release_rehearsal_status":
+        return _content(_appforge_release_rehearsal_status(root, arguments))
     if name == "factory.saas_status":
         return _content(_saas_status(root, arguments))
     if name == "factory.agent_proof_mission":

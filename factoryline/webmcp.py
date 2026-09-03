@@ -67,6 +67,11 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "description": "Read sealed AppForge Device Reality intent and supervised-capture state already visible on this page. It never starts Phone Harness, controls a device, accesses credentials, or contacts Apple.",
     },
     {
+        "name": "factory.appforge_release_rehearsal_status",
+        "title": "Read release rehearsal",
+        "description": "Read candidate-bound Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot rehearsal state already visible on this page. It never invokes a provider, accesses credentials, uploads a build, contacts Apple, or submits a release.",
+    },
+    {
         "name": "factory.saas_status",
         "title": "Read SaaS promise-to-permission status",
         "description": "Read bounded provider-neutral OAuth/OIDC-to-entitlement status already visible on this page. It never contacts or mutates a provider.",

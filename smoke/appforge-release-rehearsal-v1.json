@@ -1,0 +1,22 @@
+{
+  "checks": [
+    {
+      "name": "release_rehearsal_keeps_local_and_provider_states_distinct",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_appforge_release_rehearsal.py','tests/test_mcp.py','tests/test_webmcp.py','tests/test_graph_ops.py'])\nassert result==0\nprint('APPFORGE_RELEASE_REHEARSAL_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "APPFORGE_RELEASE_REHEARSAL_SMOKE_PASS",
+      "timeout_s": 120,
+      "must_fail_on_stub": true,
+      "covers": [
+        "REHEARSAL_ASSURANCE_BINDING",
+        "REHEARSAL_PROFILE_VALIDATE",
+        "APPFORGE_RELEASE_REHEARSAL_READY",
+        "APPFORGE_REHEARSAL_STATE_INVALID",
+        "APPFORGE_REHEARSAL_CHANNEL_INVALID",
+        "APPFORGE_REHEARSAL_NON_EXECUTING",
+        "APPFORGE_RELEASE_REHEARSAL_READ_ONLY"
+      ]
+    }
+  ]
+}

@@ -128,6 +128,7 @@ from .appforge_evidence_kit import create_evidence_kit, initialize_appforge
 from .appforge_oracle import verify_appforge_oracle_authority
 from .appforge_eas import verify_eas_preflight
 from .appforge_device_reality import create_device_reality_intent_envelope, verify_device_reality
+from .appforge_release_rehearsal import create_release_rehearsal
 from .oracle_firewall import (
     OracleFirewallError,
     capture_intent_handoff,
@@ -1745,6 +1746,13 @@ def main(argv=None) -> int:
     revenue_appforge_eas.add_argument("--submit-profile", required=True)
     revenue_appforge_eas.add_argument("--out")
     revenue_appforge_eas.add_argument("--json", action="store_true")
+    revenue_rehearsal = revenue_sub.add_parser("appforge-rehearse", help="seal a credential-free Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot release rehearsal without running a provider")
+    revenue_rehearsal.add_argument("--root", default=".")
+    revenue_rehearsal.add_argument("--candidate", required=True)
+    revenue_rehearsal.add_argument("--submission-assurance", required=True)
+    revenue_rehearsal.add_argument("--profile", required=True)
+    revenue_rehearsal.add_argument("--out", default=".factory/appforge/release-rehearsal.json")
+    revenue_rehearsal.add_argument("--json", action="store_true")
 
     saas = sub.add_parser("saas", help="verify provider-neutral SaaS identity, billing, entitlement, and revocation evidence")
     saas_sub = saas.add_subparsers(required=True, dest="saas_cmd")
@@ -4542,6 +4550,8 @@ def main(argv=None) -> int:
                 payload = verify_device_reality(root, Path(a.intent_envelope), Path(a.evidence), Path(a.out))
             elif a.revenue_cmd == "appforge-eas":
                 payload = verify_eas_preflight(root, Path(a.candidate), Path(a.eas_json), a.build_profile, a.submit_profile, out=Path(a.out) if a.out else None)
+            elif a.revenue_cmd == "appforge-rehearse":
+                payload = create_release_rehearsal(root, Path(a.candidate), Path(a.submission_assurance), Path(a.profile), Path(a.out))
             elif a.revenue_cmd == "evidence-kit":
                 payload = create_evidence_kit(root, Path(a.candidate), Path(a.design_input), Path(a.out_dir))
             elif a.revenue_cmd == "appforge-init":

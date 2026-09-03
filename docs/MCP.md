@@ -123,6 +123,7 @@ network transport, or mutation authority.
 | `factory.oracle_firewall_status` | Sealed source-to-decision Oracle Firewall contracts, weakening reports, independent challenge receipts, and incidents; never seals, approves, challenges, repairs, or releases work | Read only |
 | `factory.appforge_oracle_status` | Candidate-bound AppForge Oracle authority receipts; never changes policy sources, media, reviewers, TestFlight, or App Store Connect | Read only |
 | `factory.appforge_device_reality_status` | Sealed AppForge device-intent and supervised-capture receipts; never starts Phone Harness, controls a device, accesses credentials, or contacts Apple | Read only |
+| `factory.appforge_release_rehearsal_status` | Candidate-bound credential-free Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot rehearsal receipts; never invokes a provider, accesses credentials, uploads, contacts Apple, or submits a release | Read only |
 | `factory.codex_metadata_audit` | Privacy-safe workspace metadata audit of declared local run-state files; never imports prompts, tool output, credentials, provider history, or home-directory Codex records | Read only |
 | `factory://status` | The same status payload | Read only |
 | `factory://graph` | The same Graph Ops payload | Read only |

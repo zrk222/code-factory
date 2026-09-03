@@ -534,3 +534,17 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-03 02:14] GATE plan appforge-device-reality-v1 approver=human tasks=4 sha=f4c2e316cbe41378
 - [2026-09-03 02:19] GATE spec appforge-device-reality-v1 approver=human strict=True sha=70d14605a3da40dd
 - [2026-09-03 02:19] GATE plan appforge-device-reality-v1 approver=human tasks=4 sha=70d14605a3da40dd
+- [2026-09-03 02:32] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=46301777332742df
+- [2026-09-03 02:32] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=46301777332742df
+- [2026-09-03 02:33] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=a216aa2d69463d8b
+- [2026-09-03 02:33] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=a216aa2d69463d8b
+- [2026-09-03 02:34] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=88bf974cb2c292a0
+- [2026-09-03 02:34] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=88bf974cb2c292a0
+- [2026-09-03 02:34] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=44f34a18d967443c
+- [2026-09-03 02:35] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=44f34a18d967443c
+- [2026-09-03 02:48] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=44f34a18d967443c
+- [2026-09-03 02:48] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=44f34a18d967443c
+- [2026-09-03 02:53] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=c8df55030909136a
+- [2026-09-03 02:53] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=c8df55030909136a
+- [2026-09-03 03:02] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=ecdf44b92e14a940
+- [2026-09-03 03:02] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=ecdf44b92e14a940
