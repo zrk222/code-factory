@@ -17,6 +17,19 @@
 
 ## Unreleased
 
+## 0.46.2 - 2026-09-03
+
+- Add intent-to-diff scope and forbidden-behavior checks, receipt freshness and
+  replay defense, and human-owned, versioned team policy packs.
+- Add a plain-language IDE, MCP, and A2A agent playbook with supervised ingress,
+  mission-control action cards, evidence-led human briefings, and optional
+  AppForge routing only for explicit mobile delivery work.
+- Bind ForgeLine promotion to a SpecLine intent digest and selected capability
+  gates; add optional AppForge requirement and capture-evidence integrity when
+  that capability pack is selected.
+- Add a one-time, non-coercive proof moment for an honest review only after a
+  verified user-visible result.
+
 ## 0.46.1 - 2026-09-02
 
 - Harden the Oracle Firewall against same-ID semantic rewrites: blocking and
