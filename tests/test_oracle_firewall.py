@@ -90,7 +90,7 @@ def test_drift_blocks_threshold_lowering_and_removed_negative_case_with_source_j
     assert all(item["justification"]["approved_by"] == "Release Owner" for item in drift["findings"])
 
 
-def test_drift_blocks_same_id_semantic_rewrites_for_every_blocking_rule_class(tmp_path: Path) -> None:
+def test_drift_requires_review_for_same_id_semantic_rewrites_for_every_blocking_rule_class(tmp_path: Path) -> None:
     prior = _contract(tmp_path, out=".factory/oracles/contracts/prior.json")
     source = _input(tmp_path, tmp_path / ".factory/oracles/handoffs/ios-intake.json")
     candidate_input = json.loads(source.read_text(encoding="utf-8"))
@@ -104,9 +104,39 @@ def test_drift_blocks_same_id_semantic_rewrites_for_every_blocking_rule_class(tm
     drift = compare_oracle_contracts(tmp_path, prior, candidate)
 
     rewritten = [item for item in drift["findings"] if item["code"] == "blocking_rule_rewritten"]
-    assert drift["marker"] == "E_ORACLE_WEAKENING"
+    assert drift["marker"] == "ORACLE_DRIFT_REVIEW_REQUIRED"
+    assert drift["verdict"] == "REVIEW_REQUIRED"
     assert {item["group"] for item in rewritten} >= {"requirements", "forbidden_behaviors", "invariants", "gates"}
     assert all("statement" in item["changed_fields"] for item in rewritten)
+
+
+def test_added_blocking_rule_requires_review_and_never_clears(tmp_path: Path) -> None:
+    prior = _contract(tmp_path, out=".factory/oracles/contracts/prior.json")
+    source = _input(tmp_path, tmp_path / ".factory/oracles/handoffs/ios-intake.json")
+    candidate_input = json.loads(source.read_text(encoding="utf-8"))
+    candidate_input["requirements"].append({
+        "id": "receipt-retention",
+        "statement": "The final receipt must remain available for audit.",
+        "origin": "human_confirmed",
+        "effect": "blocking",
+        "source_id": "original-intent",
+        "critical": True,
+    })
+    _write(source, candidate_input)
+    candidate = tmp_path / seal_oracle_contract(tmp_path, source, Path(".factory/oracles/contracts/candidate.json"))["path"]
+
+    drift = compare_oracle_contracts(tmp_path, prior, candidate)
+
+    assert drift["marker"] == "ORACLE_DRIFT_REVIEW_REQUIRED"
+    assert drift["verdict"] == "REVIEW_REQUIRED"
+    assert drift["reason"] == "semantic_change_requires_review"
+    assert drift["weakening_findings"] == []
+    added = [item for item in drift["review_findings"] if item["code"] == "blocking_rule_added"]
+    assert len(added) == 1
+    assert added[0]["before"] is None
+    assert added[0]["group"] == "requirements"
+    assert added[0]["rule_id"] == "receipt-retention"
+    assert added[0]["after"]["statement"] == "The final receipt must remain available for audit."
 
 
 def test_shadow_oracle_challenge_is_implementation_targeted_and_fails_on_survivor(tmp_path: Path) -> None:
@@ -137,6 +167,42 @@ def test_oracle_incident_demotes_declared_agent_and_projects_read_only_status(tm
     assert license_value["reason"] == "ORACLE_WEAKENING_DEMOTION"
     assert projection["blocked_drift_count"] == 1
     assert all(value is False for value in projection["authority"].values())
+
+
+def test_oracle_incident_rejects_stale_or_unrelated_drift_without_demotion(tmp_path: Path) -> None:
+    prior = _contract(tmp_path, out=".factory/oracles/contracts/prior.json")
+    source = _input(tmp_path, tmp_path / ".factory/oracles/handoffs/ios-intake.json", threshold=90)
+    candidate = tmp_path / seal_oracle_contract(tmp_path, source, Path(".factory/oracles/contracts/candidate.json"))["path"]
+    drift = compare_oracle_contracts(tmp_path, prior, candidate, Path(".factory/oracles/drifts/blocked.json"))
+    before = derive_license(tmp_path, AGENT)
+    incidents = tmp_path / ".factory/oracles/incidents"
+    before_incidents = sorted(incidents.glob("*.json")) if incidents.exists() else []
+
+    with pytest.raises(OracleFirewallError) as unrelated:
+        record_oracle_incident(tmp_path, AGENT, candidate, tmp_path / drift["path"])
+    assert unrelated.value.code == "ORACLE_INCIDENT_INVALID"
+    assert derive_license(tmp_path, AGENT)["tier"] == before["tier"]
+    assert (sorted(incidents.glob("*.json")) if incidents.exists() else []) == before_incidents
+
+    stale = _write(tmp_path / ".factory/oracles/drifts/stale.json", {
+        "schema": "factory.oracle-drift.v1",
+        "marker": "E_ORACLE_WEAKENING",
+        "verdict": "BLOCKED",
+        "reason": "contract_invalid_or_stale",
+        "contracts": {"prior": {"path": "x", "contract_sha256": "0" * 64}, "candidate": {"path": "y", "contract_sha256": "1" * 64}},
+        "findings": [],
+        "verification": {"prior": "source_changed"},
+        "authority": {"execution": False, "approval": False, "repair": False, "merge": False, "publication": False, "deployment": False, "signing": False, "messaging": False, "credential": False, "connector": False},
+        "claim_boundary": "Synthetic stale local comparison for refusal coverage.",
+    })
+    stale_payload = json.loads(stale.read_text(encoding="utf-8"))
+    stale_payload["drift_sha256"] = hashlib.sha256(json.dumps(stale_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    _write(stale, stale_payload)
+    with pytest.raises(OracleFirewallError) as stale_rejection:
+        record_oracle_incident(tmp_path, AGENT, prior, stale)
+    assert stale_rejection.value.code == "ORACLE_INCIDENT_INVALID"
+    assert derive_license(tmp_path, AGENT)["tier"] == before["tier"]
+    assert (sorted(incidents.glob("*.json")) if incidents.exists() else []) == before_incidents
 
 
 def test_full_init_creates_deliberately_incomplete_appforge_authority_workspace(tmp_path: Path) -> None:

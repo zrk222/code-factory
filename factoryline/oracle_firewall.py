@@ -407,8 +407,16 @@ def _source_justification(contract: dict[str, Any], rule: dict[str, Any] | None)
     }
 
 
-def _weakening(previous: dict[str, Any], candidate: dict[str, Any]) -> list[dict[str, Any]]:
-    findings: list[dict[str, Any]] = []
+def _semantic_differences(previous: dict[str, Any], candidate: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Separate demonstrable weakening from a change needing named review.
+
+    A contract comparison must never treat an addition or rewrite as invisible
+    merely because it is not mechanically provable to be a relaxation.  The
+    former is an authority-changing event for a human; the latter is a hard
+    stop because it removes or relaxes an existing obligation.
+    """
+    weakening: list[dict[str, Any]] = []
+    review: list[dict[str, Any]] = []
     before = previous.get("rules", {})
     after = candidate.get("rules", {})
     for group in RULE_GROUPS:
@@ -420,38 +428,44 @@ def _weakening(previous: dict[str, Any], candidate: dict[str, Any]) -> list[dict
             later = candidate_rules.get(rule_id)
             if later is None:
                 code = "negative_case_removed" if group == "negative_cases" else "required_rule_removed"
-                findings.append({"code": code, "group": group, "rule_id": rule_id, "before": prior, "after": None, "justification": _source_justification(candidate, None)})
+                weakening.append({"code": code, "group": group, "rule_id": rule_id, "before": prior, "after": None, "justification": _source_justification(candidate, None)})
                 continue
+            weakened = False
             if later.get("effect") == "advisory" and prior.get("effect") != "advisory":
-                findings.append({"code": "gate_effect_relaxed", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
+                weakening.append({"code": "gate_effect_relaxed", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
+                weakened = True
             if prior.get("origin") in AUTHORITY_ORIGINS and later.get("origin") not in AUTHORITY_ORIGINS:
-                findings.append({"code": "provenance_downgraded", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
+                weakening.append({"code": "provenance_downgraded", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
+                weakened = True
             semantic_fields = list(SEMANTIC_RULE_FIELDS)
             if group == "gates":
                 semantic_fields.extend(("comparison", "value"))
             if group == "tests":
                 semantic_fields.append("path")
             changed_fields = [field for field in semantic_fields if prior.get(field) != later.get(field)]
-            if changed_fields:
-                code = "negative_proof_rewritten" if group == "negative_cases" else "test_rewritten" if group == "tests" else "blocking_rule_rewritten"
-                findings.append({"code": code, "group": group, "rule_id": rule_id, "before": prior, "after": later, "changed_fields": changed_fields, "justification": _source_justification(candidate, later)})
             if group == "gates":
                 prior_value, later_value = prior.get("value"), later.get("value")
                 comparison = prior.get("comparison")
                 if comparison == "gte" and isinstance(prior_value, (int, float)) and isinstance(later_value, (int, float)) and later_value < prior_value:
-                    findings.append({"code": "threshold_lowered", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
+                    weakening.append({"code": "threshold_lowered", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
+                    weakened = True
                 if comparison == "lte" and isinstance(prior_value, (int, float)) and isinstance(later_value, (int, float)) and later_value > prior_value:
-                    findings.append({"code": "tolerance_widened", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
-                if comparison != later.get("comparison") or (comparison == "equals" and prior_value != later_value):
-                    findings.append({"code": "gate_semantics_changed", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
-        if group == "exceptions":
-            for rule_id, later in candidate_rules.items():
-                # Any new exception changes the oracle.  Calling it advisory
-                # cannot make it invisible: advisory exceptions can be used to
-                # train a later weakening or suppress a human's review signal.
-                if rule_id not in prior_rules:
-                    findings.append({"code": "exception_added", "group": group, "rule_id": rule_id, "before": None, "after": later, "justification": _source_justification(candidate, later)})
-    return findings
+                    weakening.append({"code": "tolerance_widened", "group": group, "rule_id": rule_id, "before": prior, "after": later, "justification": _source_justification(candidate, later)})
+                    weakened = True
+            if changed_fields and not weakened:
+                code = "negative_proof_rewritten" if group == "negative_cases" else "test_rewritten" if group == "tests" else "blocking_rule_rewritten"
+                review.append({"code": code, "group": group, "rule_id": rule_id, "before": prior, "after": later, "changed_fields": changed_fields, "justification": _source_justification(candidate, later)})
+        for rule_id, later in candidate_rules.items():
+            if rule_id in prior_rules:
+                continue
+            if group == "exceptions":
+                # An exception can suppress or train a later bypass, so an
+                # addition is itself a relaxation and cannot be auto-cleared.
+                weakening.append({"code": "exception_added", "group": group, "rule_id": rule_id, "before": None, "after": later, "justification": _source_justification(candidate, later)})
+                continue
+            code = "negative_case_added" if group == "negative_cases" else "blocking_rule_added"
+            review.append({"code": code, "group": group, "rule_id": rule_id, "before": None, "after": later, "justification": _source_justification(candidate, later)})
+    return weakening, review
 
 
 def compare_oracle_contracts(root: Path, prior_path: Path, candidate_path: Path, out: Path | None = None) -> dict[str, Any]:
@@ -463,8 +477,14 @@ def compare_oracle_contracts(root: Path, prior_path: Path, candidate_path: Path,
         reason = {"prior": prior_result.get("reason"), "candidate": candidate_result.get("reason")}
         core = {"schema": DRIFT_SCHEMA, "marker": "E_ORACLE_WEAKENING", "verdict": "BLOCKED", "reason": "contract_invalid_or_stale", "contracts": {"prior": str(prior_path), "candidate": str(candidate_path)}, "findings": [], "verification": reason, "authority": dict(AUTHORITY), "claim_boundary": "A blocked local comparison requires human review; it does not decide the successor contract."}
     else:
-        findings = _weakening(prior_result["contract"], candidate_result["contract"])
-        core = {"schema": DRIFT_SCHEMA, "marker": "E_ORACLE_WEAKENING" if findings else "ORACLE_DRIFT_CLEAR", "verdict": "BLOCKED" if findings else "CLEAR", "reason": "semantic_weakening" if findings else "no_detected_weakening", "contracts": {"prior": {"path": prior_result["path"], "contract_sha256": prior_result["contract"]["contract_sha256"]}, "candidate": {"path": candidate_result["path"], "contract_sha256": candidate_result["contract"]["contract_sha256"]}}, "findings": findings, "authority": dict(AUTHORITY), "claim_boundary": "The report detects declared contract weakening. A named reviewer must decide whether to retain or replace the baseline through a separately sealed contract."}
+        weakening, review = _semantic_differences(prior_result["contract"], candidate_result["contract"])
+        if weakening:
+            marker, verdict, reason = "E_ORACLE_WEAKENING", "BLOCKED", "semantic_weakening"
+        elif review:
+            marker, verdict, reason = "ORACLE_DRIFT_REVIEW_REQUIRED", "REVIEW_REQUIRED", "semantic_change_requires_review"
+        else:
+            marker, verdict, reason = "ORACLE_DRIFT_CLEAR", "CLEAR", "no_semantic_difference"
+        core = {"schema": DRIFT_SCHEMA, "marker": marker, "verdict": verdict, "reason": reason, "contracts": {"prior": {"path": prior_result["path"], "contract_sha256": prior_result["contract"]["contract_sha256"]}, "candidate": {"path": candidate_result["path"], "contract_sha256": candidate_result["contract"]["contract_sha256"]}}, "findings": [*weakening, *review], "weakening_findings": weakening, "review_findings": review, "authority": dict(AUTHORITY), "claim_boundary": "The report detects contract weakening and other semantic changes. A named reviewer must decide whether to retain or replace the baseline through a separately sealed contract."}
     receipt = _hash_receipt(core, "drift_sha256")
     if out is not None:
         path = _write_new(workspace, Path(out), receipt, digest_field="drift_sha256")
@@ -589,8 +609,20 @@ def record_oracle_incident(root: Path, agent: object, contract_path: Path, drift
     if not contract_result["ok"]:
         raise OracleFirewallError("ORACLE_INCIDENT_BLOCKED", "incident contract must verify before it can identify the affected agent")
     drift, source = _read_json(workspace, Path(drift_path), DRIFT_SCHEMA)
-    if not _valid_receipt(drift, DRIFT_SCHEMA, "drift_sha256") or drift.get("marker") != "E_ORACLE_WEAKENING" or drift.get("verdict") != "BLOCKED":
+    if (
+        not _valid_receipt(drift, DRIFT_SCHEMA, "drift_sha256")
+        or drift.get("marker") != "E_ORACLE_WEAKENING"
+        or drift.get("verdict") != "BLOCKED"
+        or drift.get("reason") != "semantic_weakening"
+    ):
         raise OracleFirewallError("ORACLE_INCIDENT_INVALID", "incident requires a hash-valid blocked weakening report")
+    weakening = drift.get("weakening_findings")
+    contracts = drift.get("contracts")
+    prior = contracts.get("prior") if isinstance(contracts, dict) else None
+    if not isinstance(weakening, list) or not weakening:
+        raise OracleFirewallError("ORACLE_INCIDENT_INVALID", "incident report must contain a non-empty weakening finding set")
+    if not isinstance(prior, dict) or prior.get("contract_sha256") != contract_result["contract"]["contract_sha256"]:
+        raise OracleFirewallError("ORACLE_INCIDENT_INVALID", "incident contract must be the report's verified baseline contract")
     core = {"schema": INCIDENT_SCHEMA, "marker": "ORACLE_AUTONOMY_DEMOTED", "recorded_at": _now(), "agent": identity, "contract_sha256": contract_result["contract"]["contract_sha256"], "drift_path": source.relative_to(workspace).as_posix(), "drift_sha256": drift["drift_sha256"], "failure_class": "oracle_weakening", "tier": "human_controlled", "requalification_clean_runs": 5, "authority": dict(AUTHORITY), "claim_boundary": "Local demotion evidence only. It does not establish real-world agent identity or grant an automatic future promotion."}
     receipt = _hash_receipt(core, "incident_sha256")
     destination = Path(out) if out is not None else workspace / ".factory" / "oracles" / "incidents" / f"{identity['subject'].replace('/', '_')}-{receipt['incident_sha256'][:12]}.json"
