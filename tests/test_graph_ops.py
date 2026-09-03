@@ -767,3 +767,17 @@ def test_graph_ops_projects_counterexamples_guardrails_and_temporal_resilience_r
         "GRAPH_OPS_GUARDRAIL_EVALUATIONS_REDACTED",
         "GRAPH_OPS_TEMPORAL_RESILIENCE_READ_ONLY",
     } <= set(snapshot["markers"])
+
+
+def test_graph_ops_starts_with_plain_language_progressive_disclosure():
+    html = (Path(__file__).parents[1] / "factoryline" / "graph_ops.html").read_text(encoding="utf-8")
+
+    start = html.index("GRAPH_OPS_START_HERE")
+    specialized = html.index("GRAPH_OPS_SPECIALIZED_MODULES")
+    assert start < specialized
+    assert "What do you need to prove today?" in html
+    assert "factory first-proof --root ." in html
+    assert "Did the agent build what we asked for?" in html
+    assert "Can we govern agent work without trusting its story?" in html
+    assert "This guide runs nothing." in html
+    assert "AppForge applies only when mobile delivery is explicitly in scope." in html

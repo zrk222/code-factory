@@ -78,6 +78,7 @@ from .migration import (
 )
 from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
+from .ide_playbook import AdoptionGuideError, adoption_guide
 from .graph_portfolio import graph_portfolio_plan
 from .graph_forensics import GraphForensicsError, graph_forensics, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
 from .langgraph_assurance import LangGraphAssuranceError, verify_langgraph_resume_parity
@@ -601,6 +602,10 @@ def main(argv=None) -> int:
     first_proof.add_argument("--root", default=".")
     first_proof.add_argument("--out-dir", help="optional workspace-contained output directory")
     first_proof.add_argument("--json", action="store_true")
+
+    guide = sub.add_parser("guide", help="choose one plain-language path before opening advanced controls")
+    guide.add_argument("--journey", help="one of: solo, team, enterprise")
+    guide.add_argument("--json", action="store_true")
 
     proof_card = sub.add_parser("proof-card", help="create a privacy-safe share card from one verified local E2E receipt")
     proof_card.add_argument("receipt", help="workspace-contained factory.e2e_proof_receipt.v1 JSON path")
@@ -3281,6 +3286,36 @@ def main(argv=None) -> int:
         except OSError as exc:
             print(f"studio failed: LISTENER_ERROR: {exc}", file=sys.stderr)
             return 1
+        return 0
+    if a.cmd == "guide":
+        try:
+            result = adoption_guide(a.journey)
+        except AdoptionGuideError as exc:
+            error = {
+                "schema": "factory.adoption-guide.error.v1",
+                "code": exc.code,
+                "message": str(exc),
+                "supported": ["solo", "team", "enterprise"],
+                "actions_executed": False,
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"guide failed: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print("Code Factory guide")
+            print("=" * 44)
+            if a.journey is None:
+                print("Recommended: solo")
+            for item in result["journeys"]:
+                primary = "  [start here]" if item["primary"] else ""
+                print(f"\n{item['label']}{primary}")
+                print(f"Question : {item['question']}")
+                print(f"Start    : {item['first_command']}")
+                print(f"Evidence : {item['expected_local_evidence']}")
+                print(f"Next     : {item['next_safe_action']}")
+                print(f"Control  : {item['authority_boundary']}")
+            print("\nAdvanced modules stay hidden until their trigger applies. No action was executed.")
         return 0
     if a.cmd == "first-proof":
         workspace = Path(a.root).resolve()

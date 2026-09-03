@@ -2,6 +2,93 @@
 from __future__ import annotations
 from typing import Any
 
+SUPPORTED_JOURNEYS = ("solo", "team", "enterprise")
+
+
+class AdoptionGuideError(ValueError):
+    """A stable refusal for an unsupported adoption journey."""
+
+    code = "E_GUIDE_JOURNEY"
+
+
+ADOPTION_JOURNEYS = (
+    {
+        "id": "solo",
+        "label": "Individual developer",
+        "question": "Can this test actually fail?",
+        "problem": "AI-generated tests can stay green even when the behavior they claim to protect is missing.",
+        "first_command": "factory first-proof --root .",
+        "primary": True,
+        "maturity": "locally_verified_core",
+        "verification": ["tests/test_adoption.py", "tests/test_e2e_proof.py", "tests/test_adoption_guide.py"],
+        "expected_local_evidence": "A local hollow-test result, receipt, and privacy-safe Proof Card from a disposable demonstration.",
+        "next_safe_action": "Run the same positive-and-negative proof pattern against one human-approved behavior in your repository.",
+        "authority_boundary": "The demonstration does not assess or change your project and uploads nothing.",
+    },
+    {
+        "id": "team",
+        "label": "Engineering team",
+        "question": "Did the agent build what we asked for?",
+        "problem": "An agent summary does not prove the exact file delta matched the original intent or that its tests could detect failure.",
+        "first_command": "factory oracle status --root .",
+        "primary": False,
+        "maturity": "controlled_pilot",
+        "verification": ["tests/test_oracle_firewall.py", "tests/test_evidence_supply_line.py", "tests/test_control_plane.py"],
+        "expected_local_evidence": "A source-bound intent chain, observed file delta, independent validation, and explicit review state.",
+        "next_safe_action": "Seal the original intent before the next coding run, then observe that admitted run with factory wrap.",
+        "authority_boundary": "Agents cannot approve intent, weaken a blocking gate, change scope, or grant release authority.",
+    },
+    {
+        "id": "enterprise",
+        "label": "Enterprise evaluator",
+        "question": "Can we govern agent work without trusting the agent's story?",
+        "problem": "Teams need reviewable evidence, policy boundaries, and expiring authority without turning governance into hidden automation.",
+        "first_command": "factory graph ops --root . --json",
+        "primary": False,
+        "maturity": "reference_pilot",
+        "verification": ["tests/test_enterprise_enforcement.py", "tests/test_graph_ops.py"],
+        "expected_local_evidence": "A read-only source-to-decision graph with blockers, unknowns, receipts, and retained human authority.",
+        "next_safe_action": "Run a controlled pilot on one repository and one reviewed workflow before considering broader enforcement.",
+        "authority_boundary": "The guide and Graph Ops do not execute, approve, publish, deploy, sign, message, or access credentials.",
+    },
+)
+
+
+def adoption_guide(journey: str | None = None) -> dict[str, Any]:
+    """Return the three read-only adoption journeys or one selected journey."""
+    if journey is not None and journey not in SUPPORTED_JOURNEYS:
+        supported = ", ".join(SUPPORTED_JOURNEYS)
+        raise AdoptionGuideError(f"unsupported journey {journey!r}; choose one of: {supported}")
+    selected = [dict(item) for item in ADOPTION_JOURNEYS if journey is None or item["id"] == journey]
+    return {
+        "schema": "factory.adoption-guide.v1",
+        "marker": "TEAM_GUIDE_RENDERED" if journey == "team" else "ADOPTION_GUIDE_RENDERED",
+        "action_summary": "Choose one question, see the smallest safe workflow, and keep advanced controls hidden until needed.",
+        "recommended": "solo",
+        "selected_journey": journey,
+        "journeys": selected,
+        "triggered_capabilities": [
+            {
+                "id": "mobile_delivery",
+                "label": "AppForge",
+                "when": "The work explicitly includes mobile release preparation.",
+                "maturity": "candidate_bound_preflight",
+                "boundary": "Surfaces candidate-bound evidence and avoidable gaps; it does not guarantee store approval.",
+            }
+        ],
+        "actions_executed": False,
+        "action_count": 0,
+        "authority": {
+            "execution": False,
+            "approval": False,
+            "publication": False,
+            "deployment": False,
+            "credential_access": False,
+        },
+        "claim_boundary": "Read-only guidance. It does not run tests or agents, control an IDE, or change local or provider state.",
+        "battle_testing": "No independent production-scale or adoption claim is made by this guide; inspect the linked tests and run a bounded pilot.",
+    }
+
 PLAYBOOK = (
  {"id":"start","when":"Before changing code or when intent is unclear.","use":"Intake Grill + SpecLine","outcome":"reviewable intent, forbidden outcomes, and approved gates","next":"factory.intake_status"},
  {"id":"prove","when":"After an agent changes implementation or tests.","use":"First Proof + Oracle Firewall","outcome":"tests challenged and oracle weakening surfaced","next":"factory.verifier_status"},

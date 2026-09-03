@@ -34,45 +34,28 @@ provider approval, remote execution, or a guarantee of correctness.
 
 ### Pick the path that matches your work
 
-- **Individual developer or vibe coder:** start with `factory first-proof`.
-  Learn what a real negative control looks like before trusting AI-generated tests.
-- **Engineering team:** put `factory wrap` around an admitted Codex, Claude Code,
-  DeepSeek, or other local agent run. Code Factory records the exact file delta,
-  runs the validators your team declared, and stores hashes and bounded facts—not
-  prompts or raw model output—so reviewers can compare the claim with the change.
-- **Team supervising agents:** use `factory oracle init` to bind the original
-  intent, approved gates, negative cases, and independent challenge plan before
-  an agent works. Oracle Firewall blocks a weakened oracle from masquerading as
-  a successful build and exposes the source-to-decision chain in Graph Ops,
-  FactoryLine, and read-only MCP.
-- **Team or enterprise control plane:** bind a reviewed local operating
-  envelope, explicit session trace, exact consequence-aware repair packet,
-  pinned multi-repo sequence, and optional approved domain vocabulary. Graph
-  Ops and MCP expose the same facts; agents remain supervised and cannot change
-  intent, thresholds, scope, approval, Git state, credentials, or release.
-  See the [Control Plane guide](docs/CONTROL_PLANE.md).
-- **SaaS builder:** use `factory saas verify` to follow one customer promise
-  from OAuth/OIDC identity and tenant access through checkout, verified webhook,
-  entitlement, feature access, and revocation. Missing or contradictory evidence
-  stays blocked, and the provider remains untouched.
-- **App builder:** use `factory revenue appforge-design` to turn confirmed user
-  intent into a story-led iOS storyboard, then run `factory revenue
-  app-review-gate` before submission. Thirty exact-build policy and regression
-  gates surface avoidable purchase, restore, iPad, screenshot, privacy,
-  accessibility, metadata, reviewer-access, and export gaps while there is still
-  time to fix them. It is designed to save days of review/rework waiting and
-  minimize avoidable rejection risk; it cannot guarantee Apple approval.
-- **Platform or assurance team:** evaluate local policy gates, evidence packets,
-  expiring exceptions, and tenant boundaries in a controlled pilot. The free core
-  is community-supported on a best-effort basis; the proposed enterprise support
-  SLA is documented separately and is not effective until its activation evidence
-  and signed terms exist.
+Run `factory guide` to see the same three choices in any terminal:
 
-When you need more than the first proof, open the [advanced workflow guide](docs/OVERVIEW.md).
-App and SaaS builders can open the standalone [AppForge App Review Gate guide](docs/APPFORGE_APP_REVIEW_GATE.md),
-or use the same receipts inside Code Factory Graph Ops, MCP, WebMCP, and supported IDE adapters.
-For a contract that keeps a coding agent from rewriting its own definition of
-done, see [Oracle Firewall](docs/ORACLE_FIREWALL.md).
+- **Individual developer:** *Can this test actually fail?* Start with `factory
+  first-proof --root .`. You get one local result and a receipt without changing
+  your project.
+- **Engineering team:** *Did the agent build what we asked for?* Start with
+  `factory oracle status --root .`. Bind the original intent, observe the exact
+  file delta, challenge the tests independently, and keep approval human-owned.
+- **Enterprise evaluator:** *Can we govern agent work without trusting the
+  agent's story?* Start with `factory graph ops --root . --json`. Inspect the
+  source-to-decision chain, blockers, unknowns, and authority boundaries in a
+  controlled pilot.
+
+That is the whole front door. Specialized SaaS, mobile, multi-repository, and
+enterprise controls remain available in the [advanced workflow guide](docs/OVERVIEW.md)
+only when their trigger applies. AppForge is an optional mobile-delivery
+capability; it surfaces avoidable gaps but cannot guarantee store approval.
+
+Do not take the word *verified* on faith. The [Capability Evidence Map](docs/CAPABILITY_EVIDENCE.md)
+separates the locally verified core, controlled-pilot workflows, reference
+enterprise controls, and candidate-bound mobile preflight—and links each claim
+to the tests you can inspect and run yourself.
 For one agent-neutral human review path, use [`factory proof-review`](docs/PROOF_REVIEW_WORKFLOW.md)
 to seal intent, audit trajectory evidence, route the change, learn confirmed
 regressions, inspect the team inbox, and export a tamper-evident Proof Card.

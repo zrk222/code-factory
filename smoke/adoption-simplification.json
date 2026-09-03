@@ -1,0 +1,17 @@
+{
+  "checks": [
+    {
+      "name": "adoption_guide_rejects_hollow_or_mutated_behavior",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_adoption_guide.py', 'tests/test_graph_ops.py', 'tests/test_publication_metadata.py']) == 0\n",
+      "covers": [
+        "ADOPTION_GUIDE_RENDERED",
+        "TEAM_GUIDE_RENDERED",
+        "GRAPH_OPS_START_HERE",
+        "GRAPH_OPS_SPECIALIZED_MODULES",
+        "E_GUIDE_JOURNEY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}
