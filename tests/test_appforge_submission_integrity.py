@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import pytest
-from factoryline.appforge_submission_integrity import CONTRACT_SCHEMA, verify_submission_integrity, submission_integrity_projection
+from factoryline.appforge_submission_integrity import CONTRACT_SCHEMA, verify_submission_integrity, submission_integrity_projection, reconcile_capture_evidence
 from factoryline.revenueforge import RevenueForgeError
 
 def _write(path: Path, value: object) -> Path:
@@ -37,3 +37,10 @@ def test_submission_integrity_requires_human_or_trusted_approval(tmp_path: Path)
     candidate_path, candidate = _candidate(tmp_path); value = _contract(candidate); value["approval"] = {"origin": "agent_proposed", "source": "guess"}
     with pytest.raises(RevenueForgeError, match="human_confirmed"):
         verify_submission_integrity(tmp_path, candidate_path, _write(tmp_path / "bad.json", value), Path(".factory/appforge/no.json"))
+
+def test_capture_reconciliation_blocks_missing_or_collateral_files(tmp_path: Path) -> None:
+    candidate_path, candidate = _candidate(tmp_path); integrity = verify_submission_integrity(tmp_path, candidate_path, _write(tmp_path / "contract.json", _contract(candidate)), Path(".factory/appforge/integrity.json"))
+    image = tmp_path / "capture.png"; image.write_bytes(b"native-candidate-capture")
+    evidence = {"candidate": candidate, "captures": [{"requirement_id": "iphone-1", "device": "iphone", "evidence_class": "web_preview", "path": "capture.png", "sha256": "0" * 64}]}
+    receipt = reconcile_capture_evidence(tmp_path, Path(integrity["path"]), _write(tmp_path / "evidence.json", evidence), Path(".factory/appforge/reconciled.json"))
+    assert receipt["ok"] is False and {item["code"] for item in receipt["findings"]} >= {"E_CAPTURE_EVIDENCE_MISMATCH", "E_CAPTURE_EVIDENCE_MISSING"}
