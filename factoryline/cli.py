@@ -133,6 +133,7 @@ from .appforge_native_surface import verify_native_surface
 from .appforge_surface_matrix import create_surface_matrix
 from .appforge_storefront_story import verify_storefront_story
 from .appforge_fastlane_capture import create_fastlane_capture_contract
+from .appforge_submission_integrity import verify_submission_integrity
 from .proof_continuity_ledger import (
     ProofContinuityError,
     proof_continuity_projection,
@@ -1809,6 +1810,12 @@ def main(argv=None) -> int:
     revenue_fastlane_capture.add_argument("--contract", required=True)
     revenue_fastlane_capture.add_argument("--out", default=".factory/appforge/fastlane-capture.json")
     revenue_fastlane_capture.add_argument("--json", action="store_true")
+    revenue_submission_integrity = revenue_sub.add_parser("appforge-submission-integrity", help="fail closed on loose AppForge iPhone/iPad capture requirements without creating media")
+    revenue_submission_integrity.add_argument("--root", default=".")
+    revenue_submission_integrity.add_argument("--candidate", required=True)
+    revenue_submission_integrity.add_argument("--contract", required=True)
+    revenue_submission_integrity.add_argument("--out", default=".factory/appforge/submission-integrity.json")
+    revenue_submission_integrity.add_argument("--json", action="store_true")
 
     saas = sub.add_parser("saas", help="verify provider-neutral SaaS identity, billing, entitlement, and revocation evidence")
     saas_sub = saas.add_subparsers(required=True, dest="saas_cmd")
@@ -4637,6 +4644,8 @@ def main(argv=None) -> int:
                 payload = verify_storefront_story(root, Path(a.candidate), Path(a.store_media), Path(a.contract), Path(a.evidence), Path(a.out))
             elif a.revenue_cmd == "appforge-fastlane-capture":
                 payload = create_fastlane_capture_contract(root, Path(a.candidate), Path(a.surface_matrix), Path(a.storefront_story), Path(a.contract), Path(a.out))
+            elif a.revenue_cmd == "appforge-submission-integrity":
+                payload = verify_submission_integrity(root, Path(a.candidate), Path(a.contract), Path(a.out))
             elif a.revenue_cmd == "evidence-kit":
                 payload = create_evidence_kit(root, Path(a.candidate), Path(a.design_input), Path(a.out_dir))
             elif a.revenue_cmd == "appforge-init":

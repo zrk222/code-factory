@@ -34,6 +34,7 @@ from .appforge_native_surface import native_surface_projection
 from .appforge_surface_matrix import surface_matrix_projection
 from .appforge_storefront_story import storefront_story_projection
 from .appforge_fastlane_capture import fastlane_capture_projection
+from .appforge_submission_integrity import submission_integrity_projection
 from .oracle_firewall import oracle_firewall_projection
 from .proof_continuity_ledger import proof_continuity_projection
 from .semantic_authority import semantic_authority_projection
@@ -529,6 +530,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.appforge_fastlane_capture_status",
             "description": "Read candidate-bound Fastlane Snapshot capture contracts. It never starts Xcode, controls a simulator or device, runs Fastlane, accesses credentials, uploads media, contacts Apple, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_submission_integrity_status",
+            "description": "Read whether AppForge capture requirements are explicit, candidate-bound, correctly covered, and classified as native signed-build evidence. It never creates media, controls a device, contacts Apple, or submits a release.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1322,6 +1329,17 @@ def _appforge_fastlane_capture_status(root: Path, arguments: object) -> dict[str
     }
 
 
+def _appforge_submission_integrity_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_submission_integrity_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_SUBMISSION_INTEGRITY_READ_ONLY",
+        "action_summary": "Read hash-verified AppForge requirement coverage and deterministic repair instructions without creating captures, controlling a device, contacting Apple, or submitting a release.",
+        "status": submission_integrity_projection(root),
+        "scope": "Read-only local requirement integrity; not a screenshot, signed build, physical-device run, TestFlight, App Review, or Apple approval result.",
+    }
+
+
 def _proof_continuity_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.proof_continuity_status accepts no arguments")
@@ -1492,6 +1510,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_appforge_storefront_story_status(root, arguments))
     if name == "factory.appforge_fastlane_capture_status":
         return _content(_appforge_fastlane_capture_status(root, arguments))
+    if name == "factory.appforge_submission_integrity_status":
+        return _content(_appforge_submission_integrity_status(root, arguments))
     if name == "factory.proof_continuity_status":
         return _content(_proof_continuity_status(root, arguments))
     if name == "factory.saas_status":

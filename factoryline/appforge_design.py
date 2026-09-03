@@ -20,6 +20,7 @@ from .appforge_native_surface import native_surface_projection
 from .appforge_surface_matrix import surface_matrix_projection
 from .appforge_storefront_story import storefront_story_projection
 from .appforge_fastlane_capture import fastlane_capture_projection
+from .appforge_submission_integrity import submission_integrity_projection
 
 
 SCHEMA = "factory.appforge.design-director.v1"
@@ -85,6 +86,7 @@ def appforge_design_projection(root: Path) -> dict[str, Any]:
         "surface_matrix": surface_matrix_projection(workspace),
         "storefront_story": storefront_story_projection(workspace),
         "fastlane_capture": fastlane_capture_projection(workspace),
+        "submission_integrity": submission_integrity_projection(workspace),
         "authority": {**AUTHORITY, "design_intent_override": False, "app_store_claim_publish": False},
         "claim_boundary": "local design-receipt projection; not rendered UI, device proof, accessibility certification, performance proof, or App Review approval",
     }
