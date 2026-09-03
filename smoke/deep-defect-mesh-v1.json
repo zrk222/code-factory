@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "name": "deep_mesh_rejects_hollow_and_traces_repairs",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_deep_audit_contract.py','tests/test_deep_audit_sarif.py','tests/test_deep_audit.py','tests/test_deep_audit_loop.py','tests/test_deep_audit_surfaces.py'])\nassert result==0\nprint('DEEP_DEFECT_MESH_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "DEEP_DEFECT_MESH_PASS",
+      "timeout_s": 180,
+      "must_fail_on_stub": true,
+      "covers": ["HOLLOW_DEEP_AUDIT", "DEEP_RULE_THRESHOLD", "DEEP_TRACE_INCOMPLETE", "DEEP_SUPPRESSION_UNAPPROVED", "READY_FOR_HUMAN_REVIEW"]
+    }
+  ]
+}
