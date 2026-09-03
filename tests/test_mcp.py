@@ -78,6 +78,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.appforge_native_surface_status",
         "factory.appforge_surface_matrix_status",
         "factory.appforge_storefront_story_status",
+        "factory.appforge_fastlane_capture_status",
         "factory.saas_status",
         "factory.agent_proof_mission",
         "factory.jetbrains_handshake",
@@ -285,6 +286,13 @@ def test_mcp_revenue_appforge_saas_and_memory_tools_are_read_only(tmp_path: Path
     }, tmp_path))
     assert storefront_story["marker"] == "MCP_APPFORGE_STOREFRONT_STORY_READ_ONLY"
     assert storefront_story["status"]["marker"] == "APPFORGE_STOREFRONT_STORY_READ_ONLY"
+    fastlane_capture = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8226, "method": "tools/call",
+        "params": {"name": "factory.appforge_fastlane_capture_status"},
+    }, tmp_path))
+    assert fastlane_capture["marker"] == "MCP_APPFORGE_FASTLANE_CAPTURE_READ_ONLY"
+    assert fastlane_capture["status"]["marker"] == "APPFORGE_FASTLANE_CAPTURE_READ_ONLY"
+    assert all(value is False for value in fastlane_capture["status"]["authority"].values())
     saas = _content(dispatch({
         "jsonrpc": "2.0", "id": 83, "method": "tools/call",
         "params": {"name": "factory.saas_status"},

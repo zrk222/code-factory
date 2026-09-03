@@ -33,6 +33,7 @@ from .appforge_release_rehearsal import release_rehearsal_projection
 from .appforge_native_surface import native_surface_projection
 from .appforge_surface_matrix import surface_matrix_projection
 from .appforge_storefront_story import storefront_story_projection
+from .appforge_fastlane_capture import fastlane_capture_projection
 from .oracle_firewall import oracle_firewall_projection
 from .semantic_authority import semantic_authority_projection
 from .enterprise_enforcement import enterprise_enforcement_projection
@@ -521,6 +522,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.appforge_storefront_story_status",
             "description": "Read candidate-bound AppForge Store screenshot story and local claim-reference receipts. It never generates images, downloads Apple assets, uploads Store media, contacts Apple, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_fastlane_capture_status",
+            "description": "Read candidate-bound Fastlane Snapshot capture contracts. It never starts Xcode, controls a simulator or device, runs Fastlane, accesses credentials, uploads media, contacts Apple, or submits a release.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1297,6 +1304,17 @@ def _appforge_storefront_story_status(root: Path, arguments: object) -> dict[str
     }
 
 
+def _appforge_fastlane_capture_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_fastlane_capture_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_FASTLANE_CAPTURE_READ_ONLY",
+        "action_summary": "Read hash-verified, capture-only Fastlane Snapshot contracts without running Fastlane, Xcode, a simulator, a device, or any Apple action.",
+        "status": fastlane_capture_projection(root),
+        "scope": "Read-only local capture-plan metadata; not Fastlane execution, a simulator/device run, raw or framed screenshots, Store media, TestFlight, App Review, or Apple approval evidence.",
+    }
+
+
 def _saas_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.saas_status accepts no arguments")
@@ -1454,6 +1472,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_appforge_surface_matrix_status(root, arguments))
     if name == "factory.appforge_storefront_story_status":
         return _content(_appforge_storefront_story_status(root, arguments))
+    if name == "factory.appforge_fastlane_capture_status":
+        return _content(_appforge_fastlane_capture_status(root, arguments))
     if name == "factory.saas_status":
         return _content(_saas_status(root, arguments))
     if name == "factory.agent_proof_mission":

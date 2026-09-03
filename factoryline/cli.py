@@ -132,6 +132,7 @@ from .appforge_release_rehearsal import create_release_rehearsal
 from .appforge_native_surface import verify_native_surface
 from .appforge_surface_matrix import create_surface_matrix
 from .appforge_storefront_story import verify_storefront_story
+from .appforge_fastlane_capture import create_fastlane_capture_contract
 from .oracle_firewall import (
     OracleFirewallError,
     capture_intent_handoff,
@@ -1777,6 +1778,14 @@ def main(argv=None) -> int:
     revenue_storefront_story.add_argument("--evidence", required=True)
     revenue_storefront_story.add_argument("--out", default=".factory/appforge/storefront-story.json")
     revenue_storefront_story.add_argument("--json", action="store_true")
+    revenue_fastlane_capture = revenue_sub.add_parser("appforge-fastlane-capture", help="seal a capture-only Fastlane Snapshot contract without running Xcode, Fastlane, or Apple actions")
+    revenue_fastlane_capture.add_argument("--root", default=".")
+    revenue_fastlane_capture.add_argument("--candidate", required=True)
+    revenue_fastlane_capture.add_argument("--surface-matrix", required=True)
+    revenue_fastlane_capture.add_argument("--storefront-story", required=True)
+    revenue_fastlane_capture.add_argument("--contract", required=True)
+    revenue_fastlane_capture.add_argument("--out", default=".factory/appforge/fastlane-capture.json")
+    revenue_fastlane_capture.add_argument("--json", action="store_true")
 
     saas = sub.add_parser("saas", help="verify provider-neutral SaaS identity, billing, entitlement, and revocation evidence")
     saas_sub = saas.add_subparsers(required=True, dest="saas_cmd")
@@ -4582,6 +4591,8 @@ def main(argv=None) -> int:
                 payload = create_surface_matrix(root, Path(a.candidate), Path(a.native_surface), Path(a.out))
             elif a.revenue_cmd == "appforge-storefront-story":
                 payload = verify_storefront_story(root, Path(a.candidate), Path(a.store_media), Path(a.contract), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "appforge-fastlane-capture":
+                payload = create_fastlane_capture_contract(root, Path(a.candidate), Path(a.surface_matrix), Path(a.storefront_story), Path(a.contract), Path(a.out))
             elif a.revenue_cmd == "evidence-kit":
                 payload = create_evidence_kit(root, Path(a.candidate), Path(a.design_input), Path(a.out_dir))
             elif a.revenue_cmd == "appforge-init":

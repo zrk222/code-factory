@@ -2287,6 +2287,8 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["appforge_surface_matrix_invalid_count"] = appforge["surface_matrix"]["invalid_count"]
     facts["appforge_storefront_story_current_count"] = appforge["storefront_story"]["current_count"]
     facts["appforge_storefront_story_invalid_count"] = appforge["storefront_story"]["invalid_count"]
+    facts["appforge_fastlane_capture_current_count"] = appforge["fastlane_capture"]["current_count"]
+    facts["appforge_fastlane_capture_invalid_count"] = appforge["fastlane_capture"]["invalid_count"]
     facts["saas_proof_current_count"] = saas_proof["current_count"]
     facts["saas_proof_invalid_count"] = saas_proof["invalid_count"]
     facts["jetbrains_handshake_state"] = jetbrains_handshake["state"]

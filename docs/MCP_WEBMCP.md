@@ -30,6 +30,10 @@ Run `factory mcp serve --root .` from the workspace and connect the stdio proces
   accessibility configurations waiting for supervised Device Reality evidence.
 - `factory.appforge_storefront_story_status` — candidate-bound screenshot
   story coverage and local claim-reference state.
+- `factory.appforge_fastlane_capture_status` — candidate-bound Fastlane
+  Snapshot capture contracts. This is local MCP only: Fastlane/Xcode execution
+  remains outside the Windows control plane and needs a separately authorized
+  macOS/Xcode environment.
 
 Every tool has a strict JSON input schema, a deterministic name, and read-only annotations. Provider credentials and external writes stay outside the server.
 

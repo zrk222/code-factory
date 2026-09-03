@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "name": "fastlane_capture_is_windows_local_and_fail_closed",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_appforge_fastlane_capture.py','tests/test_mcp.py','tests/test_graph_ops.py'])\nassert result==0\nprint('APPFORGE_FASTLANE_CAPTURE_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "APPFORGE_FASTLANE_CAPTURE_SMOKE_PASS",
+      "timeout_s": 120,
+      "must_fail_on_stub": true,
+      "covers": ["FASTLANE_CAPTURE_BINDING", "FASTLANE_CAPTURE_GUARD", "FASTLANE_WINDOWS_HANDOFF", "FASTLANE_CAPTURE_STATUS_REQUESTED"]
+    }
+  ]
+}

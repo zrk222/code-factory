@@ -127,6 +127,7 @@ network transport, or mutation authority.
 | `factory.appforge_native_surface_status` | Candidate-bound static Swift adaptive-surface, accessibility, material-budget, and storyboard receipt state; never builds, renders, operates a device, downloads assets, or contacts Apple | Read only |
 | `factory.appforge_surface_matrix_status` | Candidate-bound iPhone/iPad and accessibility configuration plan; never starts a simulator, controls hardware, captures screenshots, or contacts Apple | Read only |
 | `factory.appforge_storefront_story_status` | Candidate-bound Store screenshot journey, story, and local claim-reference state; never generates images, uploads media, contacts Apple, or submits a release | Read only |
+| `factory.appforge_fastlane_capture_status` | Candidate-bound Fastlane Snapshot capture contract state; never runs Fastlane/Xcode, controls a simulator or device, accesses credentials, uploads media, contacts Apple, or submits a release | Read only |
 | `factory.codex_metadata_audit` | Privacy-safe workspace metadata audit of declared local run-state files; never imports prompts, tool output, credentials, provider history, or home-directory Codex records | Read only |
 | `factory://status` | The same status payload | Read only |
 | `factory://graph` | The same Graph Ops payload | Read only |
