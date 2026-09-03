@@ -56,6 +56,28 @@ The command returns `ENTERPRISE_PEP_REFERENCE_ADMITTED` only for a matching
 identity, policy, scope, action, and (when required) semantic lease. Every
 returned decision sets every authority flag to `false`.
 
+## Runner-admission packet
+
+`prepare_runner_admission` turns one verified decision into an immutable
+`RUNNER_ADMISSION_PACKET_SEALED` input for a separate runner. It binds the
+decision digest to one `run_id`, action category, exact workspace scope, and
+argv SHA-256. It rejects shell operators, a changed scope, a changed action,
+an altered decision, or an attempt to overwrite a prior packet.
+
+The packet still does **not** execute its argv. A production runner must make
+packet verification its only route to a consequential tool, then prove that
+topology with a direct-invocation bypass test. This is the next pilot
+integration gate, not a claim that every existing runner is already governed.
+
+```powershell
+factory enterprise runner-admission-seal .\runner-admission.json `
+  --root . `
+  --out .factory\enterprise-enforcement\runner-admissions\run-001.json
+```
+
+The input contains the immutable decision path, `run_id`, action class, exact
+scope paths, and argv array. Creation is deliberately non-executing.
+
 ## Pilot exit criteria
 
 Before calling this an enterprise production control, demonstrate all of these

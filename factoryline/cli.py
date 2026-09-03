@@ -1033,6 +1033,10 @@ def main(argv=None) -> int:
     enforcement_authorize.add_argument("--trust-root", required=True)
     enforcement_authorize.add_argument("--workload-revocations")
     enforcement_authorize.add_argument("--out", required=True)
+    runner_admission = enterprise_sub.add_parser("runner-admission-seal", help="seal one non-executing, decision-bound runner argv packet")
+    runner_admission.add_argument("payload")
+    runner_admission.add_argument("--root", default=".")
+    runner_admission.add_argument("--out", required=True)
 
     s = sub.add_parser("control", help="manage local tenant-scoped evidence and approvals")
     control_sub = s.add_subparsers(required=True, dest="control_cmd")
@@ -4881,6 +4885,7 @@ def main(argv=None) -> int:
             sign_workload_identity,
             sign_workload_revocations,
         )
+        from .enterprise_runner_admission import EnterpriseRunnerAdmissionError, prepare_runner_admission
         try:
             if a.enterprise_cmd == "keygen":
                 result = generate_key_material(
@@ -4938,14 +4943,16 @@ def main(argv=None) -> int:
                 entries = json.loads(Path(a.entries).read_text(encoding="utf-8"))
                 signed = sign_workload_revocations(entries, private_key_path=Path(a.private_key), keyid=a.keyid, identity=a.identity, issuer=a.issuer, out=Path(a.out))
                 result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
+            elif a.enterprise_cmd == "runner-admission-seal":
+                result = prepare_runner_admission(Path(a.root), Path(a.payload), Path(a.out))
             else:
                 request = json.loads(Path(a.request).read_text(encoding="utf-8"))
                 result = record_enterprise_decision(
                     Path(a.root), request, Path(a.out), workload_identity_path=Path(a.workload_identity), policy_path=Path(a.policy),
                     trust_root_path=Path(a.trust_root), revocations_path=Path(a.workload_revocations) if a.workload_revocations else None,
                 )
-        except (EnterpriseReceiptError, EnterpriseEnforcementError, json.JSONDecodeError, OSError) as exc:
-            if isinstance(exc, (EnterpriseReceiptError, EnterpriseEnforcementError)):
+        except (EnterpriseReceiptError, EnterpriseEnforcementError, EnterpriseRunnerAdmissionError, json.JSONDecodeError, OSError) as exc:
+            if isinstance(exc, (EnterpriseReceiptError, EnterpriseEnforcementError, EnterpriseRunnerAdmissionError)):
                 error = {"code": exc.code, "message": exc.message}
             else:
                 error = {"code": "E_INPUT", "message": str(exc)}

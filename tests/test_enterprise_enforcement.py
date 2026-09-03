@@ -16,6 +16,7 @@ from factoryline.enterprise_enforcement import (
     sign_workload_revocations,
 )
 from factoryline.enterprise_receipts import generate_key_material
+from factoryline.enterprise_runner_admission import EnterpriseRunnerAdmissionError, prepare_runner_admission
 from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
 from factoryline.semantic_authority import _now, seal_authority_lease, seal_semantic_handoff
 
@@ -132,3 +133,37 @@ def test_enterprise_cli_seals_and_records_reference_decision(tmp_path: Path, cap
     assert main(["enterprise", "enforcement-policy-seal", str(policy_payload), *common, "--out", str(policy_out)]) == 0
     assert main(["enterprise", "authorize", str(request_path), "--root", str(tmp_path), "--workload-identity", str(identity_out), "--policy", str(policy_out), "--trust-root", keys["trust_root"], "--out", ".factory/enterprise-enforcement/decisions/cli.json"]) == 0
     assert '"admitted": true' in capsys.readouterr().out
+
+
+def test_runner_packet_binds_exact_admitted_decision_scope_and_argv(tmp_path: Path) -> None:
+    keys, identity, policy, request = _materials(tmp_path)
+    request["semantic_authority"] = _semantic_binding(tmp_path)
+    recorded = record_enterprise_decision(tmp_path, request, Path(".factory/enterprise-enforcement/decisions/runner.json"), workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]))
+    manifest = _write(tmp_path / "runner.json", {"schema": "factory.runner-admission-input.v1", "id": "restore-run", "decision": recorded["path"], "run_id": "run-001", "action_class": "test", "scope_paths": ["tests"], "argv": ["python", "-m", "pytest", "-q", "tests/test_restore.py"]})
+    packet = prepare_runner_admission(tmp_path, manifest, Path(".factory/enterprise-enforcement/runner-admissions/restore.json"))
+    assert packet["marker"] == "RUNNER_ADMISSION_PACKET_SEALED"
+    assert packet["authority"]["execution"] is False
+    bad = _write(tmp_path / "bad-runner.json", {**json.loads(manifest.read_text(encoding="utf-8")), "scope_paths": ["src"]})
+    with pytest.raises(EnterpriseRunnerAdmissionError, match="E_RUNNER_SCOPE_MISMATCH"):
+        prepare_runner_admission(tmp_path, bad, Path(".factory/enterprise-enforcement/runner-admissions/bad.json"))
+
+
+def test_runner_packet_refuses_action_shell_overwrite_and_path_escape(tmp_path: Path) -> None:
+    from factoryline.cli import main
+
+    keys, identity, policy, request = _materials(tmp_path)
+    request["semantic_authority"] = _semantic_binding(tmp_path)
+    recorded = record_enterprise_decision(tmp_path, request, Path(".factory/enterprise-enforcement/decisions/runner-refusal.json"), workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]))
+    payload = {"schema": "factory.runner-admission-input.v1", "id": "refusal-run", "decision": recorded["path"], "run_id": "run-002", "action_class": "test", "scope_paths": ["tests"], "argv": ["python", "-m", "pytest", "-q"]}
+    manifest = _write(tmp_path / "runner-refusal.json", payload)
+    for changed, code in [({"action_class": "repair"}, "E_RUNNER_ACTION_MISMATCH"), ({"argv": ["python", "&&", "pytest"]}, "E_RUNNER_COMMAND_INVALID")]:
+        candidate = _write(tmp_path / f"{code}.json", {**payload, **changed})
+        with pytest.raises(EnterpriseRunnerAdmissionError, match=code):
+            prepare_runner_admission(tmp_path, candidate, Path(f".factory/enterprise-enforcement/runner-admissions/{code}.json"))
+    out = Path(".factory/enterprise-enforcement/runner-admissions/once.json")
+    prepare_runner_admission(tmp_path, manifest, out)
+    with pytest.raises(EnterpriseRunnerAdmissionError, match="E_RUNNER_ADMISSION_IMMUTABLE"):
+        prepare_runner_admission(tmp_path, manifest, out)
+    with pytest.raises(EnterpriseRunnerAdmissionError, match="E_RUNNER_ADMISSION_PATH"):
+        prepare_runner_admission(tmp_path, manifest, Path("runner-outside.json"))
+    assert main(["enterprise", "runner-admission-seal", str(manifest), "--root", str(tmp_path), "--out", ".factory/enterprise-enforcement/runner-admissions/cli.json"]) == 0

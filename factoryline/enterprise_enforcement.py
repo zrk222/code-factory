@@ -366,6 +366,25 @@ def record_enterprise_decision(root: Path, request: object, output: Path, **kwar
     return {**core, "path": target.relative_to(workspace).as_posix()}
 
 
+def verify_enterprise_decision(root: Path, path: Path) -> dict[str, Any]:
+    """Verify one immutable local decision receipt before a separate runner consumes it."""
+    workspace = Path(root).resolve()
+    candidate = (workspace / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
+    try:
+        candidate.relative_to(workspace)
+    except ValueError as exc:
+        raise EnterpriseEnforcementError("E_ENFORCEMENT_PATH", "decision must remain inside the workspace") from exc
+    value = _load_json(candidate)
+    supplied = value.get("decision_sha256")
+    unsigned = dict(value)
+    unsigned.pop("decision_sha256", None)
+    if value.get("schema") != DECISION_SCHEMA or value.get("admitted") is not True or not isinstance(supplied, str):
+        raise EnterpriseEnforcementError("E_DECISION_INVALID", "decision is not an admitted enterprise reference receipt")
+    if hashlib.sha256(canonical_json(unsigned)).hexdigest() != supplied:
+        raise EnterpriseEnforcementError("E_DECISION_HASH_INVALID", "decision hash is invalid")
+    return {"decision": value, "decision_sha256": supplied, "path": candidate.relative_to(workspace).as_posix()}
+
+
 def enterprise_enforcement_projection(root: Path) -> dict[str, Any]:
     """Read bounded local decision evidence for Graph Ops/MCP; never admits work."""
     workspace = Path(root).resolve()
@@ -373,12 +392,8 @@ def enterprise_enforcement_projection(root: Path) -> dict[str, Any]:
     result: dict[str, Any] = {"schema": PROJECTION_SCHEMA, "marker": "ENTERPRISE_ENFORCEMENT_READ_ONLY", "decision_count": 0, "admitted_count": 0, "invalid_count": 0, "decisions": [], "authority": dict(AUTHORITY), "claim_boundary": "Read-only local projection of PEP reference decisions. It does not authenticate a cloud workload, execute a tool, enforce a network boundary, or grant authority."}
     for path in sorted(directory.glob("*.json"))[:500] if directory.is_dir() else []:
         try:
-            value = _load_json(path)
-            supplied = value.get("decision_sha256")
-            unsigned = dict(value)
-            unsigned.pop("decision_sha256", None)
-            if value.get("schema") != DECISION_SCHEMA or not isinstance(supplied, str) or hashlib.sha256(canonical_json(unsigned)).hexdigest() != supplied:
-                raise EnterpriseEnforcementError("E_DECISION_HASH_INVALID", "decision hash is invalid")
+            checked = verify_enterprise_decision(workspace, path)
+            value, supplied = checked["decision"], checked["decision_sha256"]
             result["decision_count"] += 1
             if value.get("admitted") is True:
                 result["admitted_count"] += 1
