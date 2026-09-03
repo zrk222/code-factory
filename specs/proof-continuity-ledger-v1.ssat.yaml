@@ -1,0 +1,41 @@
+name: proof-continuity-ledger-v1
+language: python
+modules:
+  - name: proof_continuity_ledger
+    path: factoryline/proof_continuity_ledger.py
+    functions:
+      - name: seal_proof_continuity
+        args: [root, input_path, out]
+        returns: dict[str, Any]
+      - name: record_proof_continuity_observation
+        args: [root, contract_path, observation_path, out]
+        returns: dict[str, Any]
+dependencies:
+  - from: proof_continuity_ledger
+    to: oracle_firewall
+  - from: graph_ops
+    to: proof_continuity_ledger
+  - from: mcp
+    to: proof_continuity_ledger
+invariants:
+  - name: continuity_never_executes_or_calls_network
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system|Popen\\("
+    scopes:
+      - module: proof_continuity_ledger
+        symbol: seal_proof_continuity
+        max_lines: 100
+      - module: proof_continuity_ledger
+        symbol: record_proof_continuity_observation
+        max_lines: 100
+  - name: continuity_never_evaluates_evidence
+    forbid_pattern: "eval\\(|exec\\("
+    scopes:
+      - module: proof_continuity_ledger
+        symbol: seal_proof_continuity
+        max_lines: 100
+tests:
+  - path: tests/test_proof_continuity_ledger.py
+    command: py -3.11 -m pytest -q tests/test_proof_continuity_ledger.py
+  - path: tests/test_mcp.py
+    command: py -3.11 -m pytest -q tests/test_mcp.py
+schema: factory.ssat.v1

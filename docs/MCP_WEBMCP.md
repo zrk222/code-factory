@@ -17,6 +17,9 @@ Run `factory mcp serve --root .` from the workspace and connect the stdio proces
 - `factory.appforge_status` — hash-verified AppForge design-contract state.
 - `factory.oracle_firewall_status` — sealed Oracle Firewall provenance, drift,
   independent challenge, and incident facts.
+- `factory.proof_continuity_status` — repository-level audit continuity from
+  sealed original intent through later observations; a contradiction reopens the
+  chain for human-supervised review and never self-releases work.
 - `factory.appforge_oracle_status` — candidate-bound AppForge policy authority
   facts.
 - `factory.appforge_device_reality_status` — sealed device-intent and

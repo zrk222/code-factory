@@ -121,6 +121,7 @@ network transport, or mutation authority.
 | `factory.revenue_memory` | Exact-app, exact-journey, expiry-aware approved evidence-memory guidance; never substitutes prior evidence for the current build | Read only |
 | `factory.appforge_status` | Current hash-verified AppForge design contracts and storyboard state; never renders, approves, submits, or deploys an app | Read only |
 | `factory.oracle_firewall_status` | Sealed source-to-decision Oracle Firewall contracts, weakening reports, independent challenge receipts, and incidents; never seals, approves, challenges, repairs, or releases work | Read only |
+| `factory.proof_continuity_status` | Repository-level source-to-obligation-to-forbidden-behavior-to-gate-to-test-to-evidence audit continuity and reopened incidents; never runs evidence collection, changes code, releases, or approves work | Read only |
 | `factory.appforge_oracle_status` | Candidate-bound AppForge Oracle authority receipts; never changes policy sources, media, reviewers, TestFlight, or App Store Connect | Read only |
 | `factory.appforge_device_reality_status` | Sealed AppForge device-intent and supervised-capture receipts; never starts Phone Harness, controls a device, accesses credentials, or contacts Apple | Read only |
 | `factory.appforge_release_rehearsal_status` | Candidate-bound credential-free Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot rehearsal receipts; never invokes a provider, accesses credentials, uploads, contacts Apple, or submits a release | Read only |

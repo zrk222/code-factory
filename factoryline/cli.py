@@ -133,6 +133,12 @@ from .appforge_native_surface import verify_native_surface
 from .appforge_surface_matrix import create_surface_matrix
 from .appforge_storefront_story import verify_storefront_story
 from .appforge_fastlane_capture import create_fastlane_capture_contract
+from .proof_continuity_ledger import (
+    ProofContinuityError,
+    proof_continuity_projection,
+    record_proof_continuity_observation,
+    seal_proof_continuity,
+)
 from .oracle_firewall import (
     OracleFirewallError,
     capture_intent_handoff,
@@ -1336,6 +1342,23 @@ def main(argv=None) -> int:
     oracle_status = oracle_sub.add_parser("status", help="read local Oracle Firewall status without changing any artifact")
     oracle_status.add_argument("--root", default=".")
     oracle_status.add_argument("--json", action="store_true")
+
+    proof_continuity = sub.add_parser("proof-continuity", help="seal and monitor a senior-engineering source-to-decision audit chain")
+    proof_continuity_sub = proof_continuity.add_subparsers(required=True, dest="proof_continuity_cmd")
+    proof_continuity_seal = proof_continuity_sub.add_parser("seal", help="seal one source-to-obligation-to-evidence audit receipt without running work")
+    proof_continuity_seal.add_argument("--root", default=".")
+    proof_continuity_seal.add_argument("--input", required=True)
+    proof_continuity_seal.add_argument("--out", required=True)
+    proof_continuity_seal.add_argument("--json", action="store_true")
+    proof_continuity_observe = proof_continuity_sub.add_parser("observe", help="record later local evidence and reopen the audit on contradiction")
+    proof_continuity_observe.add_argument("--root", default=".")
+    proof_continuity_observe.add_argument("--contract", required=True)
+    proof_continuity_observe.add_argument("--observation", required=True)
+    proof_continuity_observe.add_argument("--out", required=True)
+    proof_continuity_observe.add_argument("--json", action="store_true")
+    proof_continuity_status = proof_continuity_sub.add_parser("status", help="read continuity audit and incident state without changing artifacts")
+    proof_continuity_status.add_argument("--root", default=".")
+    proof_continuity_status.add_argument("--json", action="store_true")
 
     semantic = sub.add_parser("semantic-authority", help="seal typed handoffs and expiring local authority leases without executing a runner")
     semantic_sub = semantic.add_subparsers(required=True, dest="semantic_cmd")
@@ -2911,6 +2934,27 @@ def main(argv=None) -> int:
             print(json.dumps(result, indent=2, sort_keys=True))
         elif code == 0:
             print(f"admission: {result.get('marker', result.get('verdict'))}")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
+    if a.cmd == "proof-continuity":
+        root = Path(a.root).resolve()
+        try:
+            if a.proof_continuity_cmd == "seal":
+                result = seal_proof_continuity(root, Path(a.input), Path(a.out))
+            elif a.proof_continuity_cmd == "observe":
+                result = record_proof_continuity_observation(root, Path(a.contract), Path(a.observation), Path(a.out))
+            else:
+                result = proof_continuity_projection(root)
+            code = 0 if result.get("verdict") != "BLOCKED" else 1
+        except (ProofContinuityError, OracleFirewallError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.proof-continuity.error.v1", "marker": "PROOF_CONTINUITY_REFUSED", "code": getattr(exc, "code", "PROOF_CONTINUITY_INPUT_INVALID"), "message": str(exc)}
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            print(result.get("marker", "PROOF_CONTINUITY_OK"))
+            print("authority   : local hash-bound audit only; no test run, candidate mutation, provider action, release, or approval")
         else:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
         return code

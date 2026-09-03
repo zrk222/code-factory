@@ -35,6 +35,7 @@ from .appforge_surface_matrix import surface_matrix_projection
 from .appforge_storefront_story import storefront_story_projection
 from .appforge_fastlane_capture import fastlane_capture_projection
 from .oracle_firewall import oracle_firewall_projection
+from .proof_continuity_ledger import proof_continuity_projection
 from .semantic_authority import semantic_authority_projection
 from .enterprise_enforcement import enterprise_enforcement_projection
 from .atomic_proof_adapter import atomic_proof_projection
@@ -528,6 +529,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.appforge_fastlane_capture_status",
             "description": "Read candidate-bound Fastlane Snapshot capture contracts. It never starts Xcode, controls a simulator or device, runs Fastlane, accesses credentials, uploads media, contacts Apple, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.proof_continuity_status",
+            "description": "Read hash-bound senior-engineering audit continuity and reopened incidents. It never runs a test, changes a candidate, contacts a provider, revokes credentials, releases, or approves work.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1315,6 +1322,17 @@ def _appforge_fastlane_capture_status(root: Path, arguments: object) -> dict[str
     }
 
 
+def _proof_continuity_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.proof_continuity_status accepts no arguments")
+    return {
+        "marker": "MCP_PROOF_CONTINUITY_READ_ONLY",
+        "action_summary": "Read source-to-obligation-to-forbidden-behavior-to-gate-to-test-to-evidence continuity and any reopened incident; do not change any gate, code, test, agent, credential, or release.",
+        "status": proof_continuity_projection(root),
+        "scope": "Read-only local senior-engineering audit status; not evidence collection, execution, real credential revocation, provider action, release, or approval evidence.",
+    }
+
+
 def _saas_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.saas_status accepts no arguments")
@@ -1474,6 +1492,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_appforge_storefront_story_status(root, arguments))
     if name == "factory.appforge_fastlane_capture_status":
         return _content(_appforge_fastlane_capture_status(root, arguments))
+    if name == "factory.proof_continuity_status":
+        return _content(_proof_continuity_status(root, arguments))
     if name == "factory.saas_status":
         return _content(_saas_status(root, arguments))
     if name == "factory.agent_proof_mission":

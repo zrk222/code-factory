@@ -38,6 +38,7 @@ from .proof_review_workflow import proof_review_projection
 from .revenueforge import revenueforge_projection
 from .appforge_design import appforge_design_projection
 from .oracle_firewall import oracle_firewall_projection, verify_oracle_contract
+from .proof_continuity_ledger import proof_continuity_projection
 from .semantic_authority import semantic_authority_projection
 from .enterprise_enforcement import enterprise_enforcement_projection
 from .atomic_proof_adapter import atomic_proof_projection, verify_atomic_receipt
@@ -1102,6 +1103,41 @@ def _append_oracle_firewall(state: dict[str, Any], root: Path) -> dict[str, int]
             continue
         drift_id = f"oracle-drift:{str(blocked.get('sha256') or 'blocked')[:24]}"
         _node(state, node_id=drift_id, kind="oracle_drift", label="Oracle weakening blocked", source=str(blocked.get("path") or ".factory/oracles/drifts"), status="blocked", facts={"marker": blocked.get("marker"), "verdict": blocked.get("verdict"), "drift_sha256": blocked.get("sha256"), "authority": _AUTHORITY, "execution": False})
+    return facts
+
+
+def _append_proof_continuity(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project hash-bound audit continuity and reopened incidents without writes."""
+    projection = proof_continuity_projection(root)
+    facts = {
+        "contract_count": int(projection.get("contract_count", 0)),
+        "active_contract_count": int(projection.get("active_contract_count", 0)),
+        "observation_count": int(projection.get("observation_count", 0)),
+        "reopened_count": int(projection.get("reopened_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
+    }
+    contract_nodes: dict[str, str] = {}
+    for item in projection.get("contracts", []):
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("receipt_sha256") or "continuity")
+        node_id = f"proof-continuity:{digest[:24]}"
+        contract_nodes[digest] = node_id
+        status = "reopened" if any(obs.get("contract_receipt_sha256") == digest for obs in projection.get("reopened", []) if isinstance(obs, dict)) else "current"
+        _node(state, node_id=node_id, kind="proof_continuity_audit", label=f"Proof continuity · {item.get('id', digest[:12])}", source=str(item.get("path") or ".factory/proof-continuity/contracts"), status=status, facts={"receipt_sha256": digest, "subject": item.get("subject"), "oracle_contract_sha256": item.get("oracle_contract_sha256"), "authority": _AUTHORITY, "execution": False})
+        oracle_digest = str(item.get("oracle_contract_sha256") or "")
+        if oracle_digest:
+            _edge(state, f"oracle-decision:{oracle_digest[:24]}", node_id, "continues")
+    for item in projection.get("observations", []):
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("receipt_sha256") or "observation")
+        node_id = f"proof-continuity-observation:{digest[:24]}"
+        status = "blocked" if item.get("incident_open") else "current" if item.get("verdict") == "CURRENT" else "review_required"
+        _node(state, node_id=node_id, kind="proof_continuity_observation", label="Proof continuity observation", source=str(item.get("path") or ".factory/proof-continuity/observations"), status=status, facts={"receipt_sha256": digest, "verdict": item.get("verdict"), "incident_open": item.get("incident_open"), "authority": _AUTHORITY, "execution": False})
+        contract_node = contract_nodes.get(str(item.get("contract_receipt_sha256") or ""))
+        if contract_node:
+            _edge(state, contract_node, node_id, "rechecked_by")
     return facts
 
 
@@ -2208,6 +2244,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     continuity = _append_continuity(state, workspace)
     counterexamples = _append_counterexamples(state, workspace)
     oracle_firewall = _append_oracle_firewall(state, workspace)
+    proof_continuity = _append_proof_continuity(state, workspace)
     semantic_authority = _append_semantic_authority(state, workspace)
     enterprise_enforcement = _append_enterprise_enforcement(state, workspace)
     atomic_proof_adapter = _append_atomic_proof_adapter(state, workspace)
@@ -2238,6 +2275,11 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, oracle_firewall, atomic_proof_adapter, agent_proof_bridge, proof_worklogs, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     facts["journey_proof_count"] = journey_proofs["count"]
     facts["semantic_handoff_count"] = semantic_authority["handoff_count"]
+    facts["proof_continuity_contract_count"] = proof_continuity["contract_count"]
+    facts["proof_continuity_active_contract_count"] = proof_continuity["active_contract_count"]
+    facts["proof_continuity_observation_count"] = proof_continuity["observation_count"]
+    facts["proof_continuity_reopened_count"] = proof_continuity["reopened_count"]
+    facts["proof_continuity_invalid_count"] = proof_continuity["invalid_count"]
     facts["semantic_handoff_current_count"] = semantic_authority["current_handoff_count"]
     facts["semantic_authority_lease_count"] = semantic_authority["lease_count"]
     facts["semantic_authority_active_lease_count"] = semantic_authority["active_lease_count"]
@@ -2314,6 +2356,8 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers = sorted({*markers, "GRAPH_OPS_PROOF_REVIEW_READ_ONLY", "TEAM_PROOF_INBOX_READ_ONLY"})
     if revenueforge["current_count"] or revenueforge["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_REVENUEFORGE_READ_ONLY"})
+    if proof_continuity["contract_count"] or proof_continuity["observation_count"] or proof_continuity["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_PROOF_CONTINUITY_READ_ONLY"})
     if appforge["current_count"] or appforge["invalid_count"] or appforge["quality_audit"]["current_count"] or appforge["quality_audit"]["invalid_count"] or appforge["submission_assurance"]["current_count"] or appforge["submission_assurance"]["invalid_count"] or appforge["oracle_authority"]["current_count"] or appforge["oracle_authority"]["invalid_count"] or appforge["device_reality"]["current_count"] or appforge["device_reality"]["invalid_count"] or appforge["release_rehearsal"]["current_count"] or appforge["release_rehearsal"]["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_APPFORGE_READ_ONLY"})
     if saas_proof["current_count"] or saas_proof["invalid_count"]:
