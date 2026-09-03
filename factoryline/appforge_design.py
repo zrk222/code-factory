@@ -16,6 +16,9 @@ from .appforge_oracle import appforge_oracle_projection
 from .appforge_eas import appforge_eas_projection
 from .appforge_device_reality import device_reality_projection
 from .appforge_release_rehearsal import release_rehearsal_projection
+from .appforge_native_surface import native_surface_projection
+from .appforge_surface_matrix import surface_matrix_projection
+from .appforge_storefront_story import storefront_story_projection
 
 
 SCHEMA = "factory.appforge.design-director.v1"
@@ -77,6 +80,9 @@ def appforge_design_projection(root: Path) -> dict[str, Any]:
         "device_reality": device_reality_projection(workspace),
         "eas_preflight": appforge_eas_projection(workspace),
         "release_rehearsal": release_rehearsal_projection(workspace),
+        "native_surface": native_surface_projection(workspace),
+        "surface_matrix": surface_matrix_projection(workspace),
+        "storefront_story": storefront_story_projection(workspace),
         "authority": {**AUTHORITY, "design_intent_override": False, "app_store_claim_publish": False},
         "claim_boundary": "local design-receipt projection; not rendered UI, device proof, accessibility certification, performance proof, or App Review approval",
     }

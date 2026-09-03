@@ -72,6 +72,21 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "description": "Read candidate-bound Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot rehearsal state already visible on this page. It never invokes a provider, accesses credentials, uploads a build, contacts Apple, or submits a release.",
     },
     {
+        "name": "factory.appforge_native_surface_status",
+        "title": "Read adaptive native-surface proof",
+        "description": "Read candidate-bound AppForge adaptive native-surface state already visible on this page. It never builds, runs, renders, downloads Apple assets, contacts Apple, uploads media, or submits a release.",
+    },
+    {
+        "name": "factory.appforge_surface_matrix_status",
+        "title": "Read iPhone and iPad proof plan",
+        "description": "Read candidate-bound AppForge iPhone/iPad accessibility configuration plans already visible on this page. It never starts a simulator, controls hardware, accesses credentials, contacts Apple, uploads media, or submits a release.",
+    },
+    {
+        "name": "factory.appforge_storefront_story_status",
+        "title": "Read storefront story proof",
+        "description": "Read candidate-bound AppForge screenshot story and local claim-reference state already visible on this page. It never generates images, downloads Apple assets, uploads Store media, contacts Apple, or submits a release.",
+    },
+    {
         "name": "factory.saas_status",
         "title": "Read SaaS promise-to-permission status",
         "description": "Read bounded provider-neutral OAuth/OIDC-to-entitlement status already visible on this page. It never contacts or mutates a provider.",

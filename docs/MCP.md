@@ -124,6 +124,9 @@ network transport, or mutation authority.
 | `factory.appforge_oracle_status` | Candidate-bound AppForge Oracle authority receipts; never changes policy sources, media, reviewers, TestFlight, or App Store Connect | Read only |
 | `factory.appforge_device_reality_status` | Sealed AppForge device-intent and supervised-capture receipts; never starts Phone Harness, controls a device, accesses credentials, or contacts Apple | Read only |
 | `factory.appforge_release_rehearsal_status` | Candidate-bound credential-free Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot rehearsal receipts; never invokes a provider, accesses credentials, uploads, contacts Apple, or submits a release | Read only |
+| `factory.appforge_native_surface_status` | Candidate-bound static Swift adaptive-surface, accessibility, material-budget, and storyboard receipt state; never builds, renders, operates a device, downloads assets, or contacts Apple | Read only |
+| `factory.appforge_surface_matrix_status` | Candidate-bound iPhone/iPad and accessibility configuration plan; never starts a simulator, controls hardware, captures screenshots, or contacts Apple | Read only |
+| `factory.appforge_storefront_story_status` | Candidate-bound Store screenshot journey, story, and local claim-reference state; never generates images, uploads media, contacts Apple, or submits a release | Read only |
 | `factory.codex_metadata_audit` | Privacy-safe workspace metadata audit of declared local run-state files; never imports prompts, tool output, credentials, provider history, or home-directory Codex records | Read only |
 | `factory://status` | The same status payload | Read only |
 | `factory://graph` | The same Graph Ops payload | Read only |

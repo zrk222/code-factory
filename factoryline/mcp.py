@@ -30,6 +30,9 @@ from .appforge_design import appforge_design_projection
 from .appforge_oracle import appforge_oracle_projection
 from .appforge_device_reality import device_reality_projection
 from .appforge_release_rehearsal import release_rehearsal_projection
+from .appforge_native_surface import native_surface_projection
+from .appforge_surface_matrix import surface_matrix_projection
+from .appforge_storefront_story import storefront_story_projection
 from .oracle_firewall import oracle_firewall_projection
 from .semantic_authority import semantic_authority_projection
 from .enterprise_enforcement import enterprise_enforcement_projection
@@ -500,6 +503,24 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.appforge_release_rehearsal_status",
             "description": "Read local candidate-bound Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot rehearsal receipts. It never invokes a provider, accesses credentials, uploads a build, contacts Apple, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_native_surface_status",
+            "description": "Read candidate-bound AppForge adaptive native-surface receipts. It never builds, runs, renders, downloads Apple assets, accesses credentials, contacts Apple, uploads media, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_surface_matrix_status",
+            "description": "Read candidate-bound AppForge iPhone/iPad accessibility configuration plans. It never starts a simulator, controls hardware, accesses credentials, contacts Apple, uploads media, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_storefront_story_status",
+            "description": "Read candidate-bound AppForge Store screenshot story and local claim-reference receipts. It never generates images, downloads Apple assets, uploads Store media, contacts Apple, or submits a release.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1243,6 +1264,39 @@ def _appforge_release_rehearsal_status(root: Path, arguments: object) -> dict[st
     }
 
 
+def _appforge_native_surface_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_native_surface_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_NATIVE_SURFACE_READ_ONLY",
+        "action_summary": "Read hash-verified source-bound adaptive Apple-surface preflight receipts without building, running, rendering, downloading assets, contacting Apple, uploading media, or submitting a release.",
+        "status": native_surface_projection(root),
+        "scope": "Read-only local static preflight metadata; not runtime layout, VoiceOver, screenshot authenticity, device compatibility, TestFlight, App Review, or approval evidence.",
+    }
+
+
+def _appforge_surface_matrix_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_surface_matrix_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_SURFACE_MATRIX_READ_ONLY",
+        "action_summary": "Read hash-verified iPhone/iPad and accessibility configuration plans without running a simulator, controlling a device, or changing a candidate.",
+        "status": surface_matrix_projection(root),
+        "scope": "Read-only local test-plan metadata; not device execution, runtime layout, screenshot capture, TestFlight, App Review, or Apple approval evidence.",
+    }
+
+
+def _appforge_storefront_story_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_storefront_story_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_STOREFRONT_STORY_READ_ONLY",
+        "action_summary": "Read hash-verified screenshot-story coverage and local claim-reference receipts without generating images, uploading Store media, or contacting Apple.",
+        "status": storefront_story_projection(root),
+        "scope": "Read-only local storyboard and claim-reference metadata; not image semantic verification, external claim substantiation, Store state, App Review, or approval evidence.",
+    }
+
+
 def _saas_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.saas_status accepts no arguments")
@@ -1394,6 +1448,12 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_appforge_device_reality_status(root, arguments))
     if name == "factory.appforge_release_rehearsal_status":
         return _content(_appforge_release_rehearsal_status(root, arguments))
+    if name == "factory.appforge_native_surface_status":
+        return _content(_appforge_native_surface_status(root, arguments))
+    if name == "factory.appforge_surface_matrix_status":
+        return _content(_appforge_surface_matrix_status(root, arguments))
+    if name == "factory.appforge_storefront_story_status":
+        return _content(_appforge_storefront_story_status(root, arguments))
     if name == "factory.saas_status":
         return _content(_saas_status(root, arguments))
     if name == "factory.agent_proof_mission":

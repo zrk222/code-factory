@@ -129,6 +129,9 @@ from .appforge_oracle import verify_appforge_oracle_authority
 from .appforge_eas import verify_eas_preflight
 from .appforge_device_reality import create_device_reality_intent_envelope, verify_device_reality
 from .appforge_release_rehearsal import create_release_rehearsal
+from .appforge_native_surface import verify_native_surface
+from .appforge_surface_matrix import create_surface_matrix
+from .appforge_storefront_story import verify_storefront_story
 from .oracle_firewall import (
     OracleFirewallError,
     capture_intent_handoff,
@@ -1753,6 +1756,27 @@ def main(argv=None) -> int:
     revenue_rehearsal.add_argument("--profile", required=True)
     revenue_rehearsal.add_argument("--out", default=".factory/appforge/release-rehearsal.json")
     revenue_rehearsal.add_argument("--json", action="store_true")
+    revenue_native_surface = revenue_sub.add_parser("appforge-native-surface", help="verify a source-bound adaptive Apple-surface preflight without building, rendering, or contacting Apple")
+    revenue_native_surface.add_argument("--root", default=".")
+    revenue_native_surface.add_argument("--candidate", required=True)
+    revenue_native_surface.add_argument("--contract", required=True)
+    revenue_native_surface.add_argument("--evidence", required=True)
+    revenue_native_surface.add_argument("--out", default=".factory/appforge/native-surface.json")
+    revenue_native_surface.add_argument("--json", action="store_true")
+    revenue_surface_matrix = revenue_sub.add_parser("appforge-surface-matrix", help="generate a sealed iPhone/iPad accessibility configuration plan without operating a device")
+    revenue_surface_matrix.add_argument("--root", default=".")
+    revenue_surface_matrix.add_argument("--candidate", required=True)
+    revenue_surface_matrix.add_argument("--native-surface", required=True)
+    revenue_surface_matrix.add_argument("--out", default=".factory/appforge/surface-matrix.json")
+    revenue_surface_matrix.add_argument("--json", action="store_true")
+    revenue_storefront_story = revenue_sub.add_parser("appforge-storefront-story", help="verify source-bound Store screenshot story coverage and claim references without generating or uploading media")
+    revenue_storefront_story.add_argument("--root", default=".")
+    revenue_storefront_story.add_argument("--candidate", required=True)
+    revenue_storefront_story.add_argument("--store-media", required=True)
+    revenue_storefront_story.add_argument("--contract", required=True)
+    revenue_storefront_story.add_argument("--evidence", required=True)
+    revenue_storefront_story.add_argument("--out", default=".factory/appforge/storefront-story.json")
+    revenue_storefront_story.add_argument("--json", action="store_true")
 
     saas = sub.add_parser("saas", help="verify provider-neutral SaaS identity, billing, entitlement, and revocation evidence")
     saas_sub = saas.add_subparsers(required=True, dest="saas_cmd")
@@ -4552,6 +4576,12 @@ def main(argv=None) -> int:
                 payload = verify_eas_preflight(root, Path(a.candidate), Path(a.eas_json), a.build_profile, a.submit_profile, out=Path(a.out) if a.out else None)
             elif a.revenue_cmd == "appforge-rehearse":
                 payload = create_release_rehearsal(root, Path(a.candidate), Path(a.submission_assurance), Path(a.profile), Path(a.out))
+            elif a.revenue_cmd == "appforge-native-surface":
+                payload = verify_native_surface(root, Path(a.candidate), Path(a.contract), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "appforge-surface-matrix":
+                payload = create_surface_matrix(root, Path(a.candidate), Path(a.native_surface), Path(a.out))
+            elif a.revenue_cmd == "appforge-storefront-story":
+                payload = verify_storefront_story(root, Path(a.candidate), Path(a.store_media), Path(a.contract), Path(a.evidence), Path(a.out))
             elif a.revenue_cmd == "evidence-kit":
                 payload = create_evidence_kit(root, Path(a.candidate), Path(a.design_input), Path(a.out_dir))
             elif a.revenue_cmd == "appforge-init":

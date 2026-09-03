@@ -612,6 +612,9 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "factory.appforge_oracle_status" in page
     assert "factory.appforge_device_reality_status" in page
     assert "factory.appforge_release_rehearsal_status" in page
+    assert "factory.appforge_native_surface_status" in page
+    assert "factory.appforge_surface_matrix_status" in page
+    assert "factory.appforge_storefront_story_status" in page
 
 
 def test_graph_ops_projects_sealed_admission_without_changing_its_base_graph(tmp_path: Path):

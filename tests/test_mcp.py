@@ -75,6 +75,9 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.appforge_oracle_status",
         "factory.appforge_device_reality_status",
         "factory.appforge_release_rehearsal_status",
+        "factory.appforge_native_surface_status",
+        "factory.appforge_surface_matrix_status",
+        "factory.appforge_storefront_story_status",
         "factory.saas_status",
         "factory.agent_proof_mission",
         "factory.jetbrains_handshake",
@@ -264,6 +267,24 @@ def test_mcp_revenue_appforge_saas_and_memory_tools_are_read_only(tmp_path: Path
     }, tmp_path))
     assert rehearsal["marker"] == "MCP_APPFORGE_RELEASE_REHEARSAL_READ_ONLY"
     assert rehearsal["status"]["marker"] == "APPFORGE_RELEASE_REHEARSAL_READ_ONLY"
+    native_surface = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8223, "method": "tools/call",
+        "params": {"name": "factory.appforge_native_surface_status"},
+    }, tmp_path))
+    assert native_surface["marker"] == "MCP_APPFORGE_NATIVE_SURFACE_READ_ONLY"
+    assert native_surface["status"]["marker"] == "APPFORGE_NATIVE_SURFACE_READ_ONLY"
+    surface_matrix = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8224, "method": "tools/call",
+        "params": {"name": "factory.appforge_surface_matrix_status"},
+    }, tmp_path))
+    assert surface_matrix["marker"] == "MCP_APPFORGE_SURFACE_MATRIX_READ_ONLY"
+    assert surface_matrix["status"]["marker"] == "APPFORGE_SURFACE_MATRIX_READ_ONLY"
+    storefront_story = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8225, "method": "tools/call",
+        "params": {"name": "factory.appforge_storefront_story_status"},
+    }, tmp_path))
+    assert storefront_story["marker"] == "MCP_APPFORGE_STOREFRONT_STORY_READ_ONLY"
+    assert storefront_story["status"]["marker"] == "APPFORGE_STOREFRONT_STORY_READ_ONLY"
     saas = _content(dispatch({
         "jsonrpc": "2.0", "id": 83, "method": "tools/call",
         "params": {"name": "factory.saas_status"},
