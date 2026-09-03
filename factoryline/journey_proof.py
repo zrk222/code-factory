@@ -531,6 +531,70 @@ def create_failure_capsule(root: Path, input_path: Path, out: Path | None = None
     return _create_failure_capsule(root, input_path, out)
 
 
+def validate_failure_capsule(root: Path, value: object) -> dict[str, Any]:
+    """Validate an immutable, locally bound failure capsule before it is reused.
+
+    This deliberately re-checks the receipt digest *and* the current artifact
+    hashes.  A marker-shaped JSON document, or a formerly valid capsule whose
+    supporting evidence changed, is therefore not admissible as reproduction
+    evidence for another control-plane decision.
+    """
+    workspace = _root(root)
+    fields = {
+        "schema", "marker", "markers", "project_id", "journey_id", "run_id",
+        "decision", "classification", "failed_step_index", "step_context",
+        "artifacts", "hypothesis", "suggested_repair", "reproduction_argv",
+        "bindings", "authority", "receipt_sha256",
+    }
+    data = _exact(value, fields, "factory.failure-capsule.v1")
+    if data["schema"] != "factory.failure-capsule.v1" or data["marker"] != "FAILURE_CAPSULE_BOUND":
+        raise JourneyProofError("failure capsule schema or marker is invalid")
+    if data["markers"] != ["FAILURE_CAPSULE_BOUND", "JOURNEY_INPUT_ACCEPTED", "JOURNEY_RECEIPT_WRITTEN"]:
+        raise JourneyProofError("failure capsule markers are invalid")
+    if data["decision"] != "review_required" or data["authority"] != AUTHORITY:
+        raise JourneyProofError("failure capsule authority boundary is invalid")
+    if _digest({key: item for key, item in data.items() if key != "receipt_sha256"}) != _sha(data["receipt_sha256"], "receipt_sha256"):
+        raise JourneyProofError("failure capsule receipt hash does not match")
+    if _string(data["classification"], "classification") not in {kind.value for kind in FailureClass}:
+        raise JourneyProofError("failure capsule classification is invalid")
+    if not isinstance(data["failed_step_index"], int) or isinstance(data["failed_step_index"], bool):
+        raise JourneyProofError("failure capsule failed_step_index is invalid")
+    context = [_exact(item, {"index", "label", "status"}, "failure capsule step") for item in _list(data["step_context"], "step_context", maximum=3)]
+    indexes = [item["index"] for item in context]
+    if not context or indexes != sorted(indexes) or data["failed_step_index"] not in indexes:
+        raise JourneyProofError("failure capsule step context is invalid")
+    for item in context:
+        if not isinstance(item["index"], int) or isinstance(item["index"], bool):
+            raise JourneyProofError("failure capsule step index is invalid")
+        _string(item["label"], "failure capsule step label")
+        _string(item["status"], "failure capsule step status")
+    for index, artifact in enumerate(_list(data["artifacts"], "artifacts", maximum=256)):
+        item = _exact(artifact, {"path", "sha256", "actual_sha256", "kind", "current", "step_index"}, "failure capsule artifact")
+        if item["current"] is not True or item["actual_sha256"] != item["sha256"] or item["step_index"] not in indexes:
+            raise JourneyProofError("failure capsule artifact is not current or not bound to context")
+        verified = _artifact(workspace, {key: item[key] for key in ("path", "sha256", "kind")}, f"failure capsule artifact[{index}]")
+        if not verified["current"]:
+            raise JourneyProofError("failure capsule artifact hash is stale")
+    for label in ("project_id", "journey_id", "run_id"):
+        _string(data[label], f"failure capsule {label}")
+    if not isinstance(data["hypothesis"], dict) or data["hypothesis"].get("trust") != "unverified":
+        raise JourneyProofError("failure capsule hypothesis trust is invalid")
+    if not isinstance(data["suggested_repair"], dict) or data["suggested_repair"].get("trust") != "unverified":
+        raise JourneyProofError("failure capsule suggested repair trust is invalid")
+    _string(data["hypothesis"].get("text"), "failure capsule hypothesis")
+    _string(data["suggested_repair"].get("text"), "failure capsule suggested repair")
+    if not isinstance(data["bindings"], dict) or set(data["bindings"]) != {"input_sha256", "code_version", "environment", "observed_at"}:
+        raise JourneyProofError("failure capsule bindings are invalid")
+    _sha(data["bindings"]["input_sha256"], "failure capsule input_sha256")
+    _string(data["bindings"]["code_version"], "failure capsule code_version")
+    _string(data["bindings"]["observed_at"], "failure capsule observed_at")
+    if not isinstance(data["bindings"]["environment"], dict):
+        raise JourneyProofError("failure capsule environment binding is invalid")
+    if not _strings(data["reproduction_argv"], "failure capsule reproduction_argv", maximum=64):
+        raise JourneyProofError("failure capsule reproduction argv is empty")
+    return data
+
+
 def verify_stateful_workflow(root: Path, input_path: Path, out: Path | None = None) -> dict[str, Any]:
     """Prove DAG state flow and cleanup outcomes from explicit run results."""
     return _verify_stateful_workflow(root, input_path, out)

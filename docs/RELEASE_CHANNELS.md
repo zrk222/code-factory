@@ -1,23 +1,33 @@
 # Release Channels
 
-Code Factory v0.45.3 publishes one verified source state through channel-specific
-adapters. A successful GitHub release is not evidence that every moderated
-listing has accepted the artifact.
+Code Factory core v0.46.0 and FactoryLine adapter v0.9.0 publish from one
+verified source state through channel-specific adapters. A successful GitHub
+release is not evidence that every moderated listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish `v0.45.3`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.45.3` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish core tag `v0.46.0`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.46.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code / Open VSX | `factoryline-vscode-0.8.21.vsix` | GitHub release bundle; protected publisher workflows publish the immutable, verified VSIX when their scoped credentials are configured | Installable VSIX and public marketplace version |
-| JetBrains | `factoryline-intellij-0.8.21.zip` | Prepared successor to the currently pending 0.8.19 submission; submit only after the Marketplace status gate allows another update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
+| VS Code / Open VSX | `factoryline-vscode-0.9.0.vsix` | GitHub release bundle; protected publisher workflows publish the immutable, verified VSIX when their scoped credentials are configured | Installable VSIX and public marketplace version |
+| JetBrains | `factoryline-intellij-0.9.0.zip` | Submit only after the live Marketplace binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured.
+
+### 0.46.0 core agent handoff evidence under Code Factory authority
+
+This release imports explicit agent handoff structure as evidence: typed acyclic
+stages, scoped source preconditions, real before/after artifacts, provider-
+declared tool and checkpoint hashes, and resume lineage. Code Factory binds
+those facts to the current Oracle Contract and rejects drift. The adapter and
+its local Proof Worklog are deliberately read-only: they do not run a provider,
+execute commands, post to a tracker, inherit agent authority, or make approval,
+merge, publication, or deployment decisions.
 
 ### 0.45.0 SaaS Reality and unified proof operations
 
@@ -119,7 +129,7 @@ production resilience, or estimate savings.
 
 On August 31, 2026, the public Marketplace API reported 0.8.20 approved and
 listed, no unapproved binary update, and an open upload slot. Listing metadata
-was still pending review. The prepared 0.8.21 successor must pass the live
+was still pending review. The prepared 0.9.0 successor must pass the live
 binary-slot gate again in the protected publication workflow.
 
 ### 0.42.0 Declared Change Profile and Senior Attention

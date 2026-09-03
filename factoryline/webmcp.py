@@ -27,6 +27,71 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "description": "Read bounded AppForge design-receipt status already visible on this page. It never creates, approves, renders, or releases a design.",
     },
     {
+        "name": "factory.oracle_firewall_status",
+        "title": "Read sealed intent and gate authority",
+        "description": "Read bounded Oracle Firewall facts already visible on this page. It never changes a contract, candidate, agent, or release.",
+    },
+    {
+        "name": "factory.atomic_status",
+        "title": "Read imported Atomic mechanics",
+        "description": "Read bounded Atomic DAG, scoped handoff, checkpoint, and source-precondition facts already visible on this page. It never runs Atomic, resumes a checkpoint, or approves work.",
+    },
+    {
+        "name": "factory.operations_control_status",
+        "title": "Read operating envelope",
+        "description": "Read bounded local isolation, reproduction, change-envelope, proof-tier, architecture-zone, and coordination facts. It never starts work.",
+    },
+    {
+        "name": "factory.lifecycle_status",
+        "title": "Read session trace",
+        "description": "Read hash-linked local harness session traces already visible on this page. It never resumes a session or grants authority.",
+    },
+    {
+        "name": "factory.repair_loop_status",
+        "title": "Read proof-gated repair loop",
+        "description": "Read exact failure, consequence, candidate, and independent re-check packet facts. It never attempts a repair.",
+    },
+    {
+        "name": "factory.mission_control_status",
+        "title": "Read human and agent mission control",
+        "description": "Read one bounded, hash-linked supervision view. It never grants approval, execution, repair, merge, publication, deployment, or credential access.",
+    },
+    {
+        "name": "factory.appforge_oracle_status",
+        "title": "Read AppForge policy authority",
+        "description": "Read candidate-bound AppForge authority state already visible on this page. It never contacts Apple or changes a submission.",
+    },
+    {
+        "name": "factory.appforge_device_reality_status",
+        "title": "Read supervised device evidence",
+        "description": "Read sealed AppForge Device Reality intent and supervised-capture state already visible on this page. It never starts Phone Harness, controls a device, accesses credentials, or contacts Apple.",
+    },
+    {
+        "name": "factory.appforge_release_rehearsal_status",
+        "title": "Read release rehearsal",
+        "description": "Read candidate-bound Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot rehearsal state already visible on this page. It never invokes a provider, accesses credentials, uploads a build, contacts Apple, or submits a release.",
+    },
+    {
+        "name": "factory.appforge_native_surface_status",
+        "title": "Read adaptive native-surface proof",
+        "description": "Read candidate-bound AppForge adaptive native-surface state already visible on this page. It never builds, runs, renders, downloads Apple assets, contacts Apple, uploads media, or submits a release.",
+    },
+    {
+        "name": "factory.appforge_surface_matrix_status",
+        "title": "Read iPhone and iPad proof plan",
+        "description": "Read candidate-bound AppForge iPhone/iPad accessibility configuration plans already visible on this page. It never starts a simulator, controls hardware, accesses credentials, contacts Apple, uploads media, or submits a release.",
+    },
+    {
+        "name": "factory.appforge_mobile_evidence_status",
+        "title": "Read mobile evidence readiness",
+        "description": "Read candidate-bound iOS and Android tool-evidence state already visible on this page. It never runs Xcode, XCTest, Gradle, ADB, Fastlane, a device cloud, telemetry vendor, or store console.",
+    },
+    {
+        "name": "factory.appforge_storefront_story_status",
+        "title": "Read storefront story proof",
+        "description": "Read candidate-bound AppForge screenshot story and local claim-reference state already visible on this page. It never generates images, downloads Apple assets, uploads Store media, contacts Apple, or submits a release.",
+    },
+    {
         "name": "factory.saas_status",
         "title": "Read SaaS promise-to-permission status",
         "description": "Read bounded provider-neutral OAuth/OIDC-to-entitlement status already visible on this page. It never contacts or mutates a provider.",

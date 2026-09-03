@@ -57,9 +57,32 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.agent_license_status",
         "factory.combine_status",
         "factory.workspace_advisor",
+        "factory.ide_playbook",
         "factory.revenue_status",
         "factory.revenue_memory",
         "factory.appforge_status",
+        "factory.oracle_firewall_status",
+        "factory.semantic_authority_status",
+        "factory.enterprise_enforcement_status",
+        "factory.atomic_status",
+        "factory.operations_control_status",
+        "factory.lifecycle_status",
+        "factory.repair_loop_status",
+        "factory.mission_control_status",
+        "factory.agent_bridge_status",
+        "factory.agent_handoff_brief",
+        "factory.proof_worklog_status",
+        "factory.codex_metadata_audit",
+        "factory.appforge_oracle_status",
+        "factory.appforge_device_reality_status",
+        "factory.appforge_release_rehearsal_status",
+            "factory.appforge_native_surface_status",
+            "factory.appforge_surface_matrix_status",
+            "factory.appforge_mobile_evidence_status",
+            "factory.appforge_storefront_story_status",
+        "factory.appforge_fastlane_capture_status",
+        "factory.appforge_submission_integrity_status",
+        "factory.proof_continuity_status",
         "factory.saas_status",
         "factory.agent_proof_mission",
         "factory.jetbrains_handshake",
@@ -70,7 +93,6 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
 
 
 def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
-    before = _files(tmp_path)
     initialized = dispatch({
         "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": MCP_PROTOCOL_VERSION},
     }, tmp_path)
@@ -80,7 +102,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {"name": "code-factory", "version": "0.45.3"},
+                "serverInfo": {"name": "code-factory", "version": "0.46.2"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }
@@ -106,6 +128,17 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     }, tmp_path))
     assert summary["marker"] == "MCP_GRAPH_OPS_PARITY"
     assert summary["summary"]["graph_sha256"] == graph_ops_snapshot(tmp_path)["graph_sha256"]
+
+    metadata = tmp_path / "run.json"
+    metadata.write_text(json.dumps({"status": "complete", "intent_id": "mission-1"}), encoding="utf-8")
+    before = _files(tmp_path)
+    audit = _content(dispatch({
+        "jsonrpc": "2.0", "id": 31, "method": "tools/call",
+        "params": {"name": "factory.codex_metadata_audit", "arguments": {"paths": ["run.json"]}},
+    }, tmp_path))
+    assert audit["marker"] == "MCP_CODEX_METADATA_AUDIT_READ_ONLY"
+    assert audit["audit"]["status"] == "REVIEW_REQUIRED"
+    assert audit["scope"].startswith("Read-only local metadata integrity")
 
     impact = _content(dispatch({
         "jsonrpc": "2.0", "id": 4, "method": "tools/call",
@@ -192,6 +225,85 @@ def test_mcp_revenue_appforge_saas_and_memory_tools_are_read_only(tmp_path: Path
     assert appforge["marker"] == "MCP_APPFORGE_READ_ONLY"
     assert appforge["status"]["marker"] == "APPFORGE_DESIGN_READ_ONLY"
     assert all(value is False for value in appforge["status"]["authority"].values())
+    oracle = _content(dispatch({
+        "jsonrpc": "2.0", "id": 821, "method": "tools/call",
+        "params": {"name": "factory.oracle_firewall_status"},
+    }, tmp_path))
+    assert oracle["marker"] == "MCP_ORACLE_FIREWALL_READ_ONLY"
+    assert oracle["status"]["marker"] == "ORACLE_FIREWALL_READ_ONLY"
+    semantic = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8210, "method": "tools/call",
+        "params": {"name": "factory.semantic_authority_status"},
+    }, tmp_path))
+    assert semantic["marker"] == "MCP_SEMANTIC_AUTHORITY_READ_ONLY"
+    assert semantic["status"]["marker"] == "SEMANTIC_AUTHORITY_READ_ONLY"
+    assert all(value is False for value in semantic["status"]["authority"].values())
+    enterprise = _content(dispatch({
+        "jsonrpc": "2.0", "id": 82101, "method": "tools/call",
+        "params": {"name": "factory.enterprise_enforcement_status"},
+    }, tmp_path))
+    assert enterprise["marker"] == "MCP_ENTERPRISE_ENFORCEMENT_READ_ONLY"
+    assert enterprise["status"]["marker"] == "ENTERPRISE_ENFORCEMENT_READ_ONLY"
+    assert all(value is False for value in enterprise["status"]["authority"].values())
+    assert enterprise["status"]["runner_admission"]["marker"] == "RUNNER_ADMISSION_READ_ONLY"
+    assert all(value is False for value in enterprise["status"]["runner_admission"]["authority"].values())
+    atomic = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8211, "method": "tools/call",
+        "params": {"name": "factory.atomic_status"},
+    }, tmp_path))
+    assert atomic["marker"] == "ATOMIC_MCP_READ_ONLY"
+    assert atomic["status"]["marker"] == "ATOMIC_MCP_READ_ONLY"
+    assert all(value is False for value in atomic["status"]["authority"].values())
+    appforge_oracle = _content(dispatch({
+        "jsonrpc": "2.0", "id": 822, "method": "tools/call",
+        "params": {"name": "factory.appforge_oracle_status"},
+    }, tmp_path))
+    assert appforge_oracle["marker"] == "MCP_APPFORGE_ORACLE_READ_ONLY"
+    assert appforge_oracle["status"]["marker"] == "APPFORGE_ORACLE_AUTHORITY_READ_ONLY"
+    device_reality = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8221, "method": "tools/call",
+        "params": {"name": "factory.appforge_device_reality_status"},
+    }, tmp_path))
+    assert device_reality["marker"] == "MCP_APPFORGE_DEVICE_REALITY_READ_ONLY"
+    assert device_reality["status"]["marker"] == "APPFORGE_DEVICE_REALITY_READ_ONLY"
+    rehearsal = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8222, "method": "tools/call",
+        "params": {"name": "factory.appforge_release_rehearsal_status"},
+    }, tmp_path))
+    assert rehearsal["marker"] == "MCP_APPFORGE_RELEASE_REHEARSAL_READ_ONLY"
+    assert rehearsal["status"]["marker"] == "APPFORGE_RELEASE_REHEARSAL_READ_ONLY"
+    native_surface = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8223, "method": "tools/call",
+        "params": {"name": "factory.appforge_native_surface_status"},
+    }, tmp_path))
+    assert native_surface["marker"] == "MCP_APPFORGE_NATIVE_SURFACE_READ_ONLY"
+    assert native_surface["status"]["marker"] == "APPFORGE_NATIVE_SURFACE_READ_ONLY"
+    surface_matrix = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8224, "method": "tools/call",
+        "params": {"name": "factory.appforge_surface_matrix_status"},
+    }, tmp_path))
+    assert surface_matrix["marker"] == "MCP_APPFORGE_SURFACE_MATRIX_READ_ONLY"
+
+    mobile_evidence = _content(dispatch({
+        "jsonrpc": "2.0", "id": 82241, "method": "tools/call",
+        "params": {"name": "factory.appforge_mobile_evidence_status"},
+    }, tmp_path))
+    assert mobile_evidence["marker"] == "MCP_APPFORGE_MOBILE_EVIDENCE_READ_ONLY"
+    assert mobile_evidence["status"]["marker"] == "APPFORGE_MOBILE_EVIDENCE_READ_ONLY"
+    assert surface_matrix["status"]["marker"] == "APPFORGE_SURFACE_MATRIX_READ_ONLY"
+    storefront_story = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8225, "method": "tools/call",
+        "params": {"name": "factory.appforge_storefront_story_status"},
+    }, tmp_path))
+    assert storefront_story["marker"] == "MCP_APPFORGE_STOREFRONT_STORY_READ_ONLY"
+    assert storefront_story["status"]["marker"] == "APPFORGE_STOREFRONT_STORY_READ_ONLY"
+    fastlane_capture = _content(dispatch({
+        "jsonrpc": "2.0", "id": 8226, "method": "tools/call",
+        "params": {"name": "factory.appforge_fastlane_capture_status"},
+    }, tmp_path))
+    assert fastlane_capture["marker"] == "MCP_APPFORGE_FASTLANE_CAPTURE_READ_ONLY"
+    assert fastlane_capture["status"]["marker"] == "APPFORGE_FASTLANE_CAPTURE_READ_ONLY"
+    assert all(value is False for value in fastlane_capture["status"]["authority"].values())
     saas = _content(dispatch({
         "jsonrpc": "2.0", "id": 83, "method": "tools/call",
         "params": {"name": "factory.saas_status"},

@@ -17,6 +17,71 @@
 
 ## Unreleased
 
+### AppForge Mobile Evidence Adapter
+
+- Add `factory revenue appforge-mobile-evidence`, a provider-neutral,
+  candidate-bound normalization gate for supplied Xcode/XCTest, Android
+  Gradle/ADB, Fastlane, device-cloud, and production-monitoring exports.
+- Require declared visual truth, privacy-to-store consistency, release-chain
+  state, design-system conformance, production-signal thresholds, and Android
+  adaptive/accessibility/R8/metadata evidence. Missing, stale, mismatched, or
+  failed evidence blocks the local receipt.
+- Keep every external boundary explicit: Code Factory does not execute the
+  tools, authenticate provider reports, operate a device, access a store,
+  submit a build, or guarantee platform approval.
+
+## 0.46.2 - 2026-09-03
+
+- Add intent-to-diff scope and forbidden-behavior checks, receipt freshness and
+  replay defense, and human-owned, versioned team policy packs.
+- Add a plain-language IDE, MCP, and A2A agent playbook with supervised ingress,
+  mission-control action cards, evidence-led human briefings, and optional
+  AppForge routing only for explicit mobile delivery work.
+- Bind ForgeLine promotion to a SpecLine intent digest and selected capability
+  gates; add optional AppForge requirement and capture-evidence integrity when
+  that capability pack is selected.
+- Add a one-time, non-coercive proof moment for an honest review only after a
+  verified user-visible result.
+
+## 0.46.1 - 2026-09-02
+
+- Harden the Oracle Firewall against same-ID semantic rewrites: blocking and
+  release rules now fail closed when their statement, source binding,
+  criticality, origin, effect, or gate semantics change.
+- Keep Proof Worklog drafts faithful to sealed contracts by reading approved
+  obligations and forbidden behaviors from the sealed `rules` object.
+- Bind each AppForge submission-dossier Oracle audit entry to an immutable,
+  hash-valid derived authority receipt, while retaining the input source path
+  and byte digest separately for traceability.
+
+## 0.46.0 - 2026-09-02
+
+- Add an evidence-only Agent Proof Bridge for Eve, Junie, Grok Build, and
+  generic clients. It verifies a typed acyclic workflow DAG, sealed scope,
+  source-byte preconditions, real before/after artifacts, declared checkpoints,
+  and current Oracle Contract binding without contacting or operating an agent.
+- Add review-required Proof Worklogs: concise local drafts made from sealed
+  obligations and valid receipt summaries. They never post to a tracker, chat,
+  repository, or external service.
+- Project both the portable handoff and review draft boundaries into Graph Ops,
+  the CLI, and local stdio MCP. A changed contract invalidates the derived
+  evidence; neither feature can alter gates, exceptions, approval, or release.
+
+## 0.45.4 - 2026-09-02
+
+- Add the Atomic Proof Adapter: import an explicit external workflow as
+  evidence, verify its typed acyclic graph, stage capabilities, scoped
+  handoffs, checkpoints, source preconditions, and resume lineage, then bind
+  the result to the current Oracle Contract.
+- Reject workflow cycles, undeclared handoffs, scope escape, changed source
+  bytes, hidden checkpoint drift, and autonomous runs whose isolation is not
+  independently verified. Imported declarations never become release or
+  execution authority.
+- Surface the verified workflow and its authority boundary in Graph Ops, the
+  CLI, local MCP, and progressive WebMCP. The adapter remains read-only and
+  does not execute Atomic, run shell commands, approve, repair, merge, publish,
+  or deploy.
+
 ## 0.45.3 - 2026-08-31
 
 - Add the AppForge Mission Control bridge to FactoryLine for JetBrains. It reads

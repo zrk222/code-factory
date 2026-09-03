@@ -120,6 +120,16 @@ network transport, or mutation authority.
 | `factory.revenue_status` | Current hash-verified RevenueForge receipts and fail-closed purchase, TestFlight, failure-matrix, policy-drift, and memory evidence state | Read only |
 | `factory.revenue_memory` | Exact-app, exact-journey, expiry-aware approved evidence-memory guidance; never substitutes prior evidence for the current build | Read only |
 | `factory.appforge_status` | Current hash-verified AppForge design contracts and storyboard state; never renders, approves, submits, or deploys an app | Read only |
+| `factory.oracle_firewall_status` | Sealed source-to-decision Oracle Firewall contracts, weakening reports, independent challenge receipts, and incidents; never seals, approves, challenges, repairs, or releases work | Read only |
+| `factory.proof_continuity_status` | Repository-level source-to-obligation-to-forbidden-behavior-to-gate-to-test-to-evidence audit continuity and reopened incidents; never runs evidence collection, changes code, releases, or approves work | Read only |
+| `factory.appforge_oracle_status` | Candidate-bound AppForge Oracle authority receipts; never changes policy sources, media, reviewers, TestFlight, or App Store Connect | Read only |
+| `factory.appforge_device_reality_status` | Sealed AppForge device-intent and supervised-capture receipts; never starts Phone Harness, controls a device, accesses credentials, or contacts Apple | Read only |
+| `factory.appforge_release_rehearsal_status` | Candidate-bound credential-free Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot rehearsal receipts; never invokes a provider, accesses credentials, uploads, contacts Apple, or submits a release | Read only |
+| `factory.appforge_native_surface_status` | Candidate-bound static Swift adaptive-surface, accessibility, material-budget, and storyboard receipt state; never builds, renders, operates a device, downloads assets, or contacts Apple | Read only |
+| `factory.appforge_surface_matrix_status` | Candidate-bound iPhone/iPad and accessibility configuration plan; never starts a simulator, controls hardware, captures screenshots, or contacts Apple | Read only |
+| `factory.appforge_storefront_story_status` | Candidate-bound Store screenshot journey, story, and local claim-reference state; never generates images, uploads media, contacts Apple, or submits a release | Read only |
+| `factory.appforge_fastlane_capture_status` | Candidate-bound Fastlane Snapshot capture contract state; never runs Fastlane/Xcode, controls a simulator or device, accesses credentials, uploads media, contacts Apple, or submits a release | Read only |
+| `factory.codex_metadata_audit` | Privacy-safe workspace metadata audit of declared local run-state files; never imports prompts, tool output, credentials, provider history, or home-directory Codex records | Read only |
 | `factory://status` | The same status payload | Read only |
 | `factory://graph` | The same Graph Ops payload | Read only |
 
@@ -151,6 +161,15 @@ or connector authority.
 the local filesystem and path context. It does not query an IDE, connect to
 WSL/Gateway/Docker/SSH, or change heap, caches, indexes, inspections, or
 settings. See [Workspace Load Advisor](WORKSPACE_ADVISOR.md).
+
+`factory.codex_metadata_audit` is deliberately narrower than a conversation
+export. It reads only explicit workspace-relative paths (or the bounded local
+defaults) and evaluates run provenance such as revision, task/intent hash,
+scope, command/test receipt, stop reason, and verifier outcome. Private chat
+text, credentials, raw tool output, and records outside the selected workspace
+are not accepted as authority evidence. Historical state files can be reported
+as unbound history, but cannot become live gate proof. See
+[Oracle Firewall](ORACLE_FIREWALL.md).
 
 Tool and resource payloads are canonical UTF-8 JSON embedded in MCP text
 content. The graph and impact tools directly call the same native functions as

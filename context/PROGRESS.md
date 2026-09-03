@@ -507,3 +507,44 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-31 13:14] GATE spec appforge-evidence-kit-v1 approver=human strict=True sha=cd495801cf0f7116
 - [2026-08-31 13:19] GATE spec jetbrains-proof-handshake-v1 approver=human strict=True sha=91f5d694843df562
 - [2026-08-31 14:15] GATE spec jetbrains-proof-handshake-v1 approver=human strict=True sha=91f5d694843df562
+
+- [2026-09-01 16:37] GATE spec atomic-proof-adapter-v1 approver=human strict=True sha=495a2cc2a01cfcf2
+- [2026-09-01 16:37] GATE plan atomic-proof-adapter-v1 approver=human tasks=5 sha=495a2cc2a01cfcf2
+
+- [2026-09-02 17:14] GATE spec semantic-authority-plane-v1 approver=human strict=True sha=6afb387b185d8193
+
+- [2026-09-02 17:37] GATE spec enterprise-enforcement-reference-v1 approver=human strict=True sha=22798a5b1e2d7d6b
+- [2026-09-02 17:40] GATE spec enterprise-enforcement-reference-v1 approver=human strict=True sha=22798a5b1e2d7d6b
+- [2026-09-02 17:46] GATE spec enterprise-enforcement-reference-v1 approver=human strict=True sha=22798a5b1e2d7d6b
+- [2026-09-03 00:48] GATE spec enterprise-runner-admission-v1 approver=human strict=True sha=0e813595c462f1a1
+- [2026-09-03 00:49] GATE spec enterprise-runner-admission-v1 approver=human strict=True sha=c21c77c46cbc1fc7
+- [2026-09-03 00:49] GATE spec enterprise-runner-admission-v1 approver=human strict=True sha=f2b1da3012fd6d4c
+- [2026-09-03 00:49] GATE spec enterprise-runner-admission-v1 approver=human strict=True sha=d006aabb471309bb
+- [2026-09-03 01:17] GATE spec enterprise-runner-supervision-v1 approver=human strict=True sha=6741df145705777d
+- [2026-09-03 01:26] GATE spec enterprise-runner-supervision-v1 approver=human strict=True sha=75b85a31381fffbd
+- [2026-09-03 01:38] GATE spec enterprise-runner-freshness-v1 approver=human strict=True sha=8b8ed9b433253b8b
+- [2026-09-03 01:38] GATE plan enterprise-runner-freshness-v1 approver=human tasks=3 sha=8b8ed9b433253b8b
+- [2026-09-03 01:40] GATE spec enterprise-runner-freshness-v1 approver=human strict=True sha=2ef993e3fc7d66b5
+- [2026-09-03 01:40] GATE plan enterprise-runner-freshness-v1 approver=human tasks=3 sha=2ef993e3fc7d66b5
+- [2026-09-03 01:44] GATE spec enterprise-runner-freshness-v1 approver=human strict=True sha=52fbf054946155f0
+- [2026-09-03 01:44] GATE plan enterprise-runner-freshness-v1 approver=human tasks=3 sha=52fbf054946155f0
+- [2026-09-03 01:58] GATE spec appforge-device-reality-v1 approver=human strict=True sha=4cf6e6f473418599
+- [2026-09-03 01:58] GATE plan appforge-device-reality-v1 approver=human tasks=4 sha=4cf6e6f473418599
+- [2026-09-03 02:14] GATE spec appforge-device-reality-v1 approver=human strict=True sha=f4c2e316cbe41378
+- [2026-09-03 02:14] GATE plan appforge-device-reality-v1 approver=human tasks=4 sha=f4c2e316cbe41378
+- [2026-09-03 02:19] GATE spec appforge-device-reality-v1 approver=human strict=True sha=70d14605a3da40dd
+- [2026-09-03 02:19] GATE plan appforge-device-reality-v1 approver=human tasks=4 sha=70d14605a3da40dd
+- [2026-09-03 02:32] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=46301777332742df
+- [2026-09-03 02:32] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=46301777332742df
+- [2026-09-03 02:33] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=a216aa2d69463d8b
+- [2026-09-03 02:33] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=a216aa2d69463d8b
+- [2026-09-03 02:34] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=88bf974cb2c292a0
+- [2026-09-03 02:34] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=88bf974cb2c292a0
+- [2026-09-03 02:34] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=44f34a18d967443c
+- [2026-09-03 02:35] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=44f34a18d967443c
+- [2026-09-03 02:48] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=44f34a18d967443c
+- [2026-09-03 02:48] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=44f34a18d967443c
+- [2026-09-03 02:53] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=c8df55030909136a
+- [2026-09-03 02:53] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=c8df55030909136a
+- [2026-09-03 03:02] GATE spec appforge-release-rehearsal-v1 approver=human strict=True sha=ecdf44b92e14a940
+- [2026-09-03 03:02] GATE plan appforge-release-rehearsal-v1 approver=human tasks=4 sha=ecdf44b92e14a940

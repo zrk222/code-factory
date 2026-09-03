@@ -24,9 +24,31 @@ from .gauntlet import gauntlet_status
 from .agent_license import AgentLicenseError, derive_license, license_projection, normalize_agent_identity
 from .combine import combine_projection
 from .workspace_advisor import inspect_workspace
+from .ide_playbook import ide_playbook
 from .revenueforge import RevenueForgeError, revenueforge_projection
 from .revenue_evidence import query_evidence_memory
 from .appforge_design import appforge_design_projection
+from .appforge_oracle import appforge_oracle_projection
+from .appforge_device_reality import device_reality_projection
+from .appforge_release_rehearsal import release_rehearsal_projection
+from .appforge_native_surface import native_surface_projection
+from .appforge_surface_matrix import surface_matrix_projection
+from .appforge_storefront_story import storefront_story_projection
+from .appforge_fastlane_capture import fastlane_capture_projection
+from .appforge_submission_integrity import submission_integrity_projection
+from .appforge_mobile_evidence import mobile_evidence_projection
+from .oracle_firewall import oracle_firewall_projection
+from .proof_continuity_ledger import proof_continuity_projection
+from .semantic_authority import semantic_authority_projection
+from .enterprise_enforcement import enterprise_enforcement_projection
+from .atomic_proof_adapter import atomic_proof_projection
+from .agent_proof_bridge import AgentProofBridgeError, agent_handoff_brief, agent_proof_projection
+from .proof_worklog import proof_worklog_projection
+from .operations_control import operations_control_projection
+from .lifecycle_ledger import lifecycle_projection
+from .repair_loop import repair_loop_projection
+from .mission_control_status import mission_control_status
+from .codex_metadata import MetadataAuditError, audit_metadata
 from .saas_proof import saas_proof_projection
 from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
 
@@ -70,6 +92,13 @@ _RECEIPT_ROOTS = (
     Path(".factory/combines"),
     Path(".factory/intent-ledgers"),
     Path(".factory/journey-proof"),
+    Path(".factory/oracles"),
+    Path(".factory/semantic-authority"),
+    Path(".factory/enterprise-enforcement"),
+    Path(".factory/appforge"),
+    Path(".factory/operations-control"),
+    Path(".factory/lifecycle"),
+    Path(".factory/repair-loops"),
 )
 
 
@@ -354,6 +383,7 @@ def _tool_definitions() -> list[dict[str, object]]:
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
+        {"name": "factory.ide_playbook", "description": "Read the plain-language Code Factory operating map for IDEs and coding agents. It never controls an IDE or runs an agent.", "inputSchema": no_args, "annotations": _READ_ONLY_ANNOTATIONS},
         {
             "name": "factory.revenue_status",
             "description": "Return hash-verified local RevenueForge build and evidence status. It never contacts Apple, changes pricing, replies to testers, or publishes.",
@@ -378,6 +408,149 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.appforge_status",
             "description": "Return hash-verified local AppForge design-contract status. It never creates, approves, renders, or releases a design.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.oracle_firewall_status",
+            "description": "Read sealed original-intent handoffs, provenance contracts, independent challenge plans, and blocked weakening facts. It never alters an oracle, code, agent, or release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.semantic_authority_status",
+            "description": "Read hash-sealed agent handoffs, expiring scoped leases, and local admission receipts. It never sends a message, calls a tool, grants authority, or executes work.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.enterprise_enforcement_status",
+            "description": "Read signed local workload-policy admission receipts and any exact decision-bound runner packet. It does not authenticate a cloud workload, execute argv, or enforce a network boundary.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.atomic_status",
+            "description": "Read imported Atomic workflow DAG, capability handoff, checkpoint, and source-precondition facts bound to a sealed Oracle Contract. It never invokes Atomic, resumes a checkpoint, or grants authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.operations_control_status",
+            "description": "Read local verified-isolation, repro-budget, change-envelope, proof-tier, architecture-zone, and coordination receipt facts. It never creates a worktree, dispatches a task, or approves work.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.lifecycle_status",
+            "description": "Read local hash-linked harness lifecycle summaries. It does not broadcast, contact an agent, resume a run, or grant authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.repair_loop_status",
+            "description": "Read exact failure, human-authored consequence, candidate, and independent re-check packet facts. It never executes a repair or approves work.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.mission_control_status",
+            "description": "Read one bounded human/agent control-plane status built from local intent, operations, session, and repair evidence. It never grants authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.agent_bridge_status",
+            "description": "Read imported Eve, Junie, Grok Build, CodeRabbit, Devin, or generic hash-only handoff receipts bound to a sealed Oracle Contract. It never starts an agent, contacts a provider, resumes a checkpoint, or grants authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.agent_handoff_brief",
+            "description": "Render one current sealed Oracle Contract for an agent and supervising human. It never starts an agent or changes intent.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"contract": {"type": "string", "minLength": 1, "maxLength": 512}},
+                "required": ["contract"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.proof_worklog_status",
+            "description": "Read local, review-required proof worklog drafts. It never posts to a tracker, chat, repository, or service.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.codex_metadata_audit",
+            "description": "Audit selected local Codex/workflow metadata for unbound terminal claims, stale execution status, missing intent, or self-attested gates. It never reads provider state or mutates a receipt.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "paths": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                },
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_oracle_status",
+            "description": "Read candidate-bound AppForge policy and user-intent authority receipts. It never contacts Apple, changes a candidate, or claims review readiness.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_device_reality_status",
+            "description": "Read sealed AppForge Device Reality intent and supervised-capture receipts. It never starts Phone Harness, controls a device, accesses credentials, or contacts Apple.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_release_rehearsal_status",
+            "description": "Read local candidate-bound Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot rehearsal receipts. It never invokes a provider, accesses credentials, uploads a build, contacts Apple, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_native_surface_status",
+            "description": "Read candidate-bound AppForge adaptive native-surface receipts. It never builds, runs, renders, downloads Apple assets, accesses credentials, contacts Apple, uploads media, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_surface_matrix_status",
+            "description": "Read candidate-bound AppForge iPhone/iPad accessibility configuration plans. It never starts a simulator, controls hardware, accesses credentials, contacts Apple, uploads media, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_mobile_evidence_status",
+            "description": "Read candidate-bound iOS/Android tool-evidence receipts for visual truth, privacy-to-store consistency, release-chain state, design conformance, production signals, and Android parity. It never runs a tool, device, telemetry vendor, store console, or release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_storefront_story_status",
+            "description": "Read candidate-bound AppForge Store screenshot story and local claim-reference receipts. It never generates images, downloads Apple assets, uploads Store media, contacts Apple, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_fastlane_capture_status",
+            "description": "Read candidate-bound Fastlane Snapshot capture contracts. It never starts Xcode, controls a simulator or device, runs Fastlane, accesses credentials, uploads media, contacts Apple, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_submission_integrity_status",
+            "description": "Read whether AppForge capture requirements are explicit, candidate-bound, correctly covered, and classified as native signed-build evidence. It never creates media, controls a device, contacts Apple, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.proof_continuity_status",
+            "description": "Read hash-bound senior-engineering audit continuity and reopened incidents. It never runs a test, changes a candidate, contacts a provider, revokes credentials, releases, or approves work.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -903,6 +1076,10 @@ def _combine_status(root: Path, arguments: object) -> dict[str, object]:
         "scope": "Read-only local comparison of verified governed events; no agent command, score estimation, repair, approval, publication, deployment, or credential action ran.",
     }
 
+def _ide_playbook(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}: raise McpError("factory.ide_playbook accepts no arguments")
+    return ide_playbook()
+
 
 def _revenue_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
@@ -947,6 +1124,254 @@ def _appforge_status(root: Path, arguments: object) -> dict[str, object]:
         "action_summary": "Read hash-verified local AppForge design, strict quality-audit, and submission-dossier receipts while preserving human design and release authority.",
         "status": appforge_design_projection(root),
         "scope": "Read-only local design projection; no design creation, intent override, render, App Store write, publication, deployment, or approval ran.",
+    }
+
+
+def _oracle_firewall_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.oracle_firewall_status accepts no arguments")
+    return {
+        "marker": "MCP_ORACLE_FIREWALL_READ_ONLY",
+        "action_summary": "Read local source-to-decision facts, preserve blocked oracle weakening, and expose no mutation or approval surface.",
+        "status": oracle_firewall_projection(root),
+        "scope": "Read-only local proof-of-the-oracle projection; no contract sealing, candidate mutation, challenge execution, agent action, approval, or provider action ran.",
+    }
+
+
+def _semantic_authority_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.semantic_authority_status accepts no arguments")
+    return {
+        "marker": "MCP_SEMANTIC_AUTHORITY_READ_ONLY",
+        "action_summary": "Read sealed context-bound handoffs, expiring least-privilege leases, and local decision receipts without treating a message as permission.",
+        "status": semantic_authority_projection(root),
+        "scope": "Read-only local proof projection. It does not validate open-ended semantics, authenticate a real-world identity, run a sandbox, invoke a tool, execute code, approve work, or contact a provider.",
+    }
+
+
+def _enterprise_enforcement_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.enterprise_enforcement_status accepts no arguments")
+    return {
+        "marker": "MCP_ENTERPRISE_ENFORCEMENT_READ_ONLY",
+        "action_summary": "Read local signed workload/policy admission decisions and decision-bound runner packets without treating either as execution or a production deployment control.",
+        "status": enterprise_enforcement_projection(root),
+        "scope": "Read-only local PEP-reference projection. It does not perform OIDC federation, identify a live workload, invoke a tool, enforce an Envoy/eBPF/container boundary, approve work, or contact a provider.",
+    }
+
+
+def _atomic_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.atomic_status accepts no arguments")
+    return {
+        "marker": "ATOMIC_MCP_READ_ONLY",
+        "action_summary": "Read local Atomic mechanics receipts only; retain the Oracle Contract, declared scope, and zero authority boundary.",
+        "status": atomic_proof_projection(root),
+        "scope": "Read-only imported evidence. No Atomic runtime, intercom message, checkpoint resume, code mutation, approval, provider call, or release action ran.",
+    }
+
+
+def _operations_control_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.operations_control_status accepts no arguments")
+    return {
+        "marker": "OPS_CONTROL_MCP_READ_ONLY",
+        "action_summary": "Read local operational-precondition receipts without creating a worktree, running a reproduction, dispatching an agent, or changing a release decision.",
+        "status": operations_control_projection(root),
+        "scope": "Read-only local operations facts. No execution, provider call, approval, repair, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _lifecycle_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.lifecycle_status accepts no arguments")
+    return {
+        "marker": "LIFECYCLE_MCP_READ_ONLY",
+        "action_summary": "Read hash-linked local harness lifecycle facts while preserving the sealed intent and zero-authority boundary.",
+        "status": lifecycle_projection(root),
+        "scope": "Read-only local lifecycle facts. No task dispatch, broadcast, agent resume, execution, approval, provider, credential, connector, or release action ran.",
+    }
+
+
+def _repair_loop_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.repair_loop_status accepts no arguments")
+    return {
+        "marker": "REPAIR_LOOP_MCP_READ_ONLY",
+        "action_summary": "Read exact issue-to-consequence-to-independent-recheck packets without attempting the candidate or changing any decision.",
+        "status": repair_loop_projection(root),
+        "scope": "Read-only local repair-loop facts. No repair, agent, provider, approval, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _mission_control_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.mission_control_status accepts no arguments")
+    return {
+        "marker": "MISSION_CONTROL_MCP_READ_ONLY",
+        "action_summary": "Read the shared human and agent control-plane state without granting an agent, human, or provider any action authority.",
+        "status": mission_control_status(root),
+        "scope": "Read-only local control-plane facts. No agent execution, repair, approval, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _agent_bridge_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.agent_bridge_status accepts no arguments")
+    return {
+        "marker": "AGENT_PROOF_MCP_READ_ONLY",
+        "action_summary": "Read locally bound provider-neutral agent proof facts while retaining the sealed Oracle Contract and zero-authority boundary.",
+        "status": agent_proof_projection(root),
+        "scope": "Read-only imported evidence. No Eve, Junie, Grok Build, Vercel, IDE, model, checkpoint, code, approval, provider, credential, or release action ran.",
+    }
+
+
+def _agent_handoff_brief(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) != {"contract"} or not isinstance(arguments.get("contract"), str) or not arguments["contract"].strip() or len(arguments["contract"]) > 512:
+        raise McpError("factory.agent_handoff_brief requires one workspace-relative contract path")
+    try:
+        brief = agent_handoff_brief(root, Path(arguments["contract"]))
+    except AgentProofBridgeError as exc:
+        raise McpError(str(exc), exc.code) from exc
+    return {"marker": "AGENT_HANDOFF_BRIEF_MCP_READ_ONLY", "action_summary": "Read the sealed original-intent contract shared by worker and reviewer without sending it to a provider or changing it.", "brief": brief}
+
+
+def _proof_worklog_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.proof_worklog_status accepts no arguments")
+    return {
+        "marker": "PROOF_WORKLOG_MCP_READ_ONLY",
+        "action_summary": "Read local review-required worklog drafts from sealed contracts and receipt summaries without posting or messaging anyone.",
+        "status": proof_worklog_projection(root),
+        "scope": "Read-only local draft evidence. No ticket, pull request, chat message, release note, provider, credential, approval, or deployment action ran.",
+    }
+
+
+def _codex_metadata_audit(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"paths"}:
+        raise McpError("factory.codex_metadata_audit accepts optional paths only")
+    supplied = arguments.get("paths")
+    if supplied is not None and (not isinstance(supplied, list) or not 1 <= len(supplied) <= 8 or not all(isinstance(item, str) and item.strip() and len(item) <= 512 for item in supplied)):
+        raise McpError("paths must contain 1-8 non-empty workspace-relative paths")
+    try:
+        audit = audit_metadata(root, [Path(item) for item in supplied] if supplied is not None else None)
+    except MetadataAuditError as exc:
+        raise McpError(exc.message, exc.code) from exc
+    return {
+        "marker": "MCP_CODEX_METADATA_AUDIT_READ_ONLY",
+        "action_summary": "Hash selected local run metadata and surface unbound terminal claims, stale or orphaned run state, missing intent bindings, and self-attested gates without importing prompts, tool output, credentials, or provider state.",
+        "audit": audit,
+        "scope": "Read-only local metadata integrity only; no prompt body, credential, provider state, execution, approval, or release authority is exposed or granted.",
+    }
+
+
+def _appforge_oracle_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_oracle_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_ORACLE_READ_ONLY",
+        "action_summary": "Read candidate-bound AppForge authority receipts and surface missing policy or human-source controls without asserting App Review readiness.",
+        "status": appforge_oracle_projection(root),
+        "scope": "Read-only local authority metadata; no Apple request, credential access, TestFlight action, App Review submission, or approval claim ran.",
+    }
+
+
+def _appforge_device_reality_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_device_reality_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_DEVICE_REALITY_READ_ONLY",
+        "action_summary": "Read hash-verified sealed device-intent and supervised-capture receipts without starting a device harness or changing a candidate.",
+        "status": device_reality_projection(root),
+        "scope": "Read-only local evidence status; no Phone Harness execution, device control, credential access, App Store write, submission, or approval ran.",
+    }
+
+
+def _appforge_release_rehearsal_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_release_rehearsal_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_RELEASE_REHEARSAL_READ_ONLY",
+        "action_summary": "Read hash-verified candidate-bound AppForge release rehearsals without invoking Fastlane, ASC CLI, credentials, Apple, upload, or submission.",
+        "status": release_rehearsal_projection(root),
+        "scope": "Read-only local rehearsal metadata; not archive, export, upload, processing, tester delivery, beta review, App Review, or approval evidence.",
+    }
+
+
+def _appforge_native_surface_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_native_surface_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_NATIVE_SURFACE_READ_ONLY",
+        "action_summary": "Read hash-verified source-bound adaptive Apple-surface preflight receipts without building, running, rendering, downloading assets, contacting Apple, uploading media, or submitting a release.",
+        "status": native_surface_projection(root),
+        "scope": "Read-only local static preflight metadata; not runtime layout, VoiceOver, screenshot authenticity, device compatibility, TestFlight, App Review, or approval evidence.",
+    }
+
+
+def _appforge_surface_matrix_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_surface_matrix_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_SURFACE_MATRIX_READ_ONLY",
+        "action_summary": "Read hash-verified iPhone/iPad and accessibility configuration plans without running a simulator, controlling a device, or changing a candidate.",
+        "status": surface_matrix_projection(root),
+        "scope": "Read-only local test-plan metadata; not device execution, runtime layout, screenshot capture, TestFlight, App Review, or Apple approval evidence.",
+    }
+
+
+def _appforge_mobile_evidence_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_mobile_evidence_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_MOBILE_EVIDENCE_READ_ONLY",
+        "action_summary": "Read hash-verified candidate-bound iOS/Android mobile-evidence receipts without starting Xcode, XCTest, Gradle, ADB, Fastlane, a device cloud, telemetry vendor, App Store Connect, or Play Console.",
+        "status": mobile_evidence_projection(root),
+        "scope": "Read-only local evidence status; supplied tool reports are not independently authenticated runtime or provider facts, and no submission or approval action ran.",
+    }
+
+
+def _appforge_storefront_story_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_storefront_story_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_STOREFRONT_STORY_READ_ONLY",
+        "action_summary": "Read hash-verified screenshot-story coverage and local claim-reference receipts without generating images, uploading Store media, or contacting Apple.",
+        "status": storefront_story_projection(root),
+        "scope": "Read-only local storyboard and claim-reference metadata; not image semantic verification, external claim substantiation, Store state, App Review, or approval evidence.",
+    }
+
+
+def _appforge_fastlane_capture_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_fastlane_capture_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_FASTLANE_CAPTURE_READ_ONLY",
+        "action_summary": "Read hash-verified, capture-only Fastlane Snapshot contracts without running Fastlane, Xcode, a simulator, a device, or any Apple action.",
+        "status": fastlane_capture_projection(root),
+        "scope": "Read-only local capture-plan metadata; not Fastlane execution, a simulator/device run, raw or framed screenshots, Store media, TestFlight, App Review, or Apple approval evidence.",
+    }
+
+
+def _appforge_submission_integrity_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_submission_integrity_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_SUBMISSION_INTEGRITY_READ_ONLY",
+        "action_summary": "Read hash-verified AppForge requirement coverage and deterministic repair instructions without creating captures, controlling a device, contacting Apple, or submitting a release.",
+        "status": submission_integrity_projection(root),
+        "scope": "Read-only local requirement integrity; not a screenshot, signed build, physical-device run, TestFlight, App Review, or Apple approval result.",
+    }
+
+
+def _proof_continuity_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.proof_continuity_status accepts no arguments")
+    return {
+        "marker": "MCP_PROOF_CONTINUITY_READ_ONLY",
+        "action_summary": "Read source-to-obligation-to-forbidden-behavior-to-gate-to-test-to-evidence continuity and any reopened incident; do not change any gate, code, test, agent, credential, or release.",
+        "status": proof_continuity_projection(root),
+        "scope": "Read-only local senior-engineering audit status; not evidence collection, execution, real credential revocation, provider action, release, or approval evidence.",
     }
 
 
@@ -1065,12 +1490,58 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_combine_status(root, arguments))
     if name == "factory.workspace_advisor":
         return _content(_workspace_advisor(root, arguments))
+    if name == "factory.ide_playbook":
+        return _content(_ide_playbook(root, arguments))
     if name == "factory.revenue_status":
         return _content(_revenue_status(root, arguments))
     if name == "factory.revenue_memory":
         return _content(_revenue_memory(root, arguments))
     if name == "factory.appforge_status":
         return _content(_appforge_status(root, arguments))
+    if name == "factory.oracle_firewall_status":
+        return _content(_oracle_firewall_status(root, arguments))
+    if name == "factory.semantic_authority_status":
+        return _content(_semantic_authority_status(root, arguments))
+    if name == "factory.enterprise_enforcement_status":
+        return _content(_enterprise_enforcement_status(root, arguments))
+    if name == "factory.atomic_status":
+        return _content(_atomic_status(root, arguments))
+    if name == "factory.operations_control_status":
+        return _content(_operations_control_status(root, arguments))
+    if name == "factory.lifecycle_status":
+        return _content(_lifecycle_status(root, arguments))
+    if name == "factory.repair_loop_status":
+        return _content(_repair_loop_status(root, arguments))
+    if name == "factory.mission_control_status":
+        return _content(_mission_control_status(root, arguments))
+    if name == "factory.agent_bridge_status":
+        return _content(_agent_bridge_status(root, arguments))
+    if name == "factory.agent_handoff_brief":
+        return _content(_agent_handoff_brief(root, arguments))
+    if name == "factory.proof_worklog_status":
+        return _content(_proof_worklog_status(root, arguments))
+    if name == "factory.codex_metadata_audit":
+        return _content(_codex_metadata_audit(root, arguments))
+    if name == "factory.appforge_oracle_status":
+        return _content(_appforge_oracle_status(root, arguments))
+    if name == "factory.appforge_device_reality_status":
+        return _content(_appforge_device_reality_status(root, arguments))
+    if name == "factory.appforge_release_rehearsal_status":
+        return _content(_appforge_release_rehearsal_status(root, arguments))
+    if name == "factory.appforge_native_surface_status":
+        return _content(_appforge_native_surface_status(root, arguments))
+    if name == "factory.appforge_surface_matrix_status":
+        return _content(_appforge_surface_matrix_status(root, arguments))
+    if name == "factory.appforge_mobile_evidence_status":
+        return _content(_appforge_mobile_evidence_status(root, arguments))
+    if name == "factory.appforge_storefront_story_status":
+        return _content(_appforge_storefront_story_status(root, arguments))
+    if name == "factory.appforge_fastlane_capture_status":
+        return _content(_appforge_fastlane_capture_status(root, arguments))
+    if name == "factory.appforge_submission_integrity_status":
+        return _content(_appforge_submission_integrity_status(root, arguments))
+    if name == "factory.proof_continuity_status":
+        return _content(_proof_continuity_status(root, arguments))
     if name == "factory.saas_status":
         return _content(_saas_status(root, arguments))
     if name == "factory.agent_proof_mission":

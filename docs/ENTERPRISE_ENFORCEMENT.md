@@ -1,0 +1,112 @@
+# Enterprise Enforcement Reference
+
+Code Factory now has a deterministic **enterprise admission reference**. It is
+the local Phase 1 foundation for the enterprise roadmap, not a hosted security
+product or an approval claim.
+
+## What it checks
+
+For one proposed operation, the reference verifies all of the following before
+it records an admission receipt:
+
+1. A signed workload identity is current, has the exact tenant, workload,
+   subject, audience, and action class, and expires within 24 hours.
+2. A separately signed tenant policy permits the exact action class and paths.
+3. An optional signed revocation list has not revoked that workload identity.
+4. When policy requires it, a current semantic lease binds the same agent,
+   context, action, scope, and sealed Oracle Contract.
+5. A repeated action ID cannot receive a second immutable decision receipt.
+
+The visible proof chain is:
+
+`source → obligation → forbidden behavior → gate → test → evidence → decision`
+
+The Oracle Contract anchors the first five links; this admission receipt is the
+final decision link. A green test alone cannot replace any of them.
+
+## What it does not claim
+
+This module is intentionally local and offline. It **does not** authenticate a
+real cloud workload through OIDC federation, execute a command, call a tool,
+prove a sandbox, control an Envoy/eBPF policy point, issue a credential, or
+approve/publish/deploy a release. A production pilot must wire the separate
+runner's only consequential route through a PEP and prove that topology.
+
+## Local reference workflow
+
+```powershell
+# 1. Create development-only Ed25519 material and explicit local trust root.
+factory enterprise keygen --out-dir .factory/enterprise-keys --keyid ci-proof `
+  --identity https://example.invalid/proof --issuer https://issuer.example.invalid
+
+# 2. Sign a workload identity and a tenant policy from reviewed JSON input.
+factory enterprise workload-identity-seal identity.json --private-key .factory/enterprise-keys/ci-proof.private.pem `
+  --keyid ci-proof --identity https://example.invalid/proof --issuer https://issuer.example.invalid --out identity.dsse.json
+factory enterprise enforcement-policy-seal policy.json --private-key .factory/enterprise-keys/ci-proof.private.pem `
+  --keyid ci-proof --identity https://example.invalid/proof --issuer https://issuer.example.invalid --out policy.dsse.json
+
+# 3. Record a non-executing decision. The separate runner must verify this
+#    receipt itself before it can do any consequential work.
+factory enterprise authorize request.json --root . --workload-identity identity.dsse.json `
+  --policy policy.dsse.json --trust-root .factory/enterprise-keys/trust-root.json `
+  --out .factory/enterprise-enforcement/decisions/restore-test.json
+```
+
+The command returns `ENTERPRISE_PEP_REFERENCE_ADMITTED` only for a matching
+identity, policy, scope, action, and (when required) semantic lease. Every
+returned decision sets every authority flag to `false`.
+
+## Runner-admission packet
+
+`prepare_runner_admission` turns one verified decision into an immutable
+`RUNNER_ADMISSION_PACKET_SEALED` input for a separate runner. It binds the
+decision digest to one `run_id`, action category, exact workspace scope, and
+argv SHA-256. It also copies the **verified signed identity expiry** from the
+decision into the packet. It rejects shell operators, a changed scope, a
+changed action, an altered decision, a missing/mismatched expiry, an expired
+identity, or an attempt to overwrite a prior packet.
+
+The packet still does **not** execute its argv. A production runner must make
+packet verification its only route to a consequential tool, then prove that
+topology with a direct-invocation bypass test. This is the next pilot
+integration gate, not a claim that every existing runner is already governed.
+
+```powershell
+factory enterprise runner-admission-seal .\runner-admission.json `
+  --root . `
+  --out .factory\enterprise-enforcement\runner-admissions\run-001.json
+```
+
+The input contains the immutable decision path, `run_id`, action class, exact
+scope paths, and argv array. Creation is deliberately non-executing.
+
+## Read-only supervision
+
+Graph Ops and `factory.enterprise_enforcement_status` now project runner
+packets next to their admission receipts. A packet is visible as verified only
+when its own digest, decision digest, action, scope, argv digest, zero-
+authority boundary, and identity-derived expiry all validate again. An expired
+packet is separately marked stale and must not be used as runner input; a
+malformed or changed packet remains visible as invalid.
+
+This is supervision evidence, not runner control. Graph Ops and MCP neither
+run argv nor authenticate a live workload, prove a sidecar/eBPF topology,
+enforce isolation, re-check a live revocation source, or approve an external
+action. Freshness limits the lifetime of a sealed receipt; it is not a claim of
+continuous authorization.
+
+## Pilot exit criteria
+
+Before calling this an enterprise production control, demonstrate all of these
+outside the local reference:
+
+- OIDC workload federation with tenant-isolated key and revocation management.
+- A runner topology where the PEP is the only route to consequential tools.
+- Independent challenge execution in an isolated environment.
+- Red-team proof that cross-tenant, expired, replayed, revoked, scope-expanded,
+  and policy-bypassing requests are denied at the real enforcement point.
+- Auditable export/retention, operator alerts, recovery exercises, support,
+  security review, and contractual evidence required by the buyer.
+
+Until those receipts exist, use the module as an evidence-backed local
+reference and pilot artifact—not as a substitute for a security review.

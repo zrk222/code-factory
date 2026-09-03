@@ -1,0 +1,29 @@
+name: enterprise-runner-admission-v1
+language: python
+modules:
+  - name: enterprise_runner_admission
+    path: factoryline/enterprise_runner_admission.py
+    functions:
+      - name: prepare_runner_admission
+        args: [root, input_path, out]
+        returns: dict[str, Any]
+  - name: enterprise_enforcement
+    path: factoryline/enterprise_enforcement.py
+    functions:
+      - name: verify_enterprise_decision
+        args: [root, path]
+        returns: dict[str, Any]
+dependencies:
+  - from: enterprise_runner_admission
+    to: enterprise_enforcement
+invariants:
+  - name: packet_never_executes
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system|Popen\\("
+    scopes:
+      - module: enterprise_runner_admission
+        symbol: prepare_runner_admission
+        max_lines: 75
+tests:
+  - path: tests/test_enterprise_enforcement.py
+    command: py -3.11 -m pytest -q tests/test_enterprise_enforcement.py
+schema: factory.ssat.v1

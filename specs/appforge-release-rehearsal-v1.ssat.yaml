@@ -1,0 +1,39 @@
+name: appforge-release-rehearsal-v1
+language: python
+modules:
+  - name: appforge_release_rehearsal
+    path: factoryline/appforge_release_rehearsal.py
+    functions:
+      - name: create_release_rehearsal
+        args: [root, candidate_path, assurance_path, profile_path, out_path]
+        returns: dict[str, Any]
+      - name: release_rehearsal_projection
+        args: [root]
+        returns: dict[str, Any]
+dependencies: []
+invariants:
+  - name: release_rehearsal_never_invokes_a_provider_or_network
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system|Popen\\("
+    scopes:
+      - module: appforge_release_rehearsal
+        symbol: create_release_rehearsal
+        max_lines: 80
+      - module: appforge_release_rehearsal
+        symbol: release_rehearsal_projection
+        max_lines: 80
+  - name: release_rehearsal_never_evaluates_untrusted_profile_content
+    forbid_pattern: "eval\\(|exec\\("
+    scopes:
+      - module: appforge_release_rehearsal
+        symbol: create_release_rehearsal
+        max_lines: 80
+tests:
+  - path: tests/test_appforge_release_rehearsal.py
+    command: py -3.11 -m pytest -q tests/test_appforge_release_rehearsal.py
+  - path: tests/test_mcp.py
+    command: py -3.11 -m pytest -q tests/test_mcp.py
+  - path: tests/test_webmcp.py
+    command: py -3.11 -m pytest -q tests/test_webmcp.py
+  - path: tests/test_graph_ops.py
+    command: py -3.11 -m pytest -q tests/test_graph_ops.py
+schema: factory.ssat.v1

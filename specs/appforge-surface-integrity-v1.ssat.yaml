@@ -1,0 +1,58 @@
+name: appforge-surface-integrity-v1
+language: python
+modules:
+  - name: appforge_native_surface
+    path: factoryline/appforge_native_surface.py
+    functions:
+      - name: verify_native_surface
+        args: [root, candidate_path, contract_path, evidence_path, out_path]
+        returns: dict[str, Any]
+  - name: appforge_surface_matrix
+    path: factoryline/appforge_surface_matrix.py
+    functions:
+      - name: create_surface_matrix
+        args: [root, candidate_path, native_surface_path, out_path]
+        returns: dict[str, Any]
+  - name: appforge_storefront_story
+    path: factoryline/appforge_storefront_story.py
+    functions:
+      - name: verify_storefront_story
+        args: [root, candidate_path, store_media_path, contract_path, evidence_path, out_path]
+        returns: dict[str, Any]
+dependencies:
+  - from: appforge_surface_matrix
+    to: appforge_native_surface
+invariants:
+  - name: surface_integrity_never_invokes_provider_or_device
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system|Popen\\("
+    scopes:
+      - module: appforge_native_surface
+        symbol: verify_native_surface
+        max_lines: 80
+      - module: appforge_surface_matrix
+        symbol: create_surface_matrix
+        max_lines: 80
+      - module: appforge_storefront_story
+        symbol: verify_storefront_story
+        max_lines: 80
+  - name: surface_integrity_never_evaluates_untrusted_content
+    forbid_pattern: "eval\\(|exec\\("
+    scopes:
+      - module: appforge_native_surface
+        symbol: verify_native_surface
+        max_lines: 80
+      - module: appforge_storefront_story
+        symbol: verify_storefront_story
+        max_lines: 80
+tests:
+  - path: tests/test_appforge_native_surface.py
+    command: py -3.11 -m pytest -q tests/test_appforge_native_surface.py
+  - path: tests/test_appforge_surface_matrix.py
+    command: py -3.11 -m pytest -q tests/test_appforge_surface_matrix.py
+  - path: tests/test_appforge_storefront_story.py
+    command: py -3.11 -m pytest -q tests/test_appforge_storefront_story.py
+  - path: tests/test_mcp.py
+    command: py -3.11 -m pytest -q tests/test_mcp.py
+  - path: tests/test_webmcp.py
+    command: py -3.11 -m pytest -q tests/test_webmcp.py
+schema: factory.ssat.v1

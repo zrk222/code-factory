@@ -98,6 +98,46 @@ disposition, merge, publish, deploy, sign, send a message, access a credential,
 or grant a connector. The authoritative Product Mission ledger, proof receipts,
 and trace verifiers remain separate.
 
+## Oracle Firewall: proof of the oracle
+
+Graph Ops projects a local **Oracle Firewall** lane when sealed contracts
+exist. It connects the original source, approved obligation, forbidden
+behavior, gate, declared test, challenge evidence, and decision without making
+the graph an authority source. A semantic relaxation—such as a lowered
+threshold, removed negative case, added exception, or provenance downgrade—is
+shown as `E_ORACLE_WEAKENING` and the fact-derived next action becomes review,
+not repair or release.
+
+The Oracle Firewall panel can copy the explicit `factory oracle init` command
+and validate only the loaded status shape. Its apparent approval control is
+disabled: Graph Ops cannot approve intent, seal a successor contract, mutate a
+candidate, execute a challenge, or promote a release. See
+[Oracle Firewall](ORACLE_FIREWALL.md).
+
+## Atomic workflow mechanics: verify without adopting the runtime
+
+When an operator imports a valid local Atomic mechanics receipt, Graph Ops adds
+an **Atomic mechanics** panel and typed nodes for the contract binding, declared
+workflow DAG, every stage, and every scoped handoff. The panel exposes only the
+declared topology, capability intersection, scope, artifact/tool hashes, source
+preconditions, and checkpoint continuity facts.
+
+The bridge deliberately does not import Atomic, start a stage, send an
+intercom message, resume a checkpoint, mutate code, or promote a workflow
+receipt into execution or release authority. A declared worktree, container,
+VM, or remote host is shown as unverified context rather than proof of a
+sandbox. Invalid or stale receipts are retained as invalid graph facts and do
+not support supervision.
+
+```powershell
+factory atomic import --root . --envelope .factory\exports\atomic-run.json --json
+factory atomic verify .factory\atomic\<receipt>.json --root . --json
+factory atomic status --root . --json
+```
+
+The same bounded view is available as `factory.atomic_status` in MCP and
+WebMCP. It is intentionally read-only.
+
 ## Portfolio Flight Plan and sealed admission
 
 The **Portfolio Flight Plan** makes the existing Graph Ops dependencies useful

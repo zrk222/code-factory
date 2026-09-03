@@ -1,5 +1,32 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.9.1 - 2026-09-02
+
+- Harden the local Oracle Firewall facts shown in Unified Graph Ops. Semantic
+  rewrites of existing blocking/release obligations now fail closed even when
+  their rule IDs stay the same.
+- Keep AppForge dossier evidence traceable from each displayed receipt path to
+  its matching digest. FactoryLine still provides no App Store action or
+  approval authority.
+
+## 0.9.0 - 2026-09-02
+
+- Add the Agent Proof Bridge to Unified Graph Ops: inspect hash-bound Eve,
+  Junie, Grok Build, or generic handoff evidence against the current Oracle
+  Contract, including DAG topology, scope, source preconditions, and real
+  before/after artifacts.
+- Surface review-required local Proof Worklog drafts without a tracker or chat
+  connector. FactoryLine cannot start an agent, post a worklog, or turn a
+  declaration into approval or release authority.
+
+## 0.8.22 - 2026-09-02
+
+- Add Atomic Proof Adapter facts to Unified Graph Ops so JetBrains users can
+  inspect an externally orchestrated workflow's typed stages, scoped handoffs,
+  checkpoint continuity, source preconditions, and Oracle Contract binding.
+- Make imported authority explicit: FactoryLine does not execute or resume the
+  workflow and does not approve, apply, merge, publish, or deploy its output.
+
 ## 0.8.21 - 2026-08-31
 
 - Add an IDE-native **AppForge Mission Control** tab and action. It reads only

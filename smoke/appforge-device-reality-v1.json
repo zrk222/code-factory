@@ -1,0 +1,23 @@
+{
+  "checks": [
+    {
+      "name": "device_reality_seals_intent_and_rejects_oracle_or_supervision_weakening",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_appforge_device_reality.py','tests/test_appforge_evidence_kit.py','tests/test_mcp.py','tests/test_webmcp.py','tests/test_graph_ops.py'])\nassert result==0\nprint('APPFORGE_DEVICE_REALITY_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "APPFORGE_DEVICE_REALITY_SMOKE_PASS",
+      "timeout_s": 120,
+      "must_fail_on_stub": true,
+      "covers": [
+        "DEVICE_REALITY_ORACLE_BINDING",
+        "DEVICE_REALITY_DESIGN_BINDING",
+        "DEVICE_REALITY_JOURNEY_SEALING",
+        "APPFORGE_DEVICE_REALITY_ENVELOPE_TAMPERED",
+        "APPFORGE_DEVICE_REALITY_READY",
+        "APPFORGE_DEVICE_REALITY_BLOCKED",
+        "DEVICE_REALITY_TRANSPORT_DECLARED",
+        "APPFORGE_DEVICE_REALITY_READ_ONLY"
+      ]
+    }
+  ]
+}

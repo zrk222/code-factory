@@ -25,6 +25,7 @@ from .appforge_quality_audit import RECEIPT_SCHEMA as QUALITY_AUDIT_SCHEMA
 from .appforge_store_media import RECEIPT_SCHEMA as STORE_MEDIA_SCHEMA
 from .revenueforge import AUTHORITY, RevenueForgeError
 from .saas_proof import RECEIPT_SCHEMA as SAAS_PROOF_SCHEMA
+from .appforge_oracle import RECEIPT_SCHEMA as ORACLE_AUTHORITY_RECEIPT_SCHEMA, verify_appforge_oracle_authority
 
 
 CONTRACT_SCHEMA = "factory.appforge.submission-assurance-contract.v1"
@@ -117,6 +118,26 @@ def _atomic_text(path: Path, contents: str) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def _persist_oracle_authority_receipt(root: Path, receipt: dict[str, Any]) -> Path:
+    """Persist a hash-valid derived authority receipt at a content-addressed path.
+
+    The authority input is not the same object as the verified authority
+    receipt.  The dossier therefore references this immutable, derived receipt
+    rather than attaching its digest to the mutable input file.
+    """
+    supplied = receipt.get("receipt_sha256")
+    if not isinstance(supplied, str) or not _valid_receipt(receipt, ORACLE_AUTHORITY_RECEIPT_SCHEMA):
+        raise RevenueForgeError("APPFORGE_ORACLE_RECEIPT_INVALID", "derived Oracle authority receipt is not hash-valid")
+    target = _local(root, Path(".factory/appforge/oracle-authority") / f"oracle-authority-{supplied}.json", exists=False)
+    if target.exists():
+        existing, _ = _read_json(root, target, schema=ORACLE_AUTHORITY_RECEIPT_SCHEMA)
+        if not _valid_receipt(existing, ORACLE_AUTHORITY_RECEIPT_SCHEMA) or existing != receipt:
+            raise RevenueForgeError("APPFORGE_ORACLE_RECEIPT_CONFLICT", "content-addressed Oracle authority receipt path contains different bytes")
+        return target
+    _atomic_json(target, receipt)
+    return target
 
 
 def _recipient(contract: dict[str, Any]) -> dict[str, str]:
@@ -235,6 +256,7 @@ def verify_submission_assurance(
     quality_audit_path: Path,
     out_path: Path,
     report_dir: Path,
+    oracle_authority_path: Path | None = None,
 ) -> dict[str, Any]:
     """Join three hash-valid, exact-candidate gates and emit final reports only when ready."""
     workspace = Path(root).resolve()
@@ -256,6 +278,31 @@ def verify_submission_assurance(
             continue
         source = _local(workspace, path)
         audit.append({"name": name, "detail": str(value.get("action_summary") or "Hash-valid local evidence passed."), "receipt_path": source.relative_to(workspace).as_posix(), "receipt_sha256": str(value["receipt_sha256"])})
+    configured_oracle = oracle_authority_path
+    oracle_authority_relative: str | None = None
+    oracle_authority_source_relative: str | None = None
+    if configured_oracle is None:
+        oracle_config = contract.get("oracle_authority")
+        if isinstance(oracle_config, dict) and oracle_config.get("required") is True:
+            path_value = oracle_config.get("path")
+            if not isinstance(path_value, str) or not path_value.strip():
+                findings.append({"gate": "Oracle authority", "code": "APPFORGE_ORACLE_AUTHORITY_REQUIRED", "detail": "submission contract requires a workspace-contained Oracle authority receipt"})
+            else:
+                configured_oracle = Path(path_value)
+    oracle_authority: dict[str, Any] | None = None
+    if configured_oracle is not None:
+        try:
+            oracle_authority = verify_appforge_oracle_authority(workspace, configured_oracle, candidate=candidate)
+            if not oracle_authority.get("ok"):
+                findings.extend({"gate": "Oracle authority", "code": item.get("code", "APPFORGE_ORACLE_AUTHORITY_BLOCKED"), "detail": item.get("detail", "Oracle authority is not current")} for item in oracle_authority.get("findings", []))
+            else:
+                oracle_path = _local(workspace, configured_oracle)
+                persisted_oracle = _persist_oracle_authority_receipt(workspace, oracle_authority)
+                oracle_authority_relative = persisted_oracle.relative_to(workspace).as_posix()
+                oracle_authority_source_relative = oracle_path.relative_to(workspace).as_posix()
+                audit.append({"name": "Oracle authority", "detail": str(oracle_authority.get("action_summary")), "receipt_path": oracle_authority_relative, "receipt_sha256": str(oracle_authority.get("receipt_sha256"))})
+        except (RevenueForgeError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+            findings.append({"gate": "Oracle authority", "code": getattr(error, "code", "APPFORGE_ORACLE_AUTHORITY_BLOCKED"), "detail": str(error)})
     ready = not findings
     destination = _local(workspace, out_path, exists=False)
     core: dict[str, Any] = {
@@ -266,6 +313,14 @@ def verify_submission_assurance(
         "candidate": candidate,
         "contract_sha256": hashlib.sha256(contract_source.read_bytes()).hexdigest(),
         "reviewer_packet": packet,
+        "oracle_authority": {
+            "required": configured_oracle is not None,
+            "path": oracle_authority_relative,
+            "source_path": oracle_authority_source_relative,
+            "source_sha256": oracle_authority.get("authority_source_sha256") if oracle_authority else None,
+            "marker": oracle_authority.get("marker") if oracle_authority else None,
+            "receipt_sha256": oracle_authority.get("receipt_sha256") if oracle_authority else None,
+        },
         "audit": audit,
         "findings": findings,
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),

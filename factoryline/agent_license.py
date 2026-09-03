@@ -16,6 +16,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .protocol_enums import AutonomyLevel
+
 from .attribution import FailureClass
 
 
@@ -37,8 +39,13 @@ SEVERE_FAILURES = frozenset({
     FailureClass.HOLLOW_TEST.value,
     FailureClass.HOLLOW_VALIDATOR.value,
     FailureClass.SCOPE_ESCAPE.value,
+    FailureClass.ORACLE_WEAKENING.value,
 })
-AUTONOMY_RANK = {"human_controlled": 0, "supervised": 1, "autonomous": 2}
+AUTONOMY_RANK = {
+    AutonomyLevel.HUMAN_CONTROLLED.value: 0,
+    AutonomyLevel.SUPERVISED.value: 1,
+    AutonomyLevel.AUTONOMOUS.value: 2,
+}
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,159}$")
 _TASK_IDENTIFIER = re.compile(r"^[a-z][a-z0-9-]{0,95}$")
 _AUTHORITY = {
@@ -422,16 +429,26 @@ def _license_evidence(root: Path, identity: dict[str, Any], instant: datetime) -
     stale = [event for event in evidence if event not in current]
     current.sort(key=lambda item: (item["recorded_at"], item["event_id"]))
     incidents = [event for event in current if set(event["failure_classes"]) & SEVERE_FAILURES]
+    try:
+        from .oracle_firewall import oracle_incidents_for_agent
+        oracle_incidents = oracle_incidents_for_agent(root, identity)
+    except (ImportError, ValueError, OSError, json.JSONDecodeError):
+        oracle_incidents = []
     latest_incident = incidents[-1] if incidents else None
-    after_incident = [event for event in current if latest_incident is None or _timestamp(event["recorded_at"], "recorded_at") > _timestamp(latest_incident["recorded_at"], "recorded_at")]
+    event_incident_at = _timestamp(latest_incident["recorded_at"], "recorded_at") if latest_incident else None
+    oracle_incident_at = max((_timestamp(item["recorded_at"], "recorded_at") for item in oracle_incidents), default=None)
+    latest_incident_at = max((item for item in (event_incident_at, oracle_incident_at) if item is not None), default=None)
+    after_incident = [event for event in current if latest_incident_at is None or _timestamp(event["recorded_at"], "recorded_at") > latest_incident_at]
     clean_after_incident = [event for event in after_incident if event["passed"] and not event["failure_classes"]]
     independent = [event for event in clean_after_incident if event["verification"]["subject"] != identity["subject"]]
     scopes = _common_paths(clean_after_incident)
-    return {"all": evidence, "current": current, "stale": stale, "incidents": incidents, "latest_incident": latest_incident, "clean": clean_after_incident, "independent": independent, "scopes": scopes}
+    return {"all": evidence, "current": current, "stale": stale, "incidents": incidents, "oracle_incidents": oracle_incidents, "latest_incident": latest_incident, "latest_incident_at": latest_incident_at, "clean": clean_after_incident, "independent": independent, "scopes": scopes}
 
 
 def _license_tier(evidence: dict[str, Any]) -> tuple[str, str]:
     current, all_events = evidence["current"], evidence["all"]
+    if evidence["oracle_incidents"] and len(evidence["clean"]) < POST_INCIDENT_REQUALIFICATION_RUNS:
+        return "human_controlled", "ORACLE_WEAKENING_DEMOTION"
     if not current:
         return ("supervised", "EVIDENCE_EXPIRED") if all_events else ("human_controlled", "INSUFFICIENT_GOVERNED_EVIDENCE")
     if evidence["latest_incident"] is not None and len(evidence["clean"]) < POST_INCIDENT_REQUALIFICATION_RUNS:
@@ -467,11 +484,15 @@ def derive_license(root: Path, agent: dict[str, Any], *, now: datetime | None = 
             "stale_governed_event_count": len(evidence["stale"]),
             "clean_events_since_latest_incident": len(evidence["clean"]),
             "independent_verification_count_since_latest_incident": len(evidence["independent"]),
+            "oracle_incident_count": len(evidence["oracle_incidents"]),
             "latest_event_sha256": latest["event_sha256"] if latest else None,
         },
         "incidents": [
             {"event_id": event["event_id"], "recorded_at": event["recorded_at"], "failure_classes": sorted(set(event["failure_classes"]) & SEVERE_FAILURES), "event_sha256": event["event_sha256"]}
             for event in evidence["incidents"]
+        ] + [
+            {"recorded_at": item["recorded_at"], "failure_classes": [FailureClass.ORACLE_WEAKENING.value], "incident_sha256": item["incident_sha256"]}
+            for item in evidence["oracle_incidents"]
         ],
         "policy": _policy(),
         "authority": dict(_AUTHORITY),

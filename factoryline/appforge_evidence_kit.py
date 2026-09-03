@@ -91,7 +91,9 @@ def _write_readme(path: Path, candidate: dict[str, str], design_input: Path, des
         "1. Read `WORKLIST.md`. Replace every `REPLACE_WITH...` value only with an observed fact or a named human decision.",
         "2. Collect real iPhone and iPad captures. This product kit asks for 10 iPhone journeys and 3 iPad 13-inch journeys; this is a product-quality bundle, not Apple’s global screenshot minimum.",
         "3. Run the App Review, Store media, SaaS, and quality gates. A blocked receipt is useful: fix the named gap rather than editing the receipt.",
-        "4. Run `factory revenue submission-assurance` only after all four receipts are ready. It writes the final Markdown/PDF dossier only then.",
+        "4. Run `factory revenue appforge-eas` with the reviewed EAS profile to produce a credential-free handoff packet. It does not invoke EAS or Apple.",
+        "5. Seal the supervised Device Reality intent envelope before collecting physical-device evidence. Its exact candidate, design-input digest, journeys, forbidden outcomes, and permitted transport cannot be rewritten by the capture worker.",
+        "6. Run `factory revenue submission-assurance` only after all required receipts are ready. It writes the final Markdown/PDF dossier only then.",
         "",
         "## Authority boundary",
         "",
@@ -120,6 +122,12 @@ def _write_worklist(path: Path) -> None:
         "- [ ] 3 distinct 13-inch iPad journeys: landing, core workspace, and result.",
         "- [ ] Named product/design confirmation that captures represent the candidate and storyboard.",
         "",
+        "## Device Reality (optional supervised evidence lane)",
+        "",
+        "- [ ] Complete `device-reality-journeys.json` from user-confirmed outcomes and forbidden outcomes; placeholders are deliberately invalid.",
+        "- [ ] Seal the journeys against the AppForge Oracle Authority and user design input before capture.",
+        "- [ ] Collect one hash-valid artifact per sealed journey from a named, human-supervised physical-device session. Phone Harness is an allowed transport only when the human authorizes it; it is not a release authority.",
+        "",
         "## Strict design, accessibility, and full-stack audit",
         "",
     ]
@@ -130,6 +138,7 @@ def _write_worklist(path: Path) -> None:
         "",
         "- [ ] All four gate receipts are hash-valid and bound to the same candidate.",
         "- [ ] Named release owner has checked support, privacy, review notes, and reviewer-access packets.",
+        "- [ ] Verify reviewed EAS build and iOS submit profile names without placing tokens or credential values in eas.json.",
         "- [ ] Generate Markdown/PDF dossier. This still does not submit to Apple.",
         "",
     ])
@@ -188,7 +197,8 @@ def initialize_appforge(
         "1. Edit `user-design-input.md` with the user's actual constraints and approval notes.\n"
         "2. Compile the storyboard: `factory revenue appforge-design --root . --brief appforge-design-brief.json --out-dir .factory/appforge/design --json`.\n"
         "3. Create the evidence workspace: `factory revenue evidence-kit --root . --candidate release-candidate.json --design-input user-design-input.md --out-dir .factory/appforge/evidence --json`.\n"
-        "4. Collect real evidence. The kit is not a TestFlight upload or Apple submission action.\n",
+        "4. Validate the reviewed EAS profiles with `factory revenue appforge-eas`; do not put tokens or credential values in `eas.json`.\n"
+        "5. Collect real evidence. The kit is not a TestFlight upload or Apple submission action.\n",
         encoding="utf-8", newline="\n",
     )
     artifacts = {"candidate": candidate_file, "user_design_input": design_file, "design_brief": brief_file, "next": next_file}
@@ -274,7 +284,11 @@ def create_evidence_kit(root: Path, candidate_path: Path, design_input_path: Pat
     artifacts["store_media_evidence"] = write_json("store-media-evidence.json", {"schema": "factory.appforge.store-media-evidence.v1", "candidate": candidate, "intent_sha256": design_sha, "review": {"representative_confirmed_by": "REPLACE_WITH_NAMED_REVIEWER", "storyboard_confirmed_by": "REPLACE_WITH_NAMED_REVIEWER", "confirmed_at": "REPLACE_WITH_RFC3339_TIMESTAMP"}, "captures": []})
     artifacts["quality_contract"] = write_json("quality-contract.json", {"schema": "factory.appforge.quality-audit-contract.v1", "candidate": candidate, "user_design_input_sha256": design_sha, "conditional": _conditional_templates(CONDITIONAL_CHECKS)})
     artifacts["quality_evidence"] = write_json("quality-evidence.json", {"schema": "factory.appforge.quality-audit-evidence.v1", "candidate": candidate, "user_design_input_sha256": design_sha, "design_review": {"reviewed_by": "REPLACE_WITH_NAMED_REVIEWER", "reviewed_at": "REPLACE_WITH_RFC3339_TIMESTAMP", "user_design_input_considered": False, "storyboard_sha256": "REPLACE_WITH_REAL_STORYBOARD_SHA256"}, "checks": []})
-    artifacts["assurance_contract"] = write_json("submission-assurance-contract.json", {"schema": "factory.appforge.submission-assurance-contract.v1", "candidate": candidate, "reviewer_packet": {"support_url": "REPLACE_WITH_REACHABLE_SUPPORT_URL", "privacy_url": "REPLACE_WITH_REACHABLE_PRIVACY_URL", "review_notes_sha256": "REPLACE_WITH_REAL_REVIEW_NOTES_SHA256", "reviewer_access_instructions_sha256": "REPLACE_WITH_REAL_ACCESS_INSTRUCTIONS_SHA256", "approved_by": "REPLACE_WITH_NAMED_RELEASE_OWNER", "approved_at": "REPLACE_WITH_RFC3339_TIMESTAMP"}})
+    artifacts["oracle_authority"] = write_json("oracle-authority-template.json", {"schema": "factory.appforge.oracle-authority.v1", "contract_path": "REPLACE_WITH_SEALED_ORACLE_CONTRACT_PATH", "candidate": candidate, "policy_sources": [], "human_reviewer": "REPLACE_WITH_NAMED_RELEASE_OWNER", "claim_boundary": "Template only; it is not authority evidence until source-bound and verified."})
+    artifacts["device_reality_journeys"] = write_json("device-reality-journeys.json", {"required_journeys": [{"id": journey, "expected_outcome": "REPLACE_WITH_HUMAN_CONFIRMED_EXPECTED_OUTCOME", "forbidden_outcome": "REPLACE_WITH_HUMAN_CONFIRMED_FORBIDDEN_OUTCOME"} for journey in (*IPHONE_JOURNEYS, *IPAD_JOURNEYS)]})
+    artifacts["device_reality_evidence"] = write_json("device-reality-evidence.json", {"schema": "factory.appforge.device-reality-evidence.v1", "candidate": candidate, "intent_envelope_sha256": "REPLACE_WITH_SEALED_ENVELOPE_SHA256", "user_design_input_sha256": design_sha, "supervision": {"approved_by": "REPLACE_WITH_ENVELOPE_APPROVER", "approved_at": "REPLACE_WITH_RFC3339_TIMESTAMP", "human_present": False}, "transport": {"kind": "REPLACE_WITH_manual_physical_device_OR_phone_harness", "user_authorized": False}, "captures": []})
+    artifacts["eas_profile_template"] = write_json("eas-profile-template.json", {"schema": "factory.appforge.eas-preflight.v1", "candidate": candidate, "eas_json_path": "REPLACE_WITH_REVIEWED_EAS_JSON_PATH", "build_profile": "REPLACE_WITH_EAS_BUILD_PROFILE", "submit_profile": "REPLACE_WITH_EAS_SUBMIT_PROFILE", "claim_boundary": "Template only; never place Expo, Apple, or CI credential values in this file or eas.json."})
+    artifacts["assurance_contract"] = write_json("submission-assurance-contract.json", {"schema": "factory.appforge.submission-assurance-contract.v1", "candidate": candidate, "oracle_authority": {"required": True, "path": "REPLACE_WITH_ORACLE_AUTHORITY_RECEIPT_PATH"}, "reviewer_packet": {"support_url": "REPLACE_WITH_REACHABLE_SUPPORT_URL", "privacy_url": "REPLACE_WITH_REACHABLE_PRIVACY_URL", "review_notes_sha256": "REPLACE_WITH_REAL_REVIEW_NOTES_SHA256", "reviewer_access_instructions_sha256": "REPLACE_WITH_REAL_ACCESS_INSTRUCTIONS_SHA256", "approved_by": "REPLACE_WITH_NAMED_RELEASE_OWNER", "approved_at": "REPLACE_WITH_RFC3339_TIMESTAMP"}})
     readme, worklist = destination / "README.md", destination / "WORKLIST.md"
     _write_readme(readme, candidate, design_source.relative_to(workspace), design_sha)
     _write_worklist(worklist)

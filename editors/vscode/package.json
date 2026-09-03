@@ -1,8 +1,8 @@
 {
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
-  "description": "Catch hollow AI tests, SaaS access drift, and App Store evidence gaps locally.",
-  "version": "0.8.21",
+  "description": "Start with First Proof: find AI tests that cannot fail, then keep agent and app-release evidence reviewable.",
+  "version": "0.9.3",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -108,7 +108,7 @@
   },
   "overrides": {
     "brace-expansion": "5.0.9",
-    "fast-uri": "3.1.5",
+    "fast-uri": "3.1.6",
     "js-yaml": "^4.3.1"
   },
   "devDependencies": {

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.2 - 2026-09-02
+
+- Ship the Oracle Firewall hardening behind FactoryLine: same-ID edits to a
+  blocking or release rule's meaning, source binding, provenance, criticality,
+  effect, or gate semantics now produce a review-blocking drift receipt.
+- Keep AppForge Oracle evidence path-bound and hash-verifiable in the local
+  submission dossier; this remains local evidence, not Apple authority.
+
+## 0.9.0 - 2026-09-02
+
+- Add provider-neutral Agent Proof Bridge status to the local proof surface:
+  hash-bound DAG, Oracle scope, source preconditions, and before/after evidence
+  can be inspected without operating an external agent.
+- Add review-required local Proof Worklog drafts from sealed evidence. The
+  extension never posts externally or grants approval, merge, or release power.
+
+## 0.8.22 - 2026-09-02
+
+- Add read-only Atomic workflow proof to Graph Ops: verify the supplied stage
+  graph, scoped handoffs, checkpoint continuity, source bytes, and resume
+  lineage before treating the workflow as evidence.
+- Keep the authority boundary visible. FactoryLine never starts or resumes the
+  external workflow and never turns its declarations into approval, merge, or
+  release authority.
+
 ## 0.8.21 - 2026-08-31
 
 - Add the AppForge Mission Control story to the local extension surface: bind

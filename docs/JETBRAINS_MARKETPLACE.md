@@ -14,17 +14,20 @@ submitting or replacing anything pending.
 ## Conversion-focused listing
 
 - **Name:** `FactoryLine AI Proof`
-- **Preview:** `Catch AI-generated tests that could never fail — before review.`
+- **Preview:** `Your AI change is green. Can its test actually fail? Find out before review.`
 - **Tags:** `AI`, `Code Quality`, `Code Tools`, `Productivity`, `Testing`
 - **Source:** <https://github.com/zrk222/code-factory>
 - **License:** repository `MIT OR Apache-2.0` terms
 - **Getting started:** `Tools | FactoryLine | Run First Proof`
 
-**Category position:** FactoryLine is an independent proof layer after AI coding
-and alongside static analysis. Junie or Copilot can build; Qodana or SonarQube can inspect code,
-coverage, and configured thresholds; FactoryLine challenges whether a test and
-the supplied run evidence could actually reject a broken result. It does not
-replace, control, or imply JetBrains endorsement of either product.
+**Category position:** FactoryLine addresses a common JetBrains workflow gap:
+an AI-assisted change can look finished while its test, intent, and handoff
+evidence remain unclear. It is an independent proof layer after AI coding and
+alongside static analysis. Junie, Copilot, CodeRabbit, or Devin can propose a
+change; Qodana or SonarQube can inspect code, coverage, and configured
+thresholds; FactoryLine challenges whether a declared test and supplied run
+evidence could actually reject a broken result. It does not replace, control,
+contact, or imply JetBrains endorsement of any of those products.
 
 The name stays distinct from the existing Marketplace product named Code Factory.
 The first sentence is short enough to carry the full preview outcome. The packaged
@@ -68,12 +71,12 @@ generated ZIP, including Marketplace metadata, icons, and change notes. Compatib
 WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip from the 2025.2 platform
 baseline forward.
 
-The release candidate also carries a concise [JetBrains reviewer summary](JETBRAINS_REVIEWER_SUMMARY_0_8_21.md)
+The release candidate also carries a concise [JetBrains reviewer summary](JETBRAINS_REVIEWER_SUMMARY_0_9_0.md)
 that maps each local claim to its guardrail and source-level or package-level
 evidence. Marketplace account-side requirements and manual moderation remain
 external gates, never local claims.
 
-Use the strict [0.8.21 compliance checklist](JETBRAINS_MARKETPLACE_COMPLIANCE_0_8_21.md)
+Use the strict [0.9.0 compliance checklist](JETBRAINS_MARKETPLACE_COMPLIANCE_0_9_0.md)
 before a dispatch, and keep post-approval discovery/review work inside the
 prepared, policy-compliant [growth plan](JETBRAINS_POST_RELEASE_GROWTH.md).
 
@@ -85,7 +88,7 @@ prepared, policy-compliant [growth plan](JETBRAINS_POST_RELEASE_GROWTH.md).
    must return `MARKETPLACE_UPDATE_CLEAR`.
 2. Merge the tested release commit to `main`.
 3. Create the immutable tag matching the plugin version, currently
-   `jetbrains-v0.8.21` after the remaining Marketplace metadata review is clear.
+   `jetbrains-v0.9.0` after the remaining Marketplace metadata review is clear.
 4. Run **Publish JetBrains Marketplace plugin** with that tag and the intended
    channel. The `JETBRAINS_MARKETPLACE_TOKEN` remains scoped to the protected
    `jetbrains-marketplace` environment.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.45.3"
+version = "0.46.2"
 description = "Catch hollow AI tests and App Store evidence gaps before review."
 authors = [
   { name = "Richard Katz" },
@@ -100,4 +100,7 @@ packages = ["factoryline", "factoryline.builtin_packs"]
 include-package-data = false
 
 [tool.setuptools.package-data]
-factoryline = ["builtin_packs/**/*", "data/*.json", "hosted_console.html", "graph_ops.html"]
+factoryline = ["builtin_packs/**/*.json", "builtin_packs/**/*.yaml", "data/*.json", "hosted_console.html", "graph_ops.html"]
+
+[tool.setuptools.exclude-package-data]
+factoryline = ["**/__pycache__/*", "**/*.py[cod]"]

@@ -488,11 +488,17 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "FACTORY_WEBMCP_GRAPH_SUMMARY" in page
     assert "FACTORY_WEBMCP_REVENUE_STATUS" in page
     assert "FACTORY_WEBMCP_APPFORGE_STATUS" in page
+    assert "FACTORY_WEBMCP_APPFORGE_MOBILE_EVIDENCE_STATUS" in page
+    assert "factory.appforge_mobile_evidence_status" in page
+    assert "FACTORY_WEBMCP_ORACLE_FIREWALL_STATUS" in page
+    assert "FACTORY_WEBMCP_APPFORGE_ORACLE_STATUS" in page
+    assert 'id="enterprise-runner-state"' in page
+    assert "GRAPH_OPS_ENTERPRISE_RUNNER_ADMISSION_READ_ONLY" in page
     assert "FACTORY_WEBMCP_SAAS_PROOF_STATUS" in page
     assert "GRAPH_OPS_SAAS_PROOF_READ_ONLY" in page
     assert 'annotations:{readOnlyHint:true,untrustedContentHint:true}' in page
     assert 'typeof context.registerTool!=="function"' in page
-    assert "registerFactoryWebMcp();load();loadDeveloperMemory();" in page
+    assert "registerFactoryWebMcp();registerMobileEvidenceWebMcp();load();loadDeveloperMemory();" in page
     assert "Engineering Judgment · human-promoted contracts" in page
     assert 'id="judgment-panel"' in page
     assert 'id="judgment-cards"' in page
@@ -579,6 +585,38 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "GRAPH_OPS_PORTFOLIO_ADMISSION_READ_ONLY" in page
     assert "renderPortfolio(payload)" in page
     assert "Graph Ops cannot execute a wave" in page
+    assert 'id="oracle-firewall-panel"' in page
+    assert "Oracle Firewall · Shadow Oracle Loop" in page
+    assert "Proof of the Oracle chain" in page
+    assert "Proof chain: source → obligation → forbidden behavior → gate → test → evidence → decision." in page
+    assert "E_ORACLE_WEAKENING" in page
+    assert 'id="copy-oracle-init"' in page
+    assert 'id="validate-oracle-boundary"' in page
+    assert 'id="authorize-oracle-change"' in page
+    assert "renderOracleFirewall(payload)" in page
+    assert "factory.oracle_firewall_status" in page
+    assert 'id="semantic-authority-panel"' in page
+    assert "A message is not permission." in page
+    assert "SEMANTIC_HANDOFF_PROOF_VISIBLE" in page
+    assert "renderSemanticAuthority(payload)" in page
+    assert "factory.semantic_authority_status" in page
+    assert 'id="enterprise-enforcement-panel"' in page
+    assert "An admitted receipt is not an executed action." in page
+    assert "ENTERPRISE_PEP_REFERENCE_VISIBLE" in page
+    assert "renderEnterpriseEnforcement(payload)" in page
+    assert "enterprise_pep_reference" in page
+    assert 'id="atomic-proof-panel"' in page
+    assert 'id="copy-atomic-verify"' in page
+    assert "factory atomic verify" in page
+    assert "Atomic mechanics · independent proof bridge" in page
+    assert "renderAtomicProofAdapter(payload)" in page
+    assert "ATOMIC_MCP_READ_ONLY" in page
+    assert "factory.appforge_oracle_status" in page
+    assert "factory.appforge_device_reality_status" in page
+    assert "factory.appforge_release_rehearsal_status" in page
+    assert "factory.appforge_native_surface_status" in page
+    assert "factory.appforge_surface_matrix_status" in page
+    assert "factory.appforge_storefront_story_status" in page
 
 
 def test_graph_ops_projects_sealed_admission_without_changing_its_base_graph(tmp_path: Path):

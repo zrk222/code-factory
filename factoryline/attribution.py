@@ -22,6 +22,7 @@ class FailureClass(str, Enum):
     HOLLOW_MANIFEST = "hollow_manifest"
     HOLLOW_VALIDATOR = "hollow_validator"
     HOLLOW_COVERAGE = "hollow_coverage"
+    ORACLE_WEAKENING = "oracle_weakening"
     ACCURACY_REGRESSION = "accuracy_regression"
     NONDETERMINISM = "nondeterminism"
     SECURITY_FINDING = "security_finding"

@@ -1,0 +1,41 @@
+name: enterprise-runner-freshness-v1
+language: python
+modules:
+  - name: enterprise_enforcement
+    path: factoryline/enterprise_enforcement.py
+    functions:
+      - name: authorize_enterprise_action
+        args: [root, request]
+        returns: dict[str, Any]
+  - name: enterprise_runner_admission
+    path: factoryline/enterprise_runner_admission.py
+    functions:
+      - name: prepare_runner_admission
+        args: [root, input_path, out]
+        returns: dict[str, Any]
+      - name: verify_runner_admission_packet
+        args: [root, path]
+        returns: dict[str, Any]
+      - name: runner_admission_projection
+        args: [root]
+        returns: dict[str, Any]
+dependencies:
+  - from: enterprise_runner_admission
+    to: enterprise_enforcement
+  - from: enterprise_enforcement
+    to: enterprise_runner_admission
+invariants:
+  - name: freshness_projection_never_executes
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system|Popen\\("
+    scopes:
+      - module: enterprise_runner_admission
+        symbol: runner_admission_projection
+        max_lines: 40
+tests:
+  - path: tests/test_enterprise_enforcement.py
+    command: py -3.11 -m pytest -q tests/test_enterprise_enforcement.py
+  - path: tests/test_graph_ops.py
+    command: py -3.11 -m pytest -q tests/test_graph_ops.py
+  - path: tests/test_mcp.py
+    command: py -3.11 -m pytest -q tests/test_mcp.py
+schema: factory.ssat.v1

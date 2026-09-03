@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "name": "proof_continuity_is_hash_bound_and_reopens_on_contradiction",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_proof_continuity_ledger.py','tests/test_oracle_firewall.py','tests/test_mcp.py','tests/test_graph_ops.py'])\nassert result==0\nprint('PROOF_CONTINUITY_LEDGER_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "PROOF_CONTINUITY_LEDGER_SMOKE_PASS",
+      "timeout_s": 120,
+      "must_fail_on_stub": true,
+      "covers": ["AUDIT_CHAIN_SEAL", "AUDIT_CHAIN_GUARD", "LATER_OBSERVATION", "CONTINUITY_STATUS_REQUESTED"]
+    }
+  ]
+}

@@ -26,6 +26,12 @@ That one local command creates a disposable demonstration sandbox, proves the
 healthy check can pass, then proves the hollow check is rejected. It writes a
 receipt and a privacy-safe Proof Card; it does not assess or change your project.
 
+**LLM-friendly product context:** [Canonical Product Card](docs/LLM_PRODUCT_CARD.md)
+states the supported capabilities, boundaries, audiences, integration terms,
+and exact vocabulary that documentation assistants and agent tools may safely
+reuse. It is intentionally claim-bounded: local evidence is not a release,
+provider approval, remote execution, or a guarantee of correctness.
+
 ### Pick the path that matches your work
 
 - **Individual developer or vibe coder:** start with `factory first-proof`.
@@ -34,6 +40,17 @@ receipt and a privacy-safe Proof Card; it does not assess or change your project
   DeepSeek, or other local agent run. Code Factory records the exact file delta,
   runs the validators your team declared, and stores hashes and bounded facts—not
   prompts or raw model output—so reviewers can compare the claim with the change.
+- **Team supervising agents:** use `factory oracle init` to bind the original
+  intent, approved gates, negative cases, and independent challenge plan before
+  an agent works. Oracle Firewall blocks a weakened oracle from masquerading as
+  a successful build and exposes the source-to-decision chain in Graph Ops,
+  FactoryLine, and read-only MCP.
+- **Team or enterprise control plane:** bind a reviewed local operating
+  envelope, explicit session trace, exact consequence-aware repair packet,
+  pinned multi-repo sequence, and optional approved domain vocabulary. Graph
+  Ops and MCP expose the same facts; agents remain supervised and cannot change
+  intent, thresholds, scope, approval, Git state, credentials, or release.
+  See the [Control Plane guide](docs/CONTROL_PLANE.md).
 - **SaaS builder:** use `factory saas verify` to follow one customer promise
   from OAuth/OIDC identity and tenant access through checkout, verified webhook,
   entitlement, feature access, and revocation. Missing or contradictory evidence
@@ -54,6 +71,8 @@ receipt and a privacy-safe Proof Card; it does not assess or change your project
 When you need more than the first proof, open the [advanced workflow guide](docs/OVERVIEW.md).
 App and SaaS builders can open the standalone [AppForge App Review Gate guide](docs/APPFORGE_APP_REVIEW_GATE.md),
 or use the same receipts inside Code Factory Graph Ops, MCP, WebMCP, and supported IDE adapters.
+For a contract that keeps a coding agent from rewriting its own definition of
+done, see [Oracle Firewall](docs/ORACLE_FIREWALL.md).
 For one agent-neutral human review path, use [`factory proof-review`](docs/PROOF_REVIEW_WORKFLOW.md)
 to seal intent, audit trajectory evidence, route the change, learn confirmed
 regressions, inspect the team inbox, and export a tamper-evident Proof Card.
@@ -76,9 +95,16 @@ and a final Markdown/PDF dossier to the same build. In JetBrains, **AppForge
 Mission Control** makes the missing lane visible before a human decides to
 enter the queue.
 
+For iOS and Android delivery, `factory revenue appforge-mobile-evidence`
+normalizes supplied, hash-bound Xcode/XCTest, Android Gradle/ADB, Fastlane,
+device-cloud, and production-monitoring exports into one local receipt. It
+requires visual, privacy-to-listing, release-chain, design-system,
+production-signal, and Android-parity evidence to be explicit; it does not run
+those tools, access a store, submit a build, or guarantee approval.
+
 That can prevent avoidable rework and repeat review cycles; it does not submit
 to Apple, access credentials, replace TestFlight, provide legal advice, or
-guarantee approval. Start with the [AppForge Evidence Kit](docs/APPFORGE_EVIDENCE_KIT.md).
+guarantee approval. Start with the [AppForge Evidence Kit](docs/APPFORGE_EVIDENCE_KIT.md), then use the credential-free [EAS handoff preflight](docs/APPFORGE_EAS.md) before a separately authorized build or submission.
 
 ## Support posture
 
@@ -139,6 +165,12 @@ managed-service guarantee.
   independent validators, and records the result for Agent License and Combine.
   It stores hashes and bounded facts—not prompts or raw output—and observes the
   process without pretending to sandbox it.
+- **Verify an explicit agent workflow without adopting its runtime.** Use
+  [`factory atomic import`](docs/ATOMIC_PROOF_ADAPTER.md) to bind a secret-free
+  exported stage DAG, scoped handoffs, checkpoint facts, and immutable source
+  preconditions to a current Oracle Contract. Graph Ops, MCP, and WebMCP show
+  the receipt read-only; Code Factory never starts Atomic, resumes a checkpoint,
+  or treats a declared workflow as release authority.
 - **Keep decisions from becoming tribal knowledge.** Use `factory judgment` to
   track a human-promoted design decision with exact paths, a named owner,
   review date, and hash-bound proof obligations. A Change Safety Case routes
@@ -422,7 +454,8 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [0.45.3 release notes](docs/RELEASE_NOTES_0.45.3.md),
+- See the [0.46.2 core release notes](docs/RELEASE_NOTES_0.46.2.md), the
+  [grilling ladder](docs/GRILLING_LADDER.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
 

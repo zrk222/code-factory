@@ -71,6 +71,25 @@ def test_unclear_intent_is_not_an_acceptable_test_gate(tmp_path: Path):
     assert any(item["code"] == "E_METADATA_INTENT_UNBOUND" for item in result["findings"])
 
 
+def test_oversized_metadata_is_rejected_before_its_contents_are_read(tmp_path: Path, monkeypatch) -> None:
+    from factoryline.codex_metadata import MAX_FILE_BYTES
+
+    path = tmp_path / "oversized.json"
+    path.write_bytes(b"x" * (MAX_FILE_BYTES + 1))
+    original = Path.read_bytes
+
+    def guarded_read(candidate: Path) -> bytes:
+        if candidate == path:
+            raise AssertionError("oversized metadata must not be read")
+        return original(candidate)
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_read)
+    result = audit_metadata(tmp_path, [path])
+
+    assert result["files"] == [{"path": "oversized.json", "bytes": MAX_FILE_BYTES + 1, "sha256": None, "format": "oversize"}]
+    assert any(item["code"] == "E_METADATA_TOO_LARGE" for item in result["findings"])
+
+
 def test_command_only_terminal_claim_is_weak_evidence(tmp_path: Path):
     path = tmp_path / "claim.json"
     path.write_text(json.dumps({"status": "complete", "command": "pytest -q", "intent_id": "REQ-1"}), encoding="utf-8")
@@ -139,6 +158,24 @@ def test_orphan_active_and_workspace_mismatch_are_visible(tmp_path: Path):
 
     assert "E_METADATA_ORPHAN_ACTIVE" in codes
     assert "E_METADATA_WORKSPACE_MISMATCH" in codes
+
+
+def test_active_policy_constraints_are_not_misclassified_as_live_execution(tmp_path: Path):
+    path = tmp_path / "policy.json"
+    path.write_text(
+        json.dumps({
+            "active_policy": {
+                "constraints": {"parser": {"status": "active", "prevented": 4}},
+            },
+            "version": 1,
+        }),
+        encoding="utf-8",
+    )
+
+    result = audit_metadata(tmp_path, [path])
+
+    assert result["status"] == "VERIFIED"
+    assert not any(item["code"] == "E_METADATA_ORPHAN_ACTIVE" for item in result["findings"])
 
 
 def test_markdown_claims_without_receipts_are_review_required(tmp_path: Path):

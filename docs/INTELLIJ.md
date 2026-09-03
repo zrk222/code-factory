@@ -17,6 +17,7 @@ local result. The remaining explicit actions are:
 | AI Chat lacks trustworthy project context | The Repair Sandbox can copy the current local proof context or a local MCP configuration for a manual paste/setup. | The plugin does not configure AI, upload source, call a provider, or spend credits. |
 | A large, generated, or WSL/UNC workspace is hard to triage | Workspace Advisor measures bounded local file/byte shape and path-only remote context, then offers manual review paths for managed directories. | It never changes heap, caches, indexes, inspections, plugins, project files, or remote settings; it is not an IDE performance diagnosis. |
 | Automation can overreach privacy or release controls | Every command has workspace confirmation and runs directly, not through a shell. | No source upload, credential access, edit, test, commit, publish, deploy, or release decision. |
+| An agent can quietly weaken the tests or the gate that judges it | The **Oracle** tab reads the sealed source-to-decision chain, independent challenge facts, `E_ORACLE_WEAKENING`, and agent incidents from local artifacts. | It cannot seal intent, approve a changed threshold, run a challenge, repair code, or release work. |
 
 1. Run Spec-to-Ship Assembly.
 2. Continue Assembly to Next Boundary.
@@ -34,6 +35,7 @@ local result. The remaining explicit actions are:
 14. Open Unified Graph Ops.
 15. Mission Graph & Provider Operations.
 16. Analyze Workspace Load and Remote/WSL Preflight.
+17. Inspect Oracle Firewall supervision.
 
 `REQ-*`, `FR-*`, and `NFR-*` text also receives a read-only FactoryLine gutter
 marker. Selecting it opens the first deterministic local proof match under
@@ -117,6 +119,14 @@ remain supervised and require separate execution and promotion approvals.
 completion, proof, gate, trace, receipt, and artifact links; its one suggested
 next action is fact-derived and it runs no validation or release operation.
 
+**Oracle Firewall** is a separate, schema-bound supervision tab. **Refresh
+Oracle Firewall** runs `factory oracle status --root <project> --json` only
+after workspace confirmation. It renders only the sealed contract count,
+blocked semantic weakening count, independent challenge count, incident count,
+invalid artifact count, and the explicit local boundary. It never reads prompts
+or provider credentials, does not write a contract, and cannot convert a green
+test into a release decision. See [Oracle Firewall](ORACLE_FIREWALL.md).
+
 **Mission Graph & Provider Operations** exposes initialization, status,
 history, verification, Mermaid export, guarded event recording, and provider
 routing. Every path must resolve inside the current workspace. BYOK input is an
@@ -133,7 +143,7 @@ candidate files.
 1. Install FactoryLine:
 
    ```powershell
-   pip install factoryline-code-factory==0.45.3
+   pip install factoryline-code-factory==0.46.2
    ```
 
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for

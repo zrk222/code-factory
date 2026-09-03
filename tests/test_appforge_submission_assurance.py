@@ -10,10 +10,13 @@ from factoryline.app_review_gate import RULES, verify_app_review_readiness
 from factoryline.appforge_store_media import verify_store_media
 from factoryline.appforge_submission_assurance import verify_submission_assurance
 from factoryline.appforge_quality_audit import CONDITIONAL_CHECKS, DESIGN_CHECKS, STACK_CHECKS, verify_quality_audit
+from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
 from factoryline.saas_proof import verify_saas_proof
+from factoryline.saas_proof import _sha as _receipt_sha
 
 
 CANDIDATE = {"bundle_identifier": "com.example.assured", "version": "2.0.0", "build_number": "200", "source_commit": "b" * 40}
+AGENT = {"schema": "factory.agent-identity.v1", "subject": "assurance-owner", "provider": "local", "model": "declared-model"}
 
 
 def _write(path: Path, value: object) -> Path:
@@ -78,6 +81,20 @@ def _assurance_contract(tmp_path: Path) -> Path:
     return _write(tmp_path / "assurance-contract.json", {"schema": "factory.appforge.submission-assurance-contract.v1", "candidate": CANDIDATE, "reviewer_packet": {"support_url": "https://example.com/support", "privacy_url": "https://example.com/privacy", "review_notes_sha256": "c" * 64, "reviewer_access_instructions_sha256": "d" * 64, "approved_by": "Release Owner", "approved_at": "2026-08-31T12:00:00Z"}})
 
 
+def _oracle_authority(tmp_path: Path) -> Path:
+    intent = tmp_path / "original-intent.md"
+    policy = tmp_path / "sources" / "apple-policy.md"
+    intent.write_text("The app must restore eligible subscriptions safely.", encoding="utf-8")
+    policy.parent.mkdir(parents=True, exist_ok=True)
+    policy.write_text("Trusted policy snapshot.", encoding="utf-8")
+    handoff = capture_intent_handoff(tmp_path, intent, AGENT, "appforge-assurance", Path(".factory/oracles/handoffs/appforge-assurance.json"))
+    def rule(identifier, statement, **extra):
+        return {"id": identifier, "statement": statement, "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True, **extra}
+    contract = _write(tmp_path / "oracle-contract-input.json", {"schema": "factory.oracle-contract-input.v1", "id": "appforge-assurance", "version": 1, "approved_by": "Release Owner", "approval_rationale": "The owner reviewed policy, intent, and the submission candidate.", "scope_paths": ["."], "handoff": handoff["path"], "sources": [{"id": "apple-policy", "origin": "trusted_source", "path": "sources/apple-policy.md"}], "requirements": [rule("restore", "Restore works for an eligible user.")], "forbidden_behaviors": [rule("double-charge", "Restore does not create another charge.")], "gates": [rule("accessibility", "Accessibility review is complete.", comparison="present", value=True)], "exceptions": [{"id": "offline", "statement": "Offline recovery needs future review.", "origin": "human_confirmed", "effect": "advisory", "source_id": "original-intent", "critical": False}], "negative_cases": [rule("expired", "Expired access cannot restore.")], "invariants": [rule("candidate", "Evidence stays candidate-bound.")], "tests": [rule("restore-test", "Restore test fails if expired access is accepted.", path="tests/test_restore.py")]})
+    sealed = seal_oracle_contract(tmp_path, contract, Path(".factory/oracles/contracts/appforge-assurance.json"))
+    return _write(tmp_path / "oracle-authority.json", {"schema": "factory.appforge.oracle-authority.v1", "contract_path": sealed["path"], "candidate": CANDIDATE, "policy_sources": [{"source_id": "apple-policy"}], "human_reviewer": "Release Owner"})
+
+
 def _quality(tmp_path: Path) -> Path:
     intent = "e" * 64
     contract = _write(tmp_path / "quality-contract.json", {"schema": "factory.appforge.quality-audit-contract.v1", "candidate": CANDIDATE, "user_design_input_sha256": intent, "conditional": {check: {"status": "required", "reviewed_by": "Release Owner", "rationale": "The reviewed candidate includes subscriptions and restoration."} for check in CONDITIONAL_CHECKS}})
@@ -106,12 +123,46 @@ def test_submission_dossier_only_emits_markdown_and_pdf_after_all_build_bound_ga
 
 def test_submission_dossier_blocks_candidate_mismatch_without_emitting_final_reports(tmp_path: Path) -> None:
     saas = _saas(tmp_path)
-    value = json.loads(saas.read_text(encoding="utf-8")); value["release_candidate"]["build_number"] = "wrong"; saas.write_text(json.dumps(value), encoding="utf-8")
+    value = json.loads(saas.read_text(encoding="utf-8")); value["release_candidate"]["build_number"] = "wrong"; value["receipt_sha256"] = _receipt_sha({key: item for key, item in value.items() if key != "receipt_sha256"}); saas.write_text(json.dumps(value), encoding="utf-8")
     receipt = verify_submission_assurance(tmp_path, _assurance_contract(tmp_path), _app_review(tmp_path), _media(tmp_path), saas, _quality(tmp_path), Path(".factory/appforge/submission-assurance.json"), Path(".factory/appforge/reports"))
     assert receipt["marker"] == "APPFORGE_SUBMISSION_DOSSIER_BLOCKED"
     assert receipt["ok"] is False
+    assert any(item["code"] == "APPFORGE_ASSURANCE_CANDIDATE_MISMATCH" for item in receipt["findings"])
     assert not (tmp_path / ".factory/appforge/reports").exists()
-    assert {item["code"] for item in receipt["findings"]} == {"APPFORGE_ASSURANCE_RECEIPT_TAMPERED"}
+
+
+def test_submission_dossier_fails_closed_when_the_contract_requires_oracle_authority(tmp_path: Path) -> None:
+    contract = _assurance_contract(tmp_path)
+    payload = json.loads(contract.read_text(encoding="utf-8"))
+    payload["oracle_authority"] = {"required": True, "path": "missing-oracle-authority.json"}
+    contract.write_text(json.dumps(payload), encoding="utf-8")
+
+    receipt = verify_submission_assurance(tmp_path, contract, _app_review(tmp_path), _media(tmp_path), _saas(tmp_path), _quality(tmp_path), Path(".factory/appforge/submission-assurance.json"), Path(".factory/appforge/reports"))
+
+    assert receipt["ok"] is False
+    assert receipt["marker"] == "APPFORGE_SUBMISSION_DOSSIER_BLOCKED"
+    assert any(item["gate"] == "Oracle authority" for item in receipt["findings"])
+    assert any(item["code"] == "APPFORGE_ORACLE_INPUT_UNAVAILABLE" for item in receipt["findings"])
+
+
+def test_submission_dossier_binds_each_audit_digest_to_its_referenced_receipt(tmp_path: Path) -> None:
+    contract = _assurance_contract(tmp_path)
+    payload = json.loads(contract.read_text(encoding="utf-8"))
+    payload["oracle_authority"] = {"required": True, "path": _oracle_authority(tmp_path).relative_to(tmp_path).as_posix()}
+    contract.write_text(json.dumps(payload), encoding="utf-8")
+
+    receipt = verify_submission_assurance(tmp_path, contract, _app_review(tmp_path), _media(tmp_path), _saas(tmp_path), _quality(tmp_path), Path(".factory/appforge/submission-assurance.json"), Path(".factory/appforge/reports"))
+
+    assert receipt["ok"] is True
+    for item in receipt["audit"]:
+        evidence = json.loads((tmp_path / item["receipt_path"]).read_text(encoding="utf-8"))
+        assert evidence["receipt_sha256"] == item["receipt_sha256"]
+    oracle = receipt["oracle_authority"]
+    oracle_audit = next(item for item in receipt["audit"] if item["name"] == "Oracle authority")
+    assert oracle_audit["receipt_path"] == oracle["path"]
+    assert oracle_audit["receipt_sha256"] == oracle["receipt_sha256"]
+    assert oracle["path"] != oracle["source_path"]
+    assert oracle["source_sha256"] == hashlib.sha256((tmp_path / oracle["source_path"]).read_bytes()).hexdigest()
 
 
 def test_store_media_rejects_truncated_or_alpha_pngs(tmp_path: Path) -> None:

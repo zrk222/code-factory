@@ -11,6 +11,7 @@ from typing import Any
 from .graph_ops import graph_ops_snapshot
 from .loop_passport import verify_loop_passport
 from .agent_license import AgentLicenseError, admission_license_decision, normalize_agent_identity
+from .oracle_firewall import OracleFirewallError, admission_oracle_decision
 
 
 ADMISSION_REQUEST_SCHEMA = "factory.run-admission.request.v1"
@@ -168,6 +169,8 @@ def _validate_request(root: Path, request: dict[str, Any], passport: dict[str, A
     }
     if "agent" in request:
         normalized["agent"] = normalize_agent_identity(request.get("agent"), "agent")
+    if "oracle_contract" in request:
+        normalized["oracle_contract"] = _relative_path(request.get("oracle_contract"), "oracle_contract")
     return normalized
 
 
@@ -200,6 +203,15 @@ def prepare_admission(root: Path, passport_path: Path, request_path: Path, out_d
         license_value = admission_license_decision(workspace, passport, request)
     except AgentLicenseError as exc:
         raise AdmissionError(exc.code, str(exc)) from exc
+    requested_autonomy = str(passport.get("autonomy") or "human_controlled")
+    oracle_value = None
+    if request.get("oracle_contract"):
+        try:
+            oracle_value = admission_oracle_decision(workspace, Path(request["oracle_contract"]), requested_autonomy, request["paths"])
+        except OracleFirewallError as exc:
+            raise AdmissionError(exc.code, str(exc)) from exc
+    elif requested_autonomy == "autonomous" and license_value is not None and license_value.get("tier") == "autonomous":
+        raise AdmissionError("ORACLE_CONTRACT_REQUIRED", "autonomous admission requires a current sealed Oracle Firewall contract")
     target_dir = _inside(workspace, Path(out_dir) if out_dir is not None else workspace / ".factory" / "admissions")
     workspace_sha256 = _fingerprint(workspace)
     core = {
@@ -221,10 +233,18 @@ def prepare_admission(root: Path, passport_path: Path, request_path: Path, out_d
     if license_value is not None:
         core["agent_license"] = {
             "license_sha256": license_value["license_sha256"],
+            "state_sha256": _license_state_sha256(license_value),
             "tier": license_value["tier"],
             "allowed_paths": license_value["allowed_paths"],
             "expires_at": license_value["expires_at"],
             "identity_provenance": license_value["identity_provenance"],
+        }
+    if oracle_value is not None:
+        core["oracle"] = {
+            "contract_path": oracle_value["contract_path"],
+            "contract_sha256": oracle_value["contract_sha256"],
+            "requested_autonomy": oracle_value["requested_autonomy"],
+            "scope_paths": oracle_value["scope_paths"],
         }
     packet = {**core, "packet_sha256": _sha(core)}
     path = target_dir / f"{request['id']}.admission.json"
@@ -247,6 +267,12 @@ def _blocked(reason: str) -> dict[str, Any]:
         "marker": "ADMISSION_PACKET_BLOCKED", "reason": reason,
         "authority": dict(_AUTHORITY),
     }
+
+
+def _license_state_sha256(value: dict[str, Any]) -> str:
+    """Hash durable license state without the per-read issued-at timestamp."""
+    fields = ("tier", "reason", "allowed_paths", "expires_at", "identity_provenance", "evidence", "incidents", "policy")
+    return _sha({field: value.get(field) for field in fields})
 
 
 def _bound_passport_path(workspace: Path, packet: dict[str, Any]) -> Path | None:
@@ -300,6 +326,39 @@ def verify_admission(root: Path, packet_path: Path) -> dict[str, Any]:
     request_error = _request_binding_is_current(workspace, packet, passport_path)
     if request_error:
         return _blocked(request_error)
+    # A packet is only an immutable snapshot if its derived license cap is also
+    # re-derived at consumption time.  Otherwise an agent could keep a packet
+    # after a demotion or a scope reduction and present yesterday's authority.
+    passport = _load(passport_path)
+    stored_license = packet.get("agent_license")
+    try:
+        current_license = admission_license_decision(workspace, passport, packet.get("request", {}))
+    except AgentLicenseError as exc:
+        return _blocked(exc.code)
+    if isinstance(stored_license, dict):
+        if not isinstance(current_license, dict):
+            return _blocked("agent_license_binding_invalid")
+        for field in ("tier", "allowed_paths", "expires_at", "identity_provenance"):
+            if stored_license.get(field) != current_license.get(field):
+                return _blocked("agent_license_binding_invalid")
+        if stored_license.get("state_sha256") != _license_state_sha256(current_license):
+            return _blocked("agent_license_binding_invalid")
+    oracle = packet.get("oracle")
+    requested_autonomy = str(passport.get("autonomy") or "human_controlled")
+    if requested_autonomy == "autonomous" and isinstance(current_license, dict) and current_license.get("tier") == "autonomous" and not isinstance(oracle, dict):
+        return _blocked("ORACLE_CONTRACT_REQUIRED")
+    if isinstance(oracle, dict):
+        try:
+            decision = admission_oracle_decision(
+                workspace,
+                Path(str(oracle.get("contract_path") or "")),
+                str(oracle.get("requested_autonomy") or "human_controlled"),
+                packet.get("request", {}).get("paths", []),
+            )
+            if decision.get("contract_sha256") != oracle.get("contract_sha256"):
+                return _blocked("oracle_contract_sha256_mismatch")
+        except (OracleFirewallError, TypeError, ValueError) as exc:
+            return _blocked(getattr(exc, "code", "oracle_binding_invalid"))
     return {
         "schema": ADMISSION_PACKET_SCHEMA,
         "verdict": "READY",

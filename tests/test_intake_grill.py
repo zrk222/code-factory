@@ -68,6 +68,14 @@ def test_intake_is_source_bound_idempotent_and_has_no_execution_authority(tmp_pa
     assert not (tmp_path / ".factory" / "missions").exists()
 
 
+def test_intake_explicitly_grills_forbidden_outcomes_negative_cases_and_pr_proof(tmp_path: Path):
+    grilled = grill_intake(_prd(tmp_path), tmp_path)
+    question_ids = {question["id"] for question in grilled["questions"]}
+
+    assert {"Q-FORBIDDEN", "Q-NEGATIVE-CASE", "Q-PR-REVIEW"} <= question_ids
+    assert "Before code, seal the intent as an Oracle Contract" in Path(grilled["markdown"]).read_text(encoding="utf-8")
+
+
 def test_confirmed_intake_binds_product_graph_and_required_mission(tmp_path: Path):
     confirmation = _confirmation(tmp_path)
     verified = verify_intake_confirmation(tmp_path, Path(confirmation["path"]))

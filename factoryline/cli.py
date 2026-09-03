@@ -125,6 +125,54 @@ from .appforge_store_media import StoreMediaError, verify_store_media
 from .appforge_submission_assurance import verify_submission_assurance
 from .appforge_quality_audit import verify_quality_audit
 from .appforge_evidence_kit import create_evidence_kit, initialize_appforge
+from .appforge_oracle import verify_appforge_oracle_authority
+from .appforge_eas import verify_eas_preflight
+from .appforge_device_reality import create_device_reality_intent_envelope, verify_device_reality
+from .appforge_release_rehearsal import create_release_rehearsal
+from .appforge_native_surface import verify_native_surface
+from .appforge_surface_matrix import create_surface_matrix
+from .appforge_mobile_evidence import verify_mobile_evidence
+from .appforge_storefront_story import verify_storefront_story
+from .appforge_fastlane_capture import create_fastlane_capture_contract
+from .appforge_submission_integrity import verify_submission_integrity
+from .proof_continuity_ledger import (
+    ProofContinuityError,
+    proof_continuity_projection,
+    record_proof_continuity_observation,
+    seal_proof_continuity,
+)
+from .oracle_firewall import (
+    OracleFirewallError,
+    capture_intent_handoff,
+    compare_oracle_contracts,
+    compile_oracle_challenge,
+    initialize_oracle_firewall,
+    oracle_firewall_projection,
+    record_oracle_incident,
+    seal_oracle_contract,
+    verify_oracle_challenge_result,
+    verify_oracle_contract,
+)
+from .semantic_authority import (
+    SemanticAuthorityError,
+    authorize_semantic_action,
+    record_semantic_action_decision,
+    seal_authority_lease,
+    seal_semantic_handoff,
+    semantic_authority_projection,
+    verify_authority_lease,
+    verify_semantic_handoff,
+)
+from .atomic_proof_adapter import AtomicProofAdapterError, atomic_envelope_template, atomic_proof_projection, import_atomic_run, verify_atomic_receipt
+from .agent_proof_bridge import AgentProofBridgeError, agent_handoff_brief, agent_proof_projection, import_agent_proof, provider_template, verify_agent_proof
+from .proof_worklog import ProofWorklogError, create_proof_worklog, proof_worklog_projection, verify_proof_worklog
+from .operations_control import OperationsControlError, assess_operations_control, operations_control_projection, operations_control_template
+from .lifecycle_ledger import LifecycleLedgerError, lifecycle_projection, lifecycle_template, record_lifecycle_event
+from .service_boundaries import ServiceBoundaryError, check_service_boundaries, service_boundary_template
+from .repair_loop import RepairLoopError, assess_repair_loop, repair_loop_projection, repair_loop_template
+from .repo_coordination import RepoCoordinationError, coordinate_repositories, repo_coordination_template
+from .domain_ontology import DomainOntologyError, domain_ontology_template, validate_domain_ontology
+from .mission_control_status import mission_control_status
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
 from .jetbrains_handshake import (
     JetBrainsHandshakeError,
@@ -970,6 +1018,39 @@ def main(argv=None) -> int:
     revocations.add_argument("--identity", required=True)
     revocations.add_argument("--issuer", required=True)
     revocations.add_argument("--out", required=True)
+    enforcement_identity = enterprise_sub.add_parser("workload-identity-seal", help="sign a local workload identity reference document")
+    enforcement_identity.add_argument("payload")
+    enforcement_identity.add_argument("--private-key", required=True)
+    enforcement_identity.add_argument("--keyid", required=True)
+    enforcement_identity.add_argument("--identity", required=True)
+    enforcement_identity.add_argument("--issuer", required=True)
+    enforcement_identity.add_argument("--out", required=True)
+    enforcement_policy = enterprise_sub.add_parser("enforcement-policy-seal", help="sign a tenant-bound PEP reference policy")
+    enforcement_policy.add_argument("payload")
+    enforcement_policy.add_argument("--private-key", required=True)
+    enforcement_policy.add_argument("--keyid", required=True)
+    enforcement_policy.add_argument("--identity", required=True)
+    enforcement_policy.add_argument("--issuer", required=True)
+    enforcement_policy.add_argument("--out", required=True)
+    enforcement_revocations = enterprise_sub.add_parser("workload-revocations-seal", help="sign workload identity revocations")
+    enforcement_revocations.add_argument("entries")
+    enforcement_revocations.add_argument("--private-key", required=True)
+    enforcement_revocations.add_argument("--keyid", required=True)
+    enforcement_revocations.add_argument("--identity", required=True)
+    enforcement_revocations.add_argument("--issuer", required=True)
+    enforcement_revocations.add_argument("--out", required=True)
+    enforcement_authorize = enterprise_sub.add_parser("authorize", help="record a local non-executing enterprise PEP reference decision")
+    enforcement_authorize.add_argument("request")
+    enforcement_authorize.add_argument("--root", default=".")
+    enforcement_authorize.add_argument("--workload-identity", required=True)
+    enforcement_authorize.add_argument("--policy", required=True)
+    enforcement_authorize.add_argument("--trust-root", required=True)
+    enforcement_authorize.add_argument("--workload-revocations")
+    enforcement_authorize.add_argument("--out", required=True)
+    runner_admission = enterprise_sub.add_parser("runner-admission-seal", help="seal one non-executing, decision-bound runner argv packet")
+    runner_admission.add_argument("payload")
+    runner_admission.add_argument("--root", default=".")
+    runner_admission.add_argument("--out", required=True)
 
     s = sub.add_parser("control", help="manage local tenant-scoped evidence and approvals")
     control_sub = s.add_subparsers(required=True, dest="control_cmd")
@@ -1208,6 +1289,239 @@ def main(argv=None) -> int:
     admission_verify.add_argument("--root", default=".")
     admission_verify.add_argument("--json", action="store_true")
 
+    oracle = sub.add_parser("oracle", help="seal and independently challenge the definition of done before a coding run")
+    oracle_sub = oracle.add_subparsers(required=True, dest="oracle_cmd")
+    oracle_init = oracle_sub.add_parser("init", help="create a full, intentionally incomplete source-bound Oracle Firewall workspace")
+    oracle_init.add_argument("--root", default=".")
+    oracle_init.add_argument("--out-dir", required=True)
+    oracle_init.add_argument("--source", required=True)
+    oracle_init.add_argument("--agent", required=True, help="agent identity JSON file")
+    oracle_init.add_argument("--id", required=True)
+    oracle_init.add_argument("--scope", action="append", required=True, help="workspace-relative scope path; repeat as needed")
+    oracle_init.add_argument("--appforge", action="store_true", help="also add the AppForge policy-and-candidate authority template")
+    oracle_init.add_argument("--json", action="store_true")
+    oracle_handoff = oracle_sub.add_parser("handoff", help="capture exact original user intent bytes from a declared handing-off agent")
+    oracle_handoff.add_argument("--root", default=".")
+    oracle_handoff.add_argument("--source", required=True)
+    oracle_handoff.add_argument("--agent", required=True, help="agent identity JSON file")
+    oracle_handoff.add_argument("--id", required=True)
+    oracle_handoff.add_argument("--out")
+    oracle_handoff.add_argument("--json", action="store_true")
+    oracle_seal = oracle_sub.add_parser("seal", help="seal a provenance-bound Oracle Contract from approved local input")
+    oracle_seal.add_argument("--root", default=".")
+    oracle_seal.add_argument("--input", required=True)
+    oracle_seal.add_argument("--out", required=True)
+    oracle_seal.add_argument("--json", action="store_true")
+    oracle_verify = oracle_sub.add_parser("verify", help="verify a sealed Oracle Contract and its bound sources")
+    oracle_verify.add_argument("contract")
+    oracle_verify.add_argument("--root", default=".")
+    oracle_verify.add_argument("--json", action="store_true")
+    oracle_diff = oracle_sub.add_parser("diff", help="fail closed when a successor weakens the prior oracle")
+    oracle_diff.add_argument("--root", default=".")
+    oracle_diff.add_argument("--prior", required=True)
+    oracle_diff.add_argument("--candidate", required=True)
+    oracle_diff.add_argument("--out")
+    oracle_diff.add_argument("--json", action="store_true")
+    oracle_challenge = oracle_sub.add_parser("challenge", help="compile or verify an independent implementation-targeted challenge lane")
+    oracle_challenge_sub = oracle_challenge.add_subparsers(required=True, dest="oracle_challenge_cmd")
+    oracle_challenge_compile = oracle_challenge_sub.add_parser("compile", help="compile independent counterfactual cases from a sealed contract")
+    oracle_challenge_compile.add_argument("--root", default=".")
+    oracle_challenge_compile.add_argument("--contract", required=True)
+    oracle_challenge_compile.add_argument("--out")
+    oracle_challenge_compile.add_argument("--json", action="store_true")
+    oracle_challenge_verify = oracle_challenge_sub.add_parser("verify", help="verify a challenge result against the exact plan")
+    oracle_challenge_verify.add_argument("--root", default=".")
+    oracle_challenge_verify.add_argument("--plan", required=True)
+    oracle_challenge_verify.add_argument("--result", required=True)
+    oracle_challenge_verify.add_argument("--json", action="store_true")
+    oracle_incident = oracle_sub.add_parser("incident", help="record a demoting oracle-weakening incident for a declared agent")
+    oracle_incident.add_argument("--root", default=".")
+    oracle_incident.add_argument("--agent", required=True, help="agent identity JSON file")
+    oracle_incident.add_argument("--contract", required=True)
+    oracle_incident.add_argument("--drift", required=True)
+    oracle_incident.add_argument("--out")
+    oracle_incident.add_argument("--json", action="store_true")
+    oracle_status = oracle_sub.add_parser("status", help="read local Oracle Firewall status without changing any artifact")
+    oracle_status.add_argument("--root", default=".")
+    oracle_status.add_argument("--json", action="store_true")
+
+    proof_continuity = sub.add_parser("proof-continuity", help="seal and monitor a senior-engineering source-to-decision audit chain")
+    proof_continuity_sub = proof_continuity.add_subparsers(required=True, dest="proof_continuity_cmd")
+    proof_continuity_seal = proof_continuity_sub.add_parser("seal", help="seal one source-to-obligation-to-evidence audit receipt without running work")
+    proof_continuity_seal.add_argument("--root", default=".")
+    proof_continuity_seal.add_argument("--input", required=True)
+    proof_continuity_seal.add_argument("--out", required=True)
+    proof_continuity_seal.add_argument("--json", action="store_true")
+    proof_continuity_observe = proof_continuity_sub.add_parser("observe", help="record later local evidence and reopen the audit on contradiction")
+    proof_continuity_observe.add_argument("--root", default=".")
+    proof_continuity_observe.add_argument("--contract", required=True)
+    proof_continuity_observe.add_argument("--observation", required=True)
+    proof_continuity_observe.add_argument("--out", required=True)
+    proof_continuity_observe.add_argument("--json", action="store_true")
+    proof_continuity_status = proof_continuity_sub.add_parser("status", help="read continuity audit and incident state without changing artifacts")
+    proof_continuity_status.add_argument("--root", default=".")
+    proof_continuity_status.add_argument("--json", action="store_true")
+
+    semantic = sub.add_parser("semantic-authority", help="seal typed handoffs and expiring local authority leases without executing a runner")
+    semantic_sub = semantic.add_subparsers(required=True, dest="semantic_cmd")
+    semantic_handoff = semantic_sub.add_parser("handoff", help="seal a source-bound goal, context, epistemic declaration, scope, and action envelope")
+    semantic_handoff.add_argument("--root", default=".")
+    semantic_handoff.add_argument("--input", required=True)
+    semantic_handoff.add_argument("--out", required=True)
+    semantic_handoff.add_argument("--json", action="store_true")
+    semantic_lease = semantic_sub.add_parser("lease", help="issue a short-lived, least-privilege local lease from one sealed handoff")
+    semantic_lease.add_argument("--root", default=".")
+    semantic_lease.add_argument("--input", required=True)
+    semantic_lease.add_argument("--out", required=True)
+    semantic_lease.add_argument("--json", action="store_true")
+    semantic_verify = semantic_sub.add_parser("verify", help="verify a handoff or lease without sending, executing, or approving anything")
+    semantic_verify.add_argument("kind", choices=["handoff", "lease"])
+    semantic_verify.add_argument("path")
+    semantic_verify.add_argument("--root", default=".")
+    semantic_verify.add_argument("--json", action="store_true")
+    semantic_check = semantic_sub.add_parser("check", help="evaluate one supplied action request against a current local lease")
+    semantic_check.add_argument("--root", default=".")
+    semantic_check.add_argument("--lease", required=True)
+    semantic_check.add_argument("--request", required=True)
+    semantic_check.add_argument("--json", action="store_true")
+    semantic_record = semantic_sub.add_parser("record", help="record one replay-safe local admission decision; this never executes the request")
+    semantic_record.add_argument("--root", default=".")
+    semantic_record.add_argument("--lease", required=True)
+    semantic_record.add_argument("--request", required=True)
+    semantic_record.add_argument("--out", required=True)
+    semantic_record.add_argument("--json", action="store_true")
+    semantic_status = semantic_sub.add_parser("status", help="read local handoff/lease/decision facts without mutation")
+    semantic_status.add_argument("--root", default=".")
+    semantic_status.add_argument("--json", action="store_true")
+
+    atomic = sub.add_parser("atomic", help="bind a hash-only Atomic workflow export to a sealed Oracle Contract without executing Atomic")
+    atomic_sub = atomic.add_subparsers(required=True, dest="atomic_cmd")
+    atomic_import = atomic_sub.add_parser("import", help="validate and store one immutable local Atomic mechanics receipt")
+    atomic_import.add_argument("--root", default=".")
+    atomic_import.add_argument("--envelope", required=True, help="workspace-relative factory.atomic-run-envelope.v1 JSON")
+    atomic_import.add_argument("--out", help="workspace-relative immutable receipt path")
+    atomic_import.add_argument("--json", action="store_true")
+    atomic_verify = atomic_sub.add_parser("verify", help="verify one imported Atomic mechanics receipt and its current Oracle binding")
+    atomic_verify.add_argument("receipt")
+    atomic_verify.add_argument("--root", default=".")
+    atomic_verify.add_argument("--json", action="store_true")
+    atomic_status = atomic_sub.add_parser("status", help="read bounded imported Atomic mechanics facts without changing a receipt")
+    atomic_status.add_argument("--root", default=".")
+    atomic_status.add_argument("--json", action="store_true")
+    atomic_template = atomic_sub.add_parser("template", help="render a secret-free Atomic handoff template without starting Atomic or writing a configuration")
+    atomic_template.add_argument("--json", action="store_true")
+
+    agent_bridge = sub.add_parser("agent-bridge", help="bind a hash-only Eve, Junie, Grok Build, or generic agent export to a sealed Oracle Contract without contacting a provider")
+    agent_bridge_sub = agent_bridge.add_subparsers(required=True, dest="agent_bridge_cmd")
+    agent_bridge_import = agent_bridge_sub.add_parser("import", help="validate and store one immutable provider-neutral agent proof receipt")
+    agent_bridge_import.add_argument("--root", default=".")
+    agent_bridge_import.add_argument("--envelope", required=True, help="workspace-relative factory.agent-proof-envelope.v1 JSON")
+    agent_bridge_import.add_argument("--out", help="workspace-relative immutable receipt path")
+    agent_bridge_import.add_argument("--json", action="store_true")
+    agent_bridge_verify = agent_bridge_sub.add_parser("verify", help="verify one imported agent proof receipt and current Oracle binding")
+    agent_bridge_verify.add_argument("receipt")
+    agent_bridge_verify.add_argument("--root", default=".")
+    agent_bridge_verify.add_argument("--json", action="store_true")
+    agent_bridge_status = agent_bridge_sub.add_parser("status", help="read bounded provider-bridge facts without contacting a provider")
+    agent_bridge_status.add_argument("--root", default=".")
+    agent_bridge_status.add_argument("--json", action="store_true")
+    agent_bridge_template = agent_bridge_sub.add_parser("template", help="render a secret-free provider envelope template without writing a provider configuration")
+    agent_bridge_template.add_argument("--provider", required=True, choices=["eve", "junie", "grok_build", "coderabbit", "devin", "generic"])
+    agent_bridge_template.add_argument("--json", action="store_true")
+    agent_bridge_mission = agent_bridge_sub.add_parser("mission", help="render the sealed original intent for a worker and human reviewer without contacting a provider")
+    agent_bridge_mission.add_argument("--root", default=".")
+    agent_bridge_mission.add_argument("--contract", required=True, help="workspace-relative current sealed Oracle Contract")
+    agent_bridge_mission.add_argument("--json", action="store_true")
+
+    operations_control = sub.add_parser("operations-control", help="bind verified isolation, repro budgets, change envelopes, proof tiers, architecture zones, and local repository heads without dispatching work")
+    operations_control_sub = operations_control.add_subparsers(required=True, dest="operations_control_cmd")
+    operations_control_template_parser = operations_control_sub.add_parser("template", help="render a secret-free operations-control manifest template")
+    operations_control_template_parser.add_argument("--json", action="store_true")
+    operations_control_assess = operations_control_sub.add_parser("assess", help="write one fail-closed local operations-control receipt")
+    operations_control_assess.add_argument("--root", default=".")
+    operations_control_assess.add_argument("--manifest", required=True, help="workspace-relative factory.operations-control-manifest.v1 JSON")
+    operations_control_assess.add_argument("--out", help="workspace-relative output below .factory/operations-control")
+    operations_control_assess.add_argument("--json", action="store_true")
+    operations_control_status = operations_control_sub.add_parser("status", help="read local operations-control receipt summaries")
+    operations_control_status.add_argument("--root", default=".")
+    operations_control_status.add_argument("--json", action="store_true")
+
+    lifecycle = sub.add_parser("lifecycle", help="record or inspect local hash-linked harness lifecycle facts without dispatching an agent")
+    lifecycle_sub = lifecycle.add_subparsers(required=True, dest="lifecycle_cmd")
+    lifecycle_template_parser = lifecycle_sub.add_parser("template", help="render a secret-free lifecycle event template")
+    lifecycle_template_parser.add_argument("--json", action="store_true")
+    lifecycle_record = lifecycle_sub.add_parser("record", help="append one hash-linked local lifecycle event")
+    lifecycle_record.add_argument("--root", default=".")
+    lifecycle_record.add_argument("--event", required=True, help="workspace-relative factory.lifecycle-event.v1 JSON")
+    lifecycle_record.add_argument("--out", help="workspace-relative output below .factory/lifecycle")
+    lifecycle_record.add_argument("--json", action="store_true")
+    lifecycle_status = lifecycle_sub.add_parser("status", help="read local lifecycle run summaries")
+    lifecycle_status.add_argument("--root", default=".")
+    lifecycle_status.add_argument("--json", action="store_true")
+
+    service_boundary = sub.add_parser("service-boundary", help="check declared action, service, adapter, and core boundaries for changed source without rewriting code")
+    service_boundary_sub = service_boundary.add_subparsers(required=True, dest="service_boundary_cmd")
+    service_boundary_template_parser = service_boundary_sub.add_parser("template", help="render a secret-free service-boundary manifest template")
+    service_boundary_template_parser.add_argument("--json", action="store_true")
+    service_boundary_check = service_boundary_sub.add_parser("check", help="classify changed source and fail closed on declared boundary violations")
+    service_boundary_check.add_argument("--root", default=".")
+    service_boundary_check.add_argument("--manifest", required=True, help="workspace-relative factory.service-boundary-manifest.v1 JSON")
+    service_boundary_check.add_argument("--changed", required=True, action="append", help="workspace-relative changed source path; repeat as needed")
+    service_boundary_check.add_argument("--json", action="store_true")
+
+    repair_loop = sub.add_parser("repair-loop", help="bind one exact failure, consequence assessment, candidate, independent re-check, and named human review without attempting a repair")
+    repair_loop_sub = repair_loop.add_subparsers(required=True, dest="repair_loop_cmd")
+    repair_loop_template_parser = repair_loop_sub.add_parser("template", help="render a secret-free proof-gated repair-loop manifest template")
+    repair_loop_template_parser.add_argument("--json", action="store_true")
+    repair_loop_assess = repair_loop_sub.add_parser("assess", help="write one immutable local repair-loop packet after binding all supplied evidence")
+    repair_loop_assess.add_argument("--root", default=".")
+    repair_loop_assess.add_argument("--manifest", required=True, help="workspace-relative factory.repair-loop-manifest.v1 JSON")
+    repair_loop_assess.add_argument("--out", help="workspace-relative output below .factory/repair-loops")
+    repair_loop_assess.add_argument("--json", action="store_true")
+    repair_loop_status = repair_loop_sub.add_parser("status", help="read bounded local repair-loop packets without running any candidate")
+    repair_loop_status.add_argument("--root", default=".")
+    repair_loop_status.add_argument("--json", action="store_true")
+
+    repo_coordinate = sub.add_parser("repo-coordinate", help="inspect a pinned multi-repository dependency order without changing any repository")
+    repo_coordinate_sub = repo_coordinate.add_subparsers(required=True, dest="repo_coordinate_cmd")
+    repo_coordinate_template_parser = repo_coordinate_sub.add_parser("template", help="render a secret-free multi-repository coordination manifest template")
+    repo_coordinate_template_parser.add_argument("--json", action="store_true")
+    repo_coordinate_plan = repo_coordinate_sub.add_parser("plan", help="derive a fail-closed sequential plan from pinned local Git heads")
+    repo_coordinate_plan.add_argument("--root", default=".")
+    repo_coordinate_plan.add_argument("--manifest", required=True, help="workspace-relative factory.repo-coordination-manifest.v1 JSON")
+    repo_coordinate_plan.add_argument("--json", action="store_true")
+
+    ontology = sub.add_parser("ontology", help="validate an explicitly human-approved domain vocabulary without inferring or mutating intent")
+    ontology_sub = ontology.add_subparsers(required=True, dest="ontology_cmd")
+    ontology_template_parser = ontology_sub.add_parser("template", help="render a domain-ontology template")
+    ontology_template_parser.add_argument("--json", action="store_true")
+    ontology_validate = ontology_sub.add_parser("validate", help="fail closed when referenced concepts are not in the approved ontology")
+    ontology_validate.add_argument("--root", default=".")
+    ontology_validate.add_argument("--ontology", required=True, help="workspace-relative factory.domain-ontology.v1 JSON")
+    ontology_validate.add_argument("--concept", required=True, action="append", help="referenced domain concept id; repeat as needed")
+    ontology_validate.add_argument("--json", action="store_true")
+
+    mission_control = sub.add_parser("mission-control", help="read one unified, zero-authority human and agent evidence status")
+    mission_control_sub = mission_control.add_subparsers(required=True, dest="mission_control_cmd")
+    mission_control_status_parser = mission_control_sub.add_parser("status", help="read local mission-control facts without granting authority")
+    mission_control_status_parser.add_argument("--root", default=".")
+    mission_control_status_parser.add_argument("--json", action="store_true")
+
+    worklog = sub.add_parser("worklog", help="draft a local review-required update from one sealed Oracle Contract; never posts externally")
+    worklog_sub = worklog.add_subparsers(required=True, dest="worklog_cmd")
+    worklog_draft = worklog_sub.add_parser("draft", help="write one immutable local proof worklog draft")
+    worklog_draft.add_argument("--root", default=".")
+    worklog_draft.add_argument("--contract", required=True, help="workspace-relative current sealed Oracle Contract")
+    worklog_draft.add_argument("--out", help="workspace-relative immutable local draft path")
+    worklog_draft.add_argument("--json", action="store_true")
+    worklog_verify = worklog_sub.add_parser("verify", help="verify one local proof worklog draft and current Oracle binding")
+    worklog_verify.add_argument("draft")
+    worklog_verify.add_argument("--root", default=".")
+    worklog_verify.add_argument("--json", action="store_true")
+    worklog_status = worklog_sub.add_parser("status", help="read bounded local proof worklog facts without posting anything")
+    worklog_status.add_argument("--root", default=".")
+    worklog_status.add_argument("--json", action="store_true")
+
     proofsearch = sub.add_parser("proofsearch", help="compare hash-bound repair candidates without applying them")
     proofsearch_sub = proofsearch.add_subparsers(required=True, dest="proofsearch_cmd")
     proofsearch_plan = proofsearch_sub.add_parser("plan", help="seal one graph divergence and its exact proof-impact slice")
@@ -1430,9 +1744,86 @@ def main(argv=None) -> int:
     revenue_submission_assurance.add_argument("--store-media", required=True)
     revenue_submission_assurance.add_argument("--saas-proof", required=True)
     revenue_submission_assurance.add_argument("--quality-audit", required=True)
+    revenue_submission_assurance.add_argument("--oracle-authority", help="optional source-bound AppForge Oracle authority file; required when contract marks it required")
     revenue_submission_assurance.add_argument("--out", default=".factory/appforge/submission-assurance.json")
     revenue_submission_assurance.add_argument("--report-dir", default=".factory/appforge/reports")
     revenue_submission_assurance.add_argument("--json", action="store_true")
+    revenue_appforge_oracle = revenue_sub.add_parser("appforge-oracle", help="verify source-bound AppForge candidate, policy, and gate authority without an Apple action")
+    revenue_appforge_oracle.add_argument("--root", default=".")
+    revenue_appforge_oracle.add_argument("--authority", required=True)
+    revenue_appforge_oracle.add_argument("--out")
+    revenue_appforge_oracle.add_argument("--json", action="store_true")
+    revenue_device_intent = revenue_sub.add_parser("device-reality-intent", help="seal supervised real-device journeys to source-bound AppForge intent without operating a device")
+    revenue_device_intent.add_argument("--root", default=".")
+    revenue_device_intent.add_argument("--oracle-authority", required=True)
+    revenue_device_intent.add_argument("--design-input", required=True)
+    revenue_device_intent.add_argument("--journeys", required=True, help="JSON file containing a required_journeys array")
+    revenue_device_intent.add_argument("--transport", action="append", required=True, choices=("manual_physical_device", "phone_harness"))
+    revenue_device_intent.add_argument("--out", required=True)
+    revenue_device_intent.add_argument("--json", action="store_true")
+    revenue_device_reality = revenue_sub.add_parser("device-reality-gate", help="verify supervised device evidence against a sealed AppForge intent envelope; never operates a device")
+    revenue_device_reality.add_argument("--root", default=".")
+    revenue_device_reality.add_argument("--intent-envelope", required=True)
+    revenue_device_reality.add_argument("--evidence", required=True)
+    revenue_device_reality.add_argument("--out", default=".factory/appforge/device-reality.json")
+    revenue_device_reality.add_argument("--json", action="store_true")
+    revenue_appforge_eas = revenue_sub.add_parser("appforge-eas", help="validate a candidate-bound EAS profile handoff without reading credentials or submitting to Apple")
+    revenue_appforge_eas.add_argument("--root", default=".")
+    revenue_appforge_eas.add_argument("--candidate", required=True)
+    revenue_appforge_eas.add_argument("--eas-json", required=True)
+    revenue_appforge_eas.add_argument("--build-profile", required=True)
+    revenue_appforge_eas.add_argument("--submit-profile", required=True)
+    revenue_appforge_eas.add_argument("--out")
+    revenue_appforge_eas.add_argument("--json", action="store_true")
+    revenue_rehearsal = revenue_sub.add_parser("appforge-rehearse", help="seal a credential-free Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot release rehearsal without running a provider")
+    revenue_rehearsal.add_argument("--root", default=".")
+    revenue_rehearsal.add_argument("--candidate", required=True)
+    revenue_rehearsal.add_argument("--submission-assurance", required=True)
+    revenue_rehearsal.add_argument("--profile", required=True)
+    revenue_rehearsal.add_argument("--out", default=".factory/appforge/release-rehearsal.json")
+    revenue_rehearsal.add_argument("--json", action="store_true")
+    revenue_native_surface = revenue_sub.add_parser("appforge-native-surface", help="verify a source-bound adaptive Apple-surface preflight without building, rendering, or contacting Apple")
+    revenue_native_surface.add_argument("--root", default=".")
+    revenue_native_surface.add_argument("--candidate", required=True)
+    revenue_native_surface.add_argument("--contract", required=True)
+    revenue_native_surface.add_argument("--evidence", required=True)
+    revenue_native_surface.add_argument("--out", default=".factory/appforge/native-surface.json")
+    revenue_native_surface.add_argument("--json", action="store_true")
+    revenue_surface_matrix = revenue_sub.add_parser("appforge-surface-matrix", help="generate a sealed iPhone/iPad accessibility configuration plan without operating a device")
+    revenue_surface_matrix.add_argument("--root", default=".")
+    revenue_surface_matrix.add_argument("--candidate", required=True)
+    revenue_surface_matrix.add_argument("--native-surface", required=True)
+    revenue_surface_matrix.add_argument("--out", default=".factory/appforge/surface-matrix.json")
+    revenue_surface_matrix.add_argument("--json", action="store_true")
+    revenue_storefront_story = revenue_sub.add_parser("appforge-storefront-story", help="verify source-bound Store screenshot story coverage and claim references without generating or uploading media")
+    revenue_storefront_story.add_argument("--root", default=".")
+    revenue_storefront_story.add_argument("--candidate", required=True)
+    revenue_storefront_story.add_argument("--store-media", required=True)
+    revenue_storefront_story.add_argument("--contract", required=True)
+    revenue_storefront_story.add_argument("--evidence", required=True)
+    revenue_storefront_story.add_argument("--out", default=".factory/appforge/storefront-story.json")
+    revenue_storefront_story.add_argument("--json", action="store_true")
+    revenue_fastlane_capture = revenue_sub.add_parser("appforge-fastlane-capture", help="seal a capture-only Fastlane Snapshot contract without running Xcode, Fastlane, or Apple actions")
+    revenue_fastlane_capture.add_argument("--root", default=".")
+    revenue_fastlane_capture.add_argument("--candidate", required=True)
+    revenue_fastlane_capture.add_argument("--surface-matrix", required=True)
+    revenue_fastlane_capture.add_argument("--storefront-story", required=True)
+    revenue_fastlane_capture.add_argument("--contract", required=True)
+    revenue_fastlane_capture.add_argument("--out", default=".factory/appforge/fastlane-capture.json")
+    revenue_fastlane_capture.add_argument("--json", action="store_true")
+    revenue_submission_integrity = revenue_sub.add_parser("appforge-submission-integrity", help="fail closed on loose AppForge iPhone/iPad capture requirements without creating media")
+    revenue_submission_integrity.add_argument("--root", default=".")
+    revenue_submission_integrity.add_argument("--candidate", required=True)
+    revenue_submission_integrity.add_argument("--contract", required=True)
+    revenue_submission_integrity.add_argument("--out", default=".factory/appforge/submission-integrity.json")
+    revenue_submission_integrity.add_argument("--json", action="store_true")
+    revenue_mobile_evidence = revenue_sub.add_parser("appforge-mobile-evidence", help="normalize source-bound iOS/Android tool evidence into one candidate-bound readiness receipt without running tools or providers")
+    revenue_mobile_evidence.add_argument("--root", default=".")
+    revenue_mobile_evidence.add_argument("--candidate", required=True)
+    revenue_mobile_evidence.add_argument("--contract", required=True)
+    revenue_mobile_evidence.add_argument("--evidence", required=True)
+    revenue_mobile_evidence.add_argument("--out", default=".factory/appforge/mobile-evidence.json")
+    revenue_mobile_evidence.add_argument("--json", action="store_true")
 
     saas = sub.add_parser("saas", help="verify provider-neutral SaaS identity, billing, entitlement, and revocation evidence")
     saas_sub = saas.add_subparsers(required=True, dest="saas_cmd")
@@ -2560,6 +2951,227 @@ def main(argv=None) -> int:
             print(f"admission: {result.get('marker', result.get('verdict'))}")
         else:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
+    if a.cmd == "proof-continuity":
+        root = Path(a.root).resolve()
+        try:
+            if a.proof_continuity_cmd == "seal":
+                result = seal_proof_continuity(root, Path(a.input), Path(a.out))
+            elif a.proof_continuity_cmd == "observe":
+                result = record_proof_continuity_observation(root, Path(a.contract), Path(a.observation), Path(a.out))
+            else:
+                result = proof_continuity_projection(root)
+            code = 0 if result.get("verdict") != "BLOCKED" else 1
+        except (ProofContinuityError, OracleFirewallError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.proof-continuity.error.v1", "marker": "PROOF_CONTINUITY_REFUSED", "code": getattr(exc, "code", "PROOF_CONTINUITY_INPUT_INVALID"), "message": str(exc)}
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            print(result.get("marker", "PROOF_CONTINUITY_OK"))
+            print("authority   : local hash-bound audit only; no test run, candidate mutation, provider action, release, or approval")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
+    if a.cmd == "oracle":
+        root = Path(a.root).resolve()
+        try:
+            if a.oracle_cmd == "init":
+                agent = json.loads((root / a.agent).read_text(encoding="utf-8-sig"))
+                result = initialize_oracle_firewall(root, Path(a.out_dir), Path(a.source), agent, a.id, a.scope, appforge=a.appforge)
+            elif a.oracle_cmd == "handoff":
+                agent = json.loads((root / a.agent).read_text(encoding="utf-8-sig"))
+                result = capture_intent_handoff(root, Path(a.source), agent, a.id, Path(a.out) if a.out else None)
+            elif a.oracle_cmd == "seal":
+                result = seal_oracle_contract(root, Path(a.input), Path(a.out))
+            elif a.oracle_cmd == "verify":
+                result = verify_oracle_contract(root, Path(a.contract))
+            elif a.oracle_cmd == "diff":
+                result = compare_oracle_contracts(root, Path(a.prior), Path(a.candidate), Path(a.out) if a.out else None)
+            elif a.oracle_cmd == "challenge":
+                if a.oracle_challenge_cmd == "compile":
+                    result = compile_oracle_challenge(root, Path(a.contract), Path(a.out) if a.out else None)
+                else:
+                    result = verify_oracle_challenge_result(root, Path(a.plan), Path(a.result))
+            elif a.oracle_cmd == "incident":
+                agent = json.loads((root / a.agent).read_text(encoding="utf-8-sig"))
+                result = record_oracle_incident(root, agent, Path(a.contract), Path(a.drift), Path(a.out) if a.out else None)
+            else:
+                result = oracle_firewall_projection(root)
+            code = 0 if result.get("ok", True) and result.get("verdict") != "BLOCKED" else 1
+        except (OracleFirewallError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.oracle-firewall.error.v1", "marker": "ORACLE_FIREWALL_REFUSED", "code": getattr(exc, "code", "ORACLE_INPUT_INVALID"), "message": str(exc)}
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            print(result.get("marker", "ORACLE_FIREWALL_OK"))
+            print("authority   : local integrity and read-only supervision only; no candidate mutation, approval, release, credential, or network action")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
+    if a.cmd == "semantic-authority":
+        root = Path(a.root).resolve()
+        try:
+            if a.semantic_cmd == "handoff":
+                result = seal_semantic_handoff(root, Path(a.input), Path(a.out))
+            elif a.semantic_cmd == "lease":
+                result = seal_authority_lease(root, Path(a.input), Path(a.out))
+            elif a.semantic_cmd == "verify":
+                result = verify_semantic_handoff(root, Path(a.path)) if a.kind == "handoff" else verify_authority_lease(root, Path(a.path))
+            elif a.semantic_cmd == "check":
+                result = authorize_semantic_action(root, Path(a.lease), json.loads((root / a.request).read_text(encoding="utf-8-sig")))
+            elif a.semantic_cmd == "record":
+                result = record_semantic_action_decision(root, Path(a.lease), json.loads((root / a.request).read_text(encoding="utf-8-sig")), Path(a.out))
+            else:
+                result = semantic_authority_projection(root)
+            code = 0 if result.get("ok", result.get("allowed", True)) else 1
+        except (SemanticAuthorityError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.semantic-authority.error.v1", "marker": "SEMANTIC_AUTHORITY_REFUSED", "code": getattr(exc, "code", "SEMANTIC_INPUT_INVALID"), "message": str(exc)}
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            print(result.get("marker", "SEMANTIC_AUTHORITY_READ_ONLY"))
+            print("authority   : sealed local constraints only; no message, tool, sandbox, candidate, approval, release, credential, or network action")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
+    if a.cmd == "atomic":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            if a.atomic_cmd == "import":
+                result = import_atomic_run(root, Path(a.envelope), Path(a.out) if a.out else None)
+            elif a.atomic_cmd == "verify":
+                result = verify_atomic_receipt(root, Path(a.receipt))
+            elif a.atomic_cmd == "template":
+                result = atomic_envelope_template()
+            else:
+                result = atomic_proof_projection(root)
+            code = 0 if result.get("ok", True) and int(result.get("invalid_count", 0)) == 0 else 1
+        except (AtomicProofAdapterError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.atomic-proof-adapter.error.v1", "marker": "ATOMIC_INPUT_REJECTED", "code": getattr(exc, "code", "E_ATOMIC_ENVELOPE_SCHEMA"), "message": str(exc)}
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "agent-bridge":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            if a.agent_bridge_cmd == "import":
+                result = import_agent_proof(root, Path(a.envelope), Path(a.out) if a.out else None)
+            elif a.agent_bridge_cmd == "verify":
+                result = verify_agent_proof(root, Path(a.receipt))
+            elif a.agent_bridge_cmd == "template":
+                result = provider_template(a.provider)
+            elif a.agent_bridge_cmd == "mission":
+                result = agent_handoff_brief(root, Path(a.contract))
+            else:
+                result = agent_proof_projection(root)
+            code = 0 if result.get("ok", True) and int(result.get("invalid_count", 0)) == 0 else 1
+        except (AgentProofBridgeError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.agent-proof-bridge.error.v1", "marker": "AGENT_PROOF_INPUT_REJECTED", "code": getattr(exc, "code", "E_AGENT_BRIDGE_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True) if a.json else json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "operations-control":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            if a.operations_control_cmd == "template":
+                result = operations_control_template()
+            elif a.operations_control_cmd == "assess":
+                result = assess_operations_control(root, Path(a.manifest), Path(a.out) if a.out else None)
+            else:
+                result = operations_control_projection(root)
+            code = 0 if a.operations_control_cmd == "template" or (result.get("marker") in {"OPS_CONTROL_READY", "OPS_CONTROL_READ_ONLY"} and int(result.get("invalid_count", 0)) == 0) else 1
+        except (OperationsControlError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.operations-control.error.v1", "marker": "OPS_CONTROL_INPUT_REJECTED", "code": getattr(exc, "code", "E_OPS_CONTROL_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "lifecycle":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            if a.lifecycle_cmd == "template":
+                result = lifecycle_template()
+            elif a.lifecycle_cmd == "record":
+                result = record_lifecycle_event(root, Path(a.event), Path(a.out) if a.out else None)
+            else:
+                result = lifecycle_projection(root)
+            code = 0 if a.lifecycle_cmd == "template" or (result.get("marker") in {"LIFECYCLE_EVENT_RECORDED", "LIFECYCLE_READ_ONLY"} and int(result.get("invalid_count", 0)) == 0) else 1
+        except (LifecycleLedgerError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.lifecycle.error.v1", "marker": "LIFECYCLE_INPUT_REJECTED", "code": getattr(exc, "code", "E_LIFECYCLE_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "service-boundary":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            if a.service_boundary_cmd == "template":
+                result = service_boundary_template()
+            else:
+                result = check_service_boundaries(root, Path(a.manifest), a.changed)
+            code = 0 if a.service_boundary_cmd == "template" or result.get("marker") in {"SERVICE_BOUNDARY_READY"} else 1
+        except (ServiceBoundaryError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.service-boundary.error.v1", "marker": "SERVICE_BOUNDARY_INPUT_REJECTED", "code": getattr(exc, "code", "E_SERVICE_BOUNDARY_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "repair-loop":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            if a.repair_loop_cmd == "template":
+                result = repair_loop_template()
+            elif a.repair_loop_cmd == "assess":
+                result = assess_repair_loop(root, Path(a.manifest), Path(a.out) if a.out else None)
+            else:
+                result = repair_loop_projection(root)
+            code = 0 if a.repair_loop_cmd == "template" or (result.get("marker") in {"REPAIR_LOOP_READY", "REPAIR_LOOP_READ_ONLY"} and int(result.get("invalid_count", 0)) == 0) else 1
+        except (RepairLoopError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.repair-loop.error.v1", "marker": "REPAIR_LOOP_INPUT_REJECTED", "code": getattr(exc, "code", "E_REPAIR_LOOP_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "repo-coordinate":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            result = repo_coordination_template() if a.repo_coordinate_cmd == "template" else coordinate_repositories(root, Path(a.manifest))
+            code = 0 if a.repo_coordinate_cmd == "template" or result.get("marker") == "REPO_COORDINATION_READY" else 1
+        except (RepoCoordinationError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.repo-coordination.error.v1", "marker": "REPO_COORDINATION_INPUT_REJECTED", "code": getattr(exc, "code", "E_REPO_COORDINATION_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "ontology":
+        root = Path(getattr(a, "root", ".")).resolve()
+        try:
+            result = domain_ontology_template() if a.ontology_cmd == "template" else validate_domain_ontology(root, Path(a.ontology), a.concept)
+            code = 0 if a.ontology_cmd == "template" or result.get("marker") == "ONTOLOGY_READY" else 1
+        except (DomainOntologyError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.domain-ontology.error.v1", "marker": "ONTOLOGY_INPUT_REJECTED", "code": getattr(exc, "code", "E_ONTOLOGY_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
+        return code
+    if a.cmd == "mission-control":
+        result = mission_control_status(Path(a.root).resolve())
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    if a.cmd == "worklog":
+        root = Path(a.root).resolve()
+        try:
+            if a.worklog_cmd == "draft":
+                result = create_proof_worklog(root, Path(a.contract), Path(a.out) if a.out else None)
+            elif a.worklog_cmd == "verify":
+                result = verify_proof_worklog(root, Path(a.draft))
+            else:
+                result = proof_worklog_projection(root)
+            code = 0 if result.get("ok", True) and int(result.get("invalid_count", 0)) == 0 else 1
+        except (ProofWorklogError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.proof-worklog.error.v1", "marker": "PROOF_WORKLOG_INPUT_REJECTED", "code": getattr(exc, "code", "E_PROOF_WORKLOG_SCHEMA"), "message": str(exc)}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
         return code
     if a.cmd == "pack":
         try:
@@ -4015,7 +4627,35 @@ def main(argv=None) -> int:
             elif a.revenue_cmd == "quality-audit":
                 payload = verify_quality_audit(root, Path(a.contract), Path(a.evidence), Path(a.out))
             elif a.revenue_cmd == "submission-assurance":
-                payload = verify_submission_assurance(root, Path(a.contract), Path(a.app_review), Path(a.store_media), Path(a.saas_proof), Path(a.quality_audit), Path(a.out), Path(a.report_dir))
+                payload = verify_submission_assurance(root, Path(a.contract), Path(a.app_review), Path(a.store_media), Path(a.saas_proof), Path(a.quality_audit), Path(a.out), Path(a.report_dir), Path(a.oracle_authority) if a.oracle_authority else None)
+            elif a.revenue_cmd == "appforge-oracle":
+                payload = verify_appforge_oracle_authority(root, Path(a.authority), out=Path(a.out) if a.out else None)
+            elif a.revenue_cmd == "device-reality-intent":
+                journey_path = Path(a.journeys).resolve() if Path(a.journeys).is_absolute() else (root / Path(a.journeys)).resolve()
+                journey_path.relative_to(root)
+                if not journey_path.is_file() or journey_path.stat().st_size > 1_048_576:
+                    raise RevenueForgeError("APPFORGE_DEVICE_REALITY_INPUT_UNAVAILABLE", "journeys input must be a regular workspace JSON file up to 1 MiB")
+                journeys_input = json.loads(journey_path.read_text(encoding="utf-8-sig"))
+                journeys = journeys_input.get("required_journeys") if isinstance(journeys_input, dict) else journeys_input
+                payload = create_device_reality_intent_envelope(root, Path(a.oracle_authority), Path(a.design_input), journeys, a.transport, Path(a.out))
+            elif a.revenue_cmd == "device-reality-gate":
+                payload = verify_device_reality(root, Path(a.intent_envelope), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "appforge-eas":
+                payload = verify_eas_preflight(root, Path(a.candidate), Path(a.eas_json), a.build_profile, a.submit_profile, out=Path(a.out) if a.out else None)
+            elif a.revenue_cmd == "appforge-rehearse":
+                payload = create_release_rehearsal(root, Path(a.candidate), Path(a.submission_assurance), Path(a.profile), Path(a.out))
+            elif a.revenue_cmd == "appforge-native-surface":
+                payload = verify_native_surface(root, Path(a.candidate), Path(a.contract), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "appforge-surface-matrix":
+                payload = create_surface_matrix(root, Path(a.candidate), Path(a.native_surface), Path(a.out))
+            elif a.revenue_cmd == "appforge-storefront-story":
+                payload = verify_storefront_story(root, Path(a.candidate), Path(a.store_media), Path(a.contract), Path(a.evidence), Path(a.out))
+            elif a.revenue_cmd == "appforge-fastlane-capture":
+                payload = create_fastlane_capture_contract(root, Path(a.candidate), Path(a.surface_matrix), Path(a.storefront_story), Path(a.contract), Path(a.out))
+            elif a.revenue_cmd == "appforge-submission-integrity":
+                payload = verify_submission_integrity(root, Path(a.candidate), Path(a.contract), Path(a.out))
+            elif a.revenue_cmd == "appforge-mobile-evidence":
+                payload = verify_mobile_evidence(root, Path(a.candidate), Path(a.contract), Path(a.evidence), Path(a.out))
             elif a.revenue_cmd == "evidence-kit":
                 payload = create_evidence_kit(root, Path(a.candidate), Path(a.design_input), Path(a.out_dir))
             elif a.revenue_cmd == "appforge-init":
@@ -4377,6 +5017,14 @@ def main(argv=None) -> int:
             sign_revocations,
             verify_receipt_v2,
         )
+        from .enterprise_enforcement import (
+            EnterpriseEnforcementError,
+            record_enterprise_decision,
+            sign_enforcement_policy,
+            sign_workload_identity,
+            sign_workload_revocations,
+        )
+        from .enterprise_runner_admission import EnterpriseRunnerAdmissionError, prepare_runner_admission
         try:
             if a.enterprise_cmd == "keygen":
                 result = generate_key_material(
@@ -4411,7 +5059,7 @@ def main(argv=None) -> int:
                     out=Path(a.out),
                 )
                 result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
-            else:
+            elif a.enterprise_cmd == "revocations-sign":
                 entries = json.loads(Path(a.entries).read_text(encoding="utf-8"))
                 signed = sign_revocations(
                     entries,
@@ -4422,8 +5070,28 @@ def main(argv=None) -> int:
                     out=Path(a.out),
                 )
                 result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
-        except (EnterpriseReceiptError, json.JSONDecodeError, OSError) as exc:
-            if isinstance(exc, EnterpriseReceiptError):
+            elif a.enterprise_cmd == "workload-identity-seal":
+                payload = json.loads(Path(a.payload).read_text(encoding="utf-8"))
+                signed = sign_workload_identity(payload, private_key_path=Path(a.private_key), keyid=a.keyid, identity=a.identity, issuer=a.issuer, out=Path(a.out))
+                result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
+            elif a.enterprise_cmd == "enforcement-policy-seal":
+                payload = json.loads(Path(a.payload).read_text(encoding="utf-8"))
+                signed = sign_enforcement_policy(payload, private_key_path=Path(a.private_key), keyid=a.keyid, identity=a.identity, issuer=a.issuer, out=Path(a.out))
+                result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
+            elif a.enterprise_cmd == "workload-revocations-seal":
+                entries = json.loads(Path(a.entries).read_text(encoding="utf-8"))
+                signed = sign_workload_revocations(entries, private_key_path=Path(a.private_key), keyid=a.keyid, identity=a.identity, issuer=a.issuer, out=Path(a.out))
+                result = {"schema": "factory.enterprise.result.v1", "verdict": "SIGNED", "path": str(Path(a.out).resolve()), "payload_type": signed["payloadType"]}
+            elif a.enterprise_cmd == "runner-admission-seal":
+                result = prepare_runner_admission(Path(a.root), Path(a.payload), Path(a.out))
+            else:
+                request = json.loads(Path(a.request).read_text(encoding="utf-8"))
+                result = record_enterprise_decision(
+                    Path(a.root), request, Path(a.out), workload_identity_path=Path(a.workload_identity), policy_path=Path(a.policy),
+                    trust_root_path=Path(a.trust_root), revocations_path=Path(a.workload_revocations) if a.workload_revocations else None,
+                )
+        except (EnterpriseReceiptError, EnterpriseEnforcementError, EnterpriseRunnerAdmissionError, json.JSONDecodeError, OSError) as exc:
+            if isinstance(exc, (EnterpriseReceiptError, EnterpriseEnforcementError, EnterpriseRunnerAdmissionError)):
                 error = {"code": exc.code, "message": exc.message}
             else:
                 error = {"code": "E_INPUT", "message": str(exc)}

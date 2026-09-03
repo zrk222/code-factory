@@ -1,7 +1,32 @@
 # FactoryLine for VS Code
 
-Run a bounded FactoryLine command and inspect the local JSON receipt without
-leaving VS Code. The extension never uploads your workspace, code, or receipts.
+You used an AI agent to change the app. The tests are green. Before you merge,
+you need one answer: **could the test actually fail when the behavior is
+wrong?**
+
+FactoryLine starts with that question. Run a bounded local command, inspect the
+receipt beside the diff, and decide what needs a person—not another confident
+agent message. It never uploads your workspace, code, or receipts.
+
+## The proof path, in three moves
+
+1. **Start with First Proof.** Run `factory first-proof --root .` to challenge a
+   test in a disposable sandbox. A test that still passes after its behavior is
+   removed is a review signal, not a release signal.
+2. **Make the handoff inspectable.** If Junie, Copilot, CodeRabbit, Devin,
+   Eve, Grok Build, or another agent supplied work, Agent Proof Bridge records
+   the local before/after artifacts, sealed scope, checkpoints, and Oracle
+   Contract binding in Graph Ops. It does not start agents, inherit their
+   authority, or turn their claims into proof.
+3. **Keep app-release work visible.** AppForge Mission Control turns a
+   confirmed app story into a storyboard, review queue, and evidence dossier.
+   It can surface avoidable App Store policy and prior-rejection gaps before
+   TestFlight; final submission stays with the human and Apple remains the
+   decision-maker.
+
+Your choice remains explicit throughout: inspect the evidence, approve the
+next boundary, or stop and repair. A green check is useful only when you can
+see what it actually proves.
 
 **Catch AI-generated tests that could never fail — before review.** Keep the
 receipts and proof path next to the code, then open **Graph Ops** to see what is
@@ -11,7 +36,18 @@ hollow negative control caught in a disposable sandbox, then open
 `factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
-**New in 0.8.21:** AppForge Mission Control turns a confirmed app story
+**New in 0.9.2:** the Oracle Firewall blocks same-ID rewrites of a blocking or
+release obligation's meaning, source binding, provenance, criticality, effect,
+or gate semantics. AppForge Oracle dossier receipts now retain a matching,
+hash-valid evidence path for review.
+
+**Also in 0.9.1:** the Agent Proof Bridge makes an Eve, Junie, Grok Build, or
+generic handoff inspectable in Graph Ops. It verifies the typed DAG, sealed
+scope, source preconditions, real before/after artifacts, declared checkpoint
+continuity, and current Oracle Contract binding. It never starts or resumes an
+agent, posts a worklog, or inherits agent authority.
+
+AppForge Mission Control turns a confirmed app story
 into a visible review path and checks 30 exact-build Apple policy and prior
 rejection classes before submission. Credential references—not raw secrets—can
 be handed to a supervised agent for evidence preparation; final TestFlight/App
@@ -111,7 +147,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.8.21.vsix
+code --install-extension factoryline-vscode-0.9.2.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

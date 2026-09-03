@@ -58,17 +58,34 @@ class FactoryLineCoreTest {
             FactoryLineCommands.appforgeStatus(root),
         )
         val summary = AppForgeSummary.fromJson(
-            """{"schema":"factory.appforge.design-projection.v1","current_count":1,"invalid_count":0,"init":{"current_count":1},"app_review":{"current_count":1},"quality_audit":{"current_count":1},"submission_assurance":{"current_count":1},"claim_boundary":"local receipts only"}""",
+            """{"schema":"factory.appforge.design-projection.v1","current_count":1,"invalid_count":0,"init":{"current_count":1},"app_review":{"current_count":1},"quality_audit":{"current_count":1},"submission_assurance":{"current_count":1},"oracle_authority":{"current_count":1},"claim_boundary":"local receipts only"}""",
         )
         assertNotNull(summary)
         assertTrue(summary.brief().contains("days-long repeat review cycles"))
+        assertTrue(summary.brief().contains("candidate-bound Oracle authority"))
         assertTrue(summary.brief().contains("cannot guarantee Apple approval"))
+    }
+
+    @Test
+    fun oracleFirewallSupervisionIsReadOnlyAndShowsOnlySchemaBoundEvidence() {
+        val root = Files.createTempDirectory("factoryline-oracle-firewall")
+        assertEquals(
+            listOf("oracle", "status", "--root", root.toString(), "--json"),
+            FactoryLineCommands.oracleFirewallStatus(root),
+        )
+        val summary = OracleFirewallSummary.fromJson(
+            """{"schema":"factory.oracle-firewall-projection.v1","contract_count":1,"blocked_drift_count":2,"challenge_count":3,"incident_count":4,"invalid_count":0,"claim_boundary":"local artifacts only"}""",
+        )
+        assertNotNull(summary)
+        assertTrue(summary.brief().contains("E_ORACLE_WEAKENING"))
+        assertTrue(summary.brief().contains("Agent-proposed rules remain advisory"))
+        assertNull(OracleFirewallSummary.fromJson("""{"schema":"untrusted"}"""))
     }
 
     @Test
     fun appForgeNestedReceiptFieldsCannotShadowTheProjection() {
         // CLI emits sorted keys, so nested app_review fields precede root schema/counts.
-        val raw = """{"app_review":{"schema":"nested","current_count":9,"claim_boundary":"nested"},"claim_boundary":"root boundary","current_count":2,"init":{"current_count":3},"invalid_count":1,"quality_audit":{"current_count":4},"schema":"factory.appforge.design-projection.v1","submission_assurance":{"current_count":5}}"""
+        val raw = """{"app_review":{"schema":"nested","current_count":9,"claim_boundary":"nested"},"claim_boundary":"root boundary","current_count":2,"init":{"current_count":3},"invalid_count":1,"quality_audit":{"current_count":4},"schema":"factory.appforge.design-projection.v1","submission_assurance":{"current_count":5},"oracle_authority":{"current_count":6}}"""
         val summary = assertNotNull(AppForgeSummary.fromJson(raw))
         assertEquals("2", summary.currentCount)
         assertEquals("1", summary.invalidCount)
@@ -76,6 +93,7 @@ class FactoryLineCoreTest {
         assertEquals("3", summary.initCount)
         assertEquals("4", summary.qualityCount)
         assertEquals("5", summary.submissionCount)
+        assertEquals("6", summary.oracleAuthorityCount)
         assertEquals("root boundary", summary.claimBoundary)
         assertNull(AppForgeSummary.fromJson(raw.replace("\"current_count\":2", "\"current_count\":-2")))
         assertNull(AppForgeSummary.fromJson(raw.replace("\"schema\":\"factory.appforge.design-projection.v1\"", "\"schema\":\"unknown\"")))

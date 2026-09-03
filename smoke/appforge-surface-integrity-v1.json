@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "name": "surface_integrity_is_local_candidate_bound_and_fail_closed",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_appforge_native_surface.py','tests/test_appforge_surface_matrix.py','tests/test_appforge_storefront_story.py','tests/test_mcp.py','tests/test_webmcp.py','tests/test_graph_ops.py'])\nassert result==0\nprint('APPFORGE_SURFACE_INTEGRITY_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "APPFORGE_SURFACE_INTEGRITY_SMOKE_PASS",
+      "timeout_s": 120,
+      "must_fail_on_stub": true,
+      "covers": ["NATIVE_SURFACE_STATIC_GUARD", "SURFACE_MATRIX_EXPAND", "SURFACE_MATRIX_GUARD", "STOREFRONT_STORY_BINDING", "STOREFRONT_STORY_GUARD", "SURFACE_INTEGRITY_STATUS_REQUESTED"]
+    }
+  ]
+}

@@ -37,7 +37,18 @@ from .continuous_proof import continuous_proof_projection
 from .proof_review_workflow import proof_review_projection
 from .revenueforge import revenueforge_projection
 from .appforge_design import appforge_design_projection
+from .oracle_firewall import oracle_firewall_projection, verify_oracle_contract
+from .proof_continuity_ledger import proof_continuity_projection
+from .semantic_authority import semantic_authority_projection
+from .enterprise_enforcement import enterprise_enforcement_projection
+from .atomic_proof_adapter import atomic_proof_projection, verify_atomic_receipt
+from .agent_proof_bridge import agent_proof_projection, verify_agent_proof
+from .proof_worklog import proof_worklog_projection
 from .saas_proof import saas_proof_projection
+from .operations_control import operations_control_projection
+from .lifecycle_ledger import lifecycle_projection
+from .repair_loop import repair_loop_projection
+from .mission_control_status import mission_control_status
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -1031,6 +1042,407 @@ def _append_counterexamples(state: dict[str, Any], root: Path) -> dict[str, int]
     return facts
 
 
+def _append_oracle_firewall(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project the source-to-decision oracle chain without changing any input."""
+    facts = {"contract_count": 0, "current_count": 0, "blocked_drift_count": 0, "challenge_count": 0, "incident_count": 0, "invalid_count": 0}
+    projection = oracle_firewall_projection(root)
+    facts["blocked_drift_count"] = int(projection.get("blocked_drift_count", 0))
+    facts["challenge_count"] = int(projection.get("challenge_count", 0))
+    facts["incident_count"] = int(projection.get("incident_count", 0))
+    facts["invalid_count"] = int(projection.get("invalid_count", 0))
+    for summary in projection.get("contracts", []):
+        if not isinstance(summary, dict) or not isinstance(summary.get("path"), str):
+            continue
+        checked = verify_oracle_contract(root, Path(summary["path"]))
+        contract = checked.get("contract") if isinstance(checked.get("contract"), dict) else None
+        if contract is None:
+            facts["invalid_count"] += 1
+            continue
+        digest = str(contract.get("contract_sha256") or summary.get("sha256") or "contract")
+        status = "current" if checked.get("ok") else "stale"
+        decision_id = f"oracle-decision:{digest[:24]}"
+        _node(
+            state, node_id=decision_id, kind="oracle_decision", label=f"Oracle contract {contract.get('id', digest[:12])}",
+            source=summary["path"], status=status,
+            facts={"contract_sha256": digest, "approved_by": contract.get("approved_by"), "approval_rationale": contract.get("approval_rationale"), "marker": contract.get("marker"), "authority": contract.get("authority", _AUTHORITY), "execution": False},
+        )
+        facts["contract_count"] += 1
+        facts["current_count"] += int(status == "current")
+        sources = {item.get("id"): item for item in contract.get("sources", []) if isinstance(item, dict)}
+        rule_nodes: dict[str, list[str]] = {"requirements": [], "forbidden_behaviors": [], "gates": [], "tests": []}
+        for group, kind, label in (("requirements", "oracle_obligation", "obligation"), ("forbidden_behaviors", "oracle_forbidden", "forbidden"), ("gates", "oracle_gate", "gate"), ("tests", "oracle_test", "test")):
+            for rule in contract.get("rules", {}).get(group, []):
+                if not isinstance(rule, dict):
+                    continue
+                rule_id = str(rule.get("id") or "rule")
+                node_id = f"oracle-{label}:{digest[:16]}:{rule_id}"
+                source_id = rule.get("source_id")
+                source = sources.get(source_id) if isinstance(source_id, str) else None
+                _node(state, node_id=node_id, kind=kind, label=f"{label} · {rule_id}", source=summary["path"], status="advisory" if rule.get("effect") == "advisory" else "approved", facts={"statement": rule.get("statement"), "origin": rule.get("origin"), "effect": rule.get("effect"), "source_id": source_id, "source_sha256": source.get("sha256") if isinstance(source, dict) else None, "critical": rule.get("critical"), "authority": _AUTHORITY, "execution": False})
+                source_node = f"oracle-source:{digest[:16]}:{source_id}"
+                if source_node not in state["nodes"]:
+                    _node(state, node_id=source_node, kind="oracle_source", label=f"source · {source_id}", source=source.get("path", summary["path"]) if isinstance(source, dict) else summary["path"], status="bound" if source else "missing", facts={"source_id": source_id, "origin": source.get("origin") if isinstance(source, dict) else None, "sha256": source.get("sha256") if isinstance(source, dict) else None, "authority": _AUTHORITY, "execution": False})
+                _edge(state, source_node, node_id, "authorizes")
+                rule_nodes[group].append(node_id)
+        for requirement in rule_nodes["requirements"]:
+            for forbidden in rule_nodes["forbidden_behaviors"]:
+                _edge(state, requirement, forbidden, "forbids")
+        for forbidden in rule_nodes["forbidden_behaviors"]:
+            for gate in rule_nodes["gates"]:
+                _edge(state, forbidden, gate, "guards")
+        for gate in rule_nodes["gates"]:
+            for test in rule_nodes["tests"]:
+                _edge(state, gate, test, "is_checked_by")
+        evidence_id = f"oracle-evidence:{digest[:24]}"
+        _node(state, node_id=evidence_id, kind="oracle_evidence", label="independent challenge evidence", source=".factory/oracles/challenges", status="pending" if not projection.get("challenge_count") else "planned", facts={"contract_sha256": digest, "challenge_count": projection.get("challenge_count", 0), "target": "implementation", "authority": _AUTHORITY, "execution": False})
+        for test in rule_nodes["tests"]:
+            _edge(state, test, evidence_id, "requires_evidence")
+        _edge(state, evidence_id, decision_id, "informs")
+    for blocked in projection.get("blocked_drifts", []):
+        if not isinstance(blocked, dict):
+            continue
+        drift_id = f"oracle-drift:{str(blocked.get('sha256') or 'blocked')[:24]}"
+        _node(state, node_id=drift_id, kind="oracle_drift", label="Oracle weakening blocked", source=str(blocked.get("path") or ".factory/oracles/drifts"), status="blocked", facts={"marker": blocked.get("marker"), "verdict": blocked.get("verdict"), "drift_sha256": blocked.get("sha256"), "authority": _AUTHORITY, "execution": False})
+    return facts
+
+
+def _append_proof_continuity(state: dict[str, Any], root: Path) -> dict[str, int]:
+    """Project hash-bound audit continuity and reopened incidents without writes."""
+    projection = proof_continuity_projection(root)
+    facts = {
+        "contract_count": int(projection.get("contract_count", 0)),
+        "active_contract_count": int(projection.get("active_contract_count", 0)),
+        "observation_count": int(projection.get("observation_count", 0)),
+        "reopened_count": int(projection.get("reopened_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
+    }
+    contract_nodes: dict[str, str] = {}
+    for item in projection.get("contracts", []):
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("receipt_sha256") or "continuity")
+        node_id = f"proof-continuity:{digest[:24]}"
+        contract_nodes[digest] = node_id
+        status = "reopened" if any(obs.get("contract_receipt_sha256") == digest for obs in projection.get("reopened", []) if isinstance(obs, dict)) else "current"
+        _node(state, node_id=node_id, kind="proof_continuity_audit", label=f"Proof continuity · {item.get('id', digest[:12])}", source=str(item.get("path") or ".factory/proof-continuity/contracts"), status=status, facts={"receipt_sha256": digest, "subject": item.get("subject"), "oracle_contract_sha256": item.get("oracle_contract_sha256"), "authority": _AUTHORITY, "execution": False})
+        oracle_digest = str(item.get("oracle_contract_sha256") or "")
+        if oracle_digest:
+            _edge(state, f"oracle-decision:{oracle_digest[:24]}", node_id, "continues")
+    for item in projection.get("observations", []):
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("receipt_sha256") or "observation")
+        node_id = f"proof-continuity-observation:{digest[:24]}"
+        status = "blocked" if item.get("incident_open") else "current" if item.get("verdict") == "CURRENT" else "review_required"
+        _node(state, node_id=node_id, kind="proof_continuity_observation", label="Proof continuity observation", source=str(item.get("path") or ".factory/proof-continuity/observations"), status=status, facts={"receipt_sha256": digest, "verdict": item.get("verdict"), "incident_open": item.get("incident_open"), "authority": _AUTHORITY, "execution": False})
+        contract_node = contract_nodes.get(str(item.get("contract_receipt_sha256") or ""))
+        if contract_node:
+            _edge(state, contract_node, node_id, "rechecked_by")
+    return facts
+
+
+def _append_semantic_authority(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project typed handoffs and expiring leases; never treat them as execution."""
+    projection = semantic_authority_projection(root)
+    facts = {
+        "handoff_count": int(projection.get("handoff_count", 0)),
+        "current_handoff_count": int(projection.get("current_handoff_count", 0)),
+        "lease_count": int(projection.get("lease_count", 0)),
+        "active_lease_count": int(projection.get("active_lease_count", 0)),
+        "expired_lease_count": int(projection.get("expired_lease_count", 0)),
+        "decision_count": int(projection.get("decision_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
+        "known_count": 0, "unknown_count": 0, "uncertain_count": 0, "blocking_unknown_count": 0, "capability_limit_count": 0,
+        "authority": projection.get("authority", _AUTHORITY),
+    }
+    handoffs: dict[str, str] = {}
+    leases: dict[str, str] = {}
+    for item in projection.get("handoffs", []):
+        if not isinstance(item, dict) or not item.get("ok"):
+            continue
+        digest = str(item.get("sha256") or "handoff")
+        facts["known_count"] += int(item.get("known_count", 0))
+        facts["unknown_count"] += int(item.get("unknown_count", 0))
+        facts["uncertain_count"] += int(item.get("uncertain_count", 0))
+        facts["blocking_unknown_count"] += int(item.get("blocking_unknown_count", 0))
+        facts["capability_limit_count"] += int(item.get("capability_limit_count", 0))
+        node_id = f"semantic-handoff:{digest[:24]}"
+        handoffs[digest] = node_id
+        contract_digest = str(item.get("contract_sha256") or "")
+        _node(state, node_id=node_id, kind="semantic_handoff", label=f"Semantic handoff {item.get('id', digest[:12])}", source=str(item.get("path") or ".factory/semantic-authority/handoffs"), status="current", facts={"handoff_sha256": digest, "context_urn": item.get("context_urn"), "contract_sha256": contract_digest, "authority": _AUTHORITY, "execution": False})
+        if contract_digest:
+            _edge(state, f"oracle-decision:{contract_digest[:24]}", node_id, "constrains")
+    for item in projection.get("leases", []):
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("sha256") or "lease")
+        node_id = f"semantic-lease:{digest[:24]}"
+        leases[digest] = node_id
+        status = "active" if item.get("ok") else "expired" if item.get("code") == "SEMANTIC_LEASE_EXPIRED" else "invalid"
+        _node(state, node_id=node_id, kind="authority_lease", label=f"Authority lease {item.get('id', digest[:12])}", source=str(item.get("path") or ".factory/semantic-authority/leases"), status=status, facts={"lease_sha256": digest, "context_urn": item.get("context_urn"), "contract_sha256": item.get("contract_sha256"), "authority": _AUTHORITY, "execution": False})
+        contract_digest = str(item.get("contract_sha256") or "")
+        if contract_digest:
+            _edge(state, f"oracle-decision:{contract_digest[:24]}", node_id, "bounds")
+    for item in projection.get("decisions", []):
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("sha256") or "decision")
+        node_id = f"semantic-decision:{digest[:24]}"
+        _node(state, node_id=node_id, kind="semantic_decision", label=f"Constrained action {item.get('action_id', digest[:12])}", source=str(item.get("path") or ".factory/semantic-authority/decisions"), status="recorded", facts={"decision_sha256": digest, "action": item.get("action"), "authority": _AUTHORITY, "execution": False})
+        lease_node = leases.get(str(item.get("lease_sha256") or ""))
+        if lease_node:
+            _edge(state, lease_node, node_id, "admits")
+    return facts
+
+
+def _append_enterprise_enforcement(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project local PEP-reference decisions without treating them as execution."""
+    projection = enterprise_enforcement_projection(root)
+    facts = {
+        "decision_count": int(projection.get("decision_count", 0)),
+        "admitted_count": int(projection.get("admitted_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
+        "authority": projection.get("authority", _AUTHORITY),
+    }
+    runner = projection.get("runner_admission") if isinstance(projection.get("runner_admission"), dict) else {}
+    facts["runner_admission"] = runner
+    facts["runner_packet_count"] = int(runner.get("packet_count", 0))
+    facts["runner_verified_count"] = int(runner.get("verified_count", 0))
+    facts["runner_fresh_count"] = int(runner.get("fresh_count", 0))
+    facts["runner_expired_count"] = int(runner.get("expired_count", 0))
+    facts["runner_invalid_count"] = int(runner.get("invalid_count", 0))
+    for item in projection.get("decisions", []):
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("decision_sha256") or "enterprise-decision")
+        node_id = f"enterprise-pep:{digest[:24]}"
+        admitted = item.get("admitted") is True
+        _node(state, node_id=node_id, kind="enterprise_pep_reference", label=f"Enterprise PEP reference {item.get('action_id', digest[:12])}", source=str(item.get("path") or ".factory/enterprise-enforcement/decisions"), status="admitted" if admitted else "denied", facts={"decision_sha256": digest, "admitted": admitted, "action_class": item.get("action_class"), "semantic_authority_status": item.get("semantic_authority_status"), "revocation_status": item.get("revocation_status"), "authority": _AUTHORITY, "execution": False})
+    for item in runner.get("packets", []):
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("packet_sha256") or "runner-packet")
+        decision_digest = str(item.get("decision_sha256") or "")
+        node_id = f"enterprise-runner-admission:{digest[:24]}"
+        _node(state, node_id=node_id, kind="enterprise_runner_admission", label=f"Runner packet {item.get('run_id', digest[:12])}", source=str(item.get("path") or ".factory/enterprise-enforcement/runner-admissions"), status="verified", facts={"packet_sha256": digest, "decision_sha256": decision_digest, "action_class": item.get("action_class"), "scope_count": item.get("scope_count"), "argv_sha256": item.get("argv_sha256"), "admission_expires_at": item.get("admission_expires_at"), "authority": _AUTHORITY, "execution": False})
+        if decision_digest:
+            _edge(state, f"enterprise-pep:{decision_digest[:24]}", node_id, "binds_runner_input")
+    return facts
+
+
+def _append_atomic_proof_adapter(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project imported Atomic mechanics as evidence, never as runtime control."""
+    projection = atomic_proof_projection(root)
+    facts = {
+        "receipt_count": int(projection.get("receipt_count", 0)),
+        "bound_count": int(projection.get("bound_count", 0)),
+        "resumed_count": int(projection.get("resumed_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
+        "latest": projection.get("latest"),
+        "authority": projection.get("authority", _AUTHORITY),
+    }
+    for summary in projection.get("receipts", []):
+        if not isinstance(summary, dict) or not isinstance(summary.get("path"), str):
+            continue
+        checked = verify_atomic_receipt(root, Path(summary["path"]))
+        if not checked.get("ok"):
+            facts["invalid_count"] += 1
+            continue
+        receipt = checked["receipt"]
+        digest = str(receipt.get("receipt_sha256") or summary.get("receipt_sha256") or "atomic")
+        oracle = receipt.get("oracle", {}) if isinstance(receipt.get("oracle"), dict) else {}
+        workflow = receipt.get("workflow", {}) if isinstance(receipt.get("workflow"), dict) else {}
+        run = receipt.get("run", {}) if isinstance(receipt.get("run"), dict) else {}
+        contract_digest = str(oracle.get("contract_sha256") or "unbound")
+        contract_id = f"atomic-contract:{contract_digest[:24]}"
+        workflow_id = f"atomic-workflow:{digest[:24]}"
+        run_id = f"atomic-run:{digest[:24]}"
+        _node(state, node_id=contract_id, kind="atomic_contract", label=f"Atomic contract {contract_digest[:12]}", source=str(oracle.get("path") or summary["path"]), status="bound", facts={"contract_sha256": contract_digest, "authority": _AUTHORITY, "execution": False})
+        _node(state, node_id=workflow_id, kind="atomic_workflow", label=f"Atomic DAG {workflow.get('id', digest[:12])}", source=summary["path"], status="declared", facts={"definition_sha256": workflow.get("definition_sha256"), "topology_sha256": workflow.get("topology_sha256"), "authority": _AUTHORITY, "execution": False})
+        _node(state, node_id=run_id, kind="atomic_run", label=f"Atomic run {run.get('id', digest[:12])}", source=summary["path"], status=str(run.get("status") or "unknown"), facts={"receipt_sha256": digest, "declared_isolation": receipt.get("isolation", {}).get("declared_mode") if isinstance(receipt.get("isolation"), dict) else None, "resumed": receipt.get("resume") is not None, "authority": _AUTHORITY, "execution": False})
+        _edge(state, contract_id, workflow_id, "authorizes")
+        _edge(state, workflow_id, run_id, "declares")
+        stage_nodes: dict[str, str] = {}
+        for stage in receipt.get("stages", []):
+            if not isinstance(stage, dict) or not isinstance(stage.get("id"), str):
+                continue
+            stage_id = f"atomic-stage:{digest[:16]}:{stage['id']}"
+            stage_nodes[stage["id"]] = stage_id
+            checkpoint = stage.get("checkpoint", {}) if isinstance(stage.get("checkpoint"), dict) else {}
+            _node(state, node_id=stage_id, kind="atomic_stage", label=f"Atomic {stage.get('kind', 'stage')} · {stage['id']}", source=summary["path"], status=str(stage.get("status") or "unknown"), facts={"scope_paths": stage.get("scope_paths", []), "capabilities": stage.get("capabilities", []), "checkpoint_id": checkpoint.get("id"), "checkpoint_sha256": checkpoint.get("sha256"), "artifact_sha256": stage.get("artifact_sha256"), "tool_manifest_sha256": stage.get("tool_manifest_sha256"), "source_preconditions": stage.get("source_preconditions", []), "authority": _AUTHORITY, "execution": False})
+            _edge(state, run_id, stage_id, "contains")
+        for handoff in receipt.get("handoffs", []):
+            if not isinstance(handoff, dict) or not isinstance(handoff.get("id"), str):
+                continue
+            handoff_id = f"atomic-handoff:{digest[:16]}:{handoff['id']}"
+            _node(state, node_id=handoff_id, kind="atomic_handoff", label=f"Atomic handoff {handoff['id']}", source=summary["path"], status="bound", facts={"capability": handoff.get("capability"), "scope_paths": handoff.get("scope_paths", []), "artifact_sha256": handoff.get("artifact_sha256"), "tool_manifest_sha256": handoff.get("tool_manifest_sha256"), "source_preconditions_sha256": handoff.get("source_preconditions_sha256"), "authority": _AUTHORITY, "execution": False})
+            source = stage_nodes.get(handoff.get("from_stage"))
+            target = stage_nodes.get(handoff.get("to_stage"))
+            if source:
+                _edge(state, source, handoff_id, "hands_off")
+            if target:
+                _edge(state, handoff_id, target, "scoped_to")
+    for path in projection.get("invalid", []):
+        if not isinstance(path, str):
+            continue
+        _node(state, node_id=f"atomic-invalid:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}", kind="atomic_receipt", label="Atomic receipt invalid", source=path, status="invalid", facts={"authority": _AUTHORITY, "execution": False})
+    return facts
+
+
+def _append_agent_proof_bridge(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project portable provider evidence without importing or controlling a provider."""
+    projection = agent_proof_projection(root)
+    facts = {
+        "receipt_count": int(projection.get("receipt_count", 0)),
+        "bound_count": int(projection.get("bound_count", 0)),
+        "resumed_count": int(projection.get("resumed_count", 0)),
+        "visual_evidence_count": int(projection.get("visual_evidence_count", 0)),
+        "semantic_authority_bound_count": int(projection.get("semantic_authority_bound_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
+        "providers": projection.get("providers", {}), "latest": projection.get("latest"),
+        "authority": projection.get("authority", _AUTHORITY),
+    }
+    for summary in projection.get("receipts", []):
+        if not isinstance(summary, dict) or not isinstance(summary.get("path"), str):
+            continue
+        checked = verify_agent_proof(root, Path(summary["path"]))
+        if not checked.get("ok"):
+            facts["invalid_count"] += 1
+            continue
+        receipt = checked["receipt"]
+        digest = str(receipt.get("receipt_sha256") or summary.get("receipt_sha256") or "agent")
+        oracle = receipt.get("oracle", {}) if isinstance(receipt.get("oracle"), dict) else {}
+        workflow = receipt.get("workflow", {}) if isinstance(receipt.get("workflow"), dict) else {}
+        run = receipt.get("run", {}) if isinstance(receipt.get("run"), dict) else {}
+        profile = receipt.get("provider_receipt", {}) if isinstance(receipt.get("provider_receipt"), dict) else {}
+        contract_digest = str(oracle.get("contract_sha256") or "unbound")
+        contract_id, provider_id = f"agent-contract:{contract_digest[:24]}", f"agent-provider:{digest[:24]}"
+        workflow_id, run_id = f"agent-workflow:{digest[:24]}", f"agent-run:{digest[:24]}"
+        _node(state, node_id=contract_id, kind="agent_contract", label=f"Agent contract {contract_digest[:12]}", source=str(oracle.get("path") or summary["path"]), status="bound", facts={"contract_sha256": contract_digest, "authority": _AUTHORITY, "execution": False})
+        _node(state, node_id=provider_id, kind="agent_provider", label=f"{receipt.get('provider', 'agent')} export", source=summary["path"], status="declared", facts={"runtime_sha256": profile.get("runtime_sha256"), "tool_manifest_sha256": profile.get("tool_manifest_sha256"), "session_id": profile.get("session_id"), "authority": _AUTHORITY, "execution": False})
+        _node(state, node_id=workflow_id, kind="agent_workflow", label=f"Agent DAG {workflow.get('id', digest[:12])}", source=summary["path"], status="declared", facts={"definition_sha256": workflow.get("definition_sha256"), "topology_sha256": workflow.get("topology_sha256"), "authority": _AUTHORITY, "execution": False})
+        _node(state, node_id=run_id, kind="agent_run", label=f"Agent run {run.get('id', digest[:12])}", source=summary["path"], status=str(run.get("status") or "unknown"), facts={"receipt_sha256": digest, "surface": receipt.get("surface"), "resumed": receipt.get("resume") is not None, "declared_isolation": receipt.get("isolation", {}).get("declared_mode") if isinstance(receipt.get("isolation"), dict) else None, "authority": _AUTHORITY, "execution": False})
+        _edge(state, contract_id, workflow_id, "authorizes")
+        _edge(state, provider_id, run_id, "declares")
+        _edge(state, workflow_id, run_id, "governs")
+        for node in workflow.get("nodes", []):
+            if not isinstance(node, dict) or not isinstance(node.get("id"), str):
+                continue
+            stage_id = f"agent-stage:{digest[:16]}:{node['id']}"
+            _node(state, node_id=stage_id, kind="agent_stage", label=f"Agent {node.get('kind', 'stage')} · {node['id']}", source=summary["path"], status="declared", facts={"authority": _AUTHORITY, "execution": False})
+            _edge(state, run_id, stage_id, "contains")
+        for pair in receipt.get("evidence_pairs", []):
+            if not isinstance(pair, dict) or not isinstance(pair.get("id"), str):
+                continue
+            evidence_id = f"agent-evidence:{digest[:16]}:{pair['id']}"
+            _node(state, node_id=evidence_id, kind="agent_evidence", label=f"Before/after {pair.get('kind', 'evidence')} · {pair['id']}", source=summary["path"], status="bound", facts={"before_sha256": pair.get("before_sha256"), "after_sha256": pair.get("after_sha256"), "claim_sha256": pair.get("claim_sha256"), "authority": _AUTHORITY, "execution": False})
+            _edge(state, evidence_id, run_id, "informs")
+    for path in projection.get("invalid", []):
+        if isinstance(path, str):
+            _node(state, node_id=f"agent-invalid:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}", kind="agent_receipt", label="Agent proof receipt invalid", source=path, status="invalid", facts={"authority": _AUTHORITY, "execution": False})
+    return facts
+
+
+def _append_proof_worklogs(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project local review drafts only; no tracker or message is ever invoked."""
+    projection = proof_worklog_projection(root)
+    facts = {
+        "draft_count": int(projection.get("draft_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
+        "latest": projection.get("latest"),
+        "authority": projection.get("authority", _AUTHORITY),
+    }
+    for summary in projection.get("drafts", []):
+        if not isinstance(summary, dict) or not isinstance(summary.get("draft_sha256"), str):
+            continue
+        digest, contract_digest = summary["draft_sha256"], str(summary.get("contract_sha256") or "unbound")
+        contract_id = f"proof-worklog-contract:{contract_digest[:24]}"
+        draft_id = f"proof-worklog:{digest[:24]}"
+        _node(state, node_id=contract_id, kind="proof_worklog_contract", label=f"Worklog contract {contract_digest[:12]}", source=str(summary.get("path") or ".factory/worklogs"), status="bound", facts={"contract_sha256": contract_digest, "authority": _AUTHORITY, "execution": False})
+        _node(state, node_id=draft_id, kind="proof_worklog", label=f"Review-required worklog {str(summary.get('contract_id') or digest[:12])}", source=str(summary.get("path") or ".factory/worklogs"), status="review_required", facts={"draft_sha256": digest, "review_required": True, "external_posted": False, "authority": _AUTHORITY, "execution": False})
+        _edge(state, contract_id, draft_id, "summarizes")
+    for path in projection.get("invalid", []):
+        if isinstance(path, str):
+            _node(state, node_id=f"proof-worklog-invalid:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}", kind="proof_worklog", label="Worklog draft invalid", source=path, status="invalid", facts={"authority": _AUTHORITY, "execution": False})
+    return facts
+
+
+def _append_operations_controls(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project fail-closed operating envelopes without starting any work."""
+    projection = operations_control_projection(root)
+    facts = {
+        "receipt_count": int(projection.get("receipt_count", 0)),
+        "ready_count": int(projection.get("ready_count", 0)),
+        "blocked_count": int(projection.get("blocked_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
+        "latest": projection.get("latest"),
+        "authority": projection.get("authority", _AUTHORITY),
+    }
+    for summary in projection.get("receipts", []):
+        if not isinstance(summary, dict):
+            continue
+        digest = str(summary.get("receipt_sha256") or "operations")
+        status = "ready" if summary.get("marker") == "OPS_CONTROL_READY" else "blocked"
+        control_id = f"operations-control:{digest[:24]}"
+        _node(state, node_id=control_id, kind="operations_control", label=f"Operations envelope {str(summary.get('id') or digest[:12])}", source=str(summary.get("path") or ".factory/operations-control"), status=status, facts={"receipt_sha256": digest, "marker": summary.get("marker"), "work_kind": summary.get("work_kind"), "authority": facts["authority"], "execution": False})
+        _node(state, node_id=f"operations-isolation:{digest[:24]}", kind="operations_isolation", label="Verified isolation", source=str(summary.get("path") or ".factory/operations-control"), status=status, facts={"receipt_sha256": digest, "authority": facts["authority"], "execution": False})
+        _node(state, node_id=f"operations-envelope:{digest[:24]}", kind="change_envelope", label="Reviewable change envelope", source=str(summary.get("path") or ".factory/operations-control"), status=status, facts={"receipt_sha256": digest, "authority": facts["authority"], "execution": False})
+        _edge(state, f"operations-isolation:{digest[:24]}", control_id, "preconditions_for")
+        _edge(state, f"operations-envelope:{digest[:24]}", control_id, "bounds")
+    for path in projection.get("invalid", []):
+        if isinstance(path, str):
+            _node(state, node_id=f"operations-invalid:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}", kind="operations_control", label="Operations control receipt invalid", source=path, status="invalid", facts={"authority": facts["authority"], "execution": False})
+    return facts
+
+
+def _append_lifecycle_events(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project hash-linked agent/session events; they remain declared local facts."""
+    projection = lifecycle_projection(root)
+    facts = {
+        "run_count": int(projection.get("run_count", 0)),
+        "review_required_count": int(projection.get("review_required_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
+        "latest": projection.get("latest"),
+        "authority": projection.get("authority", _AUTHORITY),
+    }
+    for summary in projection.get("runs", []):
+        if not isinstance(summary, dict) or not isinstance(summary.get("run_id"), str):
+            continue
+        digest = str(summary.get("latest_receipt_sha256") or summary["run_id"])
+        status = "review_required" if summary.get("requires_human") else str(summary.get("latest_event") or "unknown")
+        trace = summary.get("latest_session_trace") if isinstance(summary.get("latest_session_trace"), dict) else {}
+        run_id = f"lifecycle-run:{digest[:24]}"
+        trace_id = f"session-trace:{digest[:24]}"
+        _node(state, node_id=run_id, kind="lifecycle_run", label=f"Harness lifecycle {summary['run_id']}", source=".factory/lifecycle", status=status, facts={"event_count": summary.get("event_count"), "latest_event": summary.get("latest_event"), "latest_receipt_sha256": digest, "requires_human": bool(summary.get("requires_human")), "authority": facts["authority"], "execution": False})
+        _node(state, node_id=trace_id, kind="session_trace", label=f"Session trace {str(trace.get('session_id') or 'unknown')}", source=".factory/lifecycle", status=status, facts={"harness": trace.get("harness"), "stage": trace.get("stage"), "trace_sha256": trace.get("trace_sha256"), "authority": facts["authority"], "execution": False})
+        _edge(state, trace_id, run_id, "traces")
+    for path in projection.get("invalid", []):
+        if isinstance(path, str):
+            _node(state, node_id=f"lifecycle-invalid:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}", kind="lifecycle_run", label="Lifecycle receipt invalid", source=path, status="invalid", facts={"authority": facts["authority"], "execution": False})
+    return facts
+
+
+def _append_repair_loops(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project repair packets as review evidence, never a self-healing engine."""
+    projection = repair_loop_projection(root)
+    facts = {"receipt_count": int(projection.get("receipt_count", 0)), "invalid_count": int(projection.get("invalid_count", 0)), "latest": projection.get("latest"), "authority": projection.get("authority", _AUTHORITY)}
+    for summary in projection.get("receipts", []):
+        if not isinstance(summary, dict):
+            continue
+        digest = str(summary.get("receipt_sha256") or "repair-loop")
+        loop_id, issue_id, consequence_id = f"repair-loop:{digest[:24]}", f"repair-issue:{digest[:24]}", f"repair-consequence:{digest[:24]}"
+        source = str(summary.get("path") or ".factory/repair-loops")
+        _node(state, node_id=loop_id, kind="repair_loop", label=f"Repair loop {str(summary.get('id') or digest[:12])}", source=source, status="review_required", facts={"receipt_sha256": digest, "reviewer": summary.get("reviewer"), "oracle_contract_sha256": summary.get("oracle_contract_sha256"), "authority": facts["authority"], "execution": False})
+        _node(state, node_id=issue_id, kind="repair_issue", label=str(summary.get("failure_code") or "Exact failure"), source=source, status="observed", facts={"authority": facts["authority"], "execution": False})
+        _node(state, node_id=consequence_id, kind="repair_consequence", label=f"Potential consequence · {str(summary.get('highest_severity') or 'unknown')}", source=source, status="review_required", facts={"consequence_count": summary.get("consequence_count"), "authority": facts["authority"], "execution": False})
+        _edge(state, issue_id, loop_id, "requires_repair_review")
+        _edge(state, consequence_id, loop_id, "raises_risk")
+    for path in projection.get("invalid", []):
+        if isinstance(path, str):
+            _node(state, node_id=f"repair-loop-invalid:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}", kind="repair_loop", label="Repair loop receipt invalid", source=path, status="invalid", facts={"authority": facts["authority"], "execution": False})
+    return facts
+
+
 def _append_guardrail_evaluations(state: dict[str, Any], root: Path) -> dict[str, int]:
     """Project hash-bound redacted guardrail evaluations, never query a ledger."""
     facts = {"count": 0, "active_count": 0, "withheld_count": 0, "invalid_count": 0}
@@ -1503,6 +1915,14 @@ def _external_runtime_triage(facts: dict[str, int]) -> tuple[str, str] | None:
 
 
 def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
+    if facts.get("oracle_blocked_drift_count", 0) > 0:
+        return "review_oracle_weakening", "A proposed gate, scenario, threshold, test, or exception weakens the sealed definition of done. Keep work paused until a named human reviews a separately sealed successor contract."
+    if facts.get("oracle_invalid_count", 0) > 0:
+        return "repair_oracle_integrity", "An Oracle Firewall artifact is invalid or stale. Do not rely on autonomous admission or AppForge authority until its exact source binding is current."
+    if facts.get("semantic_authority_expired_lease_count", 0) > 0:
+        return "renew_semantic_authority", "An agent lease expired. Keep the handoff constrained and obtain a fresh named approval rather than extending or replaying the prior lease."
+    if facts.get("semantic_authority_invalid_count", 0) > 0:
+        return "repair_semantic_authority", "A semantic handoff, lease, or decision receipt is invalid. Do not rely on it for a runner admission until the sealed Oracle binding is repaired."
     if facts["external_runtime_invalid_count"] > 0:
         return "refresh_external_runtime_evidence", "An imported external runtime receipt is stale or invalid; re-import the bounded runner bundle before relying on its observations."
     if facts.get("intent_trace_binding_mismatch_count", 0) > 0:
@@ -1579,7 +1999,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
                     frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                    counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> dict[str, int]:
+                    counterexamples: dict[str, int], oracle_firewall: dict[str, int], atomic_proof_adapter: dict[str, Any], agent_proof_bridge: dict[str, Any], proof_worklogs: dict[str, Any], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -1618,6 +2038,24 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "counterexample_verified_count": counterexamples["verified_count"],
         "counterexample_hollow_count": counterexamples["hollow_count"],
         "counterexample_invalid_count": counterexamples["invalid_count"],
+        "oracle_contract_count": oracle_firewall["contract_count"],
+        "oracle_current_contract_count": oracle_firewall["current_count"],
+        "oracle_blocked_drift_count": oracle_firewall["blocked_drift_count"],
+        "oracle_challenge_count": oracle_firewall["challenge_count"],
+        "oracle_incident_count": oracle_firewall["incident_count"],
+        "oracle_invalid_count": oracle_firewall["invalid_count"],
+        "atomic_receipt_count": atomic_proof_adapter["receipt_count"],
+        "atomic_bound_count": atomic_proof_adapter["bound_count"],
+        "atomic_resumed_count": atomic_proof_adapter["resumed_count"],
+        "atomic_invalid_count": atomic_proof_adapter["invalid_count"],
+        "agent_bridge_receipt_count": agent_proof_bridge["receipt_count"],
+        "agent_bridge_bound_count": agent_proof_bridge["bound_count"],
+        "agent_bridge_resumed_count": agent_proof_bridge["resumed_count"],
+        "agent_bridge_visual_evidence_count": agent_proof_bridge["visual_evidence_count"],
+        "agent_bridge_semantic_authority_bound_count": agent_proof_bridge["semantic_authority_bound_count"],
+        "agent_bridge_invalid_count": agent_proof_bridge["invalid_count"],
+        "proof_worklog_draft_count": proof_worklogs["draft_count"],
+        "proof_worklog_invalid_count": proof_worklogs["invalid_count"],
         "guardrail_evaluation_count": guardrails["count"],
         "guardrail_active_count": guardrails["active_count"],
         "guardrail_withheld_count": guardrails["withheld_count"],
@@ -1672,7 +2110,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
                       proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                      counterexamples: dict[str, int], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> list[str]:
+                      counterexamples: dict[str, int], oracle_firewall: dict[str, int], atomic_proof_adapter: dict[str, Any], agent_proof_bridge: dict[str, Any], proof_worklogs: dict[str, Any], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -1705,6 +2143,22 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_CONTINUITY_METADATA_READ_ONLY")
     if counterexamples["count"]:
         markers.append("GRAPH_OPS_COUNTEREXAMPLE_PROOFS_READ_ONLY")
+    if oracle_firewall["contract_count"]:
+        markers.append("GRAPH_OPS_ORACLE_FIREWALL_READ_ONLY")
+    if oracle_firewall["blocked_drift_count"]:
+        markers.append("GRAPH_OPS_ORACLE_WEAKENING_BLOCKED")
+    if atomic_proof_adapter["receipt_count"] or atomic_proof_adapter["invalid_count"]:
+        markers.append("GRAPH_OPS_ATOMIC_PROOF_ADAPTER_READ_ONLY")
+    if atomic_proof_adapter["invalid_count"]:
+        markers.append("GRAPH_OPS_ATOMIC_PROOF_ADAPTER_INVALID")
+    if agent_proof_bridge["receipt_count"] or agent_proof_bridge["invalid_count"]:
+        markers.append("GRAPH_OPS_AGENT_PROOF_BRIDGE_READ_ONLY")
+    if agent_proof_bridge["invalid_count"]:
+        markers.append("GRAPH_OPS_AGENT_PROOF_BRIDGE_INVALID")
+    if proof_worklogs["draft_count"] or proof_worklogs["invalid_count"]:
+        markers.append("GRAPH_OPS_PROOF_WORKLOG_REVIEW_REQUIRED")
+    if proof_worklogs["invalid_count"]:
+        markers.append("GRAPH_OPS_PROOF_WORKLOG_INVALID")
     if guardrails["count"]:
         markers.append("GRAPH_OPS_GUARDRAIL_EVALUATIONS_REDACTED")
     if resilience["count"]:
@@ -1790,6 +2244,16 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     assurance = _append_github_assurance_dossiers(state, workspace)
     continuity = _append_continuity(state, workspace)
     counterexamples = _append_counterexamples(state, workspace)
+    oracle_firewall = _append_oracle_firewall(state, workspace)
+    proof_continuity = _append_proof_continuity(state, workspace)
+    semantic_authority = _append_semantic_authority(state, workspace)
+    enterprise_enforcement = _append_enterprise_enforcement(state, workspace)
+    atomic_proof_adapter = _append_atomic_proof_adapter(state, workspace)
+    agent_proof_bridge = _append_agent_proof_bridge(state, workspace)
+    proof_worklogs = _append_proof_worklogs(state, workspace)
+    operations_control = _append_operations_controls(state, workspace)
+    lifecycle = _append_lifecycle_events(state, workspace)
+    repair_loops = _append_repair_loops(state, workspace)
     guardrails = _append_guardrail_evaluations(state, workspace)
     resilience = _append_resilience_plans(state, workspace)
     proof_deltas = _append_proof_deltas(state, workspace)
@@ -1805,11 +2269,36 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     appforge = appforge_design_projection(workspace)
     saas_proof = saas_proof_projection(workspace)
     jetbrains_handshake = jetbrains_handshake_projection(workspace)
+    mission_control = mission_control_status(workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
-    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
+    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, oracle_firewall, atomic_proof_adapter, agent_proof_bridge, proof_worklogs, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     facts["journey_proof_count"] = journey_proofs["count"]
+    facts["semantic_handoff_count"] = semantic_authority["handoff_count"]
+    facts["proof_continuity_contract_count"] = proof_continuity["contract_count"]
+    facts["proof_continuity_active_contract_count"] = proof_continuity["active_contract_count"]
+    facts["proof_continuity_observation_count"] = proof_continuity["observation_count"]
+    facts["proof_continuity_reopened_count"] = proof_continuity["reopened_count"]
+    facts["proof_continuity_invalid_count"] = proof_continuity["invalid_count"]
+    facts["semantic_handoff_current_count"] = semantic_authority["current_handoff_count"]
+    facts["semantic_authority_lease_count"] = semantic_authority["lease_count"]
+    facts["semantic_authority_active_lease_count"] = semantic_authority["active_lease_count"]
+    facts["semantic_authority_expired_lease_count"] = semantic_authority["expired_lease_count"]
+    facts["semantic_authority_decision_count"] = semantic_authority["decision_count"]
+    facts["semantic_authority_invalid_count"] = semantic_authority["invalid_count"]
+    facts["semantic_known_count"] = semantic_authority["known_count"]
+    facts["semantic_unknown_count"] = semantic_authority["unknown_count"]
+    facts["semantic_uncertain_count"] = semantic_authority["uncertain_count"]
+    facts["semantic_blocking_unknown_count"] = semantic_authority["blocking_unknown_count"]
+    facts["enterprise_enforcement_decision_count"] = enterprise_enforcement["decision_count"]
+    facts["enterprise_enforcement_admitted_count"] = enterprise_enforcement["admitted_count"]
+    facts["enterprise_enforcement_invalid_count"] = enterprise_enforcement["invalid_count"]
+    facts["enterprise_runner_packet_count"] = enterprise_enforcement["runner_packet_count"]
+    facts["enterprise_runner_verified_count"] = enterprise_enforcement["runner_verified_count"]
+    facts["enterprise_runner_fresh_count"] = enterprise_enforcement["runner_fresh_count"]
+    facts["enterprise_runner_expired_count"] = enterprise_enforcement["runner_expired_count"]
+    facts["enterprise_runner_invalid_count"] = enterprise_enforcement["runner_invalid_count"]
     facts["journey_proof_admissible_count"] = journey_proofs["admissible_count"]
     facts["journey_proof_invalid_count"] = journey_proofs["invalid_count"]
     facts["continuous_proof_count"] = continuous_proof["count"]
@@ -1829,13 +2318,41 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["appforge_quality_audit_invalid_count"] = appforge["quality_audit"]["invalid_count"]
     facts["appforge_submission_assurance_current_count"] = appforge["submission_assurance"]["current_count"]
     facts["appforge_submission_assurance_invalid_count"] = appforge["submission_assurance"]["invalid_count"]
+    facts["appforge_oracle_authority_current_count"] = appforge["oracle_authority"]["current_count"]
+    facts["appforge_oracle_authority_invalid_count"] = appforge["oracle_authority"]["invalid_count"]
+    facts["appforge_device_reality_current_count"] = appforge["device_reality"]["current_count"]
+    facts["appforge_device_reality_invalid_count"] = appforge["device_reality"]["invalid_count"]
+    facts["appforge_release_rehearsal_current_count"] = appforge["release_rehearsal"]["current_count"]
+    facts["appforge_release_rehearsal_invalid_count"] = appforge["release_rehearsal"]["invalid_count"]
+    facts["appforge_native_surface_current_count"] = appforge["native_surface"]["current_count"]
+    facts["appforge_native_surface_invalid_count"] = appforge["native_surface"]["invalid_count"]
+    facts["appforge_surface_matrix_current_count"] = appforge["surface_matrix"]["current_count"]
+    facts["appforge_surface_matrix_invalid_count"] = appforge["surface_matrix"]["invalid_count"]
+    facts["appforge_storefront_story_current_count"] = appforge["storefront_story"]["current_count"]
+    facts["appforge_storefront_story_invalid_count"] = appforge["storefront_story"]["invalid_count"]
+    facts["appforge_fastlane_capture_current_count"] = appforge["fastlane_capture"]["current_count"]
+    facts["appforge_fastlane_capture_invalid_count"] = appforge["fastlane_capture"]["invalid_count"]
+    facts["appforge_submission_integrity_current_count"] = appforge["submission_integrity"]["current_count"]
+    facts["appforge_submission_integrity_invalid_count"] = appforge["submission_integrity"]["invalid_count"]
+    facts["appforge_mobile_evidence_current_count"] = appforge["mobile_evidence"]["current_count"]
+    facts["appforge_mobile_evidence_invalid_count"] = appforge["mobile_evidence"]["invalid_count"]
     facts["saas_proof_current_count"] = saas_proof["current_count"]
     facts["saas_proof_invalid_count"] = saas_proof["invalid_count"]
     facts["jetbrains_handshake_state"] = jetbrains_handshake["state"]
+    facts["operations_control_receipt_count"] = operations_control["receipt_count"]
+    facts["operations_control_ready_count"] = operations_control["ready_count"]
+    facts["operations_control_blocked_count"] = operations_control["blocked_count"]
+    facts["operations_control_invalid_count"] = operations_control["invalid_count"]
+    facts["lifecycle_run_count"] = lifecycle["run_count"]
+    facts["lifecycle_review_required_count"] = lifecycle["review_required_count"]
+    facts["lifecycle_invalid_count"] = lifecycle["invalid_count"]
+    facts["repair_loop_receipt_count"] = repair_loops["receipt_count"]
+    facts["repair_loop_invalid_count"] = repair_loops["invalid_count"]
+    facts["mission_control_state"] = mission_control["state"]
     facts["edge_count"] = len(edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
-    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
+    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, oracle_firewall, atomic_proof_adapter, agent_proof_bridge, proof_worklogs, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
     if journey_proofs["count"]:
         markers = sorted({*markers, "JOURNEY_STATUS_READ_ONLY", "GRAPH_OPS_JOURNEY_PROOF_READ_ONLY"})
     if continuous_proof["count"] or continuous_proof["invalid_count"]:
@@ -1844,12 +2361,32 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers = sorted({*markers, "GRAPH_OPS_PROOF_REVIEW_READ_ONLY", "TEAM_PROOF_INBOX_READ_ONLY"})
     if revenueforge["current_count"] or revenueforge["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_REVENUEFORGE_READ_ONLY"})
-    if appforge["current_count"] or appforge["invalid_count"] or appforge["quality_audit"]["current_count"] or appforge["quality_audit"]["invalid_count"] or appforge["submission_assurance"]["current_count"] or appforge["submission_assurance"]["invalid_count"]:
+    if proof_continuity["contract_count"] or proof_continuity["observation_count"] or proof_continuity["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_PROOF_CONTINUITY_READ_ONLY"})
+    if appforge["current_count"] or appforge["invalid_count"] or appforge["quality_audit"]["current_count"] or appforge["quality_audit"]["invalid_count"] or appforge["submission_assurance"]["current_count"] or appforge["submission_assurance"]["invalid_count"] or appforge["oracle_authority"]["current_count"] or appforge["oracle_authority"]["invalid_count"] or appforge["device_reality"]["current_count"] or appforge["device_reality"]["invalid_count"] or appforge["release_rehearsal"]["current_count"] or appforge["release_rehearsal"]["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_APPFORGE_READ_ONLY"})
     if saas_proof["current_count"] or saas_proof["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_SAAS_PROOF_READ_ONLY"})
     if jetbrains_handshake["state"] != "empty":
         markers = sorted({*markers, "GRAPH_OPS_JETBRAINS_HANDSHAKE_READ_ONLY"})
+    if semantic_authority["handoff_count"] or semantic_authority["lease_count"] or semantic_authority["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_SEMANTIC_AUTHORITY_READ_ONLY"})
+    if semantic_authority["expired_lease_count"] or semantic_authority["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_SEMANTIC_AUTHORITY_REVIEW_REQUIRED"})
+    if enterprise_enforcement["decision_count"] or enterprise_enforcement["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_ENFORCEMENT_READ_ONLY"})
+    if enterprise_enforcement["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_ENFORCEMENT_REVIEW_REQUIRED"})
+    if enterprise_enforcement["runner_packet_count"] or enterprise_enforcement["runner_invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_RUNNER_ADMISSION_READ_ONLY"})
+    if enterprise_enforcement["runner_invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_RUNNER_ADMISSION_REVIEW_REQUIRED"})
+    if operations_control["receipt_count"] or operations_control["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_OPERATIONS_CONTROL_READ_ONLY"})
+    if lifecycle["run_count"] or lifecycle["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_LIFECYCLE_READ_ONLY", "GRAPH_OPS_SESSION_TRACE_READ_ONLY"})
+    if repair_loops["receipt_count"] or repair_loops["invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_REPAIR_LOOP_READ_ONLY"})
     base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
@@ -1889,6 +2426,16 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "proof_review": proof_review,
         "revenueforge": revenueforge,
         "appforge": appforge,
+        "oracle_firewall": oracle_firewall,
+        "semantic_authority": semantic_authority,
+        "enterprise_enforcement": enterprise_enforcement,
+        "atomic_proof_adapter": atomic_proof_adapter,
+        "agent_proof_bridge": agent_proof_bridge,
+        "proof_worklogs": proof_worklogs,
+        "operations_control": operations_control,
+        "lifecycle": lifecycle,
+        "repair_loops": repair_loops,
+        "mission_control": mission_control,
         "saas_proof": saas_proof,
         "jetbrains_handshake": jetbrains_handshake,
     }

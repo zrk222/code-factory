@@ -1,0 +1,42 @@
+name: appforge-device-reality-v1
+language: python
+modules:
+  - name: appforge_device_reality
+    path: factoryline/appforge_device_reality.py
+    functions:
+      - name: create_device_reality_intent_envelope
+        args: [root, oracle_authority_path, design_input_path, required_journeys, allowed_transports, out_path]
+        returns: dict[str, Any]
+      - name: verify_device_reality
+        args: [root, envelope_path, evidence_path, out_path]
+        returns: dict[str, Any]
+      - name: device_reality_projection
+        args: [root]
+        returns: dict[str, Any]
+dependencies: []
+invariants:
+  - name: device_reality_never_controls_a_device_or_provider
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system|Popen\\("
+    scopes:
+      - module: appforge_device_reality
+        symbol: create_device_reality_intent_envelope
+        max_lines: 80
+      - module: appforge_device_reality
+        symbol: verify_device_reality
+        max_lines: 120
+  - name: device_reality_receipts_are_hash_bound
+    forbid_pattern: "eval\\(|exec\\("
+    scopes:
+      - module: appforge_device_reality
+        symbol: verify_device_reality
+        max_lines: 120
+tests:
+  - path: tests/test_appforge_device_reality.py
+    command: py -3.11 -m pytest -q tests/test_appforge_device_reality.py
+  - path: tests/test_appforge_evidence_kit.py
+    command: py -3.11 -m pytest -q tests/test_appforge_evidence_kit.py
+  - path: tests/test_mcp.py
+    command: py -3.11 -m pytest -q tests/test_mcp.py
+  - path: tests/test_graph_ops.py
+    command: py -3.11 -m pytest -q tests/test_graph_ops.py
+schema: factory.ssat.v1

@@ -57,6 +57,7 @@ GATE_KEYS = frozenset({
     "validators_passed", "verification_passed", "quality_gate", "ci_passed",
 })
 _PATH_KEYS = frozenset({"root", "workspace", "cwd", "checkout", "repository"})
+_NON_EXECUTION_STATE_SEGMENTS = frozenset({"active_policy", "constraints", "policy", "policies"})
 _PROVIDER_RE = re.compile(r"\b(?:pypi|github|open\s*vsx|jetbrains|hugging\s*face|visual\s*studio|provider|marketplace)\b", re.I)
 _TERMINAL_RE = re.compile(r"\b(?:success(?:ful|fully)?|complete(?:d)?|shipped|publish(?:ed)?|upload(?:ed)?|approv(?:ed|al)|verif(?:ied|y)|ready|passed|green|live)\b", re.I)
 _PROBLEM_RE = re.compile(r"\b(?:pending|blocked|partial|fail(?:ed|ure)?|unknown|incomplete|review[_ -]?required|needs[_ -]?revision|queued|stalled)\b", re.I)
@@ -136,6 +137,20 @@ def _nonempty(value: Any) -> bool:
     return value is not None
 
 
+def _is_execution_state_location(location: str) -> bool:
+    """Reject policy labels and historical transitions as live-run evidence.
+
+    A policy may be ``active`` indefinitely, and a historical state machine
+    legitimately contains both ``blocked`` and ``shipped``.  Neither means a
+    current process is running.  The current record is still audited for an
+    unbound terminal claim; this narrow filter only prevents those passive
+    labels from creating duplicated false ``E_METADATA_ORPHAN_ACTIVE`` or
+    contradictory-status findings.
+    """
+    segments = {part.split("[", 1)[0].lower() for part in location.split(".")}
+    return not bool(segments.intersection(_NON_EXECUTION_STATE_SEGMENTS | {"history"}))
+
+
 def _anchors(record: dict[str, Any]) -> set[str]:
     anchors: set[str] = set()
     for key, _location, value in _walk_pairs(record):
@@ -178,12 +193,12 @@ def _has_provider_identity(record: dict[str, Any]) -> bool:
     return False
 
 
-def _claim_values(record: dict[str, Any]) -> tuple[set[str], set[str], list[tuple[str, Any]]]:
+def _claim_values(record: dict[str, Any], prefix: str = "record") -> tuple[set[str], set[str], list[tuple[str, Any]]]:
     terminal: set[str] = set()
     problem: set[str] = set()
     gate_claims: list[tuple[str, Any]] = []
-    for key, location, value in _walk_pairs(record):
-        if key in STATE_KEYS and isinstance(value, str):
+    for key, location, value in _walk_pairs(record, prefix):
+        if key in STATE_KEYS and isinstance(value, str) and _is_execution_state_location(location):
             normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
             if normalized in TERMINAL_VALUES:
                 terminal.add(location)
@@ -248,7 +263,7 @@ def _finding(code: str, path: str, location: str, detail: str) -> dict[str, str]
 
 def _audit_record(workspace: Path, path: str, location: str, record: dict[str, Any]) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
-    terminal, problem, gate_claims = _claim_values(record)
+    terminal, problem, gate_claims = _claim_values(record, location)
     anchors = _anchors(record)
     strong_anchors = _strong_anchors(record)
     provider_anchors = _provider_anchors(record)
@@ -274,7 +289,10 @@ def _audit_record(workspace: Path, path: str, location: str, record: dict[str, A
         findings.append(_finding("E_METADATA_INTENT_UNCLEAR", path, location, "terminal or gate claim is associated with ambiguous or needs-clarification intent"))
     for mismatch_location, supplied in _path_mismatch(workspace, record):
         findings.append(_finding("E_METADATA_WORKSPACE_MISMATCH", path, mismatch_location, f"absolute workspace path is outside selected workspace: {supplied}"))
-    states = [value for key, _location, value in _walk_pairs(record) if key in {"status", "state"} and isinstance(value, str)]
+    states = [
+        value for key, state_location, value in _walk_pairs(record, location)
+        if key in {"status", "state"} and isinstance(value, str) and _is_execution_state_location(state_location)
+    ]
     if any(value.strip().lower() == "active" for value in states):
         execution_keys = {key for key, _location, value in _walk_pairs(record) if key in {"run_id", "execution_id", "started_at", "last_event", "execution"} and _nonempty(value)}
         if not execution_keys and not anchors:
@@ -350,17 +368,21 @@ def audit_metadata(root: Path, paths: list[Path] | None = None) -> dict[str, Any
     for path in files:
         relative = _display(workspace, path)
         try:
+            size = path.stat().st_size
+        except OSError as exc:
+            findings.append(_finding("E_METADATA_INPUT_INVALID", relative, "file", f"unable to inspect metadata: {exc}"))
+            continue
+        if size > MAX_FILE_BYTES:
+            findings.append(_finding("E_METADATA_TOO_LARGE", relative, "file", f"metadata file exceeds {MAX_FILE_BYTES} bytes"))
+            inspected.append({"path": relative, "bytes": size, "sha256": None, "format": "oversize"})
+            continue
+        try:
             raw = path.read_bytes()
         except OSError as exc:
             findings.append(_finding("E_METADATA_INPUT_INVALID", relative, "file", f"unable to read metadata: {exc}"))
             continue
         digest = hashlib.sha256(raw).hexdigest()
         entry: dict[str, Any] = {"path": relative, "bytes": len(raw), "sha256": digest}
-        if len(raw) > MAX_FILE_BYTES:
-            findings.append(_finding("E_METADATA_TOO_LARGE", relative, "file", f"metadata file exceeds {MAX_FILE_BYTES} bytes"))
-            entry["format"] = "oversize"
-            inspected.append(entry)
-            continue
         suffix = path.suffix.lower()
         entry["format"] = suffix.lstrip(".") or "none"
         try:

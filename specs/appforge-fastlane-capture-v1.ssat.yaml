@@ -1,0 +1,33 @@
+name: appforge-fastlane-capture-v1
+language: python
+modules:
+  - name: appforge_fastlane_capture
+    path: factoryline/appforge_fastlane_capture.py
+    functions:
+      - name: create_fastlane_capture_contract
+        args: [root, candidate_path, surface_matrix_path, storefront_story_path, contract_path, out_path]
+        returns: dict[str, Any]
+dependencies:
+  - from: appforge_fastlane_capture
+    to: appforge_surface_matrix
+  - from: appforge_fastlane_capture
+    to: appforge_storefront_story
+invariants:
+  - name: fastlane_capture_never_executes_or_calls_network
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system|Popen\\("
+    scopes:
+      - module: appforge_fastlane_capture
+        symbol: create_fastlane_capture_contract
+        max_lines: 100
+  - name: fastlane_capture_never_evaluates_source
+    forbid_pattern: "eval\\(|exec\\("
+    scopes:
+      - module: appforge_fastlane_capture
+        symbol: create_fastlane_capture_contract
+        max_lines: 100
+tests:
+  - path: tests/test_appforge_fastlane_capture.py
+    command: py -3.11 -m pytest -q tests/test_appforge_fastlane_capture.py
+  - path: tests/test_mcp.py
+    command: py -3.11 -m pytest -q tests/test_mcp.py
+schema: factory.ssat.v1
