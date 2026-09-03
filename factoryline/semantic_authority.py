@@ -14,7 +14,6 @@ import json
 import os
 from pathlib import Path
 import re
-import tempfile
 from typing import Any
 
 from .agent_license import normalize_agent_identity
@@ -197,16 +196,19 @@ def _valid(value: object, schema: str, field: str) -> bool:
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
+    """Create an immutable local receipt without replacing a concurrent writer's output."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+    except FileExistsError as exc:
+        raise SemanticAuthorityError("SEMANTIC_OUTPUT_EXISTS", "destination already exists; receipts are immutable") from exc
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def _write_new(root: Path, path: Path, payload: dict[str, Any], digest_field: str) -> Path:
@@ -391,15 +393,19 @@ def record_semantic_action_decision(root: Path, lease_path: Path, request: objec
     if not decision.get("allowed"):
         raise SemanticAuthorityError("E_SEMANTIC_AUTHORIZATION", str(decision.get("reason")))
     directory = workspace / ".factory" / "semantic-authority" / "decisions"
-    for path in sorted(directory.glob("*.json"))[:200] if directory.is_dir() else []:
-        try:
-            prior, _ = _read_json(workspace, path, DECISION_SCHEMA)
-        except SemanticAuthorityError:
-            continue
-        if _valid(prior, DECISION_SCHEMA, "decision_sha256") and prior.get("lease_sha256") == decision["lease_sha256"] and prior.get("action_id") == decision["action_id"]:
-            raise SemanticAuthorityError("E_SEMANTIC_REPLAY", "action_id was already recorded for this lease")
+    destination = directory / f"{decision['lease_sha256']}-{decision['action_id']}.json"
+    requested = _inside(workspace, out, exists=False)
+    if requested != destination:
+        raise SemanticAuthorityError("SEMANTIC_OUTPUT_INVALID", "decision output must use the deterministic lease-and-action destination")
+    if destination.exists():
+        raise SemanticAuthorityError("E_SEMANTIC_REPLAY", "action_id was already recorded for this lease")
     core = {"schema": DECISION_SCHEMA, **decision, "marker": "SEMANTIC_ACTION_DECISION_RECORDED", "recorded_at": _stamp()}
-    target = _write_new(workspace, out, core, "decision_sha256")
+    try:
+        target = _write_new(workspace, destination, core, "decision_sha256")
+    except SemanticAuthorityError as exc:
+        if exc.code == "SEMANTIC_OUTPUT_EXISTS":
+            raise SemanticAuthorityError("E_SEMANTIC_REPLAY", "action_id was already recorded for this lease") from exc
+        raise
     return {**json.loads(target.read_text(encoding="utf-8")), "path": target.relative_to(workspace).as_posix()}
 
 

@@ -105,10 +105,12 @@ def test_lease_rejects_expiration_ungranted_and_external_actions(tmp_path: Path)
 
 def test_recorded_action_is_immutable_and_replay_is_blocked(tmp_path: Path) -> None:
     lease = _lease(tmp_path, _handoff(tmp_path, _contract(tmp_path)))
-    recorded = record_semantic_action_decision(tmp_path, lease, _request(), Path(".factory/semantic-authority/decisions/first.json"))
+    lease_value = json.loads(lease.read_text(encoding="utf-8"))
+    output = Path(".factory/semantic-authority/decisions") / f"{lease_value['lease_sha256']}-check-restore.json"
+    recorded = record_semantic_action_decision(tmp_path, lease, _request(), output)
     assert recorded["marker"] == "SEMANTIC_ACTION_DECISION_RECORDED"
     with pytest.raises(SemanticAuthorityError) as replay:
-        record_semantic_action_decision(tmp_path, lease, _request(), Path(".factory/semantic-authority/decisions/replay.json"))
+        record_semantic_action_decision(tmp_path, lease, _request(), output)
     assert replay.value.code == "E_SEMANTIC_REPLAY"
     projection = semantic_authority_projection(tmp_path)
     assert projection["current_handoff_count"] == 1
