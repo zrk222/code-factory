@@ -522,6 +522,36 @@ def compile_oracle_challenge(root: Path, contract_path: Path, out: Path | None =
     return receipt
 
 
+def validate_oracle_challenge_plan(root: Path, value: object) -> dict[str, Any]:
+    """Validate a compiled challenge against the current sealed contract.
+
+    Consumers use this rather than trusting a challenge marker or digest alone:
+    the contract it names must still be an eligible, current local contract.
+    """
+    workspace = Path(root).resolve()
+    if not _valid_receipt(value, CHALLENGE_SCHEMA, "challenge_sha256"):
+        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan hash or schema is invalid")
+    plan = value
+    if plan.get("marker") != "ORACLE_CHALLENGE_COMPILED" or plan.get("authority") != AUTHORITY:
+        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan marker or authority is invalid")
+    contract = plan.get("contract")
+    if not isinstance(contract, dict) or set(contract) != {"path", "contract_sha256"}:
+        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan contract binding is invalid")
+    verified = verify_oracle_contract(workspace, Path(_text(contract["path"], "challenge.contract.path", limit=512)))
+    if not verified.get("ok") or verified["contract"].get("contract_sha256") != contract.get("contract_sha256"):
+        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan is not bound to the current sealed contract")
+    independence = plan.get("independence")
+    expected_independence = {"worker_may_not_select_cases": True, "verifier_may_not_edit_contract": True, "verifier_may_not_edit_candidate": True, "target": "implementation"}
+    if independence != expected_independence:
+        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan independence boundary is invalid")
+    cases = plan.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan must contain implementation cases")
+    if any(not isinstance(item, dict) or item.get("target") != "implementation" or item.get("expected") != "killed" for item in cases):
+        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge cases must target implementation and expect killed")
+    return plan
+
+
 def verify_oracle_challenge_result(root: Path, plan_path: Path, result_path: Path) -> dict[str, Any]:
     """Verify that an independent context challenged implementation rather than tests."""
     workspace = Path(root).resolve()

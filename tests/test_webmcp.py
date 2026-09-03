@@ -16,6 +16,7 @@ def test_webmcp_manifest_is_deterministic_read_only_and_progressive() -> None:
     assert "factory.appforge_release_rehearsal_status" in [item["name"] for item in first["tools"]]
     assert "factory.appforge_native_surface_status" in [item["name"] for item in first["tools"]]
     assert "factory.appforge_surface_matrix_status" in [item["name"] for item in first["tools"]]
+    assert "factory.appforge_mobile_evidence_status" in [item["name"] for item in first["tools"]]
     assert "factory.appforge_storefront_story_status" in [item["name"] for item in first["tools"]]
     assert "factory.jetbrains_handshake_status" in [item["name"] for item in first["tools"]]
     assert all(item["inputSchema"]["additionalProperties"] is False for item in first["tools"])

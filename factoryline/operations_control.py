@@ -17,6 +17,8 @@ import subprocess
 import tempfile
 from typing import Any
 
+from .e2e_proof import E2EProofError, validate_e2e_proof_receipt
+from .journey_proof import JourneyProofError, validate_failure_capsule
 from .protocol_enums import OperationsEvidenceTier, OperationsWorkKind
 
 
@@ -239,8 +241,16 @@ def _reproduction(root: Path, value: dict[str, Any], work_kind: str) -> tuple[di
     blockers: list[str] = []
     capsule, capsule_sha = _read_json(root, value["failure_capsule"], "failure capsule")
     receipt, receipt_sha = _read_json(root, value["execution_receipt"], "reproduction execution receipt")
-    capsule_ok = capsule.get("schema") == "factory.failure-capsule.v1" and capsule.get("marker") == "FAILURE_CAPSULE_BOUND"
-    receipt_ok = receipt.get("schema") == "factory.e2e_proof_receipt.v1" and receipt.get("marker") == "E2E_POSITIVE_FAILED" and receipt.get("ok") is False
+    try:
+        validate_failure_capsule(root, capsule)
+        capsule_ok = True
+    except (JourneyProofError, TypeError, ValueError):
+        capsule_ok = False
+    try:
+        validated_receipt = validate_e2e_proof_receipt(receipt)
+        receipt_ok = validated_receipt["marker"] == "E2E_POSITIVE_FAILED" and validated_receipt["ok"] is False
+    except (E2EProofError, TypeError, ValueError):
+        receipt_ok = False
     budget_ok = value["attempts_used"] <= value["max_attempts"] and value["observed_tokens"] <= value["token_budget"]
     if work_kind == "bug_fix" and not capsule_ok:
         blockers.append("REPRO_CAPSULE_UNBOUND")

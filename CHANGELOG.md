@@ -17,6 +17,19 @@
 
 ## Unreleased
 
+### AppForge Mobile Evidence Adapter
+
+- Add `factory revenue appforge-mobile-evidence`, a provider-neutral,
+  candidate-bound normalization gate for supplied Xcode/XCTest, Android
+  Gradle/ADB, Fastlane, device-cloud, and production-monitoring exports.
+- Require declared visual truth, privacy-to-store consistency, release-chain
+  state, design-system conformance, production-signal thresholds, and Android
+  adaptive/accessibility/R8/metadata evidence. Missing, stale, mismatched, or
+  failed evidence blocks the local receipt.
+- Keep every external boundary explicit: Code Factory does not execute the
+  tools, authenticate provider reports, operate a device, access a store,
+  submit a build, or guarantee platform approval.
+
 ## 0.46.2 - 2026-09-03
 
 - Add intent-to-diff scope and forbidden-behavior checks, receipt freshness and

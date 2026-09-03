@@ -82,6 +82,11 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "description": "Read candidate-bound AppForge iPhone/iPad accessibility configuration plans already visible on this page. It never starts a simulator, controls hardware, accesses credentials, contacts Apple, uploads media, or submits a release.",
     },
     {
+        "name": "factory.appforge_mobile_evidence_status",
+        "title": "Read mobile evidence readiness",
+        "description": "Read candidate-bound iOS and Android tool-evidence state already visible on this page. It never runs Xcode, XCTest, Gradle, ADB, Fastlane, a device cloud, telemetry vendor, or store console.",
+    },
+    {
         "name": "factory.appforge_storefront_story_status",
         "title": "Read storefront story proof",
         "description": "Read candidate-bound AppForge screenshot story and local claim-reference state already visible on this page. It never generates images, downloads Apple assets, uploads Store media, contacts Apple, or submits a release.",

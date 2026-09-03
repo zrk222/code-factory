@@ -36,6 +36,7 @@ from .appforge_surface_matrix import surface_matrix_projection
 from .appforge_storefront_story import storefront_story_projection
 from .appforge_fastlane_capture import fastlane_capture_projection
 from .appforge_submission_integrity import submission_integrity_projection
+from .appforge_mobile_evidence import mobile_evidence_projection
 from .oracle_firewall import oracle_firewall_projection
 from .proof_continuity_ledger import proof_continuity_projection
 from .semantic_authority import semantic_authority_projection
@@ -520,6 +521,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.appforge_surface_matrix_status",
             "description": "Read candidate-bound AppForge iPhone/iPad accessibility configuration plans. It never starts a simulator, controls hardware, accesses credentials, contacts Apple, uploads media, or submits a release.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.appforge_mobile_evidence_status",
+            "description": "Read candidate-bound iOS/Android tool-evidence receipts for visual truth, privacy-to-store consistency, release-chain state, design conformance, production signals, and Android parity. It never runs a tool, device, telemetry vendor, store console, or release.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1313,6 +1320,17 @@ def _appforge_surface_matrix_status(root: Path, arguments: object) -> dict[str, 
     }
 
 
+def _appforge_mobile_evidence_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.appforge_mobile_evidence_status accepts no arguments")
+    return {
+        "marker": "MCP_APPFORGE_MOBILE_EVIDENCE_READ_ONLY",
+        "action_summary": "Read hash-verified candidate-bound iOS/Android mobile-evidence receipts without starting Xcode, XCTest, Gradle, ADB, Fastlane, a device cloud, telemetry vendor, App Store Connect, or Play Console.",
+        "status": mobile_evidence_projection(root),
+        "scope": "Read-only local evidence status; supplied tool reports are not independently authenticated runtime or provider facts, and no submission or approval action ran.",
+    }
+
+
 def _appforge_storefront_story_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.appforge_storefront_story_status accepts no arguments")
@@ -1514,6 +1532,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_appforge_native_surface_status(root, arguments))
     if name == "factory.appforge_surface_matrix_status":
         return _content(_appforge_surface_matrix_status(root, arguments))
+    if name == "factory.appforge_mobile_evidence_status":
+        return _content(_appforge_mobile_evidence_status(root, arguments))
     if name == "factory.appforge_storefront_story_status":
         return _content(_appforge_storefront_story_status(root, arguments))
     if name == "factory.appforge_fastlane_capture_status":

@@ -4,15 +4,18 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
 from factoryline.domain_ontology import validate_domain_ontology
+from factoryline.e2e_proof import verify_e2e_proof
+from factoryline.journey_proof import create_failure_capsule
 from factoryline.lifecycle_ledger import LifecycleLedgerError, lifecycle_projection, record_lifecycle_event
 from factoryline.mission_control_status import mission_control_status
 from factoryline.operations_control import assess_operations_control, operations_control_projection
-from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
-from factoryline.repair_loop import assess_repair_loop, repair_loop_projection
+from factoryline.oracle_firewall import capture_intent_handoff, compile_oracle_challenge, seal_oracle_contract
+from factoryline.repair_loop import RepairLoopError, assess_repair_loop, repair_loop_projection
 from factoryline.repo_coordination import coordinate_repositories
 from factoryline.service_boundaries import check_service_boundaries
 
@@ -63,6 +66,44 @@ def _contract(root: Path) -> Path:
     return root / seal_oracle_contract(root, source, Path(".factory/oracles/contracts/control.json"))["path"]
 
 
+def _bound_failure_capsule(root: Path, *, code_version: str) -> Path:
+    artifact = root / "reproduction.log"
+    artifact.write_text("expired entitlement restored", encoding="utf-8")
+    source = _write(root / "failure-input.json", {
+        "schema": "factory.failure-capsule-input.v1", "project_id": "control", "journey_id": "restore", "run_id": "run1",
+        "code_version": code_version, "environment": {"kind": "test"}, "classification": "wrong_output",
+        "hypothesis": "The expired path restores access.", "suggested_repair": "Review entitlement expiration handling.",
+        "failed_step_index": 1, "steps": [{"index": 0, "label": "create expired entitlement", "status": "passed"}, {"index": 1, "label": "restore expired entitlement", "status": "failed"}],
+        "artifacts": [{"path": "reproduction.log", "sha256": _digest(artifact), "kind": "log", "step_index": 1}],
+        "reproduction_argv": [sys.executable, "-c", "raise SystemExit(1)"], "observed_at": "2026-09-03T00:00:00Z",
+    })
+    result = create_failure_capsule(root, Path("failure-input.json"), Path(".factory/journey-proof/failure.json"))
+    return root / result["receipt_path"]
+
+
+def _failed_e2e_receipt(root: Path) -> Path:
+    manifest = _write(root / "e2e-manifest.json", {
+        "schema": "factory.e2e_proof_manifest.v1", "id": "expired-restore", "approval": {"state": "approved", "approved_by": "ReleaseOwner"},
+        "working_directory": ".", "timeout_seconds": 30, "network_egress": "not_granted",
+        "positive": {"argv": [sys.executable, "-c", "raise SystemExit(1)"]},
+        "negative": {"argv": [sys.executable, "-c", "raise SystemExit(1)"]}, "artifact_paths": [],
+    })
+    receipt = verify_e2e_proof(root, manifest)
+    public = {key: value for key, value in receipt.items() if key != "_captures"}
+    return _write(root / ".factory/e2e/repro.json", public)
+
+
+def _passing_e2e_receipt(root: Path, label: str) -> Path:
+    manifest = _write(root / f"e2e-{label}.json", {
+        "schema": "factory.e2e_proof_manifest.v1", "id": f"restore-{label}", "approval": {"state": "approved", "approved_by": "ReleaseOwner"},
+        "working_directory": ".", "timeout_seconds": 30, "network_egress": "not_granted",
+        "positive": {"argv": [sys.executable, "-c", "raise SystemExit(0)"]},
+        "negative": {"argv": [sys.executable, "-c", "raise SystemExit(1)"]}, "artifact_paths": [],
+    })
+    receipt = verify_e2e_proof(root, manifest)
+    return _write(root / ".factory/e2e" / f"{label}.json", {key: value for key, value in receipt.items() if key != "_captures"})
+
+
 def test_operations_control_binds_isolation_repro_scope_and_local_heads(tmp_path: Path) -> None:
     base = _init_repo(tmp_path)
     _git(tmp_path, "checkout", "-b", "agent/control")
@@ -70,8 +111,8 @@ def test_operations_control_binds_isolation_repro_scope_and_local_heads(tmp_path
     _git(tmp_path, "add", "src/service.py")
     _git(tmp_path, "commit", "-m", "candidate")
     head = _git(tmp_path, "rev-parse", "HEAD")
-    _write(tmp_path / ".factory/journey-proof/failure.json", {"schema": "factory.failure-capsule.v1", "marker": "FAILURE_CAPSULE_BOUND"})
-    _write(tmp_path / ".factory/e2e/repro.json", {"schema": "factory.e2e_proof_receipt.v1", "marker": "E2E_POSITIVE_FAILED", "ok": False})
+    _bound_failure_capsule(tmp_path, code_version=head)
+    _failed_e2e_receipt(tmp_path)
     evidence = (tmp_path / "evidence.txt"); evidence.write_text("observed", encoding="utf-8")
     core_check = _write(tmp_path / "core-check.json", {"ok": True})
     manifest = _write(tmp_path / "operations.json", {"schema": "factory.operations-control-manifest.v1", "id": "control", "work_kind": "bug_fix", "base": base, "scope_paths": ["src"], "isolation": {"expected_branch": "agent/control", "expected_base_sha": base, "require_clean": False}, "reproduction": {"failure_capsule": ".factory/journey-proof/failure.json", "execution_receipt": ".factory/e2e/repro.json", "max_attempts": 2, "attempts_used": 1, "token_budget": 100, "observed_tokens": 10}, "change_envelope": {"purpose": "repair one behavior", "max_changed_files": 2, "max_changed_lines": 10}, "evidence": {"task_kind": "logic", "tier": "logs_metrics", "artifacts": ["evidence.txt"]}, "architecture": {"core_paths": ["src"], "interface_paths": ["web"], "core_check_receipts": ["core-check.json"]}, "coordination": {"repositories": [{"id": "primary", "path": ".", "expected_head_sha": head, "dependencies": []}]}})
@@ -110,13 +151,33 @@ def test_mission_control_keeps_human_and_agent_paths_separate(tmp_path: Path) ->
 def test_repair_loop_binds_exact_issue_consequences_and_independent_rechecks(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     contract = _contract(tmp_path)
-    files = {}
-    for name in ("repro.json", "candidate.patch", "challenge.json", "positive.json", "negative.json"):
-        path = tmp_path / name; path.write_text(name, encoding="utf-8"); files[name] = {"path": name, "sha256": _digest(path)}
-    manifest = _write(tmp_path / "repair.json", {"schema": "factory.repair-loop-manifest.v1", "id": "restore-fix", "oracle": {"contract_path": contract.relative_to(tmp_path).as_posix(), "contract_sha256": json.loads(contract.read_text(encoding="utf-8"))["contract_sha256"]}, "issue": {"failure_code": "E_RESTORE_EXPIRED", "summary": "Expired accounts restore paid access.", "affected_obligations": ["restore", "expired-case"]}, "consequences": [{"kind": "security", "severity": "high", "rationale": "Expired users may receive paid access."}], "reproduction": files["repro.json"], "repair": {"candidate": files["candidate.patch"], "allowed_paths": ["src"]}, "independent_recheck": {"challenge_plan": files["challenge.json"], "positive_receipt": files["positive.json"], "negative_receipt": files["negative.json"]}, "human_review": {"required": True, "reviewer": "ReleaseOwner"}})
+    contract_sha = json.loads(contract.read_text(encoding="utf-8"))["contract_sha256"]
+    repro = _bound_failure_capsule(tmp_path, code_version="a" * 40)
+    candidate = tmp_path / "candidate.patch"
+    candidate.write_text("diff --git a/src/service.py b/src/service.py\n--- a/src/service.py\n+++ b/src/service.py\n@@ -1 +1 @@\n-def status(): return 'old'\n+def status(): return 'new'\n", encoding="utf-8")
+    challenge = compile_oracle_challenge(tmp_path, contract, Path(".factory/oracles/challenges/restore.json"))
+    positive = _passing_e2e_receipt(tmp_path, "positive")
+    negative = _passing_e2e_receipt(tmp_path, "negative")
+    bind = lambda path: {"path": path.relative_to(tmp_path).as_posix(), "sha256": _digest(path)}
+    manifest = _write(tmp_path / "repair.json", {"schema": "factory.repair-loop-manifest.v1", "id": "restore-fix", "oracle": {"contract_path": contract.relative_to(tmp_path).as_posix(), "contract_sha256": contract_sha}, "issue": {"failure_code": "E_RESTORE_EXPIRED", "summary": "Expired accounts restore paid access.", "affected_obligations": ["restore", "expired-case"]}, "consequences": [{"kind": "security", "severity": "high", "rationale": "Expired users may receive paid access."}], "reproduction": bind(repro), "repair": {"candidate": bind(candidate), "allowed_paths": ["src"]}, "independent_recheck": {"challenge_plan": bind(tmp_path / challenge["path"]), "positive_receipt": bind(positive), "negative_receipt": bind(negative)}, "human_review": {"required": True, "reviewer": "ReleaseOwner"}})
     receipt = assess_repair_loop(tmp_path, manifest)
     assert receipt["marker"] == "REPAIR_LOOP_READY"
     assert repair_loop_projection(tmp_path)["latest"]["highest_severity"] == "high"
+
+
+def test_repair_loop_rejects_a_marker_or_hash_shaped_candidate_patch(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    contract = _contract(tmp_path)
+    contract_sha = json.loads(contract.read_text(encoding="utf-8"))["contract_sha256"]
+    repro = _bound_failure_capsule(tmp_path, code_version="a" * 40)
+    candidate = tmp_path / "candidate.patch"; candidate.write_text("not a patch", encoding="utf-8")
+    challenge = compile_oracle_challenge(tmp_path, contract, Path(".factory/oracles/challenges/restore.json"))
+    positive, negative = _passing_e2e_receipt(tmp_path, "positive"), _passing_e2e_receipt(tmp_path, "negative")
+    bind = lambda path: {"path": path.relative_to(tmp_path).as_posix(), "sha256": _digest(path)}
+    manifest = _write(tmp_path / "repair.json", {"schema": "factory.repair-loop-manifest.v1", "id": "restore-fix", "oracle": {"contract_path": contract.relative_to(tmp_path).as_posix(), "contract_sha256": contract_sha}, "issue": {"failure_code": "E_RESTORE_EXPIRED", "summary": "Expired accounts restore paid access.", "affected_obligations": ["restore", "expired-case"]}, "consequences": [{"kind": "security", "severity": "high", "rationale": "Expired users may receive paid access."}], "reproduction": bind(repro), "repair": {"candidate": bind(candidate), "allowed_paths": ["src"]}, "independent_recheck": {"challenge_plan": bind(tmp_path / challenge["path"]), "positive_receipt": bind(positive), "negative_receipt": bind(negative)}, "human_review": {"required": True, "reviewer": "ReleaseOwner"}})
+    with pytest.raises(RepairLoopError) as raised:
+        assess_repair_loop(tmp_path, manifest)
+    assert raised.value.code == "E_REPAIR_LOOP_CANDIDATE"
 
 
 def test_service_boundaries_ontology_and_multi_repo_plan_fail_closed(tmp_path: Path) -> None:

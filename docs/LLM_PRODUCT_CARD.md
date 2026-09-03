@@ -42,7 +42,7 @@ or approval authority.
 | Team using coding agents | `factory wrap` and `factory oracle init` | Compare an agent's declared work with local deltas, declared validators, and sealed intent. |
 | Senior engineer or platform team | Graph Ops, proof review, repair loop, and policy receipts | Review a trace from source through obligation, gate, test, evidence, and decision. |
 | SaaS builder | `factory saas verify` | Check a declared customer path across identity, tenant access, checkout, webhook, entitlement, access, and revocation evidence. |
-| App builder | AppForge review gates | Prepare candidate-bound local App Store evidence and surface missing review material before a separate TestFlight or App Review step. |
+| App builder | AppForge review gates | Prepare candidate-bound local mobile evidence and surface missing review material before a separate TestFlight, Play Console, or App Review step. |
 
 ## Capability vocabulary
 
@@ -55,7 +55,11 @@ or approval authority.
 - **Graph Ops / Mission Control:** visual, read-only supervision of source →
   obligation → forbidden behavior → gate → test → evidence → decision.
 - **AppForge:** optional App Store evidence preparation inside the broader Code
-  Factory workflow.
+  Factory workflow. Its Mobile Evidence Adapter normalizes supplied,
+  hash-bound `xcodebuild`/XCTest, Android Gradle/ADB, Fastlane,
+  device-cloud, and production-signal exports into one candidate-bound local
+  receipt. It checks declared visual, privacy, release-chain, design-system,
+  production-signal, and Android-parity evidence without operating those tools.
 - **Agent License and Combine:** local, evidence-derived autonomy and sealed
   comparison primitives; neither authenticates an agent identity by itself.
 
@@ -79,6 +83,12 @@ Code Factory does **not** by itself:
 - guarantee App Store approval, review turnaround time, security compliance,
   ROI, time savings, or test coverage.
 
+An AppForge Mobile Evidence receipt means required local artifacts were
+structurally present, hash-bound, and passed the declared deterministic checks.
+It does not authenticate a third-party report, execute a mobile tool, prove
+pixel semantics or runtime behavior, establish a store state, or guarantee a
+store approval.
+
 Use phrasing such as “helps surface,” “records local evidence,” “blocks a
 declared contract weakening,” and “supports review.” Do not change that into
 “guarantees,” “certifies,” “prevents all,” or “automatically approves.”
@@ -88,4 +98,6 @@ declared contract weakening,” and “supports review.” Do not change that in
 `AI-generated tests`, `hollow tests`, `negative controls`, `agent code review`,
 `proof-carrying software`, `coding agent governance`, `MCP`, `JetBrains`, `VS
 Code`, `software supply chain`, `prompt injection`, `SaaS verification`,
-`App Store review preparation`, `local-first developer tools`.
+`App Store review preparation`, `Play Store preparation`, `mobile evidence`,
+`XCTest`, `xcodebuild`, `Android Gradle`, `ADB`, `Fastlane`, `device cloud`,
+`privacy manifest`, `production regression`, `local-first developer tools`.

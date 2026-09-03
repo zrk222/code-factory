@@ -15,7 +15,9 @@ import re
 import tempfile
 from typing import Any
 
-from .oracle_firewall import OracleFirewallError, verify_oracle_contract
+from .e2e_proof import E2EProofError, validate_e2e_proof_receipt
+from .journey_proof import JourneyProofError, validate_failure_capsule
+from .oracle_firewall import OracleFirewallError, validate_oracle_challenge_plan, verify_oracle_contract
 from .protocol_enums import RepairConsequence, RepairSeverity
 
 
@@ -103,6 +105,60 @@ def _bound_file(root: Path, value: object, label: str) -> dict[str, str]:
     return {"path": relative, "sha256": expected}
 
 
+def _bound_failure_capsule(root: Path, value: object) -> dict[str, str]:
+    bound = _bound_file(root, value, "reproduction")
+    try:
+        payload = json.loads(_inside(root, bound["path"], required=True).read_text(encoding="utf-8"))
+        validate_failure_capsule(root, payload)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, JourneyProofError, TypeError, ValueError) as exc:
+        raise RepairLoopError("E_REPAIR_LOOP_REPRODUCTION", "reproduction must be a current, hash-valid failure capsule") from exc
+    return bound
+
+
+def _bound_e2e_receipt(root: Path, value: object, label: str) -> dict[str, str]:
+    bound = _bound_file(root, value, label)
+    try:
+        payload = json.loads(_inside(root, bound["path"], required=True).read_text(encoding="utf-8"))
+        verified = validate_e2e_proof_receipt(payload)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, E2EProofError, TypeError, ValueError) as exc:
+        raise RepairLoopError("E_REPAIR_LOOP_RECHECK", f"{label} must be a hash-valid E2E proof receipt") from exc
+    if verified.get("marker") != "E2E_PROOF_PASS" or verified.get("ok") is not True:
+        raise RepairLoopError("E_REPAIR_LOOP_RECHECK", f"{label} must prove its declared positive and negative controls")
+    return bound
+
+
+def _candidate_patch(root: Path, value: object, allowed_paths: list[str]) -> dict[str, Any]:
+    bound = _bound_file(root, value, "repair.candidate")
+    try:
+        text = _inside(root, bound["path"], required=True).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RepairLoopError("E_REPAIR_LOOP_CANDIDATE", "repair.candidate must be UTF-8 unified diff text") from exc
+    matches = re.findall(r"^diff --git a/([^\s]+) b/([^\s]+)$", text, flags=re.MULTILINE)
+    if not matches or not re.search(r"^@@ -", text, flags=re.MULTILINE):
+        raise RepairLoopError("E_REPAIR_LOOP_CANDIDATE", "repair.candidate must contain at least one unified-diff file and hunk")
+    paths: list[str] = []
+    for before, after in matches:
+        if before != after:
+            raise RepairLoopError("E_REPAIR_LOOP_CANDIDATE", "repair.candidate must not rename files")
+        relative = _path(before, "repair.candidate diff path")
+        if not any(scope == "." or relative == scope or relative.startswith(scope.rstrip("/") + "/") for scope in allowed_paths):
+            raise RepairLoopError("E_REPAIR_LOOP_SCOPE", f"repair.candidate changes undeclared path: {relative}")
+        paths.append(relative)
+    return {**bound, "paths": sorted(set(paths))}
+
+
+def _bound_challenge(root: Path, value: object, contract_sha256: str) -> dict[str, str]:
+    bound = _bound_file(root, value, "independent_recheck.challenge_plan")
+    try:
+        payload = json.loads(_inside(root, bound["path"], required=True).read_text(encoding="utf-8"))
+        plan = validate_oracle_challenge_plan(root, payload)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, OracleFirewallError, TypeError, ValueError) as exc:
+        raise RepairLoopError("E_REPAIR_LOOP_CHALLENGE", "challenge_plan must be a current independent Oracle challenge") from exc
+    if plan.get("contract", {}).get("contract_sha256") != contract_sha256:
+        raise RepairLoopError("E_REPAIR_LOOP_CHALLENGE", "challenge_plan must bind the repair loop's sealed Oracle contract")
+    return bound
+
+
 def _read_manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
     try:
         relative = source.resolve().relative_to(root).as_posix() if source.is_absolute() else _path(str(source), "manifest")
@@ -149,7 +205,7 @@ def _manifest(root: Path, source: Path) -> dict[str, Any]:
         if not isinstance(item, dict) or set(item) != {"kind", "severity", "rationale"} or item["kind"] not in _CONSEQUENCES or item["severity"] not in _SEVERITIES or not isinstance(item["rationale"], str) or not item["rationale"].strip() or len(item["rationale"]) > 280:
             raise RepairLoopError("E_REPAIR_LOOP_SCHEMA", f"consequences[{index}] is invalid")
         normalized_consequences.append({"kind": item["kind"], "severity": item["severity"], "rationale": item["rationale"].strip()})
-    reproduction = _bound_file(root, value["reproduction"], "reproduction")
+    reproduction = _bound_failure_capsule(root, value["reproduction"])
     repair = value["repair"]
     if not isinstance(repair, dict) or set(repair) != {"candidate", "allowed_paths"} or not isinstance(repair["allowed_paths"], list) or not 1 <= len(repair["allowed_paths"]) <= 64:
         raise RepairLoopError("E_REPAIR_LOOP_SCHEMA", "repair must bind a candidate and 1-64 allowed paths")
@@ -162,7 +218,7 @@ def _manifest(root: Path, source: Path) -> dict[str, Any]:
     human = value["human_review"]
     if not isinstance(human, dict) or set(human) != {"required", "reviewer"} or human["required"] is not True:
         raise RepairLoopError("E_REPAIR_LOOP_SCHEMA", "human_review.required must remain true")
-    return {"id": _id(value["id"], "id"), "oracle": {"contract_path": contract_path, "contract_sha256": contract_sha}, "issue": {"failure_code": issue["failure_code"], "summary": issue["summary"].strip(), "affected_obligations": obligations}, "consequences": sorted(normalized_consequences, key=lambda item: (item["severity"], item["kind"], item["rationale"])), "reproduction": reproduction, "repair": {"candidate": _bound_file(root, repair["candidate"], "repair.candidate"), "allowed_paths": allowed_paths}, "independent_recheck": {"challenge_plan": _bound_file(root, independent["challenge_plan"], "independent_recheck.challenge_plan"), "positive_receipt": _bound_file(root, independent["positive_receipt"], "independent_recheck.positive_receipt"), "negative_receipt": _bound_file(root, independent["negative_receipt"], "independent_recheck.negative_receipt")}, "human_review": {"required": True, "reviewer": _id(human["reviewer"], "human_review.reviewer")}, "source_path": relative, "source_sha256": _file_sha(_inside(root, relative, required=True))}
+    return {"id": _id(value["id"], "id"), "oracle": {"contract_path": contract_path, "contract_sha256": contract_sha}, "issue": {"failure_code": issue["failure_code"], "summary": issue["summary"].strip(), "affected_obligations": obligations}, "consequences": sorted(normalized_consequences, key=lambda item: (item["severity"], item["kind"], item["rationale"])), "reproduction": reproduction, "repair": {"candidate": _candidate_patch(root, repair["candidate"], allowed_paths), "allowed_paths": allowed_paths}, "independent_recheck": {"challenge_plan": _bound_challenge(root, independent["challenge_plan"], contract_sha), "positive_receipt": _bound_e2e_receipt(root, independent["positive_receipt"], "independent_recheck.positive_receipt"), "negative_receipt": _bound_e2e_receipt(root, independent["negative_receipt"], "independent_recheck.negative_receipt")}, "human_review": {"required": True, "reviewer": _id(human["reviewer"], "human_review.reviewer")}, "source_path": relative, "source_sha256": _file_sha(_inside(root, relative, required=True))}
 
 
 def assess_repair_loop(root: Path, manifest_path: Path, out: Path | None = None) -> dict[str, Any]:

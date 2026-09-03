@@ -95,6 +95,13 @@ and a final Markdown/PDF dossier to the same build. In JetBrains, **AppForge
 Mission Control** makes the missing lane visible before a human decides to
 enter the queue.
 
+For iOS and Android delivery, `factory revenue appforge-mobile-evidence`
+normalizes supplied, hash-bound Xcode/XCTest, Android Gradle/ADB, Fastlane,
+device-cloud, and production-monitoring exports into one local receipt. It
+requires visual, privacy-to-listing, release-chain, design-system,
+production-signal, and Android-parity evidence to be explicit; it does not run
+those tools, access a store, submit a build, or guarantee approval.
+
 That can prevent avoidable rework and repeat review cycles; it does not submit
 to Apple, access credentials, replace TestFlight, provide legal advice, or
 guarantee approval. Start with the [AppForge Evidence Kit](docs/APPFORGE_EVIDENCE_KIT.md), then use the credential-free [EAS handoff preflight](docs/APPFORGE_EAS.md) before a separately authorized build or submission.

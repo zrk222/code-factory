@@ -76,9 +76,10 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.appforge_oracle_status",
         "factory.appforge_device_reality_status",
         "factory.appforge_release_rehearsal_status",
-        "factory.appforge_native_surface_status",
-        "factory.appforge_surface_matrix_status",
-        "factory.appforge_storefront_story_status",
+            "factory.appforge_native_surface_status",
+            "factory.appforge_surface_matrix_status",
+            "factory.appforge_mobile_evidence_status",
+            "factory.appforge_storefront_story_status",
         "factory.appforge_fastlane_capture_status",
         "factory.appforge_submission_integrity_status",
         "factory.proof_continuity_status",
@@ -282,6 +283,13 @@ def test_mcp_revenue_appforge_saas_and_memory_tools_are_read_only(tmp_path: Path
         "params": {"name": "factory.appforge_surface_matrix_status"},
     }, tmp_path))
     assert surface_matrix["marker"] == "MCP_APPFORGE_SURFACE_MATRIX_READ_ONLY"
+
+    mobile_evidence = _content(dispatch({
+        "jsonrpc": "2.0", "id": 82241, "method": "tools/call",
+        "params": {"name": "factory.appforge_mobile_evidence_status"},
+    }, tmp_path))
+    assert mobile_evidence["marker"] == "MCP_APPFORGE_MOBILE_EVIDENCE_READ_ONLY"
+    assert mobile_evidence["status"]["marker"] == "APPFORGE_MOBILE_EVIDENCE_READ_ONLY"
     assert surface_matrix["status"]["marker"] == "APPFORGE_SURFACE_MATRIX_READ_ONLY"
     storefront_story = _content(dispatch({
         "jsonrpc": "2.0", "id": 8225, "method": "tools/call",
