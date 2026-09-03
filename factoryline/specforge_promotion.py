@@ -15,6 +15,15 @@ def _read(root: Path, path: Path) -> tuple[dict[str, Any], Path]:
     if not isinstance(v,dict): raise RevenueForgeError("SPECFORGE_INPUT_INVALID","inputs must be objects")
     return v,p
 
+def _output(root: Path, path: Path) -> Path:
+    """Resolve a receipt destination and reject any path that escapes the workspace before writing."""
+    target = path.resolve() if path.is_absolute() else (root / path).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise RevenueForgeError("SPECFORGE_PATH_REJECTED", "output path must stay in workspace") from exc
+    return target
+
 def verify_specforge_promotion(root: Path, spec_path: Path, forge_path: Path, out_path: Path) -> dict[str, Any]:
     """Fail closed if ForgeLine tries to promote work outside an approved SpecLine packet."""
     root=Path(root).resolve(); spec,sp=_read(root,spec_path); forge,fp=_read(root,forge_path)
@@ -27,4 +36,4 @@ def verify_specforge_promotion(root: Path, spec_path: Path, forge_path: Path, ou
     for gate in spec["required_gates"]:
         if gates.get(gate) is not True: findings.append("E_FORGELINE_REQUIRED_GATE_MISSING:"+gate)
     if forge.get("state")!="verified": findings.append("E_FORGELINE_STATE_NOT_VERIFIED")
-    core={"schema":"factory.specforge.promotion-receipt.v1","marker":"SPECFORGE_PROMOTION_READY" if not findings else "SPECFORGE_PROMOTION_BLOCKED","ok":not findings,"action_summary":"Bind ForgeLine promotion to one approved SpecLine intent digest and only the explicitly selected capability gates; do not execute, release, or override a human.","intent_sha256":digest,"obligation_count":len(spec["obligations"]),"required_gates":spec["required_gates"],"findings":findings,"repair_plan":["Re-issue ForgeLine state from the exact approved SpecLine intent." if x=="E_FORGELINE_INTENT_DRIFT" else "Restore the missing selected capability gate with its candidate-bound receipt." if x.startswith("E_FORGELINE_REQUIRED") else "Obtain human-confirmed intent approval and complete explicit forbidden behavior and gate fields." for x in findings],"sources":{"specline":sp.relative_to(root).as_posix(),"forgeline":fp.relative_to(root).as_posix()},"authority":{**AUTHORITY,"execution":False,"release":False},"claim_boundary":"Local topology and digest validation only; not proof that external SpecLine or ForgeLine ran, nor a release approval."}; receipt={**core,"receipt_sha256":_sha(core)}; target=(root/out_path).resolve() if not out_path.is_absolute() else out_path.resolve(); target.parent.mkdir(parents=True,exist_ok=True); target.write_text(json.dumps(receipt,indent=2,sort_keys=True)+"\n",encoding="utf-8"); return {**receipt,"path":target.relative_to(root).as_posix()}
+    core={"schema":"factory.specforge.promotion-receipt.v1","marker":"SPECFORGE_PROMOTION_READY" if not findings else "SPECFORGE_PROMOTION_BLOCKED","ok":not findings,"action_summary":"Bind ForgeLine promotion to one approved SpecLine intent digest and only the explicitly selected capability gates; do not execute, release, or override a human.","intent_sha256":digest,"obligation_count":len(spec["obligations"]),"required_gates":spec["required_gates"],"findings":findings,"repair_plan":["Re-issue ForgeLine state from the exact approved SpecLine intent." if x=="E_FORGELINE_INTENT_DRIFT" else "Restore the missing selected capability gate with its candidate-bound receipt." if x.startswith("E_FORGELINE_REQUIRED") else "Obtain human-confirmed intent approval and complete explicit forbidden behavior and gate fields." for x in findings],"sources":{"specline":sp.relative_to(root).as_posix(),"forgeline":fp.relative_to(root).as_posix()},"authority":{**AUTHORITY,"execution":False,"release":False},"claim_boundary":"Local topology and digest validation only; not proof that external SpecLine or ForgeLine ran, nor a release approval."}; receipt={**core,"receipt_sha256":_sha(core)}; target=_output(root,out_path); target.parent.mkdir(parents=True,exist_ok=True); target.write_text(json.dumps(receipt,indent=2,sort_keys=True)+"\n",encoding="utf-8"); return {**receipt,"path":target.relative_to(root).as_posix()}

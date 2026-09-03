@@ -1,5 +1,6 @@
 """Three fail-closed senior-review controls: intent/diff, freshness, and policy ownership."""
 from __future__ import annotations
+from datetime import datetime, timezone
 import hashlib, json, os, tempfile
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,18 @@ def _write(root:Path,path:Path,core:dict[str,Any])->dict[str,Any]:
 def _base(kind:str,ok:bool,findings:list[str],sources:dict[str,str])->dict[str,Any]:
  return {"schema":f"factory.review-integrity.{kind}-receipt.v1","marker":f"REVIEW_{kind.upper()}_READY" if ok else f"REVIEW_{kind.upper()}_BLOCKED","ok":ok,"findings":findings,"sources":sources,"authority":{**AUTHORITY,"execution":False,"release":False,"policy_override":False},"claim_boundary":"Local deterministic metadata validation only; not semantic code understanding, environment execution, signature verification, or release approval."}
 
+def _instant(value: object) -> datetime | None:
+ """Parse a timezone-aware ISO-8601 instant or return None for ambiguous timestamp input."""
+ if not isinstance(value, str) or "T" not in value:
+  return None
+ try:
+  parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+ except ValueError:
+  return None
+ if parsed.tzinfo is None:
+  return None
+ return parsed.astimezone(timezone.utc)
+
 def verify_intent_diff(root:Path,contract_path:Path,diff_path:Path,out:Path)->dict[str,Any]:
  """Fail closed when a declared change exceeds approved intent or forbidden behavior."""
  root=Path(root).resolve();c,cp=_read(root,contract_path);d,dp=_read(root,diff_path);find=[]
@@ -48,7 +61,8 @@ def verify_receipt_freshness(root:Path,manifest_path:Path,out:Path)->dict[str,An
   seen.add(r["id"])
   if r["commit"]!=m["current_commit"]:find.append("E_RECEIPT_STALE_COMMIT:"+str(r["id"]))
   if r["environment_sha256"]!=m["environment_sha256"]:find.append("E_RECEIPT_ENVIRONMENT_DRIFT:"+str(r["id"]))
-  if not isinstance(r["nonce"],str) or not r["nonce"] or not isinstance(r["expires_at"],str) or r["expires_at"]<=m["now"]:find.append("E_RECEIPT_EXPIRED:"+str(r["id"]))
+  expires_at, now = _instant(r["expires_at"]), _instant(m["now"])
+  if not isinstance(r["nonce"],str) or not r["nonce"] or expires_at is None or now is None or expires_at<=now:find.append("E_RECEIPT_EXPIRED:"+str(r["id"]))
  core=_base("freshness",not find,find,{"manifest":mp.relative_to(root).as_posix()});core.update({"action_summary":"Reject stale, replayed, expired, or environment-mismatched release-critical receipts.","receipt_count":len(m["receipts"]),"repair_plan":["Re-run the exact gate for the current commit and environment with a new expiry and nonce." for _ in find]});return _write(root,out,core)
 
 def verify_policy_pack(root:Path,pack_path:Path,out:Path)->dict[str,Any]:

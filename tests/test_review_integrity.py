@@ -11,3 +11,9 @@ def test_three_senior_review_controls_fail_closed(tmp_path:Path):
     assert verify_receipt_freshness(tmp_path,fresh,Path('.factory/fresh.json'))['ok'] is False
     policy=w(tmp_path/'policy.json',{"schema":"factory.team-policy-pack.v1","owner":"platform","version":"1","approval":{"origin":"agent_proposed"},"rules":[{"id":"x","requirement":"","gate":"g"}]})
     assert verify_policy_pack(tmp_path,policy,Path('.factory/policy.json'))['ok'] is False
+
+def test_receipt_freshness_compares_timezone_aware_instants_and_rejects_ambiguous_time(tmp_path: Path):
+    offset=w(tmp_path/'offset.json',{"schema":"factory.receipt-freshness-manifest.v1","current_commit":"c","environment_sha256":"e","now":"2026-09-03T12:00:00Z","receipts":[{"id":"offset","commit":"c","environment_sha256":"e","expires_at":"2026-09-03T12:30:00+01:00","nonce":"n"}]})
+    assert verify_receipt_freshness(tmp_path,offset,Path('.factory/offset.json'))['ok'] is False
+    ambiguous=w(tmp_path/'ambiguous.json',{"schema":"factory.receipt-freshness-manifest.v1","current_commit":"c","environment_sha256":"e","now":"2026-09-03T12:00:00Z","receipts":[{"id":"ambiguous","commit":"c","environment_sha256":"e","expires_at":"2027","nonce":"n"}]})
+    assert verify_receipt_freshness(tmp_path,ambiguous,Path('.factory/ambiguous.json'))['ok'] is False

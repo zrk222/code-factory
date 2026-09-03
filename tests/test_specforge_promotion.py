@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
+import pytest
 from factoryline.specforge_promotion import verify_specforge_promotion
+from factoryline.revenueforge import RevenueForgeError
 
 def test_specforge_promotion_fails_closed_on_intent_drift_and_missing_selected_gates(tmp_path: Path):
     spec={"schema":"factory.specline.delivery-packet.v1","intent":{"mission":"ship proven app"},"approval":{"origin":"human_confirmed"},"obligations":[{"id":"tests","forbidden_behavior":"weaken oracle","gate":"oracle_firewall"}],"required_gates":["oracle_firewall","independent_challenge"]}
@@ -15,3 +17,11 @@ def test_specforge_promotion_only_requires_appforge_when_spec_selects_it(tmp_pat
     from factoryline.specforge_promotion import _sha
     fp=tmp_path/"forge.json";fp.write_text(json.dumps({"schema":"factory.forgeline.delivery-state.v1","intent_sha256":_sha(spec["intent"]),"state":"verified","gates":{"first_proof":True,"oracle_firewall":True}}))
     assert verify_specforge_promotion(tmp_path,sp,fp,Path(".factory/ready.json"))["ok"] is True
+
+def test_specforge_promotion_rejects_an_output_path_outside_the_workspace(tmp_path: Path):
+    spec={"schema":"factory.specline.delivery-packet.v1","intent":{"mission":"review code"},"approval":{"origin":"human_confirmed"},"obligations":[{"id":"proof","forbidden_behavior":"hollow test","gate":"first_proof"}],"required_gates":["first_proof"]}; sp=tmp_path/"spec.json";sp.write_text(json.dumps(spec))
+    from factoryline.specforge_promotion import _sha
+    fp=tmp_path/"forge.json";fp.write_text(json.dumps({"schema":"factory.forgeline.delivery-state.v1","intent_sha256":_sha(spec["intent"]),"state":"verified","gates":{"first_proof":True}}))
+    with pytest.raises(RevenueForgeError) as exc_info:
+        verify_specforge_promotion(tmp_path,sp,fp,tmp_path.parent/"outside.json")
+    assert exc_info.value.code == "SPECFORGE_PATH_REJECTED"
