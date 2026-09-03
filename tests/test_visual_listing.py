@@ -100,7 +100,7 @@ def test_zenodo_and_release_metadata_only_package_current_public_visuals() -> No
     metadata = json.loads((ROOT / ".zenodo.json").read_text(encoding="utf-8"))
     workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
 
-    assert metadata["version"] == "0.46.1"
+    assert metadata["version"] == "0.46.2"
     assert metadata["publication_date"] == "2026-09-02"
     assert "Graph Ops mission-control storyboard" in metadata["description"]
     assert "designed to reduce avoidable App Review rework and waiting time" in metadata["description"]

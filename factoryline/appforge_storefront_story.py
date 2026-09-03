@@ -142,6 +142,7 @@ def verify_storefront_story(root: Path, candidate_path: Path, store_media_path: 
 
 
 def storefront_story_projection(root: Path) -> dict[str, Any]:
+    """Project valid local storefront-story receipts without generating or uploading media."""
     workspace = Path(root).resolve(); current: list[dict[str, Any]] = []; invalid: list[str] = []
     for path in sorted((workspace / ".factory" / "appforge").rglob("*storefront-story*.json"))[:100]:
         try: value = json.loads(path.read_text(encoding="utf-8"))

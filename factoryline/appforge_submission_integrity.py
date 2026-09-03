@@ -72,6 +72,7 @@ def verify_submission_integrity(root: Path, candidate_path: Path, contract_path:
     return {**receipt, "path": target.relative_to(workspace).as_posix()}
 
 def submission_integrity_projection(root: Path) -> dict[str, Any]:
+    """Project hash-valid local submission-integrity receipts without accessing Apple systems."""
     workspace = Path(root).resolve(); current: list[dict[str, Any]] = []; invalid: list[str] = []; base = workspace / ".factory" / "appforge"
     if base.exists():
         for path in sorted(base.rglob("*submission-integrity*.json"))[:100]:

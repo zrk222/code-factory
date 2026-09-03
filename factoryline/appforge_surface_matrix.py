@@ -97,6 +97,7 @@ def create_surface_matrix(root: Path, candidate_path: Path, native_surface_path:
 
 
 def surface_matrix_projection(root: Path) -> dict[str, Any]:
+    """Project valid local surface-matrix plans without asserting device or Store execution."""
     workspace = Path(root).resolve(); current: list[dict[str, Any]] = []; invalid: list[str] = []
     for path in sorted((workspace / ".factory" / "appforge").rglob("*surface-matrix*.json"))[:100]:
         try: value = json.loads(path.read_text(encoding="utf-8"))

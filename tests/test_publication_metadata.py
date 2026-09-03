@@ -181,11 +181,11 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
     assert package["scripts"]["audit"] == "npm audit --audit-level=high"
     assert package["overrides"] == {
         "brace-expansion": "5.0.9",
-        "fast-uri": "3.1.5",
+        "fast-uri": "3.1.6",
         "js-yaml": "^4.3.1",
     }
     assert lock["packages"]["node_modules/brace-expansion"]["version"] == "5.0.9"
-    assert lock["packages"]["node_modules/fast-uri"]["version"] == "3.1.5"
+    assert lock["packages"]["node_modules/fast-uri"]["version"] == "3.1.6"
     assert lock["packages"]["node_modules/js-yaml"]["version"] == "4.3.1"
     assert "dependencies" not in package
 
@@ -295,10 +295,10 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.46.1"
+    assert project["version"] == "0.46.2"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.9.2"
-    assert 'version = "0.9.1"' in gradle
+    assert vscode["version"] == "0.9.3"
+    assert 'version = "0.9.2"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -486,7 +486,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["access_right"] == "open"
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
-    assert metadata["version"] == "0.46.1"
+    assert metadata["version"] == "0.46.2"
     assert metadata["publication_date"] == "2026-09-02"
     assert "read-only Agent Proof Bridge" in metadata["description"]
     assert "Proof Worklog" in metadata["description"]
