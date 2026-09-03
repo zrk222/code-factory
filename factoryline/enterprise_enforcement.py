@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -117,11 +118,37 @@ def _write_new(root: Path, output: Path, payload: dict[str, Any]) -> Path:
         target.relative_to(root)
     except ValueError as exc:
         raise EnterpriseEnforcementError("E_ENFORCEMENT_PATH", "output must remain inside the workspace") from exc
-    if target.exists():
-        raise EnterpriseEnforcementError("E_ENFORCEMENT_IMMUTABLE", "refusing to overwrite an enforcement decision")
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(canonical_json(payload) + b"\n")
+    try:
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise EnterpriseEnforcementError("E_ENFORCEMENT_IMMUTABLE", "refusing to overwrite an enforcement decision") from exc
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(canonical_json(payload) + b"\n")
     return target
+
+
+def _decision_target(workspace: Path, output: Path, directory: Path) -> Path:
+    target = (workspace / output).resolve() if not Path(output).is_absolute() else Path(output).resolve()
+    try:
+        target.relative_to(directory.resolve())
+    except ValueError as exc:
+        raise EnterpriseEnforcementError("E_ENFORCEMENT_PATH", "decision output must stay under .factory/enterprise-enforcement/decisions") from exc
+    return target
+
+
+def _claim_action_id(directory: Path, action_id: str) -> Path:
+    """Atomically claim an action id before its immutable decision is written."""
+    claim_dir = directory / ".claims"
+    claim_dir.mkdir(parents=True, exist_ok=True)
+    claim = claim_dir / f"{hashlib.sha256(action_id.encode('utf-8')).hexdigest()}.claim"
+    try:
+        descriptor = os.open(claim, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise EnterpriseEnforcementError("E_ENFORCEMENT_REPLAY", "action_id already has an immutable enterprise decision") from exc
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(canonical_json({"action_id": action_id}) + b"\n")
+    return claim
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -357,7 +384,10 @@ def record_enterprise_decision(root: Path, request: object, output: Path, **kwar
     decision = authorize_enterprise_action(workspace, request, **kwargs)
     directory = workspace / ".factory" / "enterprise-enforcement" / "decisions"
     action_id = decision["request"]["action_id"]
-    for prior_path in sorted(directory.glob("*.json"))[:500] if directory.is_dir() else []:
+    target = _decision_target(workspace, output, directory)
+    # Preserve pre-claim legacy receipts; new receipts use the atomic claim
+    # below and never rely on a bounded directory scan for replay prevention.
+    for prior_path in sorted(directory.glob("*.json")) if directory.is_dir() else []:
         try:
             prior = _load_json(prior_path)
         except EnterpriseEnforcementError:
@@ -366,7 +396,12 @@ def record_enterprise_decision(root: Path, request: object, output: Path, **kwar
             raise EnterpriseEnforcementError("E_ENFORCEMENT_REPLAY", "action_id already has an immutable enterprise decision")
     core = dict(decision)
     core["decision_sha256"] = hashlib.sha256(canonical_json(core)).hexdigest()
-    target = _write_new(workspace, output, core)
+    claim = _claim_action_id(directory, action_id)
+    try:
+        target = _write_new(workspace, target, core)
+    except Exception:
+        claim.unlink(missing_ok=True)
+        raise
     return {**core, "path": target.relative_to(workspace).as_posix()}
 
 
@@ -401,7 +436,7 @@ def enterprise_enforcement_projection(root: Path) -> dict[str, Any]:
             result["decision_count"] += 1
             if value.get("admitted") is True:
                 result["admitted_count"] += 1
-            result["decisions"].append({"path": path.relative_to(workspace).as_posix(), "decision_sha256": supplied, "action_id": value.get("request", {}).get("action_id"), "action_class": value.get("request", {}).get("action_class"), "semantic_authority_status": value.get("semantic_authority_status"), "revocation_status": value.get("revocation_status")})
+            result["decisions"].append({"path": path.relative_to(workspace).as_posix(), "decision_sha256": supplied, "admitted": value.get("admitted") is True, "action_id": value.get("request", {}).get("action_id"), "action_class": value.get("request", {}).get("action_class"), "semantic_authority_status": value.get("semantic_authority_status"), "revocation_status": value.get("revocation_status")})
         except EnterpriseEnforcementError:
             result["invalid_count"] += 1
     from .enterprise_runner_admission import runner_admission_projection

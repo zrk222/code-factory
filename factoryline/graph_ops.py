@@ -1216,7 +1216,8 @@ def _append_enterprise_enforcement(state: dict[str, Any], root: Path) -> dict[st
             continue
         digest = str(item.get("decision_sha256") or "enterprise-decision")
         node_id = f"enterprise-pep:{digest[:24]}"
-        _node(state, node_id=node_id, kind="enterprise_pep_reference", label=f"Enterprise PEP reference {item.get('action_id', digest[:12])}", source=str(item.get("path") or ".factory/enterprise-enforcement/decisions"), status="admitted", facts={"decision_sha256": digest, "action_class": item.get("action_class"), "semantic_authority_status": item.get("semantic_authority_status"), "revocation_status": item.get("revocation_status"), "authority": _AUTHORITY, "execution": False})
+        admitted = item.get("admitted") is True
+        _node(state, node_id=node_id, kind="enterprise_pep_reference", label=f"Enterprise PEP reference {item.get('action_id', digest[:12])}", source=str(item.get("path") or ".factory/enterprise-enforcement/decisions"), status="admitted" if admitted else "denied", facts={"decision_sha256": digest, "admitted": admitted, "action_class": item.get("action_class"), "semantic_authority_status": item.get("semantic_authority_status"), "revocation_status": item.get("revocation_status"), "authority": _AUTHORITY, "execution": False})
     for item in runner.get("packets", []):
         if not isinstance(item, dict):
             continue
