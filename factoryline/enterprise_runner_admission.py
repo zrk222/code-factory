@@ -16,6 +16,7 @@ from .enterprise_enforcement import EnterpriseEnforcementError, canonical_json, 
 
 INPUT_SCHEMA = "factory.runner-admission-input.v1"
 PACKET_SCHEMA = "factory.runner-admission-packet.v1"
+PROJECTION_SCHEMA = "factory.runner-admission-projection.v1"
 PACKET_DIR = Path(".factory/enterprise-enforcement/runner-admissions")
 FORBIDDEN_ARGV_TOKENS = frozenset({"&&", ";", "|", ">", "<", "`"})
 
@@ -113,3 +114,81 @@ def prepare_runner_admission(root: Path, input_path: Path, out: Path) -> dict[st
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(canonical_json(packet) + b"\n")
     return {**packet, "path": target.relative_to(workspace).as_posix()}
+
+
+def _packet_path(workspace: Path, path: Path) -> Path:
+    """Resolve one packet path without allowing a workspace escape."""
+    candidate = (workspace / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
+    packet_root = (workspace / PACKET_DIR).resolve()
+    try:
+        candidate.relative_to(packet_root)
+    except ValueError as exc:
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_ADMISSION_PATH", f"packet must stay under {PACKET_DIR.as_posix()}") from exc
+    return candidate
+
+
+def _packet_value(candidate: Path) -> tuple[dict[str, Any], str]:
+    """Load one canonical, zero-authority runner packet."""
+    try:
+        value = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_ADMISSION_INPUT", str(exc)) from exc
+    if not isinstance(value, dict) or value.get("schema") != PACKET_SCHEMA or value.get("marker") != "RUNNER_ADMISSION_PACKET_SEALED":
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_PACKET_INVALID", "packet schema or marker is invalid")
+    supplied = value.get("packet_sha256")
+    unsigned = dict(value)
+    unsigned.pop("packet_sha256", None)
+    if not isinstance(supplied, str) or hashlib.sha256(canonical_json(unsigned)).hexdigest() != supplied:
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_PACKET_HASH_INVALID", "packet hash is invalid")
+    if not isinstance(value.get("authority"), dict) or any(item is not False for item in value["authority"].values()):
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_PACKET_AUTHORITY", "packet must grant zero authority")
+    return value, supplied
+
+
+def _packet_binding(workspace: Path, value: dict[str, Any]) -> str:
+    """Verify the decision, action, scope, and argv bindings in one packet."""
+    decision_ref = value.get("decision") if isinstance(value.get("decision"), dict) else {}
+    decision_path = _text(decision_ref.get("path"), "decision.path", limit=512)
+    try:
+        decision = verify_enterprise_decision(workspace, Path(decision_path))
+    except EnterpriseEnforcementError as exc:
+        raise EnterpriseRunnerAdmissionError(exc.code, exc.message) from exc
+    if decision_ref.get("decision_sha256") != decision["decision_sha256"]:
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_DECISION_MISMATCH", "packet decision digest does not match its verified receipt")
+    request = decision["decision"].get("request") if isinstance(decision["decision"].get("request"), dict) else {}
+    action_class = _text(value.get("action_class"), "action_class", limit=80).lower()
+    scope_paths = _paths(value.get("scope_paths"), "scope_paths")
+    argv = _argv(value.get("argv"))
+    if value.get("argv_sha256") != hashlib.sha256(canonical_json(argv)).hexdigest():
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_COMMAND_HASH_INVALID", "argv hash is invalid")
+    if action_class != request.get("action_class"):
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_ACTION_MISMATCH", "packet action does not match its decision")
+    if scope_paths != request.get("scope_paths"):
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_SCOPE_MISMATCH", "packet scope does not match its decision")
+    return decision["decision_sha256"]
+
+
+def verify_runner_admission_packet(root: Path, path: Path) -> dict[str, Any]:
+    """Verify one non-executing runner packet and its exact decision binding."""
+    workspace = Path(root).resolve()
+    candidate = _packet_path(workspace, path)
+    value, supplied = _packet_value(candidate)
+    decision_sha256 = _packet_binding(workspace, value)
+    return {"packet": value, "packet_sha256": supplied, "decision_sha256": decision_sha256, "path": candidate.relative_to(workspace).as_posix()}
+
+
+def runner_admission_projection(root: Path) -> dict[str, Any]:
+    """Read bounded runner-packet facts for Graph Ops and MCP without execution."""
+    workspace = Path(root).resolve()
+    directory = workspace / PACKET_DIR
+    result: dict[str, Any] = {"schema": PROJECTION_SCHEMA, "marker": "RUNNER_ADMISSION_READ_ONLY", "packet_count": 0, "verified_count": 0, "invalid_count": 0, "packets": [], "authority": {"execution": False, "approval": False, "publication": False, "deployment": False, "signing": False, "messaging": False, "credential": False, "connector": False}, "claim_boundary": "Read-only local runner-packet projection. It does not execute argv, authenticate a workload, prove runner topology, enforce isolation, or grant authority."}
+    for path in sorted(directory.glob("*.json"))[:500] if directory.is_dir() else []:
+        result["packet_count"] += 1
+        try:
+            checked = verify_runner_admission_packet(workspace, path)
+            packet = checked["packet"]
+            result["verified_count"] += 1
+            result["packets"].append({"path": checked["path"], "packet_sha256": checked["packet_sha256"], "decision_sha256": checked["decision_sha256"], "run_id": packet.get("run_id"), "action_class": packet.get("action_class"), "scope_count": len(packet.get("scope_paths", [])), "argv_sha256": packet.get("argv_sha256")})
+        except EnterpriseRunnerAdmissionError:
+            result["invalid_count"] += 1
+    return result

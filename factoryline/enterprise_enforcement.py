@@ -400,4 +400,6 @@ def enterprise_enforcement_projection(root: Path) -> dict[str, Any]:
             result["decisions"].append({"path": path.relative_to(workspace).as_posix(), "decision_sha256": supplied, "action_id": value.get("request", {}).get("action_id"), "action_class": value.get("request", {}).get("action_class"), "semantic_authority_status": value.get("semantic_authority_status"), "revocation_status": value.get("revocation_status")})
         except EnterpriseEnforcementError:
             result["invalid_count"] += 1
+    from .enterprise_runner_admission import runner_admission_projection
+    result["runner_admission"] = runner_admission_projection(workspace)
     return result

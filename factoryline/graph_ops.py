@@ -1168,12 +1168,26 @@ def _append_enterprise_enforcement(state: dict[str, Any], root: Path) -> dict[st
         "invalid_count": int(projection.get("invalid_count", 0)),
         "authority": projection.get("authority", _AUTHORITY),
     }
+    runner = projection.get("runner_admission") if isinstance(projection.get("runner_admission"), dict) else {}
+    facts["runner_admission"] = runner
+    facts["runner_packet_count"] = int(runner.get("packet_count", 0))
+    facts["runner_verified_count"] = int(runner.get("verified_count", 0))
+    facts["runner_invalid_count"] = int(runner.get("invalid_count", 0))
     for item in projection.get("decisions", []):
         if not isinstance(item, dict):
             continue
         digest = str(item.get("decision_sha256") or "enterprise-decision")
         node_id = f"enterprise-pep:{digest[:24]}"
         _node(state, node_id=node_id, kind="enterprise_pep_reference", label=f"Enterprise PEP reference {item.get('action_id', digest[:12])}", source=str(item.get("path") or ".factory/enterprise-enforcement/decisions"), status="admitted", facts={"decision_sha256": digest, "action_class": item.get("action_class"), "semantic_authority_status": item.get("semantic_authority_status"), "revocation_status": item.get("revocation_status"), "authority": _AUTHORITY, "execution": False})
+    for item in runner.get("packets", []):
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("packet_sha256") or "runner-packet")
+        decision_digest = str(item.get("decision_sha256") or "")
+        node_id = f"enterprise-runner-admission:{digest[:24]}"
+        _node(state, node_id=node_id, kind="enterprise_runner_admission", label=f"Runner packet {item.get('run_id', digest[:12])}", source=str(item.get("path") or ".factory/enterprise-enforcement/runner-admissions"), status="verified", facts={"packet_sha256": digest, "decision_sha256": decision_digest, "action_class": item.get("action_class"), "scope_count": item.get("scope_count"), "argv_sha256": item.get("argv_sha256"), "authority": _AUTHORITY, "execution": False})
+        if decision_digest:
+            _edge(state, f"enterprise-pep:{decision_digest[:24]}", node_id, "binds_runner_input")
     return facts
 
 
@@ -2235,6 +2249,9 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["enterprise_enforcement_decision_count"] = enterprise_enforcement["decision_count"]
     facts["enterprise_enforcement_admitted_count"] = enterprise_enforcement["admitted_count"]
     facts["enterprise_enforcement_invalid_count"] = enterprise_enforcement["invalid_count"]
+    facts["enterprise_runner_packet_count"] = enterprise_enforcement["runner_packet_count"]
+    facts["enterprise_runner_verified_count"] = enterprise_enforcement["runner_verified_count"]
+    facts["enterprise_runner_invalid_count"] = enterprise_enforcement["runner_invalid_count"]
     facts["journey_proof_admissible_count"] = journey_proofs["admissible_count"]
     facts["journey_proof_invalid_count"] = journey_proofs["invalid_count"]
     facts["continuous_proof_count"] = continuous_proof["count"]
@@ -2295,6 +2312,10 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_ENFORCEMENT_READ_ONLY"})
     if enterprise_enforcement["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_ENFORCEMENT_REVIEW_REQUIRED"})
+    if enterprise_enforcement["runner_packet_count"] or enterprise_enforcement["runner_invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_RUNNER_ADMISSION_READ_ONLY"})
+    if enterprise_enforcement["runner_invalid_count"]:
+        markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_RUNNER_ADMISSION_REVIEW_REQUIRED"})
     if operations_control["receipt_count"] or operations_control["invalid_count"]:
         markers = sorted({*markers, "GRAPH_OPS_OPERATIONS_CONTROL_READ_ONLY"})
     if lifecycle["run_count"] or lifecycle["invalid_count"]:

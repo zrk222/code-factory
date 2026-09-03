@@ -1,0 +1,27 @@
+name: enterprise-runner-supervision-v1
+language: python
+modules:
+  - name: enterprise_runner_admission
+    path: factoryline/enterprise_runner_admission.py
+    functions:
+      - name: verify_runner_admission_packet
+        args: [root, path]
+        returns: dict[str, Any]
+      - name: runner_admission_projection
+        args: [root]
+        returns: dict[str, Any]
+invariants:
+  - name: supervision_never_executes_runner
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system|Popen\\("
+    scopes:
+      - module: enterprise_runner_admission
+        symbol: runner_admission_projection
+        max_lines: 40
+tests:
+  - path: tests/test_enterprise_enforcement.py
+    command: py -3.11 -m pytest -q tests/test_enterprise_enforcement.py
+  - path: tests/test_graph_ops.py
+    command: py -3.11 -m pytest -q tests/test_graph_ops.py
+  - path: tests/test_mcp.py
+    command: py -3.11 -m pytest -q tests/test_mcp.py
+schema: factory.ssat.v1

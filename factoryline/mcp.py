@@ -414,7 +414,7 @@ def _tool_definitions() -> list[dict[str, object]]:
         },
         {
             "name": "factory.enterprise_enforcement_status",
-            "description": "Read signed local workload-policy admission reference receipts. It does not authenticate a cloud workload, execute a tool, or enforce a network boundary.",
+            "description": "Read signed local workload-policy admission receipts and any exact decision-bound runner packet. It does not authenticate a cloud workload, execute argv, or enforce a network boundary.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1085,7 +1085,7 @@ def _enterprise_enforcement_status(root: Path, arguments: object) -> dict[str, o
         raise McpError("factory.enterprise_enforcement_status accepts no arguments")
     return {
         "marker": "MCP_ENTERPRISE_ENFORCEMENT_READ_ONLY",
-        "action_summary": "Read local signed workload/policy admission reference decisions without treating an admitted receipt as execution or a production deployment control.",
+        "action_summary": "Read local signed workload/policy admission decisions and decision-bound runner packets without treating either as execution or a production deployment control.",
         "status": enterprise_enforcement_projection(root),
         "scope": "Read-only local PEP-reference projection. It does not perform OIDC federation, identify a live workload, invoke a tool, enforce an Envoy/eBPF/container boundary, approve work, or contact a provider.",
     }

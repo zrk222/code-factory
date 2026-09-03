@@ -78,6 +78,18 @@ factory enterprise runner-admission-seal .\runner-admission.json `
 The input contains the immutable decision path, `run_id`, action class, exact
 scope paths, and argv array. Creation is deliberately non-executing.
 
+## Read-only supervision
+
+Graph Ops and `factory.enterprise_enforcement_status` now project runner
+packets next to their admission receipts. A packet is visible as verified only
+when its own digest, decision digest, action, scope, argv digest, and zero-
+authority boundary all validate again. A malformed or changed packet remains
+visible as invalid and must not be used as runner input.
+
+This is supervision evidence, not runner control. Graph Ops and MCP neither
+run argv nor authenticate a live workload, prove a sidecar/eBPF topology,
+enforce isolation, or approve an external action.
+
 ## Pilot exit criteria
 
 Before calling this an enterprise production control, demonstrate all of these

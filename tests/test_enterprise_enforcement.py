@@ -16,7 +16,8 @@ from factoryline.enterprise_enforcement import (
     sign_workload_revocations,
 )
 from factoryline.enterprise_receipts import generate_key_material
-from factoryline.enterprise_runner_admission import EnterpriseRunnerAdmissionError, prepare_runner_admission
+from factoryline.enterprise_runner_admission import EnterpriseRunnerAdmissionError, prepare_runner_admission, runner_admission_projection, verify_runner_admission_packet
+from factoryline.graph_ops import graph_ops_snapshot
 from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
 from factoryline.semantic_authority import _now, seal_authority_lease, seal_semantic_handoff
 
@@ -143,6 +144,14 @@ def test_runner_packet_binds_exact_admitted_decision_scope_and_argv(tmp_path: Pa
     packet = prepare_runner_admission(tmp_path, manifest, Path(".factory/enterprise-enforcement/runner-admissions/restore.json"))
     assert packet["marker"] == "RUNNER_ADMISSION_PACKET_SEALED"
     assert packet["authority"]["execution"] is False
+    verified = verify_runner_admission_packet(tmp_path, Path(packet["path"]))
+    assert verified["decision_sha256"] == recorded["decision_sha256"]
+    projection = runner_admission_projection(tmp_path)
+    assert projection["verified_count"] == 1
+    assert all(value is False for value in projection["authority"].values())
+    snapshot = graph_ops_snapshot(tmp_path)
+    assert snapshot["facts"]["enterprise_runner_verified_count"] == 1
+    assert "enterprise_runner_admission" in {node["kind"] for node in snapshot["nodes"]}
     bad = _write(tmp_path / "bad-runner.json", {**json.loads(manifest.read_text(encoding="utf-8")), "scope_paths": ["src"]})
     with pytest.raises(EnterpriseRunnerAdmissionError, match="E_RUNNER_SCOPE_MISMATCH"):
         prepare_runner_admission(tmp_path, bad, Path(".factory/enterprise-enforcement/runner-admissions/bad.json"))
@@ -167,3 +176,5 @@ def test_runner_packet_refuses_action_shell_overwrite_and_path_escape(tmp_path: 
     with pytest.raises(EnterpriseRunnerAdmissionError, match="E_RUNNER_ADMISSION_PATH"):
         prepare_runner_admission(tmp_path, manifest, Path("runner-outside.json"))
     assert main(["enterprise", "runner-admission-seal", str(manifest), "--root", str(tmp_path), "--out", ".factory/enterprise-enforcement/runner-admissions/cli.json"]) == 0
+    (tmp_path / ".factory" / "enterprise-enforcement" / "runner-admissions" / "malformed.json").write_text("{}", encoding="utf-8")
+    assert runner_admission_projection(tmp_path)["invalid_count"] == 1

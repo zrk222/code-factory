@@ -490,6 +490,8 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "FACTORY_WEBMCP_APPFORGE_STATUS" in page
     assert "FACTORY_WEBMCP_ORACLE_FIREWALL_STATUS" in page
     assert "FACTORY_WEBMCP_APPFORGE_ORACLE_STATUS" in page
+    assert 'id="enterprise-runner-state"' in page
+    assert "GRAPH_OPS_ENTERPRISE_RUNNER_ADMISSION_READ_ONLY" in page
     assert "FACTORY_WEBMCP_SAAS_PROOF_STATUS" in page
     assert "GRAPH_OPS_SAAS_PROOF_READ_ONLY" in page
     assert 'annotations:{readOnlyHint:true,untrustedContentHint:true}' in page

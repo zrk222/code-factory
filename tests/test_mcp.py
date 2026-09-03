@@ -235,6 +235,8 @@ def test_mcp_revenue_appforge_saas_and_memory_tools_are_read_only(tmp_path: Path
     assert enterprise["marker"] == "MCP_ENTERPRISE_ENFORCEMENT_READ_ONLY"
     assert enterprise["status"]["marker"] == "ENTERPRISE_ENFORCEMENT_READ_ONLY"
     assert all(value is False for value in enterprise["status"]["authority"].values())
+    assert enterprise["status"]["runner_admission"]["marker"] == "RUNNER_ADMISSION_READ_ONLY"
+    assert all(value is False for value in enterprise["status"]["runner_admission"]["authority"].values())
     atomic = _content(dispatch({
         "jsonrpc": "2.0", "id": 8211, "method": "tools/call",
         "params": {"name": "factory.atomic_status"},
