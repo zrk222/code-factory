@@ -233,6 +233,7 @@ def prepare_admission(root: Path, passport_path: Path, request_path: Path, out_d
     if license_value is not None:
         core["agent_license"] = {
             "license_sha256": license_value["license_sha256"],
+            "state_sha256": _license_state_sha256(license_value),
             "tier": license_value["tier"],
             "allowed_paths": license_value["allowed_paths"],
             "expires_at": license_value["expires_at"],
@@ -266,6 +267,12 @@ def _blocked(reason: str) -> dict[str, Any]:
         "marker": "ADMISSION_PACKET_BLOCKED", "reason": reason,
         "authority": dict(_AUTHORITY),
     }
+
+
+def _license_state_sha256(value: dict[str, Any]) -> str:
+    """Hash durable license state without the per-read issued-at timestamp."""
+    fields = ("tier", "reason", "allowed_paths", "expires_at", "identity_provenance", "evidence", "incidents", "policy")
+    return _sha({field: value.get(field) for field in fields})
 
 
 def _bound_passport_path(workspace: Path, packet: dict[str, Any]) -> Path | None:
@@ -331,9 +338,11 @@ def verify_admission(root: Path, packet_path: Path) -> dict[str, Any]:
     if isinstance(stored_license, dict):
         if not isinstance(current_license, dict):
             return _blocked("agent_license_binding_invalid")
-        for field in ("license_sha256", "tier", "allowed_paths", "expires_at", "identity_provenance"):
+        for field in ("tier", "allowed_paths", "expires_at", "identity_provenance"):
             if stored_license.get(field) != current_license.get(field):
                 return _blocked("agent_license_binding_invalid")
+        if stored_license.get("state_sha256") != _license_state_sha256(current_license):
+            return _blocked("agent_license_binding_invalid")
     oracle = packet.get("oracle")
     requested_autonomy = str(passport.get("autonomy") or "human_controlled")
     if requested_autonomy == "autonomous" and isinstance(current_license, dict) and current_license.get("tier") == "autonomous" and not isinstance(oracle, dict):
