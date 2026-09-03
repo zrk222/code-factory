@@ -423,10 +423,11 @@ def _semantic_differences(previous: dict[str, Any], candidate: dict[str, Any]) -
         prior_rules = {item["id"]: item for item in before.get(group, []) if isinstance(item, dict)}
         candidate_rules = {item["id"]: item for item in after.get(group, []) if isinstance(item, dict)}
         for rule_id, prior in prior_rules.items():
-            if prior.get("effect") == "advisory":
-                continue
             later = candidate_rules.get(rule_id)
             if later is None:
+                if prior.get("effect") == "advisory":
+                    review.append({"code": "advisory_rule_removed", "group": group, "rule_id": rule_id, "before": prior, "after": None, "justification": _source_justification(candidate, None)})
+                    continue
                 code = "negative_case_removed" if group == "negative_cases" else "required_rule_removed"
                 weakening.append({"code": code, "group": group, "rule_id": rule_id, "before": prior, "after": None, "justification": _source_justification(candidate, None)})
                 continue

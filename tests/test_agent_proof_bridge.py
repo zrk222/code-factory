@@ -115,7 +115,7 @@ def _semantic_binding(root: Path, suffix: str = "bridge") -> dict[str, str]:
     handoff_input = _write(root / "semantic-handoff-input.json", {
         "schema": "factory.semantic-handoff-input.v1", "id": "bridge-handoff", "oracle_contract": contract.relative_to(root).as_posix(), "sender": AGENT, "receiver": AGENT,
         "performative": "REQUEST", "goal": "Inspect the exact checkout evidence envelope.", "context_urn": "urn:factory:checkout:v1", "context_source_id": "original-intent", "scope_paths": ["src"], "allowed_actions": ["inspect"],
-        "epistemic": {"known": [{"id": "intent", "statement": "The source-bound contract forbids private-data exposure.", "source_id": "original-intent"}], "unknown": [{"id": "provider", "statement": "Provider runtime state is not in the local receipt.", "impact": "No provider claim.", "blocking": True}], "uncertain": [{"id": "sandbox", "statement": "Declared isolation is not verified sandbox proof.", "impact": "Keep runtime proof separate."}], "capability_limits": ["This local envelope reader cannot call the provider or release code."]},
+        "epistemic": {"known": [{"id": "intent", "statement": "The source-bound contract forbids private-data exposure.", "source_id": "original-intent"}], "unknown": [{"id": "provider", "statement": "Provider runtime state is not in the local receipt.", "impact": "No provider claim.", "blocking": False}], "uncertain": [{"id": "sandbox", "statement": "Declared isolation is not verified sandbox proof.", "impact": "Keep runtime proof separate."}], "capability_limits": ["This local envelope reader cannot call the provider or release code."]},
     })
     handoff = seal_semantic_handoff(root, handoff_input, Path(f".factory/semantic-authority/handoffs/{suffix}.json"))
     lease_input = _write(root / "semantic-lease-input.json", {
@@ -166,6 +166,19 @@ def test_agent_bridge_can_bind_imported_evidence_to_an_active_semantic_lease(tmp
     with pytest.raises(AgentProofBridgeError) as rejected:
         _import(tmp_path, invalid, "invalid-semantic.json")
     assert rejected.value.code == "E_AGENT_BRIDGE_SEMANTIC_AUTHORITY"
+
+
+def test_agent_bridge_rejects_a_receipt_when_its_semantic_lease_is_expired(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    envelope = _envelope(tmp_path, provider="junie")
+    envelope["semantic_authority"] = _semantic_binding(tmp_path)
+    receipt = _import(tmp_path, envelope)
+    assert verify_agent_proof(tmp_path, Path(receipt["path"]))["ok"] is True
+    import factoryline.semantic_authority as semantic_module
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
+    monkeypatch.setattr(semantic_module, "_now", lambda: future)
+    checked = verify_agent_proof(tmp_path, Path(receipt["path"]))
+    assert checked["ok"] is False
+    assert checked["reason"] == "semantic_authority_stale"
 
 
 def test_bridge_fails_closed_for_private_content_scope_and_visual_proof_gaps(tmp_path: Path) -> None:

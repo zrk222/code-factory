@@ -297,6 +297,9 @@ def seal_authority_lease(root: Path, input_path: Path, out: Path) -> dict[str, A
     if not verified.get("ok"):
         raise SemanticAuthorityError("E_SEMANTIC_AUTHORIZATION", "the semantic handoff is not current and hash-valid")
     handoff = verified["handoff"]
+    blocking_unknowns = [item for item in handoff.get("epistemic", {}).get("unknown", []) if isinstance(item, dict) and item.get("blocking") is True]
+    if blocking_unknowns:
+        raise SemanticAuthorityError("E_SEMANTIC_AUTHORIZATION", "a blocking epistemic unknown must be resolved in a newly sealed handoff before a lease can be issued")
     delegatee = normalize_agent_identity(value.get("delegatee"), "delegatee")
     if not _identity_matches(delegatee, handoff.get("receiver")):
         raise SemanticAuthorityError("E_SEMANTIC_AUTHORIZATION", "lease delegatee must exactly match the handoff receiver")

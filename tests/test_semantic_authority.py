@@ -49,12 +49,12 @@ def _contract(root: Path) -> Path:
     return root / seal_oracle_contract(root, source, Path(".factory/oracles/contracts/restore.json"))["path"]
 
 
-def _handoff(root: Path, contract: Path) -> Path:
+def _handoff(root: Path, contract: Path, *, blocking_unknown: bool = False) -> Path:
     payload = _write(root / "semantic-input.json", {
         "schema": "factory.semantic-handoff-input.v1", "id": "restore-proof", "oracle_contract": contract.relative_to(root).as_posix(), "sender": SENDER, "receiver": RECEIVER,
         "performative": "REQUEST", "goal": "Verify that restore preserves the entitlement boundary.", "context_urn": "urn:factory:subscription-restore:v1", "context_source_id": "original-intent", "scope_paths": ["src", "tests"], "allowed_actions": ["inspect", "test"],
         "sensitivities": [{"id": "expired", "when": "entitlement is expired", "impact": "the negative case must reject the action"}],
-        "epistemic": {"known": [{"id": "intent", "statement": "The sealed intent prohibits a second purchase.", "source_id": "original-intent"}], "unknown": [{"id": "provider-state", "statement": "The current provider entitlement state is not in the local receipt.", "impact": "Do not claim a live restore succeeded.", "blocking": True}], "uncertain": [{"id": "sandbox-parity", "statement": "Sandbox behavior may differ from a provider environment.", "impact": "Independent runtime evidence remains required."}], "capability_limits": ["This local worker cannot inspect a provider account or approve a release."]},
+        "epistemic": {"known": [{"id": "intent", "statement": "The sealed intent prohibits a second purchase.", "source_id": "original-intent"}], "unknown": [{"id": "provider-state", "statement": "The current provider entitlement state is not in the local receipt.", "impact": "Do not claim a live restore succeeded.", "blocking": blocking_unknown}], "uncertain": [{"id": "sandbox-parity", "statement": "Sandbox behavior may differ from a provider environment.", "impact": "Independent runtime evidence remains required."}], "capability_limits": ["This local worker cannot inspect a provider account or approve a release."]},
     })
     return root / seal_semantic_handoff(root, payload, Path(".factory/semantic-authority/handoffs/restore.json"))["path"]
 
@@ -101,6 +101,14 @@ def test_lease_rejects_expiration_ungranted_and_external_actions(tmp_path: Path)
     assert forbidden.value.code == "SEMANTIC_ACTION_FORBIDDEN"
     lease = _lease(tmp_path, handoff)
     assert authorize_semantic_action(tmp_path, lease, _request(action="repair"))["reason"] == "action_not_granted"
+
+
+def test_blocking_unknown_prevents_lease_or_action_until_a_new_handoff_is_sealed(tmp_path: Path) -> None:
+    handoff = _handoff(tmp_path, _contract(tmp_path), blocking_unknown=True)
+    with pytest.raises(SemanticAuthorityError) as rejected:
+        _lease(tmp_path, handoff)
+    assert rejected.value.code == "E_SEMANTIC_AUTHORIZATION"
+    assert not (tmp_path / ".factory/semantic-authority/leases/restore.json").exists()
 
 
 def test_recorded_action_is_immutable_and_replay_is_blocked(tmp_path: Path) -> None:

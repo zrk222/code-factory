@@ -139,6 +139,30 @@ def test_added_blocking_rule_requires_review_and_never_clears(tmp_path: Path) ->
     assert added[0]["after"]["statement"] == "The final receipt must remain available for audit."
 
 
+def test_advisory_removal_or_rewrite_requires_review_and_never_clears(tmp_path: Path) -> None:
+    handoff = _handoff(tmp_path)
+    source = _input(tmp_path, handoff)
+    prior_input = json.loads(source.read_text(encoding="utf-8"))
+    prior_input["requirements"].append({"id": "advisory-note", "statement": "A non-blocking operator note remains visible.", "origin": "human_confirmed", "effect": "advisory", "source_id": "original-intent", "critical": False})
+    _write(source, prior_input)
+    prior = tmp_path / seal_oracle_contract(tmp_path, source, Path(".factory/oracles/contracts/prior.json"))["path"]
+    candidate_input = json.loads(source.read_text(encoding="utf-8"))
+    candidate_input["requirements"] = [item for item in candidate_input["requirements"] if item["id"] != "advisory-note"]
+    _write(source, candidate_input)
+    removed = tmp_path / seal_oracle_contract(tmp_path, source, Path(".factory/oracles/contracts/removed.json"))["path"]
+    removal = compare_oracle_contracts(tmp_path, prior, removed)
+    assert removal["verdict"] == "REVIEW_REQUIRED"
+    assert any(item["code"] == "advisory_rule_removed" for item in removal["review_findings"])
+
+    candidate_input = prior_input
+    candidate_input["requirements"][-1]["statement"] = "The operator note changes and must be reviewed."
+    _write(source, candidate_input)
+    rewritten = tmp_path / seal_oracle_contract(tmp_path, source, Path(".factory/oracles/contracts/rewritten.json"))["path"]
+    rewrite = compare_oracle_contracts(tmp_path, prior, rewritten)
+    assert rewrite["verdict"] == "REVIEW_REQUIRED"
+    assert any(item["code"] == "blocking_rule_rewritten" for item in rewrite["review_findings"])
+
+
 def test_shadow_oracle_challenge_is_implementation_targeted_and_fails_on_survivor(tmp_path: Path) -> None:
     contract = _contract(tmp_path)
     plan = compile_oracle_challenge(tmp_path, contract, Path(".factory/oracles/challenges/restore.json"))

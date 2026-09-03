@@ -427,6 +427,13 @@ def verify_agent_proof(root: Path, receipt_path: Path) -> dict[str, Any]:
         current = verify_oracle_contract(workspace, Path(oracle["path"]))
         if not current.get("ok") or current.get("contract", {}).get("contract_sha256") != oracle.get("contract_sha256"):
             return {"ok": False, "marker": "AGENT_PROOF_RECEIPT_INVALID", "reason": "oracle_binding_stale", "authority": dict(AUTHORITY)}
+        semantic = receipt.get("semantic_authority")
+        if isinstance(semantic, dict) and semantic.get("bound") is True:
+            binding = {key: semantic.get(key) for key in ("lease_path", "lease_sha256", "action_id", "action", "context_urn")}
+            try:
+                verify_semantic_binding(workspace, binding, receipt.get("agent"), receipt.get("scope_paths"))
+            except SemanticAuthorityError:
+                return {"ok": False, "marker": "AGENT_PROOF_RECEIPT_INVALID", "reason": "semantic_authority_stale", "authority": dict(AUTHORITY)}
         return {"ok": True, "marker": "AGENT_PROOF_RECEIPT_VALID", "receipt": receipt, "path": target.relative_to(workspace).as_posix(), "authority": dict(AUTHORITY)}
     except AgentProofBridgeError as exc:
         return {"ok": False, "marker": "AGENT_PROOF_RECEIPT_INVALID", "reason": exc.code, "authority": dict(AUTHORITY)}
