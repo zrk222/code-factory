@@ -61,8 +61,10 @@ returned decision sets every authority flag to `false`.
 `prepare_runner_admission` turns one verified decision into an immutable
 `RUNNER_ADMISSION_PACKET_SEALED` input for a separate runner. It binds the
 decision digest to one `run_id`, action category, exact workspace scope, and
-argv SHA-256. It rejects shell operators, a changed scope, a changed action,
-an altered decision, or an attempt to overwrite a prior packet.
+argv SHA-256. It also copies the **verified signed identity expiry** from the
+decision into the packet. It rejects shell operators, a changed scope, a
+changed action, an altered decision, a missing/mismatched expiry, an expired
+identity, or an attempt to overwrite a prior packet.
 
 The packet still does **not** execute its argv. A production runner must make
 packet verification its only route to a consequential tool, then prove that
@@ -82,13 +84,16 @@ scope paths, and argv array. Creation is deliberately non-executing.
 
 Graph Ops and `factory.enterprise_enforcement_status` now project runner
 packets next to their admission receipts. A packet is visible as verified only
-when its own digest, decision digest, action, scope, argv digest, and zero-
-authority boundary all validate again. A malformed or changed packet remains
-visible as invalid and must not be used as runner input.
+when its own digest, decision digest, action, scope, argv digest, zero-
+authority boundary, and identity-derived expiry all validate again. An expired
+packet is separately marked stale and must not be used as runner input; a
+malformed or changed packet remains visible as invalid.
 
 This is supervision evidence, not runner control. Graph Ops and MCP neither
 run argv nor authenticate a live workload, prove a sidecar/eBPF topology,
-enforce isolation, or approve an external action.
+enforce isolation, re-check a live revocation source, or approve an external
+action. Freshness limits the lifetime of a sealed receipt; it is not a claim of
+continuous authorization.
 
 ## Pilot exit criteria
 

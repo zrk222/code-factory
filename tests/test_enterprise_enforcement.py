@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import hashlib
 import json
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import pytest
 from factoryline.enterprise_enforcement import (
     EnterpriseEnforcementError,
     authorize_enterprise_action,
+    canonical_json,
     enterprise_enforcement_projection,
     record_enterprise_decision,
     sign_enforcement_policy,
@@ -144,10 +146,14 @@ def test_runner_packet_binds_exact_admitted_decision_scope_and_argv(tmp_path: Pa
     packet = prepare_runner_admission(tmp_path, manifest, Path(".factory/enterprise-enforcement/runner-admissions/restore.json"))
     assert packet["marker"] == "RUNNER_ADMISSION_PACKET_SEALED"
     assert packet["authority"]["execution"] is False
+    assert packet["admission_expires_at"] == recorded["workload_identity"]["expires_at"]
     verified = verify_runner_admission_packet(tmp_path, Path(packet["path"]))
     assert verified["decision_sha256"] == recorded["decision_sha256"]
+    assert verified["admission_expires_at"] == packet["admission_expires_at"]
     projection = runner_admission_projection(tmp_path)
     assert projection["verified_count"] == 1
+    assert projection["fresh_count"] == 1
+    assert projection["expired_count"] == 0
     assert all(value is False for value in projection["authority"].values())
     snapshot = graph_ops_snapshot(tmp_path)
     assert snapshot["facts"]["enterprise_runner_verified_count"] == 1
@@ -155,6 +161,43 @@ def test_runner_packet_binds_exact_admitted_decision_scope_and_argv(tmp_path: Pa
     bad = _write(tmp_path / "bad-runner.json", {**json.loads(manifest.read_text(encoding="utf-8")), "scope_paths": ["src"]})
     with pytest.raises(EnterpriseRunnerAdmissionError, match="E_RUNNER_SCOPE_MISMATCH"):
         prepare_runner_admission(tmp_path, bad, Path(".factory/enterprise-enforcement/runner-admissions/bad.json"))
+
+
+def test_runner_packet_fails_closed_when_identity_derived_admission_expires(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import factoryline.enterprise_runner_admission as runner_module
+
+    keys, identity, policy, request = _materials(tmp_path)
+    request["semantic_authority"] = _semantic_binding(tmp_path)
+    recorded = record_enterprise_decision(tmp_path, request, Path(".factory/enterprise-enforcement/decisions/freshness.json"), workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]))
+    manifest = _write(tmp_path / "runner-freshness.json", {"schema": "factory.runner-admission-input.v1", "id": "freshness-run", "decision": recorded["path"], "run_id": "run-freshness", "action_class": "test", "scope_paths": ["tests"], "argv": ["python", "-m", "pytest", "-q"]})
+    packet = prepare_runner_admission(tmp_path, manifest, Path(".factory/enterprise-enforcement/runner-admissions/freshness.json"))
+    expired_now = _now() + timedelta(hours=2)
+    with pytest.raises(EnterpriseRunnerAdmissionError, match="E_RUNNER_ADMISSION_EXPIRED"):
+        verify_runner_admission_packet(tmp_path, Path(packet["path"]), now=expired_now)
+    monkeypatch.setattr(runner_module, "_now", lambda: expired_now)
+    projection = runner_admission_projection(tmp_path)
+    assert projection["verified_count"] == 0
+    assert projection["fresh_count"] == 0
+    assert projection["expired_count"] == 1
+    assert projection["invalid_count"] == 0
+
+
+def test_runner_packet_refuses_missing_or_changed_identity_expiry(tmp_path: Path) -> None:
+    keys, identity, policy, request = _materials(tmp_path)
+    request["semantic_authority"] = _semantic_binding(tmp_path)
+    recorded = record_enterprise_decision(tmp_path, request, Path(".factory/enterprise-enforcement/decisions/expiry-binding.json"), workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]))
+    manifest = _write(tmp_path / "runner-expiry-binding.json", {"schema": "factory.runner-admission-input.v1", "id": "expiry-binding", "decision": recorded["path"], "run_id": "run-expiry-binding", "action_class": "test", "scope_paths": ["tests"], "argv": ["python", "-m", "pytest", "-q"]})
+    packet = prepare_runner_admission(tmp_path, manifest, Path(".factory/enterprise-enforcement/runner-admissions/expiry-binding.json"))
+    path = tmp_path / packet["path"]
+    value = json.loads(path.read_text(encoding="utf-8"))
+    for changed, code in [({"admission_expires_at": None}, "E_RUNNER_FRESHNESS_MISSING"), ({"admission_expires_at": "2030-01-01T00:00:00Z"}, "E_RUNNER_FRESHNESS_MISMATCH")]:
+        candidate = {**value, **changed}
+        unsigned = dict(candidate)
+        unsigned.pop("packet_sha256", None)
+        candidate["packet_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        path.write_text(json.dumps(candidate), encoding="utf-8")
+        with pytest.raises(EnterpriseRunnerAdmissionError, match=code):
+            verify_runner_admission_packet(tmp_path, Path(packet["path"]))
 
 
 def test_runner_packet_refuses_action_shell_overwrite_and_path_escape(tmp_path: Path) -> None:

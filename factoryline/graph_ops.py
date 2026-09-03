@@ -1172,6 +1172,8 @@ def _append_enterprise_enforcement(state: dict[str, Any], root: Path) -> dict[st
     facts["runner_admission"] = runner
     facts["runner_packet_count"] = int(runner.get("packet_count", 0))
     facts["runner_verified_count"] = int(runner.get("verified_count", 0))
+    facts["runner_fresh_count"] = int(runner.get("fresh_count", 0))
+    facts["runner_expired_count"] = int(runner.get("expired_count", 0))
     facts["runner_invalid_count"] = int(runner.get("invalid_count", 0))
     for item in projection.get("decisions", []):
         if not isinstance(item, dict):
@@ -1185,7 +1187,7 @@ def _append_enterprise_enforcement(state: dict[str, Any], root: Path) -> dict[st
         digest = str(item.get("packet_sha256") or "runner-packet")
         decision_digest = str(item.get("decision_sha256") or "")
         node_id = f"enterprise-runner-admission:{digest[:24]}"
-        _node(state, node_id=node_id, kind="enterprise_runner_admission", label=f"Runner packet {item.get('run_id', digest[:12])}", source=str(item.get("path") or ".factory/enterprise-enforcement/runner-admissions"), status="verified", facts={"packet_sha256": digest, "decision_sha256": decision_digest, "action_class": item.get("action_class"), "scope_count": item.get("scope_count"), "argv_sha256": item.get("argv_sha256"), "authority": _AUTHORITY, "execution": False})
+        _node(state, node_id=node_id, kind="enterprise_runner_admission", label=f"Runner packet {item.get('run_id', digest[:12])}", source=str(item.get("path") or ".factory/enterprise-enforcement/runner-admissions"), status="verified", facts={"packet_sha256": digest, "decision_sha256": decision_digest, "action_class": item.get("action_class"), "scope_count": item.get("scope_count"), "argv_sha256": item.get("argv_sha256"), "admission_expires_at": item.get("admission_expires_at"), "authority": _AUTHORITY, "execution": False})
         if decision_digest:
             _edge(state, f"enterprise-pep:{decision_digest[:24]}", node_id, "binds_runner_input")
     return facts
@@ -2251,6 +2253,8 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     facts["enterprise_enforcement_invalid_count"] = enterprise_enforcement["invalid_count"]
     facts["enterprise_runner_packet_count"] = enterprise_enforcement["runner_packet_count"]
     facts["enterprise_runner_verified_count"] = enterprise_enforcement["runner_verified_count"]
+    facts["enterprise_runner_fresh_count"] = enterprise_enforcement["runner_fresh_count"]
+    facts["enterprise_runner_expired_count"] = enterprise_enforcement["runner_expired_count"]
     facts["enterprise_runner_invalid_count"] = enterprise_enforcement["runner_invalid_count"]
     facts["journey_proof_admissible_count"] = journey_proofs["admissible_count"]
     facts["journey_proof_invalid_count"] = journey_proofs["invalid_count"]

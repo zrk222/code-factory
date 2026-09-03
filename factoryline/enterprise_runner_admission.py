@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -72,7 +73,34 @@ def _argv(value: object) -> list[str]:
     return argv
 
 
-def prepare_runner_admission(root: Path, input_path: Path, out: Path) -> dict[str, Any]:
+def _now() -> datetime:
+    """Return the explicit UTC clock used only for local freshness checks."""
+    return datetime.now(timezone.utc)
+
+
+def _stamp(value: object, field: str) -> str:
+    """Normalize one required RFC3339 timestamp without accepting local time."""
+    if not isinstance(value, str) or not value.strip():
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_FRESHNESS_MISSING", f"{field} must be present")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_FRESHNESS_INVALID", f"{field} must be an RFC3339 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_FRESHNESS_INVALID", f"{field} must include an offset")
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _admission_expiry(decision: dict[str, Any], *, now: datetime | None = None) -> str:
+    """Derive a packet expiry from signed identity evidence, never caller input."""
+    identity = decision.get("workload_identity") if isinstance(decision.get("workload_identity"), dict) else {}
+    expires_at = _stamp(identity.get("expires_at"), "decision.workload_identity.expires_at")
+    if datetime.fromisoformat(expires_at.replace("Z", "+00:00")) <= (now or _now()):
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_ADMISSION_EXPIRED", "the bound workload identity has expired; record a new decision")
+    return expires_at
+
+
+def prepare_runner_admission(root: Path, input_path: Path, out: Path, *, now: datetime | None = None) -> dict[str, Any]:
     """Seal an immutable non-executing packet for one exact admitted runner argv."""
     workspace = Path(root).resolve()
     value, _ = _load(workspace, input_path, INPUT_SCHEMA)
@@ -86,6 +114,7 @@ def prepare_runner_admission(root: Path, input_path: Path, out: Path) -> dict[st
     except EnterpriseEnforcementError as exc:
         raise EnterpriseRunnerAdmissionError(exc.code, exc.message) from exc
     decision = checked["decision"]
+    admission_expires_at = _admission_expiry(decision, now=now)
     request = decision.get("request") if isinstance(decision.get("request"), dict) else {}
     action_class = _text(value["action_class"], "action_class", limit=80).lower()
     scope_paths = _paths(value["scope_paths"], "scope_paths")
@@ -106,7 +135,7 @@ def prepare_runner_admission(root: Path, input_path: Path, out: Path) -> dict[st
     packet = {
         "schema": PACKET_SCHEMA, "marker": "RUNNER_ADMISSION_PACKET_SEALED", "packet_id": _text(value["id"], "id"), "run_id": _text(value["run_id"], "run_id"),
         "decision": {"path": checked["path"], "decision_sha256": checked["decision_sha256"]}, "action_class": action_class, "scope_paths": scope_paths,
-        "argv": argv, "argv_sha256": hashlib.sha256(canonical_json(argv)).hexdigest(),
+        "argv": argv, "argv_sha256": hashlib.sha256(canonical_json(argv)).hexdigest(), "admission_expires_at": admission_expires_at,
         "authority": {"execution": False, "approval": False, "publication": False, "deployment": False, "signing": False, "messaging": False, "credential": False, "connector": False},
         "claim_boundary": "Runner input contract only. This packet did not execute argv, authenticate a workload, prove PEP topology, enforce isolation, or grant external authority.",
     }
@@ -145,7 +174,7 @@ def _packet_value(candidate: Path) -> tuple[dict[str, Any], str]:
     return value, supplied
 
 
-def _packet_binding(workspace: Path, value: dict[str, Any]) -> str:
+def _packet_binding(workspace: Path, value: dict[str, Any], *, now: datetime | None = None) -> tuple[str, str]:
     """Verify the decision, action, scope, and argv bindings in one packet."""
     decision_ref = value.get("decision") if isinstance(value.get("decision"), dict) else {}
     decision_path = _text(decision_ref.get("path"), "decision.path", limit=512)
@@ -165,30 +194,37 @@ def _packet_binding(workspace: Path, value: dict[str, Any]) -> str:
         raise EnterpriseRunnerAdmissionError("E_RUNNER_ACTION_MISMATCH", "packet action does not match its decision")
     if scope_paths != request.get("scope_paths"):
         raise EnterpriseRunnerAdmissionError("E_RUNNER_SCOPE_MISMATCH", "packet scope does not match its decision")
-    return decision["decision_sha256"]
+    admission_expires_at = _admission_expiry(decision["decision"], now=now)
+    if _stamp(value.get("admission_expires_at"), "admission_expires_at") != admission_expires_at:
+        raise EnterpriseRunnerAdmissionError("E_RUNNER_FRESHNESS_MISMATCH", "packet expiry does not match its bound signed identity evidence")
+    return decision["decision_sha256"], admission_expires_at
 
 
-def verify_runner_admission_packet(root: Path, path: Path) -> dict[str, Any]:
-    """Verify one non-executing runner packet and its exact decision binding."""
+def verify_runner_admission_packet(root: Path, path: Path, *, now: datetime | None = None) -> dict[str, Any]:
+    """Verify one fresh non-executing runner packet and exact decision binding."""
     workspace = Path(root).resolve()
     candidate = _packet_path(workspace, path)
     value, supplied = _packet_value(candidate)
-    decision_sha256 = _packet_binding(workspace, value)
-    return {"packet": value, "packet_sha256": supplied, "decision_sha256": decision_sha256, "path": candidate.relative_to(workspace).as_posix()}
+    decision_sha256, admission_expires_at = _packet_binding(workspace, value, now=now)
+    return {"packet": value, "packet_sha256": supplied, "decision_sha256": decision_sha256, "admission_expires_at": admission_expires_at, "path": candidate.relative_to(workspace).as_posix()}
 
 
 def runner_admission_projection(root: Path) -> dict[str, Any]:
     """Read bounded runner-packet facts for Graph Ops and MCP without execution."""
     workspace = Path(root).resolve()
     directory = workspace / PACKET_DIR
-    result: dict[str, Any] = {"schema": PROJECTION_SCHEMA, "marker": "RUNNER_ADMISSION_READ_ONLY", "packet_count": 0, "verified_count": 0, "invalid_count": 0, "packets": [], "authority": {"execution": False, "approval": False, "publication": False, "deployment": False, "signing": False, "messaging": False, "credential": False, "connector": False}, "claim_boundary": "Read-only local runner-packet projection. It does not execute argv, authenticate a workload, prove runner topology, enforce isolation, or grant authority."}
+    result: dict[str, Any] = {"schema": PROJECTION_SCHEMA, "marker": "RUNNER_ADMISSION_READ_ONLY", "packet_count": 0, "verified_count": 0, "fresh_count": 0, "expired_count": 0, "invalid_count": 0, "packets": [], "authority": {"execution": False, "approval": False, "publication": False, "deployment": False, "signing": False, "messaging": False, "credential": False, "connector": False}, "claim_boundary": "Read-only local runner-packet projection. Freshness is derived from sealed identity expiry; it does not execute argv, authenticate a workload, re-check live revocations, prove runner topology, enforce isolation, or grant authority."}
     for path in sorted(directory.glob("*.json"))[:500] if directory.is_dir() else []:
         result["packet_count"] += 1
         try:
             checked = verify_runner_admission_packet(workspace, path)
             packet = checked["packet"]
             result["verified_count"] += 1
-            result["packets"].append({"path": checked["path"], "packet_sha256": checked["packet_sha256"], "decision_sha256": checked["decision_sha256"], "run_id": packet.get("run_id"), "action_class": packet.get("action_class"), "scope_count": len(packet.get("scope_paths", [])), "argv_sha256": packet.get("argv_sha256")})
-        except EnterpriseRunnerAdmissionError:
-            result["invalid_count"] += 1
+            result["fresh_count"] += 1
+            result["packets"].append({"path": checked["path"], "packet_sha256": checked["packet_sha256"], "decision_sha256": checked["decision_sha256"], "run_id": packet.get("run_id"), "action_class": packet.get("action_class"), "scope_count": len(packet.get("scope_paths", [])), "argv_sha256": packet.get("argv_sha256"), "admission_expires_at": checked["admission_expires_at"]})
+        except EnterpriseRunnerAdmissionError as exc:
+            if exc.code == "E_RUNNER_ADMISSION_EXPIRED":
+                result["expired_count"] += 1
+            else:
+                result["invalid_count"] += 1
     return result

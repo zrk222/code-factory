@@ -1,0 +1,21 @@
+{
+  "checks": [
+    {
+      "name": "enterprise_runner_packets_bind_and_enforce_identity_freshness",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_enterprise_enforcement.py','tests/test_graph_ops.py','tests/test_mcp.py'])\nassert result==0\nprint('ENTERPRISE_RUNNER_FRESHNESS_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "ENTERPRISE_RUNNER_FRESHNESS_SMOKE_PASS",
+      "timeout_s": 120,
+      "must_fail_on_stub": true,
+      "covers": [
+        "RUNNER_ADMISSION_PACKET_SEALED",
+        "E_RUNNER_ADMISSION_EXPIRED",
+        "E_RUNNER_FRESHNESS_MISSING",
+        "E_RUNNER_FRESHNESS_INVALID",
+        "E_RUNNER_FRESHNESS_MISMATCH",
+        "RUNNER_ADMISSION_READ_ONLY"
+      ]
+    }
+  ]
+}

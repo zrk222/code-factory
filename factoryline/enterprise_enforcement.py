@@ -339,6 +339,10 @@ def authorize_enterprise_action(
         "recorded_at": _stamp(now or _now()),
         "request": parsed,
         "workload_identity_sha256": checked_identity["identity_sha256"],
+        "workload_identity": {
+            "issued_at": identity["issued_at"],
+            "expires_at": identity["expires_at"],
+        },
         "policy_sha256": checked_policy["policy_sha256"],
         "semantic_authority_status": semantic_status,
         "revocation_status": checked_identity["revocation_status"],

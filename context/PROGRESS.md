@@ -522,3 +522,9 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-03 00:49] GATE spec enterprise-runner-admission-v1 approver=human strict=True sha=d006aabb471309bb
 - [2026-09-03 01:17] GATE spec enterprise-runner-supervision-v1 approver=human strict=True sha=6741df145705777d
 - [2026-09-03 01:26] GATE spec enterprise-runner-supervision-v1 approver=human strict=True sha=75b85a31381fffbd
+- [2026-09-03 01:38] GATE spec enterprise-runner-freshness-v1 approver=human strict=True sha=8b8ed9b433253b8b
+- [2026-09-03 01:38] GATE plan enterprise-runner-freshness-v1 approver=human tasks=3 sha=8b8ed9b433253b8b
+- [2026-09-03 01:40] GATE spec enterprise-runner-freshness-v1 approver=human strict=True sha=2ef993e3fc7d66b5
+- [2026-09-03 01:40] GATE plan enterprise-runner-freshness-v1 approver=human tasks=3 sha=2ef993e3fc7d66b5
+- [2026-09-03 01:44] GATE spec enterprise-runner-freshness-v1 approver=human strict=True sha=52fbf054946155f0
+- [2026-09-03 01:44] GATE plan enterprise-runner-freshness-v1 approver=human tasks=3 sha=52fbf054946155f0
