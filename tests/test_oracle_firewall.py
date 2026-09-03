@@ -153,6 +153,21 @@ def test_shadow_oracle_challenge_is_implementation_targeted_and_fails_on_survivo
     assert [item["relation"] for item in gate["boundary_cases"]] == ["below", "at", "above"]
 
 
+def test_shadow_oracle_challenge_rejects_a_stale_plan_even_when_every_case_is_killed(tmp_path: Path) -> None:
+    contract = _contract(tmp_path)
+    plan = compile_oracle_challenge(tmp_path, contract, Path(".factory/oracles/challenges/restore.json"))
+    result = _write(tmp_path / "challenge-result.json", {"schema": "factory.oracle-challenge-result.v1", "challenge_sha256": plan["challenge_sha256"], "worker_subject": "worker-alpha", "verifier_subject": "verifier-beta", "target": "implementation", "cases": [{"id": item["id"], "outcome": "killed"} for item in plan["cases"]]})
+    sealed = json.loads(contract.read_text(encoding="utf-8"))
+    captured = tmp_path / sealed["handoff"]["original_intent"]["captured_path"]
+    captured.write_text("A changed bound source invalidates the previously sealed contract.\n", encoding="utf-8")
+
+    checked = verify_oracle_challenge_result(tmp_path, tmp_path / plan["path"], result)
+
+    assert checked["ok"] is False
+    assert checked["marker"] == "ORACLE_CHALLENGE_FAILED"
+    assert checked["reason"] == "challenge_plan_invalid_or_stale"
+
+
 def test_oracle_incident_demotes_declared_agent_and_projects_read_only_status(tmp_path: Path) -> None:
     prior = _contract(tmp_path, out=".factory/oracles/contracts/prior.json")
     handoff = tmp_path / ".factory/oracles/handoffs/ios-intake.json"

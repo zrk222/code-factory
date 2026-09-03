@@ -579,6 +579,10 @@ def verify_oracle_challenge_result(root: Path, plan_path: Path, result_path: Pat
     result, result_source = _read_json(workspace, Path(result_path), CHALLENGE_RESULT_SCHEMA)
     if not _valid_receipt(plan, CHALLENGE_SCHEMA, "challenge_sha256"):
         return {"ok": False, "marker": "ORACLE_CHALLENGE_FAILED", "reason": "challenge_sha256_mismatch", "authority": dict(AUTHORITY)}
+    try:
+        validate_oracle_challenge_plan(workspace, plan)
+    except OracleFirewallError as exc:
+        return {"ok": False, "marker": "ORACLE_CHALLENGE_FAILED", "reason": "challenge_plan_invalid_or_stale", "detail": exc.code, "authority": dict(AUTHORITY)}
     if result.get("challenge_sha256") != plan.get("challenge_sha256"):
         return {"ok": False, "marker": "ORACLE_CHALLENGE_FAILED", "reason": "challenge_binding_mismatch", "authority": dict(AUTHORITY)}
     worker = _text(result.get("worker_subject"), "worker_subject", limit=160)

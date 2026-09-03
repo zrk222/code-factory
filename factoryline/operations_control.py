@@ -331,7 +331,11 @@ def assess_operations_control(root: Path, manifest_path: Path, out: Path | None 
         "authority": dict(AUTHORITY),
         "scope_limits": ["This receipt never creates a worktree, runs a reproduction, starts an agent, dispatches a task, repairs code, merges, publishes, deploys, sends a message, or accesses credentials.", "Observed token and attempt values are supplied evidence; Code Factory preserves them as declared measurements and does not infer hidden model usage."],
     }
-    receipt = {**core, "receipt_sha256": _sha(core), "created_at": _now()}
+    # Timestamp is part of the immutable receipt, not projection-only metadata.
+    # Otherwise an attacker can alter the apparent issuance time without
+    # invalidating the local receipt hash.
+    core["created_at"] = _now()
+    receipt = {**core, "receipt_sha256": _sha(core)}
     target_relative = _path(str(out) if out else (RECEIPT_DIR / f"{manifest['id']}-{receipt['receipt_sha256'][:12]}.json").as_posix(), "output")
     target = _inside(workspace, target_relative)
     if not _under([RECEIPT_DIR.as_posix()], target_relative):
@@ -359,7 +363,7 @@ def operations_control_projection(root: Path) -> dict[str, Any]:
         for path in sorted(directory.glob("*.json"))[:200]:
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
-                core = {key: value[key] for key in value if key not in {"receipt_sha256", "created_at", "path"}}
+                core = {key: value[key] for key in value if key not in {"receipt_sha256", "path"}}
                 if value.get("schema") != RECEIPT_SCHEMA or value.get("receipt_sha256") != _sha(core):
                     raise ValueError("receipt digest mismatch")
                 receipts.append({"path": path.relative_to(workspace).as_posix(), "id": value["manifest"]["id"], "marker": value["marker"], "blocker_count": len(value.get("blockers", [])), "created_at": value.get("created_at"), "receipt_sha256": value["receipt_sha256"]})
