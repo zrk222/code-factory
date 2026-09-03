@@ -26,6 +26,12 @@ That one local command creates a disposable demonstration sandbox, proves the
 healthy check can pass, then proves the hollow check is rejected. It writes a
 receipt and a privacy-safe Proof Card; it does not assess or change your project.
 
+**LLM-friendly product context:** [Canonical Product Card](docs/LLM_PRODUCT_CARD.md)
+states the supported capabilities, boundaries, audiences, integration terms,
+and exact vocabulary that documentation assistants and agent tools may safely
+reuse. It is intentionally claim-bounded: local evidence is not a release,
+provider approval, remote execution, or a guarantee of correctness.
+
 ### Pick the path that matches your work
 
 - **Individual developer or vibe coder:** start with `factory first-proof`.

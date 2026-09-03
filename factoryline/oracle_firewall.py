@@ -574,7 +574,9 @@ def oracle_incidents_for_agent(root: Path, identity: dict[str, Any]) -> list[dic
     subject = identity.get("subject") if isinstance(identity, dict) else None
     digest = identity.get("identity_sha256") if isinstance(identity, dict) else None
     current: list[dict[str, Any]] = []
-    for path in sorted((workspace / ".factory" / "oracles" / "incidents").glob("*.json"))[:200]:
+    # Every valid demotion is relevant to earned autonomy.  Truncating this
+    # history can silently revive an agent after enough unrelated incidents.
+    for path in sorted((workspace / ".factory" / "oracles" / "incidents").glob("*.json")):
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
             if _valid_receipt(value, INCIDENT_SCHEMA, "incident_sha256") and value.get("agent", {}).get("subject") == subject and value.get("agent", {}).get("identity_sha256") == digest:

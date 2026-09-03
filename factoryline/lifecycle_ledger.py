@@ -215,18 +215,14 @@ def record_lifecycle_event(root: Path, event_path: Path, out: Path | None = None
     if not target_relative.startswith(RECEIPT_DIR.as_posix() + "/"):
         raise LifecycleLedgerError("E_LIFECYCLE_PATH", "output must be beneath .factory/lifecycle")
     target = _inside(workspace, target_relative)
-    if target.exists():
-        raise LifecycleLedgerError("E_LIFECYCLE_EXISTS", "lifecycle receipt path is immutable; choose a new run or sequence")
     target.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
     try:
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
             stream.flush(); os.fsync(stream.fileno())
-        os.replace(temporary, target)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    except FileExistsError as exc:
+        raise LifecycleLedgerError("E_LIFECYCLE_EXISTS", "lifecycle receipt path is immutable; choose a new run or sequence") from exc
     return {**receipt, "path": target_relative}
 
 

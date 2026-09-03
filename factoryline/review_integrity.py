@@ -45,7 +45,7 @@ def verify_intent_diff(root:Path,contract_path:Path,diff_path:Path,out:Path)->di
  if not isinstance(c["approval"],dict) or c["approval"].get("origin") not in {"human_confirmed","trusted_source"}:find.append("E_INTENT_AUTHORITY_MISSING")
  if set(d)!={"schema","base_sha","head_sha","changed_paths","added_text"} or d.get("schema")!="factory.diff-manifest.v1" or not isinstance(d.get("changed_paths"),list) or not isinstance(d.get("added_text"),str):raise RevenueForgeError("INTENT_DIFF_MANIFEST_INVALID","diff manifest must be explicit and bounded")
  for p in d["changed_paths"]:
-  if not isinstance(p,str) or not any(p==scope or p.startswith(scope.rstrip("/")+"/") for scope in c["approved_paths"]):find.append("E_INTENT_SCOPE_DRIFT:"+str(p))
+  if not isinstance(p,str) or not any(scope=="." or p==scope or p.startswith(scope.rstrip("/")+"/") for scope in c["approved_paths"]):find.append("E_INTENT_SCOPE_DRIFT:"+str(p))
  for term in c.get("forbidden_terms",[]):
   if isinstance(term,str) and term and term.lower() in d["added_text"].lower():find.append("E_INTENT_FORBIDDEN_BEHAVIOR:"+term)
  core=_base("intent_diff",not find,find,{"contract":cp.relative_to(root).as_posix(),"diff":dp.relative_to(root).as_posix()});core.update({"action_summary":"Compare a declared diff against human-approved scope and forbidden behaviors before review promotion.","base_sha":d["base_sha"],"head_sha":d["head_sha"],"repair_plan":["Remove or separately approve the out-of-scope path or forbidden behavior." for _ in find]});return _write(root,out,core)
