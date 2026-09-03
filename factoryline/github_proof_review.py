@@ -24,6 +24,7 @@ _REVIEW_CORE_KEYS = frozenset({
     "scope_limits",
 })
 _REVIEW_RENDERED_KEYS = frozenset({"review_sha256", "mermaid", "review_markdown", "artifacts"})
+_REVIEW_OPTIONAL_CORE_KEYS = frozenset({"code_audits"})
 _PATH_PREFIXES = (
     ("specs/", "contracts"),
     ("requirements/", "contracts"),
@@ -80,7 +81,7 @@ def _reject(message: str) -> None:
 def _valid_review(review: object) -> dict[str, Any]:
     if not isinstance(review, dict) or review.get("schema") != CHANGE_REVIEW_SCHEMA:
         _reject("a factory.change_review.v1 payload is required")
-    if set(review) - (_REVIEW_CORE_KEYS | _REVIEW_RENDERED_KEYS):
+    if set(review) - (_REVIEW_CORE_KEYS | _REVIEW_RENDERED_KEYS | _REVIEW_OPTIONAL_CORE_KEYS):
         _reject("the change-review payload contains unsupported fields")
     if not _REVIEW_CORE_KEYS.issubset(review) or not _REVIEW_RENDERED_KEYS - {"artifacts"} <= set(review):
         _reject("the change-review payload is incomplete")
@@ -107,10 +108,27 @@ def _valid_review(review: object) -> dict[str, Any]:
     ):
         _reject("the change-review payload has an invalid field shape or authority boundary")
     core = {key: review[key] for key in _REVIEW_CORE_KEYS}
+    if "code_audits" in review:
+        _valid_code_audits(review["code_audits"])
+        core["code_audits"] = review["code_audits"]
     expected = _sha(core)
     if review.get("review_sha256") != expected:
         _reject("the change-review SHA-256 does not match its canonical facts")
     return review
+
+
+def _valid_code_audits(value: object) -> None:
+    if value == {"state": "not_configured", "unconfigured_tools": ["patterns", "guard-paths"]}:
+        return
+    if not isinstance(value, dict) or value.get("schema") != "factory.code-review-audits.v1":
+        _reject("the code-audit lane has an invalid schema")
+    if value.get("authority") != {"execution": False, "approval": False, "publication": False, "deployment": False}:
+        _reject("the code-audit lane cannot grant authority")
+    if not isinstance(value.get("state"), str) or value["state"] not in {"incomplete", "findings", "no_structural_findings"}:
+        _reject("the code-audit lane has an invalid state")
+    core = {key: item for key, item in value.items() if key != "audit_sha256"}
+    if value.get("audit_sha256") != sha256(json.dumps(core, sort_keys=True).encode()).hexdigest():
+        _reject("the code-audit SHA-256 does not match its facts")
 
 
 def _valid_head_sha(head_sha: str) -> str:

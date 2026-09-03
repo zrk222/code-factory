@@ -1,0 +1,17 @@
+name: capability-evidence-audit-v1
+language: python
+modules:
+  - name: capability_evidence
+    path: factoryline/capability_evidence.py
+    functions:
+      - name: audit_capability_evidence
+        args: [root, manifest_path]
+        returns: dict[str, Any]
+dependencies: []
+invariants:
+  - name: no_provider_or_release_authority
+    forbid_pattern: "requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:deploy|publish|sign|send_message|grant_connector)\\s*\\("
+    scopes:
+      - module: capability_evidence
+        symbol: audit_capability_evidence
+        max_lines: 40

@@ -13,6 +13,31 @@ maturity so a green test is never presented as independent production proof.
 
 ## How to evaluate it fairly
 
+Hollow-test detection is only one audit lane. [Implementation audits](CODE_REVIEW_AUDITS.md)
+add peer-pattern comparison and bounded guard-path bypass analysis to `factory change review`.
+Run `python -m pytest -q tests/test_review_audits.py tests/test_change_review.py` to challenge these implementations.
+Their scope is declared Python symbols; structural findings are not whole-program or runtime security proof.
+
+The machine-readable claim manifest lives in `evidence/capability-evidence.json`.
+From a repository checkout, inspect its file bindings without running code:
+
+```powershell
+factory evidence-audit --json
+```
+
+After reviewing its declared commands, execute those local checks:
+
+```powershell
+factory evidence-audit --execute --json
+```
+
+The default result is `CAPABILITY_EVIDENCE_BOUND`, not a passing test claim.
+Only explicit execution with every command returning zero produces
+`CAPABILITY_EVIDENCE_VERIFIED`. Missing, empty, escaping, or failing evidence
+blocks the audit. Returned file hashes bind the report to the inspected bytes.
+Execution runs repository code as your user; it is not a sandbox or an
+independent assessment. Neither result authorizes publication or deployment.
+
 1. Run `factory guide`, then start with `factory first-proof --root .` in a
    throwaway workspace.
 2. Read the named test and implementation before trusting the receipt.

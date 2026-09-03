@@ -79,6 +79,7 @@ from .migration import (
 from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .ide_playbook import AdoptionGuideError, adoption_guide
+from .capability_evidence import CapabilityEvidenceError, audit_capability_evidence
 from .graph_portfolio import graph_portfolio_plan
 from .graph_forensics import GraphForensicsError, graph_forensics, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
 from .langgraph_assurance import LangGraphAssuranceError, verify_langgraph_resume_parity
@@ -86,6 +87,7 @@ from .proofsearch import ProofSearchError, create_proofsearch_plan, evaluate_pro
 from .evidence_frontier import EvidenceFrontierError, plan_evidence_frontier, verify_evidence_frontier
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
+from .review_audits import ReviewAuditError, audit_code
 from .continuous_proof import (
     ContinuousProofError,
     assess_continuous_proof,
@@ -606,6 +608,18 @@ def main(argv=None) -> int:
     guide = sub.add_parser("guide", help="choose one plain-language path before opening advanced controls")
     guide.add_argument("--journey", help="one of: solo, team, enterprise")
     guide.add_argument("--json", action="store_true")
+
+    code_audit = sub.add_parser("audit", help="inspect peer-pattern irregularities and guard-bypass paths without executing code")
+    code_audit.add_argument("tool", choices=["patterns", "guard-paths", "all"])
+    code_audit.add_argument("--policy", default=".factory/review-audits.json")
+    code_audit.add_argument("--root", default=".")
+    code_audit.add_argument("--json", action="store_true")
+
+    evidence_audit = sub.add_parser("evidence-audit", help="bind capability claims to source and tests; execute only with --execute")
+    evidence_audit.add_argument("manifest", nargs="?", default="evidence/capability-evidence.json")
+    evidence_audit.add_argument("--root", default=".")
+    evidence_audit.add_argument("--execute", action="store_true", help="run the reviewed manifest commands locally without a shell")
+    evidence_audit.add_argument("--json", action="store_true")
 
     proof_card = sub.add_parser("proof-card", help="create a privacy-safe share card from one verified local E2E receipt")
     proof_card.add_argument("receipt", help="workspace-contained factory.e2e_proof_receipt.v1 JSON path")
@@ -1562,6 +1576,7 @@ def main(argv=None) -> int:
     change_review = change_sub.add_parser("review", help="join diff impact, coverage gaps, and plan-only reruns")
     change_review.add_argument("--root", default=".")
     change_review.add_argument("--base", default="main")
+    change_review.add_argument("--audit-policy", help="workspace-relative code-audit policy; defaults to .factory/review-audits.json when present")
     change_review.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
     change_review.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
     change_review.add_argument("--json", action="store_true")
@@ -3287,6 +3302,34 @@ def main(argv=None) -> int:
             print(f"studio failed: LISTENER_ERROR: {exc}", file=sys.stderr)
             return 1
         return 0
+    if a.cmd == "audit":
+        try:
+            result = audit_code(Path(a.root), a.policy, tool=a.tool)
+        except ReviewAuditError as exc:
+            print(json.dumps({"state": "invalid", "code": exc.code, "message": str(exc)}), file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Code audit: {result['state']} ({len(result['findings'])} findings)")
+            for item in result["findings"]:
+                print(f"{item['code']}: {item['target']['path']}:{item['target']['line']} — {item['message']}")
+            for item in result["results"]:
+                for gap in item.get("analysis_gaps", []):
+                    print(f"INCOMPLETE {item['rule_id']}: {gap}")
+            if result["unconfigured_tools"]:
+                print(f"Unconfigured: {', '.join(result['unconfigured_tools'])}")
+            print("Analysis only; declared policy is not authenticated approval.")
+        return 0 if result["state"] == "no_structural_findings" else 2
+    if a.cmd == "evidence-audit":
+        try:
+            result = audit_capability_evidence(Path(a.root), Path(a.manifest), execute=a.execute)
+        except (CapabilityEvidenceError, OSError, json.JSONDecodeError) as exc:
+            error = {"marker": "CAPABILITY_EVIDENCE_BLOCKED", "code": getattr(exc, "code", "E_CAPABILITY_EVIDENCE_INPUT"), "message": str(exc)}
+            print(json.dumps(error, indent=2) if a.json else f"{error['code']}: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2) if a.json else f"{result['marker']}: {len(result['claims'])} claims; {result['execution_count']} executions.\n{result['claim_boundary']}")
+        return 0 if result["ok"] else 1
     if a.cmd == "guide":
         try:
             result = adoption_guide(a.journey)
@@ -4499,7 +4542,7 @@ def main(argv=None) -> int:
         return 0
     if a.cmd == "change":
         try:
-            review = review_change(Path(a.root), base=a.base, changed=a.changed or None)
+            review = review_change(Path(a.root), base=a.base, changed=a.changed or None, audit_policy=a.audit_policy)
             if a.out_dir:
                 review["artifacts"] = write_review_artifacts(review, Path(a.out_dir))
         except ChangeReviewError as exc:

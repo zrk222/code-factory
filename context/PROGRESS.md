@@ -551,3 +551,8 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-03 08:33] GATE spec adoption-simplification approver=human strict=True sha=ae1f1dbec625cd32
 - [2026-09-03 08:50] GATE plan adoption-simplification approver=human tasks=5 sha=ae1f1dbec625cd32
 - [2026-09-03 08:55] GATE code adoption-simplification approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
+
+- [2026-09-03 16:14] GATE spec capability-evidence-audit-v1 approver=human strict=True sha=9a88018196d2f6d6
+- [2026-09-03 16:14] GATE plan capability-evidence-audit-v1 approver=human tasks=7 sha=9a88018196d2f6d6
+- [2026-09-03 16:33] GATE spec code-review-audits-v1 approver=human strict=True sha=fac809ba0a6d9ece
+- [2026-09-03 16:33] GATE plan code-review-audits-v1 approver=human tasks=4 sha=fac809ba0a6d9ece

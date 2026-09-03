@@ -1,0 +1,13 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "code-review-audits-v1",
+  "sealed_hash": "fac809ba0a6d9ece48ad31744291aa2540c5105ba88b5bb87799a62d227840d4",
+  "coherence_score": 100,
+  "source": "specs/code-review-audits-v1.md",
+  "intent": "Add implementation pattern and guard-path audits to the shared review workflow with explicit unsupported states and no approval authority.",
+  "assumptions": [
+    "Assumes declared provenance never grants approval, release or credential authority. Human review must confirm guard semantics and policy scope."
+  ],
+  "seal_timing": "retrospective_implementation_review",
+  "coherence_basis": "SpecLine strict: zero warnings; validator mutations rejected. Not a product quality rating."
+}
