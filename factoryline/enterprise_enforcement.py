@@ -137,6 +137,21 @@ def _decision_target(workspace: Path, output: Path, directory: Path) -> Path:
     return target
 
 
+def _verification_input_path(workspace: Path, value: object, label: str, *, required: bool = True) -> str | None:
+    if value is None and not required:
+        return None
+    if not isinstance(value, Path):
+        raise EnterpriseEnforcementError("E_ENFORCEMENT_INPUT", f"{label} must be a path")
+    candidate = value.resolve() if value.is_absolute() else (workspace / value).resolve()
+    try:
+        relative = candidate.relative_to(workspace).as_posix()
+    except ValueError as exc:
+        raise EnterpriseEnforcementError("E_ENFORCEMENT_PATH", f"{label} must remain inside the workspace") from exc
+    if not candidate.is_file():
+        raise EnterpriseEnforcementError("E_ENFORCEMENT_INPUT", f"{label} is unavailable")
+    return relative
+
+
 def _claim_action_id(directory: Path, action_id: str) -> Path:
     """Atomically claim an action id before its immutable decision is written."""
     claim_dir = directory / ".claims"
@@ -385,6 +400,12 @@ def record_enterprise_decision(root: Path, request: object, output: Path, **kwar
     directory = workspace / ".factory" / "enterprise-enforcement" / "decisions"
     action_id = decision["request"]["action_id"]
     target = _decision_target(workspace, output, directory)
+    verification_inputs = {
+        "workload_identity_path": _verification_input_path(workspace, kwargs.get("workload_identity_path"), "workload_identity_path"),
+        "policy_path": _verification_input_path(workspace, kwargs.get("policy_path"), "policy_path"),
+        "trust_root_path": _verification_input_path(workspace, kwargs.get("trust_root_path"), "trust_root_path"),
+        "revocations_path": _verification_input_path(workspace, kwargs.get("revocations_path"), "revocations_path", required=False),
+    }
     # Preserve pre-claim legacy receipts; new receipts use the atomic claim
     # below and never rely on a bounded directory scan for replay prevention.
     for prior_path in sorted(directory.glob("*.json")) if directory.is_dir() else []:
@@ -395,6 +416,7 @@ def record_enterprise_decision(root: Path, request: object, output: Path, **kwar
         if prior.get("schema") == DECISION_SCHEMA and prior.get("decision_sha256") and prior.get("request", {}).get("action_id") == action_id:
             raise EnterpriseEnforcementError("E_ENFORCEMENT_REPLAY", "action_id already has an immutable enterprise decision")
     core = dict(decision)
+    core["verification_inputs"] = verification_inputs
     core["decision_sha256"] = hashlib.sha256(canonical_json(core)).hexdigest()
     claim = _claim_action_id(directory, action_id)
     try:
@@ -421,6 +443,23 @@ def verify_enterprise_decision(root: Path, path: Path) -> dict[str, Any]:
         raise EnterpriseEnforcementError("E_DECISION_INVALID", "decision is not an admitted enterprise reference receipt")
     if hashlib.sha256(canonical_json(unsigned)).hexdigest() != supplied:
         raise EnterpriseEnforcementError("E_DECISION_HASH_INVALID", "decision hash is invalid")
+    inputs = value.get("verification_inputs")
+    if not isinstance(inputs, dict) or set(inputs) != {"workload_identity_path", "policy_path", "trust_root_path", "revocations_path"}:
+        raise EnterpriseEnforcementError("E_DECISION_INPUT_BINDING", "decision must retain its signed verification inputs")
+    try:
+        reauthorized = authorize_enterprise_action(
+            workspace,
+            value.get("request"),
+            workload_identity_path=workspace / Path(_text(inputs["workload_identity_path"], "verification_inputs.workload_identity_path", limit=512)),
+            policy_path=workspace / Path(_text(inputs["policy_path"], "verification_inputs.policy_path", limit=512)),
+            trust_root_path=workspace / Path(_text(inputs["trust_root_path"], "verification_inputs.trust_root_path", limit=512)),
+            revocations_path=workspace / Path(_text(inputs["revocations_path"], "verification_inputs.revocations_path", limit=512)) if inputs["revocations_path"] is not None else None,
+        )
+    except EnterpriseEnforcementError:
+        raise
+    for field in ("workload_identity_sha256", "policy_sha256", "semantic_authority_status", "revocation_status"):
+        if value.get(field) != reauthorized.get(field):
+            raise EnterpriseEnforcementError("E_DECISION_REAUTHORIZATION_MISMATCH", f"{field} no longer matches the signed input reauthorization")
     return {"decision": value, "decision_sha256": supplied, "path": candidate.relative_to(workspace).as_posix()}
 
 

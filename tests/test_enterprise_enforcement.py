@@ -13,6 +13,7 @@ from factoryline.enterprise_enforcement import (
     canonical_json,
     enterprise_enforcement_projection,
     record_enterprise_decision,
+    verify_enterprise_decision,
     sign_enforcement_policy,
     sign_workload_identity,
     sign_workload_revocations,
@@ -120,6 +121,21 @@ def test_workload_revocation_and_decision_replay_fail_closed(tmp_path: Path) -> 
     sign_workload_revocations([{"tenant_id": "tenant-a", "workload_id": "proof-runner", "subject": "repo:example/app", "revoked_at": (_now() - timedelta(minutes=1)).isoformat().replace("+00:00", "Z"), "reason": "compromised"}], private_key_path=Path(keys["private_key"]), keyid=keys["keyid"], identity=keys["identity"], issuer=keys["issuer"], out=revocations)
     with pytest.raises(EnterpriseEnforcementError, match="E_WORKLOAD_REVOKED"):
         authorize_enterprise_action(tmp_path, request, workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]), revocations_path=revocations)
+
+
+def test_decision_reauthorizes_signed_inputs_after_a_recomputed_local_hash(tmp_path: Path) -> None:
+    keys, identity, policy, request = _materials(tmp_path)
+    request["semantic_authority"] = _semantic_binding(tmp_path)
+    recorded = record_enterprise_decision(tmp_path, request, Path(".factory/enterprise-enforcement/decisions/reauthorize.json"), workload_identity_path=identity, policy_path=policy, trust_root_path=Path(keys["trust_root"]))
+    source = tmp_path / recorded["path"]
+    forged = json.loads(source.read_text(encoding="utf-8"))
+    forged["request"]["action_class"] = "deploy"
+    unsigned = {key: value for key, value in forged.items() if key != "decision_sha256"}
+    forged["decision_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+    source.write_text(json.dumps(forged), encoding="utf-8")
+
+    with pytest.raises(EnterpriseEnforcementError, match="E_ACTION_UNGRANTED"):
+        verify_enterprise_decision(tmp_path, source)
 
 
 def test_enterprise_cli_seals_and_records_reference_decision(tmp_path: Path, capsys) -> None:
