@@ -12,6 +12,7 @@ from factoryline.appforge_submission_assurance import verify_submission_assuranc
 from factoryline.appforge_quality_audit import CONDITIONAL_CHECKS, DESIGN_CHECKS, STACK_CHECKS, verify_quality_audit
 from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
 from factoryline.saas_proof import verify_saas_proof
+from factoryline.saas_proof import _sha as _receipt_sha
 
 
 CANDIDATE = {"bundle_identifier": "com.example.assured", "version": "2.0.0", "build_number": "200", "source_commit": "b" * 40}
@@ -87,7 +88,8 @@ def _oracle_authority(tmp_path: Path) -> Path:
     policy.parent.mkdir(parents=True, exist_ok=True)
     policy.write_text("Trusted policy snapshot.", encoding="utf-8")
     handoff = capture_intent_handoff(tmp_path, intent, AGENT, "appforge-assurance", Path(".factory/oracles/handoffs/appforge-assurance.json"))
-    rule = lambda identifier, statement, **extra: {"id": identifier, "statement": statement, "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True, **extra}
+    def rule(identifier, statement, **extra):
+        return {"id": identifier, "statement": statement, "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True, **extra}
     contract = _write(tmp_path / "oracle-contract-input.json", {"schema": "factory.oracle-contract-input.v1", "id": "appforge-assurance", "version": 1, "approved_by": "Release Owner", "approval_rationale": "The owner reviewed policy, intent, and the submission candidate.", "scope_paths": ["."], "handoff": handoff["path"], "sources": [{"id": "apple-policy", "origin": "trusted_source", "path": "sources/apple-policy.md"}], "requirements": [rule("restore", "Restore works for an eligible user.")], "forbidden_behaviors": [rule("double-charge", "Restore does not create another charge.")], "gates": [rule("accessibility", "Accessibility review is complete.", comparison="present", value=True)], "exceptions": [{"id": "offline", "statement": "Offline recovery needs future review.", "origin": "human_confirmed", "effect": "advisory", "source_id": "original-intent", "critical": False}], "negative_cases": [rule("expired", "Expired access cannot restore.")], "invariants": [rule("candidate", "Evidence stays candidate-bound.")], "tests": [rule("restore-test", "Restore test fails if expired access is accepted.", path="tests/test_restore.py")]})
     sealed = seal_oracle_contract(tmp_path, contract, Path(".factory/oracles/contracts/appforge-assurance.json"))
     return _write(tmp_path / "oracle-authority.json", {"schema": "factory.appforge.oracle-authority.v1", "contract_path": sealed["path"], "candidate": CANDIDATE, "policy_sources": [{"source_id": "apple-policy"}], "human_reviewer": "Release Owner"})
@@ -121,10 +123,11 @@ def test_submission_dossier_only_emits_markdown_and_pdf_after_all_build_bound_ga
 
 def test_submission_dossier_blocks_candidate_mismatch_without_emitting_final_reports(tmp_path: Path) -> None:
     saas = _saas(tmp_path)
-    value = json.loads(saas.read_text(encoding="utf-8")); value["release_candidate"]["build_number"] = "wrong"; saas.write_text(json.dumps(value), encoding="utf-8")
+    value = json.loads(saas.read_text(encoding="utf-8")); value["release_candidate"]["build_number"] = "wrong"; value["receipt_sha256"] = _receipt_sha({key: item for key, item in value.items() if key != "receipt_sha256"}); saas.write_text(json.dumps(value), encoding="utf-8")
     receipt = verify_submission_assurance(tmp_path, _assurance_contract(tmp_path), _app_review(tmp_path), _media(tmp_path), saas, _quality(tmp_path), Path(".factory/appforge/submission-assurance.json"), Path(".factory/appforge/reports"))
     assert receipt["marker"] == "APPFORGE_SUBMISSION_DOSSIER_BLOCKED"
     assert receipt["ok"] is False
+    assert any(item["code"] == "APPFORGE_ASSURANCE_CANDIDATE_MISMATCH" for item in receipt["findings"])
     assert not (tmp_path / ".factory/appforge/reports").exists()
 
 
@@ -155,6 +158,9 @@ def test_submission_dossier_binds_each_audit_digest_to_its_referenced_receipt(tm
         evidence = json.loads((tmp_path / item["receipt_path"]).read_text(encoding="utf-8"))
         assert evidence["receipt_sha256"] == item["receipt_sha256"]
     oracle = receipt["oracle_authority"]
+    oracle_audit = next(item for item in receipt["audit"] if item["name"] == "Oracle authority")
+    assert oracle_audit["receipt_path"] == oracle["path"]
+    assert oracle_audit["receipt_sha256"] == oracle["receipt_sha256"]
     assert oracle["path"] != oracle["source_path"]
     assert oracle["source_sha256"] == hashlib.sha256((tmp_path / oracle["source_path"]).read_bytes()).hexdigest()
 

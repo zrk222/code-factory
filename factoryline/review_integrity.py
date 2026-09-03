@@ -32,11 +32,11 @@ def _instant(value: object) -> datetime | None:
   return None
  try:
   parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
- except ValueError:
+  if parsed.tzinfo is None:
+   return None
+  return parsed.astimezone(timezone.utc)
+ except (ValueError, OverflowError):
   return None
- if parsed.tzinfo is None:
-  return None
- return parsed.astimezone(timezone.utc)
 
 def verify_intent_diff(root:Path,contract_path:Path,diff_path:Path,out:Path)->dict[str,Any]:
  """Fail closed when a declared change exceeds approved intent or forbidden behavior."""
@@ -61,8 +61,11 @@ def verify_receipt_freshness(root:Path,manifest_path:Path,out:Path)->dict[str,An
   seen.add(r["id"])
   if r["commit"]!=m["current_commit"]:find.append("E_RECEIPT_STALE_COMMIT:"+str(r["id"]))
   if r["environment_sha256"]!=m["environment_sha256"]:find.append("E_RECEIPT_ENVIRONMENT_DRIFT:"+str(r["id"]))
-  expires_at, now = _instant(r["expires_at"]), _instant(m["now"])
-  if not isinstance(r["nonce"],str) or not r["nonce"] or expires_at is None or now is None or expires_at<=now:find.append("E_RECEIPT_EXPIRED:"+str(r["id"]))
+  expires_at, manifest_now = _instant(r["expires_at"]), _instant(m["now"])
+  current_now = datetime.now(timezone.utc)
+  reference_now = max(current_now, manifest_now) if manifest_now is not None else current_now
+  if not isinstance(r["nonce"], str) or not r["nonce"] or expires_at is None or manifest_now is None or expires_at <= reference_now:
+   find.append("E_RECEIPT_EXPIRED:" + str(r["id"]))
  core=_base("freshness",not find,find,{"manifest":mp.relative_to(root).as_posix()});core.update({"action_summary":"Reject stale, replayed, expired, or environment-mismatched release-critical receipts.","receipt_count":len(m["receipts"]),"repair_plan":["Re-run the exact gate for the current commit and environment with a new expiry and nonce." for _ in find]});return _write(root,out,core)
 
 def verify_policy_pack(root:Path,pack_path:Path,out:Path)->dict[str,Any]:

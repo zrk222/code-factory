@@ -17,3 +17,9 @@ def test_receipt_freshness_compares_timezone_aware_instants_and_rejects_ambiguou
     assert verify_receipt_freshness(tmp_path,offset,Path('.factory/offset.json'))['ok'] is False
     ambiguous=w(tmp_path/'ambiguous.json',{"schema":"factory.receipt-freshness-manifest.v1","current_commit":"c","environment_sha256":"e","now":"2026-09-03T12:00:00Z","receipts":[{"id":"ambiguous","commit":"c","environment_sha256":"e","expires_at":"2027","nonce":"n"}]})
     assert verify_receipt_freshness(tmp_path,ambiguous,Path('.factory/ambiguous.json'))['ok'] is False
+
+def test_receipt_freshness_does_not_trust_a_caller_supplied_old_clock(tmp_path: Path):
+    stale=w(tmp_path/'stale-clock.json',{"schema":"factory.receipt-freshness-manifest.v1","current_commit":"c","environment_sha256":"e","now":"2000-01-01T00:00:00Z","receipts":[{"id":"stale","commit":"c","environment_sha256":"e","expires_at":"2001-01-01T00:00:00Z","nonce":"n"}]})
+    receipt = verify_receipt_freshness(tmp_path, stale, Path('.factory/stale-clock.json'))
+    assert receipt['ok'] is False
+    assert 'E_RECEIPT_EXPIRED:stale' in receipt['findings']
