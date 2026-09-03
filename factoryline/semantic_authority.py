@@ -286,6 +286,17 @@ def verify_semantic_handoff(root: Path, path: Path) -> dict[str, Any]:
         return {"ok": False, "code": "E_SEMANTIC_AUTHORIZATION"}
 
 
+def _blocking_unknowns(handoff: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return explicitly blocking unknowns from a verified sealed handoff."""
+    epistemic = handoff.get("epistemic")
+    if not isinstance(epistemic, dict):
+        return []
+    unknowns = epistemic.get("unknown")
+    if not isinstance(unknowns, list):
+        return []
+    return [item for item in unknowns if isinstance(item, dict) and item.get("blocking") is True]
+
+
 def seal_authority_lease(root: Path, input_path: Path, out: Path) -> dict[str, Any]:
     """Seal a short-lived, least-privilege lease derived from one handoff."""
     workspace = Path(root).resolve()
@@ -297,8 +308,7 @@ def seal_authority_lease(root: Path, input_path: Path, out: Path) -> dict[str, A
     if not verified.get("ok"):
         raise SemanticAuthorityError("E_SEMANTIC_AUTHORIZATION", "the semantic handoff is not current and hash-valid")
     handoff = verified["handoff"]
-    blocking_unknowns = [item for item in handoff.get("epistemic", {}).get("unknown", []) if isinstance(item, dict) and item.get("blocking") is True]
-    if blocking_unknowns:
+    if _blocking_unknowns(handoff):
         raise SemanticAuthorityError("E_SEMANTIC_AUTHORIZATION", "a blocking epistemic unknown must be resolved in a newly sealed handoff before a lease can be issued")
     delegatee = normalize_agent_identity(value.get("delegatee"), "delegatee")
     if not _identity_matches(delegatee, handoff.get("receiver")):
@@ -332,6 +342,8 @@ def verify_authority_lease(root: Path, path: Path) -> dict[str, Any]:
             return {"ok": False, "code": "SEMANTIC_LEASE_HASH_INVALID"}
         handoff_result = verify_semantic_handoff(workspace, Path(str(lease.get("handoff", {}).get("path", ""))))
         if not handoff_result.get("ok") or handoff_result["handoff"].get("handoff_sha256") != lease.get("handoff", {}).get("handoff_sha256"):
+            return {"ok": False, "code": "E_SEMANTIC_AUTHORIZATION"}
+        if _blocking_unknowns(handoff_result["handoff"]):
             return {"ok": False, "code": "E_SEMANTIC_AUTHORIZATION"}
         if _parse_time(lease.get("expires_at"), "expires_at") <= _now():
             return {"ok": False, "code": "SEMANTIC_LEASE_EXPIRED"}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import hashlib
 import json
 from pathlib import Path
 
@@ -74,6 +75,11 @@ def _request(**overrides: object) -> dict[str, object]:
     return request
 
 
+def _recompute_digest(value: dict[str, object], field: str) -> None:
+    unsigned = {key: item for key, item in value.items() if key != field}
+    value[field] = hashlib.sha256(json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def test_handoff_and_lease_only_admit_exact_bound_context_scope_and_actor(tmp_path: Path) -> None:
     handoff = _handoff(tmp_path, _contract(tmp_path))
     lease = _lease(tmp_path, handoff)
@@ -109,6 +115,23 @@ def test_blocking_unknown_prevents_lease_or_action_until_a_new_handoff_is_sealed
         _lease(tmp_path, handoff)
     assert rejected.value.code == "E_SEMANTIC_AUTHORIZATION"
     assert not (tmp_path / ".factory/semantic-authority/leases/restore.json").exists()
+
+
+def test_existing_hash_valid_lease_fails_closed_when_its_handoff_contains_a_blocking_unknown(tmp_path: Path) -> None:
+    handoff = _handoff(tmp_path, _contract(tmp_path))
+    lease = _lease(tmp_path, handoff)
+    handoff_value = json.loads(handoff.read_text(encoding="utf-8"))
+    handoff_value["epistemic"]["unknown"][0]["blocking"] = True
+    _recompute_digest(handoff_value, "handoff_sha256")
+    handoff.write_text(json.dumps(handoff_value), encoding="utf-8")
+    lease_value = json.loads(lease.read_text(encoding="utf-8"))
+    lease_value["handoff"]["handoff_sha256"] = handoff_value["handoff_sha256"]
+    _recompute_digest(lease_value, "lease_sha256")
+    lease.write_text(json.dumps(lease_value), encoding="utf-8")
+
+    checked = verify_authority_lease(tmp_path, lease)
+    assert checked == {"ok": False, "code": "E_SEMANTIC_AUTHORIZATION"}
+    assert authorize_semantic_action(tmp_path, lease, _request())["reason"] == "E_SEMANTIC_AUTHORIZATION"
 
 
 def test_recorded_action_is_immutable_and_replay_is_blocked(tmp_path: Path) -> None:
