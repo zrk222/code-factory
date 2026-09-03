@@ -56,7 +56,7 @@ def _semantic_binding(root: Path) -> dict:
     semantic_input = _write(root / "semantic-input.json", {
         "schema": "factory.semantic-handoff-input.v1", "id": "enterprise-proof", "oracle_contract": contract.relative_to(root).as_posix(), "sender": planner, "receiver": AGENT,
         "performative": "REQUEST", "goal": "Test the restore safety contract.", "context_urn": "urn:factory:enterprise-restore:v1", "context_source_id": "original-intent", "scope_paths": ["tests"], "allowed_actions": ["test"], "sensitivities": [],
-        "epistemic": {"known": [{"id": "intent", "statement": "The sealed intent forbids a second purchase.", "source_id": "original-intent"}], "unknown": [{"id": "provider", "statement": "Live provider state is unavailable.", "impact": "Do not claim production behavior.", "blocking": True}], "uncertain": [{"id": "parity", "statement": "Sandbox parity is uncertain.", "impact": "Runtime evidence remains required."}], "capability_limits": ["No provider or release access."]},
+        "epistemic": {"known": [{"id": "intent", "statement": "The sealed intent forbids a second purchase.", "source_id": "original-intent"}], "unknown": [{"id": "provider", "statement": "Live provider state is unavailable.", "impact": "Do not claim production behavior.", "blocking": False}], "uncertain": [{"id": "parity", "statement": "Sandbox parity is uncertain.", "impact": "Runtime evidence remains required."}], "capability_limits": ["No provider or release access."]},
     })
     semantic = root / seal_semantic_handoff(root, semantic_input, Path(".factory/semantic-authority/handoffs/enterprise.json"))["path"]
     lease_input = _write(root / "lease-input.json", {
