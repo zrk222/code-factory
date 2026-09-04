@@ -4,11 +4,12 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import tempfile
 import time
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
-from .e2e_proof import run_supervised_command
+from .runtime_audit_process import run_bounded_command
 
 SCHEMA = "factory.capability-evidence-manifest.v1"
 MATURITY = frozenset({"locally_verified_core", "controlled_pilot", "reference_pilot", "candidate_bound_preflight"})
@@ -79,8 +80,16 @@ def _claim(workspace: Path, item: object, index: int, seen: set[str]) -> dict[st
 
 def _execute(workspace: Path, claim: dict[str, Any]) -> dict[str, Any]:
     started = time.monotonic()
-    observed = run_supervised_command(claim["_argv"], cwd=workspace, timeout_seconds=claim["_timeout"])
-    return {"id": claim["id"], "passed": observed["exit_code"] == 0, "returncode": observed["exit_code"], "duration_ms": round((time.monotonic() - started) * 1000), **observed}
+    with tempfile.TemporaryDirectory(prefix="factory-capability-") as scratch:
+        observed = run_bounded_command(claim["_argv"], workspace, claim["_timeout"], Path(scratch))
+    passed = (
+        observed["exit_code"] == 0
+        and observed["timed_out"] is False
+        and observed["launch_error"] is False
+        and observed["output_limit_exceeded"] is False
+        and observed["cleanup_confirmed"] is True
+    )
+    return {"id": claim["id"], "passed": passed, "returncode": observed["exit_code"], "duration_ms": round((time.monotonic() - started) * 1000), **observed}
 
 
 def _evidence_unchanged(workspace: Path, claim: dict[str, Any]) -> bool:

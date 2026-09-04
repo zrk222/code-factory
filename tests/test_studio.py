@@ -291,6 +291,8 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         assert response.getheader("Content-Length") == "0"
         assert response.read() == b""
 
+        connection.close()
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
         body = json.dumps({"action": "create", "target": "worker", "prompt": "Build a worker.", "name": "http-worker"})
         connection.request("POST", "/api/create", body=body, headers={"Content-Type": "application/json"})
         response = connection.getresponse()
@@ -305,7 +307,7 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         connection.request(
             "POST",
             "/api/create",
-            body=b"{}",
+            body=None,
             headers={"Content-Type": "application/json", "Content-Length": str(MAX_BODY_BYTES + 1), "X-Factory-Studio-Token": token},
         )
         assert connection.getresponse().status == 413

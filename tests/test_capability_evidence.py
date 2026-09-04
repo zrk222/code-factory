@@ -76,7 +76,7 @@ def test_whole_manifest_is_validated_before_any_command_runs(tmp_path: Path, mon
     invalid = dict(raw["capabilities"][0], id="later", tests=["missing.py"])
     raw["capabilities"].append(invalid)
     manifest.write_text(json.dumps(raw), encoding="utf-8")
-    monkeypatch.setattr("factoryline.capability_evidence.run_supervised_command", lambda *args, **kwargs: pytest.fail("command ran before validation completed"))
+    monkeypatch.setattr("factoryline.capability_evidence.run_bounded_command", lambda *args, **kwargs: pytest.fail("command ran before validation completed"))
     with pytest.raises(CapabilityEvidenceError) as caught:
         audit_capability_evidence(tmp_path, Path("claims.json"), execute=True)
     assert caught.value.code == "E_CAPABILITY_EVIDENCE_MISSING"
@@ -94,3 +94,29 @@ def test_repository_manifest_binds_all_public_maturity_classes():
     root = Path(__file__).parents[1]
     result = audit_capability_evidence(root, Path("evidence/capability-evidence.json"))
     assert {item["maturity"] for item in result["claims"]} == {"locally_verified_core", "controlled_pilot", "reference_pilot", "candidate_bound_preflight"}
+
+
+def test_oversized_verifier_output_is_bounded_and_blocks(tmp_path: Path):
+    _manifest(tmp_path, "print('x' * 9000000)\nassert False\n")
+    result = audit_capability_evidence(tmp_path, Path("claims.json"), execute=True)
+    execution = result["executions"][0]
+    assert result["marker"] == "CAPABILITY_EVIDENCE_BLOCKED"
+    assert execution["output_limit_exceeded"] is True
+    assert execution["stdout_bytes"] > 8 * 1024 * 1024
+    assert "x" * 100 not in json.dumps(execution)
+
+
+def test_timeout_kills_descendant_that_inherits_streams(tmp_path: Path):
+    manifest = _manifest(
+        tmp_path,
+        "import subprocess, sys, time\nsubprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\ntime.sleep(30)\n",
+    )
+    raw = json.loads(manifest.read_text(encoding="utf-8"))
+    raw["capabilities"][0]["verify"]["timeout_seconds"] = 1
+    manifest.write_text(json.dumps(raw), encoding="utf-8")
+    started = __import__("time").monotonic()
+    result = audit_capability_evidence(tmp_path, Path("claims.json"), execute=True)
+    execution = result["executions"][0]
+    assert execution["timed_out"] is True
+    assert execution["cleanup_confirmed"] is True
+    assert __import__("time").monotonic() - started < 10

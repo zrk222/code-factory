@@ -757,6 +757,15 @@ class _StudioHandler(BaseHTTPRequestHandler):
             self._error(404, "NOT_FOUND", "route not found")
             return
         if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
+            # Consume only a bounded, well-framed request body before closing.
+            # Otherwise Windows may reset a socket that still has unread data,
+            # hiding the deterministic 403 response from the client.
+            rejected_length = self._content_length()
+            if rejected_length is None:
+                self.close_connection = True
+                return
+            if 0 < rejected_length <= MAX_BODY_BYTES:
+                self.rfile.read(rejected_length)
             self.close_connection = True
             self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
             return

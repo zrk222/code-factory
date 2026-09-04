@@ -87,7 +87,7 @@ Do not interpret a passing existing test suite as a source audit of those engine
 - The original six-module Oracle QA now passes at grade **A**, composite 91.6, security 100 and maximum complexity 10. All six previously failing public coordinators meet the unchanged ceiling.
 - The focused Oracle/Metadata suite passes **40 tests**, including five altered-plan attacks, three malformed-result attacks, a fabricated-drift attack, explicit-empty input and post-read file growth.
 - Scoped Forge review passes grade **A**, composite 95.5; architecture review, adversarial review, stub rejection and runtime smoke all pass. SpecLine strict validation passes and all 8 requirement mutations are killed.
-- Final 0.46.2 release-gate regression after Oracle, Metadata, Studio HTTP framing, and review-thread hardening: `python -m pytest -q` — **1319 passed, 3 skipped**.
+- Final 0.46.2 release-gate regression after Oracle, Metadata, Studio HTTP framing, capability execution containment, and review-thread hardening: `python -m pytest -q` — **1321 passed, 3 skipped**.
 - Studio's exact HTTP regression and all 13 Studio tests pass. Its non-hollow smoke check rejects a stub. File-wide structural complexity remains recorded above for the next bounded slice.
 
 ## Operating procedure
