@@ -26,6 +26,8 @@ def evaluate_stateful(artifact: dict[str, Any], config: dict[str, Any], *, engin
         return lane_result("stateful_invariant", "INCOMPLETE", "STATEFUL_ACTION_MISSING", "Approved transitions were omitted.")
     if any(require_int(count, "action_count", minimum=0, maximum=200000) == 0 for count in counts.values()):
         return lane_result("stateful_invariant", "INCOMPLETE", "STATEFUL_ACTION_UNEXERCISED", "A required transition was never exercised.")
+    if sum(counts.values()) > examples * actions:
+        return lane_result("stateful_invariant", "INCOMPLETE", "STATEFUL_OBSERVATION_CONTRADICTION", "Action totals exceed the reported example and sequence bounds.", details={"observed_actions": sum(counts.values()), "maximum_actions": examples * actions})
     invariants = artifact["invariants"]
     if not isinstance(invariants, list) or not 1 <= len(invariants) <= 128:
         return lane_result("stateful_invariant", "INCOMPLETE", "STATEFUL_INVARIANTS_MISSING", "Approved workflow invariants were not all exercised.")
@@ -38,13 +40,18 @@ def evaluate_stateful(artifact: dict[str, Any], config: dict[str, Any], *, engin
         if item_id in observed:
             return lane_result("stateful_invariant", "INCOMPLETE", "STATEFUL_DUPLICATE_INVARIANT", "Duplicate invariant evidence is ambiguous.")
         violations = require_int(item["violations"], "invariant.violations", minimum=0, maximum=1_000_000)
-        if require_int(item["checks"], "invariant.checks", minimum=0, maximum=1000000) == 0:
+        checks = require_int(item["checks"], "invariant.checks", minimum=0, maximum=1000000)
+        if checks == 0:
             return lane_result("stateful_invariant", "INCOMPLETE", "STATEFUL_INVARIANT_UNEXERCISED", "An invariant was suppressed or never checked.")
+        if violations > checks:
+            return lane_result("stateful_invariant", "INCOMPLETE", "STATEFUL_OBSERVATION_CONTRADICTION", "Invariant violations exceed recorded checks.", details={"invariant": item_id, "violations": violations, "checks": checks})
         trace = item["trace"]
         if not isinstance(trace, list) or len(trace) > 200 or not all(isinstance(step, str) and step for step in trace):
             return lane_result("stateful_invariant", "INCOMPLETE", "STATEFUL_TRACE_INVALID", "A counterexample trace is not reproducible.")
         if violations and not trace:
             return lane_result("stateful_invariant", "INCOMPLETE", "STATEFUL_TRACE_INVALID", "A failing invariant requires a replay trace.")
+        if len(trace) > actions:
+            return lane_result("stateful_invariant", "INCOMPLETE", "STATEFUL_OBSERVATION_CONTRADICTION", "Replay trace exceeds the reported maximum sequence length.", details={"invariant": item_id, "trace_actions": len(trace), "max_actions": actions})
         for step in trace:
             require_str(step, "trace.step")
         observed[item_id] = {"violations": violations, "trace": trace}

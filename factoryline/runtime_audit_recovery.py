@@ -30,6 +30,8 @@ def evaluate_recovery(artifact: dict[str, Any], config: dict[str, Any], *, engin
     operation_ids: set[str] = set()
     if require_int(artifact["max_concurrency"], "max_concurrency", minimum=1, maximum=64) < config["min_concurrency"] or artifact["fault_observed"] is not True:
         return lane_result("failure_recovery", "INCOMPLETE", "RECOVERY_FAULT_NOT_EXERCISED", "Fault impact and simultaneous work were not observed.")
+    if artifact["max_concurrency"] > len(operations):
+        return lane_result("failure_recovery", "INCOMPLETE", "RECOVERY_OBSERVATION_CONTRADICTION", "Claimed concurrency exceeds recorded operations.", details={"max_concurrency": artifact["max_concurrency"], "observed_operations": len(operations)})
     for operation in operations:
         if not isinstance(operation, dict):
             return lane_result("failure_recovery", "INCOMPLETE", "RECOVERY_OPERATION_INVALID", "An operation record is malformed.")
