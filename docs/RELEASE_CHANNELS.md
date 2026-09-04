@@ -1,6 +1,6 @@
 # Release Channels
 
-Code Factory core v0.46.2, FactoryLine for VS Code v0.9.3, and FactoryLine for
+Code Factory core v0.46.2, FactoryLine for VS Code v0.9.4, and FactoryLine for
 JetBrains v0.9.2 publish from one
 verified source state through channel-specific adapters. A successful GitHub
 release is not evidence that every moderated listing has accepted the artifact.
@@ -12,7 +12,7 @@ release is not evidence that every moderated listing has accepted the artifact.
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code / Open VSX | `factoryline-vscode-0.9.3.vsix` | GitHub release bundle; protected publisher workflows publish the immutable, verified VSIX when their scoped credentials are configured | Installable VSIX and public marketplace version |
+| VS Code / Open VSX | `factoryline-vscode-0.9.4.vsix` | GitHub release bundle; protected publisher workflows publish the immutable, verified VSIX when their scoped credentials are configured | Installable VSIX and public marketplace version |
 | JetBrains | `factoryline-intellij-0.9.2.zip` | Submit only after the live Marketplace binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
