@@ -355,6 +355,29 @@ def seal_oracle_contract(root: Path, input_path: Path, out: Path) -> dict[str, A
     return {**sealed, "path": path.relative_to(workspace).as_posix()}
 
 
+def _validate_contract_rules(root: Path, contract: dict[str, Any]) -> None:
+    """Reapply constructor rule constraints before trusting a local hash seal."""
+    raw_sources = contract.get("sources")
+    if not isinstance(raw_sources, list) or not raw_sources:
+        raise OracleFirewallError("ORACLE_SOURCE_INVALID", "sources are required")
+    sources = {}
+    for index, source in enumerate(raw_sources):
+        binding = _source_binding(root, source, index=index)
+        if binding["id"] in sources:
+            raise OracleFirewallError("ORACLE_SOURCE_INVALID", "duplicate source identifier")
+        sources[binding["id"]] = binding
+    original = sources.get("original-intent")
+    if not original or original["path"] != contract.get("handoff", {}).get("path"):
+        raise OracleFirewallError("ORACLE_SOURCE_INVALID", "original intent source must bind the handoff")
+    rules = contract.get("rules")
+    if not isinstance(rules, dict) or set(rules) != set(RULE_GROUPS):
+        raise OracleFirewallError("ORACLE_RULE_INVALID", "all rule groups required")
+    for group in RULE_GROUPS:
+        validated = _rules(rules[group], group, sources)
+        if group != "exceptions" and not any(item["effect"] != "advisory" for item in validated):
+            raise OracleFirewallError("ORACLE_AUTHORITY_REQUIRED", "authoritative rule required")
+
+
 def _verify_sources(root: Path, contract: dict[str, Any]) -> list[dict[str, str]]:
     stale: list[dict[str, str]] = []
     source_list = contract.get("sources")
@@ -390,6 +413,7 @@ def verify_oracle_contract(root: Path, contract_path: Path) -> dict[str, Any]:
         stale = _verify_sources(workspace, contract)
         if stale:
             return {"ok": False, "marker": "ORACLE_CONTRACT_SOURCE_STALE", "reason": "bound_source_changed", "stale_sources": stale, "contract": contract, "path": source.relative_to(workspace).as_posix(), "authority": dict(AUTHORITY)}
+        _validate_contract_rules(workspace, contract)
         return {"ok": True, "marker": "ORACLE_CONTRACT_VALID", "contract": contract, "path": source.relative_to(workspace).as_posix(), "authority": dict(AUTHORITY)}
     except OracleFirewallError as exc:
         return {"ok": False, "marker": "ORACLE_CONTRACT_INVALID", "reason": exc.code, "authority": dict(AUTHORITY)}

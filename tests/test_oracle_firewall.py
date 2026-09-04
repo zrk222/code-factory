@@ -25,6 +25,22 @@ from factoryline.oracle_firewall import (
 AGENT = {"schema": "factory.agent-identity.v1", "subject": "worker-alpha", "provider": "local", "model": "model-a"}
 
 
+@pytest.mark.parametrize("mutation", ["gates", "provenance", "sources", "duplicate", "original", "groups"])
+def test_rehashed_contract_must_still_obey_constructor_rules(tmp_path, mutation):
+    from factoryline.oracle_firewall import _hash_receipt
+    path = _contract(tmp_path)
+    payload = json.loads(path.read_text())
+    if mutation == "gates": payload["rules"]["gates"] = []
+    elif mutation == "provenance": payload["rules"]["gates"][0]["origin"] = "agent_proposed"
+    elif mutation == "sources": payload["sources"] = []
+    elif mutation == "duplicate": payload["sources"].append(dict(payload["sources"][0]))
+    elif mutation == "original": payload["sources"][0]["id"] = "replacement"
+    else: payload["rules"].pop("tests")
+    payload.pop("contract_sha256")
+    _write(path, _hash_receipt(payload, "contract_sha256"))
+    assert verify_oracle_contract(tmp_path, path)["ok"] is False
+
+
 def _write(path: Path, value: object) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2), encoding="utf-8")

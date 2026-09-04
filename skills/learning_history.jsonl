@@ -9,3 +9,5 @@
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-08-21T11:12:02.529090+00:00"}
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-08-25T06:15:45.558335+00:00"}
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-08-29T17:02:01.646497+00:00"}
+{"code": "QA_COMPLEXITY", "event": "promote", "from_count": 3, "rule": "QA_COMPLEXITY factoryline/appforge_oracle.py:verify_appforge_oracle_authority complexity 13 > 10; policy=hard", "ts": "2026-09-04T02:53:26.586685+00:00"}
+{"code": "QA_COMPLEXITY", "event": "probation", "reason": "never fired since promotion", "ts": "2026-09-04T02:53:26.596112+00:00"}

@@ -35,8 +35,17 @@
       "times_enforced": 1,
       "prevented_recurrence": 1,
       "status": "active"
+    },
+    "QA_COMPLEXITY": {
+      "code": "QA_COMPLEXITY",
+      "rule": "QA_COMPLEXITY factoryline/appforge_oracle.py:verify_appforge_oracle_authority complexity 13 > 10; policy=hard",
+      "promoted_from_count": 3,
+      "promoted_at": "2026-09-04T02:53:26.586685+00:00",
+      "times_enforced": 0,
+      "prevented_recurrence": 0,
+      "status": "probation"
     }
   },
-  "version": 109,
-  "updated": "2026-09-03T17:30:38.774604+00:00"
+  "version": 112,
+  "updated": "2026-09-04T02:53:26.596112+00:00"
 }

@@ -599,3 +599,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-04 02:41] GATE plan module-audit-readiness approver=agent_prepared_for_user_review tasks=2 sha=102f4550d5c544ba
 - [2026-09-04 02:42] GATE spec module-audit-readiness approver=agent_prepared_for_user_review strict=True sha=4a889499647cf075
 - [2026-09-04 02:44] GATE plan module-audit-readiness approver=agent_prepared_for_user_review tasks=2 sha=4a889499647cf075
+- [2026-09-04 02:46] GATE spec oracle-audit-parity approver=agent_prepared_for_user_review strict=True sha=bfa197f8d60dff67
+- [2026-09-04 02:46] GATE plan oracle-audit-parity approver=agent_prepared_for_user_review tasks=1 sha=bfa197f8d60dff67
+- [2026-09-04 02:52] GATE spec oracle-audit-parity approver=agent_prepared_for_user_review strict=True sha=a2996f81f32e136e
+- [2026-09-04 02:52] GATE plan oracle-audit-parity approver=agent_prepared_for_user_review tasks=2 sha=a2996f81f32e136e

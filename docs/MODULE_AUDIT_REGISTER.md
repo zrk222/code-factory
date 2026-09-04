@@ -17,12 +17,27 @@ Scope of this pass: six runtime evaluators, their shared receipt projection, and
 | Proof reuse | Current file hash and proof key path; malformed row handling | Full hostile filesystem/race audit remains pending |
 | Assembly | Initial process runner, attribution and meter parsing inspected | Output buffering and process-tree lifecycle need a dedicated bounded-runner review |
 | Oracle | Contract/source verification and weakening comparison inspected | Complete constructor/verifier parity and all rule-edge cases remain pending |
+| Oracle rule verification follow-up | Reuses constructor rule validation; rejects missing groups, advisory-only required groups, empty/duplicate sources and missing original-intent binding | Local hashes are not independent signatures; scope, exception and challenge paths still need further adversarial review |
+| AppForge capture reconciliation | Reconstructs integrity receipt from current original candidate and contract before accepting capture mappings | Checks file identity, not pixels, native execution, authenticity of declared approval or store approval |
+| Enterprise Receipt v2 | Inspected DSSE payload-type/digest/signature/identity checks and policy/revocation consumption | Revocations are optional and timestamp-relative; not proof of current hosted authorization, tenant isolation or freshness |
 
 ## Repaired findings
 
 - Runtime status accepted a self-hashed empty or contradictory green receipt. It now requires six distinct lane kinds and IDs, valid states, matching decision and no release authority. Nine adversarial variants reject.
 - Proof-reuse verification crashed on a non-object input/output row. It now returns invalid evidence. Ten malformed input/output variants reject.
 - Earlier committed passes fixed ambiguous execution joins and contradictory stateful/recovery counters; this pass retains their regression tests.
+- Oracle verification previously accepted rehashed structural changes the constructor rejected. Six new negative cases cover removed gates, unauthorized rule provenance, empty/duplicate sources, missing original-intent binding and a missing rule group.
+- AppForge capture reconciliation previously trusted a READY marker and self-hash without reconstructing requirements. Four new negative cases reject removed/duplicate requirements and changed/missing original contracts. A positive 13-file mapping remains accepted; its synthetic bytes intentionally prove only file reconciliation, not image quality.
+
+## Open findings: release clearance withheld
+
+- **Assembly resource/lifecycle risk:** `_run_cli` buffers stdout/stderr without a size bound, and final `communicate()` calls after kill have no timeout. Descendant processes holding pipes require a process-tree termination regression test. Do not treat the existing 300-second timeout as a proven hard bound.
+- **Stale architecture contract:** `specs/oracle-firewall-v1.ssat.yaml` fails native adoption/review. Reported mismatches include optional output arguments, `appforge_oracle` signature drift, an absent declared MCP `handle_request`, undeclared module dependencies, and an unresolved bounded Graph Ops invariant scope. These require a reviewed contract/source reconciliation, not automatic acceptance of whichever implementation exists.
+- **Complexity gate:** Forge review reports grade C and maximum complexity 47 against the hard limit 10 across the Oracle contract's six-module scope. No limit was raised and no release gate was bypassed.
+- **Spec drift tooling:** full-file SpecLine audit reports 25/48 passing units against the narrow new spec. Findings include existing values and numeric fragments in `utf-8` and `ipad_13`; this result needs precise scope/tool interpretation, not an invented claim of new behavioral drift or blanket suppression.
+- **Windows test instability:** the initial full run ended with WinError 10053 in the Studio HTTP authorization test (1273 passed, 3 skipped, 1 failed). That exact test passed in isolation. A successful rerun does not establish the original failure's root cause.
+
+The repair plan remains the ordered sequence below. This audit has not established exhaustive module coverage or absence of defects. No publication or production authorization follows from it.
 
 ## Unverified modules and next sequence
 
@@ -40,7 +55,15 @@ Do not interpret a passing existing test suite as a source audit of those engine
 
 Governance: human_controlled. For each next module: inspect constructors and consumers, reproduce a gap, seal the requirement, add negative and boundary tests, repair, verify, and commit. Do not publish, change credentials or run external engines merely to complete this register.
 
-## Verification for this pass
+## Verification for the follow-up
+
+- Final source: `python -m pytest -q` — **1279 passed, 3 skipped**, 182.53 seconds.
+- `python -m pytest -q tests/test_oracle_firewall.py tests/test_appforge_submission_integrity.py` — **26 passed**.
+- `specline strict oracle-audit-parity` — passed; `specline verify-validators oracle-audit-parity` — **3 requirement mutants killed**. Spec hash `a2996f81f32e136e`.
+- Full-file drift and original Oracle SSAT/QA checks **failed**, as detailed above. No code/release gate was declared passed on their behalf. The first direct Forge review also encountered an invalid state transition; the subsequent explicit orchestration sequence surfaced the recorded contract/QA failures.
+- `git diff --check` — passed. No deployment, native device test, external engine audit or marketplace submission performed.
+
+## Earlier verification
 
 - Full suite started with receipt hardening: 1258 passed, 3 skipped.
 - After the proof-row fix, focused proof-reuse, receipt and runtime-surface suite: 30 passed.
