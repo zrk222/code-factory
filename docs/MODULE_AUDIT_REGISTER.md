@@ -32,8 +32,8 @@ Scope of this pass: six runtime evaluators, their shared receipt projection, and
 ## Open findings: release clearance withheld
 
 - **Assembly resource/lifecycle remediation:** `_run_cli` now delegates to `assembly_process.run_cli`, limiting retained stdout and stderr to 4 MiB each, using a 300-second execution deadline and finite OS cleanup/reader waits. Overflow, cancellation, timeout, read failure and unconfirmed cleanup cannot pass. Windows inherited-pipe behavior has a regression test. Termination remains best effort: this is not a sandbox, and malicious escaped descendants are not proven absent.
-- **Stale architecture contract:** `specs/oracle-firewall-v1.ssat.yaml` fails native adoption/review. Reported mismatches include optional output arguments, `appforge_oracle` signature drift, an absent declared MCP `handle_request`, undeclared module dependencies, and an unresolved bounded Graph Ops invariant scope. These require a reviewed contract/source reconciliation, not automatic acceptance of whichever implementation exists.
-- **Complexity gate:** Forge review reports grade C and maximum complexity 47 against the hard limit 10 across the Oracle contract's six-module scope. No limit was raised and no release gate was bypassed.
+- **Oracle architecture debt:** the signature, dependency and bounded Graph Ops findings in `specs/oracle-firewall-v1.ssat.yaml` are resolved. Its six-module QA remains grade C because `audit_metadata` and five Oracle Firewall functions exceed the unchanged hard complexity limit 10. These are separate remediation slices; no release gate was bypassed.
+- **Complexity gate:** the Graph Ops coordinator now passes at complexity 10, down from 47. The wider Oracle contract still fails at maximum complexity 19 in `audit_metadata`, with five Oracle Firewall functions at 12 through 18. No limit was raised.
 - **Spec drift tooling:** full-file SpecLine audit reports 25/48 passing units against the narrow new spec. Findings include existing values and numeric fragments in `utf-8` and `ipad_13`; this result needs precise scope/tool interpretation, not an invented claim of new behavioral drift or blanket suppression.
 - **Windows test instability:** the initial full run ended with WinError 10053 in the Studio HTTP authorization test (1273 passed, 3 skipped, 1 failed). That exact test passed in isolation. A successful rerun does not establish the original failure's root cause.
 
@@ -69,7 +69,16 @@ Do not interpret a passing existing test suite as a source audit of those engine
 - Targeted authority, submission-assurance and Graph Ops tests: 39 passed. New cases cover five non-object JSON values, two changed source paths and oversized input; the existing current-authority case still passes.
 - SpecLine strict and two requirement mutants passed, spec hash `7b0139efdf4cf85b`; full-file drift audit passed after documenting the unchanged pre-existing text bounds and JSON indentation in the repair specification.
 - Updated the original Oracle SSAT's positional signatures to match tested optional-output functions and the actual MCP `dispatch(request, root)` interface. Recorded existing local evidence-projection dependencies and the lazy license incident lookup. These edges confer no new execution authority; keyword-only arguments remain covered by behavioral tests.
-- Rechecking the original SSAT no longer reports signature/dependency mismatches. It still fails the bounded Graph Ops invariant scope, and wider QA still reports maximum complexity 47. No scope limit or complexity limit was raised to hide those failures.
+- Rechecking the original SSAT no longer reports signature/dependency mismatches or a Graph Ops bounded-scope failure. Wider QA still fails only on Metadata and Oracle Firewall complexity findings; no scope or complexity limit was raised to hide them.
+
+## Graph Ops bounded snapshot follow-up
+
+- `graph_ops_snapshot` was reduced from a 300-line, complexity-47 coordinator to 70 lines at the existing hard complexity limit 10. Collection, fact mapping and marker decisions now live in deterministic private helpers; the public signature and receipt schema are unchanged.
+- Focused regression: `python -m pytest -q tests/test_graph_ops.py` — **23 passed**. The Forge smoke manifest reruns this behavioral suite and is proven non-hollow by rejecting a stubbed implementation.
+- Full regression after the refactor: `python -m pytest -q` — **1300 passed, 3 skipped** in 208.71 seconds.
+- Scoped ForgeLine review: grade **A**, composite 100, coverage intent 1.0, security 100, and architecture gate passed. SpecLine strict validation passed and all 3 requirement mutations were killed.
+- The original six-module Oracle QA now recognizes `graph_ops_snapshot` as passing. It remains grade C only because of the separately recorded Metadata and Oracle Firewall complexity debt.
+- A full-file SpecLine drift scan remains unsuitable for this narrow refactor: it scans all 59 functions and reports pre-existing numeric and encoding literals outside the changed coordinator. That failure is retained as tooling/scope evidence, not suppressed or misreported as a passing gate.
 
 ## Operating procedure
 

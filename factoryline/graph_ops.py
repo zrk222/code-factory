@@ -2244,175 +2244,170 @@ def _append_admission_packets(state: dict[str, Any], root: Path) -> dict[str, in
     return facts
 
 
+def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
+    """Collect every bounded local projection without deciding presentation."""
+    from .jetbrains_handshake import jetbrains_handshake_projection
+    requirements, slices = _append_product_graphs(state, workspace)
+    _append_intake_confirmations(state, workspace)
+    values = {
+        "evidenced": _append_missions(state, workspace, requirements, slices),
+        "stale_proof_count": _append_proofs(state, workspace),
+        "gates": _append_plans(state, workspace),
+    }
+    _append_traces(state, workspace)
+    values.update({
+        "verifier_sessions": _append_verifier_sessions(state, workspace),
+        "forensics": _append_graph_forensics(state, workspace),
+        "proofsearch": _append_proofsearch(state, workspace),
+        "frontier": _append_evidence_frontiers(state, workspace),
+        "reality": _append_reality_checks(state, workspace),
+        "authorizations": _append_graph_authorizations(state, workspace),
+        "assurance": _append_github_assurance_dossiers(state, workspace),
+        "continuity": _append_continuity(state, workspace),
+        "counterexamples": _append_counterexamples(state, workspace),
+    })
+    mission_control = mission_control_status(workspace)
+    shared = mission_control["evidence"]
+    values.update({
+        "mission_control": mission_control,
+        "oracle_firewall": _append_oracle_firewall(state, workspace, shared["oracle"]),
+        "proof_continuity": _append_proof_continuity(state, workspace),
+        "semantic_authority": _append_semantic_authority(state, workspace),
+        "enterprise_enforcement": _append_enterprise_enforcement(state, workspace),
+        "atomic_proof_adapter": _append_atomic_proof_adapter(state, workspace),
+        "agent_proof_bridge": _append_agent_proof_bridge(state, workspace),
+        "proof_worklogs": _append_proof_worklogs(state, workspace),
+        "operations_control": _append_operations_controls(state, workspace, shared["operations"]),
+        "lifecycle": _append_lifecycle_events(state, workspace, shared["lifecycle"]),
+        "repair_loops": _append_repair_loops(state, workspace, shared["repair_loops"]),
+        "deep_audit": _append_deep_audit(state, workspace, shared["deep_audit"]),
+        "guardrails": _append_guardrail_evaluations(state, workspace),
+        "resilience": _append_resilience_plans(state, workspace),
+        "proof_deltas": _append_proof_deltas(state, workspace),
+        "survival_cards": _append_survival_cards(state, workspace),
+        "agent_supervision": _append_agent_supervision(state, workspace),
+        "judgment": _append_judgment_capsules(state, workspace),
+        "external_evidence": _append_external_evidence(state, workspace),
+        "journey_proofs": _append_journey_proofs(state, workspace),
+        "intent_traces": _append_intent_traces(state, workspace),
+        "continuous_proof": continuous_proof_projection(workspace),
+        "proof_review": proof_review_projection(workspace),
+        "revenueforge": revenueforge_projection(workspace),
+        "appforge": appforge_design_projection(workspace),
+        "saas_proof": saas_proof_projection(workspace),
+        "jetbrains_handshake": jetbrains_handshake_projection(workspace),
+    })
+    return values
+
+
+def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list[dict[str, Any]]) -> None:
+    """Map projection counters to stable public fact names."""
+    semantic = p["semantic_authority"]
+    continuity = p["proof_continuity"]
+    enterprise = p["enterprise_enforcement"]
+    appforge = p["appforge"]
+    facts.update({
+        "journey_proof_count": p["journey_proofs"]["count"],
+        "journey_proof_admissible_count": p["journey_proofs"]["admissible_count"],
+        "journey_proof_invalid_count": p["journey_proofs"]["invalid_count"],
+        "semantic_handoff_count": semantic["handoff_count"],
+        "semantic_handoff_current_count": semantic["current_handoff_count"],
+        "semantic_authority_lease_count": semantic["lease_count"],
+        "semantic_authority_active_lease_count": semantic["active_lease_count"],
+        "semantic_authority_expired_lease_count": semantic["expired_lease_count"],
+        "semantic_authority_decision_count": semantic["decision_count"],
+        "semantic_authority_invalid_count": semantic["invalid_count"],
+        "semantic_known_count": semantic["known_count"],
+        "semantic_unknown_count": semantic["unknown_count"],
+        "semantic_uncertain_count": semantic["uncertain_count"],
+        "semantic_blocking_unknown_count": semantic["blocking_unknown_count"],
+        "proof_continuity_contract_count": continuity["contract_count"],
+        "proof_continuity_active_contract_count": continuity["active_contract_count"],
+        "proof_continuity_observation_count": continuity["observation_count"],
+        "proof_continuity_reopened_count": continuity["reopened_count"],
+        "proof_continuity_invalid_count": continuity["invalid_count"],
+        "enterprise_enforcement_decision_count": enterprise["decision_count"],
+        "enterprise_enforcement_admitted_count": enterprise["admitted_count"],
+        "enterprise_enforcement_invalid_count": enterprise["invalid_count"],
+        "enterprise_runner_packet_count": enterprise["runner_packet_count"],
+        "enterprise_runner_verified_count": enterprise["runner_verified_count"],
+        "enterprise_runner_fresh_count": enterprise["runner_fresh_count"],
+        "enterprise_runner_expired_count": enterprise["runner_expired_count"],
+        "enterprise_runner_invalid_count": enterprise["runner_invalid_count"],
+        "continuous_proof_count": p["continuous_proof"]["count"],
+        "continuous_proof_invalid_count": p["continuous_proof"]["invalid_count"],
+        "continuous_proof_latest_route": (p["continuous_proof"]["latest"] or {}).get("route"),
+        "proof_review_current_count": p["proof_review"]["current_count"],
+        "proof_review_stale_count": p["proof_review"]["stale_count"],
+        "proof_review_invalid_count": p["proof_review"]["invalid_count"],
+        "proof_review_next_route": (p["proof_review"]["next_item"] or {}).get("route"),
+        "revenueforge_current_count": p["revenueforge"]["current_count"],
+        "revenueforge_invalid_count": p["revenueforge"]["invalid_count"],
+        "saas_proof_current_count": p["saas_proof"]["current_count"],
+        "saas_proof_invalid_count": p["saas_proof"]["invalid_count"],
+        "jetbrains_handshake_state": p["jetbrains_handshake"]["state"],
+        "operations_control_receipt_count": p["operations_control"]["receipt_count"],
+        "operations_control_ready_count": p["operations_control"]["ready_count"],
+        "operations_control_blocked_count": p["operations_control"]["blocked_count"],
+        "operations_control_invalid_count": p["operations_control"]["invalid_count"],
+        "lifecycle_run_count": p["lifecycle"]["run_count"],
+        "lifecycle_review_required_count": p["lifecycle"]["review_required_count"],
+        "lifecycle_invalid_count": p["lifecycle"]["invalid_count"],
+        "repair_loop_receipt_count": p["repair_loops"]["receipt_count"],
+        "repair_loop_invalid_count": p["repair_loops"]["invalid_count"],
+        "mission_control_state": p["mission_control"]["state"],
+        "edge_count": len(edges),
+        "appforge_design_current_count": appforge["current_count"],
+        "appforge_design_invalid_count": appforge["invalid_count"],
+    })
+    for name in ("init", "quality_audit", "submission_assurance", "oracle_authority", "device_reality",
+                 "release_rehearsal", "native_surface", "surface_matrix", "storefront_story", "fastlane_capture",
+                 "submission_integrity", "mobile_evidence"):
+        facts[f"appforge_{name}_current_count"] = appforge[name]["current_count"]
+        facts[f"appforge_{name}_invalid_count"] = appforge[name]["invalid_count"]
+
+
+def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]:
+    """Apply optional projection markers as declarative read-only rules."""
+    appforge = p["appforge"]; semantic = p["semantic_authority"]; enterprise = p["enterprise_enforcement"]
+    rules = [
+        (p["journey_proofs"]["count"], ("JOURNEY_STATUS_READ_ONLY", "GRAPH_OPS_JOURNEY_PROOF_READ_ONLY")),
+        (any((p["continuous_proof"]["count"], p["continuous_proof"]["invalid_count"])), ("CONTINUOUS_PROOF_HISTORY_READ_ONLY", "GRAPH_OPS_CONTINUOUS_PROOF_READ_ONLY")),
+        (any((p["proof_review"]["current_count"], p["proof_review"]["stale_count"], p["proof_review"]["invalid_count"])), ("GRAPH_OPS_PROOF_REVIEW_READ_ONLY", "TEAM_PROOF_INBOX_READ_ONLY")),
+        (any((p["revenueforge"]["current_count"], p["revenueforge"]["invalid_count"])), ("GRAPH_OPS_REVENUEFORGE_READ_ONLY",)),
+        (any((p["proof_continuity"]["contract_count"], p["proof_continuity"]["observation_count"], p["proof_continuity"]["invalid_count"])), ("GRAPH_OPS_PROOF_CONTINUITY_READ_ONLY",)),
+        (any(appforge[name][key] for name in ("quality_audit", "submission_assurance", "oracle_authority", "device_reality", "release_rehearsal") for key in ("current_count", "invalid_count")) or any((appforge["current_count"], appforge["invalid_count"])), ("GRAPH_OPS_APPFORGE_READ_ONLY",)),
+        (any((p["saas_proof"]["current_count"], p["saas_proof"]["invalid_count"])), ("GRAPH_OPS_SAAS_PROOF_READ_ONLY",)),
+        (p["jetbrains_handshake"]["state"] != "empty", ("GRAPH_OPS_JETBRAINS_HANDSHAKE_READ_ONLY",)),
+        (any((semantic["handoff_count"], semantic["lease_count"], semantic["invalid_count"])), ("GRAPH_OPS_SEMANTIC_AUTHORITY_READ_ONLY",)),
+        (any((semantic["expired_lease_count"], semantic["invalid_count"])), ("GRAPH_OPS_SEMANTIC_AUTHORITY_REVIEW_REQUIRED",)),
+        (any((enterprise["decision_count"], enterprise["invalid_count"])), ("GRAPH_OPS_ENTERPRISE_ENFORCEMENT_READ_ONLY",)),
+        (enterprise["invalid_count"], ("GRAPH_OPS_ENTERPRISE_ENFORCEMENT_REVIEW_REQUIRED",)),
+        (any((enterprise["runner_packet_count"], enterprise["runner_invalid_count"])), ("GRAPH_OPS_ENTERPRISE_RUNNER_ADMISSION_READ_ONLY",)),
+        (enterprise["runner_invalid_count"], ("GRAPH_OPS_ENTERPRISE_RUNNER_ADMISSION_REVIEW_REQUIRED",)),
+        (any((p["operations_control"]["receipt_count"], p["operations_control"]["invalid_count"])), ("GRAPH_OPS_OPERATIONS_CONTROL_READ_ONLY",)),
+        (any((p["lifecycle"]["run_count"], p["lifecycle"]["invalid_count"])), ("GRAPH_OPS_LIFECYCLE_READ_ONLY", "GRAPH_OPS_SESSION_TRACE_READ_ONLY")),
+        (any((p["repair_loops"]["receipt_count"], p["repair_loops"]["invalid_count"])), ("GRAPH_OPS_REPAIR_LOOP_READ_ONLY",)),
+    ]
+    return sorted({*markers, *(marker for enabled, additions in rules if enabled for marker in additions)})
+
+
 def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     """Compile a bounded graph snapshot from existing local files without writes."""
-    # Keep the optional handshake projection lazy: intent inspection reaches
-    # Change Review, which imports Graph Ops for impact analysis.
-    from .jetbrains_handshake import jetbrains_handshake_projection
     workspace = Path(root).resolve()
     state: dict[str, Any] = {
         "nodes": {}, "edges": [], "edge_keys": set(), "errors": [], "truncated": False,
     }
-    requirements, slices = _append_product_graphs(state, workspace)
-    _append_intake_confirmations(state, workspace)
-    evidenced = _append_missions(state, workspace, requirements, slices)
-    stale_proof_count = _append_proofs(state, workspace)
-    gates = _append_plans(state, workspace)
-    _append_traces(state, workspace)
-    verifier_sessions = _append_verifier_sessions(state, workspace)
-    forensics = _append_graph_forensics(state, workspace)
-    proofsearch = _append_proofsearch(state, workspace)
-    frontier = _append_evidence_frontiers(state, workspace)
-    reality = _append_reality_checks(state, workspace)
-    authorizations = _append_graph_authorizations(state, workspace)
-    assurance = _append_github_assurance_dossiers(state, workspace)
-    continuity = _append_continuity(state, workspace)
-    counterexamples = _append_counterexamples(state, workspace)
-    mission_control = mission_control_status(workspace)
-    shared = mission_control["evidence"]
-    oracle_firewall = _append_oracle_firewall(state, workspace, shared["oracle"])
-    proof_continuity = _append_proof_continuity(state, workspace)
-    semantic_authority = _append_semantic_authority(state, workspace)
-    enterprise_enforcement = _append_enterprise_enforcement(state, workspace)
-    atomic_proof_adapter = _append_atomic_proof_adapter(state, workspace)
-    agent_proof_bridge = _append_agent_proof_bridge(state, workspace)
-    proof_worklogs = _append_proof_worklogs(state, workspace)
-    operations_control = _append_operations_controls(state, workspace, shared["operations"])
-    lifecycle = _append_lifecycle_events(state, workspace, shared["lifecycle"])
-    repair_loops = _append_repair_loops(state, workspace, shared["repair_loops"])
-    deep_audit = _append_deep_audit(state, workspace, shared["deep_audit"])
-    guardrails = _append_guardrail_evaluations(state, workspace)
-    resilience = _append_resilience_plans(state, workspace)
-    proof_deltas = _append_proof_deltas(state, workspace)
-    survival_cards = _append_survival_cards(state, workspace)
-    agent_supervision = _append_agent_supervision(state, workspace)
-    judgment = _append_judgment_capsules(state, workspace)
-    external_evidence = _append_external_evidence(state, workspace)
-    journey_proofs = _append_journey_proofs(state, workspace)
-    intent_traces = _append_intent_traces(state, workspace)
-    continuous_proof = continuous_proof_projection(workspace)
-    proof_review = proof_review_projection(workspace)
-    revenueforge = revenueforge_projection(workspace)
-    appforge = appforge_design_projection(workspace)
-    saas_proof = saas_proof_projection(workspace)
-    jetbrains_handshake = jetbrains_handshake_projection(workspace)
+    p = _collect_snapshot_sources(state, workspace)
 
     nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     edges = sorted(state["edges"], key=lambda item: (item["source"], item["target"], item["relation"]))
-    facts = _snapshot_facts(nodes, evidenced, stale_proof_count, gates, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, oracle_firewall, atomic_proof_adapter, agent_proof_bridge, proof_worklogs, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
-    facts["journey_proof_count"] = journey_proofs["count"]
-    facts["semantic_handoff_count"] = semantic_authority["handoff_count"]
-    facts["proof_continuity_contract_count"] = proof_continuity["contract_count"]
-    facts["proof_continuity_active_contract_count"] = proof_continuity["active_contract_count"]
-    facts["proof_continuity_observation_count"] = proof_continuity["observation_count"]
-    facts["proof_continuity_reopened_count"] = proof_continuity["reopened_count"]
-    facts["proof_continuity_invalid_count"] = proof_continuity["invalid_count"]
-    facts["semantic_handoff_current_count"] = semantic_authority["current_handoff_count"]
-    facts["semantic_authority_lease_count"] = semantic_authority["lease_count"]
-    facts["semantic_authority_active_lease_count"] = semantic_authority["active_lease_count"]
-    facts["semantic_authority_expired_lease_count"] = semantic_authority["expired_lease_count"]
-    facts["semantic_authority_decision_count"] = semantic_authority["decision_count"]
-    facts["semantic_authority_invalid_count"] = semantic_authority["invalid_count"]
-    facts["semantic_known_count"] = semantic_authority["known_count"]
-    facts["semantic_unknown_count"] = semantic_authority["unknown_count"]
-    facts["semantic_uncertain_count"] = semantic_authority["uncertain_count"]
-    facts["semantic_blocking_unknown_count"] = semantic_authority["blocking_unknown_count"]
-    facts["enterprise_enforcement_decision_count"] = enterprise_enforcement["decision_count"]
-    facts["enterprise_enforcement_admitted_count"] = enterprise_enforcement["admitted_count"]
-    facts["enterprise_enforcement_invalid_count"] = enterprise_enforcement["invalid_count"]
-    facts["enterprise_runner_packet_count"] = enterprise_enforcement["runner_packet_count"]
-    facts["enterprise_runner_verified_count"] = enterprise_enforcement["runner_verified_count"]
-    facts["enterprise_runner_fresh_count"] = enterprise_enforcement["runner_fresh_count"]
-    facts["enterprise_runner_expired_count"] = enterprise_enforcement["runner_expired_count"]
-    facts["enterprise_runner_invalid_count"] = enterprise_enforcement["runner_invalid_count"]
-    facts["journey_proof_admissible_count"] = journey_proofs["admissible_count"]
-    facts["journey_proof_invalid_count"] = journey_proofs["invalid_count"]
-    facts["continuous_proof_count"] = continuous_proof["count"]
-    facts["continuous_proof_invalid_count"] = continuous_proof["invalid_count"]
-    facts["continuous_proof_latest_route"] = (continuous_proof["latest"] or {}).get("route")
-    facts["proof_review_current_count"] = proof_review["current_count"]
-    facts["proof_review_stale_count"] = proof_review["stale_count"]
-    facts["proof_review_invalid_count"] = proof_review["invalid_count"]
-    facts["proof_review_next_route"] = (proof_review["next_item"] or {}).get("route")
-    facts["revenueforge_current_count"] = revenueforge["current_count"]
-    facts["revenueforge_invalid_count"] = revenueforge["invalid_count"]
-    facts["appforge_design_current_count"] = appforge["current_count"]
-    facts["appforge_design_invalid_count"] = appforge["invalid_count"]
-    facts["appforge_init_current_count"] = appforge["init"]["current_count"]
-    facts["appforge_init_invalid_count"] = appforge["init"]["invalid_count"]
-    facts["appforge_quality_audit_current_count"] = appforge["quality_audit"]["current_count"]
-    facts["appforge_quality_audit_invalid_count"] = appforge["quality_audit"]["invalid_count"]
-    facts["appforge_submission_assurance_current_count"] = appforge["submission_assurance"]["current_count"]
-    facts["appforge_submission_assurance_invalid_count"] = appforge["submission_assurance"]["invalid_count"]
-    facts["appforge_oracle_authority_current_count"] = appforge["oracle_authority"]["current_count"]
-    facts["appforge_oracle_authority_invalid_count"] = appforge["oracle_authority"]["invalid_count"]
-    facts["appforge_device_reality_current_count"] = appforge["device_reality"]["current_count"]
-    facts["appforge_device_reality_invalid_count"] = appforge["device_reality"]["invalid_count"]
-    facts["appforge_release_rehearsal_current_count"] = appforge["release_rehearsal"]["current_count"]
-    facts["appforge_release_rehearsal_invalid_count"] = appforge["release_rehearsal"]["invalid_count"]
-    facts["appforge_native_surface_current_count"] = appforge["native_surface"]["current_count"]
-    facts["appforge_native_surface_invalid_count"] = appforge["native_surface"]["invalid_count"]
-    facts["appforge_surface_matrix_current_count"] = appforge["surface_matrix"]["current_count"]
-    facts["appforge_surface_matrix_invalid_count"] = appforge["surface_matrix"]["invalid_count"]
-    facts["appforge_storefront_story_current_count"] = appforge["storefront_story"]["current_count"]
-    facts["appforge_storefront_story_invalid_count"] = appforge["storefront_story"]["invalid_count"]
-    facts["appforge_fastlane_capture_current_count"] = appforge["fastlane_capture"]["current_count"]
-    facts["appforge_fastlane_capture_invalid_count"] = appforge["fastlane_capture"]["invalid_count"]
-    facts["appforge_submission_integrity_current_count"] = appforge["submission_integrity"]["current_count"]
-    facts["appforge_submission_integrity_invalid_count"] = appforge["submission_integrity"]["invalid_count"]
-    facts["appforge_mobile_evidence_current_count"] = appforge["mobile_evidence"]["current_count"]
-    facts["appforge_mobile_evidence_invalid_count"] = appforge["mobile_evidence"]["invalid_count"]
-    facts["saas_proof_current_count"] = saas_proof["current_count"]
-    facts["saas_proof_invalid_count"] = saas_proof["invalid_count"]
-    facts["jetbrains_handshake_state"] = jetbrains_handshake["state"]
-    facts["operations_control_receipt_count"] = operations_control["receipt_count"]
-    facts["operations_control_ready_count"] = operations_control["ready_count"]
-    facts["operations_control_blocked_count"] = operations_control["blocked_count"]
-    facts["operations_control_invalid_count"] = operations_control["invalid_count"]
-    facts["lifecycle_run_count"] = lifecycle["run_count"]
-    facts["lifecycle_review_required_count"] = lifecycle["review_required_count"]
-    facts["lifecycle_invalid_count"] = lifecycle["invalid_count"]
-    facts["repair_loop_receipt_count"] = repair_loops["receipt_count"]
-    facts["repair_loop_invalid_count"] = repair_loops["invalid_count"]
-    facts["mission_control_state"] = mission_control["state"]
-    facts["edge_count"] = len(edges)
+    facts = _snapshot_facts(nodes, p["evidenced"], p["stale_proof_count"], p["gates"], p["verifier_sessions"], p["forensics"], p["proofsearch"], p["frontier"], p["reality"], p["authorizations"], p["assurance"], p["continuity"], p["counterexamples"], p["oracle_firewall"], p["atomic_proof_adapter"], p["agent_proof_bridge"], p["proof_worklogs"], p["guardrails"], p["resilience"], p["proof_deltas"], p["survival_cards"], p["agent_supervision"], p["judgment"], p["external_evidence"], p["intent_traces"])
+    _update_snapshot_facts(facts, p, edges)
     action, reason = _recommendation(facts)
     complete = not state["errors"] and not state["truncated"]
-    markers = _snapshot_markers(state, nodes, verifier_sessions, forensics, proofsearch, frontier, reality, authorizations, assurance, continuity, counterexamples, oracle_firewall, atomic_proof_adapter, agent_proof_bridge, proof_worklogs, guardrails, resilience, proof_deltas, survival_cards, agent_supervision, judgment, external_evidence, intent_traces)
-    if journey_proofs["count"]:
-        markers = sorted({*markers, "JOURNEY_STATUS_READ_ONLY", "GRAPH_OPS_JOURNEY_PROOF_READ_ONLY"})
-    if continuous_proof["count"] or continuous_proof["invalid_count"]:
-        markers = sorted({*markers, "CONTINUOUS_PROOF_HISTORY_READ_ONLY", "GRAPH_OPS_CONTINUOUS_PROOF_READ_ONLY"})
-    if proof_review["current_count"] or proof_review["stale_count"] or proof_review["invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_PROOF_REVIEW_READ_ONLY", "TEAM_PROOF_INBOX_READ_ONLY"})
-    if revenueforge["current_count"] or revenueforge["invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_REVENUEFORGE_READ_ONLY"})
-    if proof_continuity["contract_count"] or proof_continuity["observation_count"] or proof_continuity["invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_PROOF_CONTINUITY_READ_ONLY"})
-    if appforge["current_count"] or appforge["invalid_count"] or appforge["quality_audit"]["current_count"] or appforge["quality_audit"]["invalid_count"] or appforge["submission_assurance"]["current_count"] or appforge["submission_assurance"]["invalid_count"] or appforge["oracle_authority"]["current_count"] or appforge["oracle_authority"]["invalid_count"] or appforge["device_reality"]["current_count"] or appforge["device_reality"]["invalid_count"] or appforge["release_rehearsal"]["current_count"] or appforge["release_rehearsal"]["invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_APPFORGE_READ_ONLY"})
-    if saas_proof["current_count"] or saas_proof["invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_SAAS_PROOF_READ_ONLY"})
-    if jetbrains_handshake["state"] != "empty":
-        markers = sorted({*markers, "GRAPH_OPS_JETBRAINS_HANDSHAKE_READ_ONLY"})
-    if semantic_authority["handoff_count"] or semantic_authority["lease_count"] or semantic_authority["invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_SEMANTIC_AUTHORITY_READ_ONLY"})
-    if semantic_authority["expired_lease_count"] or semantic_authority["invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_SEMANTIC_AUTHORITY_REVIEW_REQUIRED"})
-    if enterprise_enforcement["decision_count"] or enterprise_enforcement["invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_ENFORCEMENT_READ_ONLY"})
-    if enterprise_enforcement["invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_ENFORCEMENT_REVIEW_REQUIRED"})
-    if enterprise_enforcement["runner_packet_count"] or enterprise_enforcement["runner_invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_RUNNER_ADMISSION_READ_ONLY"})
-    if enterprise_enforcement["runner_invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_ENTERPRISE_RUNNER_ADMISSION_REVIEW_REQUIRED"})
-    if operations_control["receipt_count"] or operations_control["invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_OPERATIONS_CONTROL_READ_ONLY"})
-    if lifecycle["run_count"] or lifecycle["invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_LIFECYCLE_READ_ONLY", "GRAPH_OPS_SESSION_TRACE_READ_ONLY"})
-    if repair_loops["receipt_count"] or repair_loops["invalid_count"]:
-        markers = sorted({*markers, "GRAPH_OPS_REPAIR_LOOP_READ_ONLY"})
+    markers = _snapshot_markers(state, nodes, p["verifier_sessions"], p["forensics"], p["proofsearch"], p["frontier"], p["reality"], p["authorizations"], p["assurance"], p["continuity"], p["counterexamples"], p["oracle_firewall"], p["atomic_proof_adapter"], p["agent_proof_bridge"], p["proof_worklogs"], p["guardrails"], p["resilience"], p["proof_deltas"], p["survival_cards"], p["agent_supervision"], p["judgment"], p["external_evidence"], p["intent_traces"])
+    markers = _extend_snapshot_markers(markers, p)
     base_core = {
         "schema": GRAPH_OPS_SCHEMA,
         "marker": "GRAPH_OPS_UNIFIED_READ_ONLY",
@@ -2446,25 +2441,25 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "facts": projected_facts,
         "portfolio": portfolio,
         "admissions": admissions,
-        "agent_supervision": agent_supervision,
-        "judgment": judgment,
-        "continuous_proof": continuous_proof,
-        "proof_review": proof_review,
-        "revenueforge": revenueforge,
-        "appforge": appforge,
-        "oracle_firewall": oracle_firewall,
-        "semantic_authority": semantic_authority,
-        "enterprise_enforcement": enterprise_enforcement,
-        "atomic_proof_adapter": atomic_proof_adapter,
-        "agent_proof_bridge": agent_proof_bridge,
-        "proof_worklogs": proof_worklogs,
-        "operations_control": operations_control,
-        "lifecycle": lifecycle,
-        "repair_loops": repair_loops,
-        "deep_audit": deep_audit,
-        "mission_control": mission_control,
-        "saas_proof": saas_proof,
-        "jetbrains_handshake": jetbrains_handshake,
+        "agent_supervision": p["agent_supervision"],
+        "judgment": p["judgment"],
+        "continuous_proof": p["continuous_proof"],
+        "proof_review": p["proof_review"],
+        "revenueforge": p["revenueforge"],
+        "appforge": p["appforge"],
+        "oracle_firewall": p["oracle_firewall"],
+        "semantic_authority": p["semantic_authority"],
+        "enterprise_enforcement": p["enterprise_enforcement"],
+        "atomic_proof_adapter": p["atomic_proof_adapter"],
+        "agent_proof_bridge": p["agent_proof_bridge"],
+        "proof_worklogs": p["proof_worklogs"],
+        "operations_control": p["operations_control"],
+        "lifecycle": p["lifecycle"],
+        "repair_loops": p["repair_loops"],
+        "deep_audit": p["deep_audit"],
+        "mission_control": p["mission_control"],
+        "saas_proof": p["saas_proof"],
+        "jetbrains_handshake": p["jetbrains_handshake"],
     }
     return {**core, "base_graph_sha256": base_graph_sha256, "graph_sha256": _sha(core), "mermaid": _mermaid(projected_nodes, projected_edges)}
 

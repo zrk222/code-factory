@@ -1,0 +1,19 @@
+name: graph-ops-bounded-snapshot
+language: python
+modules:
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    functions:
+      - name: graph_ops_snapshot
+        args: [root]
+        returns: dict
+invariants:
+  - name: snapshot_is_bounded_and_read_only
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:exec|eval|publish|deploy|sign)\\s*\\("
+    scopes:
+      - module: graph_ops
+        symbol: graph_ops_snapshot
+        max_lines: 210
+tests:
+  - path: tests/test_graph_ops.py
+    command: python -m pytest -q tests/test_graph_ops.py
