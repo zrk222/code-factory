@@ -29,7 +29,7 @@ modules:
     path: factoryline/deep_audit_loop.py
     functions:
       - name: compare_deep_audits
-        args: [before, after]
+        args: [root, before_path, after_path]
         returns: dict
 dependencies:
   - from: deep_audit

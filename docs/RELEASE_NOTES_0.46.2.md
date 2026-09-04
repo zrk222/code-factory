@@ -16,6 +16,9 @@
 
 ## What changed
 
+- **Deep Defect Mesh:** Signed analyzer/rule contracts, strict SARIF intake, required canaries, trace and suppression checks, prioritized repair guidance, and content-addressed receipts.
+- **Connected deep review:** CLI evaluation, read-only MCP/Mission Control status, bounded Graph Ops lineage, and repair comparisons that stop on policy changes, regression or stagnation. Receipt self-hashes are not signer authentication or release approval.
+
 - **IDE and A2A Agent Playbook:** Plain-language operating cards for intent, proof, challenge, trace, and handoff. External agents require scoped, expiring identity and capability envelopes; supervised is the default.
 - **Mission Control briefing contract:** Every action explains what will happen, why, inputs, uncertainty, authority, evidence, and one next safe action. Advanced modules remain contextual; blockers stay visible.
 - **Earned Proof Moments:** After a user-visible verified outcome, the UI can show a redacted receipt and offer a one-time optional invitation for an honest review. It never requests stars, positive feedback, or trades rewards for reviews.

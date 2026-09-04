@@ -34,6 +34,11 @@ provider approval, remote execution, or a guarantee of correctness.
 
 ### Pick the path that matches your work
 
+**Beyond hollow tests:** [Deep Defect Mesh](docs/DEEP_DEFECT_MESH.md) evaluates
+signed analyzer-report contracts, flags missing negative controls, traces findings
+into Graph Ops, and compares repair outcomes. It coordinates supplied evidence;
+it does not execute the analyzers or guarantee that a clean report means safe code.
+
 Run `factory guide` to see the same three choices in any terminal:
 
 - **Individual developer:** *Can this test actually fail?* Start with `factory
