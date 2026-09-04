@@ -9,22 +9,77 @@
 
 <!-- mcp-name: io.github.zrk222/code-factory -->
 
-> **Catch AI-generated tests that could never fail — before review.**
+> **Build with AI. Know what you can trust.**
 
-> **One command answers one question: can this test actually fail?** Code Factory
-> runs a safe negative control, records what happened, and gives you a local
-> result you can review. It challenges whether a test can actually reject the
-> failure it claims to cover. It does not upload your code or call a green test
-> proof when that test could never catch the failure.
+You describe what you want. Your developer—or AI agent—builds it. Then comes
+the difficult question: **Did it build the right thing, and what might break?**
+
+Code Factory brings the brief, the work, the checks, and the evidence into one
+review process. It is an **engineering audit and orchestration system** for
+human and AI-written software—not just a test checker.
+
+It helps clarify your request, spot changes that drift from it, and prevent an
+agent from quietly weakening the approved rules used to judge its own work.
+Beyond checking whether tests are meaningful, CF coordinates deeper audits for
+broken workflows, unauthorized access, failed retries, incompatible updates,
+damaged data, and performance or memory problems.
+
+When something fails, you get more than a red warning: **what went wrong, why
+it matters, the supporting evidence, and what to check after the repair.**
+
+FactoryLine brings that oversight into your coding workspace. Connected agents
+can follow the same controlled process. Design tools support your approved
+visual direction; SaaS checks examine customer journeys; optional AppForge
+checks organize mobile-release evidence and surface gaps before store submission.
+
+For individuals, that means a clearer second check. For teams, a more consistent
+handoff. For organizations, a traceable basis for review.
+
+**The result: less guesswork and a clearer decision about what is ready, what
+needs fixing, and what remains unknown.** CF does not promise perfect software
+or automatic approval. It makes the evidence inspectable—and keeps the final
+decision yours. Audits require configured tools and actual evidence; missing
+evidence is not a pass.
+
+<details>
+<summary>For developers: how the review connects across modules</summary>
+
+## From a plausible change to an inspectable engineering decision
+
+- **Build what was actually requested.** SpecLine clarifies requirements;
+  sealed intent and Oracle Firewall checks flag scope drift and weakened gates.
+- **Review behavior beyond a green unit test.** Six audit lanes coordinate
+  stateful invariants, authorization and tenant isolation, failure/concurrency
+  recovery, API compatibility, database migration, and performance/resource
+  regressions. Each lane needs the appropriate runner and real evidence.
+- **Turn findings into repair work.** Deep Defect Mesh checks supplied analyzer
+  evidence; linked traces and repair comparisons keep consequences, stale
+  results, and the next validation visible.
+- **Keep the handoff coherent.** ForgeLine orchestration and FactoryLine
+  receipts connect work across modules. Mission Control and Graph Ops show
+  humans and connected agents the same scope, blockers, evidence, and next step.
+- **Activate specialist checks when needed.** SaaS journey checks and AppForge
+  mobile-release evidence fit into the same review path. AppForge is an
+  optional module, not the whole product.
+
+**The payoff:** a reviewer can see what was audited, what passed, what remains
+unknown, and what must happen next. A receipt supports that decision; it is not
+a guarantee of defect-free code, enterprise certification, or store approval.
+People retain authority over policy, exceptions, and release.
+
+</details>
+
+Install the CLI, then follow the
+[engineering review workflow](docs/PROOF_REVIEW_WORKFLOW.md) for a full review:
 
 ```powershell
 pip install factoryline-code-factory
-factory first-proof --root .
 ```
 
-That one local command creates a disposable demonstration sandbox, proves the
-healthy check can pass, then proves the hollow check is rejected. It writes a
-receipt and a privacy-safe Proof Card; it does not assess or change your project.
+Want a small demonstration first? `factory first-proof --root .` challenges
+whether a test can actually reject its declared failure in a disposable sandbox.
+It writes a receipt and a privacy-safe Proof Card; it does not assess or change
+your project. First Proof is one entry point—not the scope of the full audit.
 
 **LLM-friendly product context:** [Canonical Product Card](docs/LLM_PRODUCT_CARD.md)
 states the supported capabilities, boundaries, audiences, integration terms,
@@ -39,11 +94,13 @@ signed analyzer-report contracts, flags missing negative controls, traces findin
 into Graph Ops, and compares repair outcomes. It coordinates supplied evidence;
 it does not execute the analyzers or guarantee that a clean report means safe code.
 
-Run `factory guide` to see the same three choices in any terminal:
+Choose your review path below. The current `factory guide` command still lists
+the existing onboarding paths, including the solo First Proof demo; it is not
+the full engineering-review workflow linked above.
 
-- **Individual developer:** *Can this test actually fail?* Start with `factory
-  first-proof --root .`. You get one local result and a receipt without changing
-  your project.
+- **Individual developer or vibe coder:** *What did my change miss?* Use the
+  engineering review workflow to inspect intent, behavior, and evidence. Try
+  `factory first-proof --root .` for a contained demonstration first.
 - **Engineering team:** *Did the agent build what we asked for?* Start with
   `factory oracle status --root .`. Bind the original intent, observe the exact
   file delta, challenge the tests independently, and keep approval human-owned.
@@ -52,7 +109,7 @@ Run `factory guide` to see the same three choices in any terminal:
   source-to-decision chain, blockers, unknowns, and authority boundaries in a
   controlled pilot.
 
-That is the whole front door. Specialized SaaS, mobile, multi-repository, and
+Choose the relevant audit scope. Specialized SaaS, mobile, multi-repository, and
 enterprise controls remain available in the [advanced workflow guide](docs/OVERVIEW.md)
 only when their trigger applies. AppForge is an optional mobile-delivery
 capability; it surfaces avoidable gaps but cannot guarantee store approval.

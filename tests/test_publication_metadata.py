@@ -76,9 +76,9 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     intellij_readme = (ROOT / "editors" / "intellij" / "README.md").read_text(encoding="utf-8")
 
     value = "Catch AI-generated tests that could never fail — before review."
-    assert value in readme
-    assert "challenges whether a test can actually reject" in readme
-    assert readme.index(value) < readme.index("## Advanced workflows")
+    assert "engineering audit and orchestration system" in readme
+    assert "First Proof is one entry point" in readme
+    assert readme.index("Six audit lanes") < readme.index("factory first-proof")
     assert "factory mvp \"Build an approval tracker\" --root ." in readme
     assert "See actual Factory Studio" in readme
     assert "factory-studio-mvp-1280x800.png" in readme

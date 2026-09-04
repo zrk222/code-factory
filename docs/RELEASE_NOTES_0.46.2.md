@@ -2,25 +2,35 @@
 
 ## Public update summary
 
-You asked an AI agent to change working software. The code looks plausible and
-the tests are green—but can the evidence survive a skeptical review?
+### Build with AI. Know what you can trust.
 
-Code Factory 0.46.2 turns that handoff into a traceable engineering story. It
-starts with the approved intent, checks the changed scope and forbidden
-outcomes, challenges the implementation with independently defined cases, and
-connects every decision to bounded evidence. Six coordinated audit lanes then
-cover stateful behavior, tenant isolation, failure and recovery, API
-compatibility, migration integrity, and performance or resource regression.
+You describe what you want. Your developer—or AI agent—builds it. Then comes
+the difficult question: **Did it build the right thing, and what might break?**
 
-When evidence is missing, stale, reordered, duplicated, altered, or bound to a
-different contract, the result stays blocked. When a run is valid, a developer,
-team reviewer, IDE agent, or A2A client receives the same concise status,
-evidence digest, consequence, and next safe action. The human still owns scope,
-policy, exceptions, and release.
+Code Factory brings the brief, the work, the checks, and the evidence into one
+review process. It helps clarify your request, spot changes that drift from it,
+and prevent an agent from quietly weakening the approved rules used to judge
+its own work.
 
-The result is not a promise that software is defect-free. It is a repeatable
-way to make an agent's work easier to question, reproduce, repair, and hand off
-without turning a green build into automatic trust.
+Beyond checking whether tests are meaningful, CF coordinates deeper audits for
+broken workflows, unauthorized access, failed retries, incompatible updates,
+damaged data, and performance or memory problems. When something fails, you get
+**what went wrong, why it matters, the supporting evidence, and what to check
+after the repair.**
+
+FactoryLine brings that oversight into your coding workspace. Connected agents
+can follow the same controlled process. Design tools support your approved
+visual direction; SaaS checks examine customer journeys; optional AppForge
+checks organize mobile-release evidence and surface gaps before store submission.
+
+For individuals, that means a clearer second check. For teams, a more consistent
+handoff. For organizations, a traceable basis for review.
+
+**The result: less guesswork and a clearer decision about what is ready, what
+needs fixing, and what remains unknown.** CF does not promise perfect software
+or automatic approval. It makes the evidence inspectable—and keeps the final
+decision yours. Audits require configured tools and actual evidence; missing
+evidence is not a pass.
 
 ## The story
 

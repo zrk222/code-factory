@@ -16,14 +16,20 @@ category:
   - agent governance
   - evidence-backed code review
 deployment: local-first Python CLI with IDE, MCP, and read-only WebMCP surfaces
-primary_question: Can this AI-generated test actually fail for the behavior it claims to cover?
+primary_question: Did the change fulfill approved intent, what could break, and what does the audit evidence support?
 ```
 
 ## What it does
 
-Code Factory helps developers inspect evidence around AI-assisted changes.
-`factory first-proof` demonstrates a positive and negative control so a green
-test is not automatically treated as meaningful. `factory wrap` records a
+Code Factory is an engineering audit and orchestration system for human and
+AI-written software. It connects intent validation, six runtime audit lanes,
+analyzer evidence, defect tracing, repair comparisons, and human review.
+The six lanes cover stateful invariants, tenant isolation, failure recovery,
+API compatibility, migration integrity, and performance/resource regression;
+they require configured runners and evidence, not merely a receipt template.
+`factory first-proof` is an optional positive/negative-control demonstration,
+not the product's whole audit or an assessment of the user's project.
+`factory wrap` records a
 declared agent change, bounded validation facts, and file-delta hashes for
 review. Oracle Firewall seals a reviewed intent contract and identifies scope,
 threshold, negative-case, exception, or provenance weakening before promotion.
@@ -38,7 +44,7 @@ or approval authority.
 
 | Audience | Start here | Outcome it supports |
 | --- | --- | --- |
-| Solo developer or vibe coder | `factory first-proof` | Find a test that still passes when its claimed behavior is absent. |
+| Solo developer or vibe coder | [Engineering proof-review workflow](PROOF_REVIEW_WORKFLOW.md) | Inspect intent, change scope, validation evidence, and the next repair; First Proof is an optional demonstration. |
 | Team using coding agents | `factory wrap` and `factory oracle init` | Compare an agent's declared work with local deltas, declared validators, and sealed intent. |
 | Senior engineer or platform team | Graph Ops, proof review, repair loop, and policy receipts | Review a trace from source through obligation, gate, test, evidence, and decision. |
 | SaaS builder | `factory saas verify` | Check a declared customer path across identity, tenant access, checkout, webhook, entitlement, access, and revocation evidence. |
