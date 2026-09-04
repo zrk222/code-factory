@@ -44,7 +44,7 @@ or approval authority.
 
 | Audience | Start here | Outcome it supports |
 | --- | --- | --- |
-| Solo developer or vibe coder | `factory guide` and the proof-review workflow | Inspect intent, change scope, validation evidence, and the next repair; First Proof is an optional demonstration. |
+| Solo developer or vibe coder | [Engineering proof-review workflow](PROOF_REVIEW_WORKFLOW.md) | Inspect intent, change scope, validation evidence, and the next repair; First Proof is an optional demonstration. |
 | Team using coding agents | `factory wrap` and `factory oracle init` | Compare an agent's declared work with local deltas, declared validators, and sealed intent. |
 | Senior engineer or platform team | Graph Ops, proof review, repair loop, and policy receipts | Review a trace from source through obligation, gate, test, evidence, and decision. |
 | SaaS builder | `factory saas verify` | Check a declared customer path across identity, tenant access, checkout, webhook, entitlement, access, and revocation evidence. |

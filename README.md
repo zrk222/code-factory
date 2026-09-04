@@ -69,12 +69,11 @@ People retain authority over policy, exceptions, and release.
 
 </details>
 
-Start with the [engineering review workflow](docs/PROOF_REVIEW_WORKFLOW.md), or
-use the guide to choose the scope that fits your project:
+Install the CLI, then follow the
+[engineering review workflow](docs/PROOF_REVIEW_WORKFLOW.md) for a full review:
 
 ```powershell
 pip install factoryline-code-factory
-factory guide
 ```
 
 Want a small demonstration first? `factory first-proof --root .` challenges
@@ -95,7 +94,9 @@ signed analyzer-report contracts, flags missing negative controls, traces findin
 into Graph Ops, and compares repair outcomes. It coordinates supplied evidence;
 it does not execute the analyzers or guarantee that a clean report means safe code.
 
-Run `factory guide` to see the same three choices in any terminal:
+Choose your review path below. The current `factory guide` command still lists
+the existing onboarding paths, including the solo First Proof demo; it is not
+the full engineering-review workflow linked above.
 
 - **Individual developer or vibe coder:** *What did my change miss?* Use the
   engineering review workflow to inspect intent, behavior, and evidence. Try
