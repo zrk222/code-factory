@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import re
 import struct
 try:
@@ -11,6 +12,23 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_public_audit_condition_count_is_recomputed_from_source():
+    module_path = ROOT / "scripts" / "audit_condition_inventory.py"
+    spec = importlib.util.spec_from_file_location("audit_condition_inventory", module_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    result = module.inventory()
+    assert result["mandatory_audit_lanes"] == 6
+    assert result["lane_specific_rejection_conditions"] == 81
+    assert result["crosscutting_rejection_conditions"] == 54
+    assert result["total_coded_rejection_conditions"] == 135
+    for relative in ("README.md", "docs/LLM_PRODUCT_CARD.md", "docs/RELEASE_NOTES_0.46.2.md"):
+        content = (ROOT / relative).read_text(encoding="utf-8")
+        assert "6 mandatory audit lanes" in content
+        assert "135 coded rejection conditions" in content
 
 
 def _match(path: Path, pattern: str) -> str:
