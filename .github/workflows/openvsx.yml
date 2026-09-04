@@ -79,7 +79,7 @@ jobs:
       - name: Install, audit, test, and package
         run: |
           set -euo pipefail
-          npm ci
+          npm ci --no-audit
           npm run audit
           npm test
           npx vsce package --no-dependencies --out factoryline-vscode.vsix

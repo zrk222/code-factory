@@ -194,9 +194,10 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
     assert lock["packages"]["node_modules/js-yaml"]["version"] == "4.3.1"
     assert "dependencies" not in package
 
-    for relative in ("vscode-extension.yml", "publish.yml"):
+    for relative in ("vscode-extension.yml", "publish.yml", "openvsx.yml", "vscode-marketplace.yml"):
         workflow = (ROOT / ".github" / "workflows" / relative).read_text(encoding="utf-8")
         install = workflow.index("npm ci")
+        assert "npm ci --no-audit" in workflow
         audit = workflow.index("npm run audit", install)
         tests = workflow.index("npm test", audit)
         assert install < audit < tests
