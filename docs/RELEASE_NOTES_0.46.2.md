@@ -2,11 +2,11 @@
 
 ## Public update summary
 
-### 6 mandatory audit lanes. 135 coded rejection conditions. One human-owned release decision.
+### 6 mandatory audit lanes. 136 coded rejection conditions. One human-owned release decision.
 
-The current senior runtime-assurance source contains 81 lane-specific and 54
-cross-cutting rejection conditions. This is a reproducible source inventory,
-not a claim that every project executes 135 tests; observations scale with the
+The current senior runtime-assurance source contains 81 lane-specific and 55 cross-cutting
+rejection conditions. This is a reproducible source inventory,
+not a claim that every project executes 136 tests; observations scale with the
 approved scope, tools and evidence.
 
 ### Build with AI. Know what you can trust.

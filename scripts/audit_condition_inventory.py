@@ -17,10 +17,20 @@ LANE_MODULES = {
 CROSSCUT_MODULES = (
     "runtime_audit_contract.py",
     "runtime_audit_common.py",
+    "runtime_audit_policy.py",
     "runtime_audit_runner.py",
     "runtime_audit_integrity.py",
     "runtime_audit.py",
 )
+NON_CONDITION_MODULES = {"runtime_audit_process.py"}
+LANE_LABELS = {
+    "stateful workflows": "Stateful workflows and business invariants",
+    "tenant isolation": "Authorization and tenant isolation",
+    "failure and recovery": "Failure, concurrency, retries and recovery",
+    "consumer compatibility": "API and consumer compatibility",
+    "migration integrity": "Database migration and data integrity",
+    "performance and resources": "Performance, memory and resource regression",
+}
 NON_REJECTION_MARKERS = {
     "PASS", "FAIL", "INCOMPLETE", "STATEFUL_INVARIANTS_HELD",
     "TENANT_MATRIX_HELD", "RECOVERY_INVARIANTS_HELD",
@@ -43,6 +53,16 @@ def _markers(module: str) -> set[str]:
 
 
 def inventory() -> dict[str, object]:
+    classified_modules = set(LANE_MODULES.values()) | set(CROSSCUT_MODULES) | NON_CONDITION_MODULES
+    discovered_modules = {
+        path.name for path in (ROOT / "factoryline").glob("runtime_audit*.py")
+    }
+    unclassified_modules = sorted(discovered_modules - classified_modules)
+    if unclassified_modules:
+        raise ValueError(
+            "classify new runtime-audit modules before publishing counts: "
+            + ", ".join(unclassified_modules)
+        )
     lane_codes = {name: sorted(_markers(module)) for name, module in LANE_MODULES.items()}
     crosscut = set()
     for module in CROSSCUT_MODULES:
@@ -57,7 +77,39 @@ def inventory() -> dict[str, object]:
         "crosscutting_rejection_conditions": len(crosscut),
         "total_coded_rejection_conditions": lane_total + len(crosscut),
         "lanes": {name: len(codes) for name, codes in lane_codes.items()},
+        "lane_condition_codes": lane_codes,
+        "crosscutting_condition_codes": sorted(crosscut),
     }
+
+
+def public_claim(result: dict[str, object]) -> str:
+    return (
+        f"{result['mandatory_audit_lanes']} mandatory audit lanes. "
+        f"{result['total_coded_rejection_conditions']} coded rejection conditions. "
+        "One human-owned release decision."
+    )
+
+
+def public_breakdown(result: dict[str, object]) -> str:
+    return (
+        f"{result['lane_specific_rejection_conditions']} lane-specific and "
+        f"{result['crosscutting_rejection_conditions']} cross-cutting"
+    )
+
+
+def markdown_table(result: dict[str, object]) -> str:
+    lanes = result["lanes"]
+    rows = [
+        "| Audit area | Coded rejection conditions |",
+        "| --- | ---: |",
+    ]
+    rows.extend(f"| {LANE_LABELS[name]} | {lanes[name]} |" for name in LANE_MODULES)
+    rows.extend((
+        "| Cross-cutting contract, policy, provenance, evidence and execution integrity "
+        f"| {result['crosscutting_rejection_conditions']} |",
+        f"| **Total** | **{result['total_coded_rejection_conditions']}** |",
+    ))
+    return "\n".join(rows)
 
 
 if __name__ == "__main__":

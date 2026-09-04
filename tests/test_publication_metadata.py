@@ -23,12 +23,20 @@ def test_public_audit_condition_count_is_recomputed_from_source():
     result = module.inventory()
     assert result["mandatory_audit_lanes"] == 6
     assert result["lane_specific_rejection_conditions"] == 81
-    assert result["crosscutting_rejection_conditions"] == 54
-    assert result["total_coded_rejection_conditions"] == 135
+    assert result["crosscutting_rejection_conditions"] == 55
+    assert result["total_coded_rejection_conditions"] == 136
+    assert "E_POLICY" in result["crosscutting_condition_codes"]
+    assert set(module.NON_CONDITION_MODULES) == {"runtime_audit_process.py"}
+    claim = module.public_claim(result)
+    breakdown = module.public_breakdown(result)
     for relative in ("README.md", "docs/LLM_PRODUCT_CARD.md", "docs/RELEASE_NOTES_0.46.2.md"):
         content = (ROOT / relative).read_text(encoding="utf-8")
-        assert "6 mandatory audit lanes" in content
-        assert "135 coded rejection conditions" in content
+        assert claim in content
+        assert breakdown in content
+    inventory_doc = (ROOT / "docs/AUDIT_CONDITION_INVENTORY.md").read_text(encoding="utf-8")
+    assert claim in inventory_doc
+    assert breakdown in inventory_doc
+    assert module.markdown_table(result) in inventory_doc
 
 
 def _match(path: Path, pattern: str) -> str:

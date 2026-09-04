@@ -21,10 +21,10 @@ primary_question: Did the change fulfill approved intent, what could break, and 
 
 ## What it does
 
-**6 mandatory audit lanes. 135 coded rejection conditions. One human-owned
-release decision.** These source-inventoried counts describe the senior runtime
-assurance path: 81 lane-specific and 54 cross-cutting conditions. They do not
-mean every project executes 135 tests; observations scale with approved scope.
+**6 mandatory audit lanes. 136 coded rejection conditions. One human-owned release decision.**
+These source-inventoried counts describe the senior runtime
+assurance path: 81 lane-specific and 55 cross-cutting conditions. They do not
+mean every project executes 136 tests; observations scale with approved scope.
 
 Code Factory is an engineering audit and orchestration system for human and
 AI-written software. It connects intent validation, six runtime audit lanes,
