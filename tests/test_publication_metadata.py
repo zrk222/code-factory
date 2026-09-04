@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import re
 import struct
 try:
@@ -11,6 +12,37 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_public_audit_condition_count_is_recomputed_from_source():
+    module_path = ROOT / "scripts" / "audit_condition_inventory.py"
+    spec = importlib.util.spec_from_file_location("audit_condition_inventory", module_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    result = module.inventory()
+    assert result["mandatory_audit_lanes"] == 6
+    assert result["lane_specific_rejection_conditions"] == 81
+    assert result["crosscutting_rejection_conditions"] == 55
+    assert result["total_coded_rejection_conditions"] == 136
+    assert "E_POLICY" in result["crosscutting_condition_codes"]
+    assert set(module.NON_CONDITION_MODULES) == {"runtime_audit_process.py"}
+    assert not {
+        code
+        for helper in module.NON_CONDITION_MODULES
+        for code in module._markers(helper)
+        if code.startswith(module.REJECTION_PREFIXES)
+    }
+    claim = module.public_claim(result)
+    breakdown = module.public_breakdown(result)
+    for relative in ("README.md", "docs/LLM_PRODUCT_CARD.md", "docs/RELEASE_NOTES_0.46.2.md"):
+        content = (ROOT / relative).read_text(encoding="utf-8")
+        assert claim in content
+        assert breakdown in content
+    inventory_doc = (ROOT / "docs/AUDIT_CONDITION_INVENTORY.md").read_text(encoding="utf-8")
+    assert claim in inventory_doc
+    assert breakdown in inventory_doc
+    assert module.markdown_table(result) in inventory_doc
 
 
 def _match(path: Path, pattern: str) -> str:

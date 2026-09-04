@@ -9,7 +9,14 @@
 
 <!-- mcp-name: io.github.zrk222/code-factory -->
 
-> **Build with AI. Know what you can trust.**
+> **6 mandatory audit lanes. 136 coded rejection conditions. One human-owned release decision.**
+
+Those numbers describe Code Factory's senior-engineering runtime-assurance
+path—not a marketing estimate. The [source-bound inventory](docs/AUDIT_CONDITION_INVENTORY.md)
+covers 81 lane-specific and 55 cross-cutting failure conditions. The actual
+observations scale with each project's approved scope and evidence.
+
+**Build with AI. Know what you can trust.**
 
 You describe what you want. Your developer—or AI agent—builds it. Then comes
 the difficult question: **Did it build the right thing, and what might break?**
