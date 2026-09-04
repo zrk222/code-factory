@@ -14,6 +14,7 @@ from .runtime_audit_recovery import evaluate_recovery
 from .runtime_audit_runner import run_runtime_audit_plan
 from .runtime_audit_stateful import evaluate_stateful
 from .runtime_audit_tenant import evaluate_tenant
+from .runtime_audit_integrity import index_executions, repair_guidance
 
 Evaluator = Callable[..., dict[str, Any]]
 EVALUATORS: dict[str, Evaluator] = {
@@ -103,7 +104,7 @@ def _command_terminal(kind: str, execution: dict[str, Any], negative: bool) -> d
 def evaluate_runtime_audit(plan: dict[str, Any], executions: dict[str, Any], workspace_root: Path) -> dict[str, Any]:
     """Join six computed lanes, their known-bad controls, cross-lane scenario, quality, and repair order."""
     del workspace_root  # source binding was already verified; evaluation has no filesystem authority.
-    by_id = {item["id"]: item for item in executions.get("executions", []) if isinstance(item, dict) and isinstance(item.get("id"), str)}
+    by_id = index_executions(plan, executions)
     lanes: list[dict[str, Any]] = []
     for lane in plan["lanes"]:
         kind = lane["kind"]
@@ -157,6 +158,7 @@ def evaluate_runtime_audit(plan: dict[str, Any], executions: dict[str, Any], wor
             "remediation": REMEDIATIONS[kind],
             "scope_limitation": SCOPE,
         })
+        result["repair_guidance"] = repair_guidance(result, lane)
         lanes.append(result)
     states = {item["state"] for item in lanes}
     decision = "READY_FOR_HUMAN_REVIEW" if len(lanes) == 6 and states == {"PASS"} else "BLOCKED"
