@@ -27,6 +27,12 @@ def test_public_audit_condition_count_is_recomputed_from_source():
     assert result["total_coded_rejection_conditions"] == 136
     assert "E_POLICY" in result["crosscutting_condition_codes"]
     assert set(module.NON_CONDITION_MODULES) == {"runtime_audit_process.py"}
+    assert not {
+        code
+        for helper in module.NON_CONDITION_MODULES
+        for code in module._markers(helper)
+        if code.startswith(module.REJECTION_PREFIXES)
+    }
     claim = module.public_claim(result)
     breakdown = module.public_breakdown(result)
     for relative in ("README.md", "docs/LLM_PRODUCT_CARD.md", "docs/RELEASE_NOTES_0.46.2.md"):

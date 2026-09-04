@@ -23,6 +23,7 @@ CROSSCUT_MODULES = (
     "runtime_audit.py",
 )
 NON_CONDITION_MODULES = {"runtime_audit_process.py"}
+REJECTION_PREFIXES = ("E_", "RUNTIME_", "CROSS_", "HOLLOW_", "INCOMPLETE_")
 LANE_LABELS = {
     "stateful workflows": "Stateful workflows and business invariants",
     "tenant isolation": "Authorization and tenant isolation",
@@ -63,12 +64,22 @@ def inventory() -> dict[str, object]:
             "classify new runtime-audit modules before publishing counts: "
             + ", ".join(unclassified_modules)
         )
+    condition_codes_in_helpers = {
+        module: sorted(code for code in _markers(module) if code.startswith(REJECTION_PREFIXES))
+        for module in NON_CONDITION_MODULES
+    }
+    condition_codes_in_helpers = {
+        module: codes for module, codes in condition_codes_in_helpers.items() if codes
+    }
+    if condition_codes_in_helpers:
+        raise ValueError(
+            "condition-free runtime-audit helpers now contain rejection codes: "
+            + json.dumps(condition_codes_in_helpers, sort_keys=True)
+        )
     lane_codes = {name: sorted(_markers(module)) for name, module in LANE_MODULES.items()}
     crosscut = set()
     for module in CROSSCUT_MODULES:
-        crosscut.update(code for code in _markers(module) if code.startswith((
-            "E_", "RUNTIME_", "CROSS_", "HOLLOW_", "INCOMPLETE_",
-        )))
+        crosscut.update(code for code in _markers(module) if code.startswith(REJECTION_PREFIXES))
     lane_total = sum(len(codes) for codes in lane_codes.values())
     return {
         "schema": "factory.runtime-audit-condition-inventory.v1",
