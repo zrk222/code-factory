@@ -7,6 +7,7 @@ from typing import Any, Callable
 import json
 import re
 import secrets
+import socket
 import threading
 import webbrowser
 from time import monotonic
@@ -33,6 +34,7 @@ from .live_activity import activity_snapshot, request_stop
 
 STUDIO_SCHEMA = "factory.studio.v1"
 MAX_BODY_BYTES = 64 * 1024
+UNAUTHORIZED_DRAIN_TIMEOUT_SECONDS = 0.25
 LOOPBACK_HOST = "127.0.0.1"
 NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}")
 FORBIDDEN_ACTIONS = {"deploy", "publish", "sign", "external-message", "credential", "connector-grant"}
@@ -765,7 +767,11 @@ class _StudioHandler(BaseHTTPRequestHandler):
                 self.close_connection = True
                 return
             if 0 < rejected_length <= MAX_BODY_BYTES:
-                self.rfile.read(rejected_length)
+                self.connection.settimeout(UNAUTHORIZED_DRAIN_TIMEOUT_SECONDS)
+                try:
+                    self.rfile.read(rejected_length)
+                except (TimeoutError, socket.timeout, OSError):
+                    pass
             self.close_connection = True
             self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
             return

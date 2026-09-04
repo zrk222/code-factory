@@ -68,4 +68,4 @@ Historical slice-specific local regression receipt (2026-09-03, Windows/Python 3
 No remote publication, native IDE benchmark, or production speed claim follows
 from these local results.
 
-The final 0.46.2 release-gate regression later reported **1322 passed, 3 skipped**; that broader result does not rewrite this earlier slice receipt.
+The final 0.46.2 release-gate regression later reported **1323 passed, 3 skipped**; that broader result does not rewrite this earlier slice receipt.
