@@ -44,7 +44,7 @@ evidence is not a pass.
 <details>
 <summary>For developers: how the review connects across modules</summary>
 
-### From a plausible change to an inspectable engineering decision
+## From a plausible change to an inspectable engineering decision
 
 - **Build what was actually requested.** SpecLine clarifies requirements;
   sealed intent and Oracle Firewall checks flag scope drift and weakened gates.
