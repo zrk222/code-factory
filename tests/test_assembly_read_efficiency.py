@@ -71,9 +71,9 @@ def test_profile_has_stable_fingerprints_and_no_raw_evidence(tmp_path, monkeypat
     ticks = iter(range(0, 10000, 10))
     second = control.mission_control_profile(tmp_path)
     assert first["evidence_sha256"] == second["evidence_sha256"]
-    assert first["reader_elapsed_ns"] == 5
-    assert second["reader_elapsed_ns"] == 50
-    assert len(first["spans"]) == 5
+    assert first["reader_elapsed_ns"] == 6
+    assert second["reader_elapsed_ns"] == 60
+    assert len(first["spans"]) == 6
     assert all(set(span) == {"name", "elapsed_ns", "output_sha256"} for span in first["spans"])
     assert all(len(span["output_sha256"]) == 64 for span in first["spans"])
     assert "evidence" not in first
@@ -104,4 +104,4 @@ def test_profile_cli(tmp_path, capsys):
     assert main(["mission-control", "profile", "--root", str(tmp_path), "--json"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["schema"] == "factory.mission-control-profile.v1"
-    assert len(result["spans"]) == 5
+    assert len(result["spans"]) == 6

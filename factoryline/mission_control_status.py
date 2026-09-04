@@ -17,6 +17,7 @@ from .operations_control import operations_control_projection
 from .oracle_firewall import oracle_firewall_projection
 from .repair_loop import repair_loop_projection
 from .runtime_audit import runtime_audit_status
+from .deep_audit import deep_audit_status
 from .protocol_enums import MissionControlState
 
 
@@ -42,6 +43,7 @@ def _collect_evidence(root: Path, spans: list | None = None) -> dict[str, Any]:
         ("lifecycle", lifecycle_projection),
         ("repair_loops", repair_loop_projection),
         ("runtime_assurance", runtime_audit_status),
+        ("deep_audit", deep_audit_status),
     )
     evidence = {}
     for name, reader in readers:
@@ -61,7 +63,7 @@ def _fingerprint(value: Any) -> str:
 
 
 def mission_control_profile(root: Path) -> dict[str, Any]:
-    """Measure five local evidence readers without exporting their bodies or authorizing any action."""
+    """Measure local evidence readers without exporting their bodies or authorizing any action."""
     spans: list[dict[str, Any]] = []
     _collect_evidence(Path(root).resolve(), spans)
     identities = [{"name": span["name"], "output_sha256": span["output_sha256"]}
@@ -93,10 +95,12 @@ def mission_control_status(root: Path) -> dict[str, Any]:
         "lifecycle_invalid": int(lifecycle.get("invalid_count", 0)),
         "repair_invalid": int(repairs.get("invalid_count", 0)),
         "runtime_assurance_blocked": int(runtime.get("state") in {"BLOCKED", "INCOMPLETE"}),
+        "deep_audit_blocked": int(evidence["deep_audit"].get("state") in {"BLOCKED", "INCOMPLETE"}),
     }
     blocked = any(blockers.values())
     human_required = (
         blocked
+        or evidence["deep_audit"].get("state") == "READY_FOR_HUMAN_REVIEW"
         or int(lifecycle.get("review_required_count", 0)) > 0
         or int(repairs.get("receipt_count", 0)) > 0
     )
@@ -131,6 +135,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
                 "session_trace",
                 "repair_loop_packet",
                 "runtime_assurance_receipt",
+                "deep_audit_receipt",
             ],
             "may_not": [
                 "alter_intent",

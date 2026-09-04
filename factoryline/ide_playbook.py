@@ -90,6 +90,7 @@ def adoption_guide(journey: str | None = None) -> dict[str, Any]:
     }
 
 PLAYBOOK = (
+ {"id":"deep_audit","when":"Independent analyzer reports exist for nested defects, leaks or risky code paths.","use":"Deep audit evidence review","outcome":"signed-rule evaluation, canary checks and prioritized repair guidance; not release approval","next":"factory.deep_audit_status"},
  {"id":"start","when":"Before changing code or when intent is unclear.","use":"Intake Grill + SpecLine","outcome":"reviewable intent, forbidden outcomes, and approved gates","next":"factory.intake_status"},
  {"id":"prove","when":"After an agent changes implementation or tests.","use":"First Proof + Oracle Firewall","outcome":"tests challenged and oracle weakening surfaced","next":"factory.verifier_status"},
  {"id":"challenge","when":"A change is risky, autonomous, or release-bound.","use":"Gauntlet + independent challenge lane","outcome":"counterfactual cases without changing production code","next":"factory.gauntlet_status"},

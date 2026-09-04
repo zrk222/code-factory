@@ -177,6 +177,7 @@ from .repo_coordination import RepoCoordinationError, coordinate_repositories, r
 from .domain_ontology import DomainOntologyError, domain_ontology_template, validate_domain_ontology
 from .mission_control_status import mission_control_status, mission_control_profile
 from .runtime_audit import execute_runtime_audit, runtime_audit_status
+from .deep_audit import execute_deep_audit, deep_audit_status
 from .runtime_audit_common import RuntimeAuditError
 from .runtime_audit_contract import verify_runtime_audit_plan
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
@@ -1532,6 +1533,16 @@ def main(argv=None) -> int:
     mission_control_profile_parser.add_argument("--root", default=".")
     mission_control_profile_parser.add_argument("--json", action="store_true")
 
+    deep = sub.add_parser("deep-audit", help="evaluate signed analyzer evidence or read local repair guidance; never release approval")
+    deep_sub = deep.add_subparsers(required=True, dest="deep_cmd")
+    for action in ("evaluate", "status"):
+        command = deep_sub.add_parser(action)
+        command.add_argument("--root", default=".")
+        command.add_argument("--json", action="store_true")
+        if action == "evaluate":
+            command.add_argument("--plan", required=True)
+            command.add_argument("--trust-root", required=True)
+            command.add_argument("--trust-root-sha256", required=True)
     runtime_audit = sub.add_parser("runtime-audit", help="run or inspect six signed senior-engineering audit lanes")
     runtime_audit_sub = runtime_audit.add_subparsers(required=True, dest="runtime_audit_cmd")
     for action in ("inspect", "run"):
@@ -3201,6 +3212,21 @@ def main(argv=None) -> int:
         result = reader(Path(a.root).resolve())
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
+    if a.cmd == "deep-audit":
+        try:
+            root = Path(a.root).resolve()
+            if a.deep_cmd == "status":
+                result = deep_audit_status(root)
+                code = 0 if result["state"] == "READY_FOR_HUMAN_REVIEW" else 1
+            else:
+                result = execute_deep_audit(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root)
+                code = 0 if result["receipt"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
+            result["action_summary"] = "Read local deep-audit evidence." if a.deep_cmd == "status" else "Evaluated signed reports and saved a review receipt; no analyzer or repair ran."
+        except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
+            result = {"code": getattr(exc, "code", "E_DEEP_AUDIT"), "message": str(exc), "authority": "none"}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
+        return code
     if a.cmd == "runtime-audit":
         root = Path(a.root).resolve()
         try:

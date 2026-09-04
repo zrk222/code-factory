@@ -45,4 +45,21 @@ can recompute a self-hash. Linked directories and invalid receipts are INCOMPLET
 
 The only successful decision is READY_FOR_HUMAN_REVIEW, never approved. Evidence
 can establish that these checks passed, not that the candidate has no defects.
-CLI/MCP/Mission Control and graph/repair-loop integration remain subsequent slices.
+Graph/repair-loop lineage integration remains a subsequent slice.
+
+## IDE and agent access
+
+Use `factory deep-audit evaluate --plan <signed.json> --trust-root <trust.json>
+--trust-root-sha256 <sha256> --root <workspace>` to evaluate existing reports and
+write the local receipt. No scanner, repair or release runs. Required paths are
+explicit; JSON output is always produced. Exit 0 means ready for human review,
+1 means blocked, and 2 means invalid inputs or an execution error.
+
+Use `factory deep-audit status --root <workspace> --json` or the read-only MCP
+tool `factory.deep_audit_status` to inspect it. Status returns exit 1 for NOT_RUN
+or INCOMPLETE too: missing evidence is not a green audit. MCP accepts no arguments
+and cannot start an audit. The IDE playbook identifies when to use this tool.
+
+Mission Control includes the deep-audit evidence and marks BLOCKED/INCOMPLETE as
+blockers. A ready receipt requires human review, never approval. Its profile now
+measures six readers; these local timings do not establish an overall speedup.

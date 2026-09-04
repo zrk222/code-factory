@@ -1,0 +1,17 @@
+name: deep-audit-surfaces
+language: python
+modules:
+  - name: mcp
+    path: factoryline/mcp.py
+    functions:
+      - name: _deep_audit_status
+        args: [root, arguments]
+        returns: dict
+dependencies: []
+invariants:
+  - name: mcp_never_evaluates_or_repairs
+    forbid_pattern: "execute_deep_audit|subprocess\\.|requests\\.|httpx\\."
+    scopes:
+      - module: mcp
+        symbol: _deep_audit_status
+        max_lines: 20
