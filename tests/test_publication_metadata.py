@@ -289,6 +289,17 @@ def test_vscode_marketplace_workflow_seals_the_candidate_and_requires_a_scoped_s
     assert "--oidc" not in workflow
 
 
+def test_vscode_release_workflows_pin_the_audited_npm_client():
+    for workflow_name in (
+        "vscode-extension.yml",
+        "vscode-marketplace.yml",
+        "openvsx.yml",
+        "publish.yml",
+    ):
+        workflow = (ROOT / ".github" / "workflows" / workflow_name).read_text(encoding="utf-8")
+        assert "npm install --global npm@10.9.4" in workflow, workflow_name
+
+
 def test_hosted_release_and_editor_versions_are_declared():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     vscode = json.loads((ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8"))

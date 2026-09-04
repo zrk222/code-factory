@@ -69,6 +69,9 @@ jobs:
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
 
+      - name: Pin the audited npm client
+        run: npm install --global npm@10.9.4
+
       - name: Test and package VS Code extension
         run: |
           npm ci
