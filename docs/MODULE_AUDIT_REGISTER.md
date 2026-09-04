@@ -61,6 +61,16 @@ Do not interpret a passing existing test suite as a source audit of those engine
 - The first SSAT adoption found that ForgeLine expects only positional arguments in its signature list. The runner's keyword-only options remain implemented and tested; the SSAT positional signature was corrected. The initially missing smoke manifest was added and stub verification rerun successfully.
 - No native POSIX execution, malicious process-escape proof or publication is claimed.
 
+## Oracle projection follow-up
+
+- Final regression: `python -m pytest -q` — **1300 passed, 3 skipped**, 189.08 seconds; `git diff --check` passed.
+- The AppForge–Oracle authority projection now rejects non-object JSON and inputs over 1 MiB without aborting its snapshot. Before showing a READY receipt as current, it reconstructs that receipt from the original authority source and current sealed contract. Missing or changed sources are invalid, not current readiness.
+- Extracted the authoritative-group check without removing any of its checks. Scoped ForgeLine review, architecture gate, stub rejection and smoke passed. Maximum complexity in `appforge_oracle.py` is now 10, within the unchanged limit. This is a scope-specific result, not the six-module Oracle review result.
+- Targeted authority, submission-assurance and Graph Ops tests: 39 passed. New cases cover five non-object JSON values, two changed source paths and oversized input; the existing current-authority case still passes.
+- SpecLine strict and two requirement mutants passed, spec hash `7b0139efdf4cf85b`; full-file drift audit passed after documenting the unchanged pre-existing text bounds and JSON indentation in the repair specification.
+- Updated the original Oracle SSAT's positional signatures to match tested optional-output functions and the actual MCP `dispatch(request, root)` interface. Recorded existing local evidence-projection dependencies and the lazy license incident lookup. These edges confer no new execution authority; keyword-only arguments remain covered by behavioral tests.
+- Rechecking the original SSAT no longer reports signature/dependency mismatches. It still fails the bounded Graph Ops invariant scope, and wider QA still reports maximum complexity 47. No scope limit or complexity limit was raised to hide those failures.
+
 ## Operating procedure
 
 Governance: human_controlled. For each next module: inspect constructors and consumers, reproduce a gap, seal the requirement, add negative and boundary tests, repair, verify, and commit. Do not publish, change credentials or run external engines merely to complete this register.

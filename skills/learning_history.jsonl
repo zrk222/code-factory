@@ -14,3 +14,14 @@
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-09-04T02:58:50.626593+00:00"}
 {"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-04T02:58:50.626593+00:00"}
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-09-04T02:59:10.277225+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-04T03:12:12.391066+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-04T03:12:12.391066+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-04T03:12:12.392066+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-04T03:12:12.392066+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-04T03:12:12.392066+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-04T03:12:12.392066+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-04T03:12:12.393067+00:00"}
+{"code": "J_ARCH", "event": "promote", "from_count": 3, "rule": "J_ARCH E_INVARIANT_SCOPE graph_ops_is_only_a_projection: cannot resolve bounded symbol graph_ops.graph_ops_snapshot", "ts": "2026-09-04T03:12:12.491065+00:00"}
+{"code": "E_INVARIANT_SCOPE", "event": "promote", "from_count": 3, "rule": "E_INVARIANT_SCOPE graph_ops_is_only_a_projection: cannot resolve bounded symbol graph_ops.graph_ops_snapshot", "ts": "2026-09-04T03:12:12.491065+00:00"}
+{"code": "J_ARCH", "event": "probation", "reason": "never fired since promotion", "ts": "2026-09-04T03:12:12.498065+00:00"}
+{"code": "E_INVARIANT_SCOPE", "event": "probation", "reason": "never fired since promotion", "ts": "2026-09-04T03:12:12.499058+00:00"}

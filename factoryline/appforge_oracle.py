@@ -106,6 +106,15 @@ def _policy_sources(value: object, contract: dict[str, Any]) -> tuple[list[dict[
     return accepted, findings
 
 
+def _gate_findings(contract: dict[str, Any]) -> list[dict[str, str]]:
+    """Require authoritative obligations in every release-relevant rule group."""
+    findings = []
+    for group in ("requirements", "forbidden_behaviors", "gates", "negative_cases", "invariants", "tests"):
+        if not any(item.get("effect") in {"blocking", "release"} and item.get("origin") in AUTHORITY_ORIGINS for item in contract["rules"].get(group, [])):
+            findings.append({"code": "APPFORGE_ORACLE_GATE_UNAUTHORIZED", "detail": f"sealed contract has no human or trusted {group} gate"})
+    return findings
+
+
 def verify_appforge_oracle_authority(root: Path, authority_path: Path, *, candidate: dict[str, str] | None = None, out: Path | None = None) -> dict[str, Any]:
     """Verify that a candidate's AppForge gates have source-bound authority."""
     workspace = Path(root).resolve()
@@ -127,9 +136,7 @@ def verify_appforge_oracle_authority(root: Path, authority_path: Path, *, candid
     policies, policy_findings = _policy_sources(authority.get("policy_sources"), contract)
     findings.extend(policy_findings)
     if contract_result.get("ok"):
-        for group in ("requirements", "forbidden_behaviors", "gates", "negative_cases", "invariants", "tests"):
-            if not any(item.get("effect") in {"blocking", "release"} and item.get("origin") in AUTHORITY_ORIGINS for item in contract["rules"].get(group, [])):
-                findings.append({"code": "APPFORGE_ORACLE_GATE_UNAUTHORIZED", "detail": f"sealed contract has no human or trusted {group} gate"})
+        findings.extend(_gate_findings(contract))
     core: dict[str, Any] = {
         "schema": RECEIPT_SCHEMA,
         "marker": "APPFORGE_ORACLE_AUTHORITY_READY" if not findings else "APPFORGE_ORACLE_AUTHORITY_BLOCKED",
@@ -155,6 +162,25 @@ def verify_appforge_oracle_authority(root: Path, authority_path: Path, *, candid
     return receipt
 
 
+def _projected_authority(workspace: Path, path: Path) -> dict[str, Any]:
+    """Check shape, local digest and source freshness before exposing readiness."""
+    source = _local(workspace, path)
+    if source.stat().st_size > MAX_BYTES:
+        raise ValueError("authority receipt exceeds byte limit")
+    value = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("authority receipt must be an object")
+    supplied = value.get("receipt_sha256")
+    core = {key: item for key, item in value.items() if key != "receipt_sha256"}
+    if value.get("schema") != RECEIPT_SCHEMA or not isinstance(supplied, str) or _sha(core) != supplied:
+        raise ValueError("invalid authority receipt digest or schema")
+    if value.get("ok") is True or value.get("marker") == "APPFORGE_ORACLE_AUTHORITY_READY":
+        fresh = verify_appforge_oracle_authority(workspace, Path(value["authority_source"]))
+        if fresh != value or fresh.get("ok") is not True:
+            raise ValueError("authority receipt is not current")
+    return {"path": path.relative_to(workspace).as_posix(), "marker": value.get("marker"), "ok": value.get("ok"), "candidate": value.get("candidate"), "receipt_sha256": supplied}
+
+
 def appforge_oracle_projection(root: Path) -> dict[str, Any]:
     """Read hash-valid AppForge authority receipts without changing release state."""
     workspace = Path(root).resolve()
@@ -162,12 +188,7 @@ def appforge_oracle_projection(root: Path) -> dict[str, Any]:
     invalid: list[str] = []
     for path in sorted((workspace / ".factory" / "appforge").rglob("*oracle-authority*.json"))[:100]:
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-            supplied = value.pop("receipt_sha256", None)
-            if value.get("schema") == RECEIPT_SCHEMA and isinstance(supplied, str) and _sha(value) == supplied:
-                current.append({"path": path.relative_to(workspace).as_posix(), "marker": value.get("marker"), "ok": value.get("ok"), "candidate": value.get("candidate"), "receipt_sha256": supplied})
-            else:
-                invalid.append(path.relative_to(workspace).as_posix())
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+            current.append(_projected_authority(workspace, path))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError, KeyError, RevenueForgeError):
             invalid.append(path.relative_to(workspace).as_posix())
     return {"schema": "factory.appforge.oracle-authority-projection.v1", "marker": "APPFORGE_ORACLE_AUTHORITY_READ_ONLY", "current_count": len(current), "invalid_count": len(invalid), "latest": current[-1] if current else None, "invalid": invalid, "authority": {**ORACLE_AUTHORITY, "app_store_connect_write": False, "testflight_upload": False, "app_review_submit": False, "apple_approval_claim": False}, "claim_boundary": "Hash-verified local authority status only; not a policy certification, App Store Connect state, TestFlight state, submission, or Apple approval."}

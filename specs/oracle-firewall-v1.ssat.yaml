@@ -14,16 +14,16 @@ modules:
         args: [root, contract_path]
         returns: dict[str, Any]
       - name: compare_oracle_contracts
-        args: [root, prior_path, candidate_path]
+        args: [root, prior_path, candidate_path, out]
         returns: dict[str, Any]
       - name: compile_oracle_challenge
-        args: [root, contract_path]
+        args: [root, contract_path, out]
         returns: dict[str, Any]
       - name: verify_oracle_challenge_result
         args: [root, plan_path, result_path]
         returns: dict[str, Any]
       - name: record_oracle_incident
-        args: [root, agent, contract_path, drift_path]
+        args: [root, agent, contract_path, drift_path, out]
         returns: dict[str, Any]
   - name: agent_license
     path: factoryline/agent_license.py
@@ -41,7 +41,7 @@ modules:
     path: factoryline/appforge_oracle.py
     functions:
       - name: verify_appforge_oracle_authority
-        args: [root, authority_path, candidate]
+        args: [root, authority_path]
         returns: dict[str, Any]
   - name: codex_metadata
     path: factoryline/codex_metadata.py
@@ -52,20 +52,33 @@ modules:
   - name: mcp
     path: factoryline/mcp.py
     functions:
-      - name: handle_request
-        args: [root, request]
+      - name: dispatch
+        args: [request, root]
         returns: dict[str, Any]
 dependencies:
+  # Existing local evidence projections and lazy incident lookup; these edges
+  # do not confer execution or release authority. Keyword-only parameters are
+  # verified by tests, not by ForgeLine's positional-signature matcher.
   - from: oracle_firewall
     to: agent_license
+  - from: agent_license
+    to: oracle_firewall
   - from: graph_ops
     to: oracle_firewall
+  - from: graph_ops
+    to: agent_license
   - from: appforge_oracle
     to: oracle_firewall
   - from: mcp
     to: oracle_firewall
   - from: mcp
     to: codex_metadata
+  - from: mcp
+    to: graph_ops
+  - from: mcp
+    to: agent_license
+  - from: mcp
+    to: appforge_oracle
 invariants:
   - name: oracle_cannot_execute_or_authorize
     forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:execute|repair|approve|merge|deploy|publish|sign|send_message|credential|connector)\\s*\\("
