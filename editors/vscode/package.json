@@ -102,8 +102,8 @@
   },
   "scripts": {
     "compile": "tsc -p .",
-    "test": "npm run compile && node ./dist/test/receipt.test.js",
-    "audit": "npm audit --audit-level=high --fetch-retries=3 --fetch-timeout=30000 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=5000",
+    "test": "node --test scripts/audit-lockfile.test.mjs && npm run compile && node ./dist/test/receipt.test.js",
+    "audit": "node scripts/audit-lockfile.mjs",
     "package": "npm run test && vsce package --no-dependencies"
   },
   "overrides": {
