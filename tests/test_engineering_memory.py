@@ -114,3 +114,12 @@ def test_recall_does_not_write_database(tmp_path):
     before = store.path.read_bytes()
     recall(tmp_path)
     assert store.path.read_bytes() == before
+
+
+def test_malformed_audit_payload_has_typed_fail_closed_error(tmp_path):
+    store = setup(tmp_path)
+    with sqlite3.connect(store.path) as db:
+        db.execute("UPDATE continuity_audit_events SET payload_json='{'")
+    with pytest.raises(ContinuityError) as exc:
+        recall(tmp_path)
+    assert exc.value.code == "E_MEMORY_AUDIT"

@@ -23,3 +23,10 @@ def test_graph_ops_ui_shows_six_lanes_and_actionable_output():
     for label in ("Stateful workflows", "Tenant isolation", "Failure recovery", "Consumer compatibility", "Migration integrity", "Performance + memory"):
         assert label in html
     assert "Next repair:" in html
+
+
+def test_completed_runtime_assurance_routes_to_named_human_review(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("factoryline.mission_control_status.runtime_audit_status", lambda _root: {"state": "READY_FOR_HUMAN_REVIEW"})
+    mission = mission_control_status(tmp_path)
+    assert mission["state"] == "review_required"
+    assert mission["human_control_plane"]["review_required"] is True

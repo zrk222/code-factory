@@ -61,7 +61,7 @@ granting an editor or an agent authority to approve its own work.
 
 ## Verified release gate
 
-- 1,311 tests passed; 3 were skipped by their declared environment guards.
+- 1,319 tests passed; 3 were skipped by their declared environment guards.
 - The focused Oracle and metadata suite passed all 40 tests.
 - The Studio HTTP suite passed all 13 tests, including the rejected-body framing regression.
 - Oracle six-module QA passed with grade A, 91.6 composite, security 100, and maximum complexity 10.

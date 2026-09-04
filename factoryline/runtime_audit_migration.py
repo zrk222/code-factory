@@ -76,6 +76,7 @@ def evaluate_migration(artifact: dict[str, Any], config: dict[str, Any], *, engi
     if strategy != config["recovery_strategy"]:
         return lane_result("migration_integrity", "INCOMPLETE", "MIGRATION_RECOVERY_MISSING", "Recovery strategy must be rollback or forward_fix.")
     invariant_failures = sorted(item_id for item_id, digest in expected.items() if actual.get(item_id) != digest)
+    unexpected_invariants = sorted(set(actual) - set(expected))
     violations = require_int(artifact["integrity_violations"], "integrity_violations", minimum=0, maximum=1_000_000)
     catalog = require_unique_strings(artifact["catalog_objects"], "catalog_objects", minimum=1, maximum=256)
     invalid_catalog = require_unique_strings(artifact["invalid_catalog_objects"], "invalid_catalog_objects", minimum=0, maximum=256)
@@ -87,6 +88,7 @@ def evaluate_migration(artifact: dict[str, Any], config: dict[str, Any], *, engi
         "drift_detected": artifact["drift_detected"] is not False,
         "missing_invariants": missing,
         "invariant_failures": invariant_failures,
+        "unexpected_invariants": unexpected_invariants,
         "record_loss": losses,
         "integrity_violations": violations,
         "old_reader": readers.get("old"),
@@ -96,6 +98,6 @@ def evaluate_migration(artifact: dict[str, Any], config: dict[str, Any], *, engi
         "invalid_catalog_objects": invalid_catalog,
         "lock_wait_seconds": lock_wait,
     }
-    if after != expected_after or artifact["history_valid"] is not True or artifact["drift_detected"] is not False or missing or set(actual) - set(expected) or invariant_failures or losses or violations or readers.get("old") is not True or readers.get("new") is not True or recovery.get("exercised") is not True or recovery.get("succeeded") is not True or missing_catalog or invalid_catalog or lock_wait > config["max_lock_wait_seconds"]:
+    if after != expected_after or artifact["history_valid"] is not True or artifact["drift_detected"] is not False or missing or unexpected_invariants or invariant_failures or losses or violations or readers.get("old") is not True or readers.get("new") is not True or recovery.get("exercised") is not True or recovery.get("succeeded") is not True or missing_catalog or invalid_catalog or lock_wait > config["max_lock_wait_seconds"]:
         return lane_result("migration_integrity", "FAIL", "MIGRATION_INTEGRITY_VIOLATION", "The rehearsal found schema drift, data loss, broken readers, or unproven recovery.", details={"before_schema_sha256": before, **failures})
     return lane_result("migration_integrity", "PASS", "MIGRATION_REHEARSAL_HELD", "The isolated migration preserved approved data invariants, both readers and recovery.", details={"before_schema_sha256": before, "after_schema_sha256": after, "invariants": len(expected), "record_counts": len(counts), "recovery_strategy": strategy})

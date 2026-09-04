@@ -61,9 +61,11 @@ literals against this narrow spec, including the `8` in UTF-8. Its failure must
 not be represented as an assembly-wide clean audit. The focused new-module
 audit and regression suite are the appropriate evidence for this slice.
 
-Final local regression receipt (2026-09-03, Windows/Python 3.11):
+Historical slice-specific local regression receipt (2026-09-03, Windows/Python 3.11; superseded by the release gate):
 `python -m pytest -q` returned **1125 passed, 3 skipped in 171.22s**.
 `python -m compileall -q` passed for all three changed Python modules.
 `specline audit` on the Mission Control module passed all four functions.
 No remote publication, native IDE benchmark, or production speed claim follows
 from these local results.
+
+The final 0.46.2 release-gate regression later reported **1319 passed, 3 skipped**; that broader result does not rewrite this earlier slice receipt.

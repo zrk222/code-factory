@@ -73,7 +73,7 @@ lanes and Qodana/Sonar adapters remain unchanged. No publication is included.
 
 ## Local verification
 
-- Full regression: 1,169 passed, 3 skipped in 192.18 seconds.
+- Historical deep-audit-ingestion slice collection (Windows/Python 3.11, 2026-09-03): 1,169 passed, 3 skipped in 192.18 seconds; superseded by the 0.46.2 release-gate total of 1,319 passed, 3 skipped.
 - Final focused intake suite: 47 passed, including three tests added after the full-suite collection (signed intake integration, inherited severity and flow-order identity).
 - SpecLine: strict validation and 13 requirement mutations passed; three-module drift audit passed.
 - ForgeLine: ingestion-scoped review, architecture and smoke passed. Scaffold rejection occurred at import, so it is not claimed as semantic mutation coverage.

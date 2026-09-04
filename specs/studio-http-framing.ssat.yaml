@@ -9,7 +9,7 @@ modules:
         returns: tuple
 invariants:
   - name: server_binding_remains_local
-    forbid_pattern: "0\\.0\\.0\\.0|requests\\.|httpx\\.|\\b(?:publish|deploy)\\s*\\("
+    forbid_pattern: "0\\.0\\.0\\.0|['\"]{2}|['\"]::['\"]|INADDR_ANY|requests\\.|httpx\\.|\\b(?:publish|deploy)\\s*\\("
     scopes:
       - module: studio
         symbol: create_server

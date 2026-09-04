@@ -36,7 +36,10 @@ def local_file(root: Path, value: object) -> Path:
     candidate = root
     for part in relative_path(value).split("/"):
         candidate = candidate / part
-        info = candidate.lstat()
+        try:
+            info = candidate.lstat()
+        except OSError as exc:
+            raise RuntimeAuditError("E_SOURCE_MISSING", "regular file required") from exc
         if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
             raise RuntimeAuditError("E_PATH_ESCAPE", "linked evidence is not supported")
     candidate.resolve().relative_to(root)

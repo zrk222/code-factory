@@ -65,6 +65,8 @@ def test_consumer_contract_requires_deployment_matrix_and_rejects_pending_failur
     assert evaluate_compatibility(artifact, config, engine="pact_verifier", engine_version="2")["state"] == "PASS"
     bad = copy.deepcopy(artifact); bad["interactions"][0].update(actual_sha256=D2, mismatch_count=1, pending=True)
     assert evaluate_compatibility(bad, config, engine="pact_verifier", engine_version="2")["state"] == "FAIL"
+    pending_only = copy.deepcopy(artifact); pending_only["interactions"][0]["pending"] = True
+    assert evaluate_compatibility(pending_only, config, engine="pact_verifier", engine_version="2")["state"] == "FAIL"
 
 
 def test_migration_rehearsal_checks_catalog_locks_readers_and_recovery():
@@ -73,6 +75,9 @@ def test_migration_rehearsal_checks_catalog_locks_readers_and_recovery():
     assert evaluate_migration(artifact, config, engine="database_rehearsal", engine_version="1")["state"] == "PASS"
     bad = copy.deepcopy(artifact); bad["invalid_catalog_objects"] = ["orders_customer_idx"]
     assert evaluate_migration(bad, config, engine="database_rehearsal", engine_version="1")["finding"] == "MIGRATION_INTEGRITY_VIOLATION"
+    unexpected = copy.deepcopy(artifact); unexpected["invariants"].append({"id": "unapproved", "actual_sha256": D})
+    result = evaluate_migration(unexpected, config, engine="database_rehearsal", engine_version="1")
+    assert result["state"] == "FAIL" and result["details"]["unexpected_invariants"] == ["unapproved"]
 
 
 def test_performance_separates_authoritative_gates_retention_and_profiler_findings():

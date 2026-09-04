@@ -86,6 +86,12 @@ def test_studio_status_is_exact_and_loopback_only(tmp_path: Path):
     assert status["authority"]["can_deploy"] is False
     assert status["authority"]["can_inject_credentials"] is False
 
+    server, _token = create_server(tmp_path)
+    try:
+        assert server.server_address[0] == "127.0.0.1"
+    finally:
+        server.server_close()
+
 
 def test_dashboard_preserves_unknowns_and_exposes_control_state(tmp_path: Path):
     dashboard = studio_dashboard(tmp_path)
@@ -294,6 +300,8 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         assert token_failure["failure"]["point_of_failure"]
         assert token_failure["failure"]["next_action"]
 
+        connection.close()
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
         connection.request(
             "POST",
             "/api/create",

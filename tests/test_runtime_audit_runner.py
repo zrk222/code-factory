@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 
-from factoryline.runtime_audit_process import run_bounded_command
+from factoryline.runtime_audit_process import _stop, run_bounded_command
 from factoryline.runtime_audit_runner import run_runtime_audit_plan
 
 
@@ -17,7 +17,10 @@ def test_runner_uses_exact_argv_separate_artifacts_and_no_worktree_home(tmp_path
     assert execution["target"]["artifact"]["mode"] == "target"
     assert execution["known_bad"]["artifact"]["mode"] == "known_bad"
     assert execution["target"]["artifact_sha256"] != execution["known_bad"]["artifact_sha256"]
-    assert not (tmp_path/".runtime-home").exists()
+    homes = list((tmp_path / "out").rglob("runtime-home"))
+    assert len(homes) == 2
+    assert all(path.is_dir() and path.is_relative_to(tmp_path / "out") for path in homes)
+    assert not (tmp_path / "runtime-home").exists()
 
 
 def test_supervisor_times_out_and_hashes_output_without_retaining_it(tmp_path):
@@ -26,3 +29,13 @@ def test_supervisor_times_out_and_hashes_output_without_retaining_it(tmp_path):
     assert result["timed_out"] is True
     assert result["cleanup_confirmed"] is True
     assert "safe" not in json.dumps(result)
+
+
+def test_windows_cleanup_timeout_is_contained(monkeypatch):
+    class Child:
+        pid = 42
+        def poll(self): return None
+        def kill(self): return None
+    monkeypatch.setattr("factoryline.runtime_audit_process.os.name", "nt")
+    monkeypatch.setattr("factoryline.runtime_audit_process.subprocess.run", lambda *args, **kwargs: (_ for _ in ()).throw(__import__("subprocess").TimeoutExpired("taskkill", 10)))
+    assert _stop(Child()) is False

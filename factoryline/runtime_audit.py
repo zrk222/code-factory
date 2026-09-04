@@ -221,10 +221,10 @@ def execute_runtime_audit(
 def runtime_audit_status(root: Path | str) -> dict[str, Any]:
     """Return the newest stable self-hash-verified runtime audit receipt without executing any audit."""
     workspace = Path(root).resolve()
-    receipt_paths = sorted((workspace / ".factory" / "runtime-audits").glob("run-*/runtime-audit-receipt.json"), key=lambda path: path.stat().st_mtime_ns, reverse=True)
-    if not receipt_paths:
-        return {"schema": "factory.runtime-audit-status.v1", "state": "NOT_RUN", "lanes": [], "authority": "none"}
     try:
+        receipt_paths = sorted((workspace / ".factory" / "runtime-audits").glob("run-*/runtime-audit-receipt.json"), key=lambda path: path.stat().st_mtime_ns, reverse=True)
+        if not receipt_paths:
+            return {"schema": "factory.runtime-audit-status.v1", "state": "NOT_RUN", "lanes": [], "authority": "none"}
         receipt, _ = read_stable_json(receipt_paths[0])
         if receipt.get("schema") != "factory.runtime-audit-receipt.v1":
             raise ValueError("unknown receipt schema")

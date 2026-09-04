@@ -50,7 +50,10 @@ def _audit_events(connection, tenant):
         raise ContinuityError("E_MEMORY_LIMIT", "audit chain exceeds bound")
     previous, latest = "", {}
     for event in events:
-        payload = json.loads(event["payload_json"])
+        try:
+            payload = json.loads(event["payload_json"])
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise ContinuityError("E_MEMORY_AUDIT", "local audit payload is malformed") from exc
         body = {"schema": "factory.continuity.audit.v1", **{key: event[key] for key in ("sequence", "tenant_id", "action", "actor", "record_id", "previous_hash", "created_at")}, "payload": payload}
         if event["previous_hash"] != previous or _sha(body) != event["event_hash"]:
             raise ContinuityError("E_MEMORY_AUDIT", "local audit chain changed")

@@ -12,6 +12,7 @@ from factoryline.github_proof_review import (
     compile_github_proof_review,
     render_github_proof_review,
     write_github_proof_review_artifacts,
+    _valid_code_audits,
 )
 from factoryline.proof_reuse import record_proof
 
@@ -179,3 +180,14 @@ def test_coderabbit_positioning_is_complementary_and_never_claims_vendor_access(
     assert "not trying to replace the AI reviewer" in discovery
     assert "Use Code Factory with CodeRabbit or another AI reviewer" in readme
     assert "does not replace human review" in readme.replace("\n", " ")
+
+
+def test_code_audit_lane_rejects_minimal_self_hashed_receipt() -> None:
+    core = {
+        "schema": "factory.code-review-audits.v1",
+        "state": "no_structural_findings",
+        "authority": {"execution": False, "approval": False, "publication": False, "deployment": False},
+    }
+    forged = {**core, "audit_sha256": __import__("hashlib").sha256(json.dumps(core, sort_keys=True).encode()).hexdigest()}
+    with pytest.raises(GitHubProofReviewError):
+        _valid_code_audits(forged)

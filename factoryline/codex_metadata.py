@@ -421,15 +421,16 @@ def _audit_metadata_file(workspace: Path, path: Path) -> tuple[dict[str, Any] | 
     entry, raw, findings = _read_metadata_bytes(path, relative)
     if entry is None or raw is None:
         return entry, findings
+    suffix = path.suffix.lower()
+    if suffix not in SUPPORTED_SUFFIXES:
+        findings.append(_finding("E_METADATA_FORMAT_UNSUPPORTED", relative, "file", f"unsupported metadata format: {suffix or '<none>'}"))
+        return entry, findings
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         findings.append(_finding("E_METADATA_INPUT_INVALID", relative, "file", f"metadata is not UTF-8: {exc}"))
         return entry, findings
-    suffix = path.suffix.lower()
-    if suffix not in SUPPORTED_SUFFIXES:
-        findings.append(_finding("E_METADATA_FORMAT_UNSUPPORTED", relative, "file", f"unsupported metadata format: {suffix or '<none>'}"))
-    elif suffix == ".json":
+    if suffix == ".json":
         findings.extend(_audit_json(workspace, relative, text, entry))
     elif suffix == ".jsonl":
         findings.extend(_audit_jsonl(workspace, relative, text, entry))

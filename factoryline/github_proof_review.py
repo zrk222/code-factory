@@ -122,10 +122,62 @@ def _valid_code_audits(value: object) -> None:
         return
     if not isinstance(value, dict) or value.get("schema") != "factory.code-review-audits.v1":
         _reject("the code-audit lane has an invalid schema")
+    expected_keys = {
+        "schema", "tool", "state", "policy", "sources", "results", "findings",
+        "unconfigured_tools", "governance", "authority", "limits", "audit_sha256",
+    }
+    if set(value) != expected_keys:
+        _reject("the code-audit lane is incomplete or contains unsupported fields")
     if value.get("authority") != {"execution": False, "approval": False, "publication": False, "deployment": False}:
         _reject("the code-audit lane cannot grant authority")
-    if not isinstance(value.get("state"), str) or value["state"] not in {"incomplete", "findings", "no_structural_findings"}:
+    if value.get("tool") not in {"all", "patterns", "guard-paths"} or value.get("governance") != "human_controlled":
+        _reject("the code-audit lane has an invalid tool or governance boundary")
+    states = {"incomplete", "findings", "no_structural_findings"}
+    if not isinstance(value.get("state"), str) or value["state"] not in states:
         _reject("the code-audit lane has an invalid state")
+    def valid_binding(binding: object) -> bool:
+        return (
+            isinstance(binding, dict)
+            and set(binding) == {"path", "sha256", "bytes"}
+            and isinstance(binding["path"], str) and bool(binding["path"])
+            and isinstance(binding["sha256"], str) and len(binding["sha256"]) == 64
+            and all(char in "0123456789abcdef" for char in binding["sha256"])
+            and isinstance(binding["bytes"], int) and 0 < binding["bytes"] <= 1_000_000
+        )
+    if not valid_binding(value.get("policy")):
+        _reject("the code-audit policy binding is invalid")
+    sources = value.get("sources")
+    if not isinstance(sources, list) or not 1 <= len(sources) <= 64 or not all(valid_binding(item) for item in sources):
+        _reject("the code-audit source bindings are invalid")
+    if len({item["path"] for item in sources}) != len(sources):
+        _reject("the code-audit source bindings must be unique")
+    results = value.get("results")
+    if not isinstance(results, list) or not results or len(results) > 128:
+        _reject("the code-audit results are missing or exceed the bound")
+    for result in results:
+        if (
+            not isinstance(result, dict)
+            or not isinstance(result.get("rule_id"), str) or not result["rule_id"]
+            or result.get("tool") not in {"patterns", "guard-paths"}
+            or result.get("state") not in states
+            or not isinstance(result.get("findings"), list)
+        ):
+            _reject("the code-audit result shape is invalid")
+    findings = value.get("findings")
+    if not isinstance(findings, list) or any(not isinstance(item, dict) for item in findings):
+        _reject("the code-audit findings are invalid")
+    flattened = [item for result in results for item in result["findings"]]
+    if findings != flattened:
+        _reject("the code-audit finding summary does not match inspected results")
+    missing_tools = value.get("unconfigured_tools")
+    if not isinstance(missing_tools, list) or any(item not in {"patterns", "guard-paths"} for item in missing_tools):
+        _reject("the code-audit unconfigured-tool summary is invalid")
+    limits = value.get("limits")
+    if not isinstance(limits, list) or not limits or not all(isinstance(item, str) and item for item in limits):
+        _reject("the code-audit scope limits are invalid")
+    derived_state = "incomplete" if missing_tools or any(result["state"] == "incomplete" for result in results) else "findings" if findings else "no_structural_findings"
+    if value["state"] != derived_state:
+        _reject("the code-audit state contradicts its inspected evidence")
     core = {key: item for key, item in value.items() if key != "audit_sha256"}
     if value.get("audit_sha256") != sha256(json.dumps(core, sort_keys=True).encode()).hexdigest():
         _reject("the code-audit SHA-256 does not match its facts")

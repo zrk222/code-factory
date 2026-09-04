@@ -11,7 +11,7 @@
 
 | Check | Observed result |
 |---|---|
-| `python -m pytest -q` | 1094 passed, 3 skipped in 192.44 seconds |
+| `python -m pytest -q` | Historical full collection at the implementation-audit slice revision on 2026-09-03: 1094 passed, 3 skipped in 192.44 seconds; superseded by the 0.46.2 release-gate total of 1319 passed, 3 skipped |
 | `python -m pytest -q tests/test_review_audits.py` | 46 passed; includes three additional direct handler tests added after full-suite collection |
 | GitHub review/dossier, public docstrings and audit regression subset | 59 passed before the three added handler tests |
 | SpecLine strict, code-review-audits-v1 | No warnings |

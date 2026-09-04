@@ -12,11 +12,15 @@ from pathlib import Path
 MAX_OUTPUT = 8 * 1024 * 1024
 
 
-def _stop(child: subprocess.Popen) -> None:
+def _stop(child: subprocess.Popen) -> bool:
+    cleanup_confirmed = True
     if os.name == "nt":
         # Only the process tree created by this invocation is addressed.
-        subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
+        try:
+            subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
+        except subprocess.TimeoutExpired:
+            cleanup_confirmed = False
     else:
         try:
             os.killpg(child.pid, signal.SIGKILL)
@@ -24,6 +28,7 @@ def _stop(child: subprocess.Popen) -> None:
             pass
     if child.poll() is None:
         child.kill()
+    return cleanup_confirmed
 
 
 def run_bounded_command(argv: list[str], cwd: Path, timeout_seconds: int, scratch: Path) -> dict:
@@ -67,16 +72,21 @@ def run_bounded_command(argv: list[str], cwd: Path, timeout_seconds: int, scratc
         time.sleep(0.01)
     facts["timed_out"] = child.poll() is None and time.monotonic() >= deadline
     facts["output_limit_exceeded"] = overflow.is_set()
+    cleanup_confirmed = True
     if child.poll() is None:
+        cleanup_confirmed = _stop(child)
+    try:
+        child.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        cleanup_confirmed = False
         _stop(child)
-    child.wait(timeout=10)
     for thread in threads:
         thread.join(timeout=0.5)
     if any(thread.is_alive() for thread in threads):
-        _stop(child)
+        cleanup_confirmed = _stop(child) and cleanup_confirmed
         for thread in threads:
             thread.join(timeout=1)
-    facts["cleanup_confirmed"] = not any(thread.is_alive() for thread in threads)
+    facts["cleanup_confirmed"] = cleanup_confirmed and child.poll() is not None and not any(thread.is_alive() for thread in threads)
     facts["exit_code"] = child.returncode
     for name in ("stdout", "stderr"):
         digest, size = streams.get(name, (hashlib.sha256(b"").hexdigest(), 0))

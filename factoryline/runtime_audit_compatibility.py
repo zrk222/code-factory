@@ -55,7 +55,7 @@ def evaluate_compatibility(artifact: dict[str, Any], config: dict[str, Any], *, 
         require_digest(actual, "actual_sha256")
         mismatch_count = require_int(item["mismatch_count"], "mismatch_count", minimum=0, maximum=1000000)
         require_bool(item["pending"], "pending")
-        if item["consumer_id"] != contract["consumer_id"] or item["consumer_version"] != contract["consumer_version"] or actual != contract["expected_sha256"] or item["provider_state_prepared"] is not True or item["request_exercised"] is not True or mismatch_count:
+        if item["consumer_id"] != contract["consumer_id"] or item["consumer_version"] != contract["consumer_version"] or actual != contract["expected_sha256"] or item["provider_state_prepared"] is not True or item["request_exercised"] is not True or mismatch_count or item["pending"] is not False:
             failures.append({"id": item_id, "consumer_id": item.get("consumer_id"), "consumer_version": item.get("consumer_version"), "response_match": actual == contract["expected_sha256"], "provider_state_prepared": item.get("provider_state_prepared"), "request_exercised": item.get("request_exercised"), "mismatch_count": mismatch_count, "pending": item["pending"]})
     matrix = artifact["deployment_matrix"]
     if not isinstance(matrix, dict):

@@ -101,6 +101,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
     human_required = (
         blocked
         or evidence["deep_audit"].get("state") == "READY_FOR_HUMAN_REVIEW"
+        or runtime.get("state") == "READY_FOR_HUMAN_REVIEW"
         or int(lifecycle.get("review_required_count", 0)) > 0
         or int(repairs.get("receipt_count", 0)) > 0
     )

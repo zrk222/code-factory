@@ -8,7 +8,7 @@ SpecFactor-target: 0.75-2.5
 - When `REQ_SHARE` builds 1 Graph Ops snapshot, it shall read each of the 4 shared Oracle, operations, lifecycle and repair projections exactly 1 time and use those observations for Mission Control and graph rendering. [R10]
 - When `REQ_FRESH` starts a second snapshot, it shall return freshly read values from all 4 projections with zero global or persistent caches. [R20]
 - When `REQ_AUTH` renders shared evidence, it shall preserve all existing blocker decisions and grant zero execution, approval or publication authority. [R30]
-- When `REQ_PROFILE` profiles Mission Control, it shall emit 5 named elapsed-time spans, 5 canonical output SHA-256 fingerprints, 1 aggregate evidence digest and zero raw evidence bodies; timing shall not participate in evidence identity. [R40]
+- When `REQ_PROFILE` profiles Mission Control, it shall emit 6 named elapsed-time spans, 6 canonical output SHA-256 fingerprints, 1 aggregate evidence digest and zero raw evidence bodies; timing shall not participate in evidence identity. [R40]
 
 ## Acceptance criteria (Gherkin)
 ```gherkin
@@ -23,7 +23,7 @@ Scenario: Fresh request observes changed evidence
   Then REQ_FRESH returns all 4 projections read again and the blocker remains visible
   And REQ_AUTH returns zero execution, approval or publication authority
 Scenario: Profiling keeps timing separate from identity
-  Given REQ_PROFILE observes 5 unchanged projection outputs
+  Given REQ_PROFILE observes 6 unchanged projection outputs
   When 2 profiling requests have different elapsed times
   Then REQ_PROFILE returns equal evidence fingerprints and no raw evidence bodies
 ```

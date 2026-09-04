@@ -57,3 +57,17 @@ def test_status_rejects_tampered_receipt(tmp_path):
     payload["decision"] = "BLOCKED"
     (run/"runtime-audit-receipt.json").write_text(json.dumps(payload), encoding="utf-8")
     assert runtime_audit_status(tmp_path)["state"] == "INCOMPLETE"
+
+
+def test_status_contains_receipt_stat_race(tmp_path, monkeypatch):
+    run = tmp_path / ".factory/runtime-audits/run-x"
+    run.mkdir(parents=True)
+    receipt = run / "runtime-audit-receipt.json"
+    receipt.write_text("{}", encoding="utf-8")
+    original = Path.stat
+    def raced(path, *args, **kwargs):
+        if path == receipt:
+            raise FileNotFoundError(path)
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "stat", raced)
+    assert runtime_audit_status(tmp_path)["state"] == "INCOMPLETE"
