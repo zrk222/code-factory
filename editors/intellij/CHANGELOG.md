@@ -1,5 +1,22 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.9.2 - 2026-09-04
+
+- Make First Proof the front door: challenge whether an AI-generated test can
+  actually fail before a green build becomes trust.
+- Connect sealed intent, forbidden outcomes, Oracle Firewall rules,
+  independent challenges, exact diff scope, and hash-bound evidence in the
+  reviewable Graph Ops path.
+- Surface the six coordinated audit lanes for stateful behavior, tenant
+  isolation, failure and recovery, API compatibility, migration integrity,
+  and performance or resource regression.
+- Give IDE and A2A agents the same supervised playbook, while leaving scope,
+  policy, exceptions, apply, merge, and release authority with the human.
+- Add cumulative enterprise assurance, session trace, evidence-memory,
+  AppForge mobile delivery, and provider-neutral SaaS proof visibility.
+- Fail closed when evidence is missing, stale, reordered, duplicated, altered,
+  or bound to a different approved contract.
+
 ## 0.9.1 - 2026-09-02
 
 - Harden the local Oracle Firewall facts shown in Unified Graph Ops. Semantic
