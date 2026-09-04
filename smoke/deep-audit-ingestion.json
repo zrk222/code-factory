@@ -1,0 +1,11 @@
+{
+  "checks": [{
+    "name": "strict_ingestion_rejects_duplicate_evidence",
+    "kind": "python",
+    "run": "from factoryline.deep_audit_io import strict_json\nfrom factoryline.runtime_audit_common import RuntimeAuditError\nassert strict_json(b'{\"a\":1}') == {'a':1}\ntry:\n    strict_json(b'{\"a\":1,\"a\":2}')\nexcept RuntimeAuditError as exc:\n    assert exc.code == 'E_DUPLICATE_FIELD'\nelse:\n    raise AssertionError('duplicate evidence accepted')\nprint('DEEP_INGESTION_PASS')\n",
+    "expect_exit": 0,
+    "expect_stdout": "DEEP_INGESTION_PASS",
+    "timeout_s": 30,
+    "must_fail_on_stub": true
+  }]
+}

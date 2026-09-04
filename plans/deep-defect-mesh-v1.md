@@ -10,9 +10,9 @@ Architect verdict: PASS
 5. Verify positive, negative, corruption, UI-surface, package, and full-regression paths.
 
 ## Tasks
-- [ ] T1 | slice=specs | files=specs/deep-defect-mesh-v1.md,specs/deep-defect-mesh-v1.ssat.yaml | verify=`specline strict deep-defect-mesh-v1 --root .` | Seal the exact contract and atomic implementation plan.
-- [ ] T2 | slice=factoryline | files=factoryline/deep_audit_contract.py | verify=`python -m pytest -q tests/test_deep_audit_contract.py` | Implement DSSE plan, source, trust, analyzer, rule, and canary validation.
-- [ ] T3 | slice=factoryline | files=factoryline/deep_audit_sarif.py | verify=`python -m pytest -q tests/test_deep_audit_sarif.py` | Implement strict bounded SARIF normalization including nested traces and suppressions.
+- [x] T1 | slice=specs | files=specs/deep-defect-mesh-v1.md,specs/deep-defect-mesh-v1.ssat.yaml | verify=`specline strict deep-defect-mesh-v1 --root .` | Seal the exact contract and atomic implementation plan.
+- [x] T2 | slice=factoryline | files=factoryline/deep_audit_contract.py,factoryline/deep_audit_io.py | verify=`python -m pytest -q tests/test_deep_audit_contract.py` | Implement DSSE plan, source, trust, analyzer, rule, and canary validation.
+- [x] T3 | slice=factoryline | files=factoryline/deep_audit_sarif.py | verify=`python -m pytest -q tests/test_deep_audit_sarif.py` | Implement strict bounded SARIF normalization including nested traces and suppressions.
 - [ ] T4 | slice=factoryline | files=factoryline/deep_audit.py | verify=`python -m pytest -q tests/test_deep_audit.py` | Implement decisions, clusters, action queue, receipt hashing, and status verification.
 - [ ] T5 | slice=factoryline | files=factoryline/cli.py,factoryline/mcp.py,factoryline/mission_control_status.py,factoryline/ide_playbook.py | verify=`python -m pytest -q tests/test_deep_audit_surfaces.py tests/test_mcp.py tests/test_ide_playbook.py` | Wire CLI, MCP, Mission Control, and IDE guidance.
 - [ ] T6 | slice=docs | files=docs/DEEP_DEFECT_MESH.md,docs/DEEP_DEFECT_RESEARCH.md,docs/RELEASE_NOTES_0.46.2.md | verify=`python -m pytest -q tests/test_public_docstrings.py` | Document engines, operator flow, action output, research provenance, and claim limits.

@@ -568,3 +568,9 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-03 18:18] GATE plan assembly-read-efficiency approver=agent_prepared_for_user_review tasks=3 sha=8d6c9f7132b9ec36
 - [2026-09-03 18:24] GATE spec assembly-read-efficiency approver=agent_prepared_for_user_review strict=True sha=3786481a606ced37
 - [2026-09-03 18:24] GATE plan assembly-read-efficiency approver=agent_prepared_for_user_review tasks=3 sha=3786481a606ced37
+- [2026-09-04 01:17] GATE spec deep-defect-mesh-v1 approver=agent_prepared_for_user_review strict=True sha=3c3ee4e2c16c68e7
+- [2026-09-04 01:17] GATE plan deep-defect-mesh-v1 approver=agent_prepared_for_user_review tasks=12 sha=3c3ee4e2c16c68e7
+- [2026-09-04 01:26] GATE spec deep-defect-mesh-v1 approver=agent_prepared_for_user_review strict=True sha=2f2d4bcea7baa3d0
+- [2026-09-04 01:26] GATE plan deep-defect-mesh-v1 approver=agent_prepared_for_user_review tasks=12 sha=2f2d4bcea7baa3d0
+- [2026-09-04 01:30] GATE spec deep-defect-mesh-v1 approver=agent_prepared_for_user_review strict=True sha=c487fddb696c8daf
+- [2026-09-04 01:30] GATE plan deep-defect-mesh-v1 approver=agent_prepared_for_user_review tasks=12 sha=c487fddb696c8daf
