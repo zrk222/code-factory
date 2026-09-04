@@ -15,7 +15,7 @@ Scope of this pass: six runtime evaluators, their shared receipt projection, and
 | Performance/memory | Equivalent workload/environment, thresholds, cooldown, loadgen saturation, leak observations | Aggregate windows cannot prove absence of long-tail or long-duration leaks |
 | Runtime status | Self-hash and lane/decision/authority consistency | Unsigned local content is not authenticated; status does not rerun the audit |
 | Proof reuse | Current file hash and proof key path; malformed row handling | Full hostile filesystem/race audit remains pending |
-| Assembly | Initial process runner, attribution and meter parsing inspected | Output buffering and process-tree lifecycle need a dedicated bounded-runner review |
+| Assembly | CLI calls now use bounded capture, finite cleanup waits, timeout/cancellation checks and failing cleanup status | OS cleanup is best effort, not process isolation; Windows exited-parent descendants and POSIX native execution require broader validation |
 | Oracle | Contract/source verification and weakening comparison inspected | Complete constructor/verifier parity and all rule-edge cases remain pending |
 | Oracle rule verification follow-up | Reuses constructor rule validation; rejects missing groups, advisory-only required groups, empty/duplicate sources and missing original-intent binding | Local hashes are not independent signatures; scope, exception and challenge paths still need further adversarial review |
 | AppForge capture reconciliation | Reconstructs integrity receipt from current original candidate and contract before accepting capture mappings | Checks file identity, not pixels, native execution, authenticity of declared approval or store approval |
@@ -31,7 +31,7 @@ Scope of this pass: six runtime evaluators, their shared receipt projection, and
 
 ## Open findings: release clearance withheld
 
-- **Assembly resource/lifecycle risk:** `_run_cli` buffers stdout/stderr without a size bound, and final `communicate()` calls after kill have no timeout. Descendant processes holding pipes require a process-tree termination regression test. Do not treat the existing 300-second timeout as a proven hard bound.
+- **Assembly resource/lifecycle remediation:** `_run_cli` now delegates to `assembly_process.run_cli`, limiting retained stdout and stderr to 4 MiB each, using a 300-second execution deadline and finite OS cleanup/reader waits. Overflow, cancellation, timeout, read failure and unconfirmed cleanup cannot pass. Windows inherited-pipe behavior has a regression test. Termination remains best effort: this is not a sandbox, and malicious escaped descendants are not proven absent.
 - **Stale architecture contract:** `specs/oracle-firewall-v1.ssat.yaml` fails native adoption/review. Reported mismatches include optional output arguments, `appforge_oracle` signature drift, an absent declared MCP `handle_request`, undeclared module dependencies, and an unresolved bounded Graph Ops invariant scope. These require a reviewed contract/source reconciliation, not automatic acceptance of whichever implementation exists.
 - **Complexity gate:** Forge review reports grade C and maximum complexity 47 against the hard limit 10 across the Oracle contract's six-module scope. No limit was raised and no release gate was bypassed.
 - **Spec drift tooling:** full-file SpecLine audit reports 25/48 passing units against the narrow new spec. Findings include existing values and numeric fragments in `utf-8` and `ipad_13`; this result needs precise scope/tool interpretation, not an invented claim of new behavioral drift or blanket suppression.
@@ -50,6 +50,16 @@ The repair plan remains the ordered sequence below. This audit has not establish
 
 The assembly registry contains four external engine adapters; those engines are not implemented entirely in this checkout.
 Do not interpret a passing existing test suite as a source audit of those engines or every CF file.
+
+## Assembly bounds verification
+
+- Final regression: `python -m pytest -q` — **1292 passed, 3 skipped**, 182.31 seconds.
+- `python -m pytest -q tests/test_assembly_process.py tests/test_assembly.py`: 17 passed, including real Windows subprocesses, both stream overflows, cancellation, deadline expiry, invalid deadlines, nonzero exit, malformed UTF-8, missing CLI, heartbeat failure and inherited pipes.
+- SpecLine strict and three requirement mutants passed. Scoped drift audit: 5/5 functions passed.
+- ForgeLine architecture and scoped QA passed; maximum complexity 9 against the unchanged hard limit 10. Empty-stub verification rejected the scaffold (one smoke check).
+- Overall ForgeLine review remains blocked by `A_SUBPROC`. Its installed adversary implementation uses an unconditional substring check for `subprocess`; no exception was created or scanner disabled. This is a security-review flag, not evidence of shell injection. The runner uses argv, no shell and closed stdin.
+- The first SSAT adoption found that ForgeLine expects only positional arguments in its signature list. The runner's keyword-only options remain implemented and tested; the SSAT positional signature was corrected. The initially missing smoke manifest was added and stub verification rerun successfully.
+- No native POSIX execution, malicious process-escape proof or publication is claimed.
 
 ## Operating procedure
 

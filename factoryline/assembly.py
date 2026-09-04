@@ -7,11 +7,9 @@ makes the factory portable: any IDE/agent/OS that can run a subprocess can drive
 """
 from __future__ import annotations
 import shutil
-import subprocess
 import json
 import hashlib
 import re
-import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +20,7 @@ from .meter import MeterLog, StageTiming, stopwatch
 from .attribution import Attribution, FailureClass
 from .agent_contract import AgentContractError, validate_agent_contract
 from .live_activity import LiveActivity
+from .assembly_process import run_cli
 
 
 @dataclass
@@ -44,29 +43,7 @@ def detect() -> list[ModuleStatus]:
 
 
 def _run_cli(cli: str, args: list[str], cwd: Path, *, heartbeat: Callable[[], bool] | None = None) -> tuple[bool, str]:
-    try:
-        proc = subprocess.Popen([cli, *args], cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        started = time.monotonic()
-        while True:
-            try:
-                stdout, stderr = proc.communicate(timeout=0.25)
-                # Parse structured evidence before truncating anything for the receipt.
-                return proc.returncode == 0, stdout + stderr
-            except subprocess.TimeoutExpired:
-                if heartbeat is not None and heartbeat() is False:
-                    proc.terminate()
-                    try:
-                        stdout, stderr = proc.communicate(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        stdout, stderr = proc.communicate()
-                    return False, "factory assembly stop requested through the local Studio\n" + stdout + stderr
-                if time.monotonic() - started >= 300:
-                    proc.kill()
-                    stdout, stderr = proc.communicate()
-                    return False, "factory stage timed out\n" + stdout + stderr
-    except FileNotFoundError:
-        return False, f"{cli} not installed"
+    return run_cli(cli, args, cwd, heartbeat=heartbeat)
 
 
 def _attribution_from_output(output: str) -> dict | None:

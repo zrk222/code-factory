@@ -1,0 +1,1 @@
+{"checks":[{"name":"bounded_cli_behavior","kind":"python","run":"import pytest\nassert pytest.main(['-q','tests/test_assembly_process.py']) == 0\nprint('PROCESS_BOUNDS_PASS')","expect_exit":0,"expect_stdout":"PROCESS_BOUNDS_PASS","timeout_s":60,"must_fail_on_stub":true,"covers":["REQ_OUTPUT","REQ_STOP","REQ_EXIT"]}]}
