@@ -20,6 +20,11 @@ def test_runner_uses_exact_argv_separate_artifacts_and_no_worktree_home(tmp_path
     homes = list((tmp_path / "out").rglob("runtime-home"))
     assert len(homes) == 2
     assert all(path.is_dir() and path.is_relative_to(tmp_path / "out") for path in homes)
+    target_artifact = Path(result["run_root"]) / "lane" / "target" / "artifact.json"
+    known_bad_artifact = Path(result["run_root"]) / "lane" / "known_bad" / "artifact.json"
+    assert target_artifact.is_file()
+    assert known_bad_artifact.is_file()
+    assert target_artifact != known_bad_artifact
     assert not (tmp_path / "runtime-home").exists()
 
 
@@ -38,4 +43,16 @@ def test_windows_cleanup_timeout_is_contained(monkeypatch):
         def kill(self): return None
     monkeypatch.setattr("factoryline.runtime_audit_process.os.name", "nt")
     monkeypatch.setattr("factoryline.runtime_audit_process.subprocess.run", lambda *args, **kwargs: (_ for _ in ()).throw(__import__("subprocess").TimeoutExpired("taskkill", 10)))
+    assert _stop(Child()) is False
+
+
+def test_windows_cleanup_failure_is_not_reported_as_confirmed(monkeypatch):
+    class Child:
+        pid = 42
+        def poll(self): return None
+        def kill(self): return None
+    class FailedTaskkill:
+        returncode = 1
+    monkeypatch.setattr("factoryline.runtime_audit_process.os.name", "nt")
+    monkeypatch.setattr("factoryline.runtime_audit_process.subprocess.run", lambda *args, **kwargs: FailedTaskkill())
     assert _stop(Child()) is False

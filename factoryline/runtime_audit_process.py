@@ -17,8 +17,9 @@ def _stop(child: subprocess.Popen) -> bool:
     if os.name == "nt":
         # Only the process tree created by this invocation is addressed.
         try:
-            subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
+            stopped = subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
+            cleanup_confirmed = stopped.returncode == 0
         except subprocess.TimeoutExpired:
             cleanup_confirmed = False
     else:
