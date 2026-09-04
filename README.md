@@ -64,7 +64,7 @@ does not replace the other audit lanes or promise store approval.
 
 ```powershell
 pip install factoryline-code-factory
-factory guide --root .
+factory guide
 ```
 
 You receive a traceable answer: **what was checked, what failed, why it matters,
