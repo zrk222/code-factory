@@ -1,7 +1,7 @@
 {
   "schema": "factoryline.intent-envelope.v1",
   "feature": "adoption-simplification",
-  "sealed_hash": "ae1f1dbec625cd326acde41f47f2c237e7030ac8dc49af8f4251490cffd1c779",
+  "sealed_hash": "b2bc5e4be26432c7f104b55477a186de59351cc5b7252583edc0d35a68bea52f",
   "coherence_score": 100,
   "source": "specs/adoption-simplification.md",
   "intent": "Make Code Factory independently inspectable through three plain-language adoption journeys whose claims are bounded by executable evidence and explicit maturity labels.",

@@ -87,6 +87,7 @@ def test_intent_envelope_is_bound_to_the_approved_spec_and_has_an_obligation():
     envelope = json.loads((root / "envelopes" / "adoption-simplification.json").read_text(encoding="utf-8"))
 
     assert envelope["source"] == "specs/adoption-simplification.md"
-    assert envelope["sealed_hash"] == hashlib.sha256(spec.read_bytes()).hexdigest()
+    canonical_spec = spec.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
+    assert envelope["sealed_hash"] == hashlib.sha256(canonical_spec).hexdigest()
     assert envelope["coherence_score"] == 100
     assert envelope["assumptions"]
