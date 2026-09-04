@@ -50,7 +50,7 @@ def test_cross_lane_scenario_mismatch_is_incomplete(monkeypatch, tmp_path):
 
 def test_status_rejects_tampered_receipt(tmp_path):
     run = tmp_path/".factory/runtime-audits/run-x"; run.mkdir(parents=True)
-    payload = {"schema": "factory.runtime-audit-receipt.v1", "decision": "READY_FOR_HUMAN_REVIEW", "lanes": []}
+    payload = {"schema": "factory.runtime-audit-receipt.v1", "decision": "READY_FOR_HUMAN_REVIEW", "authority": "none", "release_approval": False, "lanes": [{"id": kind, "lane": kind, "state": "PASS"} for kind in LANES]}
     payload["receipt_sha256"] = sha256_bytes(canonical_bytes(payload))
     (run/"runtime-audit-receipt.json").write_text(json.dumps(payload), encoding="utf-8")
     assert runtime_audit_status(tmp_path)["state"] == "READY_FOR_HUMAN_REVIEW"

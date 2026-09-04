@@ -1,0 +1,17 @@
+name: module-audit-readiness
+language: python
+modules:
+  - name: runtime_audit_integrity
+    path: factoryline/runtime_audit_integrity.py
+    functions:
+      - name: validate_receipt_decision
+        args: [receipt]
+        returns: null
+dependencies: []
+invariants:
+  - name: validation_is_read_only
+    forbid_pattern: "subprocess\\.|write_text|write_bytes"
+    scopes:
+      - module: runtime_audit_integrity
+        symbol: validate_receipt_decision
+        max_lines: 20

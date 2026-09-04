@@ -14,7 +14,7 @@ from .runtime_audit_recovery import evaluate_recovery
 from .runtime_audit_runner import run_runtime_audit_plan
 from .runtime_audit_stateful import evaluate_stateful
 from .runtime_audit_tenant import evaluate_tenant
-from .runtime_audit_integrity import index_executions, repair_guidance
+from .runtime_audit_integrity import index_executions, repair_guidance, validate_receipt_decision
 
 Evaluator = Callable[..., dict[str, Any]]
 EVALUATORS: dict[str, Evaluator] = {
@@ -233,6 +233,7 @@ def runtime_audit_status(root: Path | str) -> dict[str, Any]:
         receipt["receipt_sha256"] = claimed
         if claimed != actual:
             raise ValueError("receipt digest mismatch")
+        validate_receipt_decision(receipt)
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
         return {"schema": "factory.runtime-audit-status.v1", "state": "INCOMPLETE", "lanes": [], "authority": "none"}
     return {"schema": "factory.runtime-audit-status.v1", "state": receipt.get("decision", "INCOMPLETE"), "receipt_path": str(receipt_paths[0]), "receipt_sha256": receipt.get("receipt_sha256"), "lanes": receipt.get("lanes", []), "authority": "none"}

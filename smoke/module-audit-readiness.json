@@ -1,0 +1,1 @@
+{"checks":[{"name":"receipt_readiness","kind":"python","run":"import pytest\nassert pytest.main(['-q','tests/test_runtime_receipt_readiness.py','tests/test_runtime_audit.py','tests/test_proof_reuse.py']) == 0\nprint('READINESS_PASS')","expect_exit":0,"expect_stdout":"READINESS_PASS","timeout_s":60,"must_fail_on_stub":true,"covers":["REQ_RECEIPT","REQ_PROOF"]}]}
