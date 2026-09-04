@@ -315,13 +315,18 @@ def test_wheel_resources_are_specific_and_generated_bytecode_is_excluded():
 
 def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     plugin_xml = (ROOT / "editors" / "intellij" / "src" / "main" / "resources" / "META-INF" / "plugin.xml").read_text(encoding="utf-8")
+    gradle_path = ROOT / "editors" / "intellij" / "build.gradle.kts"
+    changelog_path = ROOT / "editors" / "intellij" / "CHANGELOG.md"
+    plugin_version = _match(gradle_path, r'^version = "([^"]+)"$')
+    latest_changelog_version = _match(changelog_path, r"^## ([^ ]+) - ")
     screenshot_brief = (ROOT / "docs" / "JETBRAINS_MARKETPLACE_SCREENSHOTS.md").read_text(encoding="utf-8")
 
     assert "<id>app.factoryline</id>" in plugin_xml
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
     assert "Your IDE feels slow. Your AI code looks fine." in plugin_xml
     assert "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains." in plugin_xml
-    assert "New in 0.9.2 — one connected proof path" in plugin_xml
+    assert latest_changelog_version == plugin_version
+    assert f"New in {plugin_version} —" in plugin_xml
     assert "OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation" in plugin_xml
     assert "Tools | FactoryLine | Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
