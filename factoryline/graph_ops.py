@@ -48,6 +48,7 @@ from .saas_proof import saas_proof_projection
 from .operations_control import operations_control_projection
 from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
+from .deep_audit_loop import deep_audit_lineage
 from .mission_control_status import mission_control_status
 
 
@@ -1425,6 +1426,25 @@ def _append_lifecycle_events(state: dict[str, Any], root: Path, projection: dict
     return facts
 
 
+def _append_deep_audit(state: dict[str, Any], root: Path, status: dict) -> dict:
+    """Add bounded, explicitly unauthenticated deep-audit evidence chains."""
+    projection = deep_audit_lineage(root, status)
+    for chain in projection["chains"]:
+        prefix = "deep-audit:" + projection["receipt_sha256"] + ":" + chain["finding_id"]
+        previous = None
+        for kind in ("source", "obligation", "finding", "evidence", "decision", "handoff"):
+            node_id = prefix + ":" + kind
+            label = str(chain.get(kind, chain["finding_id"] if kind == "finding" else chain["receipt_path"]))
+            _node(state, node_id=node_id, kind="deep_audit_" + kind, label=label,
+                  source=chain["receipt_path"], status="unassessed",
+                  facts={"authority": "none", "verification": projection["verification"],
+                         "source_sha256": chain["source_sha256"], "trace_sha256": chain["trace_sha256"]})
+            if previous:
+                _edge(state, previous, node_id, "declared_lineage")
+            previous = node_id
+    return projection
+
+
 def _append_repair_loops(state: dict[str, Any], root: Path, projection: dict | None = None) -> dict[str, Any]:
     """Project repair packets as review evidence, never a self-healing engine."""
     if projection is None:
@@ -2260,6 +2280,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     operations_control = _append_operations_controls(state, workspace, shared["operations"])
     lifecycle = _append_lifecycle_events(state, workspace, shared["lifecycle"])
     repair_loops = _append_repair_loops(state, workspace, shared["repair_loops"])
+    deep_audit = _append_deep_audit(state, workspace, shared["deep_audit"])
     guardrails = _append_guardrail_evaluations(state, workspace)
     resilience = _append_resilience_plans(state, workspace)
     proof_deltas = _append_proof_deltas(state, workspace)
@@ -2440,6 +2461,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "operations_control": operations_control,
         "lifecycle": lifecycle,
         "repair_loops": repair_loops,
+        "deep_audit": deep_audit,
         "mission_control": mission_control,
         "saas_proof": saas_proof,
         "jetbrains_handshake": jetbrains_handshake,

@@ -1,0 +1,20 @@
+name: deep-audit-loop
+language: python
+modules:
+  - name: deep_audit_loop
+    path: factoryline/deep_audit_loop.py
+    functions:
+      - name: compare_deep_audits
+        args: [root, before_path, after_path]
+        returns: dict
+      - name: deep_audit_lineage
+        args: [root, status]
+        returns: dict
+dependencies: []
+invariants:
+  - name: comparison_never_executes
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|write_text|write_bytes"
+    scopes:
+      - module: deep_audit_loop
+        symbol: compare_deep_audits
+        max_lines: 30

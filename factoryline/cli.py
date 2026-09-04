@@ -178,6 +178,7 @@ from .domain_ontology import DomainOntologyError, domain_ontology_template, vali
 from .mission_control_status import mission_control_status, mission_control_profile
 from .runtime_audit import execute_runtime_audit, runtime_audit_status
 from .deep_audit import execute_deep_audit, deep_audit_status
+from .repair_loop import compare_deep_audit_repairs
 from .runtime_audit_common import RuntimeAuditError
 from .runtime_audit_contract import verify_runtime_audit_plan
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
@@ -1535,10 +1536,13 @@ def main(argv=None) -> int:
 
     deep = sub.add_parser("deep-audit", help="evaluate signed analyzer evidence or read local repair guidance; never release approval")
     deep_sub = deep.add_subparsers(required=True, dest="deep_cmd")
-    for action in ("evaluate", "status"):
+    for action in ("evaluate", "status", "compare"):
         command = deep_sub.add_parser(action)
         command.add_argument("--root", default=".")
         command.add_argument("--json", action="store_true")
+        if action == "compare":
+            command.add_argument("--before", required=True)
+            command.add_argument("--after", required=True)
         if action == "evaluate":
             command.add_argument("--plan", required=True)
             command.add_argument("--trust-root", required=True)
@@ -3215,7 +3219,11 @@ def main(argv=None) -> int:
     if a.cmd == "deep-audit":
         try:
             root = Path(a.root).resolve()
-            if a.deep_cmd == "status":
+            if a.deep_cmd == "compare":
+                result = compare_deep_audit_repairs(root, a.before, a.after)
+                print(json.dumps(result, indent=2, sort_keys=True))
+                return 0 if result["state"] == "approval_required" else 1
+            elif a.deep_cmd == "status":
                 result = deep_audit_status(root)
                 code = 0 if result["state"] == "READY_FOR_HUMAN_REVIEW" else 1
             else:

@@ -45,7 +45,29 @@ can recompute a self-hash. Linked directories and invalid receipts are INCOMPLET
 
 The only successful decision is READY_FOR_HUMAN_REVIEW, never approved. Evidence
 can establish that these checks passed, not that the candidate has no defects.
-Graph/repair-loop lineage integration remains a subsequent slice.
+Graph Ops projects up to 50 finding chains with a complete receipt reference and
+explicit truncation. Nodes remain unassessed: receipt hashes do not establish
+signer authenticity. Projection detects changes from its observed receipt hash.
+
+## Compare a repair
+
+`factory deep-audit compare --root <workspace> --before <relative-receipt.json>
+--after <relative-receipt.json>` reads two explicit receipts without modifying
+files. The repair-loop adapter returns:
+
+- `blocked`: malformed evidence, changed rules/canaries or analyzer coverage.
+- `regressed`: new finding identities or new blocker identities.
+- `stagnated`: no finding reduction and blockers remain; stop and review.
+- `repair_required`: fewer findings, no new findings/blockers, more review work.
+- `approval_required`: the later receipt has no blocking repairs and requires a human.
+
+Exit 0 means approval_required, never approved; every other comparison state
+exits 1. Results bind both receipt digests and list resolved/introduced findings,
+new blockers and remaining repair guidance. The caller supplies chronology;
+the comparison does not prove freshness, source provenance, or report authenticity.
+It does not grant a budget, retry automatically, authorize repairs, or close an
+existing human review. Supplying self-hashed fabricated evidence remains outside
+this local authenticity boundary; re-run signed intake for current evidence.
 
 ## IDE and agent access
 
