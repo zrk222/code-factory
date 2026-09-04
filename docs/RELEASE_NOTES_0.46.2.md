@@ -30,6 +30,10 @@ without turning a green build into automatic trust.
 
 **Guidance.** Code Factory 0.46.2 adds a connected review path: clarify intent, prove the behavior, independently challenge it, trace the evidence, and hand off only what a human can inspect.
 
+The matching editor releases are FactoryLine for VS Code **0.9.4** and the
+JetBrains plugin **0.9.2**. They expose the same cumulative proof path without
+granting an editor or an agent authority to approve its own work.
+
 **Agency.** You choose the scope, the policy pack, the autonomy level, and the next action. Agents may propose; they cannot silently widen scope, weaken a blocking rule, or release work.
 
 **Transformation.** The review result becomes a short, evidence-linked briefing rather than a wall of tool output. IDE, MCP, and A2A agents receive the same supervised playbook.
