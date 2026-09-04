@@ -60,17 +60,20 @@ analyzer evidence, SaaS checks examine customer journeys, and AppForge organizes
 mobile build, design, privacy, signing, and store-submission evidence. AppForge
 does not replace the other audit lanes or promise store approval.
 
-### Start a review
+### Choose your review path
 
 ```powershell
 pip install factoryline-code-factory
 factory guide
 ```
 
-You receive a traceable answer: **what was checked, what failed, why it matters,
-what evidence supports the finding, and what must happen next.** Code Factory
-does not promise perfect software. It makes the basis for approval visible and
-keeps the final decision human-owned.
+`factory guide` is a read-only orientation: it shows the smallest suitable path
+without running tests or agents. When you are ready to produce evidence, follow
+the [engineering review workflow](docs/PROOF_REVIEW_WORKFLOW.md). Its result
+shows **what was checked, what failed, why it matters, what evidence supports
+the finding, and what must happen next.** Code Factory does not promise perfect
+software. It makes the basis for approval visible and keeps the final decision
+human-owned.
 
 <details>
 <summary>For developers: how the review connects across modules</summary>
