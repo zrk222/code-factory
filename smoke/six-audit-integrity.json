@@ -1,0 +1,1 @@
+{"checks":[{"name":"six_lane_integrity","kind":"python","run":"import pytest\nassert pytest.main(['-q','tests/test_runtime_audit_integrity.py','tests/test_runtime_audit.py']) == 0\nprint('SIX_LANE_PASS')","expect_exit":0,"expect_stdout":"SIX_LANE_PASS","timeout_s":60,"must_fail_on_stub":true,"covers":["REQ_JOIN","REQ_GUIDANCE"]}]}

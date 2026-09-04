@@ -10,6 +10,7 @@ from typing import Any
 from .coverage import requirement_coverage
 from .graph_ops import graph_ops_impact
 from .proof import git_changed_paths, risk_for_paths
+from .review_audits import ReviewAuditError, audit_code
 
 
 CHANGE_REVIEW_SCHEMA = "factory.change_review.v1"
@@ -214,7 +215,7 @@ def _review_markdown(review: dict[str, Any]) -> str:
     ])
 
 
-def review_change(root: Path, base: str = "main", changed: list[str] | None = None) -> dict:
+def review_change(root: Path, base: str = "main", changed: list[str] | None = None, audit_policy: str | None = None) -> dict:
     """Compile a deterministic change review without executing a gate or writing files."""
     workspace = Path(root).resolve()
     input_source, changed_paths = _resolve_changed_paths(workspace, base, changed)
@@ -222,6 +223,20 @@ def review_change(root: Path, base: str = "main", changed: list[str] | None = No
     coverage = requirement_coverage(workspace)
     risk = risk_for_paths(changed_paths)
     findings, next_action = _findings(impact, coverage, risk)
+    policy_path = audit_policy or ".factory/review-audits.json"
+    code_audits: dict = {"state": "not_configured", "unconfigured_tools": ["patterns", "guard-paths"]}
+    if audit_policy is not None or (workspace / policy_path).exists():
+        try:
+            code_audits = audit_code(workspace, policy_path)
+        except ReviewAuditError as exc:
+            raise ChangeReviewError(exc.code, str(exc)) from exc
+        for item in code_audits["findings"]:
+            findings.append(_finding(item["code"], "review", item["message"], audit=item))
+        if code_audits["state"] == "incomplete":
+            findings.append(_finding("code_audit_incomplete", "review", "Code audit coverage has unresolved analysis gaps."))
+        if code_audits["state"] != "no_structural_findings" and next_action["action"] == "review_packet":
+            findings = [f for f in findings if f["kind"] != "ready_for_human_review"]
+            next_action = {"action": "review_code_audit", "reason": "Resolve pattern, guard-path or analysis-gap findings."}
     core = {
         "schema": CHANGE_REVIEW_SCHEMA,
         "markers": [
@@ -241,9 +256,12 @@ def review_change(root: Path, base: str = "main", changed: list[str] | None = No
         "impact": impact,
         "coverage": coverage,
         "risk": risk,
+        "code_audits": code_audits,
         "findings": findings,
         "next_action": next_action,
-        "unproven_claims": _unproven_claims(impact, coverage),
+        "unproven_claims": _unproven_claims(impact, coverage) + [
+            f"Pattern and guard-path audit state: {code_audits['state']}; no runtime correctness or release approval is implied."
+        ],
         "authority": AUTHORITY,
         "scope_limits": [
             "The review analyzes existing local facts and never executes a gate or replay plan.",

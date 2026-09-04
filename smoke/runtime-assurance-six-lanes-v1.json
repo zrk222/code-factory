@@ -1,0 +1,24 @@
+{
+  "checks": [
+    {
+      "name": "six_runtime_lanes_reject_known_bad_and_surface_actionable_results",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_runtime_audit_contract.py','tests/test_runtime_audit_runner.py','tests/test_runtime_audit_lanes.py','tests/test_runtime_audit.py','tests/test_runtime_audit_surfaces.py','tests/test_runtime_audit_native_engines.py'])\nassert result==0\nprint('RUNTIME_ASSURANCE_SIX_LANES_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "RUNTIME_ASSURANCE_SIX_LANES_PASS",
+      "timeout_s": 180,
+      "must_fail_on_stub": true,
+      "covers": [
+        "STATEFUL_INVARIANT_VIOLATION",
+        "TENANT_ISOLATION_VIOLATION",
+        "RECOVERY_INVARIANT_VIOLATION",
+        "CONSUMER_CONTRACT_BROKEN",
+        "MIGRATION_INTEGRITY_VIOLATION",
+        "PERFORMANCE_OR_RESOURCE_REGRESSION",
+        "HOLLOW_RUNTIME_AUDIT",
+        "READY_FOR_HUMAN_REVIEW",
+        "RUNTIME_ASSURANCE_SIX_LANES"
+      ]
+    }
+  ]
+}

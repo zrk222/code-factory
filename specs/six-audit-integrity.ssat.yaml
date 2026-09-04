@@ -1,0 +1,20 @@
+name: six-audit-integrity
+language: python
+modules:
+  - name: runtime_audit_integrity
+    path: factoryline/runtime_audit_integrity.py
+    functions:
+      - name: index_executions
+        args: [plan, executions]
+        returns: dict
+      - name: repair_guidance
+        args: [result, lane]
+        returns: dict
+dependencies: []
+invariants:
+  - name: advisory_only
+    forbid_pattern: "subprocess\\.|requests\\.|write_text"
+    scopes:
+      - module: runtime_audit_integrity
+        symbol: repair_guidance
+        max_lines: 20

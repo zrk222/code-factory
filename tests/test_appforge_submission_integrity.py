@@ -4,6 +4,47 @@ from pathlib import Path
 import pytest
 from factoryline.appforge_submission_integrity import CONTRACT_SCHEMA, verify_submission_integrity, submission_integrity_projection, reconcile_capture_evidence
 from factoryline.revenueforge import RevenueForgeError
+from factoryline.appforge_submission_integrity import _sha
+import hashlib
+
+
+def test_capture_reconciliation_accepts_complete_current_file_mapping(tmp_path: Path) -> None:
+    candidate_path, candidate = _candidate(tmp_path)
+    contract = _contract(candidate)
+    verify_submission_integrity(tmp_path, candidate_path, _write(tmp_path / "contract.json", contract), Path("integrity.json"))
+    captures = []
+    for row in contract["requirements"]:
+        data = row["id"].encode()
+        name = row["id"] + ".png"
+        (tmp_path / name).write_bytes(data)
+        captures.append({"requirement_id": row["id"], "device": row["device"], "evidence_class": "native_signed_build", "path": name, "sha256": hashlib.sha256(data).hexdigest()})
+    result = reconcile_capture_evidence(tmp_path, Path("integrity.json"), _write(tmp_path / "evidence.json", {"candidate": candidate, "captures": captures}), Path("out.json"))
+    assert result["ok"] is True
+    assert result["finding_count"] == 0
+
+
+@pytest.mark.parametrize("change", ["empty", "duplicate", "source_changed", "source_missing"])
+def test_capture_reconciliation_revalidates_original_requirements(tmp_path: Path, change: str) -> None:
+    candidate_path, candidate = _candidate(tmp_path)
+    contract = _write(tmp_path / "contract.json", _contract(candidate))
+    result = verify_submission_integrity(tmp_path, candidate_path, contract, Path("integrity.json"))
+    receipt = json.loads((tmp_path / "integrity.json").read_text())
+    if change == "empty":
+        receipt["requirements"] = []
+    elif change == "duplicate":
+        receipt["requirements"][1] = receipt["requirements"][0]
+    elif change == "source_changed":
+        value = _contract(candidate)
+        value["requirements"][0]["state"] = "different state"
+        _write(contract, value)
+    else:
+        contract.unlink()
+    receipt.pop("receipt_sha256")
+    receipt["receipt_sha256"] = _sha(receipt)
+    _write(tmp_path / result["path"], receipt)
+    with pytest.raises(RevenueForgeError, match="candidate and contract"):
+        reconcile_capture_evidence(tmp_path, Path("integrity.json"), _write(tmp_path / "evidence.json", {"candidate": candidate, "captures": []}), Path("out.json"))
+    assert not (tmp_path / "out.json").exists()
 
 def _write(path: Path, value: object) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True); path.write_text(json.dumps(value), encoding="utf-8"); return path

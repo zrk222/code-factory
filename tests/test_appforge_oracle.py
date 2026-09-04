@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 from pathlib import Path
 
 from factoryline.appforge_oracle import appforge_oracle_projection, verify_appforge_oracle_authority
@@ -9,6 +10,28 @@ from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_cont
 
 AGENT = {"schema": "factory.agent-identity.v1", "subject": "builder-alpha", "provider": "local", "model": "model-a"}
 CANDIDATE = {"bundle_identifier": "app.example.calm", "version": "1.0", "build_number": "42", "source_commit": "a" * 40}
+
+
+@pytest.mark.parametrize("value", [[], None, 7, "receipt", True])
+def test_projection_rejects_non_objects(tmp_path, value):
+    _write(tmp_path / ".factory/appforge/bad-oracle-authority.json", value)
+    result = appforge_oracle_projection(tmp_path)
+    assert result["invalid_count"] == 1 and result["current_count"] == 0
+
+
+@pytest.mark.parametrize("source", ["authority.json", "sources/apple-policy.md"])
+def test_projection_rejects_changed_authority_sources(tmp_path, source):
+    authority = _authority(tmp_path, _contract(tmp_path))
+    verify_appforge_oracle_authority(tmp_path, authority, out=Path(".factory/appforge/oracle-authority.json"))
+    (tmp_path / source).write_text("changed", encoding="utf-8")
+    assert appforge_oracle_projection(tmp_path)["invalid_count"] == 1
+
+
+def test_projection_rejects_oversized_receipt(tmp_path):
+    path = tmp_path / ".factory/appforge/large-oracle-authority.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(" " * 1_048_577)
+    assert appforge_oracle_projection(tmp_path)["invalid_count"] == 1
 
 
 def _write(path: Path, value: object) -> Path:

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.4 - 2026-09-04
+
+- Make First Proof the clear entry point: challenge whether an AI-generated
+  test can actually fail before trusting a green build.
+- Connect sealed intent, Oracle Firewall rules, independent challenge evidence,
+  deep audit findings, and repair consequences in the reviewable Graph Ops path.
+- Bring the cumulative AppForge, SaaS, mobile evidence, provider-neutral agent
+  handoff, session trace, and enterprise assurance upgrades into one release.
+- Preserve the authority boundary: FactoryLine records and verifies evidence;
+  it does not convert agent claims into approval or silently publish work.
+
 ## 0.9.2 - 2026-09-02
 
 - Ship the Oracle Firewall hardening behind FactoryLine: same-ID edits to a

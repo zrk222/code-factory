@@ -24,7 +24,10 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
-      - run: npm ci
+      - name: Pin the audited npm client
+        run: npm install --global npm@10.9.4
+      # Audit is a separate mandatory full-lockfile OSV step below.
+      - run: npm ci --no-audit
       - run: npm run audit
       - run: npm test
       - run: npx vsce package --no-dependencies --out factoryline-vscode.vsix

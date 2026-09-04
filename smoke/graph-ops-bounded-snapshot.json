@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "graph_ops_snapshot_preserves_tested_behavior",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_graph_ops.py']) == 0\nprint('GRAPH_OPS_BOUNDED_SNAPSHOT_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "GRAPH_OPS_BOUNDED_SNAPSHOT_PASS",
+      "timeout_s": 60,
+      "covers": [
+        "REQ_GRAPH",
+        "REQ_BOUND",
+        "REQ_AUTHORITY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

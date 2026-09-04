@@ -78,6 +78,8 @@ from .migration import (
 )
 from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
+from .ide_playbook import AdoptionGuideError, adoption_guide
+from .capability_evidence import CapabilityEvidenceError, audit_capability_evidence
 from .graph_portfolio import graph_portfolio_plan
 from .graph_forensics import GraphForensicsError, graph_forensics, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
 from .langgraph_assurance import LangGraphAssuranceError, verify_langgraph_resume_parity
@@ -85,6 +87,7 @@ from .proofsearch import ProofSearchError, create_proofsearch_plan, evaluate_pro
 from .evidence_frontier import EvidenceFrontierError, plan_evidence_frontier, verify_evidence_frontier
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
+from .review_audits import ReviewAuditError, audit_code
 from .continuous_proof import (
     ContinuousProofError,
     assess_continuous_proof,
@@ -172,7 +175,12 @@ from .service_boundaries import ServiceBoundaryError, check_service_boundaries, 
 from .repair_loop import RepairLoopError, assess_repair_loop, repair_loop_projection, repair_loop_template
 from .repo_coordination import RepoCoordinationError, coordinate_repositories, repo_coordination_template
 from .domain_ontology import DomainOntologyError, domain_ontology_template, validate_domain_ontology
-from .mission_control_status import mission_control_status
+from .mission_control_status import mission_control_status, mission_control_profile
+from .runtime_audit import execute_runtime_audit, runtime_audit_status
+from .deep_audit import execute_deep_audit, deep_audit_status
+from .repair_loop import compare_deep_audit_repairs
+from .runtime_audit_common import RuntimeAuditError
+from .runtime_audit_contract import verify_runtime_audit_plan
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
 from .jetbrains_handshake import (
     JetBrainsHandshakeError,
@@ -601,6 +609,22 @@ def main(argv=None) -> int:
     first_proof.add_argument("--root", default=".")
     first_proof.add_argument("--out-dir", help="optional workspace-contained output directory")
     first_proof.add_argument("--json", action="store_true")
+
+    guide = sub.add_parser("guide", help="choose one plain-language path before opening advanced controls")
+    guide.add_argument("--journey", help="one of: solo, team, enterprise")
+    guide.add_argument("--json", action="store_true")
+
+    code_audit = sub.add_parser("audit", help="inspect peer-pattern irregularities and guard-bypass paths without executing code")
+    code_audit.add_argument("tool", choices=["patterns", "guard-paths", "all"])
+    code_audit.add_argument("--policy", default=".factory/review-audits.json")
+    code_audit.add_argument("--root", default=".")
+    code_audit.add_argument("--json", action="store_true")
+
+    evidence_audit = sub.add_parser("evidence-audit", help="bind capability claims to source and tests; execute only with --execute")
+    evidence_audit.add_argument("manifest", nargs="?", default="evidence/capability-evidence.json")
+    evidence_audit.add_argument("--root", default=".")
+    evidence_audit.add_argument("--execute", action="store_true", help="run the reviewed manifest commands locally without a shell")
+    evidence_audit.add_argument("--json", action="store_true")
 
     proof_card = sub.add_parser("proof-card", help="create a privacy-safe share card from one verified local E2E receipt")
     proof_card.add_argument("receipt", help="workspace-contained factory.e2e_proof_receipt.v1 JSON path")
@@ -1088,6 +1112,15 @@ def main(argv=None) -> int:
     audit_verify = control_sub.add_parser("audit-verify", help="verify the tenant audit hash chain")
     add_control_identity(audit_verify, default_role="viewer")
 
+    engineering_memory = sub.add_parser("evidence-memory", help="recall current evidence-backed engineering metadata without gate authority")
+    engineering_memory.add_argument("--root", default=".")
+    engineering_memory.add_argument("--tenant", required=True)
+    engineering_memory.add_argument("--subject", required=True)
+    engineering_memory.add_argument("--purpose", required=True)
+    engineering_memory.add_argument("--scope", required=True)
+    engineering_memory.add_argument("--sender", choices=sorted(MODULES))
+    engineering_memory.add_argument("--receiver", choices=sorted(MODULES))
+    engineering_memory.add_argument("--accept", help="workspace-relative handoff JSON to revalidate")
     continuity = sub.add_parser("continuity", help="govern local proof-carrying engineering-memory references")
     continuity_sub = continuity.add_subparsers(required=True, dest="continuity_cmd")
     continuity_init = continuity_sub.add_parser("init", help="create a local Factory Continuity metadata ledger")
@@ -1113,6 +1146,12 @@ def main(argv=None) -> int:
     continuity_promote.add_argument("record_id")
     continuity_promote.add_argument("--reason", required=True)
     add_continuity_identity(continuity_promote, default_role="promoter")
+    withdraw = continuity_sub.add_parser("withdraw", help="withdraw a reviewed memory with an atomic audit event")
+    withdraw.add_argument("record_id")
+    withdraw.add_argument("--status", choices=["superseded", "contradicted", "revoked"], required=True)
+    withdraw.add_argument("--reason", required=True)
+    withdraw.add_argument("--replacement-id")
+    add_continuity_identity(withdraw, default_role="promoter")
     continuity_prove = continuity_sub.add_parser("prove", help="show local unsigned lineage for one record without mutation authority")
     continuity_prove.add_argument("record_id")
     add_continuity_identity(continuity_prove, default_role="reader")
@@ -1506,6 +1545,38 @@ def main(argv=None) -> int:
     mission_control_status_parser = mission_control_sub.add_parser("status", help="read local mission-control facts without granting authority")
     mission_control_status_parser.add_argument("--root", default=".")
     mission_control_status_parser.add_argument("--json", action="store_true")
+    mission_control_profile_parser = mission_control_sub.add_parser("profile", help="measure local evidence readers with body-free fingerprints")
+    mission_control_profile_parser.add_argument("--root", default=".")
+    mission_control_profile_parser.add_argument("--json", action="store_true")
+
+    deep = sub.add_parser("deep-audit", help="evaluate signed analyzer evidence or read local repair guidance; never release approval")
+    deep_sub = deep.add_subparsers(required=True, dest="deep_cmd")
+    for action in ("evaluate", "status", "compare"):
+        command = deep_sub.add_parser(action)
+        command.add_argument("--root", default=".")
+        command.add_argument("--json", action="store_true")
+        if action == "compare":
+            command.add_argument("--before", required=True)
+            command.add_argument("--after", required=True)
+        if action == "evaluate":
+            command.add_argument("--plan", required=True)
+            command.add_argument("--trust-root", required=True)
+            command.add_argument("--trust-root-sha256", required=True)
+    runtime_audit = sub.add_parser("runtime-audit", help="run or inspect six signed senior-engineering audit lanes")
+    runtime_audit_sub = runtime_audit.add_subparsers(required=True, dest="runtime_audit_cmd")
+    for action in ("inspect", "run"):
+        command = runtime_audit_sub.add_parser(action, help=f"{action} one signed runtime audit plan")
+        command.add_argument("plan")
+        command.add_argument("--root", default=".")
+        command.add_argument("--trust-root", required=True)
+        command.add_argument("--trust-root-sha256", required=True)
+        command.add_argument("--environment-sha256", required=True)
+        if action == "run":
+            command.add_argument("--out", default=".factory/runtime-audits")
+        command.add_argument("--json", action="store_true")
+    runtime_status = runtime_audit_sub.add_parser("status", help="read the latest self-hash-verified local runtime audit receipt")
+    runtime_status.add_argument("--root", default=".")
+    runtime_status.add_argument("--json", action="store_true")
 
     worklog = sub.add_parser("worklog", help="draft a local review-required update from one sealed Oracle Contract; never posts externally")
     worklog_sub = worklog.add_subparsers(required=True, dest="worklog_cmd")
@@ -1557,6 +1628,7 @@ def main(argv=None) -> int:
     change_review = change_sub.add_parser("review", help="join diff impact, coverage gaps, and plan-only reruns")
     change_review.add_argument("--root", default=".")
     change_review.add_argument("--base", default="main")
+    change_review.add_argument("--audit-policy", help="workspace-relative code-audit policy; defaults to .factory/review-audits.json when present")
     change_review.add_argument("--changed", action="append", default=[], help="workspace-relative changed path; repeat as needed")
     change_review.add_argument("--out-dir", help="explicit local directory for JSON, Markdown, and Mermaid review artifacts")
     change_review.add_argument("--json", action="store_true")
@@ -3155,9 +3227,47 @@ def main(argv=None) -> int:
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code else sys.stdout)
         return code
     if a.cmd == "mission-control":
-        result = mission_control_status(Path(a.root).resolve())
+        reader = mission_control_profile if a.mission_control_cmd == "profile" else mission_control_status
+        result = reader(Path(a.root).resolve())
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
+    if a.cmd == "deep-audit":
+        try:
+            root = Path(a.root).resolve()
+            if a.deep_cmd == "compare":
+                result = compare_deep_audit_repairs(root, a.before, a.after)
+                print(json.dumps(result, indent=2, sort_keys=True))
+                return 0 if result["state"] == "approval_required" else 1
+            elif a.deep_cmd == "status":
+                result = deep_audit_status(root)
+                code = 0 if result["state"] == "READY_FOR_HUMAN_REVIEW" else 1
+            else:
+                result = execute_deep_audit(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root)
+                code = 0 if result["receipt"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
+            result["action_summary"] = "Read local deep-audit evidence." if a.deep_cmd == "status" else "Evaluated signed reports and saved a review receipt; no analyzer or repair ran."
+        except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
+            result = {"code": getattr(exc, "code", "E_DEEP_AUDIT"), "message": str(exc), "authority": "none"}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
+        return code
+    if a.cmd == "runtime-audit":
+        root = Path(a.root).resolve()
+        try:
+            if a.runtime_audit_cmd == "status":
+                result = runtime_audit_status(root)
+                code = 0 if result["state"] in {"NOT_RUN", "READY_FOR_HUMAN_REVIEW"} else 1
+            elif a.runtime_audit_cmd == "inspect":
+                result = verify_runtime_audit_plan(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root, a.environment_sha256)
+                result = {**result, "plan": {"id": result["plan"]["id"], "candidate_sha256": result["plan"]["candidate_sha256"], "lanes": [item["kind"] for item in result["plan"]["lanes"]]}, "action_summary": "Verified the signed audit authority and exact six-lane execution contract; no command ran."}
+                code = 0
+            else:
+                result = execute_runtime_audit(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root, a.environment_sha256, Path(a.out))
+                code = 0 if result["receipt"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
+        except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
+            result = {"schema": "factory.runtime-audit.error.v1", "code": getattr(exc, "code", "E_RUNTIME_AUDIT"), "message": str(exc), "authority": "none"}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
+        return code
     if a.cmd == "worklog":
         root = Path(a.root).resolve()
         try:
@@ -3281,6 +3391,64 @@ def main(argv=None) -> int:
         except OSError as exc:
             print(f"studio failed: LISTENER_ERROR: {exc}", file=sys.stderr)
             return 1
+        return 0
+    if a.cmd == "audit":
+        try:
+            result = audit_code(Path(a.root), a.policy, tool=a.tool)
+        except ReviewAuditError as exc:
+            print(json.dumps({"state": "invalid", "code": exc.code, "message": str(exc)}), file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Code audit: {result['state']} ({len(result['findings'])} findings)")
+            for item in result["findings"]:
+                print(f"{item['code']}: {item['target']['path']}:{item['target']['line']} — {item['message']}")
+            for item in result["results"]:
+                for gap in item.get("analysis_gaps", []):
+                    print(f"INCOMPLETE {item['rule_id']}: {gap}")
+            if result["unconfigured_tools"]:
+                print(f"Unconfigured: {', '.join(result['unconfigured_tools'])}")
+            print("Analysis only; declared policy is not authenticated approval.")
+        return 0 if result["state"] == "no_structural_findings" else 2
+    if a.cmd == "evidence-audit":
+        try:
+            result = audit_capability_evidence(Path(a.root), Path(a.manifest), execute=a.execute)
+        except (CapabilityEvidenceError, OSError, json.JSONDecodeError) as exc:
+            error = {"marker": "CAPABILITY_EVIDENCE_BLOCKED", "code": getattr(exc, "code", "E_CAPABILITY_EVIDENCE_INPUT"), "message": str(exc)}
+            print(json.dumps(error, indent=2) if a.json else f"{error['code']}: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2) if a.json else f"{result['marker']}: {len(result['claims'])} claims; {result['execution_count']} executions.\n{result['claim_boundary']}")
+        return 0 if result["ok"] else 1
+    if a.cmd == "guide":
+        try:
+            result = adoption_guide(a.journey)
+        except AdoptionGuideError as exc:
+            error = {
+                "schema": "factory.adoption-guide.error.v1",
+                "code": exc.code,
+                "message": str(exc),
+                "supported": ["solo", "team", "enterprise"],
+                "actions_executed": False,
+            }
+            print(json.dumps(error, indent=2, sort_keys=True) if a.json else f"guide failed: {exc.code}: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print("Code Factory guide")
+            print("=" * 44)
+            if a.journey is None:
+                print("Recommended: solo")
+            for item in result["journeys"]:
+                primary = "  [start here]" if item["primary"] else ""
+                print(f"\n{item['label']}{primary}")
+                print(f"Question : {item['question']}")
+                print(f"Start    : {item['first_command']}")
+                print(f"Evidence : {item['expected_local_evidence']}")
+                print(f"Next     : {item['next_safe_action']}")
+                print(f"Control  : {item['authority_boundary']}")
+            print("\nAdvanced modules stay hidden until their trigger applies. No action was executed.")
         return 0
     if a.cmd == "first-proof":
         workspace = Path(a.root).resolve()
@@ -4464,7 +4632,7 @@ def main(argv=None) -> int:
         return 0
     if a.cmd == "change":
         try:
-            review = review_change(Path(a.root), base=a.base, changed=a.changed or None)
+            review = review_change(Path(a.root), base=a.base, changed=a.changed or None, audit_policy=a.audit_policy)
             if a.out_dir:
                 review["artifacts"] = write_review_artifacts(review, Path(a.out_dir))
         except ChangeReviewError as exc:
@@ -5135,6 +5303,28 @@ def main(argv=None) -> int:
         if a.control_cmd == "audit-verify":
             return 0 if result["valid"] else 1
         return 0
+    if a.cmd == "evidence-memory":
+        from .engineering_memory import recall_engineering_memory
+        from .continuity import principal_from_args, ContinuityError
+        import sqlite3
+        try:
+            principal = principal_from_args(a.subject, a.tenant, ["reader"], [a.purpose])
+            from .knowledge_handoff import create_knowledge_handoff, receive_knowledge_handoff
+            from .deep_audit_io import local_file, strict_json, LIMIT
+            args = (Path(a.root), principal, a.tenant, a.purpose, a.scope)
+            if a.accept:
+                with local_file(Path(a.root).resolve(), a.accept).open("rb") as stream:
+                    packet = strict_json(stream.read(LIMIT + 1))
+                result = receive_knowledge_handoff(*args, a.sender, a.receiver, packet)
+            elif a.sender or a.receiver:
+                result = create_knowledge_handoff(*args, a.sender, a.receiver)
+            else:
+                result = recall_engineering_memory(*args)
+        except (ValueError, OSError, KeyError, TypeError, ContinuityError, sqlite3.Error) as exc:
+            print(json.dumps({"state": "blocked", "code": getattr(exc, "code", "E_MEMORY_INVALID"), "authority": "none"}))
+            return 1
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
     if a.cmd == "continuity":
         from .continuity import ContinuityError, ContinuityStore, principal_from_args as continuity_principal_from_args
         try:
@@ -5162,6 +5352,8 @@ def main(argv=None) -> int:
                         result = store.recall(principal, a.tenant, purpose_ref=a.purpose, scope_ref=a.scope)
                     elif a.continuity_cmd == "promote":
                         result = store.promote(principal, a.tenant, a.record_id, reason=a.reason)
+                    elif a.continuity_cmd == "withdraw":
+                        result = store.withdraw(principal, a.tenant, a.record_id, status=a.status, reason=a.reason, replacement_id=a.replacement_id)
                     else:
                         result = store.prove(principal, a.tenant, a.record_id)
         except (ContinuityError, json.JSONDecodeError, OSError) as exc:

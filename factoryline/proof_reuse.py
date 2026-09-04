@@ -198,6 +198,9 @@ def _verify_rows(root: Path, payload: dict[str, Any], field: str) -> list[str]:
         return [f"{field} are missing"]
     errors = []
     for row in rows:
+        if not isinstance(row, dict):
+            errors.append(f"{field}: artifact row must be an object")
+            continue
         try:
             relative, candidate = _relative_file(Path(root), row.get("path"), field)
         except ProofReuseError as error:

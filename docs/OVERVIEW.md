@@ -100,23 +100,33 @@ known, what is missing, and the one fact-derived next action.
 ## Typical path
 
 ```powershell
-pip install factoryline-code-factory==0.46.0
-factory mvp "Build an approval tracker" --root .
-factory studio --root .
-factory graph ops --root . --mermaid
-factory graph forensics --baseline good.lineage.json --candidate bad.lineage.json --json
-factory proofsearch verify .factory/proofsearch/repair.evaluation.json --root . --json
-factory verifier progress .\attempts.json --json
-factory change review --root . --base origin/main
-factory memory brief --root . --json
-factory github proof-review --root . --base origin/main --head-sha abcdefabcdefabcdefabcdefabcdefabcdefabcd --json
-factory release integrity --root . --json
+pip install factoryline-code-factory
+factory guide
 ```
 
-Start with the local MVP, open Studio to inspect its state, then use Graph Ops
-to follow relationships and impact before choosing the next proof. The visual
-surfaces do not execute commands or take external actions; they reveal the
-evidence and the next action that the local facts support.
+The guide presents exactly three questions and one recommended starting point.
+It executes nothing. Choose `solo` for a first hollow-test demonstration,
+`team` to bind agent work to original intent and an observed delta, or
+`enterprise` to inspect the read-only control plane in a bounded pilot.
+
+```powershell
+factory guide --journey solo
+factory guide --journey team
+factory guide --journey enterprise
+```
+
+Only after the first receipt should a team open specialized controls. Graph
+Ops puts the same **Start Here** panel before its module inventory. SaaS proof,
+AppForge mobile delivery, multi-repository coordination, and enterprise policy
+appear as triggered capabilities—not prerequisites to understanding the
+product. The visual surfaces reveal evidence and one next safe action; they do
+not execute commands or take external actions.
+
+For experienced operators, the existing commands remain stable: use `factory
+studio` and `factory graph ops` for inspection, `factory oracle` before an
+agent run, `factory wrap` around an admitted local run, and the relevant
+specialized module only after its trigger is explicit. The rest of this page is
+a reference catalog, not a required onboarding sequence.
 
 ## Who it is for
 

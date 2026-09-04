@@ -1,0 +1,11 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "adoption-simplification",
+  "sealed_hash": "b2bc5e4be26432c7f104b55477a186de59351cc5b7252583edc0d35a68bea52f",
+  "coherence_score": 100,
+  "source": "specs/adoption-simplification.md",
+  "intent": "Make Code Factory independently inspectable through three plain-language adoption journeys whose claims are bounded by executable evidence and explicit maturity labels.",
+  "assumptions": [
+    "Assumes external agent identity never grants execution, approval, release, or credential authority through the adoption guide."
+  ]
+}

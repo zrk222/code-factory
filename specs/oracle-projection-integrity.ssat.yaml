@@ -1,0 +1,26 @@
+name: oracle-projection-integrity
+language: python
+modules:
+  - name: appforge_oracle
+    path: factoryline/appforge_oracle.py
+    functions:
+      - name: verify_appforge_oracle_authority
+        args: [root, authority_path]
+        returns: dict[str, Any]
+      - name: appforge_oracle_projection
+        args: [root]
+        returns: dict[str, Any]
+dependencies: []
+invariants:
+  - name: projection_has_no_execution
+    forbid_pattern: 'subprocess\.|requests\.|httpx\.|socket\.|_atomic\('
+    scopes:
+      - module: appforge_oracle
+        symbol: appforge_oracle_projection
+        max_lines: 30
+      - module: appforge_oracle
+        symbol: _projected_authority
+        max_lines: 35
+tests:
+  - path: tests/test_appforge_oracle.py
+    command: python -m pytest -q tests/test_appforge_oracle.py

@@ -41,6 +41,21 @@ def _manifest(gate):
     return {"schema": "factory.proof-request.v1", "gates": [gate]}
 
 
+@pytest.mark.parametrize("row", [None, "artifact", 42, [], True])
+@pytest.mark.parametrize("field", ["inputs", "outputs"])
+def test_malformed_artifact_rows_reject_without_crashing(tmp_path, row, field):
+    from pathlib import Path
+    _, _, gate = _workspace(tmp_path)
+    saved = record_proof(tmp_path, gate, elapsed_ms=100)
+    path = Path(saved["receipt"])
+    payload = json.loads(path.read_text())
+    payload[field] = [row]
+    path.write_text(json.dumps(payload))
+    result = verify_proof_receipt(tmp_path, path)
+    assert result["valid"] is False
+    assert any("artifact row must be an object" in error for error in result["errors"])
+
+
 def test_proof_key_is_stable_and_changes_with_input(tmp_path):
     source, _, gate = _workspace(tmp_path)
     facts = proof_facts(tmp_path, gate)

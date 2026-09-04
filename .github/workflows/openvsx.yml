@@ -74,10 +74,12 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
+      - name: Pin the audited npm client
+        run: npm install --global npm@10.9.4
       - name: Install, audit, test, and package
         run: |
           set -euo pipefail
-          npm ci
+          npm ci --no-audit
           npm run audit
           npm test
           npx vsce package --no-dependencies --out factoryline-vscode.vsix

@@ -4,7 +4,9 @@ from http.client import HTTPConnection
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import json
+import socket
 import threading
+import time
 
 import pytest
 
@@ -85,6 +87,12 @@ def test_studio_status_is_exact_and_loopback_only(tmp_path: Path):
     assert status["limits"]["overwrite"] is False
     assert status["authority"]["can_deploy"] is False
     assert status["authority"]["can_inject_credentials"] is False
+
+    server, _token = create_server(tmp_path)
+    try:
+        assert server.server_address[0] == "127.0.0.1"
+    finally:
+        server.server_close()
 
 
 def test_dashboard_preserves_unknowns_and_exposes_control_state(tmp_path: Path):
@@ -285,23 +293,53 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         assert response.getheader("Content-Length") == "0"
         assert response.read() == b""
 
+        connection.close()
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
         body = json.dumps({"action": "create", "target": "worker", "prompt": "Build a worker.", "name": "http-worker"})
         connection.request("POST", "/api/create", body=body, headers={"Content-Type": "application/json"})
         response = connection.getresponse()
         assert response.status == 403
+        assert response.getheader("Connection") == "close"
         token_failure = json.loads(response.read())
         assert token_failure["failure"]["point_of_failure"]
         assert token_failure["failure"]["next_action"]
 
+        connection.close()
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
         connection.request(
             "POST",
             "/api/create",
-            body=b"{}",
+            body=None,
             headers={"Content-Type": "application/json", "Content-Length": str(MAX_BODY_BYTES + 1), "X-Factory-Studio-Token": token},
         )
         assert connection.getresponse().status == 413
     finally:
         connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_unauthorized_partial_body_has_bounded_drain_deadline(tmp_path: Path):
+    server, _token = create_server(tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    client = socket.create_connection(("127.0.0.1", server.server_port), timeout=2)
+    client.settimeout(2)
+    started = time.monotonic()
+    try:
+        client.sendall(
+            b"POST /api/create HTTP/1.1\r\n"
+            b"Host: 127.0.0.1\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: 10\r\n"
+            b"X-Factory-Studio-Token: wrong-token\r\n\r\n{}"
+        )
+        response = client.recv(4096)
+        assert b" 403 " in response
+        assert time.monotonic() - started < 1.5
+    finally:
+        client.close()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)

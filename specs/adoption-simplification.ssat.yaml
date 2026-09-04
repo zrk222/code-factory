@@ -1,0 +1,17 @@
+name: adoption-simplification
+language: python
+modules:
+  - name: ide_playbook
+    path: factoryline/ide_playbook.py
+    functions:
+      - name: adoption_guide
+        args: [journey]
+        returns: dict[str, Any]
+dependencies: []
+invariants:
+  - name: adoption_guide_is_read_only
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:deploy|publish|sign|send_message|grant_connector|run_first_proof)\\s*\\("
+    scopes:
+      - module: ide_playbook
+        symbol: adoption_guide
+        max_lines: 60

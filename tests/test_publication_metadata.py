@@ -178,7 +178,12 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
     package = json.loads((ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8"))
     lock = json.loads((ROOT / "editors" / "vscode" / "package-lock.json").read_text(encoding="utf-8"))
 
-    assert package["scripts"]["audit"] == "npm audit --audit-level=high"
+    assert package["scripts"]["audit"] == "node scripts/audit-lockfile.mjs"
+    auditor = (ROOT / "editors/vscode/scripts/audit-lockfile.mjs").read_text(encoding="utf-8")
+    assert "'scan', 'source', '-L', resolve('package-lock.json'), '--config', config" in auditor
+    assert "verifyBinary(bytes, asset[1])" in auditor
+    assert "requireSuccessfulScan(spawnSync" in auditor
+    assert "--omit" not in auditor
     assert package["overrides"] == {
         "brace-expansion": "5.0.9",
         "fast-uri": "3.1.6",
@@ -189,9 +194,10 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
     assert lock["packages"]["node_modules/js-yaml"]["version"] == "4.3.1"
     assert "dependencies" not in package
 
-    for relative in ("vscode-extension.yml", "publish.yml"):
+    for relative in ("vscode-extension.yml", "publish.yml", "openvsx.yml", "vscode-marketplace.yml"):
         workflow = (ROOT / ".github" / "workflows" / relative).read_text(encoding="utf-8")
         install = workflow.index("npm ci")
+        assert "npm ci --no-audit" in workflow
         audit = workflow.index("npm run audit", install)
         tests = workflow.index("npm test", audit)
         assert install < audit < tests
@@ -289,6 +295,17 @@ def test_vscode_marketplace_workflow_seals_the_candidate_and_requires_a_scoped_s
     assert "--oidc" not in workflow
 
 
+def test_vscode_release_workflows_pin_the_audited_npm_client():
+    for workflow_name in (
+        "vscode-extension.yml",
+        "vscode-marketplace.yml",
+        "openvsx.yml",
+        "publish.yml",
+    ):
+        workflow = (ROOT / ".github" / "workflows" / workflow_name).read_text(encoding="utf-8")
+        assert "npm install --global npm@10.9.4" in workflow, workflow_name
+
+
 def test_hosted_release_and_editor_versions_are_declared():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     vscode = json.loads((ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8"))
@@ -297,7 +314,7 @@ def test_hosted_release_and_editor_versions_are_declared():
 
     assert project["version"] == "0.46.2"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.9.3"
+    assert vscode["version"] == "0.9.4"
     assert 'version = "0.9.2"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
@@ -315,13 +332,18 @@ def test_wheel_resources_are_specific_and_generated_bytecode_is_excluded():
 
 def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     plugin_xml = (ROOT / "editors" / "intellij" / "src" / "main" / "resources" / "META-INF" / "plugin.xml").read_text(encoding="utf-8")
+    gradle_path = ROOT / "editors" / "intellij" / "build.gradle.kts"
+    changelog_path = ROOT / "editors" / "intellij" / "CHANGELOG.md"
+    plugin_version = _match(gradle_path, r'^version = "([^"]+)"$')
+    latest_changelog_version = _match(changelog_path, r"^## ([^ ]+) - ")
     screenshot_brief = (ROOT / "docs" / "JETBRAINS_MARKETPLACE_SCREENSHOTS.md").read_text(encoding="utf-8")
 
     assert "<id>app.factoryline</id>" in plugin_xml
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
     assert "Your IDE feels slow. Your AI code looks fine." in plugin_xml
     assert "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains." in plugin_xml
-    assert "New in 0.9.1 — Oracle meaning firewall" in plugin_xml
+    assert latest_changelog_version == plugin_version
+    assert f"New in {plugin_version} —" in plugin_xml
     assert "OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation" in plugin_xml
     assert "Tools | FactoryLine | Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml

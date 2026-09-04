@@ -1,0 +1,1 @@
+{"checks":[{"name":"oracle_projection","kind":"python","run":"import pytest\nassert pytest.main(['-q','tests/test_appforge_oracle.py']) == 0\nprint('ORACLE_PROJECTION_PASS')","expect_exit":0,"expect_stdout":"ORACLE_PROJECTION_PASS","timeout_s":60,"must_fail_on_stub":true,"covers":["REQ_SHAPE","REQ_FRESH"]}]}

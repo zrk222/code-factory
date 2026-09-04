@@ -7,6 +7,7 @@ from typing import Any, Callable
 import json
 import re
 import secrets
+import socket
 import threading
 import webbrowser
 from time import monotonic
@@ -33,6 +34,7 @@ from .live_activity import activity_snapshot, request_stop
 
 STUDIO_SCHEMA = "factory.studio.v1"
 MAX_BODY_BYTES = 64 * 1024
+UNAUTHORIZED_DRAIN_TIMEOUT_SECONDS = 0.25
 LOOPBACK_HOST = "127.0.0.1"
 NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}")
 FORBIDDEN_ACTIONS = {"deploy", "publish", "sign", "external-message", "credential", "connector-grant"}
@@ -672,6 +674,8 @@ class _StudioHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.end_headers()
 
     def _json(self, status: int, value: dict[str, Any]) -> None:
@@ -751,15 +755,31 @@ class _StudioHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         """Accept one token-bound target creation request within the size limit."""
         if self.path not in {"/api/create", "/api/product", "/api/mission-decision", "/api/continue", "/api/savings", "/api/graph-ops-authorize", "/api/graph-ops-run", "/api/activity/stop"}:
+            self.close_connection = True
             self._error(404, "NOT_FOUND", "route not found")
             return
         if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
+            # Consume only a bounded, well-framed request body before closing.
+            # Otherwise Windows may reset a socket that still has unread data,
+            # hiding the deterministic 403 response from the client.
+            rejected_length = self._content_length()
+            if rejected_length is None:
+                self.close_connection = True
+                return
+            if 0 < rejected_length <= MAX_BODY_BYTES:
+                self.connection.settimeout(UNAUTHORIZED_DRAIN_TIMEOUT_SECONDS)
+                try:
+                    self.rfile.read(rejected_length)
+                except (TimeoutError, socket.timeout, OSError):
+                    pass
+            self.close_connection = True
             self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
             return
         length = self._content_length()
         if length is None:
             return
         if length <= 0 or length > MAX_BODY_BYTES:
+            self.close_connection = True
             self._error(413, "BODY_LIMIT", f"body must be 1-{MAX_BODY_BYTES} bytes")
             return
         try:

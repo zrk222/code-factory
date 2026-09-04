@@ -1,0 +1,20 @@
+name: assembly-process-bounds
+language: python
+modules:
+  - name: assembly_process
+    path: factoryline/assembly_process.py
+    functions:
+      - name: run_cli
+        args: [cli, args, cwd]
+        returns: tuple[bool, str]
+dependencies: []
+invariants:
+  - name: no_unbounded_communicate
+    forbid_pattern: 'communicate\('
+    scopes:
+      - module: assembly_process
+        symbol: run_cli
+        max_lines: 60
+tests:
+  - path: tests/test_assembly_process.py
+    command: python -m pytest -q tests/test_assembly_process.py

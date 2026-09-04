@@ -1,0 +1,11 @@
+{
+  "checks": [{
+    "name": "deep_audit_loop_behavior",
+    "kind": "python",
+    "run": "import pytest\nassert pytest.main(['-q', 'tests/test_deep_audit_loop.py']) == 0\nprint('DEEP_LOOP_PASS')\n",
+    "expect_exit": 0,
+    "expect_stdout": "DEEP_LOOP_PASS",
+    "timeout_s": 60,
+    "must_fail_on_stub": true
+  }]
+}

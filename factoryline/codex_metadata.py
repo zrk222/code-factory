@@ -336,7 +336,7 @@ def _audit_text(workspace: Path, path: str, text: str) -> list[dict[str, str]]:
 
 
 def _discover(workspace: Path, paths: list[Path] | None) -> tuple[list[Path], list[dict[str, str]]]:
-    requested = paths if paths else [Path(item) for item in DEFAULT_PATHS if (workspace / item).exists()]
+    requested = paths if paths is not None else [Path(item) for item in DEFAULT_PATHS if (workspace / item).exists()]
     if not requested:
         raise MetadataAuditError("E_METADATA_INPUT_MISSING", "no metadata paths were selected or found")
     files: list[Path] = []
@@ -360,68 +360,95 @@ def _discover(workspace: Path, paths: list[Path] | None) -> tuple[list[Path], li
     return files, findings
 
 
+def _oversize_entry(relative: str, size: int) -> dict[str, Any]:
+    return {"path": relative, "bytes": size, "sha256": None, "format": "oversize"}
+
+
+def _read_metadata_bytes(path: Path, relative: str) -> tuple[dict[str, Any] | None, bytes | None, list[dict[str, str]]]:
+    """Read one bounded file and recheck its actual byte count after the read."""
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return None, None, [_finding("E_METADATA_INPUT_INVALID", relative, "file", f"unable to inspect metadata: {exc}")]
+    if size > MAX_FILE_BYTES:
+        return _oversize_entry(relative, size), None, [_finding("E_METADATA_TOO_LARGE", relative, "file", f"metadata file exceeds {MAX_FILE_BYTES} bytes")]
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        return None, None, [_finding("E_METADATA_INPUT_INVALID", relative, "file", f"unable to read metadata: {exc}")]
+    if len(raw) > MAX_FILE_BYTES:
+        return _oversize_entry(relative, len(raw)), None, [_finding("E_METADATA_TOO_LARGE", relative, "file", f"metadata file exceeds {MAX_FILE_BYTES} bytes")]
+    suffix = path.suffix.lower()
+    entry = {
+        "path": relative,
+        "bytes": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "format": suffix.lstrip(".") or "none",
+    }
+    return entry, raw, []
+
+
+def _audit_json(workspace: Path, relative: str, text: str, entry: dict[str, Any]) -> list[dict[str, str]]:
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return [_finding("E_METADATA_PARSE_INVALID", relative, f"line:{exc.lineno}", f"invalid JSON: {exc.msg}")]
+    records = list(_records(value))
+    entry["records"] = len(records)
+    return [finding for location, record in records for finding in _audit_record(workspace, relative, location, record)]
+
+
+def _audit_jsonl(workspace: Path, relative: str, text: str, entry: dict[str, Any]) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    record_count = 0
+    for number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as exc:
+            findings.append(_finding("E_METADATA_PARSE_INVALID", relative, f"line:{number}", f"invalid JSONL record: {exc.msg}"))
+            continue
+        for location, record in _records(value, f"line:{number}"):
+            record_count += 1
+            findings.extend(_audit_record(workspace, relative, location, record))
+    entry["records"] = record_count
+    return findings
+
+
+def _audit_metadata_file(workspace: Path, path: Path) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
+    relative = _display(workspace, path)
+    entry, raw, findings = _read_metadata_bytes(path, relative)
+    if entry is None or raw is None:
+        return entry, findings
+    suffix = path.suffix.lower()
+    if suffix not in SUPPORTED_SUFFIXES:
+        findings.append(_finding("E_METADATA_FORMAT_UNSUPPORTED", relative, "file", f"unsupported metadata format: {suffix or '<none>'}"))
+        return entry, findings
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        findings.append(_finding("E_METADATA_INPUT_INVALID", relative, "file", f"metadata is not UTF-8: {exc}"))
+        return entry, findings
+    if suffix == ".json":
+        findings.extend(_audit_json(workspace, relative, text, entry))
+    elif suffix == ".jsonl":
+        findings.extend(_audit_jsonl(workspace, relative, text, entry))
+    else:
+        findings.extend(_audit_text(workspace, relative, text))
+    return entry, findings
+
+
 def audit_metadata(root: Path, paths: list[Path] | None = None) -> dict[str, Any]:
     """Audit selected local Codex metadata without executing or mutating it."""
     workspace = Path(root).resolve()
     files, findings = _discover(workspace, paths)
     inspected: list[dict[str, Any]] = []
     for path in files:
-        relative = _display(workspace, path)
-        try:
-            size = path.stat().st_size
-        except OSError as exc:
-            findings.append(_finding("E_METADATA_INPUT_INVALID", relative, "file", f"unable to inspect metadata: {exc}"))
-            continue
-        if size > MAX_FILE_BYTES:
-            findings.append(_finding("E_METADATA_TOO_LARGE", relative, "file", f"metadata file exceeds {MAX_FILE_BYTES} bytes"))
-            inspected.append({"path": relative, "bytes": size, "sha256": None, "format": "oversize"})
-            continue
-        try:
-            raw = path.read_bytes()
-        except OSError as exc:
-            findings.append(_finding("E_METADATA_INPUT_INVALID", relative, "file", f"unable to read metadata: {exc}"))
-            continue
-        digest = hashlib.sha256(raw).hexdigest()
-        entry: dict[str, Any] = {"path": relative, "bytes": len(raw), "sha256": digest}
-        suffix = path.suffix.lower()
-        entry["format"] = suffix.lstrip(".") or "none"
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            findings.append(_finding("E_METADATA_INPUT_INVALID", relative, "file", f"metadata is not UTF-8: {exc}"))
+        entry, file_findings = _audit_metadata_file(workspace, path)
+        findings.extend(file_findings)
+        if entry is not None:
             inspected.append(entry)
-            continue
-        if suffix not in SUPPORTED_SUFFIXES:
-            findings.append(_finding("E_METADATA_FORMAT_UNSUPPORTED", relative, "file", f"unsupported metadata format: {suffix or '<none>'}"))
-            inspected.append(entry)
-            continue
-        if suffix == ".json":
-            try:
-                value = json.loads(text)
-            except json.JSONDecodeError as exc:
-                findings.append(_finding("E_METADATA_PARSE_INVALID", relative, f"line:{exc.lineno}", f"invalid JSON: {exc.msg}"))
-            else:
-                records = list(_records(value))
-                entry["records"] = len(records)
-                for location, record in records:
-                    findings.extend(_audit_record(workspace, relative, location, record))
-        elif suffix == ".jsonl":
-            records = 0
-            for number, line in enumerate(text.splitlines(), start=1):
-                if not line.strip():
-                    continue
-                try:
-                    value = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    findings.append(_finding("E_METADATA_PARSE_INVALID", relative, f"line:{number}", f"invalid JSONL record: {exc.msg}"))
-                    continue
-                for location, record in _records(value, f"line:{number}"):
-                    records += 1
-                    findings.extend(_audit_record(workspace, relative, location, record))
-            entry["records"] = records
-        else:
-            findings.extend(_audit_text(workspace, relative, text))
-        inspected.append(entry)
     findings = sorted(findings, key=lambda item: (item["path"], item["location"], item["code"], item["detail"]))
     body: dict[str, Any] = {
         "schema": SCHEMA,

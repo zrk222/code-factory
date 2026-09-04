@@ -42,7 +42,7 @@ def _atomic(path: Path, payload: dict[str, Any]) -> None:
 
 def _finding(code: str, message: str, repair: str) -> dict[str, str]: return {"code": code, "message": message, "repair": repair}
 
-def verify_submission_integrity(root: Path, candidate_path: Path, contract_path: Path, out_path: Path) -> dict[str, Any]:
+def _validated_submission(root: Path, candidate_path: Path, contract_path: Path) -> dict[str, Any]:
     """Validate a user-approved 10+3 capture contract; never creates or trusts media."""
     workspace = Path(root).resolve(); candidate, candidate_source = _read_candidate(workspace, candidate_path); contract, source = _read(workspace, contract_path)
     expected = {"schema", "candidate", "requirements", "approval"}
@@ -68,8 +68,26 @@ def verify_submission_integrity(root: Path, candidate_path: Path, contract_path:
         actual = sum(1 for item in normalized if item["device"] == device)
         if actual != required: findings.append(_finding("E_CAPTURE_COVERAGE_MISSING", f"{device} has {actual} named captures; the approved contract requires exactly {required}.", f"Add or remove named {device} requirements until exactly {required} states are specified and independently reviewable."))
     core: dict[str, Any] = {"schema": RECEIPT_SCHEMA, "marker": "APPFORGE_SUBMISSION_INTEGRITY_READY" if not findings else "APPFORGE_SUBMISSION_INTEGRITY_BLOCKED", "ok": not findings, "action_summary": "Fail closed on vague AppForge screenshot requirements and weak evidence classes; return the smallest deterministic repair for every missing requirement without creating media or operating Apple systems.", "candidate": candidate, "sources": {"candidate": {"path": candidate_source.relative_to(workspace).as_posix(), "sha256": _file_sha(candidate_source)}, "contract": {"path": source.relative_to(workspace).as_posix(), "sha256": _file_sha(source)}}, "approval": approval, "requirements": normalized, "coverage": {device: {"required": required, "actual": sum(1 for item in normalized if item["device"] == device)} for device, required in _SET_RULES.items()}, "findings": findings, "repair_plan": [item["repair"] for item in findings], "authority": {**AUTHORITY, "execution": False, "media_generation": False, "device_access": False, "apple_access": False, "app_review_submit": False, "apple_approval_claim": False}, "claim_boundary": "A local requirement-integrity receipt only. READY means requirements are explicit and candidate-bound, not that images depict the required state or that a native build, device, TestFlight, App Review, or Apple approval exists."}
-    receipt = {**core, "receipt_sha256": _sha(core)}; target = _local(workspace, out_path, False); _atomic(target, receipt)
+    return {**core, "receipt_sha256": _sha(core)}
+
+
+def verify_submission_integrity(root: Path, candidate_path: Path, contract_path: Path, out_path: Path) -> dict[str, Any]:
+    """Validate current source requirements and persist their local receipt."""
+    workspace = Path(root).resolve()
+    receipt = _validated_submission(workspace, candidate_path, contract_path)
+    target = _local(workspace, out_path, False); _atomic(target, receipt)
     return {**receipt, "path": target.relative_to(workspace).as_posix()}
+
+
+def _revalidate_integrity(workspace: Path, integrity: dict[str, Any]) -> None:
+    """A matching local hash does not establish constructor validity or freshness."""
+    try:
+        sources = integrity["sources"]
+        current = _validated_submission(workspace, Path(sources["candidate"]["path"]), Path(sources["contract"]["path"]))
+    except (KeyError, TypeError, ValueError, OSError, RevenueForgeError) as exc:
+        raise RevenueForgeError("APPFORGE_CAPTURE_RECONCILIATION_INTEGRITY_INVALID", "original candidate and contract must remain available and valid") from exc
+    if current != integrity or current.get("ok") is not True:
+        raise RevenueForgeError("APPFORGE_CAPTURE_RECONCILIATION_INTEGRITY_INVALID", "receipt must match freshly validated candidate and contract requirements")
 
 def submission_integrity_projection(root: Path) -> dict[str, Any]:
     """Project hash-valid local submission-integrity receipts without accessing Apple systems."""
@@ -91,6 +109,7 @@ def reconcile_capture_evidence(root: Path, integrity_path: Path, evidence_path: 
     """Compare actual local files with sealed capture requirements; never judges pixels."""
     workspace = Path(root).resolve(); integrity, integrity_source = _read(workspace, integrity_path); evidence, evidence_source = _read(workspace, evidence_path)
     if integrity.get("schema") != RECEIPT_SCHEMA or integrity.get("marker") != "APPFORGE_SUBMISSION_INTEGRITY_READY" or integrity.get("receipt_sha256") != _sha({k:v for k,v in integrity.items() if k != "receipt_sha256"}): raise RevenueForgeError("APPFORGE_CAPTURE_RECONCILIATION_INTEGRITY_INVALID", "requires a hash-valid ready submission-integrity receipt")
+    _revalidate_integrity(workspace, integrity)
     if set(evidence) != {"candidate", "captures"} or evidence["candidate"] != integrity["candidate"] or not isinstance(evidence["captures"], list): raise RevenueForgeError("APPFORGE_CAPTURE_RECONCILIATION_EVIDENCE_INVALID", "evidence must bind the exact candidate and declare captures")
     required = {item["id"]: item for item in integrity["requirements"]}; seen: set[str] = set(); findings: list[dict[str,str]] = []
     for item in evidence["captures"]:

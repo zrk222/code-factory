@@ -1,0 +1,13 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "capability-evidence-audit-v1",
+  "sealed_hash": "9a88018196d2f6d6a4716e9d8fdc650ceabb6426c154e0fbbc5b645ec53bb220",
+  "coherence_score": 100,
+  "source": "specs/capability-evidence-audit-v1.md",
+  "intent": "Bind capability claims to source and declared test evidence without claiming production or independent validation.",
+  "assumptions": [
+    "Assumes declared provenance never grants approval, release or credential authority. Human review must confirm guard semantics and policy scope."
+  ],
+  "seal_timing": "retrospective_implementation_review",
+  "coherence_basis": "SpecLine strict: zero warnings; validator mutations rejected. Not a product quality rating."
+}

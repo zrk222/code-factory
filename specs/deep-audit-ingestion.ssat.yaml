@@ -1,0 +1,36 @@
+name: deep-audit-ingestion
+language: python
+modules:
+  - name: deep_audit_contract
+    path: factoryline/deep_audit_contract.py
+    functions:
+      - name: verify_deep_audit_plan
+        args: [path, trust_root_path, trust_root_sha256, workspace_root]
+        returns: dict
+  - name: deep_audit_sarif
+    path: factoryline/deep_audit_sarif.py
+    functions:
+      - name: normalize_sarif
+        args: [root, binding, analyzer, source_hashes]
+        returns: dict
+  - name: deep_audit_io
+    path: factoryline/deep_audit_io.py
+    functions:
+      - name: strict_json
+        args: [raw]
+        returns: dict
+      - name: bound_bytes
+        args: [root, binding]
+        returns: bytes
+dependencies:
+  - from: deep_audit_contract
+    to: deep_audit_io
+  - from: deep_audit_sarif
+    to: deep_audit_io
+invariants:
+  - name: parser_has_no_execution_authority
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|\\b(?:exec|eval|publish|deploy)\\s*\\("
+    scopes:
+      - module: deep_audit_sarif
+        symbol: normalize_sarif
+        max_lines: 50

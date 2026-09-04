@@ -1,0 +1,17 @@
+name: code-review-audits-v1
+language: python
+modules:
+  - name: review_audits
+    path: factoryline/review_audits.py
+    functions:
+      - name: audit_code
+        args: [root, policy_path]
+        returns: dict
+dependencies: []
+invariants:
+  - name: no_execution_or_provider_authority
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:exec|eval|deploy|publish|sign)\\s*\\("
+    scopes:
+      - module: review_audits
+        symbol: audit_code
+        max_lines: 40

@@ -1,0 +1,13 @@
+{
+  "checks": [
+    {
+      "name": "mission_profile_is_observable_not_authoritative",
+      "kind": "python",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.mission_control_status import mission_control_profile, mission_control_status\nwith TemporaryDirectory() as directory:\n    root = Path(directory)\n    first = mission_control_profile(root)\n    second = mission_control_profile(root)\n    assert len(first['spans']) == 5\n    assert first['evidence_sha256'] == second['evidence_sha256']\n    assert not any(first['authority'].values())\n    assert mission_control_status(root)['agent_control_plane']['state'] == 'supervised_only'\nprint('ASSEMBLY_READ_PROOF_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "ASSEMBLY_READ_PROOF_PASS",
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    }
+  ]
+}

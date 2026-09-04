@@ -8,11 +8,16 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import hashlib
+import json
+import time
 
 from .lifecycle_ledger import lifecycle_projection
 from .operations_control import operations_control_projection
 from .oracle_firewall import oracle_firewall_projection
 from .repair_loop import repair_loop_projection
+from .runtime_audit import runtime_audit_status
+from .deep_audit import deep_audit_status
 from .protocol_enums import MissionControlState
 
 
@@ -31,13 +36,57 @@ AUTHORITY = {
 }
 
 
+def _collect_evidence(root: Path, spans: list | None = None) -> dict[str, Any]:
+    readers = (
+        ("oracle", oracle_firewall_projection),
+        ("operations", operations_control_projection),
+        ("lifecycle", lifecycle_projection),
+        ("repair_loops", repair_loop_projection),
+        ("runtime_assurance", runtime_audit_status),
+        ("deep_audit", deep_audit_status),
+    )
+    evidence = {}
+    for name, reader in readers:
+        started = time.perf_counter_ns()
+        evidence[name] = reader(root)
+        elapsed = time.perf_counter_ns() - started
+        if spans is not None:
+            spans.append({"name": name, "elapsed_ns": elapsed,
+                          "output_sha256": _fingerprint(evidence[name])})
+    return evidence
+
+
+def _fingerprint(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=True, allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def mission_control_profile(root: Path) -> dict[str, Any]:
+    """Measure local evidence readers without exporting their bodies or authorizing any action."""
+    spans: list[dict[str, Any]] = []
+    _collect_evidence(Path(root).resolve(), spans)
+    identities = [{"name": span["name"], "output_sha256": span["output_sha256"]}
+                  for span in spans]
+    return {
+        "schema": "factory.mission-control-profile.v1",
+        "spans": spans,
+        "reader_elapsed_ns": sum(span["elapsed_ns"] for span in spans),
+        "evidence_sha256": _fingerprint(identities),
+        "authority": dict(AUTHORITY),
+        "claim_boundary": "Local reader timings only; not an atomic filesystem snapshot, approval, signature or end-to-end speedup.",
+    }
+
+
 def mission_control_status(root: Path) -> dict[str, Any]:
     """Summarize local evidence gates without creating a hidden control path."""
     workspace = Path(root).resolve()
-    oracle = oracle_firewall_projection(workspace)
-    operations = operations_control_projection(workspace)
-    lifecycle = lifecycle_projection(workspace)
-    repairs = repair_loop_projection(workspace)
+    evidence = _collect_evidence(workspace)
+    oracle = evidence["oracle"]
+    operations = evidence["operations"]
+    lifecycle = evidence["lifecycle"]
+    repairs = evidence["repair_loops"]
+    runtime = evidence["runtime_assurance"]
     blockers = {
         "oracle_invalid": int(oracle.get("invalid_count", 0)),
         "oracle_weakening": int(oracle.get("blocked_drift_count", 0)),
@@ -45,10 +94,14 @@ def mission_control_status(root: Path) -> dict[str, Any]:
         "operations_invalid": int(operations.get("invalid_count", 0)),
         "lifecycle_invalid": int(lifecycle.get("invalid_count", 0)),
         "repair_invalid": int(repairs.get("invalid_count", 0)),
+        "runtime_assurance_blocked": int(runtime.get("state") in {"BLOCKED", "INCOMPLETE"}),
+        "deep_audit_blocked": int(evidence["deep_audit"].get("state") in {"BLOCKED", "INCOMPLETE"}),
     }
     blocked = any(blockers.values())
     human_required = (
         blocked
+        or evidence["deep_audit"].get("state") == "READY_FOR_HUMAN_REVIEW"
+        or runtime.get("state") == "READY_FOR_HUMAN_REVIEW"
         or int(lifecycle.get("review_required_count", 0)) > 0
         or int(repairs.get("receipt_count", 0)) > 0
     )
@@ -82,6 +135,8 @@ def mission_control_status(root: Path) -> dict[str, Any]:
                 "operations_receipt",
                 "session_trace",
                 "repair_loop_packet",
+                "runtime_assurance_receipt",
+                "deep_audit_receipt",
             ],
             "may_not": [
                 "alter_intent",
@@ -98,12 +153,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
             ),
         },
         "blockers": blockers,
-        "evidence": {
-            "oracle": oracle,
-            "operations": operations,
-            "lifecycle": lifecycle,
-            "repair_loops": repairs,
-        },
+        "evidence": evidence,
         "authority": dict(AUTHORITY),
         "claim_boundary": (
             "This is a read-only coordination view. It does not create approval, execute an agent, "

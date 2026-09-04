@@ -1,0 +1,53 @@
+name: deep-defect-mesh-v1
+language: python
+modules:
+  - name: deep_audit_contract
+    path: factoryline/deep_audit_contract.py
+    functions:
+      - name: verify_deep_audit_plan
+        args: [path, trust_root_path, trust_root_sha256, workspace_root]
+        returns: dict
+  - name: deep_audit_sarif
+    path: factoryline/deep_audit_sarif.py
+    functions:
+      - name: normalize_sarif
+        args: [root, binding, analyzer, source_hashes]
+        returns: dict
+  - name: deep_audit
+    path: factoryline/deep_audit.py
+    functions:
+      - name: evaluate_deep_audit
+        args: [plan, reports, canary_reports]
+        returns: dict
+      - name: execute_deep_audit
+        args: [plan_path, trust_root_path, trust_root_sha256, workspace_root]
+        returns: dict
+      - name: deep_audit_status
+        args: [root]
+        returns: dict
+  - name: deep_audit_loop
+    path: factoryline/deep_audit_loop.py
+    functions:
+      - name: compare_deep_audits
+        args: [root, before_path, after_path]
+        returns: dict
+dependencies:
+  - from: deep_audit
+    to: deep_audit_contract
+  - from: deep_audit
+    to: deep_audit_sarif
+  - from: deep_audit_loop
+    to: deep_audit
+invariants:
+  - name: evaluation_has_no_execution_authority
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|socket\\.|\\b(?:exec|eval|deploy|publish|sign)\\s*\\("
+    scopes:
+      - module: deep_audit
+        symbol: evaluate_deep_audit
+        max_lines: 180
+  - name: loop_has_no_execution_authority
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|socket\\.|\\b(?:exec|eval|deploy|publish|sign)\\s*\\("
+    scopes:
+      - module: deep_audit_loop
+        symbol: compare_deep_audits
+        max_lines: 100

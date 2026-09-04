@@ -28,7 +28,7 @@ def _source_commit(module_dir: Path) -> str | None:
             text=True,
             timeout=3,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0 or dirty.returncode != 0 or dirty.stdout.strip():
         return None

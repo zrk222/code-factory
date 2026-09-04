@@ -1,0 +1,11 @@
+{
+  "checks": [
+    {
+      "name": "capability_claims_reject_detached_and_mutated_evidence",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_capability_evidence.py']) == 0\n",
+      "covers": ["REQ_CLAIM_BINDINGS", "REQ_CLAIM_HASHES", "REQ_CLAIM_EXECUTION", "REQ_CLAIM_FAIL_CLOSED", "REQ_CLAIM_BOUNDARY"],
+      "must_fail_on_stub": true
+    }
+  ]
+}

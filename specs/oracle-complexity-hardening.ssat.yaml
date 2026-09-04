@@ -1,0 +1,59 @@
+name: oracle-complexity-hardening
+language: python
+modules:
+  - name: codex_metadata
+    path: factoryline/codex_metadata.py
+    functions:
+      - name: audit_metadata
+        args: [root, paths]
+        returns: dict
+      - name: write_metadata_audit
+        args: [root, paths, out]
+        returns: dict
+  - name: oracle_firewall
+    path: factoryline/oracle_firewall.py
+    functions:
+      - name: seal_oracle_contract
+        args: [root, input_path, out]
+        returns: dict
+      - name: compile_oracle_challenge
+        args: [root, contract_path, out]
+        returns: dict
+      - name: validate_oracle_challenge_plan
+        args: [root, value]
+        returns: dict
+      - name: verify_oracle_challenge_result
+        args: [root, plan_path, result_path]
+        returns: dict
+      - name: record_oracle_incident
+        args: [root, agent, contract_path, drift_path, out]
+        returns: dict
+invariants:
+  - name: public_coordinators_are_bounded_and_non_operational
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:exec|eval|publish|deploy|sign)\\s*\\("
+    scopes:
+      - module: codex_metadata
+        symbol: audit_metadata
+        max_lines: 50
+      - module: oracle_firewall
+        symbol: seal_oracle_contract
+        max_lines: 45
+      - module: oracle_firewall
+        symbol: compile_oracle_challenge
+        max_lines: 20
+      - module: oracle_firewall
+        symbol: validate_oracle_challenge_plan
+        max_lines: 25
+      - module: oracle_firewall
+        symbol: verify_oracle_challenge_result
+        max_lines: 40
+      - module: oracle_firewall
+        symbol: record_oracle_incident
+        max_lines: 25
+tests:
+  - path: tests/test_codex_metadata.py
+    command: python -m pytest -q tests/test_codex_metadata.py
+  - path: tests/test_oracle_firewall.py
+    command: python -m pytest -q tests/test_oracle_firewall.py
+  - path: tests/test_oracle_complexity.py
+    command: python -m pytest -q tests/test_oracle_complexity.py

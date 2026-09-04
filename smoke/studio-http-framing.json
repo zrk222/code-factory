@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "name": "studio_http_rejection_recovers_without_socket_abort",
+      "kind": "python",
+      "run": "import subprocess, sys\nresult = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-rA', 'tests/test_studio.py::test_http_surface_requires_session_token_and_enforces_body_limit'], capture_output=True, text=True)\nsummary = (result.stdout + result.stderr).lower()\nassert result.returncode == 0 and '1 passed' in summary and 'skipped' not in summary and 'xfailed' not in summary\nprint('STUDIO_HTTP_FRAMING_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "STUDIO_HTTP_FRAMING_PASS",
+      "timeout_s": 30,
+      "covers": ["REQ_POST_EARLY_REJECTION", "REQ_POST_RECOVERY", "REQ_POST_AUTHORITY"],
+      "must_fail_on_stub": true
+    }
+  ]
+}
