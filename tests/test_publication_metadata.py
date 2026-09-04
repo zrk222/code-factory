@@ -178,7 +178,7 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
     package = json.loads((ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8"))
     lock = json.loads((ROOT / "editors" / "vscode" / "package-lock.json").read_text(encoding="utf-8"))
 
-    assert package["scripts"]["audit"] == "npm audit --audit-level=high"
+    assert package["scripts"]["audit"] == "npm audit --omit=dev --audit-level=high"
     assert package["overrides"] == {
         "brace-expansion": "5.0.9",
         "fast-uri": "3.1.6",
