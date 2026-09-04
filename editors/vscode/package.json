@@ -103,7 +103,7 @@
   "scripts": {
     "compile": "tsc -p .",
     "test": "npm run compile && node ./dist/test/receipt.test.js",
-    "audit": "npm audit --omit=dev --audit-level=high",
+    "audit": "npm audit --audit-level=high --fetch-retries=3 --fetch-timeout=30000 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=5000",
     "package": "npm run test && vsce package --no-dependencies"
   },
   "overrides": {
