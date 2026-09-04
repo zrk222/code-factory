@@ -1,0 +1,23 @@
+name: deep-audit-decisions
+language: python
+modules:
+  - name: deep_audit
+    path: factoryline/deep_audit.py
+    functions:
+      - name: evaluate_deep_audit
+        args: [plan, reports, canary_reports]
+        returns: dict
+      - name: execute_deep_audit
+        args: [plan_path, trust_root_path, trust_root_sha256, workspace_root]
+        returns: dict
+      - name: deep_audit_status
+        args: [root]
+        returns: dict
+dependencies: []
+invariants:
+  - name: decisions_do_not_execute_repairs
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|\\b(?:eval|publish|deploy)\\s*\\("
+    scopes:
+      - module: deep_audit
+        symbol: evaluate_deep_audit
+        max_lines: 100
