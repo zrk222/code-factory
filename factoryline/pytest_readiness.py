@@ -10,6 +10,11 @@ class _Results:
         self.skipped = 0
         self.xfailed = 0
 
+    def pytest_collectreport(self, report) -> None:
+        """Count collection skips that prevent an entire module from running."""
+        if report.skipped:
+            self.skipped += 1
+
     def pytest_runtest_logreport(self, report) -> None:
         """Count terminal test outcomes without overlooking setup-phase skips or xfails."""
         if report.skipped:

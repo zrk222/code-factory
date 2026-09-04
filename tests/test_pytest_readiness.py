@@ -15,3 +15,15 @@ def test_setup_phase_skip_cannot_satisfy_readiness(tmp_path: Path) -> None:
     result = collect_pytest_readiness([str(suite)])
     assert result == {"exit_code": 0, "passed": 1, "skipped": 1, "xfailed": 0}
     assert (result["passed"], result["skipped"], result["xfailed"]) != (1, 0, 0)
+
+
+def test_collection_skip_cannot_satisfy_readiness(tmp_path: Path) -> None:
+    suite = tmp_path / "test_collection_sabotage.py"
+    suite.write_text(
+        "import pytest\n"
+        "pytest.skip('collection sabotage', allow_module_level=True)\n"
+        "def test_never_collected(): assert True\n",
+        encoding="utf-8",
+    )
+    result = collect_pytest_readiness([str(suite)])
+    assert result == {"exit_code": 5, "passed": 0, "skipped": 1, "xfailed": 0}
