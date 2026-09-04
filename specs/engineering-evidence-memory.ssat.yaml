@@ -1,0 +1,28 @@
+name: engineering-evidence-memory
+language: python
+modules:
+  - name: engineering_memory
+    path: factoryline/engineering_memory.py
+    functions:
+      - name: recall_engineering_memory
+        args: [root, principal, tenant_id, purpose_ref, scope_ref]
+        returns: dict
+  - name: knowledge_handoff
+    path: factoryline/knowledge_handoff.py
+    functions:
+      - name: create_knowledge_handoff
+        args: [root, principal, tenant, purpose, scope, sender, receiver]
+        returns: dict
+      - name: receive_knowledge_handoff
+        args: [root, principal, tenant, purpose, scope, sender, receiver, packet]
+        returns: dict
+dependencies:
+  - from: knowledge_handoff
+    to: engineering_memory
+invariants:
+  - name: receive_never_executes
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|write_text|write_bytes"
+    scopes:
+      - module: knowledge_handoff
+        symbol: receive_knowledge_handoff
+        max_lines: 20

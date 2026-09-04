@@ -444,6 +444,39 @@ class ContinuityStore:
                         payload={"record_sha256": row["record_sha256"], "reason": reason.strip()})
             return self._row(db.execute("SELECT * FROM continuity_records WHERE record_id = ?", (record_id,)).fetchone())
 
+    def withdraw(self, principal: ContinuityPrincipal, tenant_id: str, record_id: str, *, status: str, reason: str, replacement_id: str | None = None) -> dict:
+        """Atomically withdraw a verified memory and preserve the independent review trail."""
+        if status not in {"superseded", "contradicted", "revoked"} or not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 280:
+            raise ContinuityError("E_WITHDRAW_INVALID", "withdrawal status and bounded reason required")
+        with self._session() as db:
+            row = db.execute("SELECT * FROM continuity_records WHERE tenant_id=? AND record_id=?", (tenant_id, record_id)).fetchone()
+            if not row:
+                raise ContinuityError("E_NOT_FOUND", "continuity record not found")
+            _authorize(principal, "continuity.promote", tenant_id, row["purpose_ref"])
+            if principal.subject == row["created_by"]:
+                raise ContinuityError("E_SELF_WITHDRAWAL", "record creator cannot withdraw its own reviewed record")
+            if row["status"] != "verified":
+                raise ContinuityError("E_WITHDRAW_STATE", "only verified records can be withdrawn")
+            self._validate_replacement(db, row, status, replacement_id)
+            db.execute("UPDATE continuity_records SET status=? WHERE record_id=? AND tenant_id=?", (status, record_id, tenant_id))
+            self._audit(db, tenant_id=tenant_id, action="continuity." + status, actor=principal.subject,
+                        record_id=record_id, payload={"record_sha256": row["record_sha256"], "reason": reason.strip(), "replacement_id": replacement_id})
+            return {"record_id": record_id, "status": status, "authority": "none"}
+
+    @staticmethod
+    def _validate_replacement(db, row, status, replacement_id):
+        if status != "superseded":
+            if replacement_id is not None:
+                raise ContinuityError("E_REPLACEMENT_INVALID", "replacement only applies to supersession")
+            return
+        replacement = db.execute("SELECT * FROM continuity_records WHERE record_id=? AND tenant_id=?", (replacement_id, row["tenant_id"])).fetchone()
+        if not replacement or replacement_id == row["record_id"]:
+            raise ContinuityError("E_REPLACEMENT_INVALID", "distinct verified replacement required")
+        if replacement["status"] != "verified" or _is_expired(replacement["expires_at"]):
+            raise ContinuityError("E_REPLACEMENT_INVALID", "replacement must be current")
+        if any(replacement[key] != row[key] for key in ("scope_ref", "purpose_ref")):
+            raise ContinuityError("E_REPLACEMENT_INVALID", "replacement scope or purpose differs")
+
     def recall(self, principal: ContinuityPrincipal, tenant_id: str, *, purpose_ref: str, scope_ref: str) -> dict[str, Any]:
         """Return only current, independently-promoted, exact scope/purpose records."""
         _authorize(principal, "continuity.read", tenant_id, purpose_ref)

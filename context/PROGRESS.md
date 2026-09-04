@@ -581,3 +581,10 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-04 01:50] GATE plan deep-defect-mesh-v1 approver=agent_prepared_for_user_review tasks=12 sha=239c274e0430e146
 - [2026-09-04 01:58] GATE plan deep-defect-mesh-v1 approver=agent_prepared_for_user_review tasks=12 sha=239c274e0430e146
 - [2026-09-04 02:04] GATE plan deep-defect-mesh-v1 approver=agent_prepared_for_user_review tasks=12 sha=239c274e0430e146
+- [2026-09-04 02:08] GATE spec engineering-evidence-memory approver=agent_prepared_for_user_review strict=True sha=81beb681f57c73c8
+- [2026-09-04 02:08] GATE plan engineering-evidence-memory approver=agent_prepared_for_user_review tasks=3 sha=81beb681f57c73c8
+- [2026-09-04 02:16] GATE spec engineering-evidence-memory approver=agent_prepared_for_user_review strict=True sha=c320479859870b72
+- [2026-09-04 02:17] GATE plan engineering-evidence-memory approver=agent_prepared_for_user_review tasks=3 sha=c320479859870b72
+
+- [2026-09-04 02:19] GATE spec engineering-evidence-memory approver=agent_prepared_for_user_review strict=True sha=386989a362ecdd33
+- [2026-09-04 02:31] GATE plan engineering-evidence-memory approver=agent_prepared_for_user_review tasks=3 sha=386989a362ecdd33

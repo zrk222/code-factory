@@ -1112,6 +1112,15 @@ def main(argv=None) -> int:
     audit_verify = control_sub.add_parser("audit-verify", help="verify the tenant audit hash chain")
     add_control_identity(audit_verify, default_role="viewer")
 
+    engineering_memory = sub.add_parser("evidence-memory", help="recall current evidence-backed engineering metadata without gate authority")
+    engineering_memory.add_argument("--root", default=".")
+    engineering_memory.add_argument("--tenant", required=True)
+    engineering_memory.add_argument("--subject", required=True)
+    engineering_memory.add_argument("--purpose", required=True)
+    engineering_memory.add_argument("--scope", required=True)
+    engineering_memory.add_argument("--sender", choices=sorted(MODULES))
+    engineering_memory.add_argument("--receiver", choices=sorted(MODULES))
+    engineering_memory.add_argument("--accept", help="workspace-relative handoff JSON to revalidate")
     continuity = sub.add_parser("continuity", help="govern local proof-carrying engineering-memory references")
     continuity_sub = continuity.add_subparsers(required=True, dest="continuity_cmd")
     continuity_init = continuity_sub.add_parser("init", help="create a local Factory Continuity metadata ledger")
@@ -1137,6 +1146,12 @@ def main(argv=None) -> int:
     continuity_promote.add_argument("record_id")
     continuity_promote.add_argument("--reason", required=True)
     add_continuity_identity(continuity_promote, default_role="promoter")
+    withdraw = continuity_sub.add_parser("withdraw", help="withdraw a reviewed memory with an atomic audit event")
+    withdraw.add_argument("record_id")
+    withdraw.add_argument("--status", choices=["superseded", "contradicted", "revoked"], required=True)
+    withdraw.add_argument("--reason", required=True)
+    withdraw.add_argument("--replacement-id")
+    add_continuity_identity(withdraw, default_role="promoter")
     continuity_prove = continuity_sub.add_parser("prove", help="show local unsigned lineage for one record without mutation authority")
     continuity_prove.add_argument("record_id")
     add_continuity_identity(continuity_prove, default_role="reader")
@@ -5288,6 +5303,28 @@ def main(argv=None) -> int:
         if a.control_cmd == "audit-verify":
             return 0 if result["valid"] else 1
         return 0
+    if a.cmd == "evidence-memory":
+        from .engineering_memory import recall_engineering_memory
+        from .continuity import principal_from_args, ContinuityError
+        import sqlite3
+        try:
+            principal = principal_from_args(a.subject, a.tenant, ["reader"], [a.purpose])
+            from .knowledge_handoff import create_knowledge_handoff, receive_knowledge_handoff
+            from .deep_audit_io import local_file, strict_json, LIMIT
+            args = (Path(a.root), principal, a.tenant, a.purpose, a.scope)
+            if a.accept:
+                with local_file(Path(a.root).resolve(), a.accept).open("rb") as stream:
+                    packet = strict_json(stream.read(LIMIT + 1))
+                result = receive_knowledge_handoff(*args, a.sender, a.receiver, packet)
+            elif a.sender or a.receiver:
+                result = create_knowledge_handoff(*args, a.sender, a.receiver)
+            else:
+                result = recall_engineering_memory(*args)
+        except (ValueError, OSError, KeyError, TypeError, ContinuityError, sqlite3.Error) as exc:
+            print(json.dumps({"state": "blocked", "code": getattr(exc, "code", "E_MEMORY_INVALID"), "authority": "none"}))
+            return 1
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
     if a.cmd == "continuity":
         from .continuity import ContinuityError, ContinuityStore, principal_from_args as continuity_principal_from_args
         try:
@@ -5315,6 +5352,8 @@ def main(argv=None) -> int:
                         result = store.recall(principal, a.tenant, purpose_ref=a.purpose, scope_ref=a.scope)
                     elif a.continuity_cmd == "promote":
                         result = store.promote(principal, a.tenant, a.record_id, reason=a.reason)
+                    elif a.continuity_cmd == "withdraw":
+                        result = store.withdraw(principal, a.tenant, a.record_id, status=a.status, reason=a.reason, replacement_id=a.replacement_id)
                     else:
                         result = store.prove(principal, a.tenant, a.record_id)
         except (ContinuityError, json.JSONDecodeError, OSError) as exc:
