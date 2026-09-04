@@ -1,0 +1,19 @@
+name: studio-http-framing
+language: python
+modules:
+  - name: studio
+    path: factoryline/studio.py
+    functions:
+      - name: create_server
+        args: [root, port]
+        returns: tuple
+invariants:
+  - name: server_binding_remains_local
+    forbid_pattern: "0\\.0\\.0\\.0|requests\\.|httpx\\.|\\b(?:publish|deploy)\\s*\\("
+    scopes:
+      - module: studio
+        symbol: create_server
+        max_lines: 30
+tests:
+  - path: tests/test_studio.py
+    command: python -m pytest -q tests/test_studio.py

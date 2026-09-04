@@ -41,8 +41,8 @@
       "rule": "QA_COMPLEXITY factoryline/appforge_oracle.py:verify_appforge_oracle_authority complexity 13 > 10; policy=hard",
       "promoted_from_count": 3,
       "promoted_at": "2026-09-04T02:53:26.586685+00:00",
-      "times_enforced": 8,
-      "prevented_recurrence": 8,
+      "times_enforced": 11,
+      "prevented_recurrence": 11,
       "status": "active"
     },
     "J_ARCH": {
@@ -64,6 +64,6 @@
       "status": "probation"
     }
   },
-  "version": 121,
-  "updated": "2026-09-04T03:25:19.737131+00:00"
+  "version": 125,
+  "updated": "2026-09-04T03:50:23.855623+00:00"
 }

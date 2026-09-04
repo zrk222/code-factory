@@ -8,7 +8,9 @@ import pytest
 
 from factoryline.agent_license import derive_license
 from factoryline.oracle_firewall import (
+    CHALLENGE_RESULT_SCHEMA,
     OracleFirewallError,
+    _hash_receipt,
     capture_intent_handoff,
     compare_oracle_contracts,
     compile_oracle_challenge,
@@ -16,6 +18,7 @@ from factoryline.oracle_firewall import (
     oracle_firewall_projection,
     record_oracle_incident,
     seal_oracle_contract,
+    validate_oracle_challenge_plan,
     verify_intent_handoff,
     verify_oracle_challenge_result,
     verify_oracle_contract,
@@ -27,7 +30,6 @@ AGENT = {"schema": "factory.agent-identity.v1", "subject": "worker-alpha", "prov
 
 @pytest.mark.parametrize("mutation", ["gates", "provenance", "sources", "duplicate", "original", "groups"])
 def test_rehashed_contract_must_still_obey_constructor_rules(tmp_path, mutation):
-    from factoryline.oracle_firewall import _hash_receipt
     path = _contract(tmp_path)
     payload = json.loads(path.read_text())
     if mutation == "gates": payload["rules"]["gates"] = []
@@ -208,6 +210,50 @@ def test_shadow_oracle_challenge_rejects_a_stale_plan_even_when_every_case_is_ki
     assert checked["reason"] == "challenge_plan_invalid_or_stale"
 
 
+@pytest.mark.parametrize("mutation", ["missing", "extra", "reordered", "duplicate", "altered"])
+def test_rehashed_challenge_plan_must_exactly_match_current_contract(tmp_path: Path, mutation: str) -> None:
+    contract = _contract(tmp_path)
+    plan = compile_oracle_challenge(tmp_path, contract)
+    cases = plan["cases"]
+    if mutation == "missing":
+        plan["cases"] = cases[:-1]
+    elif mutation == "extra":
+        plan["cases"] = [*cases, {**cases[0], "id": "tests:invented"}]
+    elif mutation == "reordered":
+        plan["cases"] = list(reversed(cases))
+    elif mutation == "duplicate":
+        plan["cases"] = [*cases, dict(cases[0])]
+    else:
+        plan["cases"][0]["mutation"] = "agent_selected_weaker_mutation"
+    plan.pop("challenge_sha256")
+    rehashed = _hash_receipt(plan, "challenge_sha256")
+
+    with pytest.raises(OracleFirewallError) as raised:
+        validate_oracle_challenge_plan(tmp_path, rehashed)
+
+    assert raised.value.code == "ORACLE_CHALLENGE_INVALID"
+
+
+@pytest.mark.parametrize("mutation", ["malformed", "duplicate", "extra"])
+def test_challenge_result_rejects_non_exact_case_rows(tmp_path: Path, mutation: str) -> None:
+    contract = _contract(tmp_path)
+    plan = compile_oracle_challenge(tmp_path, contract, Path(".factory/oracles/challenges/exact.json"))
+    cases = [{"id": item["id"], "outcome": "killed"} for item in plan["cases"]]
+    if mutation == "malformed":
+        cases.append({"id": "malformed"})
+    elif mutation == "duplicate":
+        cases.append(dict(cases[0]))
+    else:
+        cases.append({"id": "tests:invented", "outcome": "killed"})
+    result = _write(tmp_path / "challenge-result.json", {"schema": CHALLENGE_RESULT_SCHEMA, "challenge_sha256": plan["challenge_sha256"], "worker_subject": "worker-alpha", "verifier_subject": "verifier-beta", "target": "implementation", "cases": cases})
+
+    checked = verify_oracle_challenge_result(tmp_path, tmp_path / plan["path"], result)
+
+    assert checked["ok"] is False
+    assert checked["marker"] == "ORACLE_CHALLENGE_FAILED"
+    assert checked["reason"].startswith("cases_")
+
+
 def test_oracle_incident_demotes_declared_agent_and_projects_read_only_status(tmp_path: Path) -> None:
     prior = _contract(tmp_path, out=".factory/oracles/contracts/prior.json")
     handoff = tmp_path / ".factory/oracles/handoffs/ios-intake.json"
@@ -258,6 +304,25 @@ def test_oracle_incident_rejects_stale_or_unrelated_drift_without_demotion(tmp_p
     assert stale_rejection.value.code == "ORACLE_INCIDENT_INVALID"
     assert derive_license(tmp_path, AGENT)["tier"] == before["tier"]
     assert (sorted(incidents.glob("*.json")) if incidents.exists() else []) == before_incidents
+
+
+def test_oracle_incident_rejects_self_hashed_drift_not_reconstructed_from_contracts(tmp_path: Path) -> None:
+    prior = _contract(tmp_path, out=".factory/oracles/contracts/prior.json")
+    source = _input(tmp_path, tmp_path / ".factory/oracles/handoffs/ios-intake.json", threshold=90)
+    candidate = tmp_path / seal_oracle_contract(tmp_path, source, Path(".factory/oracles/contracts/candidate.json"))["path"]
+    drift = compare_oracle_contracts(tmp_path, prior, candidate, Path(".factory/oracles/drifts/blocked.json"))
+    drift_path = tmp_path / drift["path"]
+    fabricated = json.loads(drift_path.read_text(encoding="utf-8"))
+    fabricated["weakening_findings"][0]["code"] = "fabricated_weakening"
+    fabricated["findings"][0]["code"] = "fabricated_weakening"
+    fabricated.pop("drift_sha256")
+    _write(drift_path, _hash_receipt(fabricated, "drift_sha256"))
+
+    with pytest.raises(OracleFirewallError) as raised:
+        record_oracle_incident(tmp_path, AGENT, prior, drift_path)
+
+    assert raised.value.code == "ORACLE_INCIDENT_INVALID"
+    assert not (tmp_path / ".factory/oracles/incidents").exists()
 
 
 def test_full_init_creates_deliberately_incomplete_appforge_authority_workspace(tmp_path: Path) -> None:

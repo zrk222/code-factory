@@ -25,3 +25,6 @@
 {"code": "E_INVARIANT_SCOPE", "event": "promote", "from_count": 3, "rule": "E_INVARIANT_SCOPE graph_ops_is_only_a_projection: cannot resolve bounded symbol graph_ops.graph_ops_snapshot", "ts": "2026-09-04T03:12:12.491065+00:00"}
 {"code": "J_ARCH", "event": "probation", "reason": "never fired since promotion", "ts": "2026-09-04T03:12:12.498065+00:00"}
 {"code": "E_INVARIANT_SCOPE", "event": "probation", "reason": "never fired since promotion", "ts": "2026-09-04T03:12:12.499058+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-04T03:50:23.521014+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-04T03:50:23.526598+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-04T03:50:23.526598+00:00"}

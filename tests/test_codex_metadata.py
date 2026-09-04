@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from factoryline.cli import main
-from factoryline.codex_metadata import MetadataAuditError, audit_metadata, write_metadata_audit
+from factoryline.codex_metadata import MAX_FILE_BYTES, MetadataAuditError, _read_metadata_bytes, audit_metadata, write_metadata_audit
 
 
 def _bound(provider: str = "github") -> dict:
@@ -214,3 +214,32 @@ def test_path_escape_and_missing_inventory_are_rejected(tmp_path: Path):
     with pytest.raises(MetadataAuditError) as missing:
         audit_metadata(tmp_path, [Path("missing.json")])
     assert missing.value.code == "E_METADATA_INPUT_MISSING"
+
+
+def test_explicit_empty_inventory_is_rejected_instead_of_discovering_defaults(tmp_path: Path):
+    (tmp_path / "context").mkdir()
+    (tmp_path / "context" / "claim.json").write_text(json.dumps(_bound()), encoding="utf-8")
+
+    with pytest.raises(MetadataAuditError) as raised:
+        audit_metadata(tmp_path, [])
+
+    assert raised.value.code == "E_METADATA_INPUT_MISSING"
+
+
+def test_file_growth_after_stat_is_still_classified_oversize():
+    class GrowingMetadata:
+        suffix = ".json"
+
+        @staticmethod
+        def stat():
+            return type("MetadataStat", (), {"st_size": 1})()
+
+        @staticmethod
+        def read_bytes():
+            return b"x" * (MAX_FILE_BYTES + 1)
+
+    entry, raw, findings = _read_metadata_bytes(GrowingMetadata(), "growing.json")
+
+    assert raw is None
+    assert entry == {"path": "growing.json", "bytes": MAX_FILE_BYTES + 1, "sha256": None, "format": "oversize"}
+    assert [finding["code"] for finding in findings] == ["E_METADATA_TOO_LARGE"]

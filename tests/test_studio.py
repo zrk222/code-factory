@@ -289,6 +289,7 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         connection.request("POST", "/api/create", body=body, headers={"Content-Type": "application/json"})
         response = connection.getresponse()
         assert response.status == 403
+        assert response.getheader("Connection") == "close"
         token_failure = json.loads(response.read())
         assert token_failure["failure"]["point_of_failure"]
         assert token_failure["failure"]["next_action"]

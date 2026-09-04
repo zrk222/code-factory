@@ -42,6 +42,15 @@
   that capability pack is selected.
 - Add a one-time, non-coercive proof moment for an honest review only after a
   verified user-visible result.
+- Add six coordinated runtime-assurance lanes and a contract-bound deep-defect
+  mesh with actionable repair receipts, evidence memory, and revalidated
+  module handoffs.
+- Reconstruct Oracle challenge plans, results, and incident drift from the
+  current sealed contract so self-consistent fabricated or stale evidence
+  cannot pass validation.
+- Bound Codex metadata reads before and after file access, and close rejected
+  Studio POST connections so unread request bodies cannot corrupt a reused
+  HTTP connection.
 
 ## 0.46.1 - 2026-09-02
 

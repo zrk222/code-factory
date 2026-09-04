@@ -1,0 +1,23 @@
+{
+  "checks": [
+    {
+      "name": "metadata_and_oracle_hardening_is_behavioral",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_codex_metadata.py', 'tests/test_oracle_firewall.py']) == 0\nprint('ORACLE_COMPLEXITY_HARDENING_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "ORACLE_COMPLEXITY_HARDENING_PASS",
+      "timeout_s": 60,
+      "covers": [
+        "REQ_METADATA_READ_BOUND",
+        "REQ_METADATA_EXPLICIT_EMPTY",
+        "REQ_METADATA_PARITY",
+        "REQ_ORACLE_PLAN_BINDING",
+        "REQ_ORACLE_RESULT_SHAPE",
+        "REQ_ORACLE_INCIDENT_BINDING",
+        "REQ_COMPLEXITY_BOUND",
+        "REQ_AUTHORITY_BOUNDARY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

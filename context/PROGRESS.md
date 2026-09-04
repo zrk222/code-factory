@@ -611,3 +611,13 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-04 03:12] GATE plan oracle-projection-integrity approver=agent_prepared_for_user_review tasks=1 sha=7b0139efdf4cf85b
 - [2026-09-04 03:20] GATE spec graph-ops-bounded-snapshot approver=agent_prepared_for_user_review strict=True sha=7a3137daa8e461da
 - [2026-09-04 03:20] GATE plan graph-ops-bounded-snapshot approver=agent_prepared_for_user_review tasks=1 sha=7a3137daa8e461da
+- [2026-09-04 03:33] GATE spec oracle-complexity-hardening approver=human strict=True sha=3a27d7129581a63f
+- [2026-09-04 03:33] GATE plan oracle-complexity-hardening approver=human tasks=3 sha=3a27d7129581a63f
+- [2026-09-04 03:33] GATE spec oracle-complexity-hardening approver=human strict=True sha=49908471faff5366
+- [2026-09-04 03:33] GATE plan oracle-complexity-hardening approver=human tasks=3 sha=49908471faff5366
+- [2026-09-04 03:50] GATE spec studio-http-framing approver=human strict=True sha=3c3c96df901ad724
+- [2026-09-04 03:50] GATE plan studio-http-framing approver=human tasks=1 sha=3c3c96df901ad724
+- [2026-09-04 03:55] GATE spec post-publication-runtime-hardening approver=human strict=True sha=19c565cc49090657
+- [2026-09-04 03:55] GATE plan post-publication-runtime-hardening approver=human tasks=4 sha=19c565cc49090657
+- [2026-09-04 03:57] GATE spec post-publication-runtime-hardening approver=human strict=True sha=46826971cb736400
+- [2026-09-04 03:57] GATE plan post-publication-runtime-hardening approver=human tasks=4 sha=46826971cb736400

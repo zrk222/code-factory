@@ -16,8 +16,8 @@ Scope of this pass: six runtime evaluators, their shared receipt projection, and
 | Runtime status | Self-hash and lane/decision/authority consistency | Unsigned local content is not authenticated; status does not rerun the audit |
 | Proof reuse | Current file hash and proof key path; malformed row handling | Full hostile filesystem/race audit remains pending |
 | Assembly | CLI calls now use bounded capture, finite cleanup waits, timeout/cancellation checks and failing cleanup status | OS cleanup is best effort, not process isolation; Windows exited-parent descendants and POSIX native execution require broader validation |
-| Oracle | Contract/source verification and weakening comparison inspected | Complete constructor/verifier parity and all rule-edge cases remain pending |
-| Oracle rule verification follow-up | Reuses constructor rule validation; rejects missing groups, advisory-only required groups, empty/duplicate sources and missing original-intent binding | Local hashes are not independent signatures; scope, exception and challenge paths still need further adversarial review |
+| Oracle | Contract/source verification, weakening comparison, exact challenge reconstruction and incident reconstruction inspected | Local hashes are not independent signatures; external identity and execution authenticity remain unproven |
+| Oracle rule verification follow-up | Reuses constructor rule validation; rejects missing groups, advisory-only required groups, empty/duplicate sources, missing original-intent binding and altered challenge cases | Scope and exception semantics still require human-approved policy inputs |
 | AppForge capture reconciliation | Reconstructs integrity receipt from current original candidate and contract before accepting capture mappings | Checks file identity, not pixels, native execution, authenticity of declared approval or store approval |
 | Enterprise Receipt v2 | Inspected DSSE payload-type/digest/signature/identity checks and policy/revocation consumption | Revocations are optional and timestamp-relative; not proof of current hosted authorization, tenant isolation or freshness |
 
@@ -27,15 +27,17 @@ Scope of this pass: six runtime evaluators, their shared receipt projection, and
 - Proof-reuse verification crashed on a non-object input/output row. It now returns invalid evidence. Ten malformed input/output variants reject.
 - Earlier committed passes fixed ambiguous execution joins and contradictory stateful/recovery counters; this pass retains their regression tests.
 - Oracle verification previously accepted rehashed structural changes the constructor rejected. Six new negative cases cover removed gates, unauthorized rule provenance, empty/duplicate sources, missing original-intent binding and a missing rule group.
+- Challenge verification now reconstructs the exact critical-case set from the current contract and rejects missing, extra, reordered, duplicated or altered cases. Result verification rejects malformed, duplicate and extra rows instead of collapsing them into a map.
+- Incident creation now reconstructs the bound prior-to-candidate drift and rejects a self-hashed fabricated weakening report. Metadata audits reject explicit empty inventories and recheck the 1048576-byte bound after reading.
 - AppForge capture reconciliation previously trusted a READY marker and self-hash without reconstructing requirements. Four new negative cases reject removed/duplicate requirements and changed/missing original contracts. A positive 13-file mapping remains accepted; its synthetic bytes intentionally prove only file reconciliation, not image quality.
+- Studio now closes early-rejected POST connections explicitly, preventing an unread unauthorized body from corrupting the next keep-alive request on Windows.
 
 ## Open findings: release clearance withheld
 
 - **Assembly resource/lifecycle remediation:** `_run_cli` now delegates to `assembly_process.run_cli`, limiting retained stdout and stderr to 4 MiB each, using a 300-second execution deadline and finite OS cleanup/reader waits. Overflow, cancellation, timeout, read failure and unconfirmed cleanup cannot pass. Windows inherited-pipe behavior has a regression test. Termination remains best effort: this is not a sandbox, and malicious escaped descendants are not proven absent.
-- **Oracle architecture debt:** the signature, dependency and bounded Graph Ops findings in `specs/oracle-firewall-v1.ssat.yaml` are resolved. Its six-module QA remains grade C because `audit_metadata` and five Oracle Firewall functions exceed the unchanged hard complexity limit 10. These are separate remediation slices; no release gate was bypassed.
-- **Complexity gate:** the Graph Ops coordinator now passes at complexity 10, down from 47. The wider Oracle contract still fails at maximum complexity 19 in `audit_metadata`, with five Oracle Firewall functions at 12 through 18. No limit was raised.
+- **Studio structural debt:** the fixed HTTP framing path has focused and full-suite behavioral proof, but file-wide Forge QA reports pre-existing complexity 11 in `create_product_mission_from_studio`, 13 in `do_GET`, and 19 in `do_POST`. These are assigned to the post-publication structural-hardening slice; no threshold was raised or failure hidden.
 - **Spec drift tooling:** full-file SpecLine audit reports 25/48 passing units against the narrow new spec. Findings include existing values and numeric fragments in `utf-8` and `ipad_13`; this result needs precise scope/tool interpretation, not an invented claim of new behavioral drift or blanket suppression.
-- **Windows test instability:** the initial full run ended with WinError 10053 in the Studio HTTP authorization test (1273 passed, 3 skipped, 1 failed). That exact test passed in isolation. A successful rerun does not establish the original failure's root cause.
+- **Process and race hardening:** hostile proof-reuse filesystem races, native POSIX process execution and malicious escaped-descendant behavior remain outside this wheel's proof boundary and are explicitly scheduled next.
 
 The repair plan remains the ordered sequence below. This audit has not established exhaustive module coverage or absence of defects. No publication or production authorization follows from it.
 
@@ -77,8 +79,16 @@ Do not interpret a passing existing test suite as a source audit of those engine
 - Focused regression: `python -m pytest -q tests/test_graph_ops.py` — **23 passed**. The Forge smoke manifest reruns this behavioral suite and is proven non-hollow by rejecting a stubbed implementation.
 - Full regression after the refactor: `python -m pytest -q` — **1300 passed, 3 skipped** in 208.71 seconds.
 - Scoped ForgeLine review: grade **A**, composite 100, coverage intent 1.0, security 100, and architecture gate passed. SpecLine strict validation passed and all 3 requirement mutations were killed.
-- The original six-module Oracle QA now recognizes `graph_ops_snapshot` as passing. It remains grade C only because of the separately recorded Metadata and Oracle Firewall complexity debt.
+- The original six-module Oracle QA recognizes `graph_ops_snapshot` as passing.
 - A full-file SpecLine drift scan remains unsuitable for this narrow refactor: it scans all 59 functions and reports pre-existing numeric and encoding literals outside the changed coordinator. That failure is retained as tooling/scope evidence, not suppressed or misreported as a passing gate.
+
+## Oracle and Metadata hardening follow-up
+
+- The original six-module Oracle QA now passes at grade **A**, composite 91.6, security 100 and maximum complexity 10. All six previously failing public coordinators meet the unchanged ceiling.
+- The focused Oracle/Metadata suite passes **40 tests**, including five altered-plan attacks, three malformed-result attacks, a fabricated-drift attack, explicit-empty input and post-read file growth.
+- Scoped Forge review passes grade **A**, composite 95.5; architecture review, adversarial review, stub rejection and runtime smoke all pass. SpecLine strict validation passes and all 8 requirement mutations are killed.
+- Full regression after Oracle, Metadata and Studio HTTP framing hardening: `python -m pytest -q` — **1311 passed, 3 skipped** in 182.31 seconds.
+- Studio's exact HTTP regression and all 13 Studio tests pass. Its non-hollow smoke check rejects a stub. File-wide structural complexity remains recorded above for the next bounded slice.
 
 ## Operating procedure
 

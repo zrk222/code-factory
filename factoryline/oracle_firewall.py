@@ -298,18 +298,19 @@ def _contract_sources(root: Path, value: dict[str, Any]) -> tuple[dict[str, dict
     return sources, handoff
 
 
-def seal_oracle_contract(root: Path, input_path: Path, out: Path) -> dict[str, Any]:
-    """Seal a versioned hash contract from named sources before candidate work."""
-    workspace = Path(root).resolve()
-    candidate, source = _read_json(workspace, Path(input_path), CONTRACT_INPUT_SCHEMA)
+def _contract_identity(candidate: dict[str, Any]) -> tuple[str, int, str, str]:
     contract_id = _identifier(candidate.get("id"), "id")
     version = candidate.get("version")
-    if isinstance(version, bool) or not isinstance(version, int) or version < 1 or version > 100_000:
+    if isinstance(version, bool) or not isinstance(version, int) or not 1 <= version <= 100_000:
         raise OracleFirewallError("ORACLE_INPUT_INVALID", "version must be an integer between 1 and 100000")
     approved_by = _text(candidate.get("approved_by"), "approved_by", limit=160)
-    approval_rationale = _text(candidate.get("approval_rationale"), "approval_rationale", limit=1000)
-    if len(approval_rationale) < 20:
+    rationale = _text(candidate.get("approval_rationale"), "approval_rationale", limit=1000)
+    if len(rationale) < 20:
         raise OracleFirewallError("ORACLE_INPUT_INVALID", "approval_rationale must explain the named approval in at least 20 characters")
+    return contract_id, version, approved_by, rationale
+
+
+def _contract_scope(candidate: dict[str, Any]) -> list[str]:
     raw_scope = candidate.get("scope_paths")
     if not isinstance(raw_scope, list) or not raw_scope or len(raw_scope) > 64:
         raise OracleFirewallError("ORACLE_SCOPE_INVALID", "scope_paths must contain 1 through 64 workspace-relative paths")
@@ -323,11 +324,25 @@ def seal_oracle_contract(root: Path, input_path: Path, out: Path) -> dict[str, A
         scope_paths.append(path.as_posix().rstrip("/") or ".")
     if len(set(scope_paths)) != len(scope_paths):
         raise OracleFirewallError("ORACLE_SCOPE_INVALID", "scope paths must be unique")
-    sources, handoff = _contract_sources(workspace, candidate)
+    return sorted(scope_paths)
+
+
+def _contract_rules(candidate: dict[str, Any], sources: dict[str, dict[str, str]]) -> dict[str, list[dict[str, Any]]]:
     rules = {group: _rules(candidate.get(group), group, sources) for group in RULE_GROUPS}
-    for group in ("requirements", "forbidden_behaviors", "gates", "negative_cases", "invariants", "tests"):
-        if not any(item["effect"] != "advisory" for item in rules[group]):
-            raise OracleFirewallError("ORACLE_AUTHORITY_REQUIRED", f"{group} needs at least one human or trusted blocking/release rule")
+    required_groups = ("requirements", "forbidden_behaviors", "gates", "negative_cases", "invariants", "tests")
+    if any(not any(item["effect"] != "advisory" for item in rules[group]) for group in required_groups):
+        raise OracleFirewallError("ORACLE_AUTHORITY_REQUIRED", "every required rule group needs at least one human or trusted blocking/release rule")
+    return rules
+
+
+def seal_oracle_contract(root: Path, input_path: Path, out: Path) -> dict[str, Any]:
+    """Seal a versioned hash contract from named sources before candidate work."""
+    workspace = Path(root).resolve()
+    candidate, source = _read_json(workspace, Path(input_path), CONTRACT_INPUT_SCHEMA)
+    contract_id, version, approved_by, approval_rationale = _contract_identity(candidate)
+    scope_paths = _contract_scope(candidate)
+    sources, handoff = _contract_sources(workspace, candidate)
+    rules = _contract_rules(candidate, sources)
     core: dict[str, Any] = {
         "schema": CONTRACT_SCHEMA,
         "marker": "ORACLE_CONTRACT_SEALED",
@@ -337,7 +352,7 @@ def seal_oracle_contract(root: Path, input_path: Path, out: Path) -> dict[str, A
         "approved_by": approved_by,
         "approval_rationale": approval_rationale,
         "input_sha256": _file_sha(source),
-        "scope_paths": sorted(scope_paths),
+        "scope_paths": scope_paths,
         "handoff": {
             "path": _relative(workspace, Path(candidate["handoff"])),
             "handoff_sha256": handoff["handoff_sha256"],
@@ -517,14 +532,26 @@ def compare_oracle_contracts(root: Path, prior_path: Path, candidate_path: Path,
     return receipt
 
 
-def compile_oracle_challenge(root: Path, contract_path: Path, out: Path | None = None) -> dict[str, Any]:
-    """Compile independent implementation-targeted counterfactual work."""
-    workspace = Path(root).resolve()
-    verified = verify_oracle_contract(workspace, Path(contract_path))
-    if not verified["ok"]:
-        raise OracleFirewallError("ORACLE_CHALLENGE_BLOCKED", f"contract is not eligible: {verified['reason']}")
-    contract = verified["contract"]
-    mutation = {
+def _challenge_boundary_cases(rule: dict[str, Any]) -> list[dict[str, Any]]:
+    """Describe exact gate edges without executing a mutation."""
+    comparison = rule.get("comparison")
+    value = rule.get("value")
+    if comparison == "present":
+        return [{"relation": "present", "value": True}, {"relation": "missing", "value": False}]
+    if comparison in {"gte", "lte"} and isinstance(value, (int, float)) and not isinstance(value, bool):
+        step = 1 if isinstance(value, int) else max(abs(value) * 0.01, 0.001)
+        return [
+            {"relation": "below", "value": value - step},
+            {"relation": "at", "value": value},
+            {"relation": "above", "value": value + step},
+        ]
+    if comparison == "equals":
+        return [{"relation": "equal", "value": value}, {"relation": "not_equal", "value": None}]
+    return []
+
+
+def _challenge_cases(contract: dict[str, Any]) -> list[dict[str, Any]]:
+    mutations = {
         "requirements": "invert_required_outcome_in_implementation",
         "forbidden_behaviors": "enable_forbidden_behavior_in_implementation",
         "gates": "cross_declared_gate_boundary_in_implementation",
@@ -532,39 +559,48 @@ def compile_oracle_challenge(root: Path, contract_path: Path, out: Path | None =
         "invariants": "violate_invariant_in_implementation",
         "tests": "mutate_implementation_so_declared_test_must_fail",
     }
-    def boundary_cases(rule: dict[str, Any]) -> list[dict[str, Any]]:
-        """Describe exact gate edges for an independent implementation lane.
-
-        These are instructions for the independently declared verifier, not an
-        executable mutation and never a request to rewrite the test oracle.
-        """
-        if rule.get("comparison") == "present":
-            return [{"relation": "present", "value": True}, {"relation": "missing", "value": False}]
-        value = rule.get("value")
-        if rule.get("comparison") in {"gte", "lte"} and isinstance(value, (int, float)) and not isinstance(value, bool):
-            step = 1 if isinstance(value, int) else max(abs(value) * 0.01, 0.001)
-            return [
-                {"relation": "below", "value": value - step},
-                {"relation": "at", "value": value},
-                {"relation": "above", "value": value + step},
-            ]
-        if rule.get("comparison") == "equals":
-            return [{"relation": "equal", "value": value}, {"relation": "not_equal", "value": None}]
-        return []
-
     cases: list[dict[str, Any]] = []
     for group in ("requirements", "forbidden_behaviors", "gates", "negative_cases", "invariants", "tests"):
         for rule in contract["rules"][group]:
             if rule["critical"]:
-                cases.append({"id": f"{group}:{rule['id']}", "group": group, "rule_id": rule["id"], "target": "implementation", "mutation": mutation[group], "source_id": rule["source_id"], "expected": "killed", "boundary_cases": boundary_cases(rule)})
+                cases.append({"id": f"{group}:{rule['id']}", "group": group, "rule_id": rule["id"], "target": "implementation", "mutation": mutations[group], "source_id": rule["source_id"], "expected": "killed", "boundary_cases": _challenge_boundary_cases(rule)})
+    return sorted(cases, key=lambda item: item["id"])
+
+
+def _challenge_independence() -> dict[str, Any]:
+    return {"worker_may_not_select_cases": True, "verifier_may_not_edit_contract": True, "verifier_may_not_edit_candidate": True, "target": "implementation"}
+
+
+def _challenge_core(verified: dict[str, Any]) -> dict[str, Any]:
+    contract = verified["contract"]
+    cases = _challenge_cases(contract)
     if not cases:
         raise OracleFirewallError("ORACLE_CHALLENGE_BLOCKED", "contract declares no critical implementation challenge")
-    core = {"schema": CHALLENGE_SCHEMA, "marker": "ORACLE_CHALLENGE_COMPILED", "contract": {"path": verified["path"], "contract_sha256": contract["contract_sha256"]}, "cases": sorted(cases, key=lambda item: item["id"]), "independence": {"worker_may_not_select_cases": True, "verifier_may_not_edit_contract": True, "verifier_may_not_edit_candidate": True, "target": "implementation"}, "authority": dict(AUTHORITY), "claim_boundary": "A local challenge plan. It defines independent implementation-targeted evidence to collect and does not mutate code or tests."}
+    return {"schema": CHALLENGE_SCHEMA, "marker": "ORACLE_CHALLENGE_COMPILED", "contract": {"path": verified["path"], "contract_sha256": contract["contract_sha256"]}, "cases": cases, "independence": _challenge_independence(), "authority": dict(AUTHORITY), "claim_boundary": "A local challenge plan. It defines independent implementation-targeted evidence to collect and does not mutate code or tests."}
+
+
+def compile_oracle_challenge(root: Path, contract_path: Path, out: Path | None = None) -> dict[str, Any]:
+    """Compile independent implementation-targeted counterfactual work."""
+    workspace = Path(root).resolve()
+    verified = verify_oracle_contract(workspace, Path(contract_path))
+    if not verified["ok"]:
+        raise OracleFirewallError("ORACLE_CHALLENGE_BLOCKED", f"contract is not eligible: {verified['reason']}")
+    core = _challenge_core(verified)
     receipt = _hash_receipt(core, "challenge_sha256")
     if out is not None:
         path = _write_new(workspace, Path(out), receipt, digest_field="challenge_sha256")
         return {**receipt, "path": path.relative_to(workspace).as_posix()}
     return receipt
+
+
+def _validated_challenge_contract(workspace: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    contract = plan.get("contract")
+    if not isinstance(contract, dict) or set(contract) != {"path", "contract_sha256"}:
+        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan contract binding is invalid")
+    verified = verify_oracle_contract(workspace, Path(_text(contract["path"], "challenge.contract.path", limit=512)))
+    if not verified.get("ok") or verified["contract"].get("contract_sha256") != contract.get("contract_sha256"):
+        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan is not bound to the current sealed contract")
+    return verified
 
 
 def validate_oracle_challenge_plan(root: Path, value: object) -> dict[str, Any]:
@@ -579,22 +615,50 @@ def validate_oracle_challenge_plan(root: Path, value: object) -> dict[str, Any]:
     plan = value
     if plan.get("marker") != "ORACLE_CHALLENGE_COMPILED" or plan.get("authority") != AUTHORITY:
         raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan marker or authority is invalid")
-    contract = plan.get("contract")
-    if not isinstance(contract, dict) or set(contract) != {"path", "contract_sha256"}:
-        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan contract binding is invalid")
-    verified = verify_oracle_contract(workspace, Path(_text(contract["path"], "challenge.contract.path", limit=512)))
-    if not verified.get("ok") or verified["contract"].get("contract_sha256") != contract.get("contract_sha256"):
-        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan is not bound to the current sealed contract")
-    independence = plan.get("independence")
-    expected_independence = {"worker_may_not_select_cases": True, "verifier_may_not_edit_contract": True, "verifier_may_not_edit_candidate": True, "target": "implementation"}
-    if independence != expected_independence:
+    verified = _validated_challenge_contract(workspace, plan)
+    if plan.get("independence") != _challenge_independence():
         raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan independence boundary is invalid")
     cases = plan.get("cases")
-    if not isinstance(cases, list) or not cases:
-        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge plan must contain implementation cases")
-    if any(not isinstance(item, dict) or item.get("target") != "implementation" or item.get("expected") != "killed" for item in cases):
-        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge cases must target implementation and expect killed")
+    if cases != _challenge_cases(verified["contract"]):
+        raise OracleFirewallError("ORACLE_CHALLENGE_INVALID", "challenge cases do not exactly match the current sealed contract")
     return plan
+
+
+def _challenge_failure(reason: str, *, detail: str | None = None) -> dict[str, Any]:
+    failure = {"ok": False, "marker": "ORACLE_CHALLENGE_FAILED", "reason": reason, "authority": dict(AUTHORITY)}
+    if detail is not None:
+        failure["detail"] = detail
+    return failure
+
+
+def _challenge_observations(value: object, expected: set[str]) -> tuple[dict[str, str], str | None]:
+    if not isinstance(value, list):
+        return {}, "cases_missing"
+    observed: dict[str, str] = {}
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"id", "outcome"}:
+            return {}, "cases_invalid"
+        identifier, outcome = item.get("id"), item.get("outcome")
+        if not isinstance(identifier, str) or outcome not in {"killed", "survived"}:
+            return {}, "cases_invalid"
+        if identifier in observed:
+            return {}, "cases_duplicated"
+        observed[identifier] = outcome
+    if set(observed) - expected:
+        return observed, "cases_unexpected"
+    return observed, None
+
+
+def _challenge_result_header(result: dict[str, Any], plan: dict[str, Any]) -> tuple[str, str]:
+    if result.get("challenge_sha256") != plan.get("challenge_sha256"):
+        raise OracleFirewallError("challenge_binding_mismatch", "result does not bind the challenge plan")
+    worker = _text(result.get("worker_subject"), "worker_subject", limit=160)
+    verifier = _text(result.get("verifier_subject"), "verifier_subject", limit=160)
+    if worker == verifier:
+        raise OracleFirewallError("independence_subject_collision", "worker and verifier subjects must differ")
+    if result.get("target") != "implementation":
+        raise OracleFirewallError("challenge_target_is_not_implementation", "challenge result must target implementation")
+    return worker, verifier
 
 
 def verify_oracle_challenge_result(root: Path, plan_path: Path, result_path: Path) -> dict[str, Any]:
@@ -603,58 +667,69 @@ def verify_oracle_challenge_result(root: Path, plan_path: Path, result_path: Pat
     plan, plan_source = _read_json(workspace, Path(plan_path), CHALLENGE_SCHEMA)
     result, result_source = _read_json(workspace, Path(result_path), CHALLENGE_RESULT_SCHEMA)
     if not _valid_receipt(plan, CHALLENGE_SCHEMA, "challenge_sha256"):
-        return {"ok": False, "marker": "ORACLE_CHALLENGE_FAILED", "reason": "challenge_sha256_mismatch", "authority": dict(AUTHORITY)}
+        return _challenge_failure("challenge_sha256_mismatch")
     try:
         validate_oracle_challenge_plan(workspace, plan)
     except OracleFirewallError as exc:
-        return {"ok": False, "marker": "ORACLE_CHALLENGE_FAILED", "reason": "challenge_plan_invalid_or_stale", "detail": exc.code, "authority": dict(AUTHORITY)}
-    if result.get("challenge_sha256") != plan.get("challenge_sha256"):
-        return {"ok": False, "marker": "ORACLE_CHALLENGE_FAILED", "reason": "challenge_binding_mismatch", "authority": dict(AUTHORITY)}
-    worker = _text(result.get("worker_subject"), "worker_subject", limit=160)
-    verifier = _text(result.get("verifier_subject"), "verifier_subject", limit=160)
-    if worker == verifier:
-        return {"ok": False, "marker": "ORACLE_CHALLENGE_FAILED", "reason": "independence_subject_collision", "authority": dict(AUTHORITY)}
-    if result.get("target") != "implementation":
-        return {"ok": False, "marker": "ORACLE_CHALLENGE_FAILED", "reason": "challenge_target_is_not_implementation", "authority": dict(AUTHORITY)}
-    supplied = result.get("cases")
-    if not isinstance(supplied, list):
-        return {"ok": False, "marker": "ORACLE_CHALLENGE_FAILED", "reason": "cases_missing", "authority": dict(AUTHORITY)}
+        return _challenge_failure("challenge_plan_invalid_or_stale", detail=exc.code)
+    try:
+        worker, verifier = _challenge_result_header(result, plan)
+    except OracleFirewallError as exc:
+        return _challenge_failure(exc.code)
     expected = {item["id"] for item in plan.get("cases", []) if isinstance(item, dict)}
-    observed: dict[str, str] = {}
-    for item in supplied:
-        if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("outcome") in {"killed", "survived"}:
-            observed[item["id"]] = item["outcome"]
+    observed, failure = _challenge_observations(result.get("cases"), expected)
+    if failure is not None:
+        return _challenge_failure(failure)
     missing = sorted(expected - set(observed))
     survivors = sorted(identifier for identifier, outcome in observed.items() if identifier in expected and outcome == "survived")
     ok = not missing and not survivors and set(observed) == expected
     return {"schema": CHALLENGE_RESULT_SCHEMA, "ok": ok, "marker": "ORACLE_CHALLENGE_VERIFIED" if ok else "ORACLE_CHALLENGE_FAILED", "plan_path": plan_source.relative_to(workspace).as_posix(), "result_path": result_source.relative_to(workspace).as_posix(), "worker_subject": worker, "verifier_subject": verifier, "missing_cases": missing, "surviving_cases": survivors, "authority": dict(AUTHORITY), "claim_boundary": "Receipt syntax and declared independence only; it is not proof that the independent verifier identity or underlying execution was authentic."}
 
 
-def record_oracle_incident(root: Path, agent: object, contract_path: Path, drift_path: Path, out: Path | None = None) -> dict[str, Any]:
-    """Record a local demotion fact when a hash-valid weakening report is blocked."""
-    workspace = Path(root).resolve()
-    identity = normalize_agent_identity(agent, "agent")
+def _verified_incident_contract(workspace: Path, contract_path: Path) -> dict[str, Any]:
     contract_result = verify_oracle_contract(workspace, Path(contract_path))
     if not contract_result["ok"]:
         raise OracleFirewallError("ORACLE_INCIDENT_BLOCKED", "incident contract must verify before it can identify the affected agent")
+    return contract_result
+
+
+def _verified_incident_drift(workspace: Path, contract_result: dict[str, Any], drift_path: Path) -> tuple[dict[str, Any], Path]:
     drift, source = _read_json(workspace, Path(drift_path), DRIFT_SCHEMA)
-    if (
-        not _valid_receipt(drift, DRIFT_SCHEMA, "drift_sha256")
-        or drift.get("marker") != "E_ORACLE_WEAKENING"
-        or drift.get("verdict") != "BLOCKED"
-        or drift.get("reason") != "semantic_weakening"
-    ):
+    required_state = (drift.get("marker"), drift.get("verdict"), drift.get("reason"))
+    if not _valid_receipt(drift, DRIFT_SCHEMA, "drift_sha256") or required_state != ("E_ORACLE_WEAKENING", "BLOCKED", "semantic_weakening"):
         raise OracleFirewallError("ORACLE_INCIDENT_INVALID", "incident requires a hash-valid blocked weakening report")
     weakening = drift.get("weakening_findings")
     contracts = drift.get("contracts")
     prior = contracts.get("prior") if isinstance(contracts, dict) else None
+    candidate = contracts.get("candidate") if isinstance(contracts, dict) else None
     if not isinstance(weakening, list) or not weakening:
         raise OracleFirewallError("ORACLE_INCIDENT_INVALID", "incident report must contain a non-empty weakening finding set")
     if not isinstance(prior, dict) or prior.get("contract_sha256") != contract_result["contract"]["contract_sha256"]:
         raise OracleFirewallError("ORACLE_INCIDENT_INVALID", "incident contract must be the report's verified baseline contract")
+    if not isinstance(candidate, dict) or not isinstance(prior.get("path"), str) or not isinstance(candidate.get("path"), str):
+        raise OracleFirewallError("ORACLE_INCIDENT_INVALID", "incident report must bind two local contract paths")
+    reconstructed = compare_oracle_contracts(workspace, Path(prior["path"]), Path(candidate["path"]))
+    if reconstructed.get("drift_sha256") != drift.get("drift_sha256"):
+        raise OracleFirewallError("ORACLE_INCIDENT_INVALID", "incident drift does not match the reconstructed contract comparison")
+    return drift, source
+
+
+def _incident_destination(workspace: Path, out: Path | None, identity: dict[str, str], digest: str) -> Path:
+    if out is not None:
+        return Path(out)
+    subject = identity["subject"].replace("/", "_")
+    return workspace / ".factory" / "oracles" / "incidents" / f"{subject}-{digest[:12]}.json"
+
+
+def record_oracle_incident(root: Path, agent: object, contract_path: Path, drift_path: Path, out: Path | None = None) -> dict[str, Any]:
+    """Record a local demotion fact for a reconstructed weakening report."""
+    workspace = Path(root).resolve()
+    identity = normalize_agent_identity(agent, "agent")
+    contract_result = _verified_incident_contract(workspace, Path(contract_path))
+    drift, source = _verified_incident_drift(workspace, contract_result, Path(drift_path))
     core = {"schema": INCIDENT_SCHEMA, "marker": "ORACLE_AUTONOMY_DEMOTED", "recorded_at": _now(), "agent": identity, "contract_sha256": contract_result["contract"]["contract_sha256"], "drift_path": source.relative_to(workspace).as_posix(), "drift_sha256": drift["drift_sha256"], "failure_class": "oracle_weakening", "tier": "human_controlled", "requalification_clean_runs": 5, "authority": dict(AUTHORITY), "claim_boundary": "Local demotion evidence only. It does not establish real-world agent identity or grant an automatic future promotion."}
     receipt = _hash_receipt(core, "incident_sha256")
-    destination = Path(out) if out is not None else workspace / ".factory" / "oracles" / "incidents" / f"{identity['subject'].replace('/', '_')}-{receipt['incident_sha256'][:12]}.json"
+    destination = _incident_destination(workspace, out, identity, receipt["incident_sha256"])
     path = _write_new(workspace, destination, receipt, digest_field="incident_sha256")
     return {**receipt, "path": path.relative_to(workspace).as_posix()}
 

@@ -672,6 +672,8 @@ class _StudioHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.end_headers()
 
     def _json(self, status: int, value: dict[str, Any]) -> None:
@@ -751,15 +753,18 @@ class _StudioHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         """Accept one token-bound target creation request within the size limit."""
         if self.path not in {"/api/create", "/api/product", "/api/mission-decision", "/api/continue", "/api/savings", "/api/graph-ops-authorize", "/api/graph-ops-run", "/api/activity/stop"}:
+            self.close_connection = True
             self._error(404, "NOT_FOUND", "route not found")
             return
         if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
+            self.close_connection = True
             self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
             return
         length = self._content_length()
         if length is None:
             return
         if length <= 0 or length > MAX_BODY_BYTES:
+            self.close_connection = True
             self._error(413, "BODY_LIMIT", f"body must be 1-{MAX_BODY_BYTES} bytes")
             return
         try:
