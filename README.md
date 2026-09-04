@@ -11,42 +11,69 @@
 
 > **6 mandatory audit lanes. 136 coded rejection conditions. One human-owned release decision.**
 
-Those numbers describe Code Factory's senior-engineering runtime-assurance
-path—not a marketing estimate. The [source-bound inventory](docs/AUDIT_CONDITION_INVENTORY.md)
-covers 81 lane-specific and 55 cross-cutting failure conditions. The actual
-observations scale with each project's approved scope and evidence.
+## Your code passed. But did it pass the right tests?
 
-**Build with AI. Know what you can trust.**
+An AI agent—or a human developer—can write the code, write the tests, and set
+the rules used to approve its own work. Everything can turn green while the
+result still misses the request, leaks another tenant's data, breaks during a
+retry, damages a migration, or slows down in production.
 
-You describe what you want. Your developer—or AI agent—builds it. Then comes
-the difficult question: **Did it build the right thing, and what might break?**
+**Code Factory is an engineering audit and orchestration system: the independent
+review layer between “the build passed” and “a person should approve this.”**
 
-Code Factory brings the brief, the work, the checks, and the evidence into one
-review process. It is an **engineering audit and orchestration system** for
-human and AI-written software—not just a test checker.
+It seals the original intent before work begins, observes what changed,
+challenges the implementation and its tests, and connects every decision to
+inspectable evidence. If evidence is missing, contradictory, stale, or based on
+a weakened rule, the result does not quietly become a pass.
 
-It helps clarify your request, spot changes that drift from it, and prevent an
-agent from quietly weakening the approved rules used to judge its own work.
-Beyond checking whether tests are meaningful, CF coordinates deeper audits for
-broken workflows, unauthorized access, failed retries, incompatible updates,
-damaged data, and performance or memory problems.
+### One review path, six questions
 
-When something fails, you get more than a red warning: **what went wrong, why
-it matters, the supporting evidence, and what to check after the repair.**
+| Audit lane | The practical question it answers |
+| --- | --- |
+| Stateful workflows | Do business rules still hold after real sequences such as create, cancel, retry, and refund? |
+| Authorization and tenant isolation | Can one customer, session, export, cache, or background job reach another customer's data? |
+| Failure and recovery | What happens during duplicate requests, timeouts, partial writes, worker crashes, and retries? |
+| API and consumer compatibility | Will this change silently break an older app, SDK, integration, or service? |
+| Migration and data integrity | Can the system upgrade without losing, corrupting, or stranding data? |
+| Performance and resources | Did latency, queries, memory, connections, or other resources regress against an approved baseline? |
 
-FactoryLine brings that oversight into your coding workspace. Connected agents
-can follow the same controlled process. Design tools support your approved
-visual direction; SaaS checks examine customer journeys; optional AppForge
-checks organize mobile-release evidence and surface gaps before store submission.
+Those lanes contain **81 lane-specific and 55 cross-cutting coded rejection
+conditions**. The [source-bound inventory](docs/AUDIT_CONDITION_INVENTORY.md)
+recomputes the total from the implementation; it is not a claim that every
+project executes 136 tests.
 
-For individuals, that means a clearer second check. For teams, a more consistent
-handoff. For organizations, a traceable basis for review.
+### Built for the way you work
 
-**The result: less guesswork and a clearer decision about what is ready, what
-needs fixing, and what remains unknown.** CF does not promise perfect software
-or automatic approval. It makes the evidence inspectable—and keeps the final
-decision yours. Audits require configured tools and actual evidence; missing
-evidence is not a pass.
+- **Solo developers and vibe coders:** get a second opinion before a plausible
+  AI-generated change becomes your problem in production.
+- **Engineering teams:** compare the request, code delta, independent checks,
+  repair evidence, and remaining unknowns in one reviewable handoff.
+- **Enterprise teams:** keep policy provenance, exceptions, approvals, tenant
+  boundaries, and evidence traceable without giving the coding agent authority
+  to redefine success.
+- **Connected agents:** use the CLI, FactoryLine IDE surfaces, MCP, WebMCP, or
+  A2A handoffs to follow the same bounded process and report the next action to
+  a human.
+
+Specialist modules join the same review when needed: Deep Defect Mesh consumes
+analyzer evidence, SaaS checks examine customer journeys, and AppForge organizes
+mobile build, design, privacy, signing, and store-submission evidence. AppForge
+does not replace the other audit lanes or promise store approval.
+
+### Choose your review path
+
+```powershell
+pip install factoryline-code-factory
+factory guide
+```
+
+`factory guide` is a read-only orientation: it shows the smallest suitable path
+without running tests or agents. When you are ready to produce evidence, follow
+the [engineering review workflow](docs/PROOF_REVIEW_WORKFLOW.md). Its result
+shows **what was checked, what failed, why it matters, what evidence supports
+the finding, and what must happen next.** Code Factory does not promise perfect
+software. It makes the basis for approval visible and keeps the final decision
+human-owned.
 
 <details>
 <summary>For developers: how the review connects across modules</summary>
