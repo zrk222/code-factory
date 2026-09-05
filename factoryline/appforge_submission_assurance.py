@@ -35,7 +35,7 @@ CANDIDATE_KEYS = ("bundle_identifier", "version", "build_number", "source_commit
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
 def _sha(value: object) -> str:
@@ -102,6 +102,8 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):
@@ -114,6 +116,8 @@ def _atomic_text(path: Path, contents: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(contents)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):
@@ -290,6 +294,8 @@ def verify_submission_assurance(
             else:
                 configured_oracle = Path(path_value)
     oracle_authority: dict[str, Any] | None = None
+    if configured_oracle is None:
+        findings.append({"gate": "Oracle authority", "code": "APPFORGE_ORACLE_AUTHORITY_REQUIRED", "detail": "submission assurance requires a candidate-bound Oracle authority receipt"})
     if configured_oracle is not None:
         try:
             oracle_authority = verify_appforge_oracle_authority(workspace, configured_oracle, candidate=candidate)
@@ -305,6 +311,8 @@ def verify_submission_assurance(
             findings.append({"gate": "Oracle authority", "code": getattr(error, "code", "APPFORGE_ORACLE_AUTHORITY_BLOCKED"), "detail": str(error)})
     ready = not findings
     destination = _local(workspace, out_path, exists=False)
+    if destination.exists():
+        raise RevenueForgeError("APPFORGE_ASSURANCE_OUTPUT_EXISTS", "output dossier is immutable; choose a new path")
     core: dict[str, Any] = {
         "schema": RECEIPT_SCHEMA,
         "marker": "APPFORGE_SUBMISSION_DOSSIER_READY" if ready else "APPFORGE_SUBMISSION_DOSSIER_BLOCKED",
@@ -337,6 +345,8 @@ def verify_submission_assurance(
     stem = f"{candidate['bundle_identifier'].replace('.', '-')}-{candidate['version']}-{candidate['build_number']}-submission-assurance"
     markdown = reports / f"{stem}.md"
     pdf = reports / f"{stem}.pdf"
+    if markdown.exists() or pdf.exists():
+        raise RevenueForgeError("APPFORGE_ASSURANCE_OUTPUT_EXISTS", "report outputs are immutable; choose a new report directory or candidate build")
     _atomic_text(markdown, _markdown(core))
     _pdf(pdf, core)
     return {**result, "reports": {"markdown": markdown.relative_to(workspace).as_posix(), "pdf": pdf.relative_to(workspace).as_posix()}}
@@ -347,9 +357,21 @@ def submission_assurance_projection(root: Path) -> dict[str, Any]:
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
-    for path in sorted((workspace / ".factory" / "appforge").rglob("submission-assurance*.json"))[:100]:
+    ranked: list[tuple[int, Path]] = []
+    candidates = list((workspace / ".factory" / "appforge").rglob("submission-assurance*.json"))
+    truncated = len(candidates) > 1_000
+    for path in candidates[:1_000]:
         try:
+            ranked.append((path.stat().st_mtime_ns, path))
+        except OSError:
+            invalid.append(path.relative_to(workspace).as_posix())
+    for _mtime, path in sorted(ranked, key=lambda item: (item[0], item[1].as_posix()))[-100:]:
+        try:
+            if path.stat().st_size > MAX_BYTES:
+                raise ValueError("submission assurance receipt exceeds 1 MiB")
             value = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError("submission assurance receipt must be an object")
             supplied = value.pop("receipt_sha256", None)
             valid = value.get("schema") == RECEIPT_SCHEMA and isinstance(supplied, str) and _sha(value) == supplied
             if valid:
@@ -358,4 +380,6 @@ def submission_assurance_projection(root: Path) -> dict[str, Any]:
                 invalid.append(path.relative_to(workspace).as_posix())
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
             invalid.append(path.relative_to(workspace).as_posix())
-    return {"schema": "factory.appforge.submission-assurance-projection.v1", "marker": "APPFORGE_SUBMISSION_ASSURANCE_READ_ONLY", "current_count": len(current), "invalid_count": len(invalid), "latest": current[-1] if current else None, "invalid": invalid, "authority": AUTHORITY, "claim_boundary": "hash-verified local dossier status only; not TestFlight, App Review, or Apple approval state."}
+    if truncated:
+        invalid.append(".factory/appforge/<scan-truncated>")
+    return {"schema": "factory.appforge.submission-assurance-projection.v1", "marker": "APPFORGE_SUBMISSION_ASSURANCE_REVIEW_REQUIRED" if invalid else "APPFORGE_SUBMISSION_ASSURANCE_READ_ONLY", "current_count": len(current), "invalid_count": len(invalid), "truncated": truncated, "latest": current[-1] if current and not invalid else None, "invalid": invalid, "authority": AUTHORITY, "claim_boundary": "hash-verified local dossier status only; not TestFlight, App Review, or Apple approval state."}

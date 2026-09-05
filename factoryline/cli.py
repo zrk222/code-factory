@@ -135,6 +135,7 @@ from .appforge_release_rehearsal import create_release_rehearsal
 from .appforge_native_surface import verify_native_surface
 from .appforge_surface_matrix import create_surface_matrix
 from .appforge_mobile_evidence import verify_mobile_evidence
+from .release_contract import SCHEMA as RELEASE_CONTRACT_SCHEMA, _sha as release_contract_digest, verify_release_contract
 from .appforge_storefront_story import verify_storefront_story
 from .appforge_fastlane_capture import create_fastlane_capture_contract
 from .appforge_submission_integrity import verify_submission_integrity
@@ -832,6 +833,24 @@ def main(argv=None) -> int:
     s.add_argument("feature")
     s.add_argument("--root", default=".")
     s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--release-contract", help="explicit release contract path to carry into stage receipts")
+
+    s = sub.add_parser("release-contract", help="create or verify a hash-bound local release policy")
+    release_sub = s.add_subparsers(required=True, dest="release_contract_cmd")
+    release_template = release_sub.add_parser("template", help="write a deterministic contract template from a sealed Oracle")
+    release_template.add_argument("feature")
+    release_template.add_argument("--root", default=".")
+    release_template.add_argument("--oracle-contract", required=True)
+    release_template.add_argument("--stage", action="append", dest="stages", help="required module:stage; repeat as needed")
+    release_template.add_argument("--approved-by", required=True)
+    release_template.add_argument("--evidence", action="append", default=[], metavar="STAGE=PATH", help="bind a supported external evidence stage")
+    release_template.add_argument("--out", required=True)
+    release_template.add_argument("--json", action="store_true")
+    release_verify = release_sub.add_parser("verify", help="verify the contract and current Oracle/evidence bindings")
+    release_verify.add_argument("feature")
+    release_verify.add_argument("contract")
+    release_verify.add_argument("--root", default=".")
+    release_verify.add_argument("--json", action="store_true")
 
     s = sub.add_parser("continue", help="resume assembly from the next safe stage")
     s.add_argument("feature", nargs="?")
@@ -960,9 +979,11 @@ def main(argv=None) -> int:
     proof_challenge.add_argument("--root", default=".")
     proof_challenge.add_argument("--json", action="store_true")
 
-    s = sub.add_parser("verify", help="summarize all existing receipts into one shippability decision")
+    s = sub.add_parser("verify", help="summarize local receipts into a fail-closed readiness decision")
     s.add_argument("feature")
     s.add_argument("--root", default=".")
+    s.add_argument("--strict-release", action="store_true", help="also require a current Oracle-bound release contract")
+    s.add_argument("--release-contract", default=None, help="workspace-relative release contract; defaults to .factory/release-contracts/<feature>.json")
     s.add_argument("--json", action="store_true")
 
     s = sub.add_parser("meter", help="real savings summary from your runs")
@@ -3974,8 +3995,58 @@ def main(argv=None) -> int:
         for sub_name in LAYOUT.values():
             print(f"  {sub_name}/")
         return 0
+    if a.cmd == "release-contract":
+        workspace = Path(a.root).resolve()
+        try:
+            if a.release_contract_cmd == "template":
+                oracle_path = Path(a.oracle_contract)
+                if not oracle_path.is_absolute():
+                    oracle_path = workspace / oracle_path
+                oracle_path = oracle_path.resolve()
+                oracle_path.relative_to(workspace)
+                oracle = json.loads(oracle_path.read_text(encoding="utf-8-sig"))
+                oracle_sha = oracle.get("contract_sha256") if isinstance(oracle, dict) else None
+                if not isinstance(oracle_sha, str) or len(oracle_sha) != 64:
+                    raise ValueError("sealed Oracle contract must expose a 64-character contract_sha256")
+                stages = list(a.stages or [
+                    "specline:strict", "specline:verify-validators", "specline:gate-spec", "specline:tasks", "specline:gate-plan",
+                    "forgeline:architect", "forgeline:review", "forgeline:arch-gate", "forgeline:verify-tests", "forgeline:smoke", "forgeline:ship",
+                ])
+                evidence: dict[str, str] = {}
+                for item in a.evidence:
+                    if "=" not in item:
+                        raise ValueError("--evidence must use STAGE=PATH")
+                    key, value = item.split("=", 1)
+                    evidence[key] = value
+                oracle_relative = oracle_path.relative_to(workspace).as_posix()
+                core = {"schema": RELEASE_CONTRACT_SCHEMA, "feature": a.feature, "oracle_contract": oracle_relative, "oracle_contract_sha256": oracle_sha, "required_stages": stages, "approved_by": a.approved_by.strip()}
+                if evidence:
+                    core["evidence"] = evidence
+                payload = {**core, "policy_digest": release_contract_digest(core)}
+                destination = Path(a.out)
+                if not destination.is_absolute():
+                    destination = workspace / destination
+                destination = destination.resolve()
+                destination.relative_to(workspace)
+                if destination.exists():
+                    raise ValueError("release contract output already exists; choose a new path")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                result = {"ok": True, "marker": "RELEASE_CONTRACT_TEMPLATE_WRITTEN", "path": destination.relative_to(workspace).as_posix(), "policy_digest": payload["policy_digest"], "claim_boundary": "Template generation only; it does not approve, execute, publish, deploy, sign, or authenticate an approver."}
+            else:
+                contract_path = Path(a.contract)
+                if not contract_path.is_absolute():
+                    contract_path = workspace / contract_path
+                value = json.loads(contract_path.read_text(encoding="utf-8-sig"))
+                required = set(value.get("required_stages", [])) if isinstance(value, dict) else set()
+                result = verify_release_contract(workspace, a.feature, contract_path, required)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            result = {"ok": False, "marker": "RELEASE_CONTRACT_INVALID", "reason": str(exc)[:240]}
+        print(json.dumps(result, indent=2, sort_keys=True) if a.json else f"release contract: {result.get('marker')}" + (f" ({result.get('reason')})" if result.get("reason") else ""))
+        return 0 if result.get("ok") else 1
     if a.cmd == "assemble":
-        report = assemble(Path(a.root), a.feature, dry_run=a.dry_run)
+        report = assemble(Path(a.root), a.feature, dry_run=a.dry_run,
+                          release_contract_path=Path(a.release_contract) if a.release_contract else None)
         print(json.dumps(report, indent=2))
         return 0 if "halted_at" not in report else 1
     if a.cmd == "continue":
@@ -4281,7 +4352,8 @@ def main(argv=None) -> int:
             return 0 if payload.get("valid", payload.get("passed", False)) else 1
         return 0
     if a.cmd == "verify":
-        result = verify_feature(Path(a.root), a.feature)
+        result = verify_feature(Path(a.root), a.feature, strict_release=a.strict_release,
+                                release_contract_path=Path(a.release_contract) if a.release_contract else None)
         if a.json:
             print(json.dumps(result, indent=2))
         else:
@@ -4289,9 +4361,11 @@ def main(argv=None) -> int:
             print("=" * 44)
             for module in result["modules"]:
                 print(f"{module['label']:<8} {module['status'].upper()}")
-            print(f"FACTORY  {'SHIPPABLE' if result['shippable'] else 'NOT SHIPPABLE'}")
+            decision = result["release_ready"] if a.strict_release else result["shippable"]
+            label = "STRICT LOCAL GATES PASS" if a.strict_release and decision else "LOCAL GATES PASS" if decision else "NOT READY"
+            print(f"FACTORY  {label}")
             print(f"next action: {result['next_action']}")
-        return 0 if result["shippable"] else 1
+        return 0 if (result["release_ready"] if a.strict_release else result["shippable"]) else 1
     if a.cmd == "meter":
         if a.interval <= 0:
             print("meter failed: --interval must be positive", file=sys.stderr)

@@ -17,6 +17,29 @@
 
 ## Unreleased
 
+### Six-module release hardening
+
+- Make local readiness fail closed on malformed receipt fields, incomplete
+  SpecLine/ForgeLine evidence, missing intent traces, and a newer failing
+  receipt hidden behind a legacy stage spelling.
+- Add a hash-bound `factory.release-contract.v1` for strict local release
+  decisions, with a public template/verify CLI. Contracts use a closed stage
+  registry, require explicit AppForge evidence when mobile scope is declared,
+  and bind every selected receipt to the current Oracle and policy digests.
+- Make AppForge mobile evidence platform-specific: Android evidence can no
+  longer satisfy a missing iOS check, any failed check blocks even if another
+  report passes, and non-finite production values are rejected.
+- Select current AppForge evidence by stable filesystem observation rather than
+  filename order, replay referenced sources before exposing READY, and mask
+  older ready state when a newer malformed or stale artifact is present.
+- Require AppForge local build and signing evidence per platform; preserve
+  upload, processing, tester, and store-decision states as explicit external
+  state rather than approval claims.
+- Pin the companion-tool revisions exercised in CI and add a clean-wheel
+  release-train smoke that proves incomplete evidence, strict bound success,
+  and stale-receipt rejection. These remain local proof checks, not provider
+  submission or approval claims.
+
 ### AppForge Mobile Evidence Adapter
 
 - Add `factory revenue appforge-mobile-evidence`, a provider-neutral,

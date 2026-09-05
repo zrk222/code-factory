@@ -44,14 +44,19 @@ jobs:
         run: |
           python -m pip install --upgrade build twine
           python -m build
-          python -m twine check dist/*
+          # Check only publishable archives; ignored scratch directories in
+          # dist/ must never be interpreted as distributions.
+          python -m twine check dist/*.whl dist/*.tar.gz
       - name: Prove the wheel installs without the source tree
         run: |
           python -m venv /tmp/factory-wheel
           /tmp/factory-wheel/bin/python -m pip install dist/*.whl
           cd /tmp
           /tmp/factory-wheel/bin/factory --help
+          ! /tmp/factory-wheel/bin/factory verify missing-feature --root /tmp --strict-release --json
           /tmp/factory-wheel/bin/python -c "import factoryline; print(factoryline.__version__)"
+          cp scripts/release_train_e2e.py /tmp/release_train_e2e.py
+          /tmp/factory-wheel/bin/python /tmp/release_train_e2e.py
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: python-distributions
@@ -68,12 +73,12 @@ jobs:
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: "22"
-      - name: Check out the four independent bricks
+      - name: Check out reviewed immutable companion revisions
         run: |
-          git clone --depth 1 https://github.com/zrk222/code-factory-1-spec ../code-factory-1-spec
-          git clone --depth 1 https://github.com/zrk222/code-factory-2-forge ../code-factory-2-forge
-          git clone --depth 1 https://github.com/zrk222/code-factory-3-compile ../code-factory-3-compile
-          git clone --depth 1 https://github.com/zrk222/code-factory-4-design ../code-factory-4-design
+          git init ../code-factory-1-spec && git -C ../code-factory-1-spec fetch --depth 1 https://github.com/zrk222/code-factory-1-spec.git 6da88be2e99bd8082e950673ee5151db84c43f2d && git -C ../code-factory-1-spec checkout --detach FETCH_HEAD
+          git init ../code-factory-2-forge && git -C ../code-factory-2-forge fetch --depth 1 https://github.com/zrk222/code-factory-2-forge.git 505dfece0e2cc6376f00b7678fff4ad87ff73815 && git -C ../code-factory-2-forge checkout --detach FETCH_HEAD
+          git init ../code-factory-3-compile && git -C ../code-factory-3-compile fetch --depth 1 https://github.com/zrk222/code-factory-3-compile.git 2f09e463f6f4bb896691a39807a664878f9e62f4 && git -C ../code-factory-3-compile checkout --detach FETCH_HEAD
+          git init ../code-factory-4-design && git -C ../code-factory-4-design fetch --depth 1 https://github.com/zrk222/code-factory-4-design.git 3190b17d4c242fd18c13306309d33ccb2b24ba04 && git -C ../code-factory-4-design checkout --detach FETCH_HEAD
       - name: Install source train
         run: >-
           python -m pip install -e .
@@ -84,3 +89,5 @@ jobs:
       - run: factory doctor --strict
       - name: Build and verify five-brick Factory Passport
         run: python scripts/prooflab_e2e.py
+      - name: Prove complete release decisions and reject incomplete ones
+        run: python scripts/release_train_e2e.py

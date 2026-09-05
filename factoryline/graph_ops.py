@@ -37,6 +37,7 @@ from .continuous_proof import continuous_proof_projection
 from .proof_review_workflow import proof_review_projection
 from .revenueforge import revenueforge_projection
 from .appforge_design import appforge_design_projection
+from .release_contract import release_readiness_projection
 from .oracle_firewall import oracle_firewall_projection, verify_oracle_contract
 from .proof_continuity_ledger import proof_continuity_projection
 from .semantic_authority import semantic_authority_projection
@@ -2294,6 +2295,7 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
         "proof_review": proof_review_projection(workspace),
         "revenueforge": revenueforge_projection(workspace),
         "appforge": appforge_design_projection(workspace),
+        "release_readiness": release_readiness_projection(workspace),
         "saas_proof": saas_proof_projection(workspace),
         "jetbrains_handshake": jetbrains_handshake_projection(workspace),
     })
@@ -2359,6 +2361,9 @@ def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list
         "edge_count": len(edges),
         "appforge_design_current_count": appforge["current_count"],
         "appforge_design_invalid_count": appforge["invalid_count"],
+        "release_contract_count": p["release_readiness"]["contract_count"],
+        "release_ready_count": p["release_readiness"]["ready_count"],
+        "release_contract_invalid_count": p["release_readiness"]["invalid_count"],
     })
     for name in ("init", "quality_audit", "submission_assurance", "oracle_authority", "device_reality",
                  "release_rehearsal", "native_surface", "surface_matrix", "storefront_story", "fastlane_capture",
@@ -2379,6 +2384,8 @@ def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]
         (any(appforge[name][key] for name in ("quality_audit", "submission_assurance", "oracle_authority", "device_reality", "release_rehearsal") for key in ("current_count", "invalid_count")) or any((appforge["current_count"], appforge["invalid_count"])), ("GRAPH_OPS_APPFORGE_READ_ONLY",)),
         (any((p["saas_proof"]["current_count"], p["saas_proof"]["invalid_count"])), ("GRAPH_OPS_SAAS_PROOF_READ_ONLY",)),
         (p["jetbrains_handshake"]["state"] != "empty", ("GRAPH_OPS_JETBRAINS_HANDSHAKE_READ_ONLY",)),
+        (p["release_readiness"]["contract_count"] or p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_READ_ONLY",)),
+        (p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_REVIEW_REQUIRED",)),
         (any((semantic["handoff_count"], semantic["lease_count"], semantic["invalid_count"])), ("GRAPH_OPS_SEMANTIC_AUTHORITY_READ_ONLY",)),
         (any((semantic["expired_lease_count"], semantic["invalid_count"])), ("GRAPH_OPS_SEMANTIC_AUTHORITY_REVIEW_REQUIRED",)),
         (any((enterprise["decision_count"], enterprise["invalid_count"])), ("GRAPH_OPS_ENTERPRISE_ENFORCEMENT_READ_ONLY",)),
@@ -2460,6 +2467,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "mission_control": p["mission_control"],
         "saas_proof": p["saas_proof"],
         "jetbrains_handshake": p["jetbrains_handshake"],
+        "release_readiness": p["release_readiness"],
     }
     return {**core, "base_graph_sha256": base_graph_sha256, "graph_sha256": _sha(core), "mermaid": _mermaid(projected_nodes, projected_edges)}
 
