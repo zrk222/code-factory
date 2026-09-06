@@ -77,11 +77,11 @@ jobs:
         run: |
           python -m venv /tmp/factory-wheel
           /tmp/factory-wheel/bin/python -m pip install dist/*.whl
+          cp scripts/release_train_e2e.py /tmp/release_train_e2e.py
           cd /tmp
           /tmp/factory-wheel/bin/factory --help
           ! /tmp/factory-wheel/bin/factory verify missing-feature --root /tmp --strict-release --json
           /tmp/factory-wheel/bin/python -c "import factoryline; print(factoryline.__version__)"
-          cp scripts/release_train_e2e.py /tmp/release_train_e2e.py
           /tmp/factory-wheel/bin/python /tmp/release_train_e2e.py
       - uses: actions/upload-artifact@v7.0.1
         with:

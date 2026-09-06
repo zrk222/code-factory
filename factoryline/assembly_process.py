@@ -211,10 +211,10 @@ def _posix_processes() -> dict[int, _PosixProcess] | None:
     return observed
 
 
-def _observe_descendants(child: subprocess.Popen, unit: _CleanupUnit) -> None:
+def _observe_descendants(child: subprocess.Popen, unit: _CleanupUnit, *, force: bool = False) -> None:
     """Record descendants while their parentage still proves invocation ownership."""
     now = time.monotonic()
-    if now - unit.last_descendant_observation < PROCESS_SNAPSHOT_INTERVAL_SECONDS:
+    if not force and now - unit.last_descendant_observation < PROCESS_SNAPSHOT_INTERVAL_SECONDS:
         return
     unit.last_descendant_observation = now
     processes = _posix_processes()
@@ -351,6 +351,12 @@ def _unit_status(child: subprocess.Popen, unit: _CleanupUnit) -> bool | None:
 def _terminate_unit(child: subprocess.Popen, unit: _CleanupUnit) -> bool:
     """Request termination of the bound cleanup unit without unbounded waits."""
     clean = True
+    # Take one final lineage snapshot while the root is still alive.  A child
+    # can call ``setsid`` immediately after launch; observing it before the
+    # group kill preserves the only reliable parentage proof we have before it
+    # is reparented.  The snapshot is bounded and failure is handled by the
+    # existing fail-closed receipt path.
+    _observe_descendants(child, unit, force=True)
     try:
         if os.name == "nt":
             if unit.job_handle is not None:
