@@ -679,3 +679,11 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-06 00:24] VERIFY post-publication-runtime-hardening/T3a posix_escape_tracking=local_simulation_passed parity_scaffold=18_passed_4_windows_skipped full=1379_passed_7_skipped_2_warnings drift=21/21 forge=verify_tests_and_smoke_passed native_junit=prepared_not_executed
 - [2026-09-06 04:18] GATE spec post-publication-runtime-hardening approver=human strict=True sha=7ea21efd698ed1fd
 - [2026-09-06 04:18] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=7ea21efd698ed1fd
+
+- [2026-09-06 04:30] GATE spec post-publication-runtime-hardening approver=human strict=True sha=7ea21efd698ed1fd
+- [2026-09-06 04:30] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=7ea21efd698ed1fd
+- [2026-09-06 00:39] VERIFY post-publication-runtime-hardening/T4 studio_routing=15_passed forge_qa=grade_A_complexity_9_no_findings forge_verify_tests=passed forge_smoke=passed full=1380_passed_7_skipped_2_warnings native_junit=prepared_not_executed
+
+- [2026-09-06 04:44] GATE spec post-publication-runtime-hardening approver=human strict=True sha=7ea21efd698ed1fd
+- [2026-09-06 04:44] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=7ea21efd698ed1fd
+- [2026-09-06 04:44] GATE code post-publication-runtime-hardening approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
