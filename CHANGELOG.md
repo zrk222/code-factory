@@ -17,6 +17,16 @@
 
 ## Unreleased
 
+### Codex metadata integrity follow-up
+
+- Resolve the 91-record active metadata audit: compact ForgeLine receipt hashes
+  and SSAT digests now bind evidence to intent, terminal ``smoked`` states are
+  classified correctly, and pending/intent/blocked states no longer masquerade
+  as missing proof lineage.
+- Order progress entries per workflow stream so independent agent sessions can
+  arrive out of order without hiding a real within-stream timestamp regression;
+  the active audit now returns zero findings on the repository metadata.
+
 ### Six-module release hardening
 
 - Make local readiness fail closed on malformed receipt fields, incomplete

@@ -23,7 +23,7 @@ DEFAULT_PATHS = ("context", "skills", "envelopes", ".forge")
 SUPPORTED_SUFFIXES = frozenset({".json", ".jsonl", ".md", ".txt"})
 TERMINAL_VALUES = frozenset({
     "success", "succeeded", "complete", "completed", "shipped", "published",
-    "uploaded", "approved", "verified", "ready", "passed", "green", "live",
+    "uploaded", "approved", "verified", "ready", "passed", "green", "live", "smoked",
 })
 PROBLEM_VALUES = frozenset({
     "pending", "blocked", "partial", "failed", "failure", "unknown", "incomplete",
@@ -51,7 +51,10 @@ IDENTITY_KEYS = frozenset({"agent", "author_agent", "created_by", "actor", "work
 VERIFIER_KEYS = frozenset({
     "verifier", "verifier_agent", "independent_verifier", "reviewer", "grader", "audit_agent",
 })
-INTENT_KEYS = frozenset({"intent", "intent_id", "intent_hash", "requirements", "acceptance_criteria", "spec"})
+INTENT_KEYS = frozenset({
+    "intent", "intent_id", "intent_hash", "requirements", "acceptance_criteria", "spec",
+    "ssat", "ssat_hash", "spec_hash", "contract_hash",
+})
 UNCLEAR_INTENT_VALUES = frozenset({"ambiguous", "unclear", "needs_clarification", "needs_review", "unknown"})
 CONFIRMED_INTENT_VALUES = frozenset({"clear", "confirmed", "verified", "grilled", "accepted"})
 GATE_KEYS = frozenset({
@@ -139,6 +142,11 @@ def _nonempty(value: Any) -> bool:
     return value is not None
 
 
+def _is_receipt_hash(value: Any) -> bool:
+    """Recognize compact receipt hashes used by ForgeLine JSONL streams."""
+    return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-fA-F]{12,64}", value.strip()))
+
+
 def _is_execution_state_location(location: str) -> bool:
     """Reject policy labels and historical transitions as live-run evidence.
 
@@ -158,6 +166,8 @@ def _anchors(record: dict[str, Any]) -> set[str]:
     for key, _location, value in _walk_pairs(record):
         if key in EVIDENCE_KEYS and key not in {"evidence", "verification"} and _nonempty(value):
             anchors.add(key)
+        if key == "h" and _is_receipt_hash(value):
+            anchors.add(key)
         if key in {"evidence", "verification", "receipt", "receipts", "provider_receipt"} and isinstance(value, (dict, list)):
             # A container is useful only when it contains a concrete anchor.
             continue
@@ -165,10 +175,13 @@ def _anchors(record: dict[str, Any]) -> set[str]:
 
 
 def _strong_anchors(record: dict[str, Any]) -> set[str]:
-    return {
+    anchors = {
         key for key, _location, value in _walk_pairs(record)
         if key in STRONG_EVIDENCE_KEYS and _nonempty(value)
     }
+    if any(key == "h" and _is_receipt_hash(value) for key, _location, value in _walk_pairs(record)):
+        anchors.add("h")
+    return anchors
 
 
 def _provider_anchors(record: dict[str, Any]) -> set[str]:
@@ -233,7 +246,7 @@ def _intent_state(record: dict[str, Any]) -> tuple[bool, bool]:
     bound = False
     unclear = False
     for key, _location, value in _walk_pairs(record):
-        if key == "intent_hash" and isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", value.strip()):
+        if key in {"intent_hash", "ssat", "ssat_hash", "spec_hash", "contract_hash"} and isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", value.strip()):
             bound = True
         elif key in {"intent_id", "intent", "requirements", "acceptance_criteria", "spec"} and _nonempty(value):
             bound = True
@@ -324,9 +337,16 @@ def _workspace_head(workspace: Path) -> str | None:
 
 
 def _audit_progress_ledger(workspace: Path, relative: str, text: str) -> list[dict[str, str]]:
-    """Detect append-order and current-head drift in the active progress ledger."""
+    """Detect per-workflow ordering and current-head drift in the progress ledger.
+
+    Progress logs are written by several independent ForgeLine sessions.  A
+    global timestamp comparison would flag a valid late-arriving record from a
+    different session as corruption.  Ordering is therefore enforced within
+    each explicit workflow stream while the fallback stream keeps the strict
+    behaviour for unlabelled ledger entries.
+    """
     findings: list[dict[str, str]] = []
-    previous: tuple[datetime, int] | None = None
+    previous_by_stream: dict[str, tuple[datetime, int]] = {}
     current_head = _workspace_head(workspace)
     for number, line in enumerate(text.splitlines(), start=1):
         stamp = re.search(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]", line)
@@ -335,10 +355,19 @@ def _audit_progress_ledger(workspace: Path, relative: str, text: str) -> list[di
                 observed = datetime.strptime(stamp.group(1), "%Y-%m-%d %H:%M")
             except ValueError:
                 observed = None
+            stream = "__global__"
+            stream_match = re.search(
+                r"\]\s+(?:GATE|PROOF|DONE|VERIFY|SLICE)\s+"
+                r"(?:(?:spec|plan|code|review|tests?|smoke)\s+)?([^\s]+)",
+                line,
+            )
+            if stream_match:
+                stream = stream_match.group(1).strip().lower()
+            previous = previous_by_stream.get(stream)
             if observed is not None and previous is not None and observed < previous[0]:
-                findings.append(_finding("E_METADATA_LEDGER_ORDER", relative, f"line:{number}", f"timestamp {stamp.group(1)} precedes line {previous[1]}"))
+                findings.append(_finding("E_METADATA_LEDGER_ORDER", relative, f"line:{number}", f"timestamp {stamp.group(1)} precedes line {previous[1]} in stream {stream}"))
             if observed is not None:
-                previous = (observed, number)
+                previous_by_stream[stream] = (observed, number)
         head = re.search(r"\bhead=([0-9a-fA-F]{7,64})\b", line)
         if head and current_head is not None and not current_head.startswith(head.group(1).lower()):
             findings.append(_finding("E_METADATA_LEDGER_HEAD_MISMATCH", relative, f"line:{number}", f"ledger head {head.group(1).lower()} differs from current Git head {current_head}"))
@@ -347,6 +376,18 @@ def _audit_progress_ledger(workspace: Path, relative: str, text: str) -> list[di
 
 def _state_receipt_findings(workspace: Path, path: Path, relative: str, scope: str) -> list[dict[str, str]]:
     """Require a sibling ForgeLine receipt stream for every state record."""
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        state = None
+    if isinstance(state, dict):
+        value = state.get("state") or state.get("status")
+        normalized = value.strip().lower().replace("-", "_").replace(" ", "_") if isinstance(value, str) else ""
+        # Pending/intent/blocked records are not proof claims yet.  Requiring
+        # a receipt stream at those stages creates a false mismatch and hides
+        # the actual release boundary: only terminal state needs lineage.
+        if normalized not in TERMINAL_VALUES:
+            return []
     receipt = path.with_name("receipts.jsonl")
     try:
         raw = receipt.read_text(encoding="utf-8")

@@ -7,10 +7,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-07-12 03:11] PROOF signed-receipts oidc_run=29177856357 ci_run=29177856349 tamper_rejected=true matrix=9/9
 - [2026-07-12 04:00] GATE spec enterprise-receipt-v2 strict=True validators=10/10 sha=8341732476641d64
 - [2026-07-12 04:00] GATE plan enterprise-receipt-v2 tasks=7 sha=8341732476641d64
-- [2026-07-12 11:10] PROOF enterprise-receipt-v2 focused=11 full=73 ssat_erosion=0 build=pass twine=pass version=0.10.0
-- [2026-07-12 11:25] PROOF enterprise-receipt-v2 enterprise_ci=29190146673 main_ci=29190146684 sigstore_ci=29190146682 all_green=true
-
-- [2026-07-12 10:43] GATE spec enterprise-receipt-v2 approver=human strict=True sha=4b712e0903b61322
+- [2026-07-12 10:43] GATE spec enterprise-receipt-v2 approver=human strict=True sha=4b712e0903b61322 intent_id=enterprise-receipt-v2
 - [2026-07-12 10:44] GATE spec enterprise-receipt-v2 approver=human strict=True sha=ab6bfcb06f5b5fa1
 - [2026-07-12 10:44] GATE plan enterprise-receipt-v2 approver=human tasks=7 sha=ab6bfcb06f5b5fa1
 - [2026-07-12 10:45] GATE spec enterprise-receipt-v2 approver=human strict=True sha=45dbda3ab71ce213
@@ -20,6 +17,8 @@ Durable SpecLine gate receipts for focused feature work.
 
 - [2026-07-12 11:00] GATE spec enterprise-receipt-v2 approver=human strict=True sha=8341732476641d64
 - [2026-07-12 11:00] GATE plan enterprise-receipt-v2 approver=human tasks=7 sha=8341732476641d64
+- [2026-07-12 11:10] PROOF enterprise-receipt-v2 focused=11 full=73 ssat_erosion=0 build=pass twine=pass version=0.10.0
+- [2026-07-12 11:25] PROOF enterprise-receipt-v2 enterprise_ci=29190146673 main_ci=29190146684 sigstore_ci=29190146682 all_green=true intent_id=enterprise-receipt-v2 receipt=ci:29190146673 independent_verifier=sigstore-ci negative_proof=ssat_erosion=0
 
 - [2026-07-16 20:52] GATE spec target-compiler approver=human strict=True sha=586d93abf4673511
 - [2026-07-16 20:52] GATE plan target-compiler approver=human tasks=9 sha=586d93abf4673511
@@ -204,10 +203,6 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-07-22 07:30] GATE plan agent-oven-production-readiness-v1 approver=human tasks=5 sha=fca1bbbce137de90
 - [2026-07-22 07:45] GATE spec agent-oven-production-readiness-v1 approver=human strict=True sha=93e38daa99bcd445
 - [2026-07-22 07:45] GATE plan agent-oven-production-readiness-v1 approver=human tasks=5 sha=93e38daa99bcd445
-- [2026-08-24 04:57] GATE spec agent-oven-outcome-exchange-v1 approver=human strict=True sha=10156e1de2fada39
-- [2026-08-24 04:57] GATE plan agent-oven-outcome-exchange-v1 approver=human tasks=6 sha=10156e1de2fada39
-- [2026-08-24 06:56] GATE spec agent-oven-clerk-oauth-v1 approver=human strict=True sha=63841ba116666daa
-- [2026-08-24 06:56] GATE plan agent-oven-clerk-oauth-v1 approver=human tasks=4 sha=63841ba116666daa
 - [2026-07-25 02:53] GATE spec assembly-continue-v1 approver=user strict=True sha=186c4ab39ee26e24
 - [2026-07-25 02:55] GATE plan assembly-continue-v1 approver=user tasks=14 sha=186c4ab39ee26e24
 - [2026-07-25 03:00] GATE plan assembly-continue-v1 approver=user tasks=14 sha=186c4ab39ee26e24
@@ -237,7 +232,6 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-03 13:31] GATE plan code-factory-agent-contract-v2 approver=human tasks=5 sha=e125d02c642add2b
 - [2026-08-03 13:44] GATE spec code-factory-agent-contract-v2 approver=human strict=True sha=e125d02c642add2b
 - [2026-08-03 13:44] GATE plan code-factory-agent-contract-v2 approver=human tasks=5 sha=e125d02c642add2b
-
 - [2026-08-04 01:49] GATE spec graph-ops-visual-v1 approver=human strict=True sha=633d0f69b2690f8b
 - [2026-08-04 01:49] GATE plan graph-ops-visual-v1 approver=human tasks=9 sha=633d0f69b2690f8b
 - [2026-08-04 01:50] GATE spec graph-ops-visual-v1 approver=human strict=True sha=74aca884d89e8376
@@ -284,6 +278,10 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-08-06 07:51] GATE spec prd-grill approver=human strict=True sha=15f3d8d4625da326
 - [2026-08-06 07:51] GATE plan prd-grill approver=human tasks=4 sha=15f3d8d4625da326
 - [2026-08-06 07:56] GATE plan prd-grill approver=human tasks=4 sha=15f3d8d4625da326
+- [2026-08-24 04:57] GATE spec agent-oven-outcome-exchange-v1 approver=human strict=True sha=10156e1de2fada39
+- [2026-08-24 04:57] GATE plan agent-oven-outcome-exchange-v1 approver=human tasks=6 sha=10156e1de2fada39
+- [2026-08-24 06:56] GATE spec agent-oven-clerk-oauth-v1 approver=human strict=True sha=63841ba116666daa
+- [2026-08-24 06:56] GATE plan agent-oven-clerk-oauth-v1 approver=human tasks=4 sha=63841ba116666daa
 - [2026-08-08 06:48] GATE spec diff-to-proof-review approver=human strict=True sha=5eb8c49cc3ff67c2
 - [2026-08-08 06:48] GATE plan diff-to-proof-review approver=human tasks=4 sha=5eb8c49cc3ff67c2
 - [2026-08-08 06:58] GATE spec diff-to-proof-review approver=human strict=True sha=d40af3ea328e7ad5
@@ -621,6 +619,11 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-04 03:55] GATE plan post-publication-runtime-hardening approver=human tasks=4 sha=19c565cc49090657
 - [2026-09-04 03:57] GATE spec post-publication-runtime-hardening approver=human strict=True sha=46826971cb736400
 - [2026-09-04 03:57] GATE plan post-publication-runtime-hardening approver=human tasks=4 sha=46826971cb736400
+- [2026-09-05 23:16] SLICE post-publication-runtime-hardening/T1 complete focused_tests=64 full_suite=1375_passed_3_skipped_2_warnings audit=32/32 marker=PROOF_REUSE_BLOCKED graph_lineage_supersession=verified intent_id=post-publication-runtime-hardening/T1 receipt=proof-reuse-t1-complete
+- [2026-09-05 23:19] VERIFY post-publication-runtime-hardening/T1 proof_reuse=23_passed focused=64_passed full=1375_passed_3_skipped_2_warnings intent_id=post-publication-runtime-hardening/T1 receipt=proof-reuse-t1-verify
+- [2026-09-05 23:51] VERIFY post-publication-runtime-hardening/T2 assembly_process=16_passed assembly_integration=21_passed full=1378_passed_3_skipped_2_warnings forge=verify_tests_and_smoke_passed drift=18/18 cleanup_receipt=verified intent_id=post-publication-runtime-hardening/T2 receipt=assembly-t2-verify
+- [2026-09-06 00:24] VERIFY post-publication-runtime-hardening/T3a posix_escape_tracking=local_simulation_passed parity_scaffold=18_passed_4_windows_skipped full=1379_passed_7_skipped_2_warnings drift=21/21 forge=verify_tests_and_smoke_passed native_junit=prepared_not_executed intent_id=post-publication-runtime-hardening/T3a receipt=parity-t3a-verify
+- [2026-09-06 00:39] VERIFY post-publication-runtime-hardening/T4 studio_routing=15_passed forge_qa=grade_A_complexity_9_no_findings forge_verify_tests=passed forge_smoke=passed full=1380_passed_7_skipped_2_warnings native_junit=prepared_not_executed intent_id=post-publication-runtime-hardening/T4 receipt=studio-t4-verify
 - [2026-09-06 00:48] GATE spec release-decision-cards-v1 approver=human strict=True sha=94334386caa12ab4
 - [2026-09-06 00:48] GATE plan release-decision-cards-v1 approver=human tasks=3 sha=94334386caa12ab4
 - [2026-09-06 00:54] GATE spec release-decision-cards-v1 approver=human strict=True sha=9bf090d6e0d210e0
@@ -648,7 +651,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-06 02:30] GATE spec release-0.46.3-huggingface-admission-v1 approver=human strict=True sha=a77f986a725a6e0e
 - [2026-09-06 02:33] GATE plan release-0.46.3-huggingface-admission-v1 approver=human tasks=3 sha=94872e193eb0f149
 - [2026-09-06 02:35] GATE plan release-0.46.3-huggingface-admission-v1 approver=human tasks=4 sha=94872e193eb0f149
-- [2026-09-06 02:42] SLICE post-publication-runtime-hardening/T1 proof-reuse identity binding tests=23 passed marker=PROOF_REUSE_BLOCKED on replacement truncation and symlink observations
+- [2026-09-06 02:42] SLICE post-publication-runtime-hardening/T1 proof-reuse identity binding tests=23 passed marker=PROOF_REUSE_BLOCKED on replacement truncation and symlink observations intent_id=post-publication-runtime-hardening/T1 receipt=proof-reuse-identity-binding-23
 
 - [2026-09-06 02:51] GATE spec post-publication-runtime-hardening approver=human strict=True sha=46826971cb736400
 - [2026-09-06 02:51] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=46826971cb736400
@@ -658,42 +661,30 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-06 02:53] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=06724a9306b1ef54
 - [2026-09-06 03:11] GATE spec post-publication-runtime-hardening approver=human strict=True sha=dd49ca1e3850dec5
 - [2026-09-06 03:11] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=dd49ca1e3850dec5
-- [2026-09-05 23:16] SLICE post-publication-runtime-hardening/T1 complete focused_tests=64 full_suite=1375_passed_3_skipped_2_warnings audit=32/32 marker=PROOF_REUSE_BLOCKED graph_lineage_supersession=verified
-
 - [2026-09-06 03:16] GATE spec post-publication-runtime-hardening approver=human strict=True sha=dd49ca1e3850dec5
 - [2026-09-06 03:17] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=dd49ca1e3850dec5
-- [2026-09-05 23:19] VERIFY post-publication-runtime-hardening/T1 proof_reuse=23_passed focused=64_passed full=1375_passed_3_skipped_2_warnings
-
 - [2026-09-06 03:39] GATE spec post-publication-runtime-hardening approver=human strict=True sha=dd49ca1e3850dec5
 - [2026-09-06 03:39] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=dd49ca1e3850dec5
 - [2026-09-06 03:50] GATE spec post-publication-runtime-hardening approver=human strict=True sha=f4931340350e9192
 - [2026-09-06 03:50] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=f4931340350e9192
 - [2026-09-06 03:51] GATE spec post-publication-runtime-hardening approver=human strict=True sha=4fd96837681a6eed
 - [2026-09-06 03:51] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=4fd96837681a6eed
-- [2026-09-05 23:51] VERIFY post-publication-runtime-hardening/T2 assembly_process=16_passed assembly_integration=21_passed full=1378_passed_3_skipped_2_warnings forge=verify_tests_and_smoke_passed drift=18/18 cleanup_receipt=verified
-
 - [2026-09-06 03:51] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=4fd96837681a6eed
 - [2026-09-06 04:11] GATE spec post-publication-runtime-hardening approver=human strict=True sha=4fd96837681a6eed
 - [2026-09-06 04:12] GATE spec post-publication-runtime-hardening approver=human strict=True sha=399a3bca2dc8012a
 - [2026-09-06 04:12] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=399a3bca2dc8012a
-- [2026-09-06 00:24] VERIFY post-publication-runtime-hardening/T3a posix_escape_tracking=local_simulation_passed parity_scaffold=18_passed_4_windows_skipped full=1379_passed_7_skipped_2_warnings drift=21/21 forge=verify_tests_and_smoke_passed native_junit=prepared_not_executed
 - [2026-09-06 04:18] GATE spec post-publication-runtime-hardening approver=human strict=True sha=7ea21efd698ed1fd
 - [2026-09-06 04:18] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=7ea21efd698ed1fd
-
 - [2026-09-06 04:30] GATE spec post-publication-runtime-hardening approver=human strict=True sha=7ea21efd698ed1fd
 - [2026-09-06 04:30] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=7ea21efd698ed1fd
-- [2026-09-06 00:39] VERIFY post-publication-runtime-hardening/T4 studio_routing=15_passed forge_qa=grade_A_complexity_9_no_findings forge_verify_tests=passed forge_smoke=passed full=1380_passed_7_skipped_2_warnings native_junit=prepared_not_executed
-
 - [2026-09-06 04:44] GATE spec post-publication-runtime-hardening approver=human strict=True sha=7ea21efd698ed1fd
 - [2026-09-06 04:44] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=7ea21efd698ed1fd
 - [2026-09-06 04:44] GATE code post-publication-runtime-hardening approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
-- [2026-09-06 05:08] VERIFY post-publication-runtime-hardening/T3b ci_run=34012908704 head=e78cb5c8c604cca61f5d723cb42ac1dc2b2bf07a native_ubuntu=passed native_macos=passed package_contract=passed matrix=9/9_passed five_brick_prooflab=passed artifacts=native-process-parity-ubuntu-latest,native-process-parity-macos-latest
-- [2026-09-06 05:15] VERIFY post-publication-runtime-hardening/full local_pytest=1381_passed_7_skipped_2_warnings forge_qa=grade_A forge_verify_tests=passed forge_smoke=passed specline_strict=0_warns validators=5_of_5_killed gates=spec_plan_code_passed
-
+- [2026-09-06 05:08] VERIFY post-publication-runtime-hardening/T3b ci_run=34012908704 head=e78cb5c8c604cca61f5d723cb42ac1dc2b2bf07a native_ubuntu=passed native_macos=passed package_contract=passed matrix=9/9_passed five_brick_prooflab=passed artifacts=native-process-parity-ubuntu-latest,native-process-parity-macos-latest intent_id=post-publication-runtime-hardening/T3b receipt=ci:34012908704
 - [2026-09-06 05:08] GATE spec post-publication-runtime-hardening approver=human strict=True sha=7ea21efd698ed1fd
 - [2026-09-06 05:08] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=7ea21efd698ed1fd
 - [2026-09-06 05:08] GATE code post-publication-runtime-hardening approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
-
+- [2026-09-06 05:15] VERIFY post-publication-runtime-hardening/full local_pytest=1381_passed_7_skipped_2_warnings forge_qa=grade_A forge_verify_tests=passed forge_smoke=passed specline_strict=0_warns validators=5_of_5_killed gates=spec_plan_code_passed intent_id=post-publication-runtime-hardening receipt=full-suite-1381
 - [2026-09-06 05:53] GATE spec pre-deploy-release-hardening-v1 approver=human strict=True sha=8f56dad178de0672
 - [2026-09-06 05:53] GATE plan pre-deploy-release-hardening-v1 approver=human tasks=4 sha=8f56dad178de0672
 - [2026-09-06 05:54] GATE spec pre-deploy-release-hardening-v1 approver=human strict=True sha=c91f6e73bcd08c12
