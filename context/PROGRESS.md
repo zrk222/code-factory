@@ -621,3 +621,11 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-04 03:55] GATE plan post-publication-runtime-hardening approver=human tasks=4 sha=19c565cc49090657
 - [2026-09-04 03:57] GATE spec post-publication-runtime-hardening approver=human strict=True sha=46826971cb736400
 - [2026-09-04 03:57] GATE plan post-publication-runtime-hardening approver=human tasks=4 sha=46826971cb736400
+- [2026-09-06 00:48] GATE spec release-decision-cards-v1 approver=human strict=True sha=94334386caa12ab4
+- [2026-09-06 00:48] GATE plan release-decision-cards-v1 approver=human tasks=3 sha=94334386caa12ab4
+- [2026-09-06 00:54] GATE spec release-decision-cards-v1 approver=human strict=True sha=9bf090d6e0d210e0
+- [2026-09-06 00:54] GATE plan release-decision-cards-v1 approver=human tasks=3 sha=9bf090d6e0d210e0
+- [2026-09-06 00:55] GATE spec release-decision-cards-v1 approver=human strict=True sha=e6f8866cd0e36870
+- [2026-09-06 00:55] GATE plan release-decision-cards-v1 approver=human tasks=3 sha=e6f8866cd0e36870
+- [2026-09-06 01:05] GATE plan release-decision-cards-v1 approver=human tasks=3 sha=e6f8866cd0e36870
+- [2026-09-06 01:07] GATE plan release-decision-cards-v1 approver=human tasks=3 sha=e6f8866cd0e36870

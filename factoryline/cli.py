@@ -279,6 +279,7 @@ from .index_continuity import (
     write_continuity_baseline,
 )
 from .release_integrity import release_integrity, render_release_integrity
+from .release_decision import SCHEMA as RELEASE_DECISION_SCHEMA, release_decision_card, render_release_decision_card
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
 from .verification import verify_feature
@@ -2061,6 +2062,10 @@ def main(argv=None) -> int:
     release_integrity_parser = release_sub.add_parser("integrity", help="verify release workflow fan-in and protected-gate topology")
     release_integrity_parser.add_argument("--root", default=".")
     release_integrity_parser.add_argument("--json", action="store_true")
+    release_decision_parser = release_sub.add_parser("decision", help="explain one strict local release decision without contacting a provider")
+    release_decision_parser.add_argument("feature")
+    release_decision_parser.add_argument("--root", default=".")
+    release_decision_parser.add_argument("--json", action="store_true")
 
     mcp = sub.add_parser("mcp", help="serve or inspect the local read-only MCP adapter")
     mcp_sub = mcp.add_subparsers(required=True, dest="mcp_cmd")
@@ -5113,13 +5118,32 @@ def main(argv=None) -> int:
                 print(f"packet      : {result['artifacts']['paths']['markdown']}")
             print("authority   : no source modification, test execution, commit, merge, publication, deployment, credential, or network action")
         return 0
-    if a.cmd == "release":
+    if a.cmd == "release" and a.release_cmd == "integrity":
         result = release_integrity(Path(a.root))
         if a.json:
             print(json.dumps(result, indent=2, sort_keys=True))
         else:
             print(render_release_integrity(result))
         return 0 if result["ok"] else 1
+    if a.cmd == "release" and a.release_cmd == "decision":
+        try:
+            result = release_decision_card(Path(a.root), a.feature)
+        except ValueError as exc:
+            result = {
+                "schema": RELEASE_DECISION_SCHEMA,
+                "marker": "RELEASE_DECISION_INPUT_REJECTED",
+                "state": "INPUT_REJECTED",
+                "reason": str(exc),
+                "authority": {"execution": False, "approval": False, "repair": False, "merge": False, "publication": False, "deployment": False, "signing": False, "messaging": False, "credential": False, "connector": False},
+                "claim_boundary": "Input validation only; no local workflow, feature evidence, provider, credential, or release action ran.",
+            }
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif result.get("state") == "INPUT_REJECTED":
+            print(f"release decision: INPUT_REJECTED ({result['reason']})")
+        else:
+            print(render_release_decision_card(result))
+        return 0 if result.get("state") == "EXTERNAL_GATES_UNOBSERVED" else 1
     if a.cmd == "jetbrains":
         root = Path(a.root).resolve()
         try:

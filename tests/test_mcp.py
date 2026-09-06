@@ -82,6 +82,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
                 "factory.appforge_surface_matrix_status",
                 "factory.appforge_mobile_evidence_status",
             "factory.release_readiness",
+                "factory.release_decision",
                 "factory.appforge_storefront_story_status",
         "factory.appforge_fastlane_capture_status",
         "factory.appforge_submission_integrity_status",

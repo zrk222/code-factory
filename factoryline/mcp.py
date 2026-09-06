@@ -38,6 +38,7 @@ from .appforge_fastlane_capture import fastlane_capture_projection
 from .appforge_submission_integrity import submission_integrity_projection
 from .appforge_mobile_evidence import mobile_evidence_projection
 from .release_contract import release_readiness_projection
+from .release_decision import release_decision_card
 from .oracle_firewall import oracle_firewall_projection
 from .proof_continuity_ledger import proof_continuity_projection
 from .semantic_authority import semantic_authority_projection
@@ -549,6 +550,17 @@ def _tool_definitions() -> list[dict[str, object]]:
             "name": "factory.release_readiness",
             "description": "Project every local release contract through the strict Oracle-bound gate and expose exact blockers. It never executes, signs, publishes, deploys, or contacts a provider.",
             "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.release_decision",
+            "description": "Explain one strict local release decision without contacting a provider. It distinguishes local workflow or evidence blocks from unobserved external gates and never publishes, signs, deploys, repairs, or accesses credentials.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"feature": {"type": "string", "description": "1-64 lowercase letters, digits, dots, underscores, or hyphens"}},
+                "required": ["feature"],
+                "additionalProperties": False,
+            },
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
@@ -1383,6 +1395,21 @@ def _release_readiness_status(root: Path, arguments: object) -> dict[str, object
     }
 
 
+def _release_decision_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) != {"feature"}:
+        raise McpError("factory.release_decision requires exactly one feature argument", marker="RELEASE_DECISION_INPUT_REJECTED")
+    try:
+        card = release_decision_card(root, arguments["feature"])
+    except ValueError as exc:
+        raise McpError(str(exc), marker="RELEASE_DECISION_INPUT_REJECTED") from exc
+    return {
+        "marker": "MCP_RELEASE_DECISION_READ_ONLY",
+        "action_summary": "Classify one local strict release state without executing a provider, repair, or release action.",
+        "card": card,
+        "scope": "Read-only local classification; provider state remains unobserved and no publication, approval, deployment, signing, credential, connector, or repair action ran.",
+    }
+
+
 def _appforge_storefront_story_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.appforge_storefront_story_status accepts no arguments")
@@ -1592,6 +1619,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_appforge_mobile_evidence_status(root, arguments))
     if name == "factory.release_readiness":
         return _content(_release_readiness_status(root, arguments))
+    if name == "factory.release_decision":
+        return _content(_release_decision_status(root, arguments))
     if name == "factory.appforge_storefront_story_status":
         return _content(_appforge_storefront_story_status(root, arguments))
     if name == "factory.appforge_fastlane_capture_status":
