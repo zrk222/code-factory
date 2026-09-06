@@ -9,7 +9,7 @@ from factoryline.release_integrity import release_integrity, render_release_inte
 
 
 ROOT = Path(__file__).parents[1]
-WORKFLOWS = ("publish.yml", "openvsx.yml", "jetbrains-marketplace.yml", "huggingface-space.yml")
+WORKFLOWS = ("publish.yml", "openvsx.yml", "vscode-marketplace.yml", "jetbrains-marketplace.yml", "intellij-plugin.yml", "huggingface-space.yml")
 INTELLIJ_FILES = (
     "editors/intellij/src/main/kotlin/app/factoryline/intellij/FactoryLineActions.kt",
     "editors/intellij/settings.gradle.kts",
@@ -51,6 +51,9 @@ def test_release_integrity_reports_exact_read_only_happy_path() -> None:
         "RELEASE_FAN_IN_EXACT",
         "RELEASE_VALIDATION_PARTITIONED",
         "OPENVSX_AUTHORIZATION_EARLY",
+        "VSCODE_MARKETPLACE_AUTHORIZATION_EARLY",
+        "VSCODE_MARKETPLACE_CANDIDATE_SEALED",
+        "JETBRAINS_JDK21_EXACT",
         "PYPI_TRUSTED_PUBLISHING",
         "JETBRAINS_APPROVAL_GUARD",
         "INTELLIJ_COMPATIBILITY_DECLARED",
@@ -93,6 +96,49 @@ def test_release_integrity_rejects_late_openvsx_authorization(tmp_path: Path) ->
 
     assert result["ok"] is False
     assert result["failed_check_ids"] == ["OPENVSX_AUTHORIZATION_EARLY"]
+
+
+def test_release_integrity_rejects_vscode_candidate_validation_without_authorization(tmp_path: Path) -> None:
+    root = _workflow_copy(tmp_path)
+    workflow = root / ".github" / "workflows" / "vscode-marketplace.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace("needs: authorize\n", "needs: []\n", 1),
+        encoding="utf-8",
+    )
+
+    result = release_integrity(root)
+
+    assert result["ok"] is False
+    assert result["failed_check_ids"] == ["VSCODE_MARKETPLACE_AUTHORIZATION_EARLY"]
+    assert result["next_action"]["action"] == "repair_release_workflow"
+
+
+def test_release_integrity_rejects_unsealed_vscode_candidate_identity(tmp_path: Path) -> None:
+    root = _workflow_copy(tmp_path)
+    workflow = root / ".github" / "workflows" / "vscode-marketplace.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace("grep -Fx 'publisher=zrk222' manifest.txt", "true"),
+        encoding="utf-8",
+    )
+
+    result = release_integrity(root)
+
+    assert result["ok"] is False
+    assert result["failed_check_ids"] == ["VSCODE_MARKETPLACE_CANDIDATE_SEALED"]
+
+
+def test_release_integrity_rejects_java17_in_any_intellij_gradle_workflow(tmp_path: Path) -> None:
+    root = _workflow_copy(tmp_path)
+    workflow = root / ".github" / "workflows" / "intellij-plugin.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace('java-version: "21"', 'java-version: "17"', 1),
+        encoding="utf-8",
+    )
+
+    result = release_integrity(root)
+
+    assert result["ok"] is False
+    assert result["failed_check_ids"] == ["JETBRAINS_JDK21_EXACT"]
 
 
 def test_release_integrity_rejects_intellij_compatibility_configuration_regression(tmp_path: Path) -> None:

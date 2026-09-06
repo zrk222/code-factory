@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .release_route_integrity import release_route_checks
+
 
 SCHEMA = "factory.release_integrity.v1"
 AUTHORITY = {
@@ -163,13 +165,13 @@ def _python_package_data_check(root: Path) -> dict[str, Any]:
 def _checks(root: Path) -> list[dict[str, Any]]:
     publish = _read_workflow(root, "publish.yml")
     openvsx = _read_workflow(root, "openvsx.yml")
-    jetbrains = _read_workflow(root, "jetbrains-marketplace.yml")
     return [
         _fan_in_check(publish),
         _partition_check(publish),
         _openvsx_check(openvsx),
+        *release_route_checks(root),
         _pypi_check(publish),
-        _jetbrains_check(jetbrains),
+        _jetbrains_check(_read_workflow(root, "jetbrains-marketplace.yml")),
         _intellij_compatibility_check(root),
         _huggingface_metadata_check(root),
         _python_package_data_check(root),
@@ -196,6 +198,7 @@ def release_integrity(root: Path) -> dict[str, Any]:
         },
         "external_requirements": [
             "Open VSX publication still requires OPENVSX_TOKEN in the protected openvsx environment.",
+            "Visual Studio Marketplace publication still requires VSCE_PAT in the protected vscode-marketplace environment.",
             "JetBrains publication still requires Marketplace approval to clear before a new update.",
         ],
         "authority": AUTHORITY,

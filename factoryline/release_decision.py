@@ -97,6 +97,11 @@ def release_workflow_decision_projection(integrity: dict[str, Any]) -> dict[str,
     applicable = integrity.get("applicable") is True
     workflow_ok = integrity.get("ok") is True
     failed_check_ids = [blocker["code"] for blocker in _workflow_blockers(integrity)]
+    external_requirements = [
+        str(item)
+        for item in integrity.get("external_requirements", [])
+        if isinstance(item, str)
+    ]
     marker = str(integrity.get("marker", "RELEASE_INTEGRITY_NOT_APPLICABLE"))
     if not applicable:
         state, status, label = (
@@ -131,6 +136,7 @@ def release_workflow_decision_projection(integrity: dict[str, Any]) -> dict[str,
             "workflow_marker": marker,
             "workflow_ok": workflow_ok if applicable else None,
             "failed_check_ids": failed_check_ids,
+            "external_requirements": external_requirements,
             "provider_state": "unobserved",
             "provider_contacted": False,
             "feature_required": feature_required,

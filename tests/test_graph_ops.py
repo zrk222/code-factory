@@ -492,12 +492,16 @@ def test_graph_ops_projects_release_workflow_before_a_named_feature_decision(tmp
         "ok": True,
         "checks": [],
         "failed_check_ids": [],
+        "external_requirements": ["VSCE_PAT remains an unobserved protected-environment requirement."],
     })
     healthy = graph_ops_snapshot(tmp_path)
     healthy_node = next(item for item in healthy["nodes"] if item["kind"] == "release_decision")
     assert healthy_node["facts"]["state"] == "FEATURE_DECISION_REQUIRED"
     assert healthy_node["facts"]["feature_required"] is True
     assert healthy_node["facts"]["next_action"] == "factory release decision <feature> --root . --json"
+    assert healthy_node["facts"]["external_requirements"] == ["VSCE_PAT remains an unobserved protected-environment requirement."]
+    assert healthy_node["facts"]["provider_state"] == "unobserved"
+    assert all(value is False for value in healthy_node["facts"]["authority"].values())
     assert healthy["release_decision"] == healthy_node["facts"]
 
     monkeypatch.setattr("factoryline.mission_control_status._release_workflow_integrity", lambda _root: {
