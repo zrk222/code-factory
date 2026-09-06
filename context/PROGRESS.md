@@ -648,3 +648,18 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-06 02:30] GATE spec release-0.46.3-huggingface-admission-v1 approver=human strict=True sha=a77f986a725a6e0e
 - [2026-09-06 02:33] GATE plan release-0.46.3-huggingface-admission-v1 approver=human tasks=3 sha=94872e193eb0f149
 - [2026-09-06 02:35] GATE plan release-0.46.3-huggingface-admission-v1 approver=human tasks=4 sha=94872e193eb0f149
+- [2026-09-06 02:42] SLICE post-publication-runtime-hardening/T1 proof-reuse identity binding tests=23 passed marker=PROOF_REUSE_BLOCKED on replacement truncation and symlink observations
+
+- [2026-09-06 02:51] GATE spec post-publication-runtime-hardening approver=human strict=True sha=46826971cb736400
+- [2026-09-06 02:51] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=46826971cb736400
+- [2026-09-06 02:53] GATE spec post-publication-runtime-hardening approver=human strict=True sha=60f503e06f54cf4a
+- [2026-09-06 02:53] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=60f503e06f54cf4a
+- [2026-09-06 02:53] GATE spec post-publication-runtime-hardening approver=human strict=True sha=06724a9306b1ef54
+- [2026-09-06 02:53] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=06724a9306b1ef54
+- [2026-09-06 03:11] GATE spec post-publication-runtime-hardening approver=human strict=True sha=dd49ca1e3850dec5
+- [2026-09-06 03:11] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=dd49ca1e3850dec5
+- [2026-09-05 23:16] SLICE post-publication-runtime-hardening/T1 complete focused_tests=64 full_suite=1375_passed_3_skipped_2_warnings audit=32/32 marker=PROOF_REUSE_BLOCKED graph_lineage_supersession=verified
+
+- [2026-09-06 03:16] GATE spec post-publication-runtime-hardening approver=human strict=True sha=dd49ca1e3850dec5
+- [2026-09-06 03:17] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=dd49ca1e3850dec5
+- [2026-09-05 23:19] VERIFY post-publication-runtime-hardening/T1 proof_reuse=23_passed focused=64_passed full=1375_passed_3_skipped_2_warnings

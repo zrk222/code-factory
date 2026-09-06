@@ -2501,34 +2501,38 @@ def graph_ops_impact(root: Path, changed_paths: list[str]) -> dict[str, Any]:
         raise ValueError("at least one changed path is required")
     snapshot = graph_ops_snapshot(root)
     nodes = {node["id"]: node for node in snapshot["nodes"]}
-    inputs = {
-        edge["source"]: edge["target"]
-        for edge in snapshot["edges"]
-        if edge["relation"] == "input_to" and nodes.get(edge["source"], {}).get("kind") == "artifact"
-    }
+    # One artifact can legitimately have several proof receipts over time.
+    # Keep every input edge instead of letting a dict comprehension hide the
+    # current receipt behind whichever proof happened to be iterated last.
+    inputs: dict[str, list[str]] = {}
+    for edge in snapshot["edges"]:
+        if edge["relation"] != "input_to" or nodes.get(edge["source"], {}).get("kind") != "artifact":
+            continue
+        inputs.setdefault(edge["source"], []).append(edge["target"])
     gate_for_proof: dict[str, list[str]] = {}
     for edge in snapshot["edges"]:
         if edge["relation"] == "uses_proof":
             gate_for_proof.setdefault(edge["target"], []).append(edge["source"])
 
     matched: dict[str, dict[str, Any]] = {}
-    for artifact_id, proof_id in inputs.items():
+    for artifact_id, proof_ids in inputs.items():
         artifact = nodes[artifact_id]
         artifact_path = str(artifact.get("facts", {}).get("path", artifact.get("label", "")))
         path_matches = [path for path in changed if artifact_path == path or artifact_path.startswith(path + "/")]
         if not path_matches:
             continue
-        proof = nodes.get(proof_id)
-        if proof is None:
-            continue
-        entry = matched.setdefault(proof_id, {
-            "proof_id": proof_id,
-            "label": proof["label"],
-            "status": proof.get("status", "unknown"),
-            "input_artifacts": [],
-            "gates": [],
-        })
-        entry["input_artifacts"].append({"path": artifact_path, "changed_paths": path_matches})
+        for proof_id in sorted(set(proof_ids)):
+            proof = nodes.get(proof_id)
+            if proof is None:
+                continue
+            entry = matched.setdefault(proof_id, {
+                "proof_id": proof_id,
+                "label": proof["label"],
+                "status": proof.get("status", "unknown"),
+                "input_artifacts": [],
+                "gates": [],
+            })
+            entry["input_artifacts"].append({"path": artifact_path, "changed_paths": path_matches})
     for proof_id, entry in matched.items():
         entry["input_artifacts"].sort(key=lambda item: item["path"])
         entry["gates"] = sorted({
@@ -2537,8 +2541,16 @@ def graph_ops_impact(root: Path, changed_paths: list[str]) -> dict[str, Any]:
             if gate_id in nodes
         })
     matched_rows = [matched[key] for key in sorted(matched)]
-    stale = [item for item in matched_rows if item["status"] == "stale"]
     verified_current = [item for item in matched_rows if item["status"] == "verified"]
+    # A rerun creates a new content-addressed receipt while the historical
+    # receipt remains useful lineage.  Once a current receipt exists for the
+    # same gate label, the older stale receipt is superseded for this impact
+    # decision; otherwise every changed input would stay blocked forever.
+    current_labels = {item["label"] for item in verified_current}
+    stale = [
+        item for item in matched_rows
+        if item["status"] == "stale" and item["label"] not in current_labels
+    ]
     core = {
         "schema": "factory.graph-impact.v1",
         "marker": "GRAPH_OPS_IMPACT_EXACT",
