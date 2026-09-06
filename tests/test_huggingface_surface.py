@@ -24,7 +24,7 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     )
     assert len(short_description) <= 60
     assert "factoryline-code-factory" in page
-    assert "github.com/zrk222/code-factory/releases/tag/v0.46.2" in page
+    assert "github.com/zrk222/code-factory/releases/tag/v0.46.3" in page
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "Actual product capture set" in page
     assert '<meta name="viewport"' in page
@@ -96,13 +96,16 @@ def test_huggingface_workflow_uses_secret_and_scoped_source_directory() -> None:
     )
 
     assert "secrets.HF_TOKEN" in workflow
+    assert 'test -n "$HF_TOKEN"' in workflow
     assert 'repo_id="zrk222/code-factory"' in workflow
     assert 'repo_type="space"' in workflow
     assert 'folder_path="deploy/huggingface"' in workflow
+    token = workflow.index('test -n "$HF_TOKEN"')
+    checkout = workflow.index("actions/checkout@v4")
     validate = workflow.index("Validate static Space metadata before remote upload")
     install = workflow.index("Install Hugging Face CLI")
     publish = workflow.index("Publish static Space")
-    assert validate < install < publish
+    assert token < checkout < validate < install < publish
     assert "scripts/huggingface_space_metadata.py" in workflow
 
 

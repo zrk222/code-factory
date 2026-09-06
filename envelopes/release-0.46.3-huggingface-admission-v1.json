@@ -1,0 +1,13 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "release-0.46.3-huggingface-admission-v1",
+  "sealed_hash": "94872e193eb0f149fd9455a9fb4198596a43fc4f35c7ef96560b236908434b8e",
+  "coherence_score": 100,
+  "source": "specs/release-0.46.3-huggingface-admission-v1.md",
+  "intent": "Prepare a local 0.46.3 candidate that fails Hugging Face publication admission before candidate work, retains zero provider authority, and preserves bounded verifier cleanup evidence.",
+  "assumptions": [
+    "Assumes remote publication authentication is enforced by a declared token admission check before candidate work.",
+    "Assumes verifier dependency availability is bounded by cleanup timeout evidence rather than an unbounded child process."
+  ],
+  "claim_boundary": "Local hash-sealed intent evidence only. It does not grant publication authority, inspect credentials, contact a provider, dispatch a workflow, upload an artifact, or prove remote availability."
+}

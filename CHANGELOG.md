@@ -53,6 +53,23 @@
   tools, authenticate provider reports, operate a device, access a store,
   submit a build, or guarantee platform approval.
 
+## 0.46.3 - 2026-09-05
+
+- Align the core package, MCP Registry descriptor, release-channel guidance,
+  citation, and archival metadata on the `0.46.3` candidate. This source
+  alignment is not a PyPI, Registry, Zenodo, Space, marketplace, or GitHub
+  release receipt.
+- Require the declared Hugging Face `HF_TOKEN` before checkout, setup,
+  metadata tooling, or upload work in the Space workflow, and make static
+  release integrity reject a missing or late admission boundary.
+- Keep Space-card metadata validation before client installation and remote
+  upload; local checks remain read-only and do not inspect a secret or contact
+  Hugging Face.
+- Make Windows bounded verifier shutdown less flaky by isolating its process
+  group and accepting a raced `taskkill` status only after the supervisor and
+  both captured streams have closed. It remains bounded supervision, not a
+  sandbox or proof that hidden descendants cannot exist.
+
 ## 0.46.2 - 2026-09-03
 
 - Add intent-to-diff scope and forbidden-behavior checks, receipt freshness and

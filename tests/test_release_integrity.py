@@ -8,6 +8,7 @@ import pytest
 
 from factoryline.cli import main
 from factoryline.release_integrity import release_integrity, render_release_integrity
+from factoryline.release_route_integrity import release_route_checks
 
 
 ROOT = Path(__file__).parents[1]
@@ -57,6 +58,7 @@ def test_release_integrity_reports_exact_read_only_happy_path() -> None:
         "VSCODE_MARKETPLACE_CANDIDATE_SEALED",
         "JETBRAINS_MARKETPLACE_AUTHORIZATION_EARLY",
         "JETBRAINS_JDK21_EXACT",
+        "HUGGINGFACE_AUTHORIZATION_EARLY",
         "PYPI_TRUSTED_PUBLISHING",
         "JETBRAINS_APPROVAL_GUARD",
         "INTELLIJ_COMPATIBILITY_DECLARED",
@@ -66,7 +68,18 @@ def test_release_integrity_reports_exact_read_only_happy_path() -> None:
     assert all(item["passed"] for item in result["checks"])
     assert not any(result["authority"].values())
     assert "JetBrains publication still requires JETBRAINS_MARKETPLACE_TOKEN in the protected jetbrains-marketplace environment." in result["external_requirements"]
+    assert "Hugging Face Space publication still requires the configured HF_TOKEN GitHub Actions secret." in result["external_requirements"]
     assert {name: (ROOT / ".github" / "workflows" / name).read_bytes() for name in WORKFLOWS} == before
+
+
+def test_release_route_checks_expose_the_huggingface_admission_boundary() -> None:
+    checks = {item["id"]: item for item in release_route_checks(ROOT)}
+
+    assert checks["HUGGINGFACE_AUTHORIZATION_EARLY"] == {
+        "id": "HUGGINGFACE_AUTHORIZATION_EARLY",
+        "passed": True,
+        "evidence": "Hugging Face credential admission is declared before Space candidate work",
+    }
 
 
 def test_release_integrity_rejects_missing_artifact_fan_in(tmp_path: Path) -> None:
@@ -209,6 +222,56 @@ def test_release_integrity_rejects_huggingface_metadata_that_would_fail_remotely
 
     assert result["ok"] is False
     assert result["failed_check_ids"] == ["HUGGINGFACE_METADATA_PREFLIGHT"]
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('test -n "$HF_TOKEN"', "false"),
+        ("HF_TOKEN: ${{ secrets.HF_TOKEN }}", "HF_TOKEN: missing"),
+    ],
+)
+def test_release_integrity_rejects_missing_huggingface_authorization(tmp_path: Path, old: str, new: str) -> None:
+    root = _workflow_copy(tmp_path)
+    workflow = root / ".github" / "workflows" / "huggingface-space.yml"
+    workflow.write_text(workflow.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
+
+    result = release_integrity(root)
+
+    assert result["ok"] is False
+    assert result["failed_check_ids"] == ["HUGGINGFACE_AUTHORIZATION_EARLY"]
+    assert result["next_action"]["action"] == "repair_release_workflow"
+
+
+def test_release_integrity_rejects_late_huggingface_authorization(tmp_path: Path) -> None:
+    root = _workflow_copy(tmp_path)
+    workflow = root / ".github" / "workflows" / "huggingface-space.yml"
+    content = workflow.read_text(encoding="utf-8")
+    authorizer = """      - name: Require Hugging Face token before candidate work
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n \"$HF_TOKEN\" || {
+            echo \"HF_TOKEN is required before Hugging Face Space candidate work.\" >&2
+            exit 1
+          }
+"""
+    assert authorizer in content
+    workflow.write_text(
+        content.replace(authorizer, "").replace(
+            "      - uses: actions/checkout@v4\n",
+            "      - uses: actions/checkout@v4\n" + authorizer,
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    result = release_integrity(root)
+
+    assert result["ok"] is False
+    assert result["failed_check_ids"] == ["HUGGINGFACE_AUTHORIZATION_EARLY"]
 
 
 def test_release_integrity_rejects_implicit_python_package_data(tmp_path: Path) -> None:

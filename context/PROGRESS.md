@@ -639,3 +639,12 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-06 01:46] GATE plan jetbrains-marketplace-admission-v1 approver=human tasks=3 sha=805b7c278d4a53fb
 - [2026-09-06 01:49] GATE spec jetbrains-marketplace-admission-v1 approver=human strict=True sha=cb54788adf559efc
 - [2026-09-06 01:49] GATE plan jetbrains-marketplace-admission-v1 approver=human tasks=3 sha=cb54788adf559efc
+- [2026-09-06 01:54] GATE spec release-0.46.3-huggingface-admission-v1 approver=human strict=True sha=52b7fe52ea3a065e
+- [2026-09-06 01:54] GATE plan release-0.46.3-huggingface-admission-v1 approver=human tasks=3 sha=52b7fe52ea3a065e
+- [2026-09-06 02:15] GATE spec release-0.46.3-huggingface-admission-v1 approver=human strict=True sha=30ab6eb2ad58258e
+- [2026-09-06 02:15] GATE plan release-0.46.3-huggingface-admission-v1 approver=human tasks=3 sha=30ab6eb2ad58258e
+- [2026-09-06 02:18] GATE spec release-0.46.3-huggingface-admission-v1 approver=human strict=True sha=30ab6eb2ad58258e
+- [2026-09-06 02:18] GATE plan release-0.46.3-huggingface-admission-v1 approver=human tasks=3 sha=30ab6eb2ad58258e
+- [2026-09-06 02:30] GATE spec release-0.46.3-huggingface-admission-v1 approver=human strict=True sha=a77f986a725a6e0e
+- [2026-09-06 02:33] GATE plan release-0.46.3-huggingface-admission-v1 approver=human tasks=3 sha=94872e193eb0f149
+- [2026-09-06 02:35] GATE plan release-0.46.3-huggingface-admission-v1 approver=human tasks=4 sha=94872e193eb0f149

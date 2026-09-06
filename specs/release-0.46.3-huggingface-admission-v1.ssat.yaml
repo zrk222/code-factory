@@ -1,0 +1,46 @@
+name: release-0.46.3-huggingface-admission-v1
+language: python
+modules:
+  - name: release_route_integrity
+    path: factoryline/release_route_integrity.py
+    functions:
+      - name: release_route_checks
+        args: [root]
+        returns: list
+      - name: _huggingface_space_authorization_check
+        args: [root]
+        returns: dict
+  - name: release_integrity
+    path: factoryline/release_integrity.py
+    functions:
+      - name: release_integrity
+        args: [root]
+        returns: dict
+  - name: runtime_audit_process
+    path: factoryline/runtime_audit_process.py
+    functions:
+      - name: run_bounded_command
+        args: [argv, cwd, timeout_seconds, scratch]
+        returns: dict
+dependencies:
+  - from: release_integrity
+    to: release_route_integrity
+invariants:
+  - name: release_route_inspection_is_non_operational
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|\\b(?:exec|eval|publish|deploy|sign)\\s*\\("
+    scopes:
+      - module: release_route_integrity
+        symbol: release_route_checks
+        max_lines: 20
+      - module: release_integrity
+        symbol: release_integrity
+        max_lines: 45
+tests:
+  - path: tests/test_release_integrity.py
+    command: python -m pytest -q tests/test_release_integrity.py
+  - path: tests/test_huggingface_surface.py
+    command: python -m pytest -q tests/test_huggingface_surface.py
+  - path: tests/test_publication_metadata.py
+    command: python -m pytest -q tests/test_publication_metadata.py
+  - path: tests/test_runtime_audit_runner.py
+    command: python -m pytest -q tests/test_runtime_audit_runner.py tests/test_capability_evidence.py

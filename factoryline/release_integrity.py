@@ -203,6 +203,7 @@ def release_integrity(root: Path) -> dict[str, Any]:
             "Visual Studio Marketplace publication still requires VSCE_PAT in the protected vscode-marketplace environment.",
             "JetBrains publication still requires JETBRAINS_MARKETPLACE_TOKEN in the protected jetbrains-marketplace environment.",
             "JetBrains publication still requires Marketplace approval to clear before a new update.",
+            "Hugging Face Space publication still requires the configured HF_TOKEN GitHub Actions secret.",
         ],
         "authority": AUTHORITY,
     }

@@ -1,4 +1,4 @@
-"""Static, read-only preflight checks for protected IDE release routes."""
+"""Static, read-only preflight checks for protected release routes."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -103,6 +103,30 @@ def _jetbrains_jdk21_check(root: Path) -> dict[str, Any]:
     )
 
 
+def _huggingface_space_authorization_check(root: Path) -> dict[str, Any]:
+    workflow = _workflow(root, "huggingface-space.yml")
+    token_check = 'test -n "$HF_TOKEN"'
+    candidate_markers = (
+        "actions/checkout@v4",
+        "actions/setup-python@v5",
+        "Validate static Space metadata before remote upload",
+        "Install Hugging Face CLI",
+        'HfApi(token=os.environ["HF_TOKEN"]).upload_folder',
+    )
+    passed = (
+        "HF_TOKEN: ${{ secrets.HF_TOKEN }}" in workflow
+        and token_check in workflow
+        and "HF_TOKEN is required before Hugging Face Space candidate work." in workflow
+        and all(marker in workflow for marker in candidate_markers)
+        and workflow.index(token_check) < min(workflow.index(marker) for marker in candidate_markers)
+    )
+    return _check(
+        "HUGGINGFACE_AUTHORIZATION_EARLY",
+        passed,
+        "Hugging Face credential admission is declared before Space candidate work",
+    )
+
+
 def release_route_checks(root: Path) -> list[dict[str, Any]]:
     """Return declared route checks without inspecting credentials or providers."""
     vscode_marketplace = _workflow(root, "vscode-marketplace.yml")
@@ -111,4 +135,5 @@ def release_route_checks(root: Path) -> list[dict[str, Any]]:
         _vscode_marketplace_candidate_check(vscode_marketplace),
         _jetbrains_marketplace_authorization_check(root),
         _jetbrains_jdk21_check(root),
+        _huggingface_space_authorization_check(root),
     ]
