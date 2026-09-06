@@ -9,7 +9,7 @@ import factoryline.release_decision as decision
 import factoryline.mission_control_status as mission_control
 from factoryline.cli import main
 from factoryline.mcp import dispatch
-from factoryline.release_decision import release_decision_card, render_release_decision_card
+from factoryline.release_decision import release_decision_card, release_workflow_decision_projection, render_release_decision_card
 
 
 def _integrity(*, ok: bool) -> dict[str, object]:
@@ -55,6 +55,34 @@ def test_release_decision_prioritizes_workflow_failure_and_never_runs_feature_ch
     assert "not a provider rejection" in card["explanation"]
     assert all(value is False for value in card["authority"].values())
     assert {path.relative_to(tmp_path).as_posix(): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+def test_release_workflow_projection_is_read_only_and_requires_feature_evidence() -> None:
+    blocked = release_workflow_decision_projection({
+        "applicable": True,
+        "ok": False,
+        "marker": "RELEASE_INTEGRITY_FAILURE",
+        "checks": [{"id": "RELEASE_FAN_IN_EXACT", "passed": False, "evidence": "fan-in missing"}],
+    })
+    assert blocked["marker"] == "RELEASE_DECISION_GRAPH_READ_ONLY"
+    assert blocked["facts"]["state"] == "LOCAL_WORKFLOW_BLOCKED"
+    assert blocked["facts"]["failed_check_ids"] == ["RELEASE_FAN_IN_EXACT"]
+    assert blocked["facts"]["provider_state"] == "unobserved"
+    assert all(value is False for value in blocked["facts"]["authority"].values())
+
+    healthy = release_workflow_decision_projection({
+        "applicable": True,
+        "ok": True,
+        "marker": "RELEASE_INTEGRITY_READ_ONLY",
+        "checks": [],
+    })
+    assert healthy["facts"]["state"] == "FEATURE_DECISION_REQUIRED"
+    assert healthy["facts"]["feature_required"] is True
+    assert healthy["facts"]["next_action"] == "factory release decision <feature> --root . --json"
+
+    absent = release_workflow_decision_projection({"applicable": False, "ok": True, "checks": []})
+    assert absent["facts"]["state"] == "RELEASE_WORKFLOW_NOT_APPLICABLE"
+    assert absent["source"] is None
 
 
 def test_release_decision_requires_a_local_contract_before_feature_verification(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

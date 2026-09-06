@@ -87,6 +87,62 @@ def _workflow_blockers(integrity: dict[str, Any]) -> list[dict[str, str]]:
     ]
 
 
+def release_workflow_decision_projection(integrity: dict[str, Any]) -> dict[str, Any]:
+    """Describe the release-workflow boundary before a feature is selected.
+
+    This is the shared, read-only precursor to :func:`release_decision_card`.
+    A healthy static workflow still requires a named feature's strict local
+    evidence, and no result in this projection observes a provider.
+    """
+    applicable = integrity.get("applicable") is True
+    workflow_ok = integrity.get("ok") is True
+    failed_check_ids = [blocker["code"] for blocker in _workflow_blockers(integrity)]
+    marker = str(integrity.get("marker", "RELEASE_INTEGRITY_NOT_APPLICABLE"))
+    if not applicable:
+        state, status, label = (
+            "RELEASE_WORKFLOW_NOT_APPLICABLE",
+            "not_applicable",
+            "Release decision · no declared workflow",
+        )
+        next_action, feature_required, source = "select_or_declare_release_workflow", False, None
+    elif not workflow_ok:
+        state, status, label = (
+            "LOCAL_WORKFLOW_BLOCKED",
+            "blocked",
+            "Release decision · local workflow blocked",
+        )
+        next_action, feature_required, source = "repair_release_workflow", False, ".github/workflows/publish.yml"
+    else:
+        state, status, label = (
+            "FEATURE_DECISION_REQUIRED",
+            "feature_required",
+            "Release decision · choose feature",
+        )
+        next_action, feature_required, source = "factory release decision <feature> --root . --json", True, ".github/workflows/publish.yml"
+    return {
+        "marker": "RELEASE_DECISION_GRAPH_READ_ONLY",
+        "id": "release-decision:workflow",
+        "kind": "release_decision",
+        "label": label,
+        "source": source,
+        "status": status,
+        "facts": {
+            "state": state,
+            "workflow_marker": marker,
+            "workflow_ok": workflow_ok if applicable else None,
+            "failed_check_ids": failed_check_ids,
+            "provider_state": "unobserved",
+            "provider_contacted": False,
+            "feature_required": feature_required,
+            "next_action": next_action,
+            "authority": dict(AUTHORITY),
+            "execution": False,
+            "repair": False,
+            "merge": False,
+        },
+    }
+
+
 def _verification_blockers(result: dict[str, Any]) -> list[dict[str, str]]:
     rows = [
         {

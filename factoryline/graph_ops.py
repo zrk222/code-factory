@@ -38,6 +38,7 @@ from .proof_review_workflow import proof_review_projection
 from .revenueforge import revenueforge_projection
 from .appforge_design import appforge_design_projection
 from .release_contract import release_readiness_projection
+from .release_decision import release_workflow_decision_projection
 from .oracle_firewall import oracle_firewall_projection, verify_oracle_contract
 from .proof_continuity_ledger import proof_continuity_projection
 from .semantic_authority import semantic_authority_projection
@@ -1944,6 +1945,8 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "review_oracle_weakening", "A proposed gate, scenario, threshold, test, or exception weakens the sealed definition of done. Keep work paused until a named human reviews a separately sealed successor contract."
     if facts.get("oracle_invalid_count", 0) > 0:
         return "repair_oracle_integrity", "An Oracle Firewall artifact is invalid or stale. Do not rely on autonomous admission or AppForge authority until its exact source binding is current."
+    if facts.get("release_decision_workflow_blocked", 0) > 0:
+        return "repair_release_workflow", "A declared local release-workflow boundary failed. Repair its named local check before evaluating feature evidence or inspecting an external provider."
     if facts.get("semantic_authority_expired_lease_count", 0) > 0:
         return "renew_semantic_authority", "An agent lease expired. Keep the handoff constrained and obtain a fresh named approval rather than extending or replaying the prior lease."
     if facts.get("semantic_authority_invalid_count", 0) > 0:
@@ -1954,7 +1957,7 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "repair_intent_trace_binding", "A Factoryline intent adapter no longer matches the exact Forge ship line it claims to observe; review the bounded receipt pair before relying on traceability."
     if facts.get("intent_trace_unbound_count", 0) > 0:
         return "refresh_intent_trace_adapter", "A Factoryline intent adapter cannot be bound to a readable Forge ship line; rerun the supervised assembly or repair the local evidence source."
-    if facts["node_count"] == 0:
+    if facts["operational_node_count"] == 0:
         return "initialize_graph", "No readable local Factory graph artifacts were found."
     if facts["agent_incident_count"] > 0:
         return "review_agent_demotion", "A governed agent result triggered automatic demotion. Inspect the bound incident capsule and collect fresh independent evidence before expanding autonomy."
@@ -2028,6 +2031,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
+        "operational_node_count": sum(node["kind"] != "release_decision" for node in nodes),
         "edge_count": 0,
         "stale_proof_count": stale_proof_count,
         "blocked_gate_count": gates["BLOCK"],
@@ -2269,8 +2273,12 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
     })
     mission_control = mission_control_status(workspace)
     shared = mission_control["evidence"]
+    release_decision = release_workflow_decision_projection(shared["release_workflow_integrity"])
+    _node(state, node_id=release_decision["id"], kind=release_decision["kind"], label=release_decision["label"],
+          source=release_decision["source"], status=release_decision["status"], facts=release_decision["facts"])
     values.update({
         "mission_control": mission_control,
+        "release_decision": release_decision["facts"],
         "oracle_firewall": _append_oracle_firewall(state, workspace, shared["oracle"]),
         "proof_continuity": _append_proof_continuity(state, workspace),
         "semantic_authority": _append_semantic_authority(state, workspace),
@@ -2358,6 +2366,8 @@ def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list
         "repair_loop_receipt_count": p["repair_loops"]["receipt_count"],
         "repair_loop_invalid_count": p["repair_loops"]["invalid_count"],
         "mission_control_state": p["mission_control"]["state"],
+        "release_decision_state": p["release_decision"]["state"],
+        "release_decision_workflow_blocked": int(p["release_decision"]["state"] == "LOCAL_WORKFLOW_BLOCKED"),
         "edge_count": len(edges),
         "appforge_design_current_count": appforge["current_count"],
         "appforge_design_invalid_count": appforge["invalid_count"],
@@ -2384,6 +2394,8 @@ def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]
         (any(appforge[name][key] for name in ("quality_audit", "submission_assurance", "oracle_authority", "device_reality", "release_rehearsal") for key in ("current_count", "invalid_count")) or any((appforge["current_count"], appforge["invalid_count"])), ("GRAPH_OPS_APPFORGE_READ_ONLY",)),
         (any((p["saas_proof"]["current_count"], p["saas_proof"]["invalid_count"])), ("GRAPH_OPS_SAAS_PROOF_READ_ONLY",)),
         (p["jetbrains_handshake"]["state"] != "empty", ("GRAPH_OPS_JETBRAINS_HANDSHAKE_READ_ONLY",)),
+        (True, ("GRAPH_OPS_RELEASE_DECISION_VISIBLE", "RELEASE_DECISION_GRAPH_READ_ONLY")),
+        (p["release_decision"]["state"] == "LOCAL_WORKFLOW_BLOCKED", ("GRAPH_OPS_RELEASE_DECISION_WORKFLOW_BLOCKED",)),
         (p["release_readiness"]["contract_count"] or p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_READ_ONLY",)),
         (p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_REVIEW_REQUIRED",)),
         (any((semantic["handoff_count"], semantic["lease_count"], semantic["invalid_count"])), ("GRAPH_OPS_SEMANTIC_AUTHORITY_READ_ONLY",)),
@@ -2465,6 +2477,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "repair_loops": p["repair_loops"],
         "deep_audit": p["deep_audit"],
         "mission_control": p["mission_control"],
+        "release_decision": p["release_decision"],
         "saas_proof": p["saas_proof"],
         "jetbrains_handshake": p["jetbrains_handshake"],
         "release_readiness": p["release_readiness"],
