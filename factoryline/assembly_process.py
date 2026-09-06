@@ -203,7 +203,11 @@ def _posix_processes() -> dict[int, _PosixProcess] | None:
             if len(fields) != 4:
                 return None
             pid, ppid, pgid = (int(value) for value in fields[:3])
-            if pid <= 0 or ppid < 0 or pgid <= 0 or not fields[3]:
+            # Linux can report pgid=0 for host-owned processes (for example
+            # PID 1 in a container).  Those rows are still valid lineage
+            # observations; rejecting the entire snapshot would disable
+            # escaped-descendant detection for the invocation we care about.
+            if pid <= 0 or ppid < 0 or pgid < 0 or not fields[3]:
                 return None
             observed[pid] = _PosixProcess(pid, ppid, pgid, fields[3])
     except ValueError:

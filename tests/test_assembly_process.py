@@ -54,6 +54,19 @@ def test_observed_posix_descendant_outside_cleanup_group_blocks_receipt(monkeypa
     assert assembly_process._escaped_descendant_status(unit) is False
 
 
+def test_posix_snapshot_accepts_host_owned_zero_process_group(monkeypatch):
+    class _Result:
+        returncode = 0
+        stdout = "    1     0     0 Sun Sep  6 00:00:00 2026\n  100     1   100 Sun Sep  6 00:00:00 2026\n"
+
+    monkeypatch.setattr(assembly_process.os, "name", "posix")
+    monkeypatch.setattr(assembly_process.subprocess, "run", lambda *args, **kwargs: _Result())
+    snapshot = assembly_process._posix_processes()
+    assert snapshot is not None
+    assert snapshot[1].pgid == 0
+    assert snapshot[100].pgid == 100
+
+
 @pytest.mark.parametrize("stream", ["stdout", "stderr"])
 def test_output_overflow_cannot_pass(tmp_path, stream):
     ok, output = run_cli(sys.executable, ["-c", f"import sys; sys.{stream}.write('x'*100000)"], tmp_path, max_stream_bytes=1024)
