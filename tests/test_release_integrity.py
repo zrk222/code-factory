@@ -52,6 +52,7 @@ def test_release_integrity_reports_exact_read_only_happy_path() -> None:
     assert result["ok"] is True
     assert [item["id"] for item in result["checks"]] == [
         "RELEASE_FAN_IN_EXACT",
+        "RELEASE_CANDIDATE_PREFLIGHT_REQUIRED",
         "RELEASE_VALIDATION_PARTITIONED",
         "OPENVSX_AUTHORIZATION_EARLY",
         "VSCODE_MARKETPLACE_AUTHORIZATION_EARLY",
@@ -128,6 +129,20 @@ def test_release_integrity_rejects_vscode_candidate_validation_without_authoriza
     assert result["ok"] is False
     assert result["failed_check_ids"] == ["VSCODE_MARKETPLACE_AUTHORIZATION_EARLY"]
     assert result["next_action"]["action"] == "repair_release_workflow"
+
+
+def test_release_integrity_rejects_publication_without_candidate_preflight(tmp_path: Path) -> None:
+    root = _workflow_copy(tmp_path)
+    publish = root / ".github" / "workflows" / "publish.yml"
+    content = publish.read_text(encoding="utf-8")
+    start = content.index("      - name: Require sealed release candidate preflight")
+    end = content.index("      - name: Attach distributions to GitHub release", start)
+    publish.write_text(content[:start] + content[end:], encoding="utf-8")
+
+    result = release_integrity(root)
+
+    assert result["ok"] is False
+    assert result["failed_check_ids"] == ["RELEASE_CANDIDATE_PREFLIGHT_REQUIRED"]
 
 
 def test_release_integrity_rejects_unsealed_vscode_candidate_identity(tmp_path: Path) -> None:

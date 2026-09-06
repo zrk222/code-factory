@@ -499,6 +499,12 @@ AppForge Builder at **$24/month or $240/year**, and Team Assurance at **$20 per
 active contributor/month annually or $24 monthly**, subject to explicit activation gates. See the
 [Open VSX service plan](docs/OPEN_VSX_MONETIZATION_2026.md).
 
+Release owners can use the read-only [release candidate preflight](docs/RELEASE_CANDIDATE_PREFLIGHT.md)
+to bind source, commit, platform artifacts, and active metadata before any
+upload. The [Codex metadata integrity](docs/CODEX_METADATA_INTEGRITY.md) audit
+keeps archival claims out of active proof, and [Windows process binding](docs/WINDOWS_PROCESS_BINDING.md)
+closes the bind-before-run process-tree race.
+
 ## The proof boundary
 
 Code Factory creates and inspects local artifacts. It does **not** silently call a

@@ -253,7 +253,8 @@ def test_openvsx_workflow_seals_a_tested_immutable_candidate_before_manual_publi
     assert "npm run audit" in workflow
     assert "npm test" in workflow
     assert workflow.index("npm ci") < workflow.index("npm run audit") < workflow.index("npm test")
-    assert "sha256sum factoryline-vscode.vsix" in workflow
+    assert "factoryline-vscode-$(node -p \\\"require('./package.json').version\\\").vsix" in workflow
+    assert "sha256sum \"${packages[0]}\"" in workflow
     assert "environment: openvsx" in workflow
     assert "if: inputs.publish == true" in workflow
     assert "  authorize:" in workflow
@@ -329,7 +330,7 @@ def test_vscode_marketplace_workflow_seals_the_candidate_and_requires_a_scoped_s
     assert "secrets.VSCE_PAT" in workflow
     assert "VSCE_PAT is required in the vscode-marketplace environment." in workflow
     assert "sha256sum --check SHA256SUMS.txt" in workflow
-    assert "--packagePath vscode-marketplace-candidate/factoryline-vscode.vsix" in workflow
+    assert "--packagePath \"$(find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit)\"" in workflow
     assert "--oidc" not in workflow
 
 

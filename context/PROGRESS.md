@@ -693,3 +693,10 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-06 05:08] GATE spec post-publication-runtime-hardening approver=human strict=True sha=7ea21efd698ed1fd
 - [2026-09-06 05:08] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=7ea21efd698ed1fd
 - [2026-09-06 05:08] GATE code post-publication-runtime-hardening approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
+
+- [2026-09-06 05:53] GATE spec pre-deploy-release-hardening-v1 approver=human strict=True sha=8f56dad178de0672
+- [2026-09-06 05:53] GATE plan pre-deploy-release-hardening-v1 approver=human tasks=4 sha=8f56dad178de0672
+- [2026-09-06 05:54] GATE spec pre-deploy-release-hardening-v1 approver=human strict=True sha=c91f6e73bcd08c12
+- [2026-09-06 05:54] GATE plan pre-deploy-release-hardening-v1 approver=human tasks=4 sha=c91f6e73bcd08c12
+- [2026-09-06 05:55] GATE spec pre-deploy-release-hardening-v1 approver=human strict=True sha=fc91caec4b6a2369
+- [2026-09-06 05:55] GATE plan pre-deploy-release-hardening-v1 approver=human tasks=4 sha=fc91caec4b6a2369

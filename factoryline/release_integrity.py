@@ -71,6 +71,42 @@ def _fan_in_check(workflow: str) -> dict[str, Any]:
     return _check("RELEASE_FAN_IN_EXACT", passed, "three independent validators with exact artifact fan-in")
 
 
+def _candidate_preflight_check(workflow: str) -> dict[str, Any]:
+    """Require the release owner to supply a sealed candidate receipt before upload.
+
+    A green language-specific build is not a release identity proof.  The
+    publication job must therefore fail closed when the protected environment
+    has not supplied a workspace-contained release contract, and it must run
+    the exact candidate preflight before the first external upload step.
+    """
+    publish = _job(workflow, "publish")
+    marker = "Require sealed release candidate preflight before external publication"
+    command = "python -m factoryline.cli release preflight"
+    try:
+        gate_index = publish.index(marker)
+        upload_index = publish.index("gh release upload")
+        pypi_index = publish.index("pypa/gh-action-pypi-publish")
+    except ValueError:
+        gate_index = upload_index = pypi_index = -1
+    ordered = gate_index >= 0 and upload_index >= 0 and pypi_index >= 0 and gate_index < upload_index and gate_index < pypi_index
+    no_bypass = ordered and "continue-on-error" not in publish[gate_index:upload_index]
+    passed = (
+        bool(publish)
+        and marker in publish
+        and "RELEASE_CONTRACT_PATH" in publish
+        and 'test -n "$RELEASE_CONTRACT_PATH"' in publish
+        and 'test -f "$RELEASE_CONTRACT_PATH"' in publish
+        and command in publish
+        and "--contract \"$RELEASE_CONTRACT_PATH\"" in publish
+        and "--artifact-dir release-bundle/python" in publish
+        and "--artifact-dir release-bundle/editors" in publish
+        and "--metadata-path context/PROGRESS.md" in publish
+        and ordered
+        and no_bypass
+    )
+    return _check("RELEASE_CANDIDATE_PREFLIGHT_REQUIRED", passed, "sealed source/commit/artifact preflight is mandatory before external release upload")
+
+
 def _partition_check(workflow: str) -> dict[str, Any]:
     python_job = _job(workflow, "validate_python")
     vscode_job = _job(workflow, "validate_vscode")
@@ -98,6 +134,11 @@ def _openvsx_check(workflow: str) -> dict[str, Any]:
         and "needs: [authorize, validate]" in publish
         and "needs.authorize.result == 'success'" in publish
         and "OPENVSX_TOKEN" in authorize
+        and "release_contract:" in workflow
+        and "python -m factoryline.cli release preflight" in validate
+        and "--metadata-path context/PROGRESS.md" in validate
+        and "RELEASE_CANDIDATE_PREFLIGHT_PASS" in validate
+        and "openvsx-preflight.json" in publish
     )
     return _check("OPENVSX_AUTHORIZATION_EARLY", passed, "protected publication is authorized before candidate validation")
 
@@ -169,6 +210,7 @@ def _checks(root: Path) -> list[dict[str, Any]]:
     openvsx = _read_workflow(root, "openvsx.yml")
     return [
         _fan_in_check(publish),
+        _candidate_preflight_check(publish),
         _partition_check(publish),
         _openvsx_check(openvsx),
         *release_route_checks(root),

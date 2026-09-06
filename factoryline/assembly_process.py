@@ -24,6 +24,7 @@ CLEANUP_TIMEOUT_SECONDS = 10.0
 READ_CHUNK_BYTES = 65_536
 PROCESS_SNAPSHOT_TIMEOUT_SECONDS = 1.0
 PROCESS_SNAPSHOT_INTERVAL_SECONDS = 0.25
+WINDOWS_CREATE_SUSPENDED = 0x00000004
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,30 @@ def _windows_job(child: subprocess.Popen) -> tuple[int | None, str | None]:
         return int(handle_value), None
     except (AttributeError, OSError, TypeError, ValueError) as error:
         return None, f"Windows Job Object setup failed: {error}"
+
+
+def _resume_windows_process(child: subprocess.Popen) -> tuple[bool, str | None]:
+    """Resume a suspended child only after its Job Object has been assigned.
+
+    ``subprocess.Popen`` closes the primary thread handle on Windows, so the
+    documented ``ResumeThread`` API cannot be called through Popen directly.
+    ``NtResumeProcess`` resumes the process using the retained process handle;
+    unlike a post-launch assignment, it preserves the required bind-before-run
+    ordering.  A missing API or non-zero NTSTATUS is a fail-closed launch error.
+    """
+    if os.name != "nt":
+        return True, None
+    try:
+        ntdll = ctypes.WinDLL("ntdll", use_last_error=True)
+        resume = ntdll.NtResumeProcess
+        resume.argtypes = [ctypes.c_void_p]
+        resume.restype = ctypes.c_long
+        status = int(resume(child._handle))
+    except (AttributeError, OSError, TypeError, ValueError) as error:
+        return False, f"Windows suspended-process resume unavailable: {error}"
+    if status != 0:
+        return False, f"NtResumeProcess failed: NTSTATUS {status}"
+    return True, None
 
 
 def _posix_group_members(pgid: int) -> set[int] | None:
@@ -324,7 +349,7 @@ def _emergency_terminate(child: subprocess.Popen) -> None:
 def _launch(cli: str, args: list[str], cwd: Path) -> tuple[subprocess.Popen | None, _CleanupUnit | None, str | None]:
     """Start a command and bind it to a process-group or Job Object."""
     options = (
-        {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
+        {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP | WINDOWS_CREATE_SUSPENDED}
         if os.name == "nt" else {"start_new_session": True}
     )
     try:
@@ -339,6 +364,11 @@ def _launch(cli: str, args: list[str], cwd: Path) -> tuple[subprocess.Popen | No
             _emergency_terminate(child)
             return None, None, error or "Windows Job Object setup failed"
         unit.job_handle = handle
+        resumed, resume_error = _resume_windows_process(child)
+        if not resumed:
+            _terminate_unit(child, unit)
+            unit.close()
+            return None, None, resume_error or "Windows suspended-process resume failed"
     return child, unit, None
 
 

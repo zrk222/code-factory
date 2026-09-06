@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +55,7 @@ def verify_release_contract(root: Path, feature: str, path: Path, required_stage
             raise ValueError("release contract exceeds 1 MiB")
         value = json.loads(source.read_text(encoding="utf-8-sig"))
         required = {"schema", "feature", "oracle_contract", "oracle_contract_sha256", "required_stages", "approved_by", "policy_digest"}
-        allowed = required | {"evidence"}
+        allowed = required | {"evidence", "candidate"}
         if not isinstance(value, dict) or not required.issubset(value) or set(value) - allowed or value.get("schema") != SCHEMA:
             raise ValueError("release contract has an invalid schema or field set")
         if value.get("feature") != feature or not isinstance(value.get("approved_by"), str) or not value["approved_by"].strip():
@@ -67,6 +68,20 @@ def verify_release_contract(root: Path, feature: str, path: Path, required_stage
             missing = sorted(required_stages - declared_set)
             return {"ok": False, "marker": "RELEASE_CONTRACT_INCOMPLETE", "reason": "required_stages_missing", "missing": missing}
         supplied = value.get("policy_digest")
+        candidate = value.get("candidate")
+        if candidate is not None:
+            if not isinstance(candidate, dict) or not {"source_version", "source_commit"}.issubset(candidate) or set(candidate) - {"source_version", "source_commit", "artifact_versions"}:
+                raise ValueError("release contract candidate binding is invalid")
+            if not isinstance(candidate.get("source_version"), str) or not candidate["source_version"].strip():
+                raise ValueError("release contract candidate source_version is invalid")
+            if not isinstance(candidate.get("source_commit"), str) or not re.fullmatch(r"[0-9a-f]{40,64}", candidate["source_commit"]):
+                raise ValueError("release contract candidate source_commit is invalid")
+            artifact_versions = candidate.get("artifact_versions")
+            if artifact_versions is not None:
+                if not isinstance(artifact_versions, dict) or set(artifact_versions) - {"python", "vscode", "intellij"}:
+                    raise ValueError("release contract candidate artifact_versions is invalid")
+                if not artifact_versions or not all(isinstance(value, str) and re.fullmatch(r"\d+\.\d+\.\d+", value.strip()) for value in artifact_versions.values()):
+                    raise ValueError("release contract candidate artifact_versions must contain semantic versions")
         core = {key: item for key, item in value.items() if key != "policy_digest"}
         if not isinstance(supplied, str) or supplied != _sha(core):
             return {"ok": False, "marker": "RELEASE_CONTRACT_INVALID", "reason": "policy_digest_mismatch"}

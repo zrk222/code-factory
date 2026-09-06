@@ -115,3 +115,51 @@ def test_inherited_pipe_does_not_hang_caller(tmp_path):
     ok, output = run_cli(sys.executable, ["-c", code], tmp_path, timeout=0.2)
     assert not ok and "timed out" in output
     assert time.monotonic() - start < 10
+
+
+def test_windows_child_is_bound_before_resume(monkeypatch, tmp_path):
+    events = []
+
+    class Child:
+        pid = 42
+        _handle = 99
+
+    monkeypatch.setattr(assembly_process.os, "name", "nt")
+    monkeypatch.setattr(assembly_process.subprocess, "Popen", lambda *args, **kwargs: (events.append(("launch", kwargs)) or Child()))
+    monkeypatch.setattr(assembly_process, "_windows_job", lambda child: (events.append("job") or (7, None)))
+    monkeypatch.setattr(assembly_process, "_resume_windows_process", lambda child: (events.append("resume") or (True, None)))
+
+    child, unit, error = assembly_process._launch("worker", [], tmp_path)
+
+    assert error is None
+    assert child is not None and unit is not None
+    assert events[0][0] == "launch"
+    assert events[0][1]["creationflags"] & assembly_process.WINDOWS_CREATE_SUSPENDED
+    assert events[1:] == ["job", "resume"]
+
+
+def test_windows_resume_failure_returns_non_success(monkeypatch, tmp_path):
+    events = []
+
+    class Child:
+        pid = 42
+        _handle = 99
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            events.append("kill")
+
+    monkeypatch.setattr(assembly_process.os, "name", "nt")
+    monkeypatch.setattr(assembly_process.subprocess, "Popen", lambda *args, **kwargs: Child())
+    monkeypatch.setattr(assembly_process, "_windows_job", lambda child: (events.append("job") or (7, None)))
+    monkeypatch.setattr(assembly_process, "_resume_windows_process", lambda child: (False, "resume failed"))
+    monkeypatch.setattr(assembly_process, "_terminate_unit", lambda child, unit: events.append("terminate") or True)
+    monkeypatch.setattr(assembly_process._CleanupUnit, "close", lambda self: events.append("close"))
+
+    child, unit, error = assembly_process._launch("worker", [], tmp_path)
+
+    assert child is None and unit is None
+    assert error == "resume failed"
+    assert events == ["job", "terminate", "close"]

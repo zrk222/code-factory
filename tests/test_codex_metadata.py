@@ -243,3 +243,50 @@ def test_file_growth_after_stat_is_still_classified_oversize():
     assert raw is None
     assert entry == {"path": "growing.json", "bytes": MAX_FILE_BYTES + 1, "sha256": None, "format": "oversize"}
     assert [finding["code"] for finding in findings] == ["E_METADATA_TOO_LARGE"]
+
+
+def test_metadata_findings_are_scope_labeled_and_cli_can_select_archive(tmp_path: Path):
+    active = tmp_path / "active.json"
+    active.write_text(json.dumps({"status": "complete"}), encoding="utf-8")
+    archived = tmp_path / "archive" / "old.json"
+    archived.parent.mkdir()
+    archived.write_text(json.dumps({"status": "complete"}), encoding="utf-8")
+
+    result = audit_metadata(tmp_path, [active, archived], scope="all")
+
+    assert result["schema_version"] == 2
+    assert {item["scope"] for item in result["findings"]} == {"active", "archive"}
+    assert result["scope_counts"]["active"] > 0
+    assert result["scope_counts"]["archive"] > 0
+
+
+def test_progress_ledger_order_and_head_drift_are_reported(tmp_path: Path):
+    progress = tmp_path / "Progress.md"
+    progress.write_text(
+        "[2026-09-06 10:00] head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+        "[2026-09-06 09:00] head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
+        encoding="utf-8",
+    )
+    git = tmp_path / ".git"
+    git.mkdir()
+    (git / "HEAD").write_text("ref: refs/heads/main\n", encoding="ascii")
+    (git / "refs").mkdir()
+    (git / "refs" / "heads").mkdir()
+    (git / "refs" / "heads" / "main").write_text("c" * 40 + "\n", encoding="ascii")
+
+    result = audit_metadata(tmp_path, [progress])
+    codes = {item["code"] for item in result["findings"]}
+
+    assert "E_METADATA_LEDGER_ORDER" in codes
+    assert "E_METADATA_LEDGER_HEAD_MISMATCH" in codes
+    assert all(item["scope"] == "active" for item in result["findings"])
+
+
+def test_state_without_receipt_lineage_is_not_proof(tmp_path: Path):
+    state = tmp_path / ".forge" / "mission" / "state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({"status": "complete"}), encoding="utf-8")
+
+    result = audit_metadata(tmp_path, [state], scope="all")
+
+    assert any(item["code"] == "E_METADATA_STATE_RECEIPT_MISMATCH" for item in result["findings"])

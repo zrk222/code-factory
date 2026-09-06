@@ -136,6 +136,7 @@ from .appforge_native_surface import verify_native_surface
 from .appforge_surface_matrix import create_surface_matrix
 from .appforge_mobile_evidence import verify_mobile_evidence
 from .release_contract import SCHEMA as RELEASE_CONTRACT_SCHEMA, _sha as release_contract_digest, verify_release_contract
+from .release_candidate import release_candidate_preflight, source_snapshot, write_release_candidate_preflight
 from .appforge_storefront_story import verify_storefront_story
 from .appforge_fastlane_capture import create_fastlane_capture_contract
 from .appforge_submission_integrity import verify_submission_integrity
@@ -2062,6 +2063,13 @@ def main(argv=None) -> int:
     release_integrity_parser = release_sub.add_parser("integrity", help="verify release workflow fan-in and protected-gate topology")
     release_integrity_parser.add_argument("--root", default=".")
     release_integrity_parser.add_argument("--json", action="store_true")
+    release_preflight_parser = release_sub.add_parser("preflight", help="verify one exact release contract and candidate artifact set")
+    release_preflight_parser.add_argument("--root", default=".")
+    release_preflight_parser.add_argument("--contract", required=True, help="workspace-contained release contract with candidate source binding")
+    release_preflight_parser.add_argument("--artifact-dir", action="append", help="workspace-contained artifact directory; repeatable")
+    release_preflight_parser.add_argument("--metadata-path", action="append", help="workspace-contained active metadata file; repeatable and audited when supplied")
+    release_preflight_parser.add_argument("--out", help="optional workspace-contained JSON receipt path")
+    release_preflight_parser.add_argument("--json", action="store_true")
     release_decision_parser = release_sub.add_parser("decision", help="explain one strict local release decision without contacting a provider")
     release_decision_parser.add_argument("feature")
     release_decision_parser.add_argument("--root", default=".")
@@ -2260,6 +2268,7 @@ def main(argv=None) -> int:
     ops_metadata.add_argument("--root", default=".")
     ops_metadata.add_argument("--path", action="append", help="workspace-contained metadata file or directory; repeatable")
     ops_metadata.add_argument("--out", help="workspace-contained metadata audit receipt path")
+    ops_metadata.add_argument("--scope", choices=["active", "archive", "all"], default="active", help="audit active records by default; choose archive or all explicitly")
     ops_metadata.add_argument("--json", action="store_true")
 
     verifier = sub.add_parser(
@@ -2717,7 +2726,7 @@ def main(argv=None) -> int:
                 result = write_compiled_policy(root, Path(a.policy), Path(a.out) if a.out else None)
             elif a.ops_cmd == "metadata":
                 selected = [Path(item) for item in a.path] if a.path else None
-                result = write_metadata_audit(root, selected, Path(a.out) if a.out else None)
+                result = write_metadata_audit(root, selected, Path(a.out) if a.out else None, scope=a.scope)
             else:
                 result = verify_workspace(root)
         except (EnterpriseOpsError, PolicyCompileError, MetadataAuditError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
@@ -4024,7 +4033,11 @@ def main(argv=None) -> int:
                     key, value = item.split("=", 1)
                     evidence[key] = value
                 oracle_relative = oracle_path.relative_to(workspace).as_posix()
-                core = {"schema": RELEASE_CONTRACT_SCHEMA, "feature": a.feature, "oracle_contract": oracle_relative, "oracle_contract_sha256": oracle_sha, "required_stages": stages, "approved_by": a.approved_by.strip()}
+                source = source_snapshot(workspace)
+                if not source.get("ok"):
+                    raise ValueError(str(source.get("reason", "core source binding is unavailable")))
+                platform_versions = {key: value for key, value in source.get("platform_versions", {"python": source["version"]}).items() if isinstance(value, str) and value}
+                core = {"schema": RELEASE_CONTRACT_SCHEMA, "feature": a.feature, "oracle_contract": oracle_relative, "oracle_contract_sha256": oracle_sha, "required_stages": stages, "approved_by": a.approved_by.strip(), "candidate": {"source_version": source["version"], "source_commit": source["commit"], "artifact_versions": platform_versions}}
                 if evidence:
                     core["evidence"] = evidence
                 payload = {**core, "policy_digest": release_contract_digest(core)}
@@ -5125,6 +5138,24 @@ def main(argv=None) -> int:
         else:
             print(render_release_integrity(result))
         return 0 if result["ok"] else 1
+    if a.cmd == "release" and a.release_cmd == "preflight":
+        root = Path(a.root).resolve()
+        try:
+            artifact_dirs = [Path(item) for item in a.artifact_dir] if a.artifact_dir else None
+            metadata_paths = [Path(item) for item in a.metadata_path] if a.metadata_path else None
+            result = write_release_candidate_preflight(root, Path(a.contract), artifact_dirs, Path(a.out), metadata_paths=metadata_paths) if a.out else release_candidate_preflight(root, Path(a.contract), artifact_dirs, metadata_paths=metadata_paths)
+        except (OSError, UnicodeDecodeError, ValueError, TypeError) as exc:
+            result = {"schema": "factory.release-candidate-preflight.v1", "marker": "RELEASE_CANDIDATE_PREFLIGHT_BLOCKED", "ok": False, "blockers": [{"code": "RELEASE_CANDIDATE_INPUT_INVALID", "detail": str(exc)[:240]}], "authority": {"execution": False, "approval": False, "repair": False, "merge": False, "publication": False, "deployment": False, "signing": False, "credential": False, "provider_call": False}}
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(f"release candidate preflight: {'PASS' if result.get('ok') else 'BLOCKED'}")
+            for check in result.get("checks", []):
+                print(f"- {'PASS' if check.get('passed') else 'FAIL'} {check.get('id')}: {check.get('evidence')}")
+            for blocker in result.get("blockers", []):
+                print(f"- BLOCK {blocker.get('code')}: {blocker.get('detail')}")
+            print("authority: no execution, credential, provider, publication, deployment, signing, merge, or approval authority")
+        return 0 if result.get("ok") else 1
     if a.cmd == "release" and a.release_cmd == "decision":
         try:
             result = release_decision_card(Path(a.root), a.feature)

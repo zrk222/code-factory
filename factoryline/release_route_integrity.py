@@ -50,12 +50,18 @@ def _vscode_marketplace_candidate_check(workflow: str) -> dict[str, Any]:
     validate = _job(workflow, "validate")
     publish = _job(workflow, "publish")
     passed = (
-        "sha256sum factoryline-vscode.vsix >" in validate
+        "release_contract:" in workflow
+        and "Require the sealed candidate preflight" in validate
+        and "python -m factoryline.cli release preflight" in validate
+        and "--metadata-path context/PROGRESS.md" in validate
+        and "grep -F 'RELEASE_CANDIDATE_PREFLIGHT_PASS'" in validate
+        and "sha256sum" in validate
         and "publisher=zrk222" in validate
         and "extension=factoryline-vscode" in validate
         and "sha256sum --check SHA256SUMS.txt" in publish
         and "test -f manifest.txt" in publish
-        and "test -f factoryline-vscode.vsix" in publish
+        and "factoryline-vscode-*.vsix" in publish
+        and "release-preflight.json" in publish
         and "grep -Fx 'publisher=zrk222' manifest.txt" in publish
         and "grep -Fx 'extension=factoryline-vscode' manifest.txt" in publish
         and "@vscode/vsce@3.9.1 publish" in publish
@@ -76,8 +82,13 @@ def _jetbrains_marketplace_authorization_check(root: Path) -> dict[str, Any]:
         "environment: jetbrains-marketplace" in authorize
         and "JETBRAINS_MARKETPLACE_TOKEN" in authorize
         and 'test -n "$PUBLISH_TOKEN"' in authorize
+        and "release_contract:" in workflow
         and "needs: authorize" in validate
+        and "python -m factoryline.cli release preflight" in validate
+        and "--metadata-path context/PROGRESS.md" in validate
+        and "RELEASE_CANDIDATE_PREFLIGHT_PASS" in validate
         and "needs: [authorize, validate, compatibility]" in publish
+        and "release-preflight.json" in publish
     )
     return _check(
         "JETBRAINS_MARKETPLACE_AUTHORIZATION_EARLY",
