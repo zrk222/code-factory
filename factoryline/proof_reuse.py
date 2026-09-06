@@ -4,8 +4,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
+import stat
 import tempfile
 import time
 from typing import Any, Iterable
@@ -17,6 +19,8 @@ from .savings import SavingsError, record_savings_pair
 REQUEST_SCHEMA = "factory.proof-request.v1"
 RECEIPT_SCHEMA = "factory.proof-receipt.v1"
 PLAN_SCHEMA = "factory.proof-plan.v1"
+READ_CHUNK_BYTES = 1_048_576
+PAIR_NONCE_MODULUS = 1_000_000_000
 
 
 class ProofReuseError(ValueError):
@@ -35,8 +39,82 @@ def _sha_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _identity_from_stat(value: os.stat_result) -> dict[str, int]:
+    """Return the portable regular-file identity used by proof receipts."""
+    return {
+        "device": int(value.st_dev),
+        "inode": int(value.st_ino),
+        "size": int(value.st_size),
+        "mtime_ns": int(value.st_mtime_ns),
+    }
+
+
+def _path_has_symlink(root: Path, raw: str) -> bool:
+    """Return whether a workspace-relative path traverses a symlink."""
+    root = Path(root).resolve()
+    supplied = Path(raw)
+    lexical = Path(os.path.abspath(os.fspath(supplied if supplied.is_absolute() else root / supplied)))
+    try:
+        relative = lexical.relative_to(root)
+    except ValueError:
+        return False
+    current = root
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def _stable_file_read(path: Path, *, label: str) -> tuple[dict[str, int], str]:
+    """Read and hash one regular file while proving its identity stayed stable."""
+    candidate = Path(path)
+    try:
+        link_stat = candidate.lstat()
+    except FileNotFoundError as error:
+        raise ProofReuseError("PROOF_INPUT_MISSING", f"{label} path is not a regular file: {candidate}") from error
+    except OSError as error:
+        raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{label} identity could not be read: {error}") from error
+    if stat.S_ISLNK(link_stat.st_mode):
+        raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{label} path became a symlink: {candidate}")
+    if not stat.S_ISREG(link_stat.st_mode):
+        raise ProofReuseError("PROOF_INPUT_MISSING", f"{label} path is not a regular file: {candidate}")
+    before = _identity_from_stat(link_stat)
+    digest = hashlib.sha256()
+    try:
+        with candidate.open("rb") as handle:
+            opened = _identity_from_stat(os.fstat(handle.fileno()))
+            if opened != before:
+                raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{label} file identity changed while opening: {candidate}")
+            while True:
+                chunk = handle.read(READ_CHUNK_BYTES)
+                if not chunk:
+                    break
+                digest.update(chunk)
+            closed = _identity_from_stat(os.fstat(handle.fileno()))
+    except ProofReuseError:
+        raise
+    except FileNotFoundError as error:
+        raise ProofReuseError("PROOF_INPUT_MISSING", f"{label} path disappeared during read: {candidate}") from error
+    except OSError as error:
+        raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{label} could not be read stably: {error}") from error
+    if closed != before:
+        raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{label} file was replaced or truncated during read: {candidate}")
+    try:
+        after_stat = candidate.lstat()
+    except OSError as error:
+        raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{label} path changed after read: {candidate}") from error
+    if stat.S_ISLNK(after_stat.st_mode):
+        raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{label} path became a symlink after read: {candidate}")
+    after = _identity_from_stat(after_stat)
+    if after != before:
+        raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{label} file identity changed during read: {candidate}")
+    return before, digest.hexdigest()
+
+
 def _sha_file(path: Path) -> str:
-    return _sha_bytes(Path(path).read_bytes())
+    """Return a stable digest for one regular file."""
+    return _stable_file_read(Path(path), label="file")[1]
 
 
 def _normalized_mapping(value: object, label: str) -> dict[str, str]:
@@ -66,17 +144,20 @@ def _relative_file(root: Path, raw: str, label: str) -> tuple[str, Path]:
     return relative.as_posix(), candidate
 
 
-def _snapshot(root: Path, paths: object, label: str) -> list[dict[str, str]]:
+def _snapshot(root: Path, paths: object, label: str) -> list[dict[str, Any]]:
     if not isinstance(paths, list) or not paths:
         raise ProofReuseError("PROOF_INPUT_INVALID", f"{label} must contain at least one file")
     seen = set()
     rows = []
     for raw in paths:
+        if _path_has_symlink(Path(root), raw):
+            raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{label} path traverses a symlink: {raw}")
         relative, candidate = _relative_file(root, raw, label)
         if relative in seen:
             continue
         seen.add(relative)
-        rows.append({"path": relative, "sha256": _sha_file(candidate)})
+        identity, digest = _stable_file_read(candidate, label=label)
+        rows.append({"path": relative, "sha256": digest, "identity": identity})
     return sorted(rows, key=lambda item: item["path"])
 
 
@@ -202,12 +283,29 @@ def _verify_rows(root: Path, payload: dict[str, Any], field: str) -> list[str]:
             errors.append(f"{field}: artifact row must be an object")
             continue
         try:
+            raw_path = row.get("path")
+            if isinstance(raw_path, str) and _path_has_symlink(Path(root), raw_path):
+                raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{field} path traverses a symlink: {raw_path}")
             relative, candidate = _relative_file(Path(root), row.get("path"), field)
+            expected_identity = row.get("identity")
+            if not isinstance(expected_identity, dict):
+                raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{field} identity is missing: {relative}")
+            identity, digest = _stable_file_read(candidate, label=field)
+            if identity != expected_identity:
+                raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{field} file identity changed: {relative}")
+            if digest != row.get("sha256"):
+                raise ProofReuseError("PROOF_REUSE_BLOCKED", f"{field} digest changed: {relative}")
         except ProofReuseError as error:
+            if error.code == "PROOF_REUSE_BLOCKED":
+                errors.append(f"PROOF_REUSE_BLOCKED: {error}")
+            else:
+                errors.append(f"{field}: {error}")
+            continue
+        except (TypeError, ValueError) as error:
             errors.append(f"{field}: {error}")
             continue
-        if relative != row.get("path") or _sha_file(candidate) != row.get("sha256"):
-            errors.append(f"{field} hash mismatch: {relative}")
+        if relative != row.get("path"):
+            errors.append(f"{field} path mismatch: {relative}")
     return errors
 
 
@@ -238,10 +336,12 @@ def verify_proof_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:
     errors.extend(_verify_rows(Path(root), payload, "outputs"))
     if _proof_key(_receipt_facts(payload)) != payload.get("proof_key"):
         errors.append("proof key mismatch")
+    blocked = any(error.startswith("PROOF_REUSE_BLOCKED:") for error in errors)
     return {
         "schema": "factory.proof-verification.v1",
-        "marker": "PROOF_RECEIPT_VERIFIED" if not errors else "PROOF_INPUT_INTEGRITY_REQUIRED",
+        "marker": "PROOF_REUSE_BLOCKED" if blocked else ("PROOF_RECEIPT_VERIFIED" if not errors else "PROOF_INPUT_INTEGRITY_REQUIRED"),
         "valid": not errors,
+        "blocked": blocked,
         "proof_key": payload.get("proof_key"),
         "receipt_sha256": payload.get("receipt_sha256"),
         "errors": errors,
@@ -271,8 +371,10 @@ def _reuse_savings(root: Path, receipt_path: Path, routing_elapsed_ms: int) -> d
     if not isinstance(elapsed, int) or elapsed <= 0 or routing_elapsed_ms <= 0:
         return None
     baseline_tokens = baseline.get("tokens")
-    observed_tokens = 0 if isinstance(baseline_tokens, int) else None
-    pair_id = f"proof-{payload['proof_key'][:16]}-{time.time_ns()}"
+    # Routing does not observe model-token usage. Keep the paired observation
+    # unknown even when the historical baseline contained a token count.
+    observed_tokens = None
+    pair_id = f"proof-{payload['proof_key']}-{time.time_ns() % PAIR_NONCE_MODULUS}"
     result = record_savings_pair(
         Path(root),
         pair_id,
@@ -405,10 +507,26 @@ def challenge_proof_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:
                 destination = challenge_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, destination)
-        baseline = verify_proof_receipt(challenge_root, Path(receipt_path))
-        target = challenge_root / rows[0]["path"]
+        # The challenge copy has different filesystem identities. Rebind only
+        # those identities in an in-memory receipt while preserving all other
+        # signed facts, so the control baseline is still verified exactly.
+        challenged = json.loads(json.dumps(payload))
+        for field in ("inputs", "outputs"):
+            for row in challenged.get(field, []):
+                copied = challenge_root / row["path"]
+                identity, digest = _stable_file_read(copied, label=field)
+                row["identity"] = identity
+                row["sha256"] = digest
+        challenged["proof_key"] = _proof_key(_receipt_facts(challenged))
+        challenged_core = {key: value for key, value in challenged.items() if key != "receipt_sha256"}
+        challenged["receipt_sha256"] = _sha_bytes(_canonical(challenged_core))
+        challenged_receipt = challenge_root / "challenge-receipt.json"
+        challenged_receipt.write_text(json.dumps(challenged), encoding="utf-8")
+        baseline = verify_proof_receipt(challenge_root, challenged_receipt)
+        first_row = next(iter(rows))
+        target = challenge_root / first_row["path"]
         target.write_bytes(target.read_bytes() + b"\nproof-mutation")
-        mutated = verify_proof_receipt(challenge_root, Path(receipt_path))
+        mutated = verify_proof_receipt(challenge_root, challenged_receipt)
     passed = baseline["valid"] and not mutated["valid"]
     return {
         "schema": "factory.proof-challenge.v1",

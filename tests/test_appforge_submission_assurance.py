@@ -8,7 +8,7 @@ from pathlib import Path
 
 from factoryline.app_review_gate import RULES, verify_app_review_readiness
 from factoryline.appforge_store_media import verify_store_media
-from factoryline.appforge_submission_assurance import verify_submission_assurance
+from factoryline.appforge_submission_assurance import submission_assurance_projection, verify_submission_assurance
 from factoryline.appforge_quality_audit import CONDITIONAL_CHECKS, DESIGN_CHECKS, STACK_CHECKS, verify_quality_audit
 from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
 from factoryline.saas_proof import verify_saas_proof
@@ -78,7 +78,8 @@ def _saas(tmp_path: Path) -> Path:
 
 
 def _assurance_contract(tmp_path: Path) -> Path:
-    return _write(tmp_path / "assurance-contract.json", {"schema": "factory.appforge.submission-assurance-contract.v1", "candidate": CANDIDATE, "reviewer_packet": {"support_url": "https://example.com/support", "privacy_url": "https://example.com/privacy", "review_notes_sha256": "c" * 64, "reviewer_access_instructions_sha256": "d" * 64, "approved_by": "Release Owner", "approved_at": "2026-08-31T12:00:00Z"}})
+    authority = _oracle_authority(tmp_path)
+    return _write(tmp_path / "assurance-contract.json", {"schema": "factory.appforge.submission-assurance-contract.v1", "candidate": CANDIDATE, "reviewer_packet": {"support_url": "https://example.com/support", "privacy_url": "https://example.com/privacy", "review_notes_sha256": "c" * 64, "reviewer_access_instructions_sha256": "d" * 64, "approved_by": "Release Owner", "approved_at": "2026-08-31T12:00:00Z"}, "oracle_authority": {"required": True, "path": authority.relative_to(tmp_path).as_posix()}})
 
 
 def _oracle_authority(tmp_path: Path) -> Path:
@@ -113,7 +114,7 @@ def test_submission_dossier_only_emits_markdown_and_pdf_after_all_build_bound_ga
     receipt = verify_submission_assurance(tmp_path, _assurance_contract(tmp_path), _app_review(tmp_path), _media(tmp_path), _saas(tmp_path), _quality(tmp_path), Path(".factory/appforge/submission-assurance.json"), Path(".factory/appforge/reports"))
     assert receipt["marker"] == "APPFORGE_SUBMISSION_DOSSIER_READY"
     assert receipt["ok"] is True
-    assert len(receipt["audit"]) == 4
+    assert len(receipt["audit"]) == 5
     markdown = tmp_path / receipt["reports"]["markdown"]
     pdf = tmp_path / receipt["reports"]["pdf"]
     assert "Audited and passed" in markdown.read_text(encoding="utf-8")
@@ -148,7 +149,6 @@ def test_submission_dossier_fails_closed_when_the_contract_requires_oracle_autho
 def test_submission_dossier_binds_each_audit_digest_to_its_referenced_receipt(tmp_path: Path) -> None:
     contract = _assurance_contract(tmp_path)
     payload = json.loads(contract.read_text(encoding="utf-8"))
-    payload["oracle_authority"] = {"required": True, "path": _oracle_authority(tmp_path).relative_to(tmp_path).as_posix()}
     contract.write_text(json.dumps(payload), encoding="utf-8")
 
     receipt = verify_submission_assurance(tmp_path, contract, _app_review(tmp_path), _media(tmp_path), _saas(tmp_path), _quality(tmp_path), Path(".factory/appforge/submission-assurance.json"), Path(".factory/appforge/reports"))
@@ -187,3 +187,15 @@ def test_quality_audit_rejects_missing_user_design_confirmation_and_unbound_arti
     receipt = verify_quality_audit(tmp_path, tmp_path / "quality-contract.json", tmp_path / "quality-invalid-evidence.json", Path(".factory/appforge/quality-invalid.json"))
     assert receipt["marker"] == "APPFORGE_QUALITY_AUDIT_BLOCKED"
     assert {item["code"] for item in receipt["findings"]} >= {"APPFORGE_QUALITY_USER_DESIGN_UNCONFIRMED", "APPFORGE_QUALITY_ARTIFACT_HASH_MISMATCH"}
+
+
+def test_submission_projection_fails_closed_on_non_object_receipt(tmp_path: Path) -> None:
+    path = tmp_path / ".factory" / "appforge" / "submission-assurance-malformed.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[]", encoding="utf-8")
+
+    projection = submission_assurance_projection(tmp_path)
+
+    assert projection["latest"] is None
+    assert projection["invalid_count"] == 1
+    assert projection["marker"] == "APPFORGE_SUBMISSION_ASSURANCE_REVIEW_REQUIRED"

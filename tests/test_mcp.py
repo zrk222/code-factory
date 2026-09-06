@@ -79,9 +79,11 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.appforge_device_reality_status",
         "factory.appforge_release_rehearsal_status",
             "factory.appforge_native_surface_status",
-            "factory.appforge_surface_matrix_status",
-            "factory.appforge_mobile_evidence_status",
-            "factory.appforge_storefront_story_status",
+                "factory.appforge_surface_matrix_status",
+                "factory.appforge_mobile_evidence_status",
+            "factory.release_readiness",
+                "factory.release_decision",
+                "factory.appforge_storefront_story_status",
         "factory.appforge_fastlane_capture_status",
         "factory.appforge_submission_integrity_status",
         "factory.proof_continuity_status",
@@ -104,7 +106,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {"name": "code-factory", "version": "0.46.2"},
+                "serverInfo": {"name": "code-factory", "version": "0.46.3"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }

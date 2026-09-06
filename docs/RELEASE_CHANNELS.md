@@ -1,14 +1,14 @@
 # Release Channels
 
-Code Factory core v0.46.2, FactoryLine for VS Code v0.9.4, and FactoryLine for
+Code Factory core v0.46.3, FactoryLine for VS Code v0.9.4, and FactoryLine for
 JetBrains v0.9.2 publish from one
 verified source state through channel-specific adapters. A successful GitHub
 release is not evidence that every moderated listing has accepted the artifact.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish core tag `v0.46.2`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.46.2` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish core tag `v0.46.3`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.46.3` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |

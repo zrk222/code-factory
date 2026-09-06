@@ -10,8 +10,10 @@ factory release integrity --root . --json
 The command is read-only. It verifies that release validation is partitioned
 into independent Python, VS Code, and JetBrains jobs; that publication fans in
 their separately sealed artifacts; that PyPI still uses protected OIDC; that
-Open VSX authorizes protected publication before candidate work; and that the
-JetBrains pending-update guard occurs before Java or Gradle setup.
+Open VSX and Visual Studio Marketplace authorize protected publication before
+candidate work; that JetBrains credential admission and its pending-update guard
+occur before Java or Gradle setup; and that Hugging Face admission occurs before
+Space checkout or upload tooling.
 
 It also checks that the IntelliJ adapter uses supported choice dialogs and the
 Kotlin JVM-default configuration that avoids synthetic internal-API bridges.
@@ -30,6 +32,9 @@ human-controlled gates:
 - JetBrains Marketplace must clear its pending prior update before the workflow
   builds a new candidate. This protects listing order; it is not a repository
   defect that source code can bypass.
+- Hugging Face Space publication needs the configured `HF_TOKEN` GitHub Actions
+  secret. The workflow stops before checkout when it is absent; static source
+  inspection cannot prove that a secret exists or that a Space is reachable.
 
 The release workflow validates Python, VS Code, and JetBrains artifacts in
 parallel. Publication starts only after all three jobs have passed and their

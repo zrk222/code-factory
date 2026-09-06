@@ -19,6 +19,7 @@ from .repair_loop import repair_loop_projection
 from .runtime_audit import runtime_audit_status
 from .deep_audit import deep_audit_status
 from .protocol_enums import MissionControlState
+from .release_integrity import release_integrity
 
 
 SCHEMA = "factory.mission-control-status.v1"
@@ -36,6 +37,22 @@ AUTHORITY = {
 }
 
 
+def _release_workflow_integrity(root: Path) -> dict[str, Any]:
+    """Read release topology only when the workspace declares a release workflow."""
+    workflow = Path(root) / ".github" / "workflows" / "publish.yml"
+    if not workflow.is_file():
+        return {
+            "schema": "factory.release_integrity.v1",
+            "marker": "RELEASE_INTEGRITY_NOT_APPLICABLE",
+            "applicable": False,
+            "ok": True,
+            "checks": [],
+            "failed_check_ids": [],
+            "claim_boundary": "No declared publish workflow exists in this workspace; no release topology was inferred.",
+        }
+    return {**release_integrity(root), "applicable": True}
+
+
 def _collect_evidence(root: Path, spans: list | None = None) -> dict[str, Any]:
     readers = (
         ("oracle", oracle_firewall_projection),
@@ -44,6 +61,7 @@ def _collect_evidence(root: Path, spans: list | None = None) -> dict[str, Any]:
         ("repair_loops", repair_loop_projection),
         ("runtime_assurance", runtime_audit_status),
         ("deep_audit", deep_audit_status),
+        ("release_workflow_integrity", _release_workflow_integrity),
     )
     evidence = {}
     for name, reader in readers:
@@ -87,6 +105,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
     lifecycle = evidence["lifecycle"]
     repairs = evidence["repair_loops"]
     runtime = evidence["runtime_assurance"]
+    release_workflow = evidence["release_workflow_integrity"]
     blockers = {
         "oracle_invalid": int(oracle.get("invalid_count", 0)),
         "oracle_weakening": int(oracle.get("blocked_drift_count", 0)),
@@ -96,6 +115,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
         "repair_invalid": int(repairs.get("invalid_count", 0)),
         "runtime_assurance_blocked": int(runtime.get("state") in {"BLOCKED", "INCOMPLETE"}),
         "deep_audit_blocked": int(evidence["deep_audit"].get("state") in {"BLOCKED", "INCOMPLETE"}),
+        "release_workflow_blocked": int(release_workflow.get("applicable") is True and release_workflow.get("ok") is not True),
     }
     blocked = any(blockers.values())
     human_required = (
@@ -121,7 +141,9 @@ def mission_control_status(root: Path) -> dict[str, Any]:
             "review_required": human_required,
             "can_approve_here": False,
             "next_action": (
-                "repair_evidence_chain"
+                "repair_release_workflow"
+                if blockers["release_workflow_blocked"]
+                else "repair_evidence_chain"
                 if blocked
                 else "named_human_review"
                 if human_required
@@ -137,6 +159,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
                 "repair_loop_packet",
                 "runtime_assurance_receipt",
                 "deep_audit_receipt",
+                "release_workflow_integrity",
             ],
             "may_not": [
                 "alter_intent",

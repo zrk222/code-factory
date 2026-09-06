@@ -1,15 +1,70 @@
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
-from factoryline.assembly_process import run_cli
+import factoryline.assembly_process as assembly_process
+from factoryline.assembly_process import run_cli, run_cli_detailed
 
 
 def test_success_preserves_both_streams(tmp_path):
     ok, output = run_cli(sys.executable, ["-c", "import sys; print('proof'); print('error', file=sys.stderr)"], tmp_path)
     assert ok
     assert "proof" in output and "error" in output
+
+
+def test_detailed_result_contains_cleanup_receipt(tmp_path):
+    result = run_cli_detailed(sys.executable, ["-c", "print('proof')"], tmp_path)
+    assert result["ok"] is True
+    assert result["cleanup_confirmed"] is True
+    assert result["streams_closed"] is True
+    assert result["exit_code"] == 0
+    assert result["reason"] is None
+    assert "proof" in result["output"]
+
+
+def test_detailed_timeout_keeps_cleanup_receipt_explicit(tmp_path):
+    result = run_cli_detailed(sys.executable, ["-c", "import time; time.sleep(30)"], tmp_path, timeout=0.2)
+    assert result["ok"] is False
+    assert result["cleanup_confirmed"] is True
+    assert result["streams_closed"] is True
+    assert result["reason"] == "stage timed out"
+    assert "timed out" in result["output"]
+
+
+def test_detailed_launch_failure_cannot_claim_cleanup(tmp_path):
+    result = run_cli_detailed(str(tmp_path / "missing-cli"), [], tmp_path)
+    assert result["ok"] is False
+    assert result["cleanup_confirmed"] is False
+    assert result["streams_closed"] is False
+    assert result["reason"] == "launch failed"
+
+
+def test_observed_posix_descendant_outside_cleanup_group_blocks_receipt(monkeypatch):
+    unit = assembly_process._CleanupUnit(pgid=100)
+    snapshot = {
+        100: assembly_process._PosixProcess(100, 1, 100, "root"),
+        101: assembly_process._PosixProcess(101, 100, 101, "escaped"),
+    }
+    monkeypatch.setattr(assembly_process, "_posix_processes", lambda: snapshot)
+    monkeypatch.setattr(assembly_process.os, "name", "posix")
+    assembly_process._observe_descendants(SimpleNamespace(pid=100), unit)
+    assert unit.observed_descendants == {101: "escaped"}
+    assert assembly_process._escaped_descendant_status(unit) is False
+
+
+def test_posix_snapshot_accepts_host_owned_zero_process_group(monkeypatch):
+    class _Result:
+        returncode = 0
+        stdout = "    1     0     0 Sun Sep  6 00:00:00 2026\n  100     1   100 Sun Sep  6 00:00:00 2026\n"
+
+    monkeypatch.setattr(assembly_process.os, "name", "posix")
+    monkeypatch.setattr(assembly_process.subprocess, "run", lambda *args, **kwargs: _Result())
+    snapshot = assembly_process._posix_processes()
+    assert snapshot is not None
+    assert snapshot[1].pgid == 0
+    assert snapshot[100].pgid == 100
 
 
 @pytest.mark.parametrize("stream", ["stdout", "stderr"])

@@ -35,7 +35,7 @@ def test_public_audit_condition_count_is_recomputed_from_source():
     }
     claim = module.public_claim(result)
     breakdown = module.public_breakdown(result)
-    for relative in ("README.md", "docs/LLM_PRODUCT_CARD.md", "docs/RELEASE_NOTES_0.46.2.md"):
+    for relative in ("README.md", "docs/LLM_PRODUCT_CARD.md", "docs/RELEASE_NOTES_0.46.3.md"):
         content = (ROOT / relative).read_text(encoding="utf-8")
         assert claim in content
         assert breakdown in content
@@ -57,7 +57,13 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-09-02"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-09-05"
+
+    descriptor = json.loads((ROOT / "mcp" / "server.json").read_text(encoding="utf-8"))
+    package = descriptor["packages"][0]
+    assert descriptor["version"] == pyproject_version
+    assert package["version"] == pyproject_version
+    assert package["runtimeArguments"][0]["value"] == f"factoryline-code-factory=={pyproject_version}"
 
 
 def test_pypi_storefront_has_identity_and_canonical_links():
@@ -344,7 +350,7 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.46.2"
+    assert project["version"] == "0.46.3"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.9.4"
     assert 'version = "0.9.2"' in gradle
@@ -503,7 +509,7 @@ def test_jetbrains_publication_workflow_blocks_an_occupied_binary_update_slot():
     assert "guardianReleaseGate" in workflow
     assert "verify sealed candidate" in workflow
     assert "Restore Gradle wrapper execute permission" in workflow
-    assert "needs: [validate, compatibility]" in workflow
+    assert "needs: [authorize, validate, compatibility]" in workflow
 
 
 def test_jetbrains_reviewer_and_growth_docs_keep_external_approval_and_reviews_honest():
@@ -540,8 +546,8 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["access_right"] == "open"
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
-    assert metadata["version"] == "0.46.2"
-    assert metadata["publication_date"] == "2026-09-02"
+    assert metadata["version"] == "0.46.3"
+    assert metadata["publication_date"] == "2026-09-05"
     assert "read-only Agent Proof Bridge" in metadata["description"]
     assert "Proof Worklog" in metadata["description"]
     assert "deterministic AppForge App Review evidence gate" in metadata["description"]

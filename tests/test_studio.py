@@ -320,6 +320,66 @@ def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: P
         thread.join(timeout=5)
 
 
+def test_studio_route_contract_golden_preserves_public_and_token_bound_surfaces(tmp_path: Path):
+    """Keep the externally visible Studio route, token, and error contract stable."""
+    server, token = create_server(tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def get(path: str, headers: dict[str, str] | None = None) -> tuple[int, str, str | None]:
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request("GET", path, headers=headers or {})
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+        content_type = response.getheader("Content-Type")
+        connection.close()
+        return response.status, body, content_type
+
+    def post(path: str, body: dict[str, object], headers: dict[str, str] | None = None) -> tuple[int, dict[str, object], str | None]:
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request("POST", path, body=json.dumps(body), headers={"Content-Type": "application/json", **(headers or {})})
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        connection_header = response.getheader("Connection")
+        connection.close()
+        return response.status, payload, connection_header
+
+    try:
+        for path, status, marker in [
+            ("/", 200, "FACTORY_DUAL_TRACK_START"),
+            ("/?screen=overview", 200, "FACTORY_DUAL_TRACK_START"),
+            ("/graph-ops", 200, "GRAPH_OPS_VISUAL_ACCESSIBLE"),
+            ("/favicon.ico", 204, ""),
+            ("/favicon.ico?cache=1", 404, "NOT_FOUND"),
+            ("/unknown", 404, "NOT_FOUND"),
+        ]:
+            actual_status, body, _content_type = get(path)
+            assert (actual_status, marker in body) == (status, True)
+
+        protected_schemas = {
+            "/api/dashboard": "factory.studio.dashboard.v1",
+            "/api/savings": "factory.savings-report.public.v1",
+            "/api/developer-memory": "factory.studio.developer-memory.v1",
+            "/api/graph-ops": "factory.graph-ops.v1",
+        }
+        for path, schema in protected_schemas.items():
+            rejected_status, rejected_body, _content_type = get(path)
+            assert (rejected_status, json.loads(rejected_body)["code"]) == (403, "TOKEN_REQUIRED")
+            accepted_status, accepted_body, _content_type = get(path, {"X-Factory-Studio-Token": token})
+            assert (accepted_status, json.loads(accepted_body)["schema"]) == (200, schema)
+
+        unknown_status, unknown_body, unknown_connection = post("/api/unknown", {}, {"X-Factory-Studio-Token": token})
+        assert (unknown_status, unknown_body["code"], unknown_connection) == (404, "NOT_FOUND", "close")
+        stopped_status, stopped_body, _stopped_connection = post("/api/activity/stop", {"action": "request-stop"}, {"X-Factory-Studio-Token": token})
+        assert (stopped_status, stopped_body["code"]) == (409, "NO_ACTIVE_ASSEMBLY")
+        action_status, action_body, _action_connection = post("/api/activity/stop", {}, {"X-Factory-Studio-Token": token})
+        assert (action_status, action_body["code"]) == (400, "ACTION_UNSUPPORTED")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_unauthorized_partial_body_has_bounded_drain_deadline(tmp_path: Path):
     server, _token = create_server(tmp_path)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
