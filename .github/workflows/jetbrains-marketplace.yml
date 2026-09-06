@@ -19,8 +19,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  authorize:
+    name: authorize protected Marketplace publication
+    runs-on: ubuntu-latest
+    environment: jetbrains-marketplace
+    steps:
+      - name: Require the scoped Marketplace publisher token before candidate work
+        shell: bash
+        env:
+          PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$PUBLISH_TOKEN" || {
+            echo "JETBRAINS_MARKETPLACE_TOKEN is required in the jetbrains-marketplace environment." >&2
+            exit 1
+          }
+
   validate:
     name: validate Marketplace candidate
+    needs: authorize
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -189,7 +206,7 @@ jobs:
 
   publish:
     name: publish verified Marketplace candidate
-    needs: [validate, compatibility]
+    needs: [authorize, validate, compatibility]
     runs-on: ubuntu-latest
     environment: jetbrains-marketplace
     defaults:

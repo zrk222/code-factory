@@ -635,3 +635,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-06 01:37] GATE spec release-route-contracts-v1 approver=human strict=True sha=40e9bba5bb926858
 - [2026-09-06 01:37] GATE plan release-route-contracts-v1 approver=human tasks=3 sha=40e9bba5bb926858
 - [2026-09-06 01:43] GATE plan release-route-contracts-v1 approver=human tasks=3 sha=40e9bba5bb926858
+- [2026-09-06 01:46] GATE spec jetbrains-marketplace-admission-v1 approver=human strict=True sha=805b7c278d4a53fb
+- [2026-09-06 01:46] GATE plan jetbrains-marketplace-admission-v1 approver=human tasks=3 sha=805b7c278d4a53fb
+- [2026-09-06 01:49] GATE spec jetbrains-marketplace-admission-v1 approver=human strict=True sha=cb54788adf559efc
+- [2026-09-06 01:49] GATE plan jetbrains-marketplace-admission-v1 approver=human tasks=3 sha=cb54788adf559efc

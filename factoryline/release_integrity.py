@@ -12,6 +12,8 @@ SCHEMA = "factory.release_integrity.v1"
 AUTHORITY = {
     "execution": False,
     "approval": False,
+    "repair": False,
+    "merge": False,
     "publication": False,
     "deployment": False,
     "signing": False,
@@ -199,6 +201,7 @@ def release_integrity(root: Path) -> dict[str, Any]:
         "external_requirements": [
             "Open VSX publication still requires OPENVSX_TOKEN in the protected openvsx environment.",
             "Visual Studio Marketplace publication still requires VSCE_PAT in the protected vscode-marketplace environment.",
+            "JetBrains publication still requires JETBRAINS_MARKETPLACE_TOKEN in the protected jetbrains-marketplace environment.",
             "JetBrains publication still requires Marketplace approval to clear before a new update.",
         ],
         "authority": AUTHORITY,

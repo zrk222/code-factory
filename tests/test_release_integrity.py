@@ -4,6 +4,8 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
 from factoryline.cli import main
 from factoryline.release_integrity import release_integrity, render_release_integrity
 
@@ -53,6 +55,7 @@ def test_release_integrity_reports_exact_read_only_happy_path() -> None:
         "OPENVSX_AUTHORIZATION_EARLY",
         "VSCODE_MARKETPLACE_AUTHORIZATION_EARLY",
         "VSCODE_MARKETPLACE_CANDIDATE_SEALED",
+        "JETBRAINS_MARKETPLACE_AUTHORIZATION_EARLY",
         "JETBRAINS_JDK21_EXACT",
         "PYPI_TRUSTED_PUBLISHING",
         "JETBRAINS_APPROVAL_GUARD",
@@ -62,6 +65,7 @@ def test_release_integrity_reports_exact_read_only_happy_path() -> None:
     ]
     assert all(item["passed"] for item in result["checks"])
     assert not any(result["authority"].values())
+    assert "JetBrains publication still requires JETBRAINS_MARKETPLACE_TOKEN in the protected jetbrains-marketplace environment." in result["external_requirements"]
     assert {name: (ROOT / ".github" / "workflows" / name).read_bytes() for name in WORKFLOWS} == before
 
 
@@ -139,6 +143,27 @@ def test_release_integrity_rejects_java17_in_any_intellij_gradle_workflow(tmp_pa
 
     assert result["ok"] is False
     assert result["failed_check_ids"] == ["JETBRAINS_JDK21_EXACT"]
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("environment: jetbrains-marketplace", "environment: missing"),
+        ('test -n "$PUBLISH_TOKEN"', "false"),
+        ("needs: authorize\n", "needs: []\n"),
+        ("needs: [authorize, validate, compatibility]", "needs: [validate, compatibility]"),
+    ],
+)
+def test_release_integrity_rejects_jetbrains_authorization_route_bypass(tmp_path: Path, old: str, new: str) -> None:
+    root = _workflow_copy(tmp_path)
+    workflow = root / ".github" / "workflows" / "jetbrains-marketplace.yml"
+    workflow.write_text(workflow.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
+
+    result = release_integrity(root)
+
+    assert result["ok"] is False
+    assert result["failed_check_ids"] == ["JETBRAINS_MARKETPLACE_AUTHORIZATION_EARLY"]
+    assert result["next_action"]["action"] == "repair_release_workflow"
 
 
 def test_release_integrity_rejects_intellij_compatibility_configuration_regression(tmp_path: Path) -> None:

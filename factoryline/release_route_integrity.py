@@ -67,6 +67,25 @@ def _vscode_marketplace_candidate_check(workflow: str) -> dict[str, Any]:
     )
 
 
+def _jetbrains_marketplace_authorization_check(root: Path) -> dict[str, Any]:
+    workflow = _workflow(root, "jetbrains-marketplace.yml")
+    authorize = _job(workflow, "authorize")
+    validate = _job(workflow, "validate")
+    publish = _job(workflow, "publish")
+    passed = (
+        "environment: jetbrains-marketplace" in authorize
+        and "JETBRAINS_MARKETPLACE_TOKEN" in authorize
+        and 'test -n "$PUBLISH_TOKEN"' in authorize
+        and "needs: authorize" in validate
+        and "needs: [authorize, validate, compatibility]" in publish
+    )
+    return _check(
+        "JETBRAINS_MARKETPLACE_AUTHORIZATION_EARLY",
+        passed,
+        "protected JetBrains Marketplace authorization is required before candidate validation",
+    )
+
+
 def _action_blocks(workflow: str, action: str) -> list[str]:
     pattern = rf"(?ms)^      - uses: {re.escape(action)}\n(?:(?!^      - ).)*"
     return re.findall(pattern, workflow)
@@ -90,5 +109,6 @@ def release_route_checks(root: Path) -> list[dict[str, Any]]:
     return [
         _vscode_marketplace_authorization_check(vscode_marketplace),
         _vscode_marketplace_candidate_check(vscode_marketplace),
+        _jetbrains_marketplace_authorization_check(root),
         _jetbrains_jdk21_check(root),
     ]
