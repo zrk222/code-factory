@@ -663,3 +663,13 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-06 03:16] GATE spec post-publication-runtime-hardening approver=human strict=True sha=dd49ca1e3850dec5
 - [2026-09-06 03:17] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=dd49ca1e3850dec5
 - [2026-09-05 23:19] VERIFY post-publication-runtime-hardening/T1 proof_reuse=23_passed focused=64_passed full=1375_passed_3_skipped_2_warnings
+
+- [2026-09-06 03:39] GATE spec post-publication-runtime-hardening approver=human strict=True sha=dd49ca1e3850dec5
+- [2026-09-06 03:39] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=dd49ca1e3850dec5
+- [2026-09-06 03:50] GATE spec post-publication-runtime-hardening approver=human strict=True sha=f4931340350e9192
+- [2026-09-06 03:50] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=f4931340350e9192
+- [2026-09-06 03:51] GATE spec post-publication-runtime-hardening approver=human strict=True sha=4fd96837681a6eed
+- [2026-09-06 03:51] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=4fd96837681a6eed
+- [2026-09-05 23:51] VERIFY post-publication-runtime-hardening/T2 assembly_process=16_passed assembly_integration=21_passed full=1378_passed_3_skipped_2_warnings forge=verify_tests_and_smoke_passed drift=18/18 cleanup_receipt=verified
+
+- [2026-09-06 03:51] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=4fd96837681a6eed

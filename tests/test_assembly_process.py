@@ -3,13 +3,40 @@ import time
 
 import pytest
 
-from factoryline.assembly_process import run_cli
+from factoryline.assembly_process import run_cli, run_cli_detailed
 
 
 def test_success_preserves_both_streams(tmp_path):
     ok, output = run_cli(sys.executable, ["-c", "import sys; print('proof'); print('error', file=sys.stderr)"], tmp_path)
     assert ok
     assert "proof" in output and "error" in output
+
+
+def test_detailed_result_contains_cleanup_receipt(tmp_path):
+    result = run_cli_detailed(sys.executable, ["-c", "print('proof')"], tmp_path)
+    assert result["ok"] is True
+    assert result["cleanup_confirmed"] is True
+    assert result["streams_closed"] is True
+    assert result["exit_code"] == 0
+    assert result["reason"] is None
+    assert "proof" in result["output"]
+
+
+def test_detailed_timeout_keeps_cleanup_receipt_explicit(tmp_path):
+    result = run_cli_detailed(sys.executable, ["-c", "import time; time.sleep(30)"], tmp_path, timeout=0.2)
+    assert result["ok"] is False
+    assert result["cleanup_confirmed"] is True
+    assert result["streams_closed"] is True
+    assert result["reason"] == "stage timed out"
+    assert "timed out" in result["output"]
+
+
+def test_detailed_launch_failure_cannot_claim_cleanup(tmp_path):
+    result = run_cli_detailed(str(tmp_path / "missing-cli"), [], tmp_path)
+    assert result["ok"] is False
+    assert result["cleanup_confirmed"] is False
+    assert result["streams_closed"] is False
+    assert result["reason"] == "launch failed"
 
 
 @pytest.mark.parametrize("stream", ["stdout", "stderr"])
