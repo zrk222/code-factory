@@ -32,6 +32,32 @@ jobs:
       - name: Test
         run: python -m pytest -q
 
+  native-process-parity:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install native parity test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Verify native process parity
+        run: >-
+          python -m pytest -q -rA tests/test_ci_platform_parity.py
+          --junitxml=native-process-parity.junit.xml
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: native-process-parity-${{ matrix.os }}
+          path: native-process-parity.junit.xml
+          if-no-files-found: error
+
   package-contract:
     runs-on: ubuntu-latest
     steps:

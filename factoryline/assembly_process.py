@@ -15,12 +15,25 @@ import signal
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 MAX_STREAM_BYTES = 4_194_304
 CLEANUP_TIMEOUT_SECONDS = 10.0
 READ_CHUNK_BYTES = 65_536
+PROCESS_SNAPSHOT_TIMEOUT_SECONDS = 1.0
+PROCESS_SNAPSHOT_INTERVAL_SECONDS = 0.25
+
+
+@dataclass(frozen=True)
+class _PosixProcess:
+    """One PID identity and lineage observation from the native process table."""
+
+    pid: int
+    ppid: int
+    pgid: int
+    identity: str
 
 
 class _CleanupUnit:
@@ -30,6 +43,8 @@ class _CleanupUnit:
         self.pgid = pgid
         self.job_handle = job_handle
         self.setup_error = setup_error
+        self.observed_descendants: dict[int, str] = {}
+        self.last_descendant_observation = 0.0
 
     def close(self) -> None:
         """Close the native cleanup handle after process exit is observed."""
@@ -159,6 +174,80 @@ def _posix_group_status(pgid: int) -> bool | None:
     except OSError as error:
         return True if error.errno == errno.ESRCH else None
     return False
+
+
+def _posix_processes() -> dict[int, _PosixProcess] | None:
+    """Read stable-enough native PID lineage for this short-lived invocation."""
+    if os.name == "nt":
+        return None
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,pgid=,lstart="],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROCESS_SNAPSHOT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    observed: dict[int, _PosixProcess] = {}
+    try:
+        for line in result.stdout.splitlines():
+            fields = line.split(maxsplit=3)
+            if len(fields) != 4:
+                return None
+            pid, ppid, pgid = (int(value) for value in fields[:3])
+            if pid <= 0 or ppid < 0 or pgid <= 0 or not fields[3]:
+                return None
+            observed[pid] = _PosixProcess(pid, ppid, pgid, fields[3])
+    except ValueError:
+        return None
+    return observed
+
+
+def _observe_descendants(child: subprocess.Popen, unit: _CleanupUnit) -> None:
+    """Record descendants while their parentage still proves invocation ownership."""
+    now = time.monotonic()
+    if now - unit.last_descendant_observation < PROCESS_SNAPSHOT_INTERVAL_SECONDS:
+        return
+    unit.last_descendant_observation = now
+    processes = _posix_processes()
+    if processes is None:
+        return
+    known = {child.pid}
+    # Existing observations may expose a grandchild in the next sample even if
+    # its direct parent has already been reaped from the original process tree.
+    for pid, identity in unit.observed_descendants.items():
+        item = processes.get(pid)
+        if item is not None and item.identity == identity:
+            known.add(pid)
+    while True:
+        additions = [item for item in processes.values() if item.pid not in known and item.ppid in known]
+        if not additions:
+            return
+        for item in additions:
+            unit.observed_descendants[item.pid] = item.identity
+            known.add(item.pid)
+
+
+def _escaped_descendant_status(unit: _CleanupUnit) -> bool | None:
+    """Return false for a still-live observed descendant outside the cleanup group."""
+    if os.name == "nt" or not unit.observed_descendants:
+        return True
+    processes = _posix_processes()
+    if processes is None:
+        return None
+    for pid, identity in unit.observed_descendants.items():
+        item = processes.get(pid)
+        if item is not None and item.identity == identity and item.pgid != unit.pgid:
+            return False
+    return True
 
 
 def _windows_job_active(job_handle: int) -> int | None:
@@ -302,6 +391,9 @@ def _await_cleanup(child: subprocess.Popen, unit: _CleanupUnit, *, terminate: bo
     deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
     while True:
         status = _unit_status(child, unit)
+        escaped = _escaped_descendant_status(unit)
+        if escaped is not True:
+            return False
         if status is True:
             return clean
         if time.monotonic() >= deadline:
@@ -316,9 +408,10 @@ def _stop(child: subprocess.Popen, unit: _CleanupUnit | None = None) -> bool:
     return _await_cleanup(child, cleanup, terminate=status is not True)
 
 
-def _monitor(child, readers, failed, heartbeat, deadline: float) -> str:
+def _monitor(child, unit, readers, failed, heartbeat, deadline: float) -> str:
     """Wait for exit and pipe EOF, checking interruption throughout."""
     while True:
+        _observe_descendants(child, unit)
         if failed.is_set():
             return "output limit exceeded or stream read failed"
         if heartbeat is not None and heartbeat() is False:
@@ -361,7 +454,7 @@ def run_cli_detailed(cli: str, args: list[str], cwd: Path, *, heartbeat: Callabl
     for reader in readers:
         reader.start()
     try:
-        reason = _monitor(child, readers, failed, heartbeat, time.monotonic() + timeout)
+        reason = _monitor(child, unit, readers, failed, heartbeat, time.monotonic() + timeout)
     except BaseException:
         _stop(child, unit)
         unit.close()

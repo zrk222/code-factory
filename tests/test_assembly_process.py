@@ -1,8 +1,10 @@
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
+import factoryline.assembly_process as assembly_process
 from factoryline.assembly_process import run_cli, run_cli_detailed
 
 
@@ -37,6 +39,19 @@ def test_detailed_launch_failure_cannot_claim_cleanup(tmp_path):
     assert result["cleanup_confirmed"] is False
     assert result["streams_closed"] is False
     assert result["reason"] == "launch failed"
+
+
+def test_observed_posix_descendant_outside_cleanup_group_blocks_receipt(monkeypatch):
+    unit = assembly_process._CleanupUnit(pgid=100)
+    snapshot = {
+        100: assembly_process._PosixProcess(100, 1, 100, "root"),
+        101: assembly_process._PosixProcess(101, 100, 101, "escaped"),
+    }
+    monkeypatch.setattr(assembly_process, "_posix_processes", lambda: snapshot)
+    monkeypatch.setattr(assembly_process.os, "name", "posix")
+    assembly_process._observe_descendants(SimpleNamespace(pid=100), unit)
+    assert unit.observed_descendants == {101: "escaped"}
+    assert assembly_process._escaped_descendant_status(unit) is False
 
 
 @pytest.mark.parametrize("stream", ["stdout", "stderr"])

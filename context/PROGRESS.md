@@ -673,3 +673,9 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-05 23:51] VERIFY post-publication-runtime-hardening/T2 assembly_process=16_passed assembly_integration=21_passed full=1378_passed_3_skipped_2_warnings forge=verify_tests_and_smoke_passed drift=18/18 cleanup_receipt=verified
 
 - [2026-09-06 03:51] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=4fd96837681a6eed
+- [2026-09-06 04:11] GATE spec post-publication-runtime-hardening approver=human strict=True sha=4fd96837681a6eed
+- [2026-09-06 04:12] GATE spec post-publication-runtime-hardening approver=human strict=True sha=399a3bca2dc8012a
+- [2026-09-06 04:12] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=399a3bca2dc8012a
+- [2026-09-06 00:24] VERIFY post-publication-runtime-hardening/T3a posix_escape_tracking=local_simulation_passed parity_scaffold=18_passed_4_windows_skipped full=1379_passed_7_skipped_2_warnings drift=21/21 forge=verify_tests_and_smoke_passed native_junit=prepared_not_executed
+- [2026-09-06 04:18] GATE spec post-publication-runtime-hardening approver=human strict=True sha=7ea21efd698ed1fd
+- [2026-09-06 04:18] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=7ea21efd698ed1fd
