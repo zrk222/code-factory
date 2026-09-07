@@ -680,7 +680,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-06 04:44] GATE spec post-publication-runtime-hardening approver=human strict=True sha=7ea21efd698ed1fd
 - [2026-09-06 04:44] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=7ea21efd698ed1fd
 - [2026-09-06 04:44] GATE code post-publication-runtime-hardening approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
-- [2026-09-06 05:08] VERIFY post-publication-runtime-hardening/T3b ci_run=34012908704 head=e78cb5c8c604cca61f5d723cb42ac1dc2b2bf07a native_ubuntu=passed native_macos=passed package_contract=passed matrix=9/9_passed five_brick_prooflab=passed artifacts=native-process-parity-ubuntu-latest,native-process-parity-macos-latest intent_id=post-publication-runtime-hardening/T3b receipt=ci:34012908704
+- [2026-09-06 05:08] VERIFY post-publication-runtime-hardening/T3b ci_run=34012908704 source_head=e78cb5c8c604cca61f5d723cb42ac1dc2b2bf07a native_ubuntu=passed native_macos=passed package_contract=passed matrix=9/9_passed five_brick_prooflab=passed artifacts=native-process-parity-ubuntu-latest,native-process-parity-macos-latest intent_id=post-publication-runtime-hardening/T3b receipt=ci:34012908704
 - [2026-09-06 05:08] GATE spec post-publication-runtime-hardening approver=human strict=True sha=7ea21efd698ed1fd
 - [2026-09-06 05:08] GATE plan post-publication-runtime-hardening approver=human tasks=3 sha=7ea21efd698ed1fd
 - [2026-09-06 05:08] GATE code post-publication-runtime-hardening approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
