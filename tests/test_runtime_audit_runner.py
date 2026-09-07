@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import io
 from pathlib import Path
 import sys
+import threading
 
-from factoryline.runtime_audit_process import _stop, run_bounded_command
+from factoryline.runtime_audit_process import _drain_stream, _stop, run_bounded_command
 from factoryline.runtime_audit_runner import run_runtime_audit_plan
 
 
@@ -56,3 +58,11 @@ def test_windows_cleanup_failure_is_not_reported_as_confirmed(monkeypatch):
     monkeypatch.setattr("factoryline.runtime_audit_process.os.name", "nt")
     monkeypatch.setattr("factoryline.runtime_audit_process.subprocess.run", lambda *args, **kwargs: FailedTaskkill())
     assert _stop(Child()) is False
+
+
+def test_stream_drainer_hashes_and_counts_without_retaining_payload():
+    streams: dict[str, tuple[str, int]] = {}
+    _drain_stream("stdout", io.BytesIO(b"receipt-only"), threading.Event(), streams)
+    digest, size = streams["stdout"]
+    assert size == len(b"receipt-only")
+    assert len(digest) == 64

@@ -11,17 +11,19 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from datetime import datetime
 from typing import Any, Iterable
 
 
 SCHEMA = "factory.codex-metadata-integrity.v1"
+SCOPES = frozenset({"active", "archive", "all"})
 MAX_FILE_BYTES = 1_048_576
 MAX_FILES = 256
 DEFAULT_PATHS = ("context", "skills", "envelopes", ".forge")
 SUPPORTED_SUFFIXES = frozenset({".json", ".jsonl", ".md", ".txt"})
 TERMINAL_VALUES = frozenset({
     "success", "succeeded", "complete", "completed", "shipped", "published",
-    "uploaded", "approved", "verified", "ready", "passed", "green", "live",
+    "uploaded", "approved", "verified", "ready", "passed", "green", "live", "smoked",
 })
 PROBLEM_VALUES = frozenset({
     "pending", "blocked", "partial", "failed", "failure", "unknown", "incomplete",
@@ -49,7 +51,10 @@ IDENTITY_KEYS = frozenset({"agent", "author_agent", "created_by", "actor", "work
 VERIFIER_KEYS = frozenset({
     "verifier", "verifier_agent", "independent_verifier", "reviewer", "grader", "audit_agent",
 })
-INTENT_KEYS = frozenset({"intent", "intent_id", "intent_hash", "requirements", "acceptance_criteria", "spec"})
+INTENT_KEYS = frozenset({
+    "intent", "intent_id", "intent_hash", "requirements", "acceptance_criteria", "spec",
+    "ssat", "ssat_hash", "spec_hash", "contract_hash",
+})
 UNCLEAR_INTENT_VALUES = frozenset({"ambiguous", "unclear", "needs_clarification", "needs_review", "unknown"})
 CONFIRMED_INTENT_VALUES = frozenset({"clear", "confirmed", "verified", "grilled", "accepted"})
 GATE_KEYS = frozenset({
@@ -137,6 +142,11 @@ def _nonempty(value: Any) -> bool:
     return value is not None
 
 
+def _is_receipt_hash(value: Any) -> bool:
+    """Recognize compact receipt hashes used by ForgeLine JSONL streams."""
+    return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-fA-F]{12,64}", value.strip()))
+
+
 def _is_execution_state_location(location: str) -> bool:
     """Reject policy labels and historical transitions as live-run evidence.
 
@@ -156,6 +166,8 @@ def _anchors(record: dict[str, Any]) -> set[str]:
     for key, _location, value in _walk_pairs(record):
         if key in EVIDENCE_KEYS and key not in {"evidence", "verification"} and _nonempty(value):
             anchors.add(key)
+        if key == "h" and _is_receipt_hash(value):
+            anchors.add(key)
         if key in {"evidence", "verification", "receipt", "receipts", "provider_receipt"} and isinstance(value, (dict, list)):
             # A container is useful only when it contains a concrete anchor.
             continue
@@ -163,10 +175,13 @@ def _anchors(record: dict[str, Any]) -> set[str]:
 
 
 def _strong_anchors(record: dict[str, Any]) -> set[str]:
-    return {
+    anchors = {
         key for key, _location, value in _walk_pairs(record)
         if key in STRONG_EVIDENCE_KEYS and _nonempty(value)
     }
+    if any(key == "h" and _is_receipt_hash(value) for key, _location, value in _walk_pairs(record)):
+        anchors.add("h")
+    return anchors
 
 
 def _provider_anchors(record: dict[str, Any]) -> set[str]:
@@ -231,7 +246,7 @@ def _intent_state(record: dict[str, Any]) -> tuple[bool, bool]:
     bound = False
     unclear = False
     for key, _location, value in _walk_pairs(record):
-        if key == "intent_hash" and isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", value.strip()):
+        if key in {"intent_hash", "ssat", "ssat_hash", "spec_hash", "contract_hash"} and isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", value.strip()):
             bound = True
         elif key in {"intent_id", "intent", "requirements", "acceptance_criteria", "spec"} and _nonempty(value):
             bound = True
@@ -259,6 +274,138 @@ def _path_mismatch(workspace: Path, record: dict[str, Any]) -> list[tuple[str, s
 
 def _finding(code: str, path: str, location: str, detail: str) -> dict[str, str]:
     return {"code": code, "path": path, "location": location, "detail": detail}
+
+
+def _scope_for_record(relative: str, record: dict[str, Any], workspace: Path | None = None) -> str:
+    """Classify a record without treating historical terminal state as active."""
+    explicit = record.get("scope")
+    if isinstance(explicit, str) and explicit.strip().lower() in {"active", "archive"}:
+        return explicit.strip().lower()
+    if ".forge" in relative.replace("\\", "/") and relative.lower().endswith("state.json"):
+        state = record.get("state") or record.get("status")
+        if isinstance(state, str) and state.strip().lower().replace("-", "_") in TERMINAL_VALUES:
+            return "archive"
+    if workspace is not None and ".forge" in relative.replace("\\", "/") and relative.lower().endswith("receipts.jsonl"):
+        state_path = workspace / Path(relative).parent / "state.json"
+        try:
+            state_value = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            state_value = None
+        if isinstance(state_value, dict):
+            state = state_value.get("state") or state_value.get("status")
+            if isinstance(state, str) and state.strip().lower().replace("-", "_") in TERMINAL_VALUES:
+                return "archive"
+    if re.search(r"(?:^|[/\\])(?:archive|archived)(?:[/\\]|$)", relative, re.I):
+        return "archive"
+    return "active"
+
+
+def _scope_findings(findings: list[dict[str, str]], scope: str) -> list[dict[str, str]]:
+    for finding in findings:
+        finding["scope"] = scope
+    return findings
+
+
+def _workspace_head(workspace: Path) -> str | None:
+    """Read the current Git head without spawning a process."""
+    git = workspace / ".git"
+    try:
+        head = (git / "HEAD").read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    if re.fullmatch(r"[0-9a-fA-F]{40,64}", head):
+        return head.lower()
+    if not head.startswith("ref: "):
+        return None
+    ref = head[5:].strip()
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", ref):
+        return None
+    try:
+        value = (git / ref).read_text(encoding="ascii").strip()
+        if re.fullmatch(r"[0-9a-fA-F]{40,64}", value):
+            return value.lower()
+        packed = (git / "packed-refs").read_text(encoding="ascii")
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in packed.splitlines():
+        if line.startswith("#") or line.startswith("^"):
+            continue
+        parts = line.split(" ", 1)
+        if len(parts) == 2 and parts[1].strip() == ref and re.fullmatch(r"[0-9a-fA-F]{40,64}", parts[0]):
+            return parts[0].lower()
+    return None
+
+
+def _audit_progress_ledger(workspace: Path, relative: str, text: str) -> list[dict[str, str]]:
+    """Detect per-workflow ordering and current-head drift in the progress ledger.
+
+    Progress logs are written by several independent ForgeLine sessions.  A
+    global timestamp comparison would flag a valid late-arriving record from a
+    different session as corruption.  Ordering is therefore enforced within
+    each explicit workflow stream while the fallback stream keeps the strict
+    behaviour for unlabelled ledger entries.
+    """
+    findings: list[dict[str, str]] = []
+    previous_by_stream: dict[str, tuple[datetime, int]] = {}
+    current_head = _workspace_head(workspace)
+    for number, line in enumerate(text.splitlines(), start=1):
+        stamp = re.search(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]", line)
+        if stamp:
+            try:
+                observed = datetime.strptime(stamp.group(1), "%Y-%m-%d %H:%M")
+            except ValueError:
+                observed = None
+            stream = "__global__"
+            stream_match = re.search(
+                r"\]\s+(?:GATE|PROOF|DONE|VERIFY|SLICE)\s+"
+                r"(?:(?:spec|plan|code|review|tests?|smoke)\s+)?([^\s]+)",
+                line,
+            )
+            if stream_match:
+                stream = stream_match.group(1).strip().lower()
+            previous = previous_by_stream.get(stream)
+            if observed is not None and previous is not None and observed < previous[0]:
+                findings.append(_finding("E_METADATA_LEDGER_ORDER", relative, f"line:{number}", f"timestamp {stamp.group(1)} precedes line {previous[1]} in stream {stream}"))
+            if observed is not None:
+                previous_by_stream[stream] = (observed, number)
+        head = re.search(r"\bhead=([0-9a-fA-F]{7,64})\b", line)
+        if head and current_head is not None and not current_head.startswith(head.group(1).lower()):
+            findings.append(_finding("E_METADATA_LEDGER_HEAD_MISMATCH", relative, f"line:{number}", f"ledger head {head.group(1).lower()} differs from current Git head {current_head}"))
+    return _scope_findings(findings, "active")
+
+
+def _state_receipt_findings(workspace: Path, path: Path, relative: str, scope: str) -> list[dict[str, str]]:
+    """Require a sibling ForgeLine receipt stream for every state record."""
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        state = None
+    if isinstance(state, dict):
+        value = state.get("state") or state.get("status")
+        normalized = value.strip().lower().replace("-", "_").replace(" ", "_") if isinstance(value, str) else ""
+        # Pending/intent/blocked records are not proof claims yet.  Requiring
+        # a receipt stream at those stages creates a false mismatch and hides
+        # the actual release boundary: only terminal state needs lineage.
+        if normalized not in TERMINAL_VALUES:
+            return []
+    receipt = path.with_name("receipts.jsonl")
+    try:
+        raw = receipt.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return _scope_findings([_finding("E_METADATA_STATE_RECEIPT_MISMATCH", relative, "state", "state.json has no readable sibling receipts.jsonl lineage")], scope)
+    rows = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("h"):
+            rows.append(value)
+    if not rows:
+        return _scope_findings([_finding("E_METADATA_STATE_RECEIPT_MISMATCH", relative, "state", "state.json sibling receipts.jsonl has no hash-bearing lineage")], scope)
+    return []
 
 
 def _audit_record(workspace: Path, path: str, location: str, record: dict[str, Any]) -> list[dict[str, str]]:
@@ -388,17 +535,26 @@ def _read_metadata_bytes(path: Path, relative: str) -> tuple[dict[str, Any] | No
     return entry, raw, []
 
 
-def _audit_json(workspace: Path, relative: str, text: str, entry: dict[str, Any]) -> list[dict[str, str]]:
+def _audit_json(workspace: Path, path: Path, relative: str, text: str, entry: dict[str, Any], scope: str) -> list[dict[str, str]]:
     try:
         value = json.loads(text)
     except json.JSONDecodeError as exc:
         return [_finding("E_METADATA_PARSE_INVALID", relative, f"line:{exc.lineno}", f"invalid JSON: {exc.msg}")]
     records = list(_records(value))
     entry["records"] = len(records)
-    return [finding for location, record in records for finding in _audit_record(workspace, relative, location, record)]
+    findings: list[dict[str, str]] = []
+    for location, record in records:
+        record_scope = _scope_for_record(relative, record, workspace)
+        if scope in {"all", record_scope}:
+            findings.extend(_scope_findings(_audit_record(workspace, relative, location, record), record_scope))
+    if relative.lower().endswith("state.json") and isinstance(value, dict):
+        root_scope = _scope_for_record(relative, value)
+        if scope in {"all", root_scope}:
+            findings.extend(_state_receipt_findings(workspace, path, relative, root_scope))
+    return findings
 
 
-def _audit_jsonl(workspace: Path, relative: str, text: str, entry: dict[str, Any]) -> list[dict[str, str]]:
+def _audit_jsonl(workspace: Path, relative: str, text: str, entry: dict[str, Any], scope: str) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
     record_count = 0
     for number, line in enumerate(text.splitlines(), start=1):
@@ -411,12 +567,14 @@ def _audit_jsonl(workspace: Path, relative: str, text: str, entry: dict[str, Any
             continue
         for location, record in _records(value, f"line:{number}"):
             record_count += 1
-            findings.extend(_audit_record(workspace, relative, location, record))
+            record_scope = _scope_for_record(relative, record, workspace)
+            if scope in {"all", record_scope}:
+                findings.extend(_scope_findings(_audit_record(workspace, relative, location, record), record_scope))
     entry["records"] = record_count
     return findings
 
 
-def _audit_metadata_file(workspace: Path, path: Path) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
+def _audit_metadata_file(workspace: Path, path: Path, scope: str) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
     relative = _display(workspace, path)
     entry, raw, findings = _read_metadata_bytes(path, relative)
     if entry is None or raw is None:
@@ -431,30 +589,44 @@ def _audit_metadata_file(workspace: Path, path: Path) -> tuple[dict[str, Any] | 
         findings.append(_finding("E_METADATA_INPUT_INVALID", relative, "file", f"metadata is not UTF-8: {exc}"))
         return entry, findings
     if suffix == ".json":
-        findings.extend(_audit_json(workspace, relative, text, entry))
+        findings.extend(_audit_json(workspace, path, relative, text, entry, scope))
     elif suffix == ".jsonl":
-        findings.extend(_audit_jsonl(workspace, relative, text, entry))
+        findings.extend(_audit_jsonl(workspace, relative, text, entry, scope))
     else:
-        findings.extend(_audit_text(workspace, relative, text))
+        if scope != "archive" or re.search(r"(?:^|[/\\])(?:archive|archived)(?:[/\\]|$)", relative, re.I):
+            findings.extend(_scope_findings(_audit_text(workspace, relative, text), "archive" if re.search(r"(?:^|[/\\])(?:archive|archived)(?:[/\\]|$)", relative, re.I) else "active"))
+        if Path(relative).name.lower() == "progress.md" and scope in {"active", "all"}:
+            findings.extend(_audit_progress_ledger(workspace, relative, text))
     return entry, findings
 
 
-def audit_metadata(root: Path, paths: list[Path] | None = None) -> dict[str, Any]:
-    """Audit selected local Codex metadata without executing or mutating it."""
+def audit_metadata(root: Path, paths: list[Path] | None = None, *, scope: str = "active") -> dict[str, Any]:
+    """Audit selected local Codex metadata without executing or mutating it.
+
+    ``active`` is the release-safe default; ``archive`` inspects historical
+    terminal state only, and ``all`` returns both classifications.
+    """
+    if scope not in SCOPES:
+        raise MetadataAuditError("E_METADATA_SCOPE_INVALID", "scope must be active, archive, or all")
     workspace = Path(root).resolve()
     files, findings = _discover(workspace, paths)
     inspected: list[dict[str, Any]] = []
     for path in files:
-        entry, file_findings = _audit_metadata_file(workspace, path)
+        entry, file_findings = _audit_metadata_file(workspace, path, scope)
         findings.extend(file_findings)
         if entry is not None:
             inspected.append(entry)
     findings = sorted(findings, key=lambda item: (item["path"], item["location"], item["code"], item["detail"]))
+    scoped_counts = {name: sum(1 for item in findings if item.get("scope") == name) for name in ("active", "archive")}
     body: dict[str, Any] = {
         "schema": SCHEMA,
+        "schema_version": 2,
         "workspace": str(workspace),
+        "scope": scope,
         "files": inspected,
         "findings": findings,
+        "scope_counts": scoped_counts,
+        "metadata_lineage_valid": not any(item["code"] == "E_METADATA_STATE_RECEIPT_MISMATCH" for item in findings),
         "status": "REVIEW_REQUIRED" if findings else "VERIFIED",
         "markers": ["CODEX_METADATA_INPUT_ACCEPTED", "CODEX_METADATA_HASHED", "CODEX_METADATA_CLAIMS_CHECKED"],
         "authority": {"execute": False, "merge": False, "deploy": False, "release": False, "publish": False, "billing": False},
@@ -466,10 +638,10 @@ def audit_metadata(root: Path, paths: list[Path] | None = None) -> dict[str, Any
     return body
 
 
-def write_metadata_audit(root: Path, paths: list[Path] | None = None, out: Path | None = None) -> dict[str, Any]:
+def write_metadata_audit(root: Path, paths: list[Path] | None = None, out: Path | None = None, *, scope: str = "active") -> dict[str, Any]:
     """Audit metadata and optionally write one workspace-contained JSON receipt atomically."""
     workspace = Path(root).resolve()
-    result = audit_metadata(workspace, paths)
+    result = audit_metadata(workspace, paths, scope=scope)
     if out is None:
         return result
     destination = _relative(workspace, Path(out), "metadata output")

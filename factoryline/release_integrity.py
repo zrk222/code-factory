@@ -5,11 +5,15 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .release_route_integrity import release_route_checks
+
 
 SCHEMA = "factory.release_integrity.v1"
 AUTHORITY = {
     "execution": False,
     "approval": False,
+    "repair": False,
+    "merge": False,
     "publication": False,
     "deployment": False,
     "signing": False,
@@ -67,6 +71,42 @@ def _fan_in_check(workflow: str) -> dict[str, Any]:
     return _check("RELEASE_FAN_IN_EXACT", passed, "three independent validators with exact artifact fan-in")
 
 
+def _candidate_preflight_check(workflow: str) -> dict[str, Any]:
+    """Require the release owner to supply a sealed candidate receipt before upload.
+
+    A green language-specific build is not a release identity proof.  The
+    publication job must therefore fail closed when the protected environment
+    has not supplied a workspace-contained release contract, and it must run
+    the exact candidate preflight before the first external upload step.
+    """
+    publish = _job(workflow, "publish")
+    marker = "Require sealed release candidate preflight before external publication"
+    command = "python -m factoryline.cli release preflight"
+    try:
+        gate_index = publish.index(marker)
+        upload_index = publish.index("gh release upload")
+        pypi_index = publish.index("pypa/gh-action-pypi-publish")
+    except ValueError:
+        gate_index = upload_index = pypi_index = -1
+    ordered = gate_index >= 0 and upload_index >= 0 and pypi_index >= 0 and gate_index < upload_index and gate_index < pypi_index
+    no_bypass = ordered and "continue-on-error" not in publish[gate_index:upload_index]
+    passed = (
+        bool(publish)
+        and marker in publish
+        and "RELEASE_CONTRACT_PATH" in publish
+        and 'test -n "$RELEASE_CONTRACT_PATH"' in publish
+        and 'test -f "$RELEASE_CONTRACT_PATH"' in publish
+        and command in publish
+        and "--contract \"$RELEASE_CONTRACT_PATH\"" in publish
+        and "--artifact-dir release-bundle/python" in publish
+        and "--artifact-dir release-bundle/editors" in publish
+        and "--metadata-path context/PROGRESS.md" in publish
+        and ordered
+        and no_bypass
+    )
+    return _check("RELEASE_CANDIDATE_PREFLIGHT_REQUIRED", passed, "sealed source/commit/artifact preflight is mandatory before external release upload")
+
+
 def _partition_check(workflow: str) -> dict[str, Any]:
     python_job = _job(workflow, "validate_python")
     vscode_job = _job(workflow, "validate_vscode")
@@ -94,6 +134,12 @@ def _openvsx_check(workflow: str) -> dict[str, Any]:
         and "needs: [authorize, validate]" in publish
         and "needs.authorize.result == 'success'" in publish
         and "OPENVSX_TOKEN" in authorize
+        and "release_contract:" in workflow
+        and "python -m factoryline.cli release preflight" in validate
+        and "--metadata-path context/PROGRESS.md" in validate
+        and "scripts/verify_release_preflight.py" in validate
+        and "scripts/verify_release_preflight.py" in publish
+        and "openvsx-preflight.json" in publish
     )
     return _check("OPENVSX_AUTHORIZATION_EARLY", passed, "protected publication is authorized before candidate validation")
 
@@ -163,13 +209,14 @@ def _python_package_data_check(root: Path) -> dict[str, Any]:
 def _checks(root: Path) -> list[dict[str, Any]]:
     publish = _read_workflow(root, "publish.yml")
     openvsx = _read_workflow(root, "openvsx.yml")
-    jetbrains = _read_workflow(root, "jetbrains-marketplace.yml")
     return [
         _fan_in_check(publish),
+        _candidate_preflight_check(publish),
         _partition_check(publish),
         _openvsx_check(openvsx),
+        *release_route_checks(root),
         _pypi_check(publish),
-        _jetbrains_check(jetbrains),
+        _jetbrains_check(_read_workflow(root, "jetbrains-marketplace.yml")),
         _intellij_compatibility_check(root),
         _huggingface_metadata_check(root),
         _python_package_data_check(root),
@@ -196,7 +243,10 @@ def release_integrity(root: Path) -> dict[str, Any]:
         },
         "external_requirements": [
             "Open VSX publication still requires OPENVSX_TOKEN in the protected openvsx environment.",
+            "Visual Studio Marketplace publication still requires VSCE_PAT in the protected vscode-marketplace environment.",
+            "JetBrains publication still requires JETBRAINS_MARKETPLACE_TOKEN in the protected jetbrains-marketplace environment.",
             "JetBrains publication still requires Marketplace approval to clear before a new update.",
+            "Hugging Face Space publication still requires the configured HF_TOKEN GitHub Actions secret.",
         ],
         "authority": AUTHORITY,
     }

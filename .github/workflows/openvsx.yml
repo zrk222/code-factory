@@ -12,6 +12,10 @@ on:
         required: true
         default: false
         type: boolean
+      release_contract:
+        description: "Workspace-contained, source-bound release contract (for example release-contracts/openvsx.json)"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -82,17 +86,71 @@ jobs:
           npm ci --no-audit
           npm run audit
           npm test
-          npx vsce package --no-dependencies --out factoryline-vscode.vsix
+          version="$(node -p "require('./package.json').version")"
+          npx vsce package --no-dependencies --out "factoryline-vscode-${version}.vsix"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Code Factory preflight runtime
+        working-directory: ${{ github.workspace }}
+        run: python -m pip install .
+
+      - name: Prepare source-bound release contract
+        working-directory: ${{ github.workspace }}
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          RELEASE_CONTRACT_PATH: ${{ inputs.release_contract }}
+          APPROVED_BY: ${{ github.actor }} (protected openvsx deployment approval)
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          raw = os.environ["RELEASE_CONTRACT_PATH"]
+          if Path(raw).is_absolute() or raw.startswith(("/", "\\")):
+              raise SystemExit("release_contract must be workspace-relative")
+          candidate = (root / raw).resolve()
+          try:
+              candidate.relative_to(root)
+          except ValueError as exc:
+              raise SystemExit("release_contract escapes the workspace") from exc
+          PY
+          python scripts/prepare_release_contract.py \
+            --root . \
+            --feature "openvsx-${RELEASE_REF}" \
+            --out "$RELEASE_CONTRACT_PATH" \
+            --approved-by "$APPROVED_BY"
+
+      - name: Require the sealed candidate preflight
+        working-directory: ${{ github.workspace }}
+        env:
+          RELEASE_CONTRACT_PATH: ${{ inputs.release_contract }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_CONTRACT_PATH" != /* && "$RELEASE_CONTRACT_PATH" != *..* ]] || { echo "release_contract must be a workspace-relative path" >&2; exit 1; }
+          test -f "$RELEASE_CONTRACT_PATH" || { echo "release contract is not present in the immutable checkout" >&2; exit 1; }
+          python -m factoryline.cli release preflight \
+            --root . \
+            --contract "$RELEASE_CONTRACT_PATH" \
+            --artifact-dir editors/vscode \
+            --metadata-path context/PROGRESS.md \
+            --out editors/vscode/openvsx-preflight.json \
+            --json
       - name: Seal the verified Open VSX candidate
         shell: bash
         env:
           RELEASE_REF: ${{ inputs.release_ref }}
         run: |
           set -euo pipefail
-          test -f factoryline-vscode.vsix
+          mapfile -t packages < <(find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print)
+          test "${#packages[@]}" -eq 1
           mkdir -p "$GITHUB_WORKSPACE/openvsx-candidate"
-          cp factoryline-vscode.vsix "$GITHUB_WORKSPACE/openvsx-candidate/"
-          sha256sum factoryline-vscode.vsix > "$GITHUB_WORKSPACE/openvsx-candidate/SHA256SUMS.txt"
+          cp "${packages[0]}" "$GITHUB_WORKSPACE/openvsx-candidate/"
+          sha256sum "${packages[0]}" > "$GITHUB_WORKSPACE/openvsx-candidate/SHA256SUMS.txt"
+          cp openvsx-preflight.json "$GITHUB_WORKSPACE/openvsx-candidate/"
+          python "$GITHUB_WORKSPACE/scripts/verify_release_preflight.py" openvsx-preflight.json
           printf 'release_ref=%s\ncommit=%s\npublisher=zrk222\n' \
             "$RELEASE_REF" "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/openvsx-candidate/manifest.txt"
       - uses: actions/upload-artifact@v7.0.1
@@ -130,11 +188,13 @@ jobs:
           cd openvsx-candidate
           sha256sum --check SHA256SUMS.txt
           test -f manifest.txt
-          test -f factoryline-vscode.vsix
+          find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit | grep -q .
+          test -f openvsx-preflight.json
+          python "$GITHUB_WORKSPACE/scripts/verify_release_preflight.py" openvsx-preflight.json
       - name: Publish verified VSIX to Open VSX
         shell: bash
         env:
           OPENVSX_TOKEN: ${{ secrets.OPENVSX_TOKEN }}
         run: |
           set -euo pipefail
-          npx --yes ovsx@1.1.0 publish openvsx-candidate/factoryline-vscode.vsix -p "$OPENVSX_TOKEN"
+          npx --yes ovsx@1.1.0 publish "$(find openvsx-candidate -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit)" -p "$OPENVSX_TOKEN"

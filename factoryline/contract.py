@@ -136,31 +136,76 @@ class Receipt:
     @classmethod
     def from_dict(cls, payload: dict) -> "Receipt":
         """Validate and construct a receipt from its serialized dictionary form."""
+        if not isinstance(payload, dict):
+            raise ValueError("receipt must be an object")
         required = {"module", "stage", "feature", "ok"}
         missing = required - payload.keys()
         if missing:
             raise ValueError(f"receipt missing required fields: {sorted(missing)}")
+        if not isinstance(payload["module"], str) or not payload["module"].strip():
+            raise ValueError("receipt module must be a non-empty string")
+        if not isinstance(payload["stage"], str) or not payload["stage"].strip():
+            raise ValueError("receipt stage must be a non-empty string")
+        if not isinstance(payload["feature"], str) or not payload["feature"].strip():
+            raise ValueError("receipt feature must be a non-empty string")
+        # Do not coerce truthy strings such as "false".  Receipts are evidence
+        # envelopes, so an ambiguous result must be rejected rather than
+        # interpreted as a passing stage.
+        if not isinstance(payload["ok"], bool):
+            raise ValueError("receipt ok must be a boolean")
+        # A receipt is an evidence envelope, not an arbitrary JSON object.
+        # Accepting unknown schemas or silently inventing run/timestamp data
+        # lets stale or forged files enter a readiness decision.  Migration of
+        # old v1 envelopes belongs in ``enterprise_receipts``; the assembly
+        # line consumes only the current, explicit protocol.
+        if payload.get("schema") != RECEIPT_SCHEMA:
+            raise ValueError(f"receipt schema must be {RECEIPT_SCHEMA}")
+        for field_name in ("tenant_id", "run_id"):
+            value = payload.get(field_name)
+            if not isinstance(value, str) or not value.strip() or len(value.strip()) > 256:
+                raise ValueError(f"receipt {field_name} must be a non-empty bounded string")
+        producer_version = payload.get("producer_version")
+        if producer_version is not None and (not isinstance(producer_version, str) or len(producer_version.strip()) > 128):
+            raise ValueError("receipt producer_version must be a bounded string")
+        for field_name in ("inputs", "outputs"):
+            value = payload.get(field_name)
+            if not isinstance(value, dict):
+                raise ValueError(f"receipt {field_name} must be an object")
         attribution = payload.get("attribution")
         if attribution is not None:
             from .attribution import Attribution
             Attribution.from_dict(attribution)
         meter = payload.get("meter", {})
-        if isinstance(meter, dict):
-            meter = Meter(**meter)
+        if not isinstance(meter, dict) or set(meter) - {"wall_ms", "model_calls", "tokens_in", "tokens_out"}:
+            raise ValueError("receipt meter must contain only known counters")
+        counters: dict[str, int] = {}
+        for name in ("wall_ms", "model_calls", "tokens_in", "tokens_out"):
+            value = meter.get(name, 0)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"receipt meter {name} must be a non-negative integer")
+            counters[name] = value
+        meter = Meter(**counters)
+        timestamp = payload.get("ts")
+        if not isinstance(timestamp, str) or not timestamp.strip() or len(timestamp) > 128:
+            raise ValueError("receipt ts must be a bounded ISO-8601 string")
+        try:
+            _dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("receipt ts must be a valid ISO-8601 timestamp") from exc
         return cls(
-            module=payload["module"],
-            stage=payload["stage"],
-            feature=payload["feature"],
-            ok=bool(payload["ok"]),
-            tenant_id=payload.get("tenant_id", "local"),
-            schema=payload.get("schema", "factory.receipt.v1"),
-            producer_version=payload.get("producer_version"),
-            run_id=payload.get("run_id", uuid.uuid4().hex),
-            inputs=payload.get("inputs", {}),
-            outputs=payload.get("outputs", {}),
+            module=payload["module"].strip(),
+            stage=payload["stage"].strip(),
+            feature=payload["feature"].strip(),
+            ok=payload["ok"],
+            tenant_id=payload["tenant_id"].strip(),
+            schema=payload["schema"],
+            producer_version=producer_version.strip() if isinstance(producer_version, str) else producer_version,
+            run_id=payload["run_id"].strip(),
+            inputs=payload["inputs"],
+            outputs=payload["outputs"],
             meter=meter,
             attribution=attribution,
-            ts=payload.get("ts", _dt.datetime.now(_dt.timezone.utc).isoformat()),
+            ts=timestamp.strip(),
         )
 
 

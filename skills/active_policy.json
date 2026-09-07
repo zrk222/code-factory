@@ -5,8 +5,8 @@
       "rule": "A_SUBPROC subprocess use in factoryline/cli.py",
       "promoted_from_count": 3,
       "promoted_at": "2026-08-19T03:42:59.193810+00:00",
-      "times_enforced": 8,
-      "prevented_recurrence": 8,
+      "times_enforced": 19,
+      "prevented_recurrence": 19,
       "status": "active"
     },
     "J_PARSER_UNSUPPORTED": {
@@ -41,8 +41,8 @@
       "rule": "QA_COMPLEXITY factoryline/appforge_oracle.py:verify_appforge_oracle_authority complexity 13 > 10; policy=hard",
       "promoted_from_count": 3,
       "promoted_at": "2026-09-04T02:53:26.586685+00:00",
-      "times_enforced": 11,
-      "prevented_recurrence": 11,
+      "times_enforced": 43,
+      "prevented_recurrence": 43,
       "status": "active"
     },
     "J_ARCH": {
@@ -50,9 +50,9 @@
       "rule": "J_ARCH E_INVARIANT_SCOPE graph_ops_is_only_a_projection: cannot resolve bounded symbol graph_ops.graph_ops_snapshot",
       "promoted_from_count": 3,
       "promoted_at": "2026-09-04T03:12:12.491065+00:00",
-      "times_enforced": 0,
-      "prevented_recurrence": 0,
-      "status": "probation"
+      "times_enforced": 433,
+      "prevented_recurrence": 433,
+      "status": "active"
     },
     "E_INVARIANT_SCOPE": {
       "code": "E_INVARIANT_SCOPE",
@@ -62,8 +62,17 @@
       "times_enforced": 0,
       "prevented_recurrence": 0,
       "status": "probation"
+    },
+    "E_SIG_DRIFT": {
+      "code": "E_SIG_DRIFT",
+      "rule": "E_SIG_DRIFT _text(['value', 'field']) != SSAT (['value', 'field', '*', 'limit'])",
+      "promoted_from_count": 11,
+      "promoted_at": "2026-09-06T06:21:23.830260+00:00",
+      "times_enforced": 0,
+      "prevented_recurrence": 0,
+      "status": "probation"
     }
   },
-  "version": 125,
-  "updated": "2026-09-04T03:50:23.855623+00:00"
+  "version": 136,
+  "updated": "2026-09-06T13:33:13.731128+00:00"
 }

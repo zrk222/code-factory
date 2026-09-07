@@ -243,3 +243,108 @@ def test_file_growth_after_stat_is_still_classified_oversize():
     assert raw is None
     assert entry == {"path": "growing.json", "bytes": MAX_FILE_BYTES + 1, "sha256": None, "format": "oversize"}
     assert [finding["code"] for finding in findings] == ["E_METADATA_TOO_LARGE"]
+
+
+def test_metadata_findings_are_scope_labeled_and_cli_can_select_archive(tmp_path: Path):
+    active = tmp_path / "active.json"
+    active.write_text(json.dumps({"status": "complete"}), encoding="utf-8")
+    archived = tmp_path / "archive" / "old.json"
+    archived.parent.mkdir()
+    archived.write_text(json.dumps({"status": "complete"}), encoding="utf-8")
+
+    result = audit_metadata(tmp_path, [active, archived], scope="all")
+
+    assert result["schema_version"] == 2
+    assert {item["scope"] for item in result["findings"]} == {"active", "archive"}
+    assert result["scope_counts"]["active"] > 0
+    assert result["scope_counts"]["archive"] > 0
+
+
+def test_progress_ledger_order_and_head_drift_are_reported(tmp_path: Path):
+    progress = tmp_path / "Progress.md"
+    progress.write_text(
+        "[2026-09-06 10:00] head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+        "[2026-09-06 09:00] head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
+        encoding="utf-8",
+    )
+    git = tmp_path / ".git"
+    git.mkdir()
+    (git / "HEAD").write_text("ref: refs/heads/main\n", encoding="ascii")
+    (git / "refs").mkdir()
+    (git / "refs" / "heads").mkdir()
+    (git / "refs" / "heads" / "main").write_text("c" * 40 + "\n", encoding="ascii")
+
+    result = audit_metadata(tmp_path, [progress])
+    codes = {item["code"] for item in result["findings"]}
+
+    assert "E_METADATA_LEDGER_ORDER" in codes
+    assert "E_METADATA_LEDGER_HEAD_MISMATCH" in codes
+    assert all(item["scope"] == "active" for item in result["findings"])
+
+
+def test_progress_ledger_orders_independent_workflow_streams_separately(tmp_path: Path):
+    progress = tmp_path / "Progress.md"
+    progress.write_text(
+        "[2026-09-06 10:00] GATE spec alpha approver=human\n"
+        "[2026-09-06 09:00] GATE spec beta approver=human\n"
+        "[2026-09-06 09:30] GATE plan alpha approver=human\n",
+        encoding="utf-8",
+    )
+
+    result = audit_metadata(tmp_path, [progress])
+
+    assert any(item["code"] == "E_METADATA_LEDGER_ORDER" for item in result["findings"])
+    assert all("stream alpha" in item["detail"] for item in result["findings"])
+
+
+def test_state_without_receipt_lineage_is_not_proof(tmp_path: Path):
+    state = tmp_path / ".forge" / "mission" / "state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({"status": "complete"}), encoding="utf-8")
+
+    result = audit_metadata(tmp_path, [state], scope="all")
+
+    assert any(item["code"] == "E_METADATA_STATE_RECEIPT_MISMATCH" for item in result["findings"])
+
+
+def test_nonterminal_state_without_receipt_lineage_is_not_a_mismatch(tmp_path: Path):
+    state = tmp_path / ".forge" / "mission" / "state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({"state": "intent"}), encoding="utf-8")
+
+    result = audit_metadata(tmp_path, [state], scope="all")
+
+    assert not any(item["code"] == "E_METADATA_STATE_RECEIPT_MISMATCH" for item in result["findings"])
+
+
+def test_compact_forgeline_hash_and_ssat_bind_a_receipt_to_intent(tmp_path: Path):
+    receipt = tmp_path / ".forge" / "mission" / "receipts.jsonl"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        json.dumps({
+            "h": "a" * 12,
+            "input_components": {"ssat": "b" * 64},
+            "status": "passed",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    result = audit_metadata(tmp_path, [receipt])
+
+    assert result["status"] == "VERIFIED"
+    assert result["findings"] == []
+
+
+def test_smoked_forgeline_stream_is_classified_as_archive(tmp_path: Path):
+    mission = tmp_path / ".forge" / "mission"
+    mission.mkdir(parents=True)
+    (mission / "state.json").write_text(json.dumps({"state": "smoked"}), encoding="utf-8")
+    (mission / "receipts.jsonl").write_text(
+        json.dumps({"h": "c" * 12, "input_components": {"ssat": "d" * 64}, "status": "passed"}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = audit_metadata(tmp_path, [mission / "receipts.jsonl"])
+
+    assert result["status"] == "VERIFIED"
+    assert result["findings"] == []

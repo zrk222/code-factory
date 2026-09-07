@@ -25,6 +25,23 @@ def test_assembly_marks_prestige_not_applicable_without_ui_scope(tmp_path: Path,
     assert report["stages"][0]["reason"] == "ui_scope_not_declared"
 
 
+def test_assembly_fails_closed_when_release_contract_declares_missing_ui_scope(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("factoryline.assembly.detect", lambda: [
+        type("Module", (), {"name": name, "installed": True, "cli": name, "role": "test"})()
+        for name in ("specline", "forgeline", "hsf", "prestige")
+    ])
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "specs" / "feature.md").write_text("# feature\n", encoding="utf-8")
+    contract = tmp_path / ".factory/release-contracts/feature.json"
+    contract.parent.mkdir(parents=True)
+    contract.write_text(json.dumps({"required_stages": ["prestige:score"]}), encoding="utf-8")
+
+    report = assemble(tmp_path, "feature", chain=[("prestige", ["score", "smoke/{f}.ui", "--json", "--strict"])])
+
+    assert report["stages"][0]["marker"] == "UI_SCOPE_REQUIRED_EVIDENCE_MISSING"
+    assert report["halted_at"] == "prestige:score"
+
+
 def test_assembly_preserves_explicit_forge_intent_trace_in_standard_receipt(tmp_path: Path, monkeypatch):
     class Module:
         def __init__(self, name: str):

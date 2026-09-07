@@ -461,6 +461,64 @@ def test_graph_ops_cli_is_read_only_and_machine_readable(tmp_path: Path, capsys)
     assert before == after
 
 
+def test_graph_ops_projects_release_workflow_before_a_named_feature_decision(tmp_path: Path, monkeypatch):
+    def blocked(_root: Path):
+        return {
+            "schema": "factory.release_integrity.v1",
+            "marker": "RELEASE_INTEGRITY_FAILURE",
+            "applicable": True,
+            "ok": False,
+            "checks": [{"id": "RELEASE_FAN_IN_EXACT", "passed": False}],
+        }
+
+    monkeypatch.setattr("factoryline.mission_control_status._release_workflow_integrity", blocked)
+    snapshot = graph_ops_snapshot(tmp_path)
+    node = next(item for item in snapshot["nodes"] if item["kind"] == "release_decision")
+
+    assert node["status"] == "blocked"
+    assert node["facts"]["state"] == "LOCAL_WORKFLOW_BLOCKED"
+    assert node["facts"]["failed_check_ids"] == ["RELEASE_FAN_IN_EXACT"]
+    assert node["facts"]["provider_state"] == "unobserved"
+    assert node["facts"]["provider_contacted"] is False
+    assert node["facts"]["next_action"] == "repair_release_workflow"
+    assert all(value is False for value in node["facts"]["authority"].values())
+    assert "GRAPH_OPS_RELEASE_DECISION_VISIBLE" in snapshot["markers"]
+    assert "GRAPH_OPS_RELEASE_DECISION_WORKFLOW_BLOCKED" in snapshot["markers"]
+
+    monkeypatch.setattr("factoryline.mission_control_status._release_workflow_integrity", lambda _root: {
+        "schema": "factory.release_integrity.v1",
+        "marker": "RELEASE_INTEGRITY_READ_ONLY",
+        "applicable": True,
+        "ok": True,
+        "checks": [],
+        "failed_check_ids": [],
+        "external_requirements": ["VSCE_PAT remains an unobserved protected-environment requirement."],
+    })
+    healthy = graph_ops_snapshot(tmp_path)
+    healthy_node = next(item for item in healthy["nodes"] if item["kind"] == "release_decision")
+    assert healthy_node["facts"]["state"] == "FEATURE_DECISION_REQUIRED"
+    assert healthy_node["facts"]["feature_required"] is True
+    assert healthy_node["facts"]["next_action"] == "factory release decision <feature> --root . --json"
+    assert healthy_node["facts"]["external_requirements"] == ["VSCE_PAT remains an unobserved protected-environment requirement."]
+    assert healthy_node["facts"]["provider_state"] == "unobserved"
+    assert all(value is False for value in healthy_node["facts"]["authority"].values())
+    assert healthy["release_decision"] == healthy_node["facts"]
+
+    monkeypatch.setattr("factoryline.mission_control_status._release_workflow_integrity", lambda _root: {
+        "schema": "factory.release_integrity.v1",
+        "marker": "RELEASE_INTEGRITY_NOT_APPLICABLE",
+        "applicable": False,
+        "ok": True,
+        "checks": [],
+        "failed_check_ids": [],
+    })
+    absent = graph_ops_snapshot(tmp_path)
+    absent_node = next(item for item in absent["nodes"] if item["kind"] == "release_decision")
+    assert absent_node["facts"]["state"] == "RELEASE_WORKFLOW_NOT_APPLICABLE"
+    assert absent_node["facts"]["provider_state"] == "unobserved"
+    assert "source" not in absent_node
+
+
 def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     page = graph_ops_html("session-token")
 
@@ -491,6 +549,7 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "FACTORY_WEBMCP_APPFORGE_MOBILE_EVIDENCE_STATUS" in page
     assert "factory.appforge_mobile_evidence_status" in page
     assert "FACTORY_WEBMCP_ORACLE_FIREWALL_STATUS" in page
+    assert '"release_decision"' in page
     assert "FACTORY_WEBMCP_APPFORGE_ORACLE_STATUS" in page
     assert 'id="enterprise-runner-state"' in page
     assert "GRAPH_OPS_ENTERPRISE_RUNNER_ADMISSION_READ_ONLY" in page

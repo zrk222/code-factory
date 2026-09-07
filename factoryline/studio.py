@@ -430,8 +430,8 @@ def create_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     return {**result, "studio_marker": "STUDIO_CONTAINED"}
 
 
-def create_product_mission_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
-    """Compile a PRD to the first dependency-ready supervised mission."""
+def _validated_product_mission_request(root: Path, payload: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    """Validate the user-controlled values used to compile a product mission."""
     action = str(payload.get("action", ""))
     if action in FORBIDDEN_ACTIONS:
         raise StudioRequestError("ACTION_FORBIDDEN", f"Studio cannot perform {action}", 403)
@@ -447,41 +447,54 @@ def create_product_mission_from_studio(root: Path, payload: dict[str, Any]) -> d
     resolution_mode = str(payload.get("resolution_mode", "human_approval"))
     if resolution_mode not in RESOLUTION_MODES:
         raise StudioRequestError("RESOLUTION_MODE_INVALID", f"resolution mode must be one of {', '.join(sorted(RESOLUTION_MODES))}")
-    try:
-        graph = compile_product_text(prompt, root=Path(root), source_name="studio-prd.md", project=name)
-        if graph["status"] != "ready":
-            items = [{
-                "id": f"resolve-{gap['code'].lower().replace('_', '-')}",
-                "code": gap["code"],
-                "severity": gap["severity"],
-                "why": gap["message"],
-                "next_action": gap["message"],
-                "auto_resolvable": False,
-                "approval_required": True,
-            } for gap in graph["gaps"]]
-            return {
-                "schema": "factory.studio.product_mission.v1",
-                "status": "needs_input",
-                "graph": graph,
-                "mission": None,
-                "resolution": {
-                    "mode": resolution_mode,
-                    "status": "human_input_required",
-                    "auto_resolved": [],
-                    "items": items,
-                    "why_auto_stopped": "Product facts, UX intent, and acceptance criteria cannot be invented by safe auto-resolution.",
-                    "next_action": "Add the listed facts to the PRD and compile again.",
-                },
-                "studio_marker": "STUDIO_PRODUCT_MISSION_CONTAINED",
-            }
-        slices = plan_value_slices(Path(graph["path"]), Path(root))
-        ready = [item for item in slices["slices"] if not item["depends_on"]]
-        if not ready:
-            raise ProductMissionError("MISSION_DEPENDENCY_CYCLE", "no dependency-ready value slice is available")
-        mission = create_mission(Path(slices["path"]), ready[0]["id"], Path(root), owner, executor)
-    except ProductMissionError as exc:
-        status = 409 if exc.code.endswith("EXISTS") else 400
-        raise StudioRequestError(exc.code, exc.message, status) from exc
+    return prompt, name, owner, executor, resolution_mode
+
+
+def _product_gap_response(graph: dict[str, Any], resolution_mode: str) -> dict[str, Any]:
+    """Return actionable, human-owned feedback for an incomplete PRD."""
+    items = [{
+        "id": f"resolve-{gap['code'].lower().replace('_', '-')}",
+        "code": gap["code"],
+        "severity": gap["severity"],
+        "why": gap["message"],
+        "next_action": gap["message"],
+        "auto_resolvable": False,
+        "approval_required": True,
+    } for gap in graph["gaps"]]
+    return {
+        "schema": "factory.studio.product_mission.v1",
+        "status": "needs_input",
+        "graph": graph,
+        "mission": None,
+        "resolution": {
+            "mode": resolution_mode,
+            "status": "human_input_required",
+            "auto_resolved": [],
+            "items": items,
+            "why_auto_stopped": "Product facts, UX intent, and acceptance criteria cannot be invented by safe auto-resolution.",
+            "next_action": "Add the listed facts to the PRD and compile again.",
+        },
+        "studio_marker": "STUDIO_PRODUCT_MISSION_CONTAINED",
+    }
+
+
+def _first_product_mission(root: Path, graph: dict[str, Any], owner: str, executor: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Plan the product graph and return its first dependency-ready mission."""
+    slices = plan_value_slices(Path(graph["path"]), root)
+    ready = [item for item in slices["slices"] if not item["depends_on"]]
+    if not ready:
+        raise ProductMissionError("MISSION_DEPENDENCY_CYCLE", "no dependency-ready value slice is available")
+    mission = create_mission(Path(slices["path"]), ready[0]["id"], root, owner, executor)
+    return slices, mission
+
+
+def _planned_product_mission_response(
+    graph: dict[str, Any],
+    slices: dict[str, Any],
+    mission: dict[str, Any],
+    resolution_mode: str,
+) -> dict[str, Any]:
+    """Project the bounded, approval-ready product mission response."""
     return {
         "schema": "factory.studio.product_mission.v1",
         "status": "planned",
@@ -516,6 +529,20 @@ def create_product_mission_from_studio(root: Path, payload: dict[str, Any]) -> d
         },
         "studio_marker": "STUDIO_PRODUCT_MISSION_CONTAINED",
     }
+
+
+def create_product_mission_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Compile a PRD to the first dependency-ready supervised mission."""
+    prompt, name, owner, executor, resolution_mode = _validated_product_mission_request(root, payload)
+    try:
+        graph = compile_product_text(prompt, root=Path(root), source_name="studio-prd.md", project=name)
+        if graph["status"] != "ready":
+            return _product_gap_response(graph, resolution_mode)
+        slices, mission = _first_product_mission(Path(root), graph, owner, executor)
+    except ProductMissionError as exc:
+        status = 409 if exc.code.endswith("EXISTS") else 400
+        raise StudioRequestError(exc.code, exc.message, status) from exc
+    return _planned_product_mission_response(graph, slices, mission, resolution_mode)
 
 
 def decide_product_mission_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -691,59 +718,62 @@ class _StudioHandler(BaseHTTPRequestHandler):
             "failure": explain_failure(code, message),
         })
 
+    def _has_valid_token(self) -> bool:
+        return secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token)
+
+    def _serve_favicon(self) -> None:
+        self._headers(204, "image/x-icon")
+
+    def _serve_html(self, renderer: Callable[[str], str]) -> None:
+        body = renderer(self.studio_token).encode("utf-8")
+        self._headers(200, "text/html; charset=utf-8", len(body))
+        self.wfile.write(body)
+
+    def _serve_status(self) -> None:
+        payload = dict(self.status_payload)
+        payload["listener"] = {**payload["listener"], "port": self.server.server_port}
+        self._json(200, payload)
+
+    def _serve_token_json(self, operation: Callable[[Path], dict[str, Any]]) -> None:
+        if not self._has_valid_token():
+            self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
+            return
+        self._json(200, operation(self.studio_root))
+
+    def _graph_ops_payload(self, root: Path) -> dict[str, Any]:
+        payload = graph_ops_snapshot(root)
+        payload["live_telemetry"] = {
+            "activity": activity_snapshot(root),
+            "meter": live_snapshot(root),
+            "recent_runs": _recent_run_stats(root, limit=3),
+            "refresh_interval_ms": 1000,
+            "scope_limits": ["Live telemetry is local and aggregate-safe.", "Unknown usage, cost, queue, and productivity values remain unavailable."],
+        }
+        return payload
+
+    def _get_route_handler(self) -> Callable[[], None] | None:
+        if self.path == "/favicon.ico":
+            return self._serve_favicon
+        page_routes = {"/": _studio_html, "/graph-ops": graph_ops_html}
+        renderer = page_routes.get(self.path.split("?", 1)[0])
+        if renderer is not None:
+            return lambda: self._serve_html(renderer)
+        api_routes: dict[str, Callable[[], None]] = {
+            "/api/status": self._serve_status,
+            "/api/dashboard": lambda: self._serve_token_json(studio_dashboard),
+            "/api/savings": lambda: self._serve_token_json(public_savings_report),
+            "/api/developer-memory": lambda: self._serve_token_json(developer_memory_snapshot),
+            "/api/graph-ops": lambda: self._serve_token_json(self._graph_ops_payload),
+        }
+        return api_routes.get(self.path)
+
     def do_GET(self) -> None:
         """Serve only the Studio shell and its public boundary status."""
-        if self.path == "/favicon.ico":
-            self._headers(204, "image/x-icon")
+        handler = self._get_route_handler()
+        if handler is None:
+            self._error(404, "NOT_FOUND", "route not found")
             return
-        if self.path.split("?", 1)[0] == "/":
-            body = _studio_html(self.studio_token).encode("utf-8")
-            self._headers(200, "text/html; charset=utf-8", len(body))
-            self.wfile.write(body)
-            return
-        if self.path.split("?", 1)[0] == "/graph-ops":
-            body = graph_ops_html(self.studio_token).encode("utf-8")
-            self._headers(200, "text/html; charset=utf-8", len(body))
-            self.wfile.write(body)
-            return
-        if self.path == "/api/status":
-            payload = dict(self.status_payload)
-            payload["listener"] = {**payload["listener"], "port": self.server.server_port}
-            self._json(200, payload)
-            return
-        if self.path == "/api/dashboard":
-            if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
-                self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
-                return
-            self._json(200, studio_dashboard(self.studio_root))
-            return
-        if self.path == "/api/savings":
-            if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
-                self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
-                return
-            self._json(200, public_savings_report(self.studio_root))
-            return
-        if self.path == "/api/developer-memory":
-            if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
-                self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
-                return
-            self._json(200, developer_memory_snapshot(self.studio_root))
-            return
-        if self.path == "/api/graph-ops":
-            if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
-                self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
-                return
-            payload = graph_ops_snapshot(self.studio_root)
-            payload["live_telemetry"] = {
-                "activity": activity_snapshot(self.studio_root),
-                "meter": live_snapshot(self.studio_root),
-                "recent_runs": _recent_run_stats(self.studio_root, limit=3),
-                "refresh_interval_ms": 1000,
-                "scope_limits": ["Live telemetry is local and aggregate-safe.", "Unknown usage, cost, queue, and productivity values remain unavailable."],
-            }
-            self._json(200, payload)
-            return
-        self._error(404, "NOT_FOUND", "route not found")
+        handler()
 
     def _content_length(self) -> int | None:
         try:
@@ -752,61 +782,81 @@ class _StudioHandler(BaseHTTPRequestHandler):
             self._error(400, "LENGTH_INVALID", "invalid content length")
             return None
 
-    def do_POST(self) -> None:
-        """Accept one token-bound target creation request within the size limit."""
-        if self.path not in {"/api/create", "/api/product", "/api/mission-decision", "/api/continue", "/api/savings", "/api/graph-ops-authorize", "/api/graph-ops-run", "/api/activity/stop"}:
+    def _is_post_route(self) -> bool:
+        return self.path in {
+            "/api/create", "/api/product", "/api/mission-decision", "/api/continue",
+            "/api/savings", "/api/graph-ops-authorize", "/api/graph-ops-run", "/api/activity/stop",
+        }
+
+    def _drain_rejected_body(self, content_length: int) -> None:
+        if 0 < content_length <= MAX_BODY_BYTES:
+            self.connection.settimeout(UNAUTHORIZED_DRAIN_TIMEOUT_SECONDS)
+            try:
+                self.rfile.read(content_length)
+            except (TimeoutError, socket.timeout, OSError):
+                pass
+
+    def _reject_unauthorized_post(self) -> None:
+        rejected_length = self._content_length()
+        if rejected_length is None:
             self.close_connection = True
-            self._error(404, "NOT_FOUND", "route not found")
             return
-        if not secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token):
-            # Consume only a bounded, well-framed request body before closing.
-            # Otherwise Windows may reset a socket that still has unread data,
-            # hiding the deterministic 403 response from the client.
-            rejected_length = self._content_length()
-            if rejected_length is None:
-                self.close_connection = True
-                return
-            if 0 < rejected_length <= MAX_BODY_BYTES:
-                self.connection.settimeout(UNAUTHORIZED_DRAIN_TIMEOUT_SECONDS)
-                try:
-                    self.rfile.read(rejected_length)
-                except (TimeoutError, socket.timeout, OSError):
-                    pass
-            self.close_connection = True
-            self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
-            return
+        self._drain_rejected_body(rejected_length)
+        self.close_connection = True
+        self._error(403, "TOKEN_REQUIRED", "valid Studio session token required")
+
+    def _read_post_payload(self) -> dict[str, Any] | None:
         length = self._content_length()
         if length is None:
-            return
+            return None
         if length <= 0 or length > MAX_BODY_BYTES:
             self.close_connection = True
             self._error(413, "BODY_LIMIT", f"body must be 1-{MAX_BODY_BYTES} bytes")
+            return None
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise StudioRequestError("JSON_OBJECT_REQUIRED", "request must be a JSON object")
+        return payload
+
+    def _stop_activity_from_studio(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if payload.get("action") != "request-stop":
+            raise StudioRequestError("ACTION_UNSUPPORTED", "activity stop endpoint requires request-stop")
+        try:
+            return request_stop(self.studio_root)
+        except ValueError as exc:
+            raise StudioRequestError("NO_ACTIVE_ASSEMBLY", str(exc), 409) from exc
+
+    def _dispatch_post_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.path == "/api/activity/stop":
+            return self._stop_activity_from_studio(payload)
+        handlers: dict[str, Callable[[Path, dict[str, Any]], dict[str, Any]]] = {
+            "/api/create": create_from_studio,
+            "/api/product": create_product_mission_from_studio,
+            "/api/mission-decision": decide_product_mission_from_studio,
+            "/api/continue": continue_from_studio,
+            "/api/savings": savings_from_studio,
+            "/api/graph-ops-authorize": authorize_graph_ops_from_studio,
+            "/api/graph-ops-run": run_graph_ops_reality_check_from_studio,
+        }
+        return handlers[self.path](self.studio_root, payload)
+
+    def do_POST(self) -> None:
+        """Accept one token-bound target creation request within the size limit."""
+        if not self._is_post_route():
+            self.close_connection = True
+            self._error(404, "NOT_FOUND", "route not found")
+            return
+        if not self._has_valid_token():
+            # Consume only a bounded, well-framed request body before closing.
+            # Otherwise Windows may reset a socket that still has unread data,
+            # hiding the deterministic 403 response from the client.
+            self._reject_unauthorized_post()
             return
         try:
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            if not isinstance(payload, dict):
-                raise StudioRequestError("JSON_OBJECT_REQUIRED", "request must be a JSON object")
-            if self.path == "/api/activity/stop":
-                if payload.get("action") != "request-stop":
-                    raise StudioRequestError("ACTION_UNSUPPORTED", "activity stop endpoint requires request-stop")
-                try:
-                    result = request_stop(self.studio_root)
-                except ValueError as exc:
-                    raise StudioRequestError("NO_ACTIVE_ASSEMBLY", str(exc), 409) from exc
-            elif self.path == "/api/product":
-                result = create_product_mission_from_studio(self.studio_root, payload)
-            elif self.path == "/api/mission-decision":
-                result = decide_product_mission_from_studio(self.studio_root, payload)
-            elif self.path == "/api/continue":
-                result = continue_from_studio(self.studio_root, payload)
-            elif self.path == "/api/savings":
-                result = savings_from_studio(self.studio_root, payload)
-            elif self.path == "/api/graph-ops-authorize":
-                result = authorize_graph_ops_from_studio(self.studio_root, payload)
-            elif self.path == "/api/graph-ops-run":
-                result = run_graph_ops_reality_check_from_studio(self.studio_root, payload)
-            else:
-                result = create_from_studio(self.studio_root, payload)
+            payload = self._read_post_payload()
+            if payload is None:
+                return
+            result = self._dispatch_post_payload(payload)
         except StudioRequestError as exc:
             self._json(exc.status, {
                 "schema": "factory.studio.error.v1",

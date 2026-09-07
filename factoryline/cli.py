@@ -135,6 +135,8 @@ from .appforge_release_rehearsal import create_release_rehearsal
 from .appforge_native_surface import verify_native_surface
 from .appforge_surface_matrix import create_surface_matrix
 from .appforge_mobile_evidence import verify_mobile_evidence
+from .release_contract import SCHEMA as RELEASE_CONTRACT_SCHEMA, _sha as release_contract_digest, verify_release_contract
+from .release_candidate import release_candidate_preflight, source_snapshot, write_release_candidate_preflight
 from .appforge_storefront_story import verify_storefront_story
 from .appforge_fastlane_capture import create_fastlane_capture_contract
 from .appforge_submission_integrity import verify_submission_integrity
@@ -176,11 +178,22 @@ from .repair_loop import RepairLoopError, assess_repair_loop, repair_loop_projec
 from .repo_coordination import RepoCoordinationError, coordinate_repositories, repo_coordination_template
 from .domain_ontology import DomainOntologyError, domain_ontology_template, validate_domain_ontology
 from .mission_control_status import mission_control_status, mission_control_profile
+from .senior_assurance import (
+    SeniorAssuranceError,
+    compare_repair,
+    explain_evidence_reuse,
+    failure_brief,
+    load_assurance_json,
+    run_replay,
+)
 from .runtime_audit import execute_runtime_audit, runtime_audit_status
 from .deep_audit import execute_deep_audit, deep_audit_status
 from .repair_loop import compare_deep_audit_repairs
 from .runtime_audit_common import RuntimeAuditError
 from .runtime_audit_contract import verify_runtime_audit_plan
+from .independent_execution import ExecutionAttestationError, verify_signed_execution_attestation
+from .benchmark_lab import BenchmarkError, evaluate_benchmark, load_benchmark_json
+from .incremental_scheduler import SchedulerError, compare_shadow, load_schedule_json, plan_incremental
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
 from .jetbrains_handshake import (
     JetBrainsHandshakeError,
@@ -278,6 +291,7 @@ from .index_continuity import (
     write_continuity_baseline,
 )
 from .release_integrity import release_integrity, render_release_integrity
+from .release_decision import SCHEMA as RELEASE_DECISION_SCHEMA, release_decision_card, render_release_decision_card
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
 from .verification import verify_feature
@@ -832,6 +846,24 @@ def main(argv=None) -> int:
     s.add_argument("feature")
     s.add_argument("--root", default=".")
     s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--release-contract", help="explicit release contract path to carry into stage receipts")
+
+    s = sub.add_parser("release-contract", help="create or verify a hash-bound local release policy")
+    release_sub = s.add_subparsers(required=True, dest="release_contract_cmd")
+    release_template = release_sub.add_parser("template", help="write a deterministic contract template from a sealed Oracle")
+    release_template.add_argument("feature")
+    release_template.add_argument("--root", default=".")
+    release_template.add_argument("--oracle-contract", required=True)
+    release_template.add_argument("--stage", action="append", dest="stages", help="required module:stage; repeat as needed")
+    release_template.add_argument("--approved-by", required=True)
+    release_template.add_argument("--evidence", action="append", default=[], metavar="STAGE=PATH", help="bind a supported external evidence stage")
+    release_template.add_argument("--out", required=True)
+    release_template.add_argument("--json", action="store_true")
+    release_verify = release_sub.add_parser("verify", help="verify the contract and current Oracle/evidence bindings")
+    release_verify.add_argument("feature")
+    release_verify.add_argument("contract")
+    release_verify.add_argument("--root", default=".")
+    release_verify.add_argument("--json", action="store_true")
 
     s = sub.add_parser("continue", help="resume assembly from the next safe stage")
     s.add_argument("feature", nargs="?")
@@ -960,9 +992,11 @@ def main(argv=None) -> int:
     proof_challenge.add_argument("--root", default=".")
     proof_challenge.add_argument("--json", action="store_true")
 
-    s = sub.add_parser("verify", help="summarize all existing receipts into one shippability decision")
+    s = sub.add_parser("verify", help="summarize local receipts into a fail-closed readiness decision")
     s.add_argument("feature")
     s.add_argument("--root", default=".")
+    s.add_argument("--strict-release", action="store_true", help="also require a current Oracle-bound release contract")
+    s.add_argument("--release-contract", default=None, help="workspace-relative release contract; defaults to .factory/release-contracts/<feature>.json")
     s.add_argument("--json", action="store_true")
 
     s = sub.add_parser("meter", help="real savings summary from your runs")
@@ -1578,6 +1612,51 @@ def main(argv=None) -> int:
     runtime_status.add_argument("--root", default=".")
     runtime_status.add_argument("--json", action="store_true")
 
+    senior = sub.add_parser("senior", help="independent evidence, real-defect benchmarks, and incremental scheduling")
+    senior_sub = senior.add_subparsers(required=True, dest="senior_cmd")
+    senior_attest = senior_sub.add_parser("attest", help="verify one DSSE-signed independent execution attestation")
+    senior_attest.add_argument("receipt")
+    senior_attest.add_argument("--trust-root", required=True)
+    senior_attest.add_argument("--candidate-sha256")
+    senior_attest.add_argument("--plan-sha256")
+    senior_attest.add_argument("--json", action="store_true")
+    senior_benchmark = senior_sub.add_parser("benchmark", help="evaluate a manifest-bound buggy/fixed defect corpus")
+    senior_benchmark.add_argument("manifest")
+    senior_benchmark.add_argument("--observations", required=True)
+    senior_benchmark.add_argument("--out")
+    senior_benchmark.add_argument("--json", action="store_true")
+    senior_schedule = senior_sub.add_parser("schedule", help="plan dependency-aware proof routing without executing gates")
+    senior_schedule.add_argument("manifest")
+    senior_schedule.add_argument("--root", default=".")
+    senior_schedule.add_argument("--out")
+    senior_schedule.add_argument("--json", action="store_true")
+    senior_shadow = senior_sub.add_parser("shadow", help="compare incremental and full plan obligations/findings")
+    senior_shadow.add_argument("incremental")
+    senior_shadow.add_argument("full")
+    senior_shadow.add_argument("--out")
+    senior_shadow.add_argument("--json", action="store_true")
+    senior_replay = senior_sub.add_parser("replay", help="reproduce one contract-bound candidate in a fresh process workspace")
+    senior_replay.add_argument("manifest")
+    senior_replay.add_argument("--root", default=".")
+    senior_replay.add_argument("--execute", action="store_true", help="run the declared argv; without this flag only validate the replay plan")
+    senior_replay.add_argument("--out")
+    senior_replay.add_argument("--json", action="store_true")
+    senior_repair = senior_sub.add_parser("repair", help="compare the original failure, repair, and negative controls")
+    senior_repair.add_argument("manifest")
+    senior_repair.add_argument("--root", default=".")
+    senior_repair.add_argument("--execute", action="store_true", help="run all declared replay legs; without this flag only validate the comparison")
+    senior_repair.add_argument("--out")
+    senior_repair.add_argument("--json", action="store_true")
+    senior_reuse = senior_sub.add_parser("reuse", help="explain exact proof reuse or the reason a gate must run")
+    senior_reuse.add_argument("manifest")
+    senior_reuse.add_argument("--root", default=".")
+    senior_reuse.add_argument("--out")
+    senior_reuse.add_argument("--json", action="store_true")
+    senior_brief = senior_sub.add_parser("brief", help="turn one failed receipt into an evidence-linked failure briefing")
+    senior_brief.add_argument("receipt")
+    senior_brief.add_argument("--out")
+    senior_brief.add_argument("--json", action="store_true")
+
     worklog = sub.add_parser("worklog", help="draft a local review-required update from one sealed Oracle Contract; never posts externally")
     worklog_sub = worklog.add_subparsers(required=True, dest="worklog_cmd")
     worklog_draft = worklog_sub.add_parser("draft", help="write one immutable local proof worklog draft")
@@ -2040,6 +2119,17 @@ def main(argv=None) -> int:
     release_integrity_parser = release_sub.add_parser("integrity", help="verify release workflow fan-in and protected-gate topology")
     release_integrity_parser.add_argument("--root", default=".")
     release_integrity_parser.add_argument("--json", action="store_true")
+    release_preflight_parser = release_sub.add_parser("preflight", help="verify one exact release contract and candidate artifact set")
+    release_preflight_parser.add_argument("--root", default=".")
+    release_preflight_parser.add_argument("--contract", required=True, help="workspace-contained release contract with candidate source binding")
+    release_preflight_parser.add_argument("--artifact-dir", action="append", help="workspace-contained artifact directory; repeatable")
+    release_preflight_parser.add_argument("--metadata-path", action="append", help="workspace-contained active metadata file; repeatable and audited when supplied")
+    release_preflight_parser.add_argument("--out", help="optional workspace-contained JSON receipt path")
+    release_preflight_parser.add_argument("--json", action="store_true")
+    release_decision_parser = release_sub.add_parser("decision", help="explain one strict local release decision without contacting a provider")
+    release_decision_parser.add_argument("feature")
+    release_decision_parser.add_argument("--root", default=".")
+    release_decision_parser.add_argument("--json", action="store_true")
 
     mcp = sub.add_parser("mcp", help="serve or inspect the local read-only MCP adapter")
     mcp_sub = mcp.add_subparsers(required=True, dest="mcp_cmd")
@@ -2234,6 +2324,7 @@ def main(argv=None) -> int:
     ops_metadata.add_argument("--root", default=".")
     ops_metadata.add_argument("--path", action="append", help="workspace-contained metadata file or directory; repeatable")
     ops_metadata.add_argument("--out", help="workspace-contained metadata audit receipt path")
+    ops_metadata.add_argument("--scope", choices=["active", "archive", "all"], default="active", help="audit active records by default; choose archive or all explicitly")
     ops_metadata.add_argument("--json", action="store_true")
 
     verifier = sub.add_parser(
@@ -2691,7 +2782,7 @@ def main(argv=None) -> int:
                 result = write_compiled_policy(root, Path(a.policy), Path(a.out) if a.out else None)
             elif a.ops_cmd == "metadata":
                 selected = [Path(item) for item in a.path] if a.path else None
-                result = write_metadata_audit(root, selected, Path(a.out) if a.out else None)
+                result = write_metadata_audit(root, selected, Path(a.out) if a.out else None, scope=a.scope)
             else:
                 result = verify_workspace(root)
         except (EnterpriseOpsError, PolicyCompileError, MetadataAuditError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
@@ -3265,6 +3356,53 @@ def main(argv=None) -> int:
                 code = 0 if result["receipt"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
         except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
             result = {"schema": "factory.runtime-audit.error.v1", "code": getattr(exc, "code", "E_RUNTIME_AUDIT"), "message": str(exc), "authority": "none"}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
+        return code
+    if a.cmd == "senior":
+        try:
+            if a.senior_cmd == "attest":
+                result = verify_signed_execution_attestation(Path(a.receipt), Path(a.trust_root), candidate_sha256=a.candidate_sha256, plan_sha256=a.plan_sha256)
+                code = 0
+                result["action_summary"] = "Verified an independently collected execution attestation; no command ran and release authority stayed disabled."
+            elif a.senior_cmd == "benchmark":
+                manifest = load_benchmark_json(Path(a.manifest))
+                observations = load_benchmark_json(Path(a.observations))
+                result = evaluate_benchmark(manifest, observations, out=Path(a.out) if a.out else None)
+                code = 0 if result["decision"] == "PASS" else 1
+                result["action_summary"] = "Evaluated supplied buggy/fixed benchmark observations; no replay command ran."
+            elif a.senior_cmd == "schedule":
+                result = plan_incremental(Path(a.root).resolve(), load_schedule_json(Path(a.manifest)), out=Path(a.out) if a.out else None)
+                code = 1 if result["counts"]["BLOCK"] else 0
+                result["action_summary"] = "Planned dependency-aware proof routing; no gate command ran."
+            elif a.senior_cmd == "shadow":
+                result = compare_shadow(load_schedule_json(Path(a.incremental)), load_schedule_json(Path(a.full)), out=Path(a.out) if a.out else None)
+                code = 0 if result["shadow_equivalent"] else 1
+                result["action_summary"] = "Compared supplied incremental and full obligations/findings; no plan ran."
+            elif a.senior_cmd == "replay":
+                result = run_replay(Path(a.root).resolve(), load_assurance_json(Path(a.manifest)), execute=a.execute, out=Path(a.out) if a.out else None)
+                code = 0 if result["state"] in {"PLAN_ONLY", "PASS"} else 1
+                result["action_summary"] = "Replayed the declared candidate in a fresh process workspace; no release authority was granted." if a.execute else "Validated a contract-bound replay plan; no candidate command ran."
+            elif a.senior_cmd == "repair":
+                result = compare_repair(Path(a.root).resolve(), load_assurance_json(Path(a.manifest)), execute=a.execute, out=Path(a.out) if a.out else None)
+                code = 0 if result["state"] in {"PLAN_ONLY", "PASS"} else 1
+                result["action_summary"] = "Compared original, repaired, and negative-control executions; release authority stayed disabled." if a.execute else "Validated a repair comparison; no candidate command ran."
+            elif a.senior_cmd == "reuse":
+                result = explain_evidence_reuse(Path(a.root).resolve(), load_assurance_json(Path(a.manifest)), out=Path(a.out) if a.out else None)
+                code = 1 if result["counts"]["BLOCK"] else 0
+                result["action_summary"] = "Explained exact evidence reuse and fail-closed reruns; no gate command ran."
+            else:
+                receipt_path = Path(a.receipt)
+                receipt, receipt_sha256 = load_assurance_json(receipt_path), None
+                try:
+                    receipt_sha256 = __import__("hashlib").sha256(receipt_path.read_bytes()).hexdigest()
+                except OSError:
+                    pass
+                result = failure_brief(receipt, receipt_path=receipt_path.as_posix(), receipt_sha256=receipt_sha256, out=Path(a.out) if a.out else None)
+                code = 0
+                result["action_summary"] = "Built an evidence-linked failure briefing; no repair or release action ran."
+        except (SeniorAssuranceError, ExecutionAttestationError, BenchmarkError, SchedulerError, OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            result = {"schema": "factory.senior.error.v1", "code": getattr(exc, "code", "E_SENIOR_INPUT"), "message": str(exc), "authority": "none", "release_approval": False}
             code = 2
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
         return code
@@ -3974,8 +4112,62 @@ def main(argv=None) -> int:
         for sub_name in LAYOUT.values():
             print(f"  {sub_name}/")
         return 0
+    if a.cmd == "release-contract":
+        workspace = Path(a.root).resolve()
+        try:
+            if a.release_contract_cmd == "template":
+                oracle_path = Path(a.oracle_contract)
+                if not oracle_path.is_absolute():
+                    oracle_path = workspace / oracle_path
+                oracle_path = oracle_path.resolve()
+                oracle_path.relative_to(workspace)
+                oracle = json.loads(oracle_path.read_text(encoding="utf-8-sig"))
+                oracle_sha = oracle.get("contract_sha256") if isinstance(oracle, dict) else None
+                if not isinstance(oracle_sha, str) or len(oracle_sha) != 64:
+                    raise ValueError("sealed Oracle contract must expose a 64-character contract_sha256")
+                stages = list(a.stages or [
+                    "specline:strict", "specline:verify-validators", "specline:gate-spec", "specline:tasks", "specline:gate-plan",
+                    "forgeline:architect", "forgeline:review", "forgeline:arch-gate", "forgeline:verify-tests", "forgeline:smoke", "forgeline:ship",
+                ])
+                evidence: dict[str, str] = {}
+                for item in a.evidence:
+                    if "=" not in item:
+                        raise ValueError("--evidence must use STAGE=PATH")
+                    key, value = item.split("=", 1)
+                    evidence[key] = value
+                oracle_relative = oracle_path.relative_to(workspace).as_posix()
+                source = source_snapshot(workspace)
+                if not source.get("ok"):
+                    raise ValueError(str(source.get("reason", "core source binding is unavailable")))
+                platform_versions = {key: value for key, value in source.get("platform_versions", {"python": source["version"]}).items() if isinstance(value, str) and value}
+                core = {"schema": RELEASE_CONTRACT_SCHEMA, "feature": a.feature, "oracle_contract": oracle_relative, "oracle_contract_sha256": oracle_sha, "required_stages": stages, "approved_by": a.approved_by.strip(), "candidate": {"source_version": source["version"], "source_commit": source["commit"], "artifact_versions": platform_versions}}
+                if evidence:
+                    core["evidence"] = evidence
+                payload = {**core, "policy_digest": release_contract_digest(core)}
+                destination = Path(a.out)
+                if not destination.is_absolute():
+                    destination = workspace / destination
+                destination = destination.resolve()
+                destination.relative_to(workspace)
+                if destination.exists():
+                    raise ValueError("release contract output already exists; choose a new path")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                result = {"ok": True, "marker": "RELEASE_CONTRACT_TEMPLATE_WRITTEN", "path": destination.relative_to(workspace).as_posix(), "policy_digest": payload["policy_digest"], "claim_boundary": "Template generation only; it does not approve, execute, publish, deploy, sign, or authenticate an approver."}
+            else:
+                contract_path = Path(a.contract)
+                if not contract_path.is_absolute():
+                    contract_path = workspace / contract_path
+                value = json.loads(contract_path.read_text(encoding="utf-8-sig"))
+                required = set(value.get("required_stages", [])) if isinstance(value, dict) else set()
+                result = verify_release_contract(workspace, a.feature, contract_path, required)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            result = {"ok": False, "marker": "RELEASE_CONTRACT_INVALID", "reason": str(exc)[:240]}
+        print(json.dumps(result, indent=2, sort_keys=True) if a.json else f"release contract: {result.get('marker')}" + (f" ({result.get('reason')})" if result.get("reason") else ""))
+        return 0 if result.get("ok") else 1
     if a.cmd == "assemble":
-        report = assemble(Path(a.root), a.feature, dry_run=a.dry_run)
+        report = assemble(Path(a.root), a.feature, dry_run=a.dry_run,
+                          release_contract_path=Path(a.release_contract) if a.release_contract else None)
         print(json.dumps(report, indent=2))
         return 0 if "halted_at" not in report else 1
     if a.cmd == "continue":
@@ -4281,7 +4473,8 @@ def main(argv=None) -> int:
             return 0 if payload.get("valid", payload.get("passed", False)) else 1
         return 0
     if a.cmd == "verify":
-        result = verify_feature(Path(a.root), a.feature)
+        result = verify_feature(Path(a.root), a.feature, strict_release=a.strict_release,
+                                release_contract_path=Path(a.release_contract) if a.release_contract else None)
         if a.json:
             print(json.dumps(result, indent=2))
         else:
@@ -4289,9 +4482,11 @@ def main(argv=None) -> int:
             print("=" * 44)
             for module in result["modules"]:
                 print(f"{module['label']:<8} {module['status'].upper()}")
-            print(f"FACTORY  {'SHIPPABLE' if result['shippable'] else 'NOT SHIPPABLE'}")
+            decision = result["release_ready"] if a.strict_release else result["shippable"]
+            label = "STRICT LOCAL GATES PASS" if a.strict_release and decision else "LOCAL GATES PASS" if decision else "NOT READY"
+            print(f"FACTORY  {label}")
             print(f"next action: {result['next_action']}")
-        return 0 if result["shippable"] else 1
+        return 0 if (result["release_ready"] if a.strict_release else result["shippable"]) else 1
     if a.cmd == "meter":
         if a.interval <= 0:
             print("meter failed: --interval must be positive", file=sys.stderr)
@@ -5039,13 +5234,50 @@ def main(argv=None) -> int:
                 print(f"packet      : {result['artifacts']['paths']['markdown']}")
             print("authority   : no source modification, test execution, commit, merge, publication, deployment, credential, or network action")
         return 0
-    if a.cmd == "release":
+    if a.cmd == "release" and a.release_cmd == "integrity":
         result = release_integrity(Path(a.root))
         if a.json:
             print(json.dumps(result, indent=2, sort_keys=True))
         else:
             print(render_release_integrity(result))
         return 0 if result["ok"] else 1
+    if a.cmd == "release" and a.release_cmd == "preflight":
+        root = Path(a.root).resolve()
+        try:
+            artifact_dirs = [Path(item) for item in a.artifact_dir] if a.artifact_dir else None
+            metadata_paths = [Path(item) for item in a.metadata_path] if a.metadata_path else None
+            result = write_release_candidate_preflight(root, Path(a.contract), artifact_dirs, Path(a.out), metadata_paths=metadata_paths) if a.out else release_candidate_preflight(root, Path(a.contract), artifact_dirs, metadata_paths=metadata_paths)
+        except (OSError, UnicodeDecodeError, ValueError, TypeError) as exc:
+            result = {"schema": "factory.release-candidate-preflight.v1", "marker": "RELEASE_CANDIDATE_PREFLIGHT_BLOCKED", "ok": False, "blockers": [{"code": "RELEASE_CANDIDATE_INPUT_INVALID", "detail": str(exc)[:240]}], "authority": {"execution": False, "approval": False, "repair": False, "merge": False, "publication": False, "deployment": False, "signing": False, "credential": False, "provider_call": False}}
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(f"release candidate preflight: {'PASS' if result.get('ok') else 'BLOCKED'}")
+            for check in result.get("checks", []):
+                print(f"- {'PASS' if check.get('passed') else 'FAIL'} {check.get('id')}: {check.get('evidence')}")
+            for blocker in result.get("blockers", []):
+                print(f"- BLOCK {blocker.get('code')}: {blocker.get('detail')}")
+            print("authority: no execution, credential, provider, publication, deployment, signing, merge, or approval authority")
+        return 0 if result.get("ok") else 1
+    if a.cmd == "release" and a.release_cmd == "decision":
+        try:
+            result = release_decision_card(Path(a.root), a.feature)
+        except ValueError as exc:
+            result = {
+                "schema": RELEASE_DECISION_SCHEMA,
+                "marker": "RELEASE_DECISION_INPUT_REJECTED",
+                "state": "INPUT_REJECTED",
+                "reason": str(exc),
+                "authority": {"execution": False, "approval": False, "repair": False, "merge": False, "publication": False, "deployment": False, "signing": False, "messaging": False, "credential": False, "connector": False},
+                "claim_boundary": "Input validation only; no local workflow, feature evidence, provider, credential, or release action ran.",
+            }
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif result.get("state") == "INPUT_REJECTED":
+            print(f"release decision: INPUT_REJECTED ({result['reason']})")
+        else:
+            print(render_release_decision_card(result))
+        return 0 if result.get("state") == "EXTERNAL_GATES_UNOBSERVED" else 1
     if a.cmd == "jetbrains":
         root = Path(a.root).resolve()
         try:

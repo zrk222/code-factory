@@ -1,0 +1,131 @@
+name: senior-engineering-integration
+language: python
+modules:
+  - name: independent_execution
+    path: factoryline/independent_execution.py
+    imports: [enterprise_receipts, runtime_audit_common]
+    functions:
+      - name: validate_execution_attestation
+        args: ["value: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Validate one bounded, candidate-bound execution observation without release authority."
+      - name: verify_signed_execution_attestation
+        args: ["path: Path", "trust_root_path: Path"]
+        returns: "dict[str, Any]"
+        doc: "Verify one DSSE-signed observation against an explicit offline trust root."
+  - name: benchmark_lab
+    path: factoryline/benchmark_lab.py
+    imports: [runtime_audit_common]
+    functions:
+      - name: validate_benchmark_manifest
+        args: ["value: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Validate immutable source, buggy/fixed digest, expected finding, and replay metadata."
+      - name: evaluate_benchmark
+        args: ["manifest: dict[str, Any]", "observations: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Compute case-level and per-category defect detection metrics from supplied observations."
+      - name: load_benchmark_json
+        args: ["path: Path"]
+        returns: "dict[str, Any]"
+        doc: "Load one bounded benchmark JSON object for the CLI without execution."
+  - name: incremental_scheduler
+    path: factoryline/incremental_scheduler.py
+    imports: [proof_reuse, runtime_audit_common]
+    functions:
+      - name: validate_schedule_manifest
+        args: ["value: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Validate a bounded dependency DAG, closure, assurance level, and side-effect declarations."
+      - name: plan_incremental
+        args: ["root: Path", "manifest: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Plan RUN, REUSE, SKIP, or BLOCK dispositions without executing any gate."
+      - name: compare_shadow
+        args: ["incremental: dict[str, Any]", "full: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Compare incremental and full obligations/findings before a skip is reviewed."
+      - name: load_schedule_json
+        args: ["path: Path"]
+        returns: "dict[str, Any]"
+        doc: "Load one bounded schedule JSON object for the CLI without execution."
+  - name: senior_assurance
+    path: factoryline/senior_assurance.py
+    imports: [runtime_audit_common]
+    functions:
+      - name: validate_replay_manifest
+        args: ["root: Path", "value: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Validate exact source, dependency, policy, input, argv, and contract bindings without execution."
+      - name: run_replay
+        args: ["root: Path", "manifest: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Run one explicit candidate in a fresh temporary process workspace with bounded output and cleanup."
+      - name: compare_repair
+        args: ["root: Path", "manifest: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Compare original failure, repaired candidate, and negative controls under one sealed contract."
+      - name: explain_evidence_reuse
+        args: ["root: Path", "manifest: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Explain exact reuse or fail-closed rerun from policy, dependency, toolchain, environment, and input facts."
+      - name: failure_brief
+        args: ["receipt: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Create an evidence-linked briefing with impact scope, reproduction, next fix, and uncertainty."
+dependencies: []
+invariants:
+  - name: no-release-authority
+    forbid_pattern: "(?i)\\b(publish|deploy|approve)\\s*\\(|release_approval\\s*[:=]\\s*true"
+    scopes:
+      - module: independent_execution
+        symbol: validate_execution_attestation
+        max_lines: 260
+      - module: independent_execution
+        symbol: verify_signed_execution_attestation
+        max_lines: 120
+      - module: benchmark_lab
+        symbol: evaluate_benchmark
+        max_lines: 260
+      - module: incremental_scheduler
+        symbol: plan_incremental
+        max_lines: 260
+      - module: incremental_scheduler
+        symbol: compare_shadow
+        max_lines: 120
+      - module: senior_assurance
+        symbol: run_replay
+        max_lines: 280
+      - module: senior_assurance
+        symbol: compare_repair
+        max_lines: 220
+      - module: senior_assurance
+        symbol: explain_evidence_reuse
+        max_lines: 220
+      - module: senior_assurance
+        symbol: failure_brief
+        max_lines: 180
+  - name: no-network-or-secret-lookup
+    forbid_pattern: "(?i)\\b(requests|httpx|urllib3|os\\.environ|os\\.getenv)\\b"
+    scopes:
+      - module: independent_execution
+        symbol: validate_execution_attestation
+        max_lines: 260
+      - module: benchmark_lab
+        symbol: evaluate_benchmark
+        max_lines: 260
+      - module: incremental_scheduler
+        symbol: plan_incremental
+        max_lines: 260
+      - module: senior_assurance
+        symbol: validate_replay_manifest
+        max_lines: 260
+      - module: senior_assurance
+        symbol: run_replay
+        max_lines: 280
+      - module: senior_assurance
+        symbol: compare_repair
+        max_lines: 220
+      - module: senior_assurance
+        symbol: explain_evidence_reuse
+        max_lines: 220

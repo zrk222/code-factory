@@ -24,7 +24,7 @@ CANDIDATE_KEYS = ("bundle_identifier", "version", "build_number", "source_commit
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
 def _sha(value: object) -> str:
@@ -76,6 +76,8 @@ def _atomic(path: Path, payload: dict[str, Any]) -> None:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):
@@ -186,9 +188,19 @@ def appforge_oracle_projection(root: Path) -> dict[str, Any]:
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
-    for path in sorted((workspace / ".factory" / "appforge").rglob("*oracle-authority*.json"))[:100]:
+    ranked: list[tuple[int, Path]] = []
+    candidates = list((workspace / ".factory" / "appforge").rglob("*oracle-authority*.json"))
+    truncated = len(candidates) > 1_000
+    for path in candidates[:1_000]:
+        try:
+            ranked.append((path.stat().st_mtime_ns, path))
+        except OSError:
+            invalid.append(path.relative_to(workspace).as_posix())
+    for _mtime, path in sorted(ranked, key=lambda item: (item[0], item[1].as_posix()))[-100:]:
         try:
             current.append(_projected_authority(workspace, path))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError, KeyError, RevenueForgeError):
             invalid.append(path.relative_to(workspace).as_posix())
-    return {"schema": "factory.appforge.oracle-authority-projection.v1", "marker": "APPFORGE_ORACLE_AUTHORITY_READ_ONLY", "current_count": len(current), "invalid_count": len(invalid), "latest": current[-1] if current else None, "invalid": invalid, "authority": {**ORACLE_AUTHORITY, "app_store_connect_write": False, "testflight_upload": False, "app_review_submit": False, "apple_approval_claim": False}, "claim_boundary": "Hash-verified local authority status only; not a policy certification, App Store Connect state, TestFlight state, submission, or Apple approval."}
+    if truncated:
+        invalid.append(".factory/appforge/<scan-truncated>")
+    return {"schema": "factory.appforge.oracle-authority-projection.v1", "marker": "APPFORGE_ORACLE_AUTHORITY_REVIEW_REQUIRED" if invalid else "APPFORGE_ORACLE_AUTHORITY_READ_ONLY", "current_count": len(current), "invalid_count": len(invalid), "truncated": truncated, "latest": current[-1] if current and not invalid else None, "invalid": invalid, "authority": {**ORACLE_AUTHORITY, "app_store_connect_write": False, "testflight_upload": False, "app_review_submit": False, "apple_approval_claim": False}, "claim_boundary": "Hash-verified local authority status only; not a policy certification, App Store Connect state, TestFlight state, submission, or Apple approval."}

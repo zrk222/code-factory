@@ -12,6 +12,10 @@ on:
         required: true
         default: false
         type: boolean
+      release_contract:
+        description: "Workspace-contained, source-bound release contract (for example release-contracts/vscode.json)"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -85,7 +89,59 @@ jobs:
           npm ci --no-audit
           npm run audit
           npm test
-          npx vsce package --no-dependencies --out factoryline-vscode.vsix
+          version="$(node -p "require('./package.json').version")"
+          npx vsce package --no-dependencies --out "factoryline-vscode-${version}.vsix"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Code Factory preflight runtime
+        working-directory: ${{ github.workspace }}
+        run: python -m pip install .
+
+      - name: Prepare source-bound release contract
+        working-directory: ${{ github.workspace }}
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          RELEASE_CONTRACT_PATH: ${{ inputs.release_contract }}
+          APPROVED_BY: ${{ github.actor }} (protected vscode deployment approval)
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          raw = os.environ["RELEASE_CONTRACT_PATH"]
+          if Path(raw).is_absolute() or raw.startswith(("/", "\\")):
+              raise SystemExit("release_contract must be workspace-relative")
+          candidate = (root / raw).resolve()
+          try:
+              candidate.relative_to(root)
+          except ValueError as exc:
+              raise SystemExit("release_contract escapes the workspace") from exc
+          PY
+          python scripts/prepare_release_contract.py \
+            --root . \
+            --feature "vscode-${RELEASE_REF}" \
+            --out "$RELEASE_CONTRACT_PATH" \
+            --approved-by "$APPROVED_BY"
+
+      - name: Require the sealed candidate preflight
+        working-directory: ${{ github.workspace }}
+        env:
+          RELEASE_CONTRACT_PATH: ${{ inputs.release_contract }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_CONTRACT_PATH" != /* && "$RELEASE_CONTRACT_PATH" != *..* ]] || { echo "release_contract must be a workspace-relative path" >&2; exit 1; }
+          test -f "$RELEASE_CONTRACT_PATH" || { echo "release contract is not present in the immutable checkout" >&2; exit 1; }
+          python -m factoryline.cli release preflight \
+            --root . \
+            --contract "$RELEASE_CONTRACT_PATH" \
+            --artifact-dir editors/vscode \
+            --metadata-path context/PROGRESS.md \
+            --out editors/vscode/release-preflight.json \
+            --json
 
       - name: Seal the verified Marketplace candidate
         shell: bash
@@ -93,10 +149,13 @@ jobs:
           RELEASE_REF: ${{ inputs.release_ref }}
         run: |
           set -euo pipefail
-          test -f factoryline-vscode.vsix
+          mapfile -t packages < <(find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print)
+          test "${#packages[@]}" -eq 1
           mkdir -p "$GITHUB_WORKSPACE/vscode-marketplace-candidate"
-          cp factoryline-vscode.vsix "$GITHUB_WORKSPACE/vscode-marketplace-candidate/"
-          sha256sum factoryline-vscode.vsix > "$GITHUB_WORKSPACE/vscode-marketplace-candidate/SHA256SUMS.txt"
+          cp "${packages[0]}" "$GITHUB_WORKSPACE/vscode-marketplace-candidate/"
+          sha256sum "${packages[0]}" > "$GITHUB_WORKSPACE/vscode-marketplace-candidate/SHA256SUMS.txt"
+          cp release-preflight.json "$GITHUB_WORKSPACE/vscode-marketplace-candidate/"
+          python "$GITHUB_WORKSPACE/scripts/verify_release_preflight.py" release-preflight.json
           printf 'release_ref=%s\ncommit=%s\npublisher=zrk222\nextension=factoryline-vscode\n' \
             "$RELEASE_REF" "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/vscode-marketplace-candidate/manifest.txt"
 
@@ -130,7 +189,9 @@ jobs:
           cd vscode-marketplace-candidate
           sha256sum --check SHA256SUMS.txt
           test -f manifest.txt
-          test -f factoryline-vscode.vsix
+          find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit | grep -q .
+          test -f release-preflight.json
+          python "$GITHUB_WORKSPACE/scripts/verify_release_preflight.py" release-preflight.json
           grep -Fx 'publisher=zrk222' manifest.txt >/dev/null
           grep -Fx 'extension=factoryline-vscode' manifest.txt >/dev/null
 
@@ -139,5 +200,5 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes @vscode/vsce@3.9.1 publish \
-            --packagePath vscode-marketplace-candidate/factoryline-vscode.vsix \
+            --packagePath "$(find vscode-marketplace-candidate -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit)" \
             --skip-duplicate

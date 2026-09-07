@@ -77,12 +77,13 @@ jobs:
           npm ci --no-audit
           npm run audit
           npm test
-          npx vsce package --no-dependencies --out factoryline-vscode-${{ github.event.release.tag_name }}.vsix
+          version="$(node -p "require('./package.json').version")"
+          npx vsce package --no-dependencies --out "factoryline-vscode-${version}.vsix"
 
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: release-vscode-${{ github.event.release.tag_name }}
-          path: editors/vscode/factoryline-vscode-${{ github.event.release.tag_name }}.vsix
+          path: editors/vscode/factoryline-vscode-*.vsix
           if-no-files-found: error
           retention-days: 30
 
@@ -139,6 +140,47 @@ jobs:
         with:
           name: release-intellij-${{ github.event.release.tag_name }}
           path: release-bundle/editors
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Code Factory preflight runtime
+        run: python -m pip install .
+
+      - name: Prepare source-bound release contract
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          APPROVED_BY: ${{ github.actor }} (protected pypi deployment approval)
+        run: |
+          set -euo pipefail
+          python scripts/prepare_release_contract.py \
+            --root . \
+            --feature "release-${RELEASE_TAG}" \
+            --out .factory/release-contracts/release.json \
+            --approved-by "$APPROVED_BY"
+
+      - name: Require sealed release candidate preflight before external publication
+        env:
+          RELEASE_CONTRACT_PATH: .factory/release-contracts/release.json
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_CONTRACT_PATH" || {
+            echo "RELEASE_CONTRACT_PATH must point to the approved, source-bound contract in the protected release environment." >&2
+            exit 1
+          }
+          test -f "$RELEASE_CONTRACT_PATH" || {
+            echo "The configured release contract is not present in the checked-out candidate." >&2
+            exit 1
+          }
+          python -m factoryline.cli release preflight \
+            --root . \
+            --contract "$RELEASE_CONTRACT_PATH" \
+            --artifact-dir release-bundle/python \
+            --artifact-dir release-bundle/editors \
+            --metadata-path context/PROGRESS.md \
+            --out release-bundle/release-preflight.json \
+            --json
 
       - name: Attach distributions to GitHub release
         env:

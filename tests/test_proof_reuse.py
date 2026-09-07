@@ -78,6 +78,53 @@ def test_exact_green_receipt_is_reused(tmp_path):
     assert "PROOF_RECEIPT_REUSED" in plan["items"][0]["markers"]
 
 
+def test_receipt_binds_regular_file_identity(tmp_path):
+    _, _, gate = _workspace(tmp_path)
+    receipt = record_proof(tmp_path, gate, elapsed_ms=1000)
+    payload = json.loads((tmp_path / ".factory" / "proofs" / f"{receipt['proof_key']}.json").read_text(encoding="utf-8"))
+    for field in ("inputs", "outputs"):
+        assert payload[field][0]["identity"]["inode"] >= 0
+        assert payload[field][0]["identity"]["size"] > 0
+
+
+def test_replaced_file_blocks_receipt_reuse(tmp_path):
+    source, _, gate = _workspace(tmp_path)
+    receipt = record_proof(tmp_path, gate, elapsed_ms=1000)
+    replacement = source.with_name("replacement.py")
+    replacement.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    source.unlink()
+    replacement.replace(source)
+    verification = verify_proof_receipt(tmp_path, receipt["receipt"])
+    assert verification["valid"] is False
+    assert verification["marker"] == "PROOF_REUSE_BLOCKED"
+    assert verification["blocked"] is True
+    assert any("file identity changed" in error for error in verification["errors"])
+
+
+def test_truncated_file_blocks_receipt_reuse(tmp_path):
+    source, _, gate = _workspace(tmp_path)
+    receipt = record_proof(tmp_path, gate, elapsed_ms=1000)
+    source.write_bytes(b"x")
+    verification = verify_proof_receipt(tmp_path, receipt["receipt"])
+    assert verification["valid"] is False
+    assert verification["marker"] == "PROOF_REUSE_BLOCKED"
+    assert any("PROOF_REUSE_BLOCKED" in error for error in verification["errors"])
+
+
+def test_symlinked_file_blocks_receipt_reuse_when_supported(tmp_path):
+    source, output, gate = _workspace(tmp_path)
+    receipt = record_proof(tmp_path, gate, elapsed_ms=1000)
+    source.unlink()
+    try:
+        source.symlink_to(output)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip(f"symlinks unavailable: {error}")
+    verification = verify_proof_receipt(tmp_path, receipt["receipt"])
+    assert verification["valid"] is False
+    assert verification["marker"] == "PROOF_REUSE_BLOCKED"
+    assert any("symlink" in error for error in verification["errors"])
+
+
 def test_mutated_input_forces_run_and_challenge_rejects_it(tmp_path):
     source, _, gate = _workspace(tmp_path)
     receipt = record_proof(tmp_path, gate, elapsed_ms=1000)

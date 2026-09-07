@@ -15,6 +15,16 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      - name: Require Hugging Face token before candidate work
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN" || {
+            echo "HF_TOKEN is required before Hugging Face Space candidate work." >&2
+            exit 1
+          }
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:

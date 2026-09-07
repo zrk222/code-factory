@@ -1,5 +1,14 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.9.3 - 2026-09-06
+
+- Add the senior-engineering evidence layer to the shared review story:
+  independently signed execution attestations, real-defect benchmark metrics,
+  and dependency-aware incremental proof routing with shadow comparison.
+- Keep these controls review-only and human-owned: the plugin displays local
+  receipts and next actions but never runs an external runner, publishes,
+  deploys, or approves a release.
+
 ## 0.9.2 - 2026-09-04
 
 - Make First Proof the front door: challenge whether an AI-generated test can

@@ -24,7 +24,7 @@ from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCH
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.46.2"
+    assert factoryline.__version__ == "0.46.3"
 
 
 def test_cli_mvp_builds_one_contained_web_starter_with_a_proof_path(tmp_path, capsys):
@@ -88,6 +88,140 @@ def test_factory_verify_refuses_to_call_missing_receipts_shippable(tmp_path):
     result = verify_feature(tmp_path, "f")
     assert result["shippable"] is False
     assert result["next_action"] == f"factory assemble f --root {tmp_path}"
+
+
+def test_receipt_rejects_truthy_string_result():
+    import pytest
+
+    with pytest.raises(ValueError, match="ok must be a boolean"):
+        Receipt.from_dict({"module": "specline", "stage": "strict", "feature": "f", "ok": "false"})
+
+
+def test_rollup_keeps_newer_failure_when_glob_order_is_adversarial(tmp_path, monkeypatch):
+    old = Receipt("specline", "strict", "f", True).write(tmp_path)
+    new = Receipt("specline", "strict", "f", False).write(tmp_path)
+    import os
+    os.utime(old, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(new, ns=(2_000_000_000, 2_000_000_000))
+    monkeypatch.setattr(Path, "glob", lambda _self, _pattern: iter([new, old]))
+    result = rollup_receipts(tmp_path, "f")
+    assert result["earliest_failing_stage"] == "specline:strict"
+
+
+def test_rollup_normalizes_legacy_stage_spellings_before_supersession(tmp_path):
+    old = Receipt("forgeline", "verify_tests", "f", True).write(tmp_path)
+    new = Receipt("forgeline", "verify-tests", "f", False).write(tmp_path)
+    import os
+    os.utime(old, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(new, ns=(2_000_000_000, 2_000_000_000))
+
+    result = rollup_receipts(tmp_path, "f")
+
+    assert result["earliest_failing_stage"] == "forgeline:verify-tests"
+
+
+def test_factory_verify_rejects_scaffold_and_architecture_without_required_gates(tmp_path):
+    Receipt("specline", "strict", "f", True).write(tmp_path)
+    Receipt("forgeline", "architect", "f", True).write(tmp_path)
+    from factoryline.verification import verify_feature
+
+    result = verify_feature(tmp_path, "f")
+    assert result["shippable"] is False
+    assert any(item["detail"] == "forgeline:verify-tests receipt is missing or non-passing" for item in result["blockers"])
+
+
+def test_factory_verify_accepts_only_a_complete_traceable_local_pipeline(tmp_path):
+    for stage in ("strict", "verify-validators", "gate-spec", "tasks", "gate-plan"):
+        Receipt("specline", stage, "f", True).write(tmp_path)
+    for stage in ("architect", "review", "arch-gate", "verify-tests", "smoke"):
+        Receipt("forgeline", stage, "f", True).write(tmp_path)
+    Receipt("forgeline", "ship", "f", True, outputs={"intent_trace": {"intent_traceable": True, "shipped": True}}).write(tmp_path)
+    from factoryline.verification import verify_feature
+
+    assert verify_feature(tmp_path, "f")["shippable"] is True
+
+
+def test_factory_verify_strict_release_requires_oracle_bound_release_contract(tmp_path):
+    for stage in ("strict", "verify-validators", "gate-spec", "tasks", "gate-plan"):
+        Receipt("specline", stage, "f", True).write(tmp_path)
+    for stage in ("architect", "review", "arch-gate", "verify-tests", "smoke"):
+        Receipt("forgeline", stage, "f", True).write(tmp_path)
+    Receipt("forgeline", "ship", "f", True, outputs={"intent_trace": {"intent_traceable": True, "shipped": True}}).write(tmp_path)
+    from factoryline.verification import verify_feature
+
+    result = verify_feature(tmp_path, "f", strict_release=True)
+    assert result["shippable"] is False
+    assert result["release_ready"] is False
+    assert result["release_contract"]["marker"] == "RELEASE_CONTRACT_INVALID"
+
+
+def test_factory_verify_strict_release_does_not_skip_a_declared_design_gate(tmp_path):
+    for stage in ("strict", "verify-validators", "gate-spec", "tasks", "gate-plan"):
+        Receipt("specline", stage, "f", True).write(tmp_path)
+    for stage in ("architect", "review", "arch-gate", "verify-tests", "smoke"):
+        Receipt("forgeline", stage, "f", True).write(tmp_path)
+    Receipt("forgeline", "ship", "f", True, outputs={"intent_trace": {"intent_traceable": True, "shipped": True}}).write(tmp_path)
+    contract = tmp_path / ".factory/release-contracts/f.json"
+    contract.parent.mkdir(parents=True)
+    contract.write_text(json.dumps({"required_stages": ["prestige:score"]}), encoding="utf-8")
+    from factoryline.verification import verify_feature
+
+    result = verify_feature(tmp_path, "f", strict_release=True)
+
+    assert any(item["detail"] == "prestige:score receipt is missing or non-passing" for item in result["blockers"])
+
+
+def test_factory_verify_strict_release_accepts_a_current_oracle_bound_contract(tmp_path):
+    for stage in ("strict", "verify-validators", "gate-spec", "tasks", "gate-plan"):
+        Receipt("specline", stage, "f", True).write(tmp_path)
+    for stage in ("architect", "review", "arch-gate", "verify-tests", "smoke"):
+        Receipt("forgeline", stage, "f", True).write(tmp_path)
+    Receipt("forgeline", "ship", "f", True, outputs={"intent_trace": {"intent_traceable": True, "shipped": True}}).write(tmp_path)
+    from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
+    from factoryline.release_contract import _sha
+    agent = {"schema": "factory.agent-identity.v1", "subject": "release-owner", "provider": "local", "model": "reviewer"}
+    brief = tmp_path / "brief.md"
+    brief.write_text("The release must keep evidence traceable.", encoding="utf-8")
+    handoff = capture_intent_handoff(tmp_path, brief, agent, "release", Path(".factory/oracles/handoffs/f.json"))
+    rule = lambda identifier, statement, **extra: {"id": identifier, "statement": statement, "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True, **extra}
+    oracle_input = {
+        "schema": "factory.oracle-contract-input.v1", "id": "release-f", "version": 1,
+        "approved_by": "Release Owner", "approval_rationale": "A human reviewed the release boundary.", "scope_paths": ["."], "handoff": handoff["path"], "sources": [],
+        "requirements": [rule("intent", "Preserve the approved intent.")],
+        "forbidden_behaviors": [rule("weaken", "Do not weaken a required gate.")],
+        "gates": [rule("proof", "A proof receipt is required.", comparison="present", value=True)],
+        "exceptions": [{"id": "note", "statement": "A future policy note remains advisory.", "origin": "human_confirmed", "effect": "advisory", "source_id": "original-intent", "critical": False}], "negative_cases": [rule("negative", "A missing receipt cannot pass.")],
+        "invariants": [rule("bound", "Evidence stays bound to this feature.")],
+        "tests": [rule("test", "The required proof test must run.", path="tests/test_release.py")],
+    }
+    source = tmp_path / "oracle-input.json"
+    source.write_text(json.dumps(oracle_input), encoding="utf-8")
+    oracle_path = Path(seal_oracle_contract(tmp_path, source, Path(".factory/oracles/contracts/f.json"))["path"])
+    oracle = json.loads((tmp_path / oracle_path).read_text(encoding="utf-8"))
+    stages = [f"specline:{stage}" for stage in ("strict", "verify-validators", "gate-spec", "tasks", "gate-plan")]
+    stages += [f"forgeline:{stage}" for stage in ("architect", "review", "arch-gate", "verify-tests", "smoke", "ship")]
+    core = {"schema": "factory.release-contract.v1", "feature": "f", "oracle_contract": oracle_path.as_posix(), "oracle_contract_sha256": oracle["contract_sha256"], "required_stages": stages, "approved_by": "Release Owner"}
+    release = {**core, "policy_digest": _sha(core)}
+    destination = tmp_path / ".factory/release-contracts/f.json"
+    destination.parent.mkdir(parents=True)
+    destination.write_text(json.dumps(release), encoding="utf-8")
+    # Strict readiness requires every selected gate receipt to carry the exact
+    # Oracle and release-policy digests; an otherwise green receipt set is not
+    # sufficient evidence of contract-bound work.
+    for receipt_path in (tmp_path / "receipts").glob("*.json"):
+        payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+        payload["inputs"] = {
+            "oracle_contract_sha256": oracle["contract_sha256"],
+            "release_contract_policy_digest": release["policy_digest"],
+        }
+        receipt_path.write_text(json.dumps(payload), encoding="utf-8")
+    from factoryline.verification import verify_feature
+
+    result = verify_feature(tmp_path, "f", strict_release=True)
+
+    assert result["shippable"] is True
+    assert result["release_ready"] is True
+    assert result["release_contract"]["marker"] == "RELEASE_CONTRACT_VALID"
 
 
 def test_protocol_requires_design_md_compatible_prestige():

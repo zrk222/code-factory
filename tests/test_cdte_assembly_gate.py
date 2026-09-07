@@ -49,19 +49,21 @@ def test_gate_passes_a_clean_spec(tmp_path):
     assert outcome["summary"]["conflicts"] == []
 
 
-def test_gate_degrades_gracefully_on_unreadable_constraints(tmp_path):
-    """A broken constraints file must not halt the line with a stack trace."""
+def test_gate_fails_closed_on_unreadable_declared_constraints(tmp_path):
+    """A declared constraints file is an obligation, not an optional hint."""
     (tmp_path / "specs").mkdir(parents=True)
     (tmp_path / "specs" / "checkout.nfr.json").write_text("{not json", encoding="utf-8")
     outcome = _cdte_gate(tmp_path, "checkout")
-    assert outcome["blocking"] is False
-    assert outcome["stage"]["status"] == "skipped"
+    assert outcome["blocking"] is True
+    assert outcome["stage"]["status"] == "blocked"
+    assert outcome["stage"]["marker"] == "CDTE_INPUT_INVALID"
 
 
 def test_gate_degrades_on_malformed_constraints(tmp_path):
     _write(tmp_path, "checkout", [{"category": "performance"}])  # no metric
     outcome = _cdte_gate(tmp_path, "checkout")
-    assert outcome["stage"]["status"] == "skipped"
+    assert outcome["blocking"] is True
+    assert outcome["stage"]["status"] == "blocked"
     assert "CONSTRAINT_FIELD_MISSING" in outcome["stage"]["reason"]
 
 

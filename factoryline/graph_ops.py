@@ -37,6 +37,8 @@ from .continuous_proof import continuous_proof_projection
 from .proof_review_workflow import proof_review_projection
 from .revenueforge import revenueforge_projection
 from .appforge_design import appforge_design_projection
+from .release_contract import release_readiness_projection
+from .release_decision import release_workflow_decision_projection
 from .oracle_firewall import oracle_firewall_projection, verify_oracle_contract
 from .proof_continuity_ledger import proof_continuity_projection
 from .semantic_authority import semantic_authority_projection
@@ -50,6 +52,7 @@ from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
 from .deep_audit_loop import deep_audit_lineage
 from .mission_control_status import mission_control_status
+from .senior_engineering import senior_engineering_projection
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -1943,6 +1946,12 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "review_oracle_weakening", "A proposed gate, scenario, threshold, test, or exception weakens the sealed definition of done. Keep work paused until a named human reviews a separately sealed successor contract."
     if facts.get("oracle_invalid_count", 0) > 0:
         return "repair_oracle_integrity", "An Oracle Firewall artifact is invalid or stale. Do not rely on autonomous admission or AppForge authority until its exact source binding is current."
+    if facts.get("senior_engineering_invalid_count", 0) > 0 or facts.get("senior_engineering_shadow_mismatch_count", 0) > 0:
+        return "review_senior_engineering_evidence", "A senior-engineering receipt is invalid or its incremental plan differs from the full obligation set; keep the release review-bound until the supplied evidence is repaired."
+    if facts.get("senior_engineering_blocked_count", 0) > 0:
+        return "review_senior_engineering_block", "A supplied benchmark or incremental plan is blocked; inspect the bounded failure evidence before relying on the result."
+    if facts.get("release_decision_workflow_blocked", 0) > 0:
+        return "repair_release_workflow", "A declared local release-workflow boundary failed. Repair its named local check before evaluating feature evidence or inspecting an external provider."
     if facts.get("semantic_authority_expired_lease_count", 0) > 0:
         return "renew_semantic_authority", "An agent lease expired. Keep the handoff constrained and obtain a fresh named approval rather than extending or replaying the prior lease."
     if facts.get("semantic_authority_invalid_count", 0) > 0:
@@ -1953,7 +1962,7 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "repair_intent_trace_binding", "A Factoryline intent adapter no longer matches the exact Forge ship line it claims to observe; review the bounded receipt pair before relying on traceability."
     if facts.get("intent_trace_unbound_count", 0) > 0:
         return "refresh_intent_trace_adapter", "A Factoryline intent adapter cannot be bound to a readable Forge ship line; rerun the supervised assembly or repair the local evidence source."
-    if facts["node_count"] == 0:
+    if facts["operational_node_count"] == 0:
         return "initialize_graph", "No readable local Factory graph artifacts were found."
     if facts["agent_incident_count"] > 0:
         return "review_agent_demotion", "A governed agent result triggered automatic demotion. Inspect the bound incident capsule and collect fresh independent evidence before expanding autonomy."
@@ -2027,6 +2036,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
+        "operational_node_count": sum(node["kind"] != "release_decision" for node in nodes),
         "edge_count": 0,
         "stale_proof_count": stale_proof_count,
         "blocked_gate_count": gates["BLOCK"],
@@ -2244,6 +2254,29 @@ def _append_admission_packets(state: dict[str, Any], root: Path) -> dict[str, in
     return facts
 
 
+def _append_senior_engineering(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project 0.46.3 senior receipts as bounded, review-only Graph Ops nodes."""
+    projection = senior_engineering_projection(root)
+    for receipt in projection["receipts"]:
+        identity = receipt.get("receipt_sha256") or receipt.get("attestation_id") or receipt.get("benchmark_id") or receipt.get("plan_id") or receipt["path"]
+        node_id = f"senior-engineering:{_sha({'path': receipt['path'], 'identity': identity})[:24]}"
+        status = str(receipt.get("status", "UNKNOWN")).lower()
+        _node(
+            state,
+            node_id=node_id,
+            kind="senior_engineering_evidence",
+            label=f"senior evidence {receipt.get('schema', 'unknown')}"[:240],
+            source=receipt["path"],
+            status=status,
+            facts={
+                key: value
+                for key, value in receipt.items()
+                if key not in {"path", "schema", "status", "valid"}
+            },
+        )
+    return projection
+
+
 def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
     """Collect every bounded local projection without deciding presentation."""
     from .jetbrains_handshake import jetbrains_handshake_projection
@@ -2268,8 +2301,12 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
     })
     mission_control = mission_control_status(workspace)
     shared = mission_control["evidence"]
+    release_decision = release_workflow_decision_projection(shared["release_workflow_integrity"])
+    _node(state, node_id=release_decision["id"], kind=release_decision["kind"], label=release_decision["label"],
+          source=release_decision["source"], status=release_decision["status"], facts=release_decision["facts"])
     values.update({
         "mission_control": mission_control,
+        "release_decision": release_decision["facts"],
         "oracle_firewall": _append_oracle_firewall(state, workspace, shared["oracle"]),
         "proof_continuity": _append_proof_continuity(state, workspace),
         "semantic_authority": _append_semantic_authority(state, workspace),
@@ -2294,8 +2331,10 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
         "proof_review": proof_review_projection(workspace),
         "revenueforge": revenueforge_projection(workspace),
         "appforge": appforge_design_projection(workspace),
+        "release_readiness": release_readiness_projection(workspace),
         "saas_proof": saas_proof_projection(workspace),
         "jetbrains_handshake": jetbrains_handshake_projection(workspace),
+        "senior_engineering": _append_senior_engineering(state, workspace),
     })
     return values
 
@@ -2356,9 +2395,21 @@ def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list
         "repair_loop_receipt_count": p["repair_loops"]["receipt_count"],
         "repair_loop_invalid_count": p["repair_loops"]["invalid_count"],
         "mission_control_state": p["mission_control"]["state"],
+        "release_decision_state": p["release_decision"]["state"],
+        "release_decision_workflow_blocked": int(p["release_decision"]["state"] == "LOCAL_WORKFLOW_BLOCKED"),
         "edge_count": len(edges),
         "appforge_design_current_count": appforge["current_count"],
         "appforge_design_invalid_count": appforge["invalid_count"],
+        "release_contract_count": p["release_readiness"]["contract_count"],
+        "release_ready_count": p["release_readiness"]["ready_count"],
+        "release_contract_invalid_count": p["release_readiness"]["invalid_count"],
+        "senior_engineering_receipt_count": p["senior_engineering"]["receipt_count"],
+        "senior_engineering_verified_count": p["senior_engineering"]["verified_count"],
+        "senior_engineering_invalid_count": p["senior_engineering"]["invalid_count"],
+        "senior_engineering_blocked_count": p["senior_engineering"]["blocked_count"],
+        "senior_engineering_run_count": p["senior_engineering"]["run_count"],
+        "senior_engineering_reuse_count": p["senior_engineering"]["reuse_count"],
+        "senior_engineering_shadow_mismatch_count": p["senior_engineering"]["shadow_mismatch_count"],
     })
     for name in ("init", "quality_audit", "submission_assurance", "oracle_authority", "device_reality",
                  "release_rehearsal", "native_surface", "surface_matrix", "storefront_story", "fastlane_capture",
@@ -2379,6 +2430,10 @@ def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]
         (any(appforge[name][key] for name in ("quality_audit", "submission_assurance", "oracle_authority", "device_reality", "release_rehearsal") for key in ("current_count", "invalid_count")) or any((appforge["current_count"], appforge["invalid_count"])), ("GRAPH_OPS_APPFORGE_READ_ONLY",)),
         (any((p["saas_proof"]["current_count"], p["saas_proof"]["invalid_count"])), ("GRAPH_OPS_SAAS_PROOF_READ_ONLY",)),
         (p["jetbrains_handshake"]["state"] != "empty", ("GRAPH_OPS_JETBRAINS_HANDSHAKE_READ_ONLY",)),
+        (True, ("GRAPH_OPS_RELEASE_DECISION_VISIBLE", "RELEASE_DECISION_GRAPH_READ_ONLY")),
+        (p["release_decision"]["state"] == "LOCAL_WORKFLOW_BLOCKED", ("GRAPH_OPS_RELEASE_DECISION_WORKFLOW_BLOCKED",)),
+        (p["release_readiness"]["contract_count"] or p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_READ_ONLY",)),
+        (p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_REVIEW_REQUIRED",)),
         (any((semantic["handoff_count"], semantic["lease_count"], semantic["invalid_count"])), ("GRAPH_OPS_SEMANTIC_AUTHORITY_READ_ONLY",)),
         (any((semantic["expired_lease_count"], semantic["invalid_count"])), ("GRAPH_OPS_SEMANTIC_AUTHORITY_REVIEW_REQUIRED",)),
         (any((enterprise["decision_count"], enterprise["invalid_count"])), ("GRAPH_OPS_ENTERPRISE_ENFORCEMENT_READ_ONLY",)),
@@ -2388,6 +2443,8 @@ def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]
         (any((p["operations_control"]["receipt_count"], p["operations_control"]["invalid_count"])), ("GRAPH_OPS_OPERATIONS_CONTROL_READ_ONLY",)),
         (any((p["lifecycle"]["run_count"], p["lifecycle"]["invalid_count"])), ("GRAPH_OPS_LIFECYCLE_READ_ONLY", "GRAPH_OPS_SESSION_TRACE_READ_ONLY")),
         (any((p["repair_loops"]["receipt_count"], p["repair_loops"]["invalid_count"])), ("GRAPH_OPS_REPAIR_LOOP_READ_ONLY",)),
+        (p["senior_engineering"]["receipt_count"] or p["senior_engineering"]["invalid_count"], ("GRAPH_OPS_SENIOR_ENGINEERING_READ_ONLY",)),
+        (p["senior_engineering"]["invalid_count"] or p["senior_engineering"]["shadow_mismatch_count"] or p["senior_engineering"]["blocked_count"], ("GRAPH_OPS_SENIOR_ENGINEERING_REVIEW_REQUIRED",)),
     ]
     return sorted({*markers, *(marker for enabled, additions in rules if enabled for marker in additions)})
 
@@ -2458,8 +2515,10 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "repair_loops": p["repair_loops"],
         "deep_audit": p["deep_audit"],
         "mission_control": p["mission_control"],
+        "release_decision": p["release_decision"],
         "saas_proof": p["saas_proof"],
         "jetbrains_handshake": p["jetbrains_handshake"],
+        "release_readiness": p["release_readiness"],
     }
     return {**core, "base_graph_sha256": base_graph_sha256, "graph_sha256": _sha(core), "mermaid": _mermaid(projected_nodes, projected_edges)}
 
@@ -2480,34 +2539,38 @@ def graph_ops_impact(root: Path, changed_paths: list[str]) -> dict[str, Any]:
         raise ValueError("at least one changed path is required")
     snapshot = graph_ops_snapshot(root)
     nodes = {node["id"]: node for node in snapshot["nodes"]}
-    inputs = {
-        edge["source"]: edge["target"]
-        for edge in snapshot["edges"]
-        if edge["relation"] == "input_to" and nodes.get(edge["source"], {}).get("kind") == "artifact"
-    }
+    # One artifact can legitimately have several proof receipts over time.
+    # Keep every input edge instead of letting a dict comprehension hide the
+    # current receipt behind whichever proof happened to be iterated last.
+    inputs: dict[str, list[str]] = {}
+    for edge in snapshot["edges"]:
+        if edge["relation"] != "input_to" or nodes.get(edge["source"], {}).get("kind") != "artifact":
+            continue
+        inputs.setdefault(edge["source"], []).append(edge["target"])
     gate_for_proof: dict[str, list[str]] = {}
     for edge in snapshot["edges"]:
         if edge["relation"] == "uses_proof":
             gate_for_proof.setdefault(edge["target"], []).append(edge["source"])
 
     matched: dict[str, dict[str, Any]] = {}
-    for artifact_id, proof_id in inputs.items():
+    for artifact_id, proof_ids in inputs.items():
         artifact = nodes[artifact_id]
         artifact_path = str(artifact.get("facts", {}).get("path", artifact.get("label", "")))
         path_matches = [path for path in changed if artifact_path == path or artifact_path.startswith(path + "/")]
         if not path_matches:
             continue
-        proof = nodes.get(proof_id)
-        if proof is None:
-            continue
-        entry = matched.setdefault(proof_id, {
-            "proof_id": proof_id,
-            "label": proof["label"],
-            "status": proof.get("status", "unknown"),
-            "input_artifacts": [],
-            "gates": [],
-        })
-        entry["input_artifacts"].append({"path": artifact_path, "changed_paths": path_matches})
+        for proof_id in sorted(set(proof_ids)):
+            proof = nodes.get(proof_id)
+            if proof is None:
+                continue
+            entry = matched.setdefault(proof_id, {
+                "proof_id": proof_id,
+                "label": proof["label"],
+                "status": proof.get("status", "unknown"),
+                "input_artifacts": [],
+                "gates": [],
+            })
+            entry["input_artifacts"].append({"path": artifact_path, "changed_paths": path_matches})
     for proof_id, entry in matched.items():
         entry["input_artifacts"].sort(key=lambda item: item["path"])
         entry["gates"] = sorted({
@@ -2516,8 +2579,16 @@ def graph_ops_impact(root: Path, changed_paths: list[str]) -> dict[str, Any]:
             if gate_id in nodes
         })
     matched_rows = [matched[key] for key in sorted(matched)]
-    stale = [item for item in matched_rows if item["status"] == "stale"]
     verified_current = [item for item in matched_rows if item["status"] == "verified"]
+    # A rerun creates a new content-addressed receipt while the historical
+    # receipt remains useful lineage.  Once a current receipt exists for the
+    # same gate label, the older stale receipt is superseded for this impact
+    # decision; otherwise every changed input would stay blocked forever.
+    current_labels = {item["label"] for item in verified_current}
+    stale = [
+        item for item in matched_rows
+        if item["status"] == "stale" and item["label"] not in current_labels
+    ]
     core = {
         "schema": "factory.graph-impact.v1",
         "marker": "GRAPH_OPS_IMPACT_EXACT",

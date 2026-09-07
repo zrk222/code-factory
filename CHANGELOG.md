@@ -17,6 +17,39 @@
 
 ## Unreleased
 
+### Codex metadata integrity follow-up
+
+- Resolve the 91-record active metadata audit: compact ForgeLine receipt hashes
+  and SSAT digests now bind evidence to intent, terminal ``smoked`` states are
+  classified correctly, and pending/intent/blocked states no longer masquerade
+  as missing proof lineage.
+- Order progress entries per workflow stream so independent agent sessions can
+  arrive out of order without hiding a real within-stream timestamp regression;
+  the active audit now returns zero findings on the repository metadata.
+
+### Six-module release hardening
+
+- Make local readiness fail closed on malformed receipt fields, incomplete
+  SpecLine/ForgeLine evidence, missing intent traces, and a newer failing
+  receipt hidden behind a legacy stage spelling.
+- Add a hash-bound `factory.release-contract.v1` for strict local release
+  decisions, with a public template/verify CLI. Contracts use a closed stage
+  registry, require explicit AppForge evidence when mobile scope is declared,
+  and bind every selected receipt to the current Oracle and policy digests.
+- Make AppForge mobile evidence platform-specific: Android evidence can no
+  longer satisfy a missing iOS check, any failed check blocks even if another
+  report passes, and non-finite production values are rejected.
+- Select current AppForge evidence by stable filesystem observation rather than
+  filename order, replay referenced sources before exposing READY, and mask
+  older ready state when a newer malformed or stale artifact is present.
+- Require AppForge local build and signing evidence per platform; preserve
+  upload, processing, tester, and store-decision states as explicit external
+  state rather than approval claims.
+- Pin the companion-tool revisions exercised in CI and add a clean-wheel
+  release-train smoke that proves incomplete evidence, strict bound success,
+  and stale-receipt rejection. These remain local proof checks, not provider
+  submission or approval claims.
+
 ### AppForge Mobile Evidence Adapter
 
 - Add `factory revenue appforge-mobile-evidence`, a provider-neutral,
@@ -29,6 +62,40 @@
 - Keep every external boundary explicit: Code Factory does not execute the
   tools, authenticate provider reports, operate a device, access a store,
   submit a build, or guarantee platform approval.
+
+## 0.46.3 - 2026-09-05
+
+- Add the senior assurance loop: fresh contract-bound replay, executable repair
+  comparison with negative controls, policy/dependency/toolchain/environment
+  reuse explanations, and evidence-linked failure briefings. Unknown inputs
+  force a rerun; side effects block reuse; changed expectations require human
+  review; all four adapters remain zero-authority and bounded.
+- Add the senior-engineering evidence layer: independently signed execution
+  attestations, a manifest-bound real-defect benchmark lab, and a
+  dependency-aware incremental scheduler with shadow comparison. These are
+  review-only adapters; they do not execute supplied commands or grant release
+  authority.
+- Expose `factory senior attest|benchmark|schedule|shadow` with bounded,
+  content-addressed JSON receipts. Unknown dependency closure, side effects,
+  stale assurance, replayed attestations, missed defects, and non-equivalent
+  incremental plans fail closed.
+- Project those receipts into Graph Ops as read-only evidence nodes with
+  self-hash, authority, blocked-plan, and shadow-mismatch markers; Graph Ops
+  never executes the supplied runner or changes release authority.
+- Align the core package, MCP Registry descriptor, release-channel guidance,
+  citation, and archival metadata on the `0.46.3` candidate. This source
+  alignment is not a PyPI, Registry, Zenodo, Space, marketplace, or GitHub
+  release receipt.
+- Require the declared Hugging Face `HF_TOKEN` before checkout, setup,
+  metadata tooling, or upload work in the Space workflow, and make static
+  release integrity reject a missing or late admission boundary.
+- Keep Space-card metadata validation before client installation and remote
+  upload; local checks remain read-only and do not inspect a secret or contact
+  Hugging Face.
+- Make Windows bounded verifier shutdown less flaky by isolating its process
+  group and accepting a raced `taskkill` status only after the supervisor and
+  both captured streams have closed. It remains bounded supervision, not a
+  sandbox or proof that hidden descendants cannot exist.
 
 ## 0.46.2 - 2026-09-03
 

@@ -1,0 +1,29 @@
+{
+  "checks": [
+    {
+      "name": "huggingface_admission_requires_token_before_candidate_markers",
+      "kind": "python",
+      "run": "import importlib.util\nfrom pathlib import Path\nfrom tempfile import TemporaryDirectory\nmodule_path = Path('factoryline/release_route_integrity.py')\nspec = importlib.util.spec_from_file_location('release_route_integrity_smoke', module_path)\nmodule = importlib.util.module_from_spec(spec)\nassert spec and spec.loader\nspec.loader.exec_module(module)\nwith TemporaryDirectory() as directory:\n    root = Path(directory)\n    workflow = root / '.github' / 'workflows' / 'huggingface-space.yml'\n    workflow.parent.mkdir(parents=True)\n    workflow.write_text('''jobs:\n  publish:\n    steps:\n      - name: Require Hugging Face token before candidate work\n        env:\n          HF_TOKEN: ${{ secrets.HF_TOKEN }}\n        run: |\n          test -n \"$HF_TOKEN\"\n          echo \"HF_TOKEN is required before Hugging Face Space candidate work.\"\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n      - name: Validate static Space metadata before remote upload\n      - name: Install Hugging Face CLI\n      - name: Publish static Space\n        run: HfApi(token=os.environ[\"HF_TOKEN\"]).upload_folder()\n''', encoding='utf-8')\n    result = module._huggingface_space_authorization_check(root)\n    assert result['id'] == 'HUGGINGFACE_AUTHORIZATION_EARLY'\n    assert result['passed'] is True\nprint('HUGGINGFACE_ADMISSION_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "HUGGINGFACE_ADMISSION_SMOKE_PASS",
+      "timeout_s": 30,
+      "must_fail_on_stub": true,
+      "covers": [
+        "HUGGINGFACE_AUTHORIZATION_EARLY",
+        "HUGGINGFACE_METADATA_PREFLIGHT"
+      ]
+    },
+    {
+      "name": "bounded_verifier_runner_returns_closed_stream_receipt",
+      "kind": "python",
+      "run": "import importlib.util\nimport sys\nfrom pathlib import Path\nfrom tempfile import TemporaryDirectory\nmodule_path = Path('factoryline/runtime_audit_process.py')\nspec = importlib.util.spec_from_file_location('runtime_audit_process_smoke', module_path)\nmodule = importlib.util.module_from_spec(spec)\nassert spec and spec.loader\nspec.loader.exec_module(module)\nwith TemporaryDirectory() as directory:\n    scratch = Path(directory) / 'scratch'\n    scratch.mkdir()\n    result = module.run_bounded_command([sys.executable, '-c', 'print(\"bounded\")'], Path('.'), 5, scratch)\n    assert result['exit_code'] == 0\n    assert result['timed_out'] is False\n    assert result['cleanup_confirmed'] is True\nprint('BOUNDED_VERIFIER_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "BOUNDED_VERIFIER_SMOKE_PASS",
+      "timeout_s": 30,
+      "must_fail_on_stub": true,
+      "covers": [
+        "WINDOWS_TIMEOUT_CLEANUP_READ"
+      ]
+    }
+  ]
+}
