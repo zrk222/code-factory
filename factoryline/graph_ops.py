@@ -52,6 +52,7 @@ from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
 from .deep_audit_loop import deep_audit_lineage
 from .mission_control_status import mission_control_status
+from .senior_engineering import senior_engineering_projection
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -1945,6 +1946,10 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "review_oracle_weakening", "A proposed gate, scenario, threshold, test, or exception weakens the sealed definition of done. Keep work paused until a named human reviews a separately sealed successor contract."
     if facts.get("oracle_invalid_count", 0) > 0:
         return "repair_oracle_integrity", "An Oracle Firewall artifact is invalid or stale. Do not rely on autonomous admission or AppForge authority until its exact source binding is current."
+    if facts.get("senior_engineering_invalid_count", 0) > 0 or facts.get("senior_engineering_shadow_mismatch_count", 0) > 0:
+        return "review_senior_engineering_evidence", "A senior-engineering receipt is invalid or its incremental plan differs from the full obligation set; keep the release review-bound until the supplied evidence is repaired."
+    if facts.get("senior_engineering_blocked_count", 0) > 0:
+        return "review_senior_engineering_block", "A supplied benchmark or incremental plan is blocked; inspect the bounded failure evidence before relying on the result."
     if facts.get("release_decision_workflow_blocked", 0) > 0:
         return "repair_release_workflow", "A declared local release-workflow boundary failed. Repair its named local check before evaluating feature evidence or inspecting an external provider."
     if facts.get("semantic_authority_expired_lease_count", 0) > 0:
@@ -2249,6 +2254,29 @@ def _append_admission_packets(state: dict[str, Any], root: Path) -> dict[str, in
     return facts
 
 
+def _append_senior_engineering(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Project 0.46.3 senior receipts as bounded, review-only Graph Ops nodes."""
+    projection = senior_engineering_projection(root)
+    for receipt in projection["receipts"]:
+        identity = receipt.get("receipt_sha256") or receipt.get("attestation_id") or receipt.get("benchmark_id") or receipt.get("plan_id") or receipt["path"]
+        node_id = f"senior-engineering:{_sha({'path': receipt['path'], 'identity': identity})[:24]}"
+        status = str(receipt.get("status", "UNKNOWN")).lower()
+        _node(
+            state,
+            node_id=node_id,
+            kind="senior_engineering_evidence",
+            label=f"senior evidence {receipt.get('schema', 'unknown')}"[:240],
+            source=receipt["path"],
+            status=status,
+            facts={
+                key: value
+                for key, value in receipt.items()
+                if key not in {"path", "schema", "status", "valid"}
+            },
+        )
+    return projection
+
+
 def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
     """Collect every bounded local projection without deciding presentation."""
     from .jetbrains_handshake import jetbrains_handshake_projection
@@ -2306,6 +2334,7 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
         "release_readiness": release_readiness_projection(workspace),
         "saas_proof": saas_proof_projection(workspace),
         "jetbrains_handshake": jetbrains_handshake_projection(workspace),
+        "senior_engineering": _append_senior_engineering(state, workspace),
     })
     return values
 
@@ -2374,6 +2403,13 @@ def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list
         "release_contract_count": p["release_readiness"]["contract_count"],
         "release_ready_count": p["release_readiness"]["ready_count"],
         "release_contract_invalid_count": p["release_readiness"]["invalid_count"],
+        "senior_engineering_receipt_count": p["senior_engineering"]["receipt_count"],
+        "senior_engineering_verified_count": p["senior_engineering"]["verified_count"],
+        "senior_engineering_invalid_count": p["senior_engineering"]["invalid_count"],
+        "senior_engineering_blocked_count": p["senior_engineering"]["blocked_count"],
+        "senior_engineering_run_count": p["senior_engineering"]["run_count"],
+        "senior_engineering_reuse_count": p["senior_engineering"]["reuse_count"],
+        "senior_engineering_shadow_mismatch_count": p["senior_engineering"]["shadow_mismatch_count"],
     })
     for name in ("init", "quality_audit", "submission_assurance", "oracle_authority", "device_reality",
                  "release_rehearsal", "native_surface", "surface_matrix", "storefront_story", "fastlane_capture",
@@ -2407,6 +2443,8 @@ def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]
         (any((p["operations_control"]["receipt_count"], p["operations_control"]["invalid_count"])), ("GRAPH_OPS_OPERATIONS_CONTROL_READ_ONLY",)),
         (any((p["lifecycle"]["run_count"], p["lifecycle"]["invalid_count"])), ("GRAPH_OPS_LIFECYCLE_READ_ONLY", "GRAPH_OPS_SESSION_TRACE_READ_ONLY")),
         (any((p["repair_loops"]["receipt_count"], p["repair_loops"]["invalid_count"])), ("GRAPH_OPS_REPAIR_LOOP_READ_ONLY",)),
+        (p["senior_engineering"]["receipt_count"] or p["senior_engineering"]["invalid_count"], ("GRAPH_OPS_SENIOR_ENGINEERING_READ_ONLY",)),
+        (p["senior_engineering"]["invalid_count"] or p["senior_engineering"]["shadow_mismatch_count"] or p["senior_engineering"]["blocked_count"], ("GRAPH_OPS_SENIOR_ENGINEERING_REVIEW_REQUIRED",)),
     ]
     return sorted({*markers, *(marker for enabled, additions in rules if enabled for marker in additions)})
 

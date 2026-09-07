@@ -22,6 +22,11 @@ does not replace, control, or imply endorsement by either JetBrains product.
 rewrites of blocking/release Oracle rules and keeps AppForge authority receipts
 path-to-digest verifiable.
 
+**New in 0.9.3:** senior teams can review candidate-bound execution
+attestations, real-defect benchmark metrics, and dependency-aware incremental
+proof plans with a full-plan shadow comparison. The IDE remains a read-only
+review surface; external runners and release authority stay explicit.
+
 **Also in 0.9.0:** Unified Graph Ops can display a verified Agent Proof Bridge
 receipt from Eve, Junie, Grok Build, CodeRabbit, Devin, or a generic client:
 explicit DAG stages, sealed scope, source preconditions, real before/after

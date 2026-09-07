@@ -155,6 +155,27 @@ checks under one signed plan. Every failed lane returns the consequence,
 evidence digest, exact replay, and next repair. A six-lane pass means ready for
 human review—not approved for release.
 
+### Senior engineering controls in 0.46.3
+
+When a team needs stronger evidence than a self-reported green build, use the
+[senior-engineering integration](docs/SENIOR_ENGINEERING_INTEGRATION.md):
+
+- verify an independently collected, candidate-bound execution attestation;
+- measure a reviewed buggy/fixed defect corpus with case-level recall and
+  precision; and
+- route a dependency DAG through `RUN`, `REUSE`, `SKIP`, or `BLOCK`, then compare
+  the incremental plan with a full baseline;
+- reproduce a failure in a fresh, contract-bound process workspace, compare the
+  original failure with a repair and negative controls, explain every reuse
+  decision across policy/dependency/toolchain/environment fingerprints, and
+  hand a reviewer a runnable, evidence-linked failure briefing.
+
+These adapters are provider-neutral and review-only. Replay and repair execute
+only when the operator supplies `--execute`; they use a fresh temporary process
+workspace with a secret-free environment, not a kernel/container sandbox. They
+never publish a package or approve a release. Missing independent evidence
+remains an evidence gap.
+
 Do not take the word *verified* on faith. The [Capability Evidence Map](docs/CAPABILITY_EVIDENCE.md)
 separates the locally verified core, controlled-pilot workflows, reference
 enterprise controls, and candidate-bound mobile preflight—and links each claim
@@ -293,7 +314,7 @@ security, productivity, production readiness, or an automatic repair service.
 | --- | --- | --- | --- |
 | **Individual developer / vibe coder** | `factory first-proof` | See whether a passing test can actually reject a known failure before trusting it | A local receipt and privacy-safe Proof Card from a disposable demonstration; your project remains unchanged |
 | **Junior developer** | `factory prd grill`, `factory plan verify`, `factory change review` | Clarify acceptance evidence before coding; keep an AI-assisted diff inside the approved plan; surface missing tests and Proof Debt before review | Source-bound questions, exact changed paths, severity-ordered findings, and a review handoff |
-| **Senior / staff engineer** | `factory judgment`, `factory graph forensics`, `factory proofsearch`, `factory gauntlet` | Protect architecture decisions; diagnose resumed or parallel workflow drift; compare candidate repairs; challenge whether critical E2E checks can actually reject declared failures | Hash-bound decision context, first-divergence facts, rejected candidates, a deterministic winner, and Survival Cards |
+| **Senior / staff engineer** | `factory senior replay|repair|reuse|brief`, then `factory judgment` and `factory graph forensics` | Reproduce the exact failure, prove a repair without weakening negative controls, refuse unsafe proof reuse, and brief the team in one evidence-linked handoff | Source/dependency/policy-bound replays, original-vs-fix comparisons, explicit reuse explanations, runnable reproducers, uncertainty, and next action |
 | **Engineering team** | `factory wrap`, then GitHub Proof Review | Record the exact agent-created file delta, run declared independent validators, and hand reviewers a commit-bound evidence packet without retaining prompts | Local receipts, exact changed paths, explicit blockers, and a neutral PR Check beside AI review |
 | **Platform / assurance pilot** | Policy gates and evidence packets | Evaluate named approval boundaries, expiring exceptions, tenant isolation, budgets, and release evidence inside existing SDLC controls | Independently verifiable packets and read-only views; identity, credentials, merge, release, and deployment remain enterprise-owned. No SLA, certification, references, or procurement-readiness claim |
 | **Enterprise support evaluator** | Support and operating requirements | Review the proposed response, availability, recovery, exclusions, and activation evidence before procurement | [Support SLA policy](docs/SUPPORT_SLA.md); terms remain proposed until a signed order and all activation gates are evidenced |

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.5 - 2026-09-06
+
+- Synchronize the adapter metadata and installable artifact name with the
+  current VS Code Marketplace release. This is a release-channel alignment;
+  the cumulative proof, AppForge, and evidence-boundary behavior remains
+  unchanged from 0.9.4.
+
 ## 0.9.4 - 2026-09-04
 
 - Make First Proof the clear entry point: challenge whether an AI-generated

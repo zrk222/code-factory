@@ -65,6 +65,23 @@
 
 ## 0.46.3 - 2026-09-05
 
+- Add the senior assurance loop: fresh contract-bound replay, executable repair
+  comparison with negative controls, policy/dependency/toolchain/environment
+  reuse explanations, and evidence-linked failure briefings. Unknown inputs
+  force a rerun; side effects block reuse; changed expectations require human
+  review; all four adapters remain zero-authority and bounded.
+- Add the senior-engineering evidence layer: independently signed execution
+  attestations, a manifest-bound real-defect benchmark lab, and a
+  dependency-aware incremental scheduler with shadow comparison. These are
+  review-only adapters; they do not execute supplied commands or grant release
+  authority.
+- Expose `factory senior attest|benchmark|schedule|shadow` with bounded,
+  content-addressed JSON receipts. Unknown dependency closure, side effects,
+  stale assurance, replayed attestations, missed defects, and non-equivalent
+  incremental plans fail closed.
+- Project those receipts into Graph Ops as read-only evidence nodes with
+  self-hash, authority, blocked-plan, and shadow-mismatch markers; Graph Ops
+  never executes the supplied runner or changes release authority.
 - Align the core package, MCP Registry descriptor, release-channel guidance,
   citation, and archival metadata on the `0.46.3` candidate. This source
   alignment is not a PyPI, Registry, Zenodo, Space, marketplace, or GitHub

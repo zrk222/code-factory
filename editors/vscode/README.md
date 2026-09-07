@@ -36,6 +36,11 @@ hollow negative control caught in a disposable sandbox, then open
 `factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
+**Current in 0.9.5:** the adapter metadata and installable artifact are aligned
+with the current VS Code Marketplace release. The proof, AppForge, and
+evidence-boundary behavior remains the cumulative 0.9.4 surface described
+below.
+
 **New in 0.9.4:** the Oracle Firewall blocks same-ID rewrites of a blocking or
 release obligation's meaning, source binding, provenance, criticality, effect,
 or gate semantics. AppForge Oracle dossier receipts now retain a matching,
@@ -147,7 +152,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.9.4.vsix
+code --install-extension factoryline-vscode-0.9.5.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

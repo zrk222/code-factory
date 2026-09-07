@@ -1,0 +1,20 @@
+{
+  "checks": [
+    {
+      "name": "senior_assurance_receipts_reject_weak_replay_repair_and_reuse",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_senior_assurance.py', 'tests/test_senior_cli.py', 'tests/test_senior_graph_ops.py']) == 0\nprint('SENIOR_ASSURANCE_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "SENIOR_ASSURANCE_SMOKE_PASS",
+      "timeout_s": 120,
+      "covers": [
+        "REPLAY_SOURCE_AND_POLICY_BOUND",
+        "REPAIR_COMPARISON_SEALED",
+        "EVIDENCE_REUSE_EXPLAINED",
+        "FAILURE_BRIEF_EVIDENCE_LINKED",
+        "GRAPH_OPS_SENIOR_ENGINEERING_READ_ONLY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

@@ -178,11 +178,22 @@ from .repair_loop import RepairLoopError, assess_repair_loop, repair_loop_projec
 from .repo_coordination import RepoCoordinationError, coordinate_repositories, repo_coordination_template
 from .domain_ontology import DomainOntologyError, domain_ontology_template, validate_domain_ontology
 from .mission_control_status import mission_control_status, mission_control_profile
+from .senior_assurance import (
+    SeniorAssuranceError,
+    compare_repair,
+    explain_evidence_reuse,
+    failure_brief,
+    load_assurance_json,
+    run_replay,
+)
 from .runtime_audit import execute_runtime_audit, runtime_audit_status
 from .deep_audit import execute_deep_audit, deep_audit_status
 from .repair_loop import compare_deep_audit_repairs
 from .runtime_audit_common import RuntimeAuditError
 from .runtime_audit_contract import verify_runtime_audit_plan
+from .independent_execution import ExecutionAttestationError, verify_signed_execution_attestation
+from .benchmark_lab import BenchmarkError, evaluate_benchmark, load_benchmark_json
+from .incremental_scheduler import SchedulerError, compare_shadow, load_schedule_json, plan_incremental
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
 from .jetbrains_handshake import (
     JetBrainsHandshakeError,
@@ -1600,6 +1611,51 @@ def main(argv=None) -> int:
     runtime_status = runtime_audit_sub.add_parser("status", help="read the latest self-hash-verified local runtime audit receipt")
     runtime_status.add_argument("--root", default=".")
     runtime_status.add_argument("--json", action="store_true")
+
+    senior = sub.add_parser("senior", help="independent evidence, real-defect benchmarks, and incremental scheduling")
+    senior_sub = senior.add_subparsers(required=True, dest="senior_cmd")
+    senior_attest = senior_sub.add_parser("attest", help="verify one DSSE-signed independent execution attestation")
+    senior_attest.add_argument("receipt")
+    senior_attest.add_argument("--trust-root", required=True)
+    senior_attest.add_argument("--candidate-sha256")
+    senior_attest.add_argument("--plan-sha256")
+    senior_attest.add_argument("--json", action="store_true")
+    senior_benchmark = senior_sub.add_parser("benchmark", help="evaluate a manifest-bound buggy/fixed defect corpus")
+    senior_benchmark.add_argument("manifest")
+    senior_benchmark.add_argument("--observations", required=True)
+    senior_benchmark.add_argument("--out")
+    senior_benchmark.add_argument("--json", action="store_true")
+    senior_schedule = senior_sub.add_parser("schedule", help="plan dependency-aware proof routing without executing gates")
+    senior_schedule.add_argument("manifest")
+    senior_schedule.add_argument("--root", default=".")
+    senior_schedule.add_argument("--out")
+    senior_schedule.add_argument("--json", action="store_true")
+    senior_shadow = senior_sub.add_parser("shadow", help="compare incremental and full plan obligations/findings")
+    senior_shadow.add_argument("incremental")
+    senior_shadow.add_argument("full")
+    senior_shadow.add_argument("--out")
+    senior_shadow.add_argument("--json", action="store_true")
+    senior_replay = senior_sub.add_parser("replay", help="reproduce one contract-bound candidate in a fresh process workspace")
+    senior_replay.add_argument("manifest")
+    senior_replay.add_argument("--root", default=".")
+    senior_replay.add_argument("--execute", action="store_true", help="run the declared argv; without this flag only validate the replay plan")
+    senior_replay.add_argument("--out")
+    senior_replay.add_argument("--json", action="store_true")
+    senior_repair = senior_sub.add_parser("repair", help="compare the original failure, repair, and negative controls")
+    senior_repair.add_argument("manifest")
+    senior_repair.add_argument("--root", default=".")
+    senior_repair.add_argument("--execute", action="store_true", help="run all declared replay legs; without this flag only validate the comparison")
+    senior_repair.add_argument("--out")
+    senior_repair.add_argument("--json", action="store_true")
+    senior_reuse = senior_sub.add_parser("reuse", help="explain exact proof reuse or the reason a gate must run")
+    senior_reuse.add_argument("manifest")
+    senior_reuse.add_argument("--root", default=".")
+    senior_reuse.add_argument("--out")
+    senior_reuse.add_argument("--json", action="store_true")
+    senior_brief = senior_sub.add_parser("brief", help="turn one failed receipt into an evidence-linked failure briefing")
+    senior_brief.add_argument("receipt")
+    senior_brief.add_argument("--out")
+    senior_brief.add_argument("--json", action="store_true")
 
     worklog = sub.add_parser("worklog", help="draft a local review-required update from one sealed Oracle Contract; never posts externally")
     worklog_sub = worklog.add_subparsers(required=True, dest="worklog_cmd")
@@ -3300,6 +3356,53 @@ def main(argv=None) -> int:
                 code = 0 if result["receipt"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
         except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
             result = {"schema": "factory.runtime-audit.error.v1", "code": getattr(exc, "code", "E_RUNTIME_AUDIT"), "message": str(exc), "authority": "none"}
+            code = 2
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
+        return code
+    if a.cmd == "senior":
+        try:
+            if a.senior_cmd == "attest":
+                result = verify_signed_execution_attestation(Path(a.receipt), Path(a.trust_root), candidate_sha256=a.candidate_sha256, plan_sha256=a.plan_sha256)
+                code = 0
+                result["action_summary"] = "Verified an independently collected execution attestation; no command ran and release authority stayed disabled."
+            elif a.senior_cmd == "benchmark":
+                manifest = load_benchmark_json(Path(a.manifest))
+                observations = load_benchmark_json(Path(a.observations))
+                result = evaluate_benchmark(manifest, observations, out=Path(a.out) if a.out else None)
+                code = 0 if result["decision"] == "PASS" else 1
+                result["action_summary"] = "Evaluated supplied buggy/fixed benchmark observations; no replay command ran."
+            elif a.senior_cmd == "schedule":
+                result = plan_incremental(Path(a.root).resolve(), load_schedule_json(Path(a.manifest)), out=Path(a.out) if a.out else None)
+                code = 1 if result["counts"]["BLOCK"] else 0
+                result["action_summary"] = "Planned dependency-aware proof routing; no gate command ran."
+            elif a.senior_cmd == "shadow":
+                result = compare_shadow(load_schedule_json(Path(a.incremental)), load_schedule_json(Path(a.full)), out=Path(a.out) if a.out else None)
+                code = 0 if result["shadow_equivalent"] else 1
+                result["action_summary"] = "Compared supplied incremental and full obligations/findings; no plan ran."
+            elif a.senior_cmd == "replay":
+                result = run_replay(Path(a.root).resolve(), load_assurance_json(Path(a.manifest)), execute=a.execute, out=Path(a.out) if a.out else None)
+                code = 0 if result["state"] in {"PLAN_ONLY", "PASS"} else 1
+                result["action_summary"] = "Replayed the declared candidate in a fresh process workspace; no release authority was granted." if a.execute else "Validated a contract-bound replay plan; no candidate command ran."
+            elif a.senior_cmd == "repair":
+                result = compare_repair(Path(a.root).resolve(), load_assurance_json(Path(a.manifest)), execute=a.execute, out=Path(a.out) if a.out else None)
+                code = 0 if result["state"] in {"PLAN_ONLY", "PASS"} else 1
+                result["action_summary"] = "Compared original, repaired, and negative-control executions; release authority stayed disabled." if a.execute else "Validated a repair comparison; no candidate command ran."
+            elif a.senior_cmd == "reuse":
+                result = explain_evidence_reuse(Path(a.root).resolve(), load_assurance_json(Path(a.manifest)), out=Path(a.out) if a.out else None)
+                code = 1 if result["counts"]["BLOCK"] else 0
+                result["action_summary"] = "Explained exact evidence reuse and fail-closed reruns; no gate command ran."
+            else:
+                receipt_path = Path(a.receipt)
+                receipt, receipt_sha256 = load_assurance_json(receipt_path), None
+                try:
+                    receipt_sha256 = __import__("hashlib").sha256(receipt_path.read_bytes()).hexdigest()
+                except OSError:
+                    pass
+                result = failure_brief(receipt, receipt_path=receipt_path.as_posix(), receipt_sha256=receipt_sha256, out=Path(a.out) if a.out else None)
+                code = 0
+                result["action_summary"] = "Built an evidence-linked failure briefing; no repair or release action ran."
+        except (SeniorAssuranceError, ExecutionAttestationError, BenchmarkError, SchedulerError, OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            result = {"schema": "factory.senior.error.v1", "code": getattr(exc, "code", "E_SENIOR_INPUT"), "message": str(exc), "authority": "none", "release_approval": False}
             code = 2
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
         return code
