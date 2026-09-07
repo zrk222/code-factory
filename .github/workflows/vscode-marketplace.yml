@@ -140,7 +140,7 @@ jobs:
           cp "${packages[0]}" "$GITHUB_WORKSPACE/vscode-marketplace-candidate/"
           sha256sum "${packages[0]}" > "$GITHUB_WORKSPACE/vscode-marketplace-candidate/SHA256SUMS.txt"
           cp release-preflight.json "$GITHUB_WORKSPACE/vscode-marketplace-candidate/"
-          grep -E '"ok": true|RELEASE_CANDIDATE_PREFLIGHT_PASS' release-preflight.json >/dev/null
+          python "$GITHUB_WORKSPACE/scripts/verify_release_preflight.py" release-preflight.json
           printf 'release_ref=%s\ncommit=%s\npublisher=zrk222\nextension=factoryline-vscode\n' \
             "$RELEASE_REF" "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/vscode-marketplace-candidate/manifest.txt"
 
@@ -176,7 +176,7 @@ jobs:
           test -f manifest.txt
           find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit | grep -q .
           test -f release-preflight.json
-          grep -E '"ok": true|RELEASE_CANDIDATE_PREFLIGHT_PASS' release-preflight.json >/dev/null
+          python "$GITHUB_WORKSPACE/scripts/verify_release_preflight.py" release-preflight.json
           grep -Fx 'publisher=zrk222' manifest.txt >/dev/null
           grep -Fx 'extension=factoryline-vscode' manifest.txt >/dev/null
 
@@ -185,5 +185,5 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes @vscode/vsce@3.9.1 publish \
-            --packagePath "$(find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit)" \
+            --packagePath "$(find vscode-marketplace-candidate -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit)" \
             --skip-duplicate

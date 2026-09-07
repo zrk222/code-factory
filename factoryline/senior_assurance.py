@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .assembly_process import run_cli_detailed
 from .runtime_audit_common import (
     MAX_ARTIFACT_BYTES,
     RuntimeAuditError,
@@ -264,11 +265,26 @@ def _capture_process(source: Path, normalized: dict[str, Any]) -> dict[str, Any]
         with tempfile.TemporaryDirectory(prefix="factory-replay-") as temporary:
             sandbox_root = Path(temporary) / "workspace"
             _copy_source(source, sandbox_root)
-            completed = subprocess.run(normalized["argv"], cwd=sandbox_root, env=_process_environment(normalized), shell=False, stdin=subprocess.DEVNULL, capture_output=True, timeout=normalized["timeout_seconds"], check=False)
-            outcome.update({"observed_exit": int(completed.returncode), "stdout": completed.stdout[: normalized["max_output_bytes"]], "stderr": completed.stderr[: normalized["max_output_bytes"]]})
-        outcome["cleanup"] = True
-    except subprocess.TimeoutExpired as exc:
-        outcome.update({"timed_out": True, "stdout": _bounded_output(exc.stdout), "stderr": _bounded_output(exc.stderr), "failure_reason": "TIMEOUT", "cleanup": True})
+            result = run_cli_detailed(
+                normalized["argv"][0], normalized["argv"][1:], sandbox_root,
+                env=_process_environment(normalized),
+                timeout=normalized["timeout_seconds"],
+                max_stream_bytes=normalized["max_output_bytes"],
+            )
+            outcome.update({
+                "observed_exit": result.get("exit_code"),
+                "stdout": result.get("stdout", b"")[: normalized["max_output_bytes"]],
+                "stderr": result.get("stderr", b"")[: normalized["max_output_bytes"]],
+                "cleanup": bool(result.get("cleanup_confirmed")) and bool(result.get("streams_closed")),
+            })
+            reason = str(result.get("reason") or "")
+            if reason == "stage timed out":
+                outcome.update({"timed_out": True, "failure_reason": "TIMEOUT"})
+            elif reason:
+                outcome["failure_reason"] = reason.upper().replace(" ", "_")
+            elif not result.get("ok") and outcome["observed_exit"] is None:
+                outcome["failure_reason"] = "EXECUTION_ERROR:LAUNCH_FAILED"
+        outcome["cleanup"] = bool(outcome["cleanup"])
     except OSError as exc:
         outcome.update({"failure_reason": f"EXECUTION_ERROR:{type(exc).__name__}", "cleanup": True})
     outcome["duration_ms"] = max(0, int((time.monotonic() - started) * 1000))

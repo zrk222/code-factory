@@ -129,7 +129,7 @@ jobs:
             exit 1
           }
           test -f build/distributions/release-preflight.json
-          grep -E '"ok": true|RELEASE_CANDIDATE_PREFLIGHT_PASS' build/distributions/release-preflight.json >/dev/null
+          python "$GITHUB_WORKSPACE/scripts/verify_release_preflight.py" build/distributions/release-preflight.json
           candidate="$GITHUB_WORKSPACE/marketplace-candidate"
           mkdir -p "$candidate"
           cp "${archives[0]}" "$candidate/factoryline-intellij.zip"
@@ -197,7 +197,7 @@ jobs:
           set -euo pipefail
           test -f "$GITHUB_WORKSPACE/marketplace-candidate/factoryline-intellij.zip"
           test -f "$GITHUB_WORKSPACE/marketplace-candidate/release-preflight.json"
-          grep -E '"ok": true|RELEASE_CANDIDATE_PREFLIGHT_PASS' "$GITHUB_WORKSPACE/marketplace-candidate/release-preflight.json" >/dev/null
+          python "$GITHUB_WORKSPACE/scripts/verify_release_preflight.py" "$GITHUB_WORKSPACE/marketplace-candidate/release-preflight.json"
       - name: Resolve current DataGrip archive
         if: matrix.product == 'DataGrip'
         shell: bash
@@ -275,7 +275,7 @@ jobs:
         run: |
           set -euo pipefail
           test -f "$GITHUB_WORKSPACE/marketplace-candidate/release-preflight.json"
-          grep -E '"ok": true|RELEASE_CANDIDATE_PREFLIGHT_PASS' "$GITHUB_WORKSPACE/marketplace-candidate/release-preflight.json" >/dev/null
+          python "$GITHUB_WORKSPACE/scripts/verify_release_preflight.py" "$GITHUB_WORKSPACE/marketplace-candidate/release-preflight.json"
       - name: Require the scoped Marketplace publisher token
         env:
           PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}

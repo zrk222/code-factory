@@ -137,7 +137,8 @@ def _openvsx_check(workflow: str) -> dict[str, Any]:
         and "release_contract:" in workflow
         and "python -m factoryline.cli release preflight" in validate
         and "--metadata-path context/PROGRESS.md" in validate
-        and "RELEASE_CANDIDATE_PREFLIGHT_PASS" in validate
+        and "scripts/verify_release_preflight.py" in validate
+        and "scripts/verify_release_preflight.py" in publish
         and "openvsx-preflight.json" in publish
     )
     return _check("OPENVSX_AUTHORIZATION_EARLY", passed, "protected publication is authorized before candidate validation")

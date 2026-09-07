@@ -351,14 +351,14 @@ def _emergency_terminate(child: subprocess.Popen) -> None:
             pass
 
 
-def _launch(cli: str, args: list[str], cwd: Path) -> tuple[subprocess.Popen | None, _CleanupUnit | None, str | None]:
+def _launch(cli: str, args: list[str], cwd: Path, *, env: dict[str, str] | None = None) -> tuple[subprocess.Popen | None, _CleanupUnit | None, str | None]:
     """Start a command and bind it to a process-group or Job Object."""
     options = (
         {"creationflags": WINDOWS_CREATE_NO_WINDOW | WINDOWS_CREATE_NEW_PROCESS_GROUP | WINDOWS_CREATE_SUSPENDED}
         if os.name == "nt" else {"start_new_session": True}
     )
     try:
-        child = subprocess.Popen([cli, *args], cwd=str(cwd), stdin=subprocess.DEVNULL,
+        child = subprocess.Popen([cli, *args], cwd=str(cwd), env=env, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options)
     except OSError:
         return None, None, f"{cli} unavailable or could not be started"
@@ -469,7 +469,8 @@ def _monitor(child, unit, readers, failed, heartbeat, deadline: float) -> str:
 
 
 def run_cli_detailed(cli: str, args: list[str], cwd: Path, *, heartbeat: Callable[[], bool] | None = None,
-                     timeout: float = 300, max_stream_bytes: int = MAX_STREAM_BYTES) -> dict[str, object]:
+                     timeout: float = 300, max_stream_bytes: int = MAX_STREAM_BYTES,
+                     env: dict[str, str] | None = None) -> dict[str, object]:
     """Return a bounded CLI result with an explicit cleanup receipt.
 
     ``cleanup_confirmed`` is true only after the root process, its captured
@@ -482,7 +483,7 @@ def run_cli_detailed(cli: str, args: list[str], cwd: Path, *, heartbeat: Callabl
         raise ValueError("positive finite execution deadline required")
     if type(max_stream_bytes) is not int or max_stream_bytes <= 0:
         raise ValueError("positive execution bounds required")
-    child, unit, launch_error = _launch(cli, args, cwd)
+    child, unit, launch_error = _launch(cli, args, cwd, env=env)
     if child is None or unit is None:
         return {
             "ok": False,
@@ -534,6 +535,8 @@ def _finish_result(child, unit: _CleanupUnit, readers, outputs, reason: str) -> 
     return {
         "ok": not reason and cleanup_confirmed and streams_closed and child.returncode == 0,
         "output": output,
+        "stdout": bytes(outputs[0]),
+        "stderr": bytes(outputs[1]),
         "cleanup_confirmed": cleanup_confirmed,
         "streams_closed": streams_closed,
         "reason": reason or None,

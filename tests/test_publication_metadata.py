@@ -334,7 +334,7 @@ def test_vscode_marketplace_workflow_seals_the_candidate_and_requires_a_scoped_s
     assert "secrets.VSCE_PAT" in workflow
     assert "VSCE_PAT is required in the vscode-marketplace environment." in workflow
     assert "sha256sum --check SHA256SUMS.txt" in workflow
-    assert "--packagePath \"$(find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit)\"" in workflow
+    assert "--packagePath \"$(find vscode-marketplace-candidate -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit)\"" in workflow
     assert "--oidc" not in workflow
 
 
