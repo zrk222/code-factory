@@ -147,6 +147,20 @@ def test_reuse_explains_exact_match_and_unknown_policy_dependency(tmp_path):
     assert "toolchain" in unknown["gates"][0]["unknown_inputs"]
 
 
+def test_reuse_runs_when_changed_directory_contains_receipt_input(tmp_path):
+    policy = _sha_bytes(b"policy")
+    dependencies = _sha_bytes(b"deps")
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "app.py").write_text("pass", encoding="utf-8")
+    receipt = {"schema": "factory.proof-receipt.v1", "status": "green", "read_only": True, "policy_sha256": policy, "dependencies_sha256": dependencies, "toolchain": {"python": "3.11"}, "environment": {"os": "windows"}, "inputs": [{"path": "src/app.py"}]}
+    receipt_path = tmp_path / "proof.json"
+    receipt_path.write_bytes(_canonical(receipt))
+    request = {"schema": REUSE_REQUEST_SCHEMA, "request_id": "r2", "policy_sha256": policy, "dependencies_sha256": dependencies, "changed_paths": ["src"], "gates": [{"id": "lint", "read_only": True, "side_effects": False, "receipt_path": "proof.json", "receipt_sha256": _sha_bytes(receipt_path.read_bytes()), "toolchain": {"python": "3.11"}, "environment": {"os": "windows"}}]}
+    result = explain_evidence_reuse(tmp_path, request)
+    assert result["gates"][0]["decision"] == "RUN"
+
+
 def test_failure_brief_links_finding_to_receipt_and_surfaces_uncertainty():
     brief = failure_brief({"schema": "factory.replay-receipt.v1", "state": "FAIL", "replay_id": "r1", "source_root": "src", "failure_reason": "EXIT_MISMATCH", "argv": [sys.executable, "run.py"], "receipt_sha256": _sha_bytes(b"receipt")}, receipt_path=".factory/senior/replay.json")
     assert brief["state"] == "ACTION_REQUIRED"

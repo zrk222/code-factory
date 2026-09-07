@@ -110,6 +110,14 @@ def _file_digest(path: Path, label: str) -> str:
     return sha256_bytes(raw)
 
 
+def _paths_intersect(left: str, right: str) -> bool:
+    """Match workspace paths by component, including directory/file overlap."""
+    def normalize(value: str) -> tuple[str, ...]:
+        return tuple(part for part in value.replace("\\", "/").strip("/").split("/") if part and part != ".")
+    a, b = normalize(left), normalize(right)
+    return bool(a and b) and (a == b or (len(a) < len(b) and b[:len(a)] == a) or (len(b) < len(a) and a[:len(b)] == b))
+
+
 def _tree_snapshot(source: Path) -> list[dict[str, Any]]:
     if source.is_symlink() or not source.is_dir():
         raise SeniorAssuranceError("E_REPLAY_SOURCE", f"source_root is not a regular directory: {source}")
@@ -447,8 +455,8 @@ def _reuse_gate(root: Path, gate: dict[str, Any], request: dict[str, Any]) -> di
         return explanation
     changed = request.get("changed_paths", [])
     receipt_inputs = receipt.get("inputs", [])
-    input_paths = {item.get("path") for item in receipt_inputs if isinstance(item, dict)}
-    if isinstance(changed, list) and any(path in input_paths for path in changed):
+    input_paths = {item.get("path") for item in receipt_inputs if isinstance(item, dict) and isinstance(item.get("path"), str)}
+    if isinstance(changed, list) and any(_paths_intersect(path, input_path) for path in changed if isinstance(path, str) for input_path in input_paths):
         explanation.update({"reason": "CHANGED_INPUT_REQUIRES_EXECUTION"})
         return explanation
     explanation.update({"decision": "REUSE", "reason": "EXACT_EVIDENCE_REUSED"})

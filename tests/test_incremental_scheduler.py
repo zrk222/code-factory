@@ -17,6 +17,13 @@ def test_unknown_closure_fails_closed_to_run_and_preserves_topological_order():
     assert result["authority"] == "none"
 
 
+def test_changed_dependency_closure_forces_run_even_with_reusable_proof():
+    manifest = _manifest(gates=[{"id": "lint", "depends_on": [], "side_effects": False, "proof": {"assurance_level": "isolated_worker"}}], dependency_closure={"lint": ["src/app.py"]})
+    result = plan_incremental(__import__("pathlib").Path.cwd(), manifest)
+    assert result["findings"]["lint"]["disposition"] == "RUN"
+    assert result["findings"]["lint"]["reason"] == "DEPENDENCY_CLOSURE_CHANGED"
+
+
 def test_side_effect_block_propagates_to_dependents():
     manifest = _manifest(gates=[{"id": "lint", "depends_on": [], "side_effects": True, "proof": None}, {"id": "tests", "depends_on": ["lint"], "side_effects": False, "proof": None}])
     result = plan_incremental(__import__("pathlib").Path.cwd(), manifest)

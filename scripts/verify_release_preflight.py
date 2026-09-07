@@ -16,7 +16,8 @@ MAX_RECEIPT_BYTES = 4 * 1024 * 1024
 
 def verify(path: str | Path) -> dict[str, object]:
     receipt_path = Path(path)
-    raw = receipt_path.read_bytes()
+    with receipt_path.open("rb") as receipt_file:
+        raw = receipt_file.read(MAX_RECEIPT_BYTES + 1)
     if len(raw) > MAX_RECEIPT_BYTES:
         raise ValueError("release preflight receipt exceeds 4 MiB")
     payload = json.loads(raw.decode("utf-8"))
@@ -24,6 +25,10 @@ def verify(path: str | Path) -> dict[str, object]:
         raise ValueError("release preflight receipt must be a JSON object")
     if payload.get("ok") is not True:
         raise ValueError("release preflight receipt is not approved (ok must be true)")
+    if payload.get("schema") != "factory.release-candidate-preflight.v1":
+        raise ValueError("release preflight receipt has an unexpected schema")
+    if payload.get("marker") != "RELEASE_CANDIDATE_PREFLIGHT_WRITTEN":
+        raise ValueError("release preflight receipt has an unexpected marker")
     return payload
 
 

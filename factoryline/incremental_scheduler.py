@@ -131,6 +131,13 @@ def _route_gate(root: Path, manifest: dict[str, Any], gate: dict[str, Any]) -> d
         return {"id": gate_id, "depends_on": gate["depends_on"], "dependency_paths": [], "disposition": "RUN", "reason": "PROOF_RELEVANCE_FAIL_CLOSED", "proof": None}
     if gate["side_effects"]:
         return {"id": gate_id, "depends_on": gate["depends_on"], "dependency_paths": closure, "disposition": "BLOCK", "reason": "PROOF_SIDE_EFFECT_REUSE_REFUSED", "proof": None}
+    changed = manifest["changed_paths"]
+    def intersects(left: str, right: str) -> bool:
+        a = tuple(part for part in left.replace("\\", "/").strip("/").split("/") if part and part != ".")
+        b = tuple(part for part in right.replace("\\", "/").strip("/").split("/") if part and part != ".")
+        return bool(a and b) and (a == b or (len(a) < len(b) and b[:len(a)] == a) or (len(b) < len(a) and a[:len(b)] == b))
+    if any(intersects(changed_path, dependency_path) for changed_path in changed for dependency_path in closure):
+        return {"id": gate_id, "depends_on": gate["depends_on"], "dependency_paths": closure, "disposition": "RUN", "reason": "DEPENDENCY_CLOSURE_CHANGED", "proof": None}
     proof = gate.get("proof")
     if not proof:
         return {"id": gate_id, "depends_on": gate["depends_on"], "dependency_paths": closure, "disposition": "RUN", "reason": "PROOF_EXECUTION_REQUIRED", "proof": None}

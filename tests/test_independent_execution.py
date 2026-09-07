@@ -44,6 +44,13 @@ def test_supervised_local_is_rejected_for_independent_lane():
         validate_execution_attestation(payload)
 
 
+def test_independent_assurance_rejects_local_backend():
+    payload = _payload()
+    payload["runner"] = {**payload["runner"], "backend": "local_supervised"}
+    with pytest.raises(ExecutionAttestationError, match="E_ATTESTATION_BACKEND"):
+        validate_execution_attestation(payload)
+
+
 def test_binding_cleanup_expiry_replay_and_unknown_fields_fail_closed():
     with pytest.raises(ExecutionAttestationError, match="E_ATTESTATION_BINDING"):
         validate_execution_attestation(_payload(), candidate_sha256=_digest("z"))

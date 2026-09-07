@@ -29,6 +29,11 @@ PAYLOAD_TYPE = "application/vnd.factory.execution-attestation.v1+json"
 ASSURANCE_LEVELS = ("supervised_local", "isolated_worker", "hardened_vm")
 INDEPENDENT_LEVELS = {"isolated_worker", "hardened_vm"}
 BACKENDS = {"local_supervised", "external_collector", "isolated_worker", "hardened_vm"}
+COMPATIBLE_BACKENDS = {
+    "supervised_local": {"local_supervised", "external_collector"},
+    "isolated_worker": {"isolated_worker"},
+    "hardened_vm": {"hardened_vm"},
+}
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -144,6 +149,9 @@ def validate_execution_attestation(
     _exact(value, {"schema", "attestation_id", "candidate_sha256", "plan_sha256", "run_nonce", "issued_at", "expires_at", "assurance_level", "runner", "observations", "authority"}, "E_ATTESTATION_SCHEMA")
     attestation_id, candidate, plan, nonce, issued, expires, assurance = _validate_header(value, candidate_sha256=candidate_sha256, plan_sha256=plan_sha256, now=now, seen_nonces=seen_nonces, require_independent=require_independent)
     runner_id, version, platform, backend, executable = _validate_identity(value["runner"])
+    allowed_backends = COMPATIBLE_BACKENDS[assurance]
+    if backend not in allowed_backends:
+        raise ExecutionAttestationError("E_ATTESTATION_BACKEND", "runner backend is incompatible with assurance level")
     observations = _validate_observations(value["observations"])
     return {
         "schema": SCHEMA,

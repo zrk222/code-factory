@@ -7,7 +7,7 @@ from scripts.verify_release_preflight import main, verify
 
 def test_structured_ok_receipt_is_accepted(tmp_path):
     path = tmp_path / "release-preflight.json"
-    path.write_text(json.dumps({"ok": True, "marker": "RELEASE_CANDIDATE_PREFLIGHT_WRITTEN"}), encoding="utf-8")
+    path.write_text(json.dumps({"ok": True, "schema": "factory.release-candidate-preflight.v1", "marker": "RELEASE_CANDIDATE_PREFLIGHT_WRITTEN"}), encoding="utf-8")
     assert verify(path)["ok"] is True
     assert main([str(path)]) == 0
 

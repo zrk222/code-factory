@@ -104,21 +104,23 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           RELEASE_REF: ${{ inputs.release_ref }}
+          RELEASE_CONTRACT_PATH: ${{ inputs.release_contract }}
           APPROVED_BY: ${{ github.actor }} (protected vscode deployment approval)
         run: |
           set -euo pipefail
           python scripts/prepare_release_contract.py \
             --root . \
             --feature "vscode-${RELEASE_REF}" \
-            --out .factory/release-contracts/vscode.json \
+            --out "$RELEASE_CONTRACT_PATH" \
             --approved-by "$APPROVED_BY"
 
       - name: Require the sealed candidate preflight
         working-directory: ${{ github.workspace }}
         env:
-          RELEASE_CONTRACT_PATH: .factory/release-contracts/vscode.json
+          RELEASE_CONTRACT_PATH: ${{ inputs.release_contract }}
         run: |
           set -euo pipefail
+          [[ "$RELEASE_CONTRACT_PATH" != /* && "$RELEASE_CONTRACT_PATH" != *..* ]] || { echo "release_contract must be a workspace-relative path" >&2; exit 1; }
           test -f "$RELEASE_CONTRACT_PATH" || { echo "release contract is not present in the immutable checkout" >&2; exit 1; }
           python -m factoryline.cli release preflight \
             --root . \
