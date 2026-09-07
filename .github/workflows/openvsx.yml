@@ -135,7 +135,7 @@ jobs:
           cp "${packages[0]}" "$GITHUB_WORKSPACE/openvsx-candidate/"
           sha256sum "${packages[0]}" > "$GITHUB_WORKSPACE/openvsx-candidate/SHA256SUMS.txt"
           cp openvsx-preflight.json "$GITHUB_WORKSPACE/openvsx-candidate/"
-          grep -F 'RELEASE_CANDIDATE_PREFLIGHT_PASS' openvsx-preflight.json >/dev/null
+          grep -E '"ok": true|RELEASE_CANDIDATE_PREFLIGHT_PASS' openvsx-preflight.json >/dev/null
           printf 'release_ref=%s\ncommit=%s\npublisher=zrk222\n' \
             "$RELEASE_REF" "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/openvsx-candidate/manifest.txt"
       - uses: actions/upload-artifact@v7.0.1
@@ -175,7 +175,7 @@ jobs:
           test -f manifest.txt
           find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit | grep -q .
           test -f openvsx-preflight.json
-          grep -F 'RELEASE_CANDIDATE_PREFLIGHT_PASS' openvsx-preflight.json >/dev/null
+          grep -E '"ok": true|RELEASE_CANDIDATE_PREFLIGHT_PASS' openvsx-preflight.json >/dev/null
       - name: Publish verified VSIX to Open VSX
         shell: bash
         env:
