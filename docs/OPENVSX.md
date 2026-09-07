@@ -7,9 +7,10 @@ surfaces. This repository contains a guarded, manual release workflow at
 
 ## Current status
 
-FactoryLine is published in Open VSX under the `zrk222` namespace. The registry
-showed 144 downloads on 2026-08-21, but also displayed **publisher not verified
-for namespace**. That warning is a provider trust gap, not a package-test result.
+FactoryLine is published in Open VSX under the `zrk222` namespace. The latest
+registry read-back (2026-09-07 UTC) reports version **0.9.5**, **2,692
+downloads**, and `verified: true` for the extension listing. Download totals
+are provider-reported and can change; they are not unique-user counts.
 
 The official ownership request is now open as
 [EclipseFdn/open-vsx.org #12688](https://github.com/EclipseFdn/open-vsx.org/issues/12688).
@@ -26,7 +27,7 @@ verified before that provider action occurs.
    repository, then store a least-privilege `OPENVSX_TOKEN` in the protected
    `openvsx` GitHub environment.
 2. Start **Publish Open VSX extension** manually and supply an existing,
-   immutable repository tag such as `v0.46.0` for the 0.9.0 FactoryLine adapter.
+   immutable repository tag such as `v0.46.3` for the 0.9.5 FactoryLine adapter.
 3. Leave `publish` false to produce and retain only the verified VSIX candidate,
    SHA-256 manifest, audit result, and tests.
 4. Set `publish` true only after the environment reviewer approves the target

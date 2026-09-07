@@ -37,9 +37,10 @@ hollow negative control caught in a disposable sandbox, then open
 extension never calls a starter production-ready by itself.
 
 **Current in 0.9.5:** the adapter metadata and installable artifact are aligned
-with the current VS Code Marketplace release. The proof, AppForge, and
-evidence-boundary behavior remains the cumulative 0.9.4 surface described
-below.
+with the prepared release. Open VSX is live at 0.9.5; the public Visual Studio
+Marketplace listing read-back is still 0.9.4 until its protected upload
+credential is restored. The proof, AppForge, and evidence-boundary behavior
+remains the cumulative 0.9.4 surface described below.
 
 **New in 0.9.4:** the Oracle Firewall blocks same-ID rewrites of a blocking or
 release obligation's meaning, source binding, provenance, criticality, effect,

@@ -1,8 +1,8 @@
 # Code Factory 0.46.3 — Release Routes That Fail Earlier
 
-> **Candidate status:** this document describes the source candidate. It is
-> not evidence of a GitHub tag, PyPI upload, MCP Registry update, Zenodo record,
-> Hugging Face Space deployment, marketplace availability, or provider approval.
+> **Published status:** the `v0.46.3` GitHub release and tagged artifacts are
+> published. Provider availability and download counters below are read-backs
+> from the providers on 2026-09-07 UTC; they are not approval guarantees.
 
 ## Public update summary
 
@@ -79,28 +79,39 @@ The new senior-engineering layer closes a different gap: a green report is not
 the same as independent observation, real-defect sensitivity, or safe proof
 reuse. It makes those distinctions visible before a human decides.
 
-## Next safe action
+## Current provider read-back
 
-Finish the remaining approved release slices, run the local package and
-release-integrity proof again, and only then request the separately
-human-controlled publication actions. Provider response, processing, and
-approval remain external states.
+- **GitHub:** `v0.46.3` release points to the verified commit and carries the
+  Python, VS Code, JetBrains, and collateral assets.
+- **PyPI:** `factoryline-code-factory` is at **0.46.3**.
+- **Hugging Face:** `zrk222/code-factory` is deployed at the published route;
+  the Space API read-back reports the deployed revision and running state.
+- **Open VSX:** `zrk222.factoryline-vscode` is **0.9.5** with **2,692
+  provider-reported downloads**.
+- **JetBrains:** the FactoryLine update passed the eight compatibility
+  verifiers and the Marketplace publish workflow; the listing read-back shows
+  **169 downloads** and no unapproved update flag.
+- **Visual Studio Marketplace:** the public listing read-back remains **0.9.4**
+  with **220 provider-reported downloads** (and 2 installs). The 0.9.5 route is
+  not published because the protected `VSCE_PAT` credential is absent; this is
+  the only unresolved provider-side publication gate.
 
-## Distribution summary for this candidate
+These states are intentionally separate: a successful local build or GitHub
+workflow does not imply Microsoft Marketplace processing or approval.
 
-The source package is prepared as a **0.46.3 candidate**. This integration turn
-performed local implementation and verification only; it did not upload or
-publish to any provider. Keep these states separate when the release operator
-uses the prepared artifact:
+## Distribution summary for the published release
 
-| Surface | State in this candidate | Evidence boundary |
+The source package is published as **0.46.3**. Keep artifact, provider
+processing, and approval states separate when reporting this release:
+
+| Surface | Current state | Evidence boundary |
 | --- | --- | --- |
-| GitHub | Source/worktree candidate | Local commit/remote read-back is a separate action |
-| PyPI | Not uploaded by this change | Requires an authenticated upload and PyPI read-back |
-| Hugging Face Space | Not deployed by this change | Workflow now admits `HF_TOKEN` early; Space availability is external |
-| Zenodo | Not archived by this change | Archive record and DOI are provider state |
-| Visual Studio Marketplace | Not uploaded by this change | Marketplace processing/read-back is external |
-| Open VSX | Not uploaded by this change | Namespace auth, processing, and listing read-back are external |
+| GitHub | Published `v0.46.3` release and assets | Release URL and asset list |
+| PyPI | Published `0.46.3` | PyPI JSON read-back |
+| Hugging Face Space | Deployed | Space API revision/read-back |
+| Zenodo | No new archive was created in this release | DOI/archive state is separate |
+| Visual Studio Marketplace | Public `0.9.4`; `0.9.5` awaiting credentialed upload | Gallery API read-back; `VSCE_PAT` gate |
+| Open VSX | Published `0.9.5` | Registry API read-back |
 
 This is a truthful handoff, not a claim that any provider has approved or
 received the package.
