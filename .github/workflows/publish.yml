@@ -77,7 +77,8 @@ jobs:
           npm ci --no-audit
           npm run audit
           npm test
-          npx vsce package --no-dependencies --out "factoryline-vscode-$(node -p \"require('./package.json').version\").vsix"
+          version="$(node -p "require('./package.json').version")"
+          npx vsce package --no-dependencies --out "factoryline-vscode-${version}.vsix"
 
       - uses: actions/upload-artifact@v7.0.1
         with:

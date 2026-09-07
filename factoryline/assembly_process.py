@@ -25,6 +25,11 @@ READ_CHUNK_BYTES = 65_536
 PROCESS_SNAPSHOT_TIMEOUT_SECONDS = 1.0
 PROCESS_SNAPSHOT_INTERVAL_SECONDS = 0.25
 WINDOWS_CREATE_SUSPENDED = 0x00000004
+# The Windows-only subprocess constants are absent on POSIX Python builds.
+# Keep their documented values available for deterministic cross-platform
+# tests that exercise the Windows branch without importing a Windows runtime.
+WINDOWS_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+WINDOWS_CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
 
 
 @dataclass(frozen=True)
@@ -332,7 +337,7 @@ def _emergency_terminate(child: subprocess.Popen) -> None:
             subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                            timeout=CLEANUP_TIMEOUT_SECONDS,
-                           creationflags=subprocess.CREATE_NO_WINDOW, check=False)
+                           creationflags=WINDOWS_CREATE_NO_WINDOW, check=False)
         else:
             os.killpg(child.pid, signal.SIGKILL)
     except (OSError, subprocess.TimeoutExpired):
@@ -349,7 +354,7 @@ def _emergency_terminate(child: subprocess.Popen) -> None:
 def _launch(cli: str, args: list[str], cwd: Path) -> tuple[subprocess.Popen | None, _CleanupUnit | None, str | None]:
     """Start a command and bind it to a process-group or Job Object."""
     options = (
-        {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP | WINDOWS_CREATE_SUSPENDED}
+        {"creationflags": WINDOWS_CREATE_NO_WINDOW | WINDOWS_CREATE_NEW_PROCESS_GROUP | WINDOWS_CREATE_SUSPENDED}
         if os.name == "nt" else {"start_new_session": True}
     )
     try:
@@ -405,7 +410,7 @@ def _terminate_unit(child: subprocess.Popen, unit: _CleanupUnit) -> bool:
                 subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                timeout=CLEANUP_TIMEOUT_SECONDS,
-                               creationflags=subprocess.CREATE_NO_WINDOW, check=False)
+                               creationflags=WINDOWS_CREATE_NO_WINDOW, check=False)
                 clean = False
         else:
             status = _posix_group_status(unit.pgid)
