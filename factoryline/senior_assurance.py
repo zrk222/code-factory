@@ -474,21 +474,26 @@ def _reuse_gate(root: Path, gate: dict[str, Any], request: dict[str, Any]) -> di
         return explanation
     changed = request.get("changed_paths", [])
     receipt_inputs = receipt.get("inputs", [])
+    if not isinstance(changed, list):
+        explanation.update({"reason": "INVALID_CHANGED_PATH_REQUIRES_EXECUTION"})
+        return explanation
+    if not isinstance(receipt_inputs, list):
+        explanation.update({"reason": "UNSAFE_RECEIPT_INPUT_REQUIRES_EXECUTION"})
+        return explanation
     input_paths = {item.get("path") for item in receipt_inputs if isinstance(item, dict) and isinstance(item.get("path"), str)}
     if any(not isinstance(item, dict) or not isinstance(item.get("path"), str) or _normalize_workspace_path(item["path"]) is None for item in receipt_inputs):
         explanation.update({"reason": "UNSAFE_RECEIPT_INPUT_REQUIRES_EXECUTION"})
         return explanation
-    if isinstance(changed, list):
-        for path in changed:
-            if not isinstance(path, str):
-                explanation.update({"reason": "INVALID_CHANGED_PATH_REQUIRES_EXECUTION"})
-                return explanation
-            if _normalize_workspace_path(path) is None:
-                explanation.update({"reason": "UNSAFE_CHANGED_PATH_REQUIRES_EXECUTION"})
-                return explanation
-            if any(_paths_intersect(path, input_path) for input_path in input_paths):
-                explanation.update({"reason": "CHANGED_INPUT_REQUIRES_EXECUTION"})
-                return explanation
+    for path in changed:
+        if not isinstance(path, str):
+            explanation.update({"reason": "INVALID_CHANGED_PATH_REQUIRES_EXECUTION"})
+            return explanation
+        if _normalize_workspace_path(path) is None:
+            explanation.update({"reason": "UNSAFE_CHANGED_PATH_REQUIRES_EXECUTION"})
+            return explanation
+        if any(_paths_intersect(path, input_path) for input_path in input_paths):
+            explanation.update({"reason": "CHANGED_INPUT_REQUIRES_EXECUTION"})
+            return explanation
     explanation.update({"decision": "REUSE", "reason": "EXACT_EVIDENCE_REUSED"})
     return explanation
 
