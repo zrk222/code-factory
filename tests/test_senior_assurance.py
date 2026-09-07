@@ -196,6 +196,18 @@ def test_reuse_runs_for_windows_absolute_changed_path(tmp_path):
     assert result["gates"][0]["reason"] == "UNSAFE_CHANGED_PATH_REQUIRES_EXECUTION"
 
 
+def test_reuse_runs_for_windows_drive_relative_changed_path(tmp_path):
+    policy = _sha_bytes(b"policy")
+    dependencies = _sha_bytes(b"deps")
+    receipt = {"schema": "factory.proof-receipt.v1", "status": "green", "read_only": True, "policy_sha256": policy, "dependencies_sha256": dependencies, "toolchain": {"python": "3.11"}, "environment": {"os": "windows"}, "inputs": [{"path": "src/app.py"}]}
+    receipt_path = tmp_path / "proof.json"
+    receipt_path.write_bytes(_canonical(receipt))
+    request = {"schema": REUSE_REQUEST_SCHEMA, "request_id": "r5b", "policy_sha256": policy, "dependencies_sha256": dependencies, "changed_paths": [r"C:src\app.py"], "gates": [{"id": "lint", "read_only": True, "side_effects": False, "receipt_path": "proof.json", "receipt_sha256": _sha_bytes(receipt_path.read_bytes()), "toolchain": {"python": "3.11"}, "environment": {"os": "windows"}}]}
+    result = explain_evidence_reuse(tmp_path, request)
+    assert result["gates"][0]["decision"] == "RUN"
+    assert result["gates"][0]["reason"] == "UNSAFE_CHANGED_PATH_REQUIRES_EXECUTION"
+
+
 def test_reuse_runs_for_unsafe_receipt_input(tmp_path):
     policy = _sha_bytes(b"policy")
     dependencies = _sha_bytes(b"deps")

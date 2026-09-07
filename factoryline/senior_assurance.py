@@ -118,7 +118,9 @@ def _normalize_workspace_path(value: str) -> tuple[str, ...] | None:
     # Changed paths and receipt inputs are workspace-relative. Treat absolute
     # or traversal-bearing values as unsafe so callers fail closed and execute
     # the gate instead of reusing evidence.
-    if normalized.startswith("/") or (len(normalized) >= 3 and normalized[1] == ":" and normalized[2] == "/"):
+    if normalized.startswith("/") or (
+        len(normalized) >= 2 and normalized[0].isalpha() and normalized[1] == ":"
+    ):
         return None
     parts = tuple(part for part in normalized.strip("/").split("/") if part and part != ".")
     if any(part == ".." for part in parts):
