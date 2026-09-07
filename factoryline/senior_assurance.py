@@ -110,23 +110,25 @@ def _file_digest(path: Path, label: str) -> str:
     return sha256_bytes(raw)
 
 
+def _normalize_workspace_path(value: str) -> tuple[str, ...] | None:
+    """Normalize a workspace-relative path, returning None for unsafe input."""
+    normalized = value.replace("\\", "/").strip()
+    if not normalized or normalized in {".", "./"}:
+        return ()
+    # Changed paths and receipt inputs are workspace-relative. Treat absolute
+    # or traversal-bearing values as unsafe so callers fail closed and execute
+    # the gate instead of reusing evidence.
+    if normalized.startswith("/") or (len(normalized) >= 3 and normalized[1] == ":" and normalized[2] == "/"):
+        return None
+    parts = tuple(part for part in normalized.strip("/").split("/") if part and part != ".")
+    if any(part == ".." for part in parts):
+        return None
+    return parts
+
+
 def _paths_intersect(left: str, right: str) -> bool:
     """Match workspace paths by component, including directory/file overlap."""
-    def normalize(value: str) -> tuple[str, ...] | None:
-        normalized = value.replace("\\", "/").strip()
-        if not normalized or normalized in {".", "./"}:
-            return ()
-        # Changed paths and receipt inputs are workspace-relative. Treat
-        # absolute or traversal-bearing values as unsafe so callers fail
-        # closed and execute the gate instead of reusing evidence.
-        if normalized.startswith("/") or (len(normalized) >= 3 and normalized[1] == ":" and normalized[2] == "/"):
-            return None
-        parts = tuple(part for part in normalized.strip("/").split("/") if part and part != ".")
-        if any(part == ".." for part in parts):
-            return None
-        return parts
-
-    a, b = normalize(left), normalize(right)
+    a, b = _normalize_workspace_path(left), _normalize_workspace_path(right)
     if a is None or b is None:
         return False
     # The workspace root intersects every workspace-relative path.
@@ -473,13 +475,15 @@ def _reuse_gate(root: Path, gate: dict[str, Any], request: dict[str, Any]) -> di
     changed = request.get("changed_paths", [])
     receipt_inputs = receipt.get("inputs", [])
     input_paths = {item.get("path") for item in receipt_inputs if isinstance(item, dict) and isinstance(item.get("path"), str)}
+    if any(not isinstance(item, dict) or not isinstance(item.get("path"), str) or _normalize_workspace_path(item["path"]) is None for item in receipt_inputs):
+        explanation.update({"reason": "UNSAFE_RECEIPT_INPUT_REQUIRES_EXECUTION"})
+        return explanation
     if isinstance(changed, list):
         for path in changed:
             if not isinstance(path, str):
                 explanation.update({"reason": "INVALID_CHANGED_PATH_REQUIRES_EXECUTION"})
                 return explanation
-            normalized = path.replace("\\", "/").strip()
-            if normalized.startswith("/") or ".." in normalized.split("/"):
+            if _normalize_workspace_path(path) is None:
                 explanation.update({"reason": "UNSAFE_CHANGED_PATH_REQUIRES_EXECUTION"})
                 return explanation
             if any(_paths_intersect(path, input_path) for input_path in input_paths):
