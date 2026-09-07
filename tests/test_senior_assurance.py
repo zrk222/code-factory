@@ -161,6 +161,29 @@ def test_reuse_runs_when_changed_directory_contains_receipt_input(tmp_path):
     assert result["gates"][0]["decision"] == "RUN"
 
 
+def test_reuse_runs_when_workspace_root_changes(tmp_path):
+    policy = _sha_bytes(b"policy")
+    dependencies = _sha_bytes(b"deps")
+    receipt = {"schema": "factory.proof-receipt.v1", "status": "green", "read_only": True, "policy_sha256": policy, "dependencies_sha256": dependencies, "toolchain": {"python": "3.11"}, "environment": {"os": "windows"}, "inputs": [{"path": "src/app.py"}]}
+    receipt_path = tmp_path / "proof.json"
+    receipt_path.write_bytes(_canonical(receipt))
+    request = {"schema": REUSE_REQUEST_SCHEMA, "request_id": "r3", "policy_sha256": policy, "dependencies_sha256": dependencies, "changed_paths": ["."], "gates": [{"id": "lint", "read_only": True, "side_effects": False, "receipt_path": "proof.json", "receipt_sha256": _sha_bytes(receipt_path.read_bytes()), "toolchain": {"python": "3.11"}, "environment": {"os": "windows"}}]}
+    result = explain_evidence_reuse(tmp_path, request)
+    assert result["gates"][0]["decision"] == "RUN"
+
+
+def test_reuse_runs_for_traversal_changed_path(tmp_path):
+    policy = _sha_bytes(b"policy")
+    dependencies = _sha_bytes(b"deps")
+    receipt = {"schema": "factory.proof-receipt.v1", "status": "green", "read_only": True, "policy_sha256": policy, "dependencies_sha256": dependencies, "toolchain": {"python": "3.11"}, "environment": {"os": "windows"}, "inputs": [{"path": "src/app.py"}]}
+    receipt_path = tmp_path / "proof.json"
+    receipt_path.write_bytes(_canonical(receipt))
+    request = {"schema": REUSE_REQUEST_SCHEMA, "request_id": "r4", "policy_sha256": policy, "dependencies_sha256": dependencies, "changed_paths": ["src/../secrets.txt"], "gates": [{"id": "lint", "read_only": True, "side_effects": False, "receipt_path": "proof.json", "receipt_sha256": _sha_bytes(receipt_path.read_bytes()), "toolchain": {"python": "3.11"}, "environment": {"os": "windows"}}]}
+    result = explain_evidence_reuse(tmp_path, request)
+    assert result["gates"][0]["decision"] == "RUN"
+    assert result["gates"][0]["reason"] == "UNSAFE_CHANGED_PATH_REQUIRES_EXECUTION"
+
+
 def test_failure_brief_links_finding_to_receipt_and_surfaces_uncertainty():
     brief = failure_brief({"schema": "factory.replay-receipt.v1", "state": "FAIL", "replay_id": "r1", "source_root": "src", "failure_reason": "EXIT_MISMATCH", "argv": [sys.executable, "run.py"], "receipt_sha256": _sha_bytes(b"receipt")}, receipt_path=".factory/senior/replay.json")
     assert brief["state"] == "ACTION_REQUIRED"

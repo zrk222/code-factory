@@ -108,6 +108,19 @@ jobs:
           APPROVED_BY: ${{ github.actor }} (protected vscode deployment approval)
         run: |
           set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          raw = os.environ["RELEASE_CONTRACT_PATH"]
+          if Path(raw).is_absolute() or raw.startswith(("/", "\\")):
+              raise SystemExit("release_contract must be workspace-relative")
+          candidate = (root / raw).resolve()
+          try:
+              candidate.relative_to(root)
+          except ValueError as exc:
+              raise SystemExit("release_contract escapes the workspace") from exc
+          PY
           python scripts/prepare_release_contract.py \
             --root . \
             --feature "vscode-${RELEASE_REF}" \

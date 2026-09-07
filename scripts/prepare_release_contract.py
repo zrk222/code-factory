@@ -56,10 +56,13 @@ def _rule(identifier: str, statement: str, *, group: str, path: str | None = Non
 
 def prepare(root: Path, *, feature: str, source_path: Path, out: Path, approved_by: str) -> dict[str, object]:
     workspace = root.resolve()
-    source = source_path if source_path.is_absolute() else workspace / source_path
-    destination = out if out.is_absolute() else workspace / out
-    source.relative_to(workspace)
-    destination.relative_to(workspace)
+    source = (source_path if source_path.is_absolute() else workspace / source_path).resolve()
+    destination = (out if out.is_absolute() else workspace / out).resolve()
+    try:
+        source.relative_to(workspace)
+        destination.relative_to(workspace)
+    except ValueError as exc:
+        raise ValueError("release contract paths must remain inside the workspace") from exc
     if not source.is_file():
         raise ValueError(f"release intent source is unavailable: {source}")
     if destination.exists():
