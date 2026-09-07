@@ -148,9 +148,21 @@ jobs:
       - name: Install Code Factory preflight runtime
         run: python -m pip install --no-deps .
 
+      - name: Prepare source-bound release contract
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          APPROVED_BY: ${{ github.actor }} (protected pypi deployment approval)
+        run: |
+          set -euo pipefail
+          python scripts/prepare_release_contract.py \
+            --root . \
+            --feature "release-${RELEASE_TAG}" \
+            --out .factory/release-contracts/release.json \
+            --approved-by "$APPROVED_BY"
+
       - name: Require sealed release candidate preflight before external publication
         env:
-          RELEASE_CONTRACT_PATH: ${{ vars.RELEASE_CONTRACT_PATH }}
+          RELEASE_CONTRACT_PATH: .factory/release-contracts/release.json
         run: |
           set -euo pipefail
           test -n "$RELEASE_CONTRACT_PATH" || {

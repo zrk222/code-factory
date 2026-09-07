@@ -86,18 +86,36 @@ jobs:
           npm ci --no-audit
           npm run audit
           npm test
-          npx vsce package --no-dependencies --out "factoryline-vscode-$(node -p \"require('./package.json').version\").vsix"
+          version="$(node -p "require('./package.json').version")"
+          npx vsce package --no-dependencies --out "factoryline-vscode-${version}.vsix"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      - name: Install Code Factory preflight runtime
+        working-directory: ${{ github.workspace }}
+        run: python -m pip install --no-deps .
+
+      - name: Prepare source-bound release contract
+        working-directory: ${{ github.workspace }}
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          APPROVED_BY: ${{ github.actor }} (protected openvsx deployment approval)
+        run: |
+          set -euo pipefail
+          python scripts/prepare_release_contract.py \
+            --root . \
+            --feature "openvsx-${RELEASE_REF}" \
+            --out .factory/release-contracts/openvsx.json \
+            --approved-by "$APPROVED_BY"
+
       - name: Require the sealed candidate preflight
         working-directory: ${{ github.workspace }}
         env:
-          RELEASE_CONTRACT_PATH: ${{ inputs.release_contract }}
+          RELEASE_CONTRACT_PATH: .factory/release-contracts/openvsx.json
         run: |
           set -euo pipefail
           test -f "$RELEASE_CONTRACT_PATH" || { echo "release contract is not present in the immutable checkout" >&2; exit 1; }
-          python -m pip install --no-deps .
           python -m factoryline.cli release preflight \
             --root . \
             --contract "$RELEASE_CONTRACT_PATH" \
