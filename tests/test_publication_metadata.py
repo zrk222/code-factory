@@ -253,7 +253,11 @@ def test_openvsx_workflow_seals_a_tested_immutable_candidate_before_manual_publi
     assert "npm run audit" in workflow
     assert "npm test" in workflow
     assert workflow.index("npm ci") < workflow.index("npm run audit") < workflow.index("npm test")
-    assert "factoryline-vscode-$(node -p \\\"require('./package.json').version\\\").vsix" in workflow
+    # Keep the package name bound to the checked-out manifest while using
+    # shell-safe quoting (the former nested escaped command broke bash
+    # parsing on the protected release runner).
+    assert 'version="$(node -p "require(\'./package.json\').version")"' in workflow
+    assert 'factoryline-vscode-${version}.vsix' in workflow
     assert "sha256sum \"${packages[0]}\"" in workflow
     assert "environment: openvsx" in workflow
     assert "if: inputs.publish == true" in workflow
