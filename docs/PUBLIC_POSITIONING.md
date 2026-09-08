@@ -40,7 +40,7 @@ provider-state distinction, not a hidden version claim.
 
 | Surface | Copy |
 | --- | --- |
-| GitHub About / PyPI summary | Catch AI-generated tests that could never fail and review AI code with local proof. |
+| GitHub About / PyPI summary | Independent local audit for AI-built code: catch hollow tests, security, recovery, compatibility, migration, and performance gaps before review. |
 | Hugging Face short description | Catch tests that could never fail. Prove AI code locally. |
 | VS Code Marketplace | Catch AI-generated tests that could never fail. Review code with local proof. |
 | JetBrains Marketplace preview | Catch AI-generated tests that could never fail—before review. |
