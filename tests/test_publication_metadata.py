@@ -79,7 +79,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
         "Issues": "https://github.com/zrk222/code-factory/issues",
         "Changelog": "https://github.com/zrk222/code-factory/releases",
     }
-    assert project["description"] == "Catch hollow AI tests and App Store evidence gaps before review."
+    assert project["description"] == "Independent local audit for AI-built code: catch hollow tests, security, recovery, compatibility, migration, and performance gaps before review."
     assert {
         "mvp",
         "mcp",
