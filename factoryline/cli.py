@@ -2166,6 +2166,20 @@ def main(argv=None) -> int:
     mcp_serve = mcp_sub.add_parser("serve", help="serve newline-delimited JSON-RPC over stdio only")
     mcp_serve.add_argument("--root", default=".")
 
+    junie = sub.add_parser("junie", help="inspect or explicitly install the local Junie FactoryLine pack")
+    junie_sub = junie.add_subparsers(required=True, dest="junie_cmd")
+    junie_taxonomy_parser = junie_sub.add_parser("taxonomy", help="show the complete progressive Junie FactoryLine taxonomy")
+    junie_taxonomy_parser.add_argument("--root", default=".")
+    junie_taxonomy_parser.add_argument("--json", action="store_true")
+    junie_install = junie_sub.add_parser("install", help="install secret-free project Junie guidance and MCP config after exact confirmation")
+    junie_install.add_argument("--root", default=".")
+    junie_install.add_argument("--confirmation", required=True)
+    junie_install.add_argument("--json", action="store_true")
+    junie_contribution = junie_sub.add_parser("contribution", help="validate a Junie-declared FactoryLine contribution from a local JSON object")
+    junie_contribution.add_argument("--root", default=".")
+    junie_contribution.add_argument("--declaration", required=True, help="workspace-relative JSON declaration file")
+    junie_contribution.add_argument("--json", action="store_true")
+
     s = sub.add_parser("attest", help="export in-toto/SLSA-shaped proof statements for a trace")
     s.add_argument("trace")
     s.add_argument("--out-dir", default="dist/attestations")
@@ -5387,6 +5401,42 @@ def main(argv=None) -> int:
         except (McpError, McpSetupError) as exc:
             print(f"mcp failed: {exc.marker}: {exc}", file=sys.stderr)
             return 2
+    if a.cmd == "junie":
+        from .junie_taxonomy import JunieTaxonomyError, install_junie_factoryline_pack, junie_taxonomy, validate_junie_contribution
+
+        try:
+            root = Path(a.root)
+            if a.junie_cmd == "taxonomy":
+                payload = junie_taxonomy(root)
+            elif a.junie_cmd == "install":
+                payload = install_junie_factoryline_pack(root, a.confirmation)
+            else:
+                declaration_path = Path(a.declaration)
+                declaration_path = declaration_path if declaration_path.is_absolute() else root / declaration_path
+                try:
+                    declaration_path.resolve().relative_to(root.resolve())
+                except ValueError as exc:
+                    raise JunieTaxonomyError("declaration must stay inside the workspace", "JUNIE_CONTRIBUTION_PATH_REJECTED") from exc
+                payload = validate_junie_contribution(root, json.loads(declaration_path.read_text(encoding="utf-8")))
+        except JunieTaxonomyError as exc:
+            print(f"junie failed: {exc.marker}: {exc}", file=sys.stderr)
+            return 2
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"junie failed: JUNIE_CONTRIBUTION_INPUT_REJECTED: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        elif a.junie_cmd == "taxonomy":
+            print("FactoryLine taxonomy for Junie")
+            print("=" * 32)
+            for stage in payload["stages"]:
+                print(f"{stage['label']}: {stage['outcome']}")
+            print("Boundary: local guidance only; Junie remains enabled under JetBrains controls.")
+        elif a.junie_cmd == "install":
+            print(f"Junie FactoryLine pack {payload['state']}: .junie/AGENTS.md + .junie/mcp/mcp.json")
+        else:
+            print(payload["credit_line"])
+        return 0
     if a.cmd == "attest":
         outputs = export_attestations(load_trace(Path(a.trace)), out_dir=Path(a.out_dir))
         if a.json:

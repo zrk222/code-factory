@@ -720,3 +720,5 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-09 05:26] GATE plan full-stack-ux-harness-v1 approver=human tasks=3 sha=40121fffa65d5db2
 - [2026-09-09 06:15] GATE spec full-stack-ux-harness-v1 approver=human strict=True sha=6d7d53d4f39dec32
 - [2026-09-09 06:15] GATE plan full-stack-ux-harness-v1 approver=human tasks=3 sha=6d7d53d4f39dec32
+- [2026-09-09 06:31] GATE spec junie-factoryline-taxonomy-v1 approver=human strict=True sha=fb8fd802e7735c69
+- [2026-09-09 06:31] GATE plan junie-factoryline-taxonomy-v1 approver=human tasks=3 sha=fb8fd802e7735c69

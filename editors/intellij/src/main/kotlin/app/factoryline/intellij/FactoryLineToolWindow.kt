@@ -28,6 +28,7 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         val judgment = FactoryLineJudgmentPanel(project)
         val appForge = FactoryLineAppForgePanel(project)
         val oracle = FactoryLineOraclePanel(project)
+        val junie = FactoryLineJuniePanel(project)
         project.putUserData(FactoryLinePanels.guardianKey, guardian)
         project.putUserData(FactoryLinePanels.key, panel)
         project.putUserData(FactoryLinePanels.proofReviewKey, proofReview)
@@ -39,6 +40,7 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         project.putUserData(FactoryLinePanels.judgmentKey, judgment)
         project.putUserData(FactoryLinePanels.appForgeKey, appForge)
         project.putUserData(FactoryLinePanels.oracleKey, oracle)
+        project.putUserData(FactoryLinePanels.junieKey, junie)
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(guardian, "Guardian", false)
         )
@@ -71,6 +73,9 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         )
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(oracle, "Oracle", false)
+        )
+        toolWindow.contentManager.addContent(
+            ContentFactory.getInstance().createContent(junie, "Junie", false)
         )
     }
 }
@@ -155,6 +160,7 @@ object FactoryLinePanels {
     val judgmentKey: Key<FactoryLineJudgmentPanel> = Key.create("app.factoryline.intellij.judgment")
     val appForgeKey: Key<FactoryLineAppForgePanel> = Key.create("app.factoryline.intellij.appforge")
     val oracleKey: Key<FactoryLineOraclePanel> = Key.create("app.factoryline.intellij.oracle")
+    val junieKey: Key<FactoryLineJuniePanel> = Key.create("app.factoryline.intellij.junie")
 
     fun show(project: Project, result: CommandResult) {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
@@ -279,6 +285,16 @@ object FactoryLinePanels {
             ApplicationManager.getApplication().invokeLater {
                 toolWindow.contentManager.findContent("Oracle")?.let { toolWindow.contentManager.setSelectedContent(it) }
                 project.getUserData(oracleKey)?.show(result)
+            }
+        }
+    }
+
+    fun showJunie(project: Project, result: CommandResult) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(FactoryLineIds.TOOL_WINDOW)
+        toolWindow?.show {
+            ApplicationManager.getApplication().invokeLater {
+                toolWindow.contentManager.findContent("Junie")?.let { toolWindow.contentManager.setSelectedContent(it) }
+                project.getUserData(junieKey)?.show(result)
             }
         }
     }

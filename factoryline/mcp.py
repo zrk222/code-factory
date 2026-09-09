@@ -54,6 +54,7 @@ from .runtime_audit import runtime_audit_status
 from .deep_audit import deep_audit_status
 from .codex_metadata import MetadataAuditError, audit_metadata
 from .saas_proof import saas_proof_projection
+from .junie_taxonomy import JunieTaxonomyError, junie_taxonomy, validate_junie_contribution
 from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
 
 
@@ -591,6 +592,31 @@ def _tool_definitions() -> list[dict[str, object]]:
             "name": "factory.saas_status",
             "description": "Return hash-verified local, provider-neutral OAuth/OIDC-to-entitlement proof status. It never contacts an identity, billing, or deployment provider.",
             "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.junie_taxonomy",
+            "description": "Return the complete progressive FactoryLine taxonomy for a Junie project. It is local, read-only guidance and never enables, starts, or controls Junie.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.junie_contribution",
+            "description": "Validate Junie's declared FactoryLine contribution against the current taxonomy and hashes of cited local files. It never observes Junie, proves an internal tool call, runs a test, or approves work.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "taxonomy_sha256": {"type": "string", "minLength": 64, "maxLength": 64},
+                    "tools_called": {"type": "array", "minItems": 1, "maxItems": 58, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                    "evidence_paths": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                    "changed_paths": {"type": "array", "maxItems": 200, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                    "change_rationales": {"type": "object", "maxProperties": 200, "additionalProperties": {"type": "string", "minLength": 12, "maxLength": 1000}},
+                    "contribution": {"type": "string", "minLength": 12, "maxLength": 1000},
+                    "unknowns": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                },
+                "required": ["taxonomy_sha256", "tools_called", "evidence_paths", "changed_paths", "change_rationales", "contribution", "unknowns"],
+                "additionalProperties": False,
+            },
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
@@ -1465,6 +1491,32 @@ def _saas_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _junie_taxonomy(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.junie_taxonomy accepts no arguments")
+    try:
+        taxonomy = junie_taxonomy(root)
+    except JunieTaxonomyError as exc:
+        raise McpError(str(exc), exc.marker) from exc
+    return {
+        "marker": "MCP_JUNIE_TAXONOMY_READ_ONLY",
+        "taxonomy": taxonomy,
+        "scope": "Local guidance only. FactoryLine did not enable, start, observe, or control Junie and did not run, approve, or change work.",
+    }
+
+
+def _junie_contribution(root: Path, arguments: object) -> dict[str, object]:
+    try:
+        contribution = validate_junie_contribution(root, arguments)
+    except JunieTaxonomyError as exc:
+        raise McpError(str(exc), exc.marker) from exc
+    return {
+        "marker": "MCP_JUNIE_CONTRIBUTION_READ_ONLY",
+        "contribution": contribution,
+        "scope": "A self-declared, local evidence-bound acknowledgement only. FactoryLine did not observe or control Junie, run a test, change a file, approve, or contact a service.",
+    }
+
+
 def _agent_proof_mission(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) - {"scope", "changed_paths"} or "scope" not in arguments:
         raise McpError("factory.agent_proof_mission requires scope and accepts optional changed_paths")
@@ -1631,6 +1683,10 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_proof_continuity_status(root, arguments))
     if name == "factory.saas_status":
         return _content(_saas_status(root, arguments))
+    if name == "factory.junie_taxonomy":
+        return _content(_junie_taxonomy(root, arguments))
+    if name == "factory.junie_contribution":
+        return _content(_junie_contribution(root, arguments))
     if name == "factory.agent_proof_mission":
         return _content(_agent_proof_mission(root, arguments))
     if name == "factory.jetbrains_handshake":

@@ -371,6 +371,20 @@ object FactoryLineController {
         runBackground(project, "Install $label") { FactoryLineRunner.mcpInstall(project, client) }
     }
 
+    fun inspectJunieTaxonomy(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Inspect Junie Taxonomy")) return
+        runBackground(project, "Inspect Junie Taxonomy", onCompleted = { FactoryLinePanels.showJunie(project, it) }) {
+            FactoryLineRunner.junieTaxonomy(project)
+        }
+    }
+
+    fun installJunieFactoryLinePack(project: Project) {
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Install Junie FactoryLine Pack")) return
+        runBackground(project, "Install Junie FactoryLine Pack", onCompleted = { FactoryLinePanels.showJunie(project, it) }) {
+            FactoryLineRunner.junieInstallPack(project)
+        }
+    }
+
     fun verifyAgentAndAnalyzer(project: Project, scope: RepairScopeSummary?) {
         val selectedScope = scope ?: run {
             Messages.showInfoMessage(project, "Prepare a trusted Change List scope before verifying an agent result.", "FactoryLine Proof Handshake")

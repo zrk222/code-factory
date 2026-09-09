@@ -212,6 +212,14 @@ object FactoryLineCommands {
         return listOf("mcp", "install", "--root", root.toString(), "--client", client, "--confirmation", "INSTALL $label MCP", "--json")
     }
 
+    fun junieTaxonomy(root: Path): List<String> =
+        listOf("junie", "taxonomy", "--root", root.toString(), "--json")
+
+    fun junieInstallPack(root: Path): List<String> = listOf(
+        "junie", "install", "--root", root.toString(),
+        "--confirmation", "INSTALL Junie FactoryLine Pack", "--json",
+    )
+
     fun jetbrainsHandshake(
         root: Path,
         scope: Path,
@@ -568,6 +576,18 @@ object FactoryLineRunner {
         val root = project.basePath?.let(Path::of)
             ?: return CommandResult("Install Proof Adapter", emptyList(), null, false, "Blocked: the project has no local workspace path.")
         return execute(project, "Install ${client.replaceFirstChar { it.uppercase() }} Proof Adapter", FactoryLineCommands.mcpInstall(root, client))
+    }
+
+    fun junieTaxonomy(project: Project): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Inspect Junie Taxonomy", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        return execute(project, "Inspect Junie Taxonomy", FactoryLineCommands.junieTaxonomy(root))
+    }
+
+    fun junieInstallPack(project: Project): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return CommandResult("Install Junie FactoryLine Pack", emptyList(), null, false, "Blocked: the project has no local workspace path.")
+        return execute(project, "Install Junie FactoryLine Pack", FactoryLineCommands.junieInstallPack(root))
     }
 
     fun jetbrainsHandshake(

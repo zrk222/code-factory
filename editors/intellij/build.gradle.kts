@@ -88,6 +88,8 @@ abstract class MarketplacePreflightTask : DefaultTask() {
             "id=\"app.factoryline.intellij.openGuardian\"",
             "class=\"app.factoryline.intellij.OpenGuardianAction\"",
             "Your IDE feels slow. Your AI code looks fine.",
+            "Tuned for Junie. Not dependent on Junie.",
+            "proof-coupled change acknowledgement",
             "Add Guardian Core as the first tool-window tab",
         )
         val missingDescriptorFragments = requiredDescriptorFragments.filterNot(pluginXml::contains)

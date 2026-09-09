@@ -54,6 +54,7 @@ def test_junie_project_install_is_confirmed_idempotent_and_never_overwrites_a_co
     assert installed["state"] == "installed"
     assert repeated["state"] == "already_current"
     assert config["mcpServers"]["code-factory"]["command"] == "factory"
+    assert "factory.junie_taxonomy" in installed["next_action"]
     assert all(value is False for value in installed["authority"].values())
 
     config["mcpServers"]["code-factory"]["command"] = "other"

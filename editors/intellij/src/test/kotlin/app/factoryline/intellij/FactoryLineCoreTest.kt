@@ -325,6 +325,23 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun junieTaxonomyAndPackCommandsAreExplicitWorkspaceBoundAndUseTheExactConfirmation() {
+        val root = Files.createTempDirectory("factoryline-junie-taxonomy")
+
+        assertEquals(
+            listOf("junie", "taxonomy", "--root", root.toString(), "--json"),
+            FactoryLineCommands.junieTaxonomy(root),
+        )
+        assertEquals(
+            listOf(
+                "junie", "install", "--root", root.toString(),
+                "--confirmation", "INSTALL Junie FactoryLine Pack", "--json",
+            ),
+            FactoryLineCommands.junieInstallPack(root),
+        )
+    }
+
+    @Test
     fun intentLedgerCommandsBindOnlyOneSelectedChangeListAndCarryTheConfirmationPhrase() {
         val root = Files.createTempDirectory("factoryline-intent-ledger")
 
