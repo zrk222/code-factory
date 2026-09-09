@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "name": "full_stack_ux_harness_rejects_weakened_evidence_and_authority",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_full_stack_ux_harness.py', 'tests/test_ide_playbook.py']) == 0\n",
+      "covers": [
+        "REQ_HARNESS_CLOSED_SET",
+        "REQ_HARNESS_PROVENANCE",
+        "REQ_HARNESS_HUMAN_BOUNDARY",
+        "REQ_HARNESS_ROUTING"
+      ],
+      "expect_exit": 0,
+      "timeout_s": 120,
+      "must_fail_on_stub": true
+    }
+  ]
+}

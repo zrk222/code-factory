@@ -10,6 +10,11 @@ def test_playbook_keeps_appforge_optional_and_external_agents_supervised():
     assert "Never ask for a rating or positive review." in playbook["proof_moment"]["limits"]
     assert "AppForge activates only for explicit mobile delivery scope." in playbook["rules"]
     assert any(item["id"] == "runtime_assurance" for item in playbook["capability_packs"])
+    quality = next(item for item in playbook["capability_packs"] if item["id"] == "quality_harness")
+    assert "full-stack" in quality["when"]
+    assert "not certification" in quality["outcome"]
+    assert "quality-harness template" in quality["next"]
+    assert any("six human judgments" in item for item in playbook["external_agent_ingress"]["admission_rules"])
     decision = next(item for item in playbook["capability_packs"] if item["id"] == "release_decision")
     assert decision["next"] == "factory.release_decision"
     assert "provider state stays explicitly unobserved" in decision["outcome"]

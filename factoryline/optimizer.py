@@ -131,6 +131,8 @@ def optimize_pr(root: Path, *, base: str = "main", changed: list[str] | None = N
     stages = [f"{item['module']}:{item['stage']}" for item in risk["rerun_stages"]]
     if needs_design and "prestige:audit" not in stages:
         stages.append("prestige:audit")
+    if needs_design and "quality-harness:verify" not in stages:
+        stages.append("quality-harness:verify")
     if needs_release and "factoryline:release-readiness" not in stages:
         stages.append("factoryline:release-readiness")
     return {

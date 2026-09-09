@@ -1,0 +1,40 @@
+feature: full-stack-ux-harness-v1
+version: "1.0"
+intent: "Bind full-stack and UI quality evidence to a closed review contract without granting release authority."
+requirements:
+  - id: REQ_HARNESS_CLOSED_SET
+    description: "UI work requires exactly 12 core checks, 7 UI checks, and 6 human judgments; non-UI work requires exactly the 12 core checks."
+    invariant: "REQ_HARNESS_CLOSED_SET"
+    checks:
+      - "CORE_CHECKS"
+      - "UI_CHECKS"
+      - "JUDGMENTS"
+      - "E_UX_CHECK_SET_MISMATCH"
+  - id: REQ_HARNESS_PROVENANCE
+    description: "Every passed check binds workspace-contained evidence from an approved origin; agent-proposed evidence remains blocked."
+    invariant: "REQ_HARNESS_PROVENANCE"
+    checks:
+      - "APPROVED_PROVENANCE"
+      - "E_UX_CHECK_PROVENANCE"
+      - "E_UX_EVIDENCE_PATH"
+      - "sha256"
+  - id: REQ_HARNESS_HUMAN_BOUNDARY
+    description: "Six named judgments require declared human review while the receipt explicitly denies authenticated identity and release authority."
+    invariant: "REQ_HARNESS_HUMAN_BOUNDARY"
+    checks:
+      - "E_UX_HUMAN_REVIEW_REQUIRED"
+      - "review_identity"
+      - "authenticated"
+      - "authority"
+  - id: REQ_HARNESS_ROUTING
+    description: "Frontend changes route through both the quality harness and Prestige, and IDE or A2A operators can discover the workflow."
+    invariant: "REQ_HARNESS_ROUTING"
+    checks:
+      - "quality-harness:verify"
+      - "prestige:audit"
+      - "quality_harness"
+gates:
+  - type: test
+    command: "python -m pytest -q tests/test_full_stack_ux_harness.py tests/test_ide_playbook.py"
+  - type: smoke
+    command: "python -m py_compile factoryline/full_stack_ux_harness.py factoryline/cli.py"

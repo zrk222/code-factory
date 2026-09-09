@@ -80,6 +80,11 @@ from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .ide_playbook import AdoptionGuideError, adoption_guide
 from .capability_evidence import CapabilityEvidenceError, audit_capability_evidence
+from .full_stack_ux_harness import (
+    FullStackUXHarnessError,
+    verify_quality_harness,
+    write_quality_harness_template,
+)
 from .graph_portfolio import graph_portfolio_plan
 from .graph_forensics import GraphForensicsError, graph_forensics, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
 from .langgraph_assurance import LangGraphAssuranceError, verify_langgraph_resume_parity
@@ -627,6 +632,19 @@ def main(argv=None) -> int:
     guide = sub.add_parser("guide", help="choose one plain-language path before opening advanced controls")
     guide.add_argument("--journey", help="one of: solo, team, enterprise")
     guide.add_argument("--json", action="store_true")
+
+    quality_harness = sub.add_parser("quality-harness", help="bind full-stack engineering evidence and six human UX judgments")
+    quality_sub = quality_harness.add_subparsers(required=True, dest="quality_cmd")
+    quality_template = quality_sub.add_parser("template", help="write a closed, unverified quality manifest")
+    quality_template.add_argument("--root", default=".")
+    quality_template.add_argument("--out", required=True)
+    quality_template.add_argument("--ui", action="store_true", help="include the seven UI evidence checks")
+    quality_template.add_argument("--json", action="store_true")
+    quality_verify = quality_sub.add_parser("verify", help="verify bound evidence and human judgments without executing checks")
+    quality_verify.add_argument("manifest")
+    quality_verify.add_argument("--root", default=".")
+    quality_verify.add_argument("--out")
+    quality_verify.add_argument("--json", action="store_true")
 
     code_audit = sub.add_parser("audit", help="inspect peer-pattern irregularities and guard-bypass paths without executing code")
     code_audit.add_argument("tool", choices=["patterns", "guard-paths", "all"])
@@ -3558,6 +3576,33 @@ def main(argv=None) -> int:
             return 2
         print(json.dumps(result, indent=2) if a.json else f"{result['marker']}: {len(result['claims'])} claims; {result['execution_count']} executions.\n{result['claim_boundary']}")
         return 0 if result["ok"] else 1
+    if a.cmd == "quality-harness":
+        try:
+            if a.quality_cmd == "template":
+                result = write_quality_harness_template(Path(a.root), Path(a.out), ui_in_scope=a.ui)
+                code = 0
+            else:
+                result = verify_quality_harness(
+                    Path(a.root), Path(a.manifest), out=Path(a.out) if a.out else None,
+                )
+                code = 0 if result["decision"] == "READY_FOR_HUMAN_RELEASE_REVIEW" else 1
+        except (FullStackUXHarnessError, OSError, json.JSONDecodeError, ValueError) as exc:
+            result = {
+                "schema": "factory.full-stack-ux-harness.error.v1",
+                "decision": "REJECTED",
+                "code": getattr(exc, "code", "E_UX_INPUT"),
+                "message": getattr(exc, "message", str(exc)),
+                "authority": "none",
+            }
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
+        elif code == 0:
+            print(f"Quality harness: {result.get('decision', 'TEMPLATE_WRITTEN')}")
+            print(f"Receipt: {result['path']}")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
+        return code
     if a.cmd == "guide":
         try:
             result = adoption_guide(a.journey)
