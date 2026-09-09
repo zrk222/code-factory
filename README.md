@@ -42,6 +42,30 @@ conditions**. The [source-bound inventory](docs/AUDIT_CONDITION_INVENTORY.md)
 recomputes the total from the implementation; it is not a claim that every
 project executes 136 tests.
 
+### What the Code Factory upgrade improves
+
+Code Factory is the core audit and orchestration system. FactoryLine is one
+CLI/IDE/MCP surface for using it; the performance gains below come from the CF
+workflow itself, not from a JetBrains-specific adapter:
+
+- **Less repeated work:** the dependency-aware proof DAG routes each change to
+  `RUN`, `REUSE`, `SKIP`, or `BLOCK`, then compares the incremental route with a
+  full baseline when that comparison is required.
+- **Fewer wasted agent retries:** Proof-Delta stops a loop when the candidate
+  did not change or fresh evidence did not improve the result, instead of
+  spending another repair cycle on the same idea.
+- **Faster review orientation:** hash-bound receipts, Graph Ops, and the
+  failure briefing keep the exact diff, proof gap, consequence, evidence, and
+  next action together instead of making a reviewer reconstruct them from
+  agent chat and scattered logs.
+- **Bounded resource cost:** evidence reads, workspace measurements, and
+  process-bound replays have explicit limits and fresh-workspace rules, so the
+  audit does not silently scan or mutate an entire project.
+
+These are workflow-efficiency improvements, not a promise that application
+code or tests execute faster. Actual time or cost savings remain unknown until
+your project supplies a baseline and an evidence window.
+
 ### Built for the way you work
 
 - **Solo developers and vibe coders:** get a second opinion before a plausible
