@@ -61,6 +61,10 @@ workflow itself, not from a JetBrains-specific adapter:
 - **Bounded resource cost:** evidence reads, workspace measurements, and
   process-bound replays have explicit limits and fresh-workspace rules, so the
   audit does not silently scan or mutate an entire project.
+- **Clear agent accountability:** the proof-coupled Junie handoff records the
+  known tool, changed-file rationale, hashes, and explicit unknowns against a
+  taxonomy digest, so an agent receives credit only for evidence a reviewer
+  can inspect.
 
 These are workflow-efficiency improvements, not a promise that application
 code or tests execute faster. Actual time or cost savings remain unknown until
@@ -591,7 +595,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [0.46.3 core release notes](docs/RELEASE_NOTES_0.46.3.md), the
+- See the [0.46.4 core release notes](docs/RELEASE_NOTES_0.46.4.md), the
   [grilling ladder](docs/GRILLING_LADDER.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.

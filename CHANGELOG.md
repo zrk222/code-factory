@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.46.4 - 2026-09-09
+
+- Make the public Code Factory performance story concrete: explain how
+  content-addressed receipts, incremental DAG routing, and RUN/REUSE/SKIP/BLOCK
+  decisions reduce repeated discovery and review archaeology without claiming
+  application runtime speed or unmeasured productivity gains.
+- Add proof-coupled Junie attribution across the MCP taxonomy, contribution
+  card, CLI, and JetBrains surface. A contribution records the exact known
+  tool, changed-file rationale, workspace-local hashes, explicit unknowns, and
+  a visible credit line; mismatched taxonomy or unsupported claims fail closed.
+- Keep provider integrations local and review-only. Junie, IDEs, and agents do
+  not gain execution, approval, merge, publication, deployment, telemetry, or
+  credential authority through this release.
+
 ## 0.45.0 - 2026-08-29
 
 - Add SaaS Reality, a provider-neutral OAuth/OIDC promise-to-permission proof

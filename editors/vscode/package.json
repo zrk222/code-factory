@@ -2,7 +2,7 @@
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
   "description": "Start with First Proof: find AI tests that cannot fail, then keep agent and app-release evidence reviewable.",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -109,7 +109,7 @@
   "overrides": {
     "brace-expansion": "5.0.9",
     "fast-uri": "3.1.6",
-    "js-yaml": "^4.3.1"
+    "js-yaml": "^4.3.2"
   },
   "devDependencies": {
     "@types/node": "^20.17.30",

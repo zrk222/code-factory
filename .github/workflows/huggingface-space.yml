@@ -41,11 +41,15 @@ jobs:
           import os
           from huggingface_hub import HfApi
 
-          HfApi(token=os.environ["HF_TOKEN"]).upload_folder(
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          info = api.upload_folder(
               repo_id="zrk222/code-factory",
               repo_type="space",
               folder_path="deploy/huggingface",
               path_in_repo=".",
               commit_message=f"Publish Code Factory Space from {os.environ['GITHUB_SHA']}",
           )
+          print(f"HF_SPACE_UPLOAD_COMMIT={getattr(info, 'oid', '')}")
+          readback = api.repo_info(repo_id="zrk222/code-factory", repo_type="space")
+          print(f"HF_SPACE_READBACK_SHA={getattr(readback, 'sha', '')}")
           PY

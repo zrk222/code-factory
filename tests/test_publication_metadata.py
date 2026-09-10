@@ -35,7 +35,7 @@ def test_public_audit_condition_count_is_recomputed_from_source():
     }
     claim = module.public_claim(result)
     breakdown = module.public_breakdown(result)
-    for relative in ("README.md", "docs/LLM_PRODUCT_CARD.md", "docs/RELEASE_NOTES_0.46.3.md"):
+    for relative in ("README.md", "docs/LLM_PRODUCT_CARD.md", "docs/RELEASE_NOTES_0.46.3.md", "docs/RELEASE_NOTES_0.46.4.md"):
         content = (ROOT / relative).read_text(encoding="utf-8")
         assert claim in content
         assert breakdown in content
@@ -57,7 +57,7 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-09-05"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-09-09"
 
     descriptor = json.loads((ROOT / "mcp" / "server.json").read_text(encoding="utf-8"))
     package = descriptor["packages"][0]
@@ -225,11 +225,11 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
     assert package["overrides"] == {
         "brace-expansion": "5.0.9",
         "fast-uri": "3.1.6",
-        "js-yaml": "^4.3.1",
+        "js-yaml": "^4.3.2",
     }
     assert lock["packages"]["node_modules/brace-expansion"]["version"] == "5.0.9"
     assert lock["packages"]["node_modules/fast-uri"]["version"] == "3.1.6"
-    assert lock["packages"]["node_modules/js-yaml"]["version"] == "4.3.1"
+    assert lock["packages"]["node_modules/js-yaml"]["version"] == "4.3.2"
     assert "dependencies" not in package
 
     for relative in ("vscode-extension.yml", "publish.yml", "openvsx.yml", "vscode-marketplace.yml"):
@@ -355,10 +355,10 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.46.3"
+    assert project["version"] == "0.46.4"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.9.5"
-    assert 'version = "0.9.3"' in gradle
+    assert vscode["version"] == "0.9.6"
+    assert 'version = "0.9.4"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -551,8 +551,8 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["access_right"] == "open"
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
-    assert metadata["version"] == "0.46.3"
-    assert metadata["publication_date"] == "2026-09-05"
+    assert metadata["version"] == "0.46.4"
+    assert metadata["publication_date"] == "2026-09-09"
     assert "read-only Agent Proof Bridge" in metadata["description"]
     assert "Proof Worklog" in metadata["description"]
     assert "deterministic AppForge App Review evidence gate" in metadata["description"]

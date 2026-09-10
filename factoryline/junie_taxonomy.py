@@ -227,7 +227,7 @@ def validate_junie_contribution(root: Path | str, declaration: object) -> dict[s
             "sequence": "source → obligation → forbidden behavior → gate → test → evidence → decision",
             "next_human_check": "Review the cited diff and receipts against the sealed scope; do not infer approval from this declaration.",
         },
-        "claim_boundary": "This validates only the supplied FactoryLine tool names and hashes of cited local files. It does not authenticate Junie, observe its reasoning or MCP calls, prove a test ran, or approve the change.",
+        "claim_boundary": "This validates only the supplied FactoryLine tool names and hashes of cited local files. It cannot authenticate Junie, observe its reasoning or MCP calls, prove a test ran, or approve the change.",
         "authority": dict(_AUTHORITY),
     }
 
