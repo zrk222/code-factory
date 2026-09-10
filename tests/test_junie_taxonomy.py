@@ -80,6 +80,44 @@ def test_contribution_gives_visible_bounded_credit_and_hashes_only_cited_local_f
     assert mismatch.value.marker == "JUNIE_CONTRIBUTION_TAXONOMY_MISMATCH"
 
 
+def test_contribution_canonicalizes_declared_paths_before_building_change_cards(tmp_path: Path) -> None:
+    changed = tmp_path / "src/example.py"
+    changed.parent.mkdir(parents=True)
+    changed.write_text("print('reviewed')\n", encoding="utf-8")
+    taxonomy = junie_taxonomy(tmp_path)
+    contribution = validate_junie_contribution(tmp_path, {
+        "taxonomy_sha256": taxonomy["taxonomy_sha256"],
+        "tools_called": ["factory.junie_taxonomy"],
+        "evidence_paths": [],
+        "changed_paths": ["./src/example.py"],
+        "change_rationales": {"./src/example.py": "Connect this changed implementation path to the reviewable proof route."},
+        "contribution": "Mapped the change to local review facts.",
+        "unknowns": [],
+    })
+    assert contribution["change_cards"][0]["path"] == "src/example.py"
+
+
+def test_contribution_rejects_paths_that_canonicalize_to_one_file(tmp_path: Path) -> None:
+    changed = tmp_path / "src/example.py"
+    changed.parent.mkdir(parents=True)
+    changed.write_text("print('reviewed')\n", encoding="utf-8")
+    taxonomy = junie_taxonomy(tmp_path)
+    with pytest.raises(JunieTaxonomyError) as caught:
+        validate_junie_contribution(tmp_path, {
+            "taxonomy_sha256": taxonomy["taxonomy_sha256"],
+            "tools_called": ["factory.junie_taxonomy"],
+            "evidence_paths": [],
+            "changed_paths": ["src/example.py", "./src/example.py"],
+            "change_rationales": {
+                "src/example.py": "Connect this changed implementation path to the reviewable proof route.",
+                "./src/example.py": "Connect this changed implementation path to the reviewable proof route.",
+            },
+            "contribution": "Mapped the change to local review facts.",
+            "unknowns": [],
+        })
+    assert caught.value.marker == "JUNIE_CONTRIBUTION_PATH_REJECTED"
+
+
 def test_project_pack_requires_confirmation_is_idempotent_and_preserves_owned_files(tmp_path: Path) -> None:
     with pytest.raises(JunieTaxonomyError, match="confirmation") as confirmation:
         install_junie_factoryline_pack(tmp_path, "yes")

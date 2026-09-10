@@ -106,6 +106,14 @@ def test_evidence_path_escape_is_rejected(tmp_path: Path):
     assert caught.value.code == "E_UX_EVIDENCE_PATH"
 
 
+def test_receipt_cannot_replace_manifest_even_with_equivalent_relative_path(tmp_path: Path):
+    path = _write_manifest(tmp_path, ui=False)
+    with pytest.raises(FullStackUXHarnessError) as caught:
+        verify_quality_harness(tmp_path, path, out=Path(".") / path.name)
+    assert caught.value.code == "E_UX_RECEIPT_PATH"
+    assert json.loads(path.read_text(encoding="utf-8"))["schema"] == "factory.full-stack-ux-harness.manifest.v1"
+
+
 def test_unknown_manifest_fields_are_rejected_instead_of_ignored(tmp_path: Path):
     path = _write_manifest(tmp_path, ui=False)
     manifest = json.loads(path.read_text(encoding="utf-8"))

@@ -153,6 +153,26 @@ def _string_list(value: object, name: str, *, maximum: int, allow_empty: bool = 
     return normalized
 
 
+def _canonical_path(workspace: Path, raw: str, field: str) -> str:
+    """Return one canonical workspace-relative path for declaration matching."""
+    candidate = (workspace / raw).resolve()
+    try:
+        relative = candidate.relative_to(workspace)
+    except ValueError as exc:
+        raise JunieTaxonomyError(f"{field} must stay inside the workspace", "JUNIE_CONTRIBUTION_PATH_REJECTED") from exc
+    if not relative.parts:
+        raise JunieTaxonomyError(f"{field} must name a file inside the workspace", "JUNIE_CONTRIBUTION_PATH_REJECTED")
+    return relative.as_posix()
+
+
+def _canonical_path_list(workspace: Path, value: object, name: str, *, maximum: int, allow_empty: bool = True) -> list[str]:
+    declared = _string_list(value, name, maximum=maximum, allow_empty=allow_empty)
+    canonical = [_canonical_path(workspace, raw, name) for raw in declared]
+    if len(canonical) != len(set(canonical)):
+        raise JunieTaxonomyError(f"{name} must not contain paths that resolve to the same file", "JUNIE_CONTRIBUTION_PATH_REJECTED")
+    return canonical
+
+
 def _local_file_hashes(workspace: Path, paths: list[str], field: str) -> list[dict[str, str]]:
     bound: list[dict[str, str]] = []
     for raw in paths:
@@ -191,15 +211,23 @@ def validate_junie_contribution(root: Path | str, declaration: object) -> dict[s
     unknown_tools = sorted(set(tools) - known_tools)
     if unknown_tools:
         raise JunieTaxonomyError(f"tools_called contains unknown FactoryLine tools: {', '.join(unknown_tools)}", "JUNIE_CONTRIBUTION_TOOL_REJECTED")
-    evidence_paths = _string_list(declaration["evidence_paths"], "evidence_paths", maximum=32)
-    changed_paths = _string_list(declaration["changed_paths"], "changed_paths", maximum=200)
+    evidence_paths = _canonical_path_list(workspace, declaration["evidence_paths"], "evidence_paths", maximum=32)
+    changed_paths = _canonical_path_list(workspace, declaration["changed_paths"], "changed_paths", maximum=200)
     raw_rationales = declaration["change_rationales"]
     if not isinstance(raw_rationales, dict) or not all(
         isinstance(path, str) and isinstance(rationale, str) and 12 <= len(rationale.strip()) <= 1_000
         for path, rationale in raw_rationales.items()
     ):
         raise JunieTaxonomyError("change_rationales must map every changed path to a 12 to 1000 character rationale", "JUNIE_CONTRIBUTION_INPUT_REJECTED")
-    rationales = {path.strip().replace("\\", "/"): rationale.strip() for path, rationale in raw_rationales.items()}
+    rationales: dict[str, str] = {}
+    for path, rationale in raw_rationales.items():
+        canonical = _canonical_path(workspace, path.strip().replace("\\", "/"), "change_rationales")
+        if canonical in rationales:
+            raise JunieTaxonomyError(
+                "change_rationales must not contain paths that resolve to the same file",
+                "JUNIE_CONTRIBUTION_PATH_REJECTED",
+            )
+        rationales[canonical] = rationale.strip()
     if set(rationales) != set(changed_paths):
         raise JunieTaxonomyError("change_rationales must cover exactly the declared changed_paths", "JUNIE_CONTRIBUTION_RATIONALE_REJECTED")
     contribution = declaration["contribution"]

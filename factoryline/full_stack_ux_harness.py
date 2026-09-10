@@ -236,7 +236,9 @@ def _judgment_findings(manifest: dict[str, Any]) -> tuple[list[dict[str, str]], 
 def verify_quality_harness(root: Path, manifest_path: Path, *, out: Path | None = None) -> dict[str, Any]:
     """Verify declared evidence and human judgment; never execute checks or release work."""
     workspace = Path(root).resolve()
-    manifest, source = _load_manifest(workspace, Path(manifest_path))
+    manifest_input = Path(manifest_path)
+    manifest_source = (manifest_input if manifest_input.is_absolute() else workspace / manifest_input).resolve()
+    manifest, source = _load_manifest(workspace, manifest_input)
     check_findings, checks = _check_findings(workspace, manifest)
     judgment_findings, review = _judgment_findings(manifest)
     findings = [*check_findings, *judgment_findings]
@@ -280,5 +282,10 @@ def verify_quality_harness(root: Path, manifest_path: Path, *, out: Path | None 
         destination.relative_to(workspace)
     except ValueError as exc:
         raise FullStackUXHarnessError("E_UX_RECEIPT_PATH", "receipt must stay inside the workspace") from exc
+    if destination == manifest_source:
+        raise FullStackUXHarnessError(
+            "E_UX_RECEIPT_PATH",
+            "receipt destination must differ from the manifest source",
+        )
     _atomic_json(destination, receipt)
     return {**receipt, "path": str(destination)}
