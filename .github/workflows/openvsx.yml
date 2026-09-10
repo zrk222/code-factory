@@ -181,6 +181,10 @@ jobs:
             echo "OPENVSX_TOKEN is required in the openvsx environment." >&2
             exit 1
           }
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_ref }}
+          fetch-depth: 0
       - name: Verify sealed candidate
         shell: bash
         run: |
