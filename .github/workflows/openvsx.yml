@@ -167,6 +167,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: openvsx
     steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_ref }}
+          fetch-depth: 0
       - uses: actions/download-artifact@v8.0.1
         with:
           name: openvsx-candidate-${{ inputs.release_ref }}

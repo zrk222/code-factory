@@ -88,6 +88,8 @@ abstract class MarketplacePreflightTask : DefaultTask() {
             "id=\"app.factoryline.intellij.openGuardian\"",
             "class=\"app.factoryline.intellij.OpenGuardianAction\"",
             "Your IDE feels slow. Your AI code looks fine.",
+            "Tuned for Junie. Not dependent on Junie.",
+            "proof-coupled change acknowledgement",
             "Add Guardian Core as the first tool-window tab",
         )
         val missingDescriptorFragments = requiredDescriptorFragments.filterNot(pluginXml::contains)
@@ -136,7 +138,7 @@ plugins {
 }
 
 group = "app.factoryline"
-version = "0.9.3"
+version = "0.9.4"
 
 // Keep release task inputs configuration-cache safe. Do not resolve the
 // Project from a task action: Gradle 9.5 treats that as a release-gate error.

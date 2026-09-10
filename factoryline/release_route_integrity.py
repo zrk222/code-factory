@@ -123,7 +123,7 @@ def _huggingface_space_authorization_check(root: Path) -> dict[str, Any]:
         "actions/setup-python@v5",
         "Validate static Space metadata before remote upload",
         "Install Hugging Face CLI",
-        'HfApi(token=os.environ["HF_TOKEN"]).upload_folder',
+        "api.upload_folder(",
     )
     passed = (
         "HF_TOKEN: ${{ secrets.HF_TOKEN }}" in workflow

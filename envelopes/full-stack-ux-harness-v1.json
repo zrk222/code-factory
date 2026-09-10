@@ -1,0 +1,14 @@
+{
+  "schema": "factoryline.intent-envelope.v1",
+  "feature": "full-stack-ux-harness-v1",
+  "sealed_hash": "6d7d53d4f39dec3289b8da6858a30f92eecc4304db583a0d628b700f68d12413",
+  "coherence_score": 100,
+  "source": "specs/full-stack-ux-harness-v1.md",
+  "intent": "Bind full-stack and product-facing UI evidence to a closed review contract, preserve human judgment, and deny the verifier release authority.",
+  "assumptions": [
+    "Authentication identity is not assumed from local reviewer metadata; consequential release decisions require the repository's trusted approval and receipt path.",
+    "Native tool dependency availability is not assumed: output is supplied as evidence and is not executed by the quality-harness verifier."
+  ],
+  "seal_timing": "pre-commit implementation review",
+  "coherence_basis": "SpecLine strict: zero warnings; all nine requirement mutations killed; ForgeLine smoke rejects a weakened stub. Not product certification or measured outcome proof."
+}

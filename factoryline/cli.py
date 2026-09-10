@@ -80,6 +80,11 @@ from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .ide_playbook import AdoptionGuideError, adoption_guide
 from .capability_evidence import CapabilityEvidenceError, audit_capability_evidence
+from .full_stack_ux_harness import (
+    FullStackUXHarnessError,
+    verify_quality_harness,
+    write_quality_harness_template,
+)
 from .graph_portfolio import graph_portfolio_plan
 from .graph_forensics import GraphForensicsError, graph_forensics, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
 from .langgraph_assurance import LangGraphAssuranceError, verify_langgraph_resume_parity
@@ -627,6 +632,19 @@ def main(argv=None) -> int:
     guide = sub.add_parser("guide", help="choose one plain-language path before opening advanced controls")
     guide.add_argument("--journey", help="one of: solo, team, enterprise")
     guide.add_argument("--json", action="store_true")
+
+    quality_harness = sub.add_parser("quality-harness", help="bind full-stack engineering evidence and six human UX judgments")
+    quality_sub = quality_harness.add_subparsers(required=True, dest="quality_cmd")
+    quality_template = quality_sub.add_parser("template", help="write a closed, unverified quality manifest")
+    quality_template.add_argument("--root", default=".")
+    quality_template.add_argument("--out", required=True)
+    quality_template.add_argument("--ui", action="store_true", help="include the seven UI evidence checks")
+    quality_template.add_argument("--json", action="store_true")
+    quality_verify = quality_sub.add_parser("verify", help="verify bound evidence and human judgments without executing checks")
+    quality_verify.add_argument("manifest")
+    quality_verify.add_argument("--root", default=".")
+    quality_verify.add_argument("--out")
+    quality_verify.add_argument("--json", action="store_true")
 
     code_audit = sub.add_parser("audit", help="inspect peer-pattern irregularities and guard-bypass paths without executing code")
     code_audit.add_argument("tool", choices=["patterns", "guard-paths", "all"])
@@ -2148,6 +2166,20 @@ def main(argv=None) -> int:
     mcp_serve = mcp_sub.add_parser("serve", help="serve newline-delimited JSON-RPC over stdio only")
     mcp_serve.add_argument("--root", default=".")
 
+    junie = sub.add_parser("junie", help="inspect or explicitly install the local Junie FactoryLine pack")
+    junie_sub = junie.add_subparsers(required=True, dest="junie_cmd")
+    junie_taxonomy_parser = junie_sub.add_parser("taxonomy", help="show the complete progressive Junie FactoryLine taxonomy")
+    junie_taxonomy_parser.add_argument("--root", default=".")
+    junie_taxonomy_parser.add_argument("--json", action="store_true")
+    junie_install = junie_sub.add_parser("install", help="install secret-free project Junie guidance and MCP config after exact confirmation")
+    junie_install.add_argument("--root", default=".")
+    junie_install.add_argument("--confirmation", required=True)
+    junie_install.add_argument("--json", action="store_true")
+    junie_contribution = junie_sub.add_parser("contribution", help="validate a Junie-declared FactoryLine contribution from a local JSON object")
+    junie_contribution.add_argument("--root", default=".")
+    junie_contribution.add_argument("--declaration", required=True, help="workspace-relative JSON declaration file")
+    junie_contribution.add_argument("--json", action="store_true")
+
     s = sub.add_parser("attest", help="export in-toto/SLSA-shaped proof statements for a trace")
     s.add_argument("trace")
     s.add_argument("--out-dir", default="dist/attestations")
@@ -3558,6 +3590,33 @@ def main(argv=None) -> int:
             return 2
         print(json.dumps(result, indent=2) if a.json else f"{result['marker']}: {len(result['claims'])} claims; {result['execution_count']} executions.\n{result['claim_boundary']}")
         return 0 if result["ok"] else 1
+    if a.cmd == "quality-harness":
+        try:
+            if a.quality_cmd == "template":
+                result = write_quality_harness_template(Path(a.root), Path(a.out), ui_in_scope=a.ui)
+                code = 0
+            else:
+                result = verify_quality_harness(
+                    Path(a.root), Path(a.manifest), out=Path(a.out) if a.out else None,
+                )
+                code = 0 if result["decision"] == "READY_FOR_HUMAN_RELEASE_REVIEW" else 1
+        except (FullStackUXHarnessError, OSError, json.JSONDecodeError, ValueError) as exc:
+            result = {
+                "schema": "factory.full-stack-ux-harness.error.v1",
+                "decision": "REJECTED",
+                "code": getattr(exc, "code", "E_UX_INPUT"),
+                "message": getattr(exc, "message", str(exc)),
+                "authority": "none",
+            }
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
+        elif code == 0:
+            print(f"Quality harness: {result.get('decision', 'TEMPLATE_WRITTEN')}")
+            print(f"Receipt: {result['path']}")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
+        return code
     if a.cmd == "guide":
         try:
             result = adoption_guide(a.journey)
@@ -5342,6 +5401,42 @@ def main(argv=None) -> int:
         except (McpError, McpSetupError) as exc:
             print(f"mcp failed: {exc.marker}: {exc}", file=sys.stderr)
             return 2
+    if a.cmd == "junie":
+        from .junie_taxonomy import JunieTaxonomyError, install_junie_factoryline_pack, junie_taxonomy, validate_junie_contribution
+
+        try:
+            root = Path(a.root)
+            if a.junie_cmd == "taxonomy":
+                payload = junie_taxonomy(root)
+            elif a.junie_cmd == "install":
+                payload = install_junie_factoryline_pack(root, a.confirmation)
+            else:
+                declaration_path = Path(a.declaration)
+                declaration_path = declaration_path if declaration_path.is_absolute() else root / declaration_path
+                try:
+                    declaration_path.resolve().relative_to(root.resolve())
+                except ValueError as exc:
+                    raise JunieTaxonomyError("declaration must stay inside the workspace", "JUNIE_CONTRIBUTION_PATH_REJECTED") from exc
+                payload = validate_junie_contribution(root, json.loads(declaration_path.read_text(encoding="utf-8")))
+        except JunieTaxonomyError as exc:
+            print(f"junie failed: {exc.marker}: {exc}", file=sys.stderr)
+            return 2
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"junie failed: JUNIE_CONTRIBUTION_INPUT_REJECTED: {exc}", file=sys.stderr)
+            return 2
+        if a.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        elif a.junie_cmd == "taxonomy":
+            print("FactoryLine taxonomy for Junie")
+            print("=" * 32)
+            for stage in payload["stages"]:
+                print(f"{stage['label']}: {stage['outcome']}")
+            print("Boundary: local guidance only; Junie remains enabled under JetBrains controls.")
+        elif a.junie_cmd == "install":
+            print(f"Junie FactoryLine pack {payload['state']}: .junie/AGENTS.md + .junie/mcp/mcp.json")
+        else:
+            print(payload["credit_line"])
+        return 0
     if a.cmd == "attest":
         outputs = export_attestations(load_trace(Path(a.trace)), out_dir=Path(a.out_dir))
         if a.json:

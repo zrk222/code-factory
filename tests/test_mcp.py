@@ -88,6 +88,8 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.appforge_submission_integrity_status",
         "factory.proof_continuity_status",
         "factory.saas_status",
+        "factory.junie_taxonomy",
+        "factory.junie_contribution",
         "factory.agent_proof_mission",
         "factory.jetbrains_handshake",
         "factory.jetbrains_handshake_status",
@@ -106,7 +108,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {"name": "code-factory", "version": "0.46.3"},
+                "serverInfo": {"name": "code-factory", "version": "0.46.4"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }
@@ -120,6 +122,34 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "idempotentHint": True,
         "openWorldHint": False,
     } for tool in inventory["result"]["tools"])
+
+    junie = _content(dispatch({
+        "jsonrpc": "2.0", "id": 29, "method": "tools/call", "params": {"name": "factory.junie_taxonomy"},
+    }, tmp_path))
+    assert junie["marker"] == "MCP_JUNIE_TAXONOMY_READ_ONLY"
+    assert junie["taxonomy"]["tool_count"] == len(mcp_status(tmp_path)["tools"])
+    assert all(value is False for value in junie["taxonomy"]["authority"].values())
+
+    evidence_path = tmp_path / "junie-evidence.json"
+    evidence_path.write_text('{"local": true}\n', encoding="utf-8")
+    contribution = _content(dispatch({
+        "jsonrpc": "2.0", "id": 291, "method": "tools/call", "params": {
+            "name": "factory.junie_contribution",
+            "arguments": {
+                "taxonomy_sha256": junie["taxonomy"]["taxonomy_sha256"],
+                "tools_called": ["factory.junie_taxonomy", "factory.graph_ops"],
+                "evidence_paths": ["junie-evidence.json"],
+                "changed_paths": [],
+                "change_rationales": {},
+                "contribution": "Mapped the change review to local FactoryLine evidence.",
+                "unknowns": ["A human reviewer still decides whether the change is acceptable."],
+            },
+        },
+    }, tmp_path))
+    assert contribution["marker"] == "MCP_JUNIE_CONTRIBUTION_READ_ONLY"
+    assert contribution["contribution"]["marker"] == "JUNIE_FACTORYLINE_CONTRIBUTION_DECLARED"
+    assert contribution["contribution"]["credit_line"].startswith("FactoryLine contribution declared:")
+    assert "cannot authenticate Junie" in contribution["contribution"]["claim_boundary"]
 
     graph = _content(dispatch({
         "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "factory.graph_ops"},

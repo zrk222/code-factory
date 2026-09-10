@@ -22,6 +22,11 @@ does not replace, control, or imply endorsement by either JetBrains product.
 rewrites of blocking/release Oracle rules and keeps AppForge authority receipts
 path-to-digest verifiable.
 
+**New in 0.9.4:** Junie handoffs can carry proof-coupled attribution: the
+known FactoryLine tool, changed-file rationale, workspace-local hashes,
+unknowns, and a visible credit line are checked against the taxonomy digest.
+The card is read-only and does not grant Junie execution or release authority.
+
 **New in 0.9.3:** senior teams can review candidate-bound execution
 attestations, real-defect benchmark metrics, and dependency-aware incremental
 proof plans with a full-plan shadow comparison. The IDE remains a read-only
@@ -131,7 +136,7 @@ facts, and their review scope is never a root-cause or repair claim. See
 
 ## Install
 
-1. Install `factoryline-code-factory==0.46.3` into the Python environment that
+1. Install `factoryline-code-factory==0.46.4` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the

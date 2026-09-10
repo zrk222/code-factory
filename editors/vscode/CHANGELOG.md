@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.6 - 2026-09-09
+
+- Align the VS Code and Open VSX adapters with Code Factory 0.46.4 and expose
+  the proof-coupled Junie handoff story in the release metadata.
+- Keep the adapter read-only and local: it displays receipts and next actions
+  but never executes agents, approves, merges, publishes, deploys, or stores
+  credentials.
+
 ## 0.9.5 - 2026-09-06
 
 - Synchronize the adapter metadata and installable artifact name with the

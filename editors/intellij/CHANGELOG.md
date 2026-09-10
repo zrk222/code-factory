@@ -1,5 +1,14 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.9.4 - 2026-09-09
+
+- Add proof-coupled Junie attribution: the IDE can inspect the known tool,
+  changed-file rationale, hashes, unknowns, and visible credit line from a
+  locally verified contribution card.
+- Keep the handoff optional and read-only. FactoryLine remains useful beside
+  Junie, Qodana, Copilot, or another analyzer and never executes, approves,
+  merges, publishes, deploys, or receives credentials.
+
 ## 0.9.3 - 2026-09-06
 
 - Add the senior-engineering evidence layer to the shared review story:

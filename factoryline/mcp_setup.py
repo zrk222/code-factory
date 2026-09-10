@@ -182,5 +182,5 @@ def install_project_mcp_config(root: Path | str, client: str, confirmation: str)
         "client": "junie", "target": target.relative_to(workspace).as_posix(), "file_sha256": sha256(encoded).hexdigest(),
         "connection": {"command": "factory", "args": _command(workspace)[1:]},
         "authority": {"agent_start": False, "credential": False, "network": False, "approval": False},
-        "next_action": "Enable custom MCP servers in JetBrains AI Assistant, confirm code-factory is active, then ask Junie for factory.agent_proof_mission.",
+        "next_action": "Enable custom MCP servers in JetBrains AI Assistant, confirm code-factory is active, then ask Junie for factory.junie_taxonomy before requesting a scoped factory.agent_proof_mission.",
     }
