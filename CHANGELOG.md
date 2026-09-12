@@ -31,6 +31,17 @@
 
 ## Unreleased
 
+### Deep-audit attestation and freshness
+
+- Add a review-only `factory.deep-audit attestation` verifier for independent
+  DSSE evidence bound to the exact deep-audit receipt, signed plan, candidate,
+  rules, canaries, and complete report coverage.
+- Add bounded timezone-aware freshness checks, analyzer-self-attestation
+  rejection, stable `E_DEEP_ATTESTATION_*` failures, and strict comparison
+  flags that require both attestations plus an operator-pinned trust root.
+- Preserve the legacy self-hash comparison for compatibility; no path executes,
+  repairs, approves, publishes, deploys, or grants credentials.
+
 ### Intake parameter envelope
 
 - Add `factory intake parameters seal|verify|status`, a confirmation-bound,

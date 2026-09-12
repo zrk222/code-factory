@@ -1,0 +1,22 @@
+{
+  "checks": [
+    {
+      "name": "deep_audit_attestation_is_independent_and_fresh",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_deep_audit_attestation.py','tests/test_deep_audit_loop.py'])\nassert result==0\nprint('DEEP_AUDIT_ATTESTATION_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "DEEP_AUDIT_ATTESTATION_PASS",
+      "timeout_s": 180,
+      "must_fail_on_stub": true,
+      "covers": [
+        "DEEP_AUDIT_ATTESTATION_VERIFIED",
+        "E_DEEP_ATTESTATION_SIGNATURE",
+        "E_DEEP_ATTESTATION_BINDING",
+        "E_DEEP_ATTESTATION_INDEPENDENCE",
+        "E_DEEP_ATTESTATION_FRESHNESS",
+        "E_DEEP_ATTESTATION_REQUIRED",
+        "AUTHORITY_NONE"
+      ]
+    }
+  ]
+}

@@ -32,6 +32,12 @@ known, what is missing, and the one fact-derived next action.
   state lineage, identifies the first semantic divergence, detects stale reads,
   unsafe parallel writes, and repeated effects, then previews the smallest
   human-reviewed recovery fork without executing it.
+- **Authenticates deep-audit observations without pretending they are approval.**
+  An independent verifier can sign a receipt-bound DSSE attestation; CF checks
+  the operator-pinned signer, complete report coverage, and bounded freshness
+  offline before strict comparisons. Invalid, stale, or analyzer-self evidence
+  fails closed, while the result remains `authority: none` and requires human
+  review.
 - **Chooses the smallest repair that still carries complete proof.**
   `factory proofsearch` verifies supplied patch and receipt hashes, required
   gates, mutation results, scope, and safety declarations across 2 through 12

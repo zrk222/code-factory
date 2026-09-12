@@ -743,3 +743,15 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-12 16:48] GATE spec intake-admission-v1 approver=human strict=True sha=d3f123b9f0870d26
 - [2026-09-12 16:48] GATE plan intake-admission-v1 approver=human tasks=6 sha=d3f123b9f0870d26
 - [2026-09-12 16:49] GATE plan intake-admission-v1 approver=human tasks=6 sha=d3f123b9f0870d26
+
+- [2026-09-12 14:46] GATE spec deep-audit-attestation-v1 approver=human strict=True validators=1/1 sha=853df60d2ead0c2c
+- [2026-09-12 14:46] GATE plan deep-audit-attestation-v1 approver=human tasks=8 sha=28496a7a8bd16492
+- [2026-09-12 14:46] VERIFY deep-audit-attestation-v1 focused=18_passed deep_audit_family=74_passed full=1513_passed_7_skipped_2_warnings ruff=passed audit=0_drift wheel_sdist=0.46.4 twine=passed wheel_module=present
+
+- [2026-09-12 18:31] GATE spec deep-audit-attestation-v1 approver=human strict=True sha=853df60d2ead0c2c
+- [2026-09-12 18:34] GATE plan deep-audit-attestation-v1 approver=human tasks=8 sha=4dd955baa00945cc
+- [2026-09-12 18:41] GATE plan deep-audit-attestation-v1 approver=human tasks=8 sha=28496a7a8bd16492
+
+- [2026-09-12 18:46] GATE spec deep-audit-attestation-v1 approver=human strict=True sha=28496a7a8bd16492
+- [2026-09-12 18:46] GATE plan deep-audit-attestation-v1 approver=human tasks=8 sha=28496a7a8bd16492
+- [2026-09-12 18:46] VERIFY deep-audit-attestation-v1 focused=18_passed deep_audit_family=74_passed full=1513_passed_7_skipped_2_warnings ruff=passed audit=0_drift wheel_sdist=0.46.4-r2 twine=passed wheel_module=present smoke=passed

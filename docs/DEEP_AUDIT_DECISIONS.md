@@ -49,6 +49,25 @@ Graph Ops projects up to 50 finding chains with a complete receipt reference and
 explicit truncation. Nodes remain unassessed: receipt hashes do not establish
 signer authenticity. Projection detects changes from its observed receipt hash.
 
+## Independent attestation and freshness
+
+An external verifier can now sign a `factory.deep-audit-attestation.v1` DSSE
+document. `factory deep-audit attestation <attestation.json> --receipt
+<receipt.json> --trust-root <trust.json> --root <workspace>` verifies the signer
+against the operator-pinned trust root, binds the exact receipt, plan, candidate,
+rules, canary set and complete report maps, and enforces the timezone-aware
+freshness window (one hour by default, never longer than 24 hours). The verifier
+identity must be independent of every analyzer. The result is
+`DEEP_AUDIT_ATTESTATION_VERIFIED`; it is still review-only and carries
+`authority: none`.
+
+For a repair comparison, pass `--before-attestation`, `--after-attestation` and
+`--trust-root`; add `--require-attestation` to make both attestations mandatory.
+Any supplied attestation is verified even in compatibility mode, and a bad or
+stale one blocks. The default three-argument comparison remains self-hash-only
+for backwards compatibility. Attestation verification authenticates signer,
+binding and freshness, not analyzer semantic correctness or release approval.
+
 ## Compare a repair
 
 `factory deep-audit compare --root <workspace> --before <relative-receipt.json>

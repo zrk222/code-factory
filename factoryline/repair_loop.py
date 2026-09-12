@@ -40,10 +40,10 @@ class RepairLoopError(ValueError):
         self.code = code
 
 
-def compare_deep_audit_repairs(root: Path, before_path: str, after_path: str) -> dict:
+def compare_deep_audit_repairs(root: Path, before_path: str, after_path: str, **kwargs) -> dict:
     """Route two deep-audit observations into a human-controlled repair handoff, without executing repairs."""
     from .deep_audit_loop import compare_deep_audits
-    return compare_deep_audits(root, before_path, after_path)
+    return compare_deep_audits(root, before_path, after_path, **kwargs)
 
 
 def _canonical(value: object) -> bytes:

@@ -205,6 +205,7 @@ from .senior_assurance import (
 )
 from .runtime_audit import execute_runtime_audit, runtime_audit_status
 from .deep_audit import execute_deep_audit, deep_audit_status
+from .deep_audit_attestation import DeepAuditAttestationError, verify_deep_audit_attestation
 from .repair_loop import compare_deep_audit_repairs
 from .runtime_audit_common import RuntimeAuditError
 from .runtime_audit_contract import verify_runtime_audit_plan
@@ -1629,13 +1630,23 @@ def main(argv=None) -> int:
 
     deep = sub.add_parser("deep-audit", help="evaluate signed analyzer evidence or read local repair guidance; never release approval")
     deep_sub = deep.add_subparsers(required=True, dest="deep_cmd")
-    for action in ("evaluate", "status", "compare"):
+    for action in ("evaluate", "status", "compare", "attestation"):
         command = deep_sub.add_parser(action)
         command.add_argument("--root", default=".")
         command.add_argument("--json", action="store_true")
         if action == "compare":
             command.add_argument("--before", required=True)
             command.add_argument("--after", required=True)
+            command.add_argument("--before-attestation")
+            command.add_argument("--after-attestation")
+            command.add_argument("--trust-root")
+            command.add_argument("--require-attestation", action="store_true")
+            command.add_argument("--max-age-seconds", type=int, default=3600)
+        if action == "attestation":
+            command.add_argument("attestation")
+            command.add_argument("--receipt", required=True)
+            command.add_argument("--trust-root", required=True)
+            command.add_argument("--max-age-seconds", type=int, default=3600)
         if action == "evaluate":
             command.add_argument("--plan", required=True)
             command.add_argument("--trust-root", required=True)
@@ -3463,17 +3474,40 @@ def main(argv=None) -> int:
         try:
             root = Path(a.root).resolve()
             if a.deep_cmd == "compare":
-                result = compare_deep_audit_repairs(root, a.before, a.after)
+                result = compare_deep_audit_repairs(
+                    root,
+                    a.before,
+                    a.after,
+                    before_attestation=a.before_attestation,
+                    after_attestation=a.after_attestation,
+                    trust_root_path=Path(a.trust_root) if a.trust_root else None,
+                    require_attestation=a.require_attestation,
+                    max_age_seconds=a.max_age_seconds,
+                )
                 print(json.dumps(result, indent=2, sort_keys=True))
                 return 0 if result["state"] == "approval_required" else 1
             elif a.deep_cmd == "status":
                 result = deep_audit_status(root)
                 code = 0 if result["state"] == "READY_FOR_HUMAN_REVIEW" else 1
+            elif a.deep_cmd == "attestation":
+                result = verify_deep_audit_attestation(
+                    root,
+                    Path(a.attestation),
+                    Path(a.trust_root),
+                    Path(a.receipt),
+                    max_age_seconds=a.max_age_seconds,
+                )
+                code = 0 if result["state"] == "VERIFIED" else 1
             else:
                 result = execute_deep_audit(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root)
                 code = 0 if result["receipt"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
-            result["action_summary"] = "Read local deep-audit evidence." if a.deep_cmd == "status" else "Evaluated signed reports and saved a review receipt; no analyzer or repair ran."
-        except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
+            result["action_summary"] = (
+                "Read local deep-audit evidence." if a.deep_cmd == "status" else
+                "Verified one offline DSSE deep-audit attestation; no analyzer or repair ran." if a.deep_cmd == "attestation" else
+                "Compared signed deep-audit observations; no analyzer or repair ran." if a.deep_cmd == "compare" else
+                "Evaluated signed reports and saved a review receipt; no analyzer or repair ran."
+            )
+        except (DeepAuditAttestationError, RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
             result = {"code": getattr(exc, "code", "E_DEEP_AUDIT"), "message": str(exc), "authority": "none"}
             code = 2
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
