@@ -60,7 +60,7 @@ _STAGES: tuple[dict[str, object], ...] = (
         "label": "2. Contract — bind intent, scope, and forbidden behavior",
         "default": True,
         "when": "Before editing code or accepting an agent plan.",
-        "tools": ("factory.intent_ledger", "factory.intake_status", "factory.prd_grill_status", "factory.oracle_firewall_status", "factory.semantic_authority_status", "factory.codex_metadata_audit"),
+        "tools": ("factory.intent_ledger", "factory.intake_status", "factory.intake_parameters_status", "factory.prd_grill_status", "factory.oracle_firewall_status", "factory.semantic_authority_status", "factory.codex_metadata_audit"),
         "outcome": "A human-owned promise, non-goal, negative case, and no silent oracle weakening.",
     },
     {

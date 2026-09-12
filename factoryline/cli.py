@@ -82,6 +82,12 @@ from .context_efficiency import (
     context_efficiency_status,
     verify_context_packet,
 )
+from .intake_parameters import (
+    IntakeParametersError,
+    intake_parameters_status,
+    seal_intake_parameters,
+    verify_intake_parameters,
+)
 from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .ide_playbook import AdoptionGuideError, adoption_guide
@@ -2506,6 +2512,21 @@ def main(argv=None) -> int:
     intake_read.add_argument("--root", default=".")
     intake_read.add_argument("--prd")
     intake_read.add_argument("--json", action="store_true")
+    intake_parameters = intake_sub.add_parser("parameters", aliases=("params",), help="seal or verify bounded intake operating parameters")
+    intake_parameters_sub = intake_parameters.add_subparsers(dest="intake_parameters_cmd", required=True)
+    intake_parameters_seal = intake_parameters_sub.add_parser("seal", help="seal a confirmation-bound intake parameter envelope")
+    intake_parameters_seal.add_argument("request")
+    intake_parameters_seal.add_argument("--root", default=".")
+    intake_parameters_seal.add_argument("--out")
+    intake_parameters_seal.add_argument("--force", action="store_true")
+    intake_parameters_seal.add_argument("--json", action="store_true")
+    intake_parameters_verify = intake_parameters_sub.add_parser("verify", help="verify a sealed intake parameter envelope")
+    intake_parameters_verify.add_argument("receipt")
+    intake_parameters_verify.add_argument("--root", default=".")
+    intake_parameters_verify.add_argument("--json", action="store_true")
+    intake_parameters_read = intake_parameters_sub.add_parser("status", help="read intake parameter envelope status")
+    intake_parameters_read.add_argument("--root", default=".")
+    intake_parameters_read.add_argument("--json", action="store_true")
 
     mission = sub.add_parser("mission", help="create or verify a supervised, passport-bound value mission")
     mission_sub = mission.add_subparsers(dest="mission_cmd", required=True)
@@ -2984,6 +3005,12 @@ def main(argv=None) -> int:
                 )
             elif a.cmd == "intake" and a.intake_cmd == "verify":
                 result = verify_intake_confirmation(Path(a.root), Path(a.receipt)) if a.confirmation else verify_intake_grill(Path(a.root), Path(a.receipt))
+            elif a.cmd == "intake" and a.intake_cmd in {"parameters", "params"} and a.intake_parameters_cmd == "seal":
+                result = seal_intake_parameters(Path(a.root), Path(a.request), Path(a.out) if a.out else None, a.force)
+            elif a.cmd == "intake" and a.intake_cmd in {"parameters", "params"} and a.intake_parameters_cmd == "verify":
+                result = verify_intake_parameters(Path(a.root), Path(a.receipt))
+            elif a.cmd == "intake" and a.intake_cmd in {"parameters", "params"}:
+                result = intake_parameters_status(Path(a.root))
             elif a.cmd == "intake":
                 result = intake_status(Path(a.root), Path(a.prd) if a.prd else None)
             elif a.cmd == "agent" and a.agent_cmd == "contract":
@@ -3156,7 +3183,7 @@ def main(argv=None) -> int:
                 )
             else:
                 result = outcome_summary(Path(a.root), a.mission_id)
-        except (ProductMissionError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProofDeltaError, ProviderRouterError, AgentContractError, VerifierPlaneError, LangGraphAssuranceError) as exc:
+        except (ProductMissionError, IntakeParametersError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProofDeltaError, ProviderRouterError, AgentContractError, VerifierPlaneError, LangGraphAssuranceError) as exc:
             print(json.dumps({
                 "schema": "factory.workflow_error.v1", "status": "failed",
                 "code": exc.code, "message": exc.message,
@@ -3185,6 +3212,7 @@ def main(argv=None) -> int:
             or (a.cmd == "provider" and a.provider_cmd == "verify")
             or (a.cmd == "agent" and a.agent_cmd in {"contract", "attestation"})
             or (a.cmd == "verifier" and a.verifier_cmd == "verify")
+            or (a.cmd == "intake" and a.intake_cmd in {"parameters", "params"} and a.intake_parameters_cmd == "verify")
         ):
             return 0 if result.get("valid", result.get("verdict") == "VERIFIED") else 1
         return 0

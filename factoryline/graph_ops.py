@@ -1957,6 +1957,10 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "repair_supply_chain_attestation", "The local supply-chain receipt is blocked or integrity-invalid. Reconcile source, dependency, vulnerability, licence, reproducible-build, and artifact evidence before release review."
     if facts.get("context_efficiency_blocked", 0) > 0:
         return "repair_context_efficiency_packet", "A cached context packet is malformed or invalid. Rebuild it from the sealed request and current source digests before handing context to an agent."
+    if facts.get("intake_parameters_blocked", 0) > 0:
+        return "repair_intake_parameters", "An intake parameter envelope is invalid, expired, or drifted. Repair the source-bound envelope before any agent receives operating parameters."
+    if facts.get("intake_parameters_review_required", 0) > 0:
+        return "review_intake_parameters", "An intake parameter envelope contains advisory agent or production values. A named human must promote them before they can influence a blocking or release decision."
     if facts.get("semantic_authority_expired_lease_count", 0) > 0:
         return "renew_semantic_authority", "An agent lease expired. Keep the handoff constrained and obtain a fresh named approval rather than extending or replaying the prior lease."
     if facts.get("semantic_authority_invalid_count", 0) > 0:
@@ -2321,10 +2325,17 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
         context_id = f"context-efficiency:{str(context_efficiency.get('schema', 'v1'))}:{context_efficiency.get('packet_count', 0)}"
         _node(state, node_id=context_id, kind="context_efficiency", label="Context efficiency packets", source=".factory/context-efficiency", status=context_status,
               facts={key: value for key, value in context_efficiency.items() if key not in {"schema", "claim_boundary", "packets"}})
+    intake_parameters = shared["intake_parameters"]
+    intake_parameters_state = str(intake_parameters.get("state", "MISSING")).lower()
+    if intake_parameters_state != "missing":
+        intake_parameters_id = f"intake-parameters:{intake_parameters.get('receipt_count', 0)}:{intake_parameters.get('invalid_count', 0)}"
+        _node(state, node_id=intake_parameters_id, kind="intake_parameters", label="Intake parameter envelope", source=".factory/intake-parameters", status=intake_parameters_state,
+              facts={key: value for key, value in intake_parameters.items() if key not in {"schema", "claim_boundary", "latest", "invalid"}})
     values.update({
         "mission_control": mission_control,
         "supply_chain": supply_chain,
         "context_efficiency": context_efficiency,
+        "intake_parameters": intake_parameters,
         "release_decision": release_decision["facts"],
         "oracle_firewall": _append_oracle_firewall(state, workspace, shared["oracle"]),
         "proof_continuity": _append_proof_continuity(state, workspace),
@@ -2423,6 +2434,13 @@ def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list
         "context_efficiency_packet_count": int(p["context_efficiency"].get("packet_count", 0)),
         "context_efficiency_cache_hits": int(p["context_efficiency"].get("cache_hits", 0)),
         "context_efficiency_estimated_tokens": int(p["context_efficiency"].get("estimated_tokens", 0)),
+        "intake_parameters_state": p["intake_parameters"].get("state", "MISSING"),
+        "intake_parameters_blocked": int(p["intake_parameters"].get("state") == "BLOCKED"),
+        "intake_parameters_review_required": int(p["intake_parameters"].get("state") == "REVIEW_REQUIRED"),
+        "intake_parameters_receipt_count": int(p["intake_parameters"].get("receipt_count", 0)),
+        "intake_parameters_authoritative_count": int(p["intake_parameters"].get("ready_count", 0)),
+        "intake_parameters_advisory_count": int(p["intake_parameters"].get("review_required_count", 0)),
+        "intake_parameters_invalid_count": int(p["intake_parameters"].get("invalid_count", 0)),
         "edge_count": len(edges),
         "appforge_design_current_count": appforge["current_count"],
         "appforge_design_invalid_count": appforge["invalid_count"],
@@ -2462,6 +2480,8 @@ def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]
         (p["supply_chain"].get("state") in {"BLOCKED", "INCOMPLETE"}, ("GRAPH_OPS_SUPPLY_CHAIN_REVIEW_REQUIRED",)),
         (p["context_efficiency"].get("state") != "MISSING", ("GRAPH_OPS_CONTEXT_EFFICIENCY_READ_ONLY",)),
         (p["context_efficiency"].get("state") == "BLOCKED", ("GRAPH_OPS_CONTEXT_EFFICIENCY_REVIEW_REQUIRED",)),
+        (p["intake_parameters"].get("state") != "MISSING", ("GRAPH_OPS_INTAKE_PARAMETERS_READ_ONLY",)),
+        (p["intake_parameters"].get("state") in {"BLOCKED", "REVIEW_REQUIRED"}, ("GRAPH_OPS_INTAKE_PARAMETERS_REVIEW_REQUIRED",)),
         (p["release_readiness"]["contract_count"] or p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_READ_ONLY",)),
         (p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_REVIEW_REQUIRED",)),
         (any((semantic["handoff_count"], semantic["lease_count"], semantic["invalid_count"])), ("GRAPH_OPS_SEMANTIC_AUTHORITY_READ_ONLY",)),

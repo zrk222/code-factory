@@ -20,6 +20,7 @@ from .proof_delta import proof_delta_status
 from .proof_reuse import verify_proof_receipt
 from .prd_grill import verify_prd_grill
 from .intake_grill import intake_status
+from .intake_parameters import intake_parameters_status
 from .gauntlet import gauntlet_status
 from .agent_license import AgentLicenseError, derive_license, license_projection, normalize_agent_identity
 from .combine import combine_projection
@@ -93,6 +94,7 @@ _RECEIPT_ROOTS = (
     Path(".factory/proof-deltas"),
     Path(".factory/intake-grills"),
     Path(".factory/intake-confirmations"),
+    Path(".factory/intake-parameters"),
     Path(".factory/gauntlets"),
     Path(".factory/agent-licenses"),
     Path(".factory/combines"),
@@ -468,6 +470,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.context_efficiency_status",
             "description": "Read bounded context-packet cache metadata and estimated token budgets. It never executes sources, changes intent, or grants authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.intake_parameters_status",
+            "description": "Read bounded intake operating parameters, provenance, expiry, and canonical six-lane coverage. It never changes intent, authorizes execution, or grants provider access.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1292,6 +1300,17 @@ def _context_efficiency_status(root: Path, arguments: object) -> dict[str, objec
     }
 
 
+def _intake_parameters_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.intake_parameters_status accepts no arguments")
+    return {
+        "marker": "INTAKE_PARAMETERS_MCP_READ_ONLY",
+        "action_summary": "Read bounded intake parameters, provenance, expiry, and six-lane coverage without changing the intake or granting authority.",
+        "status": intake_parameters_status(root),
+        "scope": "Read-only local metadata. No intent change, execution, approval, repair, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
 def _deep_audit_status(root: Path, arguments: object) -> dict[str, object]:
     """Read local deep audit findings without execution or approval authority."""
     if arguments != {}:
@@ -1665,6 +1684,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_mission_control_status(root, arguments))
     if name == "factory.context_efficiency_status":
         return _content(_context_efficiency_status(root, arguments))
+    if name == "factory.intake_parameters_status":
+        return _content(_intake_parameters_status(root, arguments))
     if name == "factory.deep_audit_status":
         return _content(_deep_audit_status(root, arguments))
     if name == "factory.runtime_audit_status":

@@ -70,6 +70,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
             "factory.repair_loop_status",
                 "factory.mission_control_status",
                 "factory.context_efficiency_status",
+                "factory.intake_parameters_status",
                 "factory.deep_audit_status",
             "factory.runtime_audit_status",
             "factory.agent_bridge_status",

@@ -62,6 +62,11 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "description": "Read bounded packet/cache metadata and estimated token budgets already visible on this page. It never executes sources or grants authority.",
     },
     {
+        "name": "factory.intake_parameters_status",
+        "title": "Read intake parameter envelope",
+        "description": "Read bounded intake parameters, provenance, expiry, and canonical six-lane coverage already visible on this page. It never changes intent or grants authority.",
+    },
+    {
         "name": "factory.appforge_oracle_status",
         "title": "Read AppForge policy authority",
         "description": "Read candidate-bound AppForge authority state already visible on this page. It never contacts Apple or changes a submission.",

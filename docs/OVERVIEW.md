@@ -15,6 +15,11 @@ known, what is missing, and the one fact-derived next action.
 - **Clarifies the contract before automation compounds it.** `factory prd grill
   PRD.md --root .` creates a capped, source-bound question sheet with answer
   stubs. It does not rewrite the PRD, invent answers, or authorize a build.
+- **Pins down the operating envelope before a worker starts.** `factory intake
+  parameters seal|verify|status` binds mode, risk, budgets, scope, external
+  effects, provenance, expiry, and the complete six-lane runtime audit to the
+  verified human intake. Agent-proposed values remain advisory; drift,
+  widening, and incomplete lanes fail closed.
 - **Makes delivery state legible.** Factory Studio, Graph Ops, and the VS Code
   and JetBrains integrations present requirements, gates, proofs, and blocked
   work in one local, read-only view.

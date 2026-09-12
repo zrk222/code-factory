@@ -31,6 +31,19 @@
 
 ## Unreleased
 
+### Intake parameter envelope
+
+- Add `factory intake parameters seal|verify|status`, a confirmation-bound,
+  self-hash-verified operating envelope for mode, risk, budgets, scope,
+  external-effects posture, provenance, expiry, and all six runtime-audit lanes.
+- Agent-proposed or production-observed values remain `REVIEW_REQUIRED`; only
+  human-confirmed or trusted-source values are authoritative. Traversal,
+  symlinks, secrets, widening, drift, expiry, incomplete lanes, and autonomy
+  outside local-only effects fail closed.
+- Surface bounded status and one recovery action in Mission Control, Graph Ops,
+  stdio MCP, WebMCP, and the Junie taxonomy. No new execution, approval,
+  credential, provider, publication, or deployment authority is introduced.
+
 ### Context efficiency and deterministic agent hand-offs
 
 - Add `factory efficiency pack|verify|status` for bounded, priority-aware

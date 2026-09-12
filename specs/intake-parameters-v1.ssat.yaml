@@ -1,0 +1,38 @@
+name: intake-parameters-v1
+language: python
+modules:
+  - name: intake_parameters
+    path: factoryline/intake_parameters.py
+    functions:
+      - name: seal_intake_parameters
+        args: [root, request_path, out_path, force]
+        returns: dict[str, Any]
+      - name: verify_intake_parameters
+        args: [root, receipt_path]
+        returns: dict[str, Any]
+      - name: intake_parameters_status
+        args: [root]
+        returns: dict[str, Any]
+dependencies:
+  - factoryline.intake_grill
+  - factoryline.product_missions
+invariants:
+  - name: intake_parameters_never_authorize_execution
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system|Popen\\(|eval\\(|exec\\("
+    scopes:
+      - module: intake_parameters
+        symbol: seal_intake_parameters
+        max_lines: 180
+      - module: intake_parameters
+        symbol: verify_intake_parameters
+        max_lines: 150
+  - name: intake_parameters_require_all_lanes
+    forbid_pattern: "required_lanes.*\\["
+    scopes:
+      - module: intake_parameters
+        symbol: _validate_request
+        max_lines: 170
+tests:
+  - path: tests/test_intake_parameters.py
+    command: py -3.11 -m pytest -q tests/test_intake_parameters.py
+schema: factory.ssat.v1
