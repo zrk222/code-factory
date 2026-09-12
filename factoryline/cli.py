@@ -99,6 +99,7 @@ from .full_stack_ux_harness import (
 )
 from .graph_portfolio import graph_portfolio_plan
 from .graph_forensics import GraphForensicsError, graph_forensics, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
+from .candidate_lineage import CandidateLineageError, verify_candidate_lineage
 from .langgraph_assurance import LangGraphAssuranceError, verify_langgraph_resume_parity
 from .proofsearch import ProofSearchError, create_proofsearch_plan, evaluate_proofsearch, verify_proofsearch_evaluation
 from .evidence_frontier import EvidenceFrontierError, plan_evidence_frontier, verify_evidence_frontier
@@ -1374,19 +1375,26 @@ def main(argv=None) -> int:
     graph_portfolio.add_argument("--json", action="store_true")
     graph_lineage = graph_sub.add_parser("lineage-verify", help="verify one hash-sealed semantic graph lineage receipt")
     graph_lineage.add_argument("lineage")
+    graph_lineage.add_argument("--candidate-sha256", help="require this candidate digest in the lineage receipt")
     graph_lineage.add_argument("--json", action="store_true")
     graph_seal = graph_sub.add_parser("lineage-seal", help="validate step objects and atomically write a hash-sealed lineage receipt")
     graph_seal.add_argument("--run-id", required=True)
     graph_seal.add_argument("--graph-id", required=True)
     graph_seal.add_argument("--steps", required=True)
     graph_seal.add_argument("--out", required=True)
+    graph_seal.add_argument("--candidate-sha256", help="bind the sealed lineage to a candidate digest")
     graph_seal.add_argument("--json", action="store_true")
     graph_mission = graph_sub.add_parser("lineage-mission", help="export a verified native mission event chain as sealed lineage")
     graph_mission.add_argument("mission")
     graph_mission.add_argument("--root", default=".")
     graph_mission.add_argument("--run-id", required=True)
     graph_mission.add_argument("--out", required=True)
+    graph_mission.add_argument("--candidate-sha256", help="bind the exported lineage to a candidate digest")
     graph_mission.add_argument("--json", action="store_true")
+    graph_continuity = graph_sub.add_parser("lineage-continuity", help="verify one candidate across Oracle, deep-audit, and graph lineage evidence")
+    graph_continuity.add_argument("manifest")
+    graph_continuity.add_argument("--root", default=".")
+    graph_continuity.add_argument("--json", action="store_true")
     graph_forensic = graph_sub.add_parser("forensics", help="compare verified graph runs and preview a bounded recovery fork")
     graph_forensic.add_argument("--baseline", required=True)
     graph_forensic.add_argument("--candidate", required=True)
@@ -4912,9 +4920,17 @@ def main(argv=None) -> int:
             return 0 if payload["valid"] else 1
         return 0
     if a.cmd == "graph":
+        if a.graph_cmd == "lineage-continuity":
+            try:
+                payload = verify_candidate_lineage(Path(a.root), Path(a.manifest))
+            except CandidateLineageError as exc:
+                print(json.dumps({"schema": "factory.candidate-lineage-error.v1", "code": exc.code, "message": str(exc)}, indent=2), file=sys.stderr)
+                return 2
+            print(json.dumps(payload, indent=2, sort_keys=True) if a.json else "candidate lineage: verified (review only)")
+            return 0
         if a.graph_cmd == "lineage-mission":
             try:
-                payload = seal_mission_graph_lineage(Path(a.mission), Path(a.root), a.run_id, Path(a.out))
+                payload = seal_mission_graph_lineage(Path(a.mission), Path(a.root), a.run_id, Path(a.out), a.candidate_sha256)
             except (GraphForensicsError, ValueError) as exc:
                 code = exc.code if isinstance(exc, GraphForensicsError) else "GRAPH_LINEAGE_HISTORY_INVALID"
                 print(json.dumps({"schema": "factory.graph-lineage.error.v1", "code": code, "message": str(exc)}, indent=2), file=sys.stderr)
@@ -4923,7 +4939,7 @@ def main(argv=None) -> int:
             return 0
         if a.graph_cmd == "lineage-seal":
             try:
-                payload = seal_graph_lineage(a.run_id, a.graph_id, Path(a.steps), Path(a.out))
+                payload = seal_graph_lineage(a.run_id, a.graph_id, Path(a.steps), Path(a.out), a.candidate_sha256)
             except GraphForensicsError as exc:
                 print(json.dumps({"schema": "factory.graph-lineage.error.v1", "code": exc.code, "message": str(exc)}, indent=2), file=sys.stderr)
                 return 2
@@ -4931,7 +4947,7 @@ def main(argv=None) -> int:
             return 0
         if a.graph_cmd == "lineage-verify":
             try:
-                payload = verify_graph_lineage(Path(a.lineage))
+                payload = verify_graph_lineage(Path(a.lineage), a.candidate_sha256)
             except GraphForensicsError as exc:
                 print(json.dumps({"schema": "factory.graph-lineage.error.v1", "code": exc.code, "message": str(exc)}, indent=2), file=sys.stderr)
                 return 2

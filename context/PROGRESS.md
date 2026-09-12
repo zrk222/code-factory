@@ -755,3 +755,12 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-12 18:46] GATE spec deep-audit-attestation-v1 approver=human strict=True sha=28496a7a8bd16492
 - [2026-09-12 18:46] GATE plan deep-audit-attestation-v1 approver=human tasks=8 sha=28496a7a8bd16492
 - [2026-09-12 18:46] VERIFY deep-audit-attestation-v1 focused=18_passed deep_audit_family=74_passed full=1513_passed_7_skipped_2_warnings ruff=passed audit=0_drift wheel_sdist=0.46.4-r2 twine=passed wheel_module=present smoke=passed
+
+- [2026-09-12 19:41] GATE spec candidate-lineage-continuity-v1 approver=human strict=True sha=e1eb432e50500082
+- [2026-09-12 19:44] GATE spec candidate-lineage-continuity-v1 approver=human strict=True sha=049e4835c8b11e17
+- [2026-09-12 19:44] GATE plan candidate-lineage-continuity-v1 approver=human tasks=9 sha=252e8372d5548350
+- [2026-09-12 19:45] GATE plan candidate-lineage-continuity-v1 approver=human tasks=9 sha=3c268008b716c450
+- [2026-09-12 19:50] GATE plan candidate-lineage-continuity-v1 approver=human tasks=10 sha=3c268008b716c450
+- [2026-09-12 20:03] GATE spec candidate-lineage-continuity-v1 approver=human strict=True sha=3c268008b716c450
+- [2026-09-12 20:03] GATE plan candidate-lineage-continuity-v1 approver=human tasks=10 sha=3c268008b716c450
+- [2026-09-12 20:04] VERIFY candidate-lineage-continuity-v1 focused=20_passed full=1520_passed_7_skipped_2_warnings smoke=1_passed verify_tests=1_passed forge_qa=A_100pct ruff=passed spec_strict=passed validators=1_of_1 twine=all_artifacts_passed wheel_module=present authority=review_only

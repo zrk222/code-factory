@@ -1,0 +1,45 @@
+name: candidate-lineage-continuity-v1
+language: python
+modules:
+  - name: candidate_lineage
+    path: factoryline/candidate_lineage.py
+    imports: [deep_audit, graph_forensics, oracle_firewall]
+    functions:
+      - name: verify_candidate_lineage
+        args: ["root: Path", "manifest_path: Path", "required_kinds: tuple[str, ...]"]
+        returns: "dict[str, Any]"
+        doc: "Verify one current Oracle contract and candidate-bound deep-audit and graph evidence without authority."
+  - name: graph_forensics
+    path: factoryline/graph_forensics.py
+    imports: []
+    functions:
+      - name: verify_graph_lineage
+        args: ["path: Path", "expected_candidate_sha256: str | None"]
+        returns: "dict[str, Any]"
+        doc: "Verify a graph lineage receipt and optionally require an exact candidate binding."
+dependencies:
+  - from: candidate_lineage
+    to: deep_audit
+  - from: candidate_lineage
+    to: graph_forensics
+  - from: candidate_lineage
+    to: oracle_firewall
+invariants:
+  - name: no-execution-or-authority
+    forbid_pattern: "(?i)(?:subprocess\\.(?:run|Popen)|requests\\.|httpx\\.|urllib3\\.|socket\\.|os\\.system\\s*\\(|Popen\\s*\\(|eval\\s*\\(|exec\\s*\\(|write_text\\s*\\(|write_bytes\\s*\\(|\\b(?:publish|deploy|approve)\\s*\\()"
+    scopes:
+      - module: candidate_lineage
+        symbol: verify_candidate_lineage
+        max_lines: 80
+      - module: graph_forensics
+        symbol: verify_graph_lineage
+        max_lines: 100
+  - name: no-credential-or-network-lookup
+    forbid_pattern: "(?i)(?:os\\.environ|os\\.getenv|requests\\.|httpx\\.|urllib3\\.|socket\\.)"
+    scopes:
+      - module: candidate_lineage
+        symbol: verify_candidate_lineage
+        max_lines: 80
+      - module: graph_forensics
+        symbol: verify_graph_lineage
+        max_lines: 100

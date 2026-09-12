@@ -31,6 +31,24 @@ factory graph forensics --baseline .factory/graph-runs/good.lineage.json `
 factory graph forensics --baseline good.json --candidate bad.json --mermaid
 ```
 
+For release review, bind lineage to the candidate digest emitted by the
+Oracle/deep-audit inputs and then verify the whole continuity manifest:
+
+```powershell
+factory graph lineage-seal --run-id candidate --graph-id checkout `
+  --steps candidate-steps.json --candidate-sha256 <candidate-sha256> `
+  --out .factory/graph-runs/candidate.bound.lineage.json --json
+factory graph lineage-verify .factory/graph-runs/candidate.bound.lineage.json `
+  --candidate-sha256 <candidate-sha256> --json
+factory graph lineage-continuity .factory/candidate-lineage.json --root . --json
+```
+
+Legacy lineage receipts without `candidate_sha256` remain readable for
+forensics. They are intentionally rejected by strict continuity verification,
+which prevents a valid graph from an older or different candidate being shown
+as current. The continuity command also checks the current Oracle contract,
+deep-audit receipt seal, exact file hashes, and review-only authority.
+
 Each step declares its sequence, superstep, node, checkpoint, state reads and
 writes, evidence, side effects, and routing decision. State values are never
 required; receipts bind their SHA-256 digests and versions instead.

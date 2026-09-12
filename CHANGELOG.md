@@ -42,6 +42,15 @@
 - Preserve the legacy self-hash comparison for compatibility; no path executes,
   repairs, approves, publishes, deploys, or grants credentials.
 
+### Candidate continuity across Graph Ops
+
+- Bind sealed graph lineage to an optional candidate SHA-256 and require that
+  binding when a reviewer verifies cross-artifact continuity.
+- Add `factory graph lineage-continuity` to join the current Oracle contract,
+  deep-audit receipt, and graph lineage with exact hashes and stable fail-closed
+  errors. Legacy graph receipts remain readable but cannot masquerade as
+  current evidence; the result is review-only with no release authority.
+
 ### Intake parameter envelope
 
 - Add `factory intake parameters seal|verify|status`, a confirmation-bound,

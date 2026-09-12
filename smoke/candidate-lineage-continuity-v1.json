@@ -1,0 +1,21 @@
+{
+  "checks": [
+    {
+      "name": "candidate_lineage_binds_current_evidence",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_candidate_lineage.py', 'tests/test_graph_forensics.py']) == 0\nprint('CANDIDATE_LINEAGE_CONTINUITY_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "CANDIDATE_LINEAGE_CONTINUITY_PASS",
+      "timeout_s": 120,
+      "covers": [
+        "CANDIDATE_LINEAGE_VERIFIED",
+        "E_CANDIDATE_LINEAGE_ORACLE",
+        "E_CANDIDATE_LINEAGE_GRAPH",
+        "E_CANDIDATE_LINEAGE_EVIDENCE",
+        "GRAPH_CANDIDATE_BINDING",
+        "AUTHORITY_NONE"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}
