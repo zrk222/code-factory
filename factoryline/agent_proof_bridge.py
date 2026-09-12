@@ -21,6 +21,7 @@ from typing import Any
 from .agent_license import AgentLicenseError, normalize_agent_identity
 from .oracle_firewall import OracleFirewallError, admission_oracle_decision, verify_oracle_contract
 from .semantic_authority import SemanticAuthorityError, verify_semantic_binding
+from .intake_parameters import verify_intake_binding
 from .protocol_enums import (
     AgentCapability,
     AgentProvider,
@@ -346,8 +347,8 @@ def import_agent_proof(root: Path, envelope_path: Path, out: Path | None = None)
         _canonical(envelope)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise AgentProofBridgeError("E_AGENT_BRIDGE_SCHEMA", "envelope must be canonical UTF-8 JSON") from exc
-    allowed = {"schema", "envelope_id", "provider", "run_id", "status", "agent", "autonomy", "isolation", "scope_paths", "surface", "oracle", "workflow", "source_preconditions", "evidence_pairs", "provider_receipt", "resume", "semantic_authority"}
-    entry = _exact(envelope, allowed, "envelope", required=allowed - {"resume", "semantic_authority"})
+    allowed = {"schema", "envelope_id", "provider", "run_id", "status", "agent", "autonomy", "isolation", "scope_paths", "surface", "oracle", "workflow", "source_preconditions", "evidence_pairs", "provider_receipt", "resume", "semantic_authority", "intake_parameters"}
+    entry = _exact(envelope, allowed, "envelope", required=allowed - {"resume", "semantic_authority", "intake_parameters"})
     if entry.get("schema") != ENVELOPE_SCHEMA or entry.get("provider") not in _PROVIDERS or entry.get("status") not in _STATUS:
         raise AgentProofBridgeError("E_AGENT_BRIDGE_SCHEMA", "envelope schema, provider, or status is unsupported")
     provider, run_id = entry["provider"], _identifier(entry["run_id"], "run_id")
@@ -376,6 +377,22 @@ def import_agent_proof(root: Path, envelope_path: Path, out: Path | None = None)
     except SemanticAuthorityError as exc:
         raise AgentProofBridgeError("E_AGENT_BRIDGE_SEMANTIC_AUTHORITY", str(exc)) from exc
     preconditions = _source_preconditions(workspace, entry["source_preconditions"], contract_scope)
+    intake = entry.get("intake_parameters")
+    if intake is not None:
+        intake = _exact(intake, {"path", "parameter_sha256"}, "intake_parameters")
+        intake_path = _path(intake["path"], "intake_parameters.path")
+        intake_digest = _digest(intake["parameter_sha256"], "intake_parameters.parameter_sha256")
+        binding = verify_intake_binding(
+            workspace,
+            Path(intake_path),
+            scope_paths=sorted({*scope, *(item["path"] for item in preconditions)}),
+            mode=entry["autonomy"],
+            binding_sha256=intake_digest,
+        )
+        if not binding.get("ok"):
+            first = (binding.get("errors") or [{"code": "E_INTAKE_PARAMETER_DRIFT", "detail": "intake binding failed"}])[0]
+            raise AgentProofBridgeError(str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")), str(first.get("detail", "intake binding failed")))
+        intake = {"path": intake_path, "parameter_sha256": intake_digest}
     workflow = _workflow(entry["workflow"])
     evidence = _evidence(workspace, entry["evidence_pairs"], entry["surface"] == "visual")
     profile = _provider_receipt(provider, entry["provider_receipt"])
@@ -401,6 +418,7 @@ def import_agent_proof(root: Path, envelope_path: Path, out: Path | None = None)
         "surface": entry["surface"],
         "workflow": workflow,
         "source_preconditions": preconditions,
+        **({"intake_parameters": intake} if intake is not None else {}),
         "evidence_pairs": evidence,
         "provider_receipt": profile,
         "resume": resume,
@@ -434,6 +452,20 @@ def verify_agent_proof(root: Path, receipt_path: Path) -> dict[str, Any]:
                 verify_semantic_binding(workspace, binding, receipt.get("agent"), receipt.get("scope_paths"))
             except SemanticAuthorityError:
                 return {"ok": False, "marker": "AGENT_PROOF_RECEIPT_INVALID", "reason": "semantic_authority_stale", "authority": dict(AUTHORITY)}
+        intake = receipt.get("intake_parameters")
+        if intake is not None:
+            if not isinstance(intake, dict) or set(intake) != {"path", "parameter_sha256"}:
+                return {"ok": False, "marker": "AGENT_PROOF_RECEIPT_INVALID", "reason": "intake_binding_invalid", "authority": dict(AUTHORITY)}
+            binding = verify_intake_binding(
+                workspace,
+                Path(str(intake.get("path"))),
+                scope_paths=sorted({*(receipt.get("scope_paths") or []), *(item.get("path") for item in receipt.get("source_preconditions", []) if isinstance(item, dict) and isinstance(item.get("path"), str))}),
+                mode=receipt.get("autonomy"),
+                binding_sha256=intake.get("parameter_sha256"),
+            )
+            if not binding.get("ok"):
+                first = (binding.get("errors") or [{"code": "E_INTAKE_PARAMETER_DRIFT"}])[0]
+                return {"ok": False, "marker": "AGENT_PROOF_RECEIPT_INVALID", "reason": str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")), "authority": dict(AUTHORITY)}
         return {"ok": True, "marker": "AGENT_PROOF_RECEIPT_VALID", "receipt": receipt, "path": target.relative_to(workspace).as_posix(), "authority": dict(AUTHORITY)}
     except AgentProofBridgeError as exc:
         return {"ok": False, "marker": "AGENT_PROOF_RECEIPT_INVALID", "reason": exc.code, "authority": dict(AUTHORITY)}
@@ -455,6 +487,7 @@ def agent_proof_projection(root: Path) -> dict[str, Any]:
             "stage_count": len(receipt["workflow"]["nodes"]), "evidence_pair_count": len(receipt["evidence_pairs"]),
             "visual": receipt["surface"] == "visual", "resumed": receipt.get("resume") is not None,
             "semantic_authority_bound": bool(receipt.get("semantic_authority", {}).get("bound")) if isinstance(receipt.get("semantic_authority"), dict) else False,
+            "intake_parameters_bound": isinstance(receipt.get("intake_parameters"), dict),
             "receipt_sha256": receipt["receipt_sha256"],
         })
     receipts.sort(key=lambda item: item["path"])

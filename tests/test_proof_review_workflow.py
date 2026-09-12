@@ -23,6 +23,7 @@ from factoryline.proof_review_workflow import (
     verify_quick_review,
     verify_trajectory,
 )
+from test_intake_admission import _intake
 
 
 def _canonical(value: object) -> bytes:
@@ -213,3 +214,33 @@ def test_req_pr_010_cli_is_one_machine_readable_front_door_without_regression(tm
     assert review["route"] == "evidence_required"
     assert main(["proof-review", "verify", review["artifact"], "--root", str(tmp_path), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["ok"] is True
+
+
+def test_strict_proof_review_binds_intake_scope_and_digest(tmp_path: Path) -> None:
+    contract = _contract(tmp_path)
+    intake_path, _ = _intake(tmp_path, scope=["src"])
+    review = create_quick_review(
+        tmp_path,
+        "intake-bound-review",
+        Path(contract["artifact"]),
+        ["src/service.py"],
+        intake_parameters_path=intake_path,
+        require_intake=True,
+    )
+    checked = verify_quick_review(tmp_path, Path(review["artifact"]))
+    assert checked["ok"] is True
+    value = json.loads(Path(review["artifact"]).read_text(encoding="utf-8"))
+    assert value["intake_parameters"]["parameter_sha256"]
+
+
+def test_strict_proof_review_rejects_missing_intake(tmp_path: Path) -> None:
+    contract = _contract(tmp_path)
+    with pytest.raises(ProofReviewError) as raised:
+        create_quick_review(
+            tmp_path,
+            "strict-review",
+            Path(contract["artifact"]),
+            ["src/service.py"],
+            require_intake=True,
+        )
+    assert raised.value.code == "E_INTAKE_BINDING_REQUIRED"

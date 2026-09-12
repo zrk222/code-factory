@@ -44,6 +44,23 @@
   stdio MCP, WebMCP, and the Junie taxonomy. No new execution, approval,
   credential, provider, publication, or deployment authority is introduced.
 
+### Intent-bound audit admission
+
+- Add one shared `factory.intake-binding.v1` verifier and wire it into runtime
+  audit plans, external-agent admission, the proof bridge, Proof Review, and
+  release preflight. Strict consumers now fail closed when scope, the canonical
+  six lanes, budgets, autonomy, external-effects posture, expiry, or the sealed
+  intake digest drifts.
+- Permit agents to request a checkpoint-scoped fix allowance without granting
+  repair authority. Each allowance is limited to `write_workspace`, an
+  in-scope hash-bound patch, a named approver, and an expiry covering the run;
+  CF reports `BOUND_FOR_EXTERNAL_HARNESS` and revalidates the binding at
+  consumption time, but never applies the patch.
+- Add stable `E_INTAKE_BINDING_*` failure codes, strict CLI flags, a SpecLine
+  contract, and deterministic mismatch/replay coverage. Existing consumers
+  remain compatible unless `--require-intake` is selected or a binding is
+  supplied.
+
 ### Context efficiency and deterministic agent hand-offs
 
 - Add `factory efficiency pack|verify|status` for bounded, priority-aware

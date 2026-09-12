@@ -20,6 +20,11 @@ known, what is missing, and the one fact-derived next action.
   effects, provenance, expiry, and the complete six-lane runtime audit to the
   verified human intake. Agent-proposed values remain advisory; drift,
   widening, and incomplete lanes fail closed.
+- **Keeps every consumer on the same intent.** Runtime audit, agent admission,
+  proof handoff, Proof Review, and release preflight can require the sealed
+  intake digest. A checkpoint fix may be offered to an external harness only as
+  an in-scope, hash-bound, named-and-expiring allowance; CF rechecks it and
+  never applies it or treats it as approval.
 - **Makes delivery state legible.** Factory Studio, Graph Ops, and the VS Code
   and JetBrains integrations present requirements, gates, proofs, and blocked
   work in one local, read-only view.

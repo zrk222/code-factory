@@ -31,6 +31,7 @@ REQUEST_SCHEMA = "factory.intake-parameters-request.v1"
 RECEIPT_SCHEMA = "factory.intake-parameters.v1"
 VERIFICATION_SCHEMA = "factory.intake-parameters-verification.v1"
 STATUS_SCHEMA = "factory.intake-parameters-status.v1"
+BINDING_SCHEMA = "factory.intake-binding.v1"
 
 ORIGINS = frozenset({"human_confirmed", "trusted_source", "observed_production", "agent_proposed"})
 AUTHORITATIVE_ORIGINS = frozenset({"human_confirmed", "trusted_source"})
@@ -391,6 +392,127 @@ def verify_intake_parameters(root: Path, receipt_path: Path) -> dict[str, Any]:
         "authoritative": valid and state == "READY",
         "authority": AUTHORITY,
         "claim_boundary": "Verification is local and read-only; it never authorizes execution or provider actions.",
+    }
+
+
+def verify_intake_binding(
+    root: Path,
+    receipt_path: Path | str,
+    *,
+    scope_paths: list[str] | tuple[str, ...] | None = None,
+    required_lanes: list[str] | tuple[str, ...] | None = None,
+    budgets: dict[str, Any] | None = None,
+    mode: str | None = None,
+    external_effects: str | None = None,
+    expires_at: str | None = None,
+    binding_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Verify that a consumer's plan is inside one authoritative intake envelope.
+
+    This is deliberately a pure compatibility check.  It does not promote
+    advisory values, execute a lane, mutate the envelope, or grant authority.
+    A consumer may provide only the dimensions it knows; every supplied
+    dimension is fail-closed against the sealed parameters.
+    """
+    workspace = Path(root).resolve()
+    checks: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+
+    def fail(code: str, detail: str) -> None:
+        errors.append({"code": code, "detail": detail})
+
+    try:
+        _, _, receipt = _load_receipt(workspace, Path(receipt_path))
+        verification = verify_intake_parameters(workspace, Path(receipt_path))
+    except (IntakeParametersError, OSError, TypeError, ValueError) as exc:
+        code = getattr(exc, "code", "E_INTAKE_BINDING_INVALID")
+        fail(str(code), str(exc))
+        verification = {"valid": False, "authoritative": False, "state": "BLOCKED"}
+        receipt = {}
+
+    if not verification.get("valid"):
+        if not errors:
+            fail("E_INTAKE_PARAMETER_DRIFT", "intake parameter receipt is not currently verified")
+    elif not verification.get("authoritative") or receipt.get("status") != "READY":
+        fail("E_INTAKE_BINDING_ADVISORY", "only a READY authoritative intake envelope may admit work")
+
+    parameters = receipt.get("parameters") if isinstance(receipt, dict) else None
+    if not isinstance(parameters, dict):
+        parameters = {}
+
+    if binding_sha256 is not None:
+        if not isinstance(binding_sha256, str) or not _DIGEST.fullmatch(binding_sha256):
+            fail("E_INTAKE_BINDING_INVALID", "binding parameter_sha256 must be a lowercase SHA-256 digest")
+        elif binding_sha256 != receipt.get("parameter_sha256"):
+            fail("E_INTAKE_PARAMETER_DRIFT", "consumer digest does not match the sealed intake envelope")
+    checks.append({"id": "INTAKE_BINDING_DIGEST", "passed": not any(item["code"] == "E_INTAKE_PARAMETER_DRIFT" for item in errors), "evidence": receipt.get("parameter_sha256")})
+
+    envelope_scope = parameters.get("scope_paths", [])
+    if scope_paths is not None:
+        if not isinstance(scope_paths, (list, tuple)) or len(scope_paths) == 0:
+            fail("E_INTAKE_BINDING_SCOPE_ESCAPE", "consumer scope must contain at least one path")
+        else:
+            normalized_scope: list[str] = []
+            for index, raw in enumerate(scope_paths):
+                try:
+                    _, relative = _relative(workspace, raw, f"binding.scope_paths[{index}]", exists=False)
+                    normalized_scope.append(relative)
+                except IntakeParametersError as exc:
+                    fail("E_INTAKE_BINDING_SCOPE_ESCAPE", exc.message)
+            if isinstance(envelope_scope, list) and normalized_scope and any(not any(scope == "." or item == scope or item.startswith(scope.rstrip("/") + "/") for scope in envelope_scope) for item in normalized_scope):
+                fail("E_INTAKE_BINDING_SCOPE_ESCAPE", "consumer scope escapes the sealed intake scope")
+            checks.append({"id": "INTAKE_BINDING_SCOPE", "passed": not any(item["code"] == "E_INTAKE_BINDING_SCOPE_ESCAPE" for item in errors), "evidence": sorted(normalized_scope)})
+
+    if required_lanes is not None:
+        supplied = list(required_lanes) if isinstance(required_lanes, (list, tuple)) else []
+        expected = list(REQUIRED_AUDIT_LANES)
+        if len(supplied) != len(expected) or set(supplied) != set(expected):
+            fail("E_INTAKE_BINDING_LANES_MISMATCH", "consumer must retain the canonical six audit lanes")
+        checks.append({"id": "INTAKE_BINDING_LANES", "passed": not any(item["code"] == "E_INTAKE_BINDING_LANES_MISMATCH" for item in errors), "evidence": supplied})
+
+    envelope_budgets = parameters.get("budgets") if isinstance(parameters.get("budgets"), dict) else {}
+    if budgets is not None:
+        if not isinstance(budgets, dict):
+            fail("E_INTAKE_BINDING_BUDGET_INVALID", "consumer budgets must be an object")
+        else:
+            for key, value in budgets.items():
+                if key not in BUDGET_KEYS or isinstance(value, bool) or not isinstance(value, (int, float)):
+                    fail("E_INTAKE_BINDING_BUDGET_INVALID", f"unsupported or non-numeric consumer budget: {key}")
+                elif key not in envelope_budgets or value < 0 or value > envelope_budgets[key]:
+                    fail("E_INTAKE_BINDING_BUDGET_INVALID", f"consumer budget {key} exceeds the sealed intake cap")
+        checks.append({"id": "INTAKE_BINDING_BUDGET", "passed": not any(item["code"] == "E_INTAKE_BINDING_BUDGET_INVALID" for item in errors), "evidence": {key: budgets[key] for key in budgets} if isinstance(budgets, dict) else {}})
+
+    if mode is not None:
+        if mode not in MODES or mode != parameters.get("mode"):
+            fail("E_INTAKE_BINDING_MODE_MISMATCH", "consumer autonomy mode differs from the sealed intake mode")
+        checks.append({"id": "INTAKE_BINDING_MODE", "passed": not any(item["code"] == "E_INTAKE_BINDING_MODE_MISMATCH" for item in errors), "evidence": mode})
+
+    if external_effects is not None:
+        if external_effects not in EXTERNAL_EFFECTS or external_effects != parameters.get("external_effects"):
+            fail("E_INTAKE_BINDING_EXTERNAL_EFFECTS_MISMATCH", "consumer external-effects mode differs from the sealed intake decision")
+        checks.append({"id": "INTAKE_BINDING_EXTERNAL_EFFECTS", "passed": not any(item["code"] == "E_INTAKE_BINDING_EXTERNAL_EFFECTS_MISMATCH" for item in errors), "evidence": external_effects})
+
+    if expires_at is not None:
+        try:
+            _, candidate_expiry = _parse_expiry(expires_at)
+            _, envelope_expiry = _parse_expiry(receipt.get("expires_at"))
+            if candidate_expiry > envelope_expiry:
+                fail("E_INTAKE_BINDING_EXPIRY_MISMATCH", "consumer validity outlives the sealed intake envelope")
+        except IntakeParametersError as exc:
+            fail("E_INTAKE_BINDING_EXPIRY_MISMATCH", exc.message)
+        checks.append({"id": "INTAKE_BINDING_EXPIRY", "passed": not any(item["code"] == "E_INTAKE_BINDING_EXPIRY_MISMATCH" for item in errors), "evidence": expires_at})
+
+    ok = not errors
+    return {
+        "schema": BINDING_SCHEMA,
+        "ok": ok,
+        "state": "VERIFIED" if ok else "BLOCKED",
+        "marker": "INTAKE_BINDING_VERIFIED" if ok else "INTAKE_BINDING_BLOCKED",
+        "parameter_sha256": receipt.get("parameter_sha256"),
+        "checks": checks,
+        "errors": errors,
+        "authority": AUTHORITY,
+        "claim_boundary": "Read-only compatibility proof; it never authorizes execution, approval, repair, publication, deployment, credentials, or provider state.",
     }
 
 

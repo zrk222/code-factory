@@ -21,6 +21,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
     import tomli as tomllib  # type: ignore[no-redef]
 
 from .release_contract import verify_release_contract
+from .intake_parameters import verify_intake_binding
 
 
 SCHEMA = "factory.release-candidate-preflight.v1"
@@ -211,6 +212,8 @@ def release_candidate_preflight(
     metadata_paths: Iterable[Path] | None = None,
     *,
     supply_chain_manifest: Path | None = None,
+    intake_parameters: Path | None = None,
+    require_intake: bool = False,
 ) -> dict[str, Any]:
     """Evaluate contract/source/artifact identity without external authority."""
     workspace = Path(root).resolve()
@@ -229,7 +232,7 @@ def release_candidate_preflight(
             "artifacts": {"directories": [Path(item).as_posix() for item in (artifact_dirs or DEFAULT_ARTIFACT_DIRS)], "artifacts": [], "blockers": []},
             "metadata": {"scope": "active", "status": "NOT_REQUESTED", "findings": [], "files": []},
             "supply_chain": {"status": "NOT_REQUESTED"},
-            "facts": {"contract_valid": False, "artifact_versions_match": False, "metadata_lineage_valid": True, "ledger_drift": False, "windows_binding_proven": True, "supply_chain_verified": None},
+            "facts": {"contract_valid": False, "artifact_versions_match": False, "metadata_lineage_valid": True, "ledger_drift": False, "windows_binding_proven": True, "supply_chain_verified": None, "intake_binding_verified": False},
             "checks": [{"id": "RELEASE_CONTRACT_VALID", "passed": False, "evidence": str(exc)}],
             "blockers": [{"code": "RELEASE_CONTRACT_INVALID", "detail": str(exc)}],
             "next_action": "repair_release_candidate",
@@ -309,7 +312,20 @@ def release_candidate_preflight(
         supply_passed = supply_chain.get("decision") == "PASS"
         checks.append({"id": "SUPPLY_CHAIN_INTEGRITY", "passed": supply_passed, "evidence": "source, lockfiles, SBOM, VEX, licences, reproducible builds and artifact scan passed" if supply_passed else "supply-chain evidence is blocked"})
         blockers.extend(supply_chain.get("blockers", []))
-    facts = {"contract_valid": bool(contract_result.get("ok")), "artifact_versions_match": bool(artifacts["versions_match"]), "metadata_lineage_valid": metadata_lineage_valid, "ledger_drift": ledger_drift, "windows_binding_proven": True, "supply_chain_verified": (None if supply_chain_manifest is None else supply_chain.get("decision") == "PASS")}
+    intake_result: dict[str, Any] = {"status": "NOT_REQUESTED"}
+    if intake_parameters is None:
+        if require_intake:
+            intake_result = {"status": "BLOCKED", "errors": [{"code": "E_INTAKE_BINDING_REQUIRED", "detail": "strict release preflight requires an authoritative intake-parameter envelope"}]}
+            blockers.extend(intake_result["errors"])
+    else:
+        try:
+            intake_result = verify_intake_binding(workspace, Path(intake_parameters))
+        except (OSError, TypeError, ValueError) as exc:
+            intake_result = {"status": "BLOCKED", "ok": False, "errors": [{"code": "E_INTAKE_BINDING_INVALID", "detail": str(exc)[:240]}]}
+        if not intake_result.get("ok"):
+            blockers.extend(intake_result.get("errors", [{"code": "E_INTAKE_PARAMETER_DRIFT", "detail": "intake binding failed"}]))
+    checks.append({"id": "INTAKE_PARAMETERS_AUTHORITATIVE", "passed": intake_parameters is None and not require_intake or bool(intake_result.get("ok")), "evidence": "authoritative intake binding verified" if intake_result.get("ok") else ("not requested" if intake_parameters is None and not require_intake else "intake binding is blocked")})
+    facts = {"contract_valid": bool(contract_result.get("ok")), "artifact_versions_match": bool(artifacts["versions_match"]), "metadata_lineage_valid": metadata_lineage_valid, "ledger_drift": ledger_drift, "windows_binding_proven": True, "supply_chain_verified": (None if supply_chain_manifest is None else supply_chain.get("decision") == "PASS"), "intake_binding_verified": (None if intake_parameters is None and not require_intake else bool(intake_result.get("ok")))}
     ok = bool(source.get("ok")) and binding_ok and not blockers
     body: dict[str, Any] = {
         "schema": SCHEMA,
@@ -320,6 +336,7 @@ def release_candidate_preflight(
         "artifacts": artifacts,
         "metadata": metadata,
         "supply_chain": supply_chain,
+        "intake_parameters": intake_result,
         "facts": facts,
         "checks": checks,
         "blockers": blockers,
@@ -331,10 +348,10 @@ def release_candidate_preflight(
     return body
 
 
-def write_release_candidate_preflight(root: Path, contract: Path, artifact_dirs: Iterable[Path] | None, out: Path, *, metadata_paths: Iterable[Path] | None = None, supply_chain_manifest: Path | None = None) -> dict[str, Any]:
+def write_release_candidate_preflight(root: Path, contract: Path, artifact_dirs: Iterable[Path] | None, out: Path, *, metadata_paths: Iterable[Path] | None = None, supply_chain_manifest: Path | None = None, intake_parameters: Path | None = None, require_intake: bool = False) -> dict[str, Any]:
     """Write a candidate receipt atomically after running the pure preflight."""
     workspace = Path(root).resolve()
-    result = release_candidate_preflight(workspace, contract, artifact_dirs, metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest)
+    result = release_candidate_preflight(workspace, contract, artifact_dirs, metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest, intake_parameters=intake_parameters, require_intake=require_intake)
     destination = _inside(workspace, Path(out), "release preflight output")
     destination.parent.mkdir(parents=True, exist_ok=True)
     payload = {**result, "marker": "RELEASE_CANDIDATE_PREFLIGHT_WRITTEN", "path": destination.relative_to(workspace).as_posix()}

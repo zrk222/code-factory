@@ -6,11 +6,11 @@
 
 ## Public update summary
 
-### 6 mandatory audit lanes. 137 coded rejection conditions. One human-owned release decision.
+### 6 mandatory audit lanes. 140 coded rejection conditions. One human-owned release decision.
 
-The source inventory reports **81 lane-specific and 56 cross-cutting**
+The source inventory reports **81 lane-specific and 59 cross-cutting**
 rejection conditions. Those counts describe code paths, not a promise that
-every project runs 137 tests; observations depend on approved scope, configured
+every project runs 140 tests; observations depend on approved scope, configured
 engines, and supplied evidence.
 
 Code Factory helps people and coding agents turn a request into a reviewable

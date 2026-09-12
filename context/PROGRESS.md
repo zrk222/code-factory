@@ -732,3 +732,14 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-12 14:44] GATE plan intake-parameters-v1 approver=human tasks=5 sha=c7c7449afe770d82
 - [2026-09-12 14:52] GATE spec intake-parameters-v1 approver=human strict=True sha=c7c7449afe770d82
 - [2026-09-12 14:52] GATE plan intake-parameters-v1 approver=human tasks=5 sha=c7c7449afe770d82
+- [2026-09-12 12:29] GATE spec intake-admission-v1 approver=human strict=True sha=79deaf632233b997
+- [2026-09-12 12:29] GATE plan intake-admission-v1 approver=human tasks=6 sha=79deaf632233b997
+- [2026-09-12 12:49] GATE spec intake-admission-v1 approver=human strict=True validators=5/5 sha=d3f123b9f0870d26
+- [2026-09-12 12:49] GATE plan intake-admission-v1 approver=human tasks=6 sha=d3f123b9f0870d26
+- [2026-09-12 12:49] VERIFY intake-admission-v1 smoke=32_passed focused=63_passed full=1505_passed_7_skipped_2_warnings ruff=passed build=wheel_sdist twine=passed forgeline_assembly=dry_run_topology_verified
+- [2026-09-12 16:31] GATE spec intake-admission-v1 approver=human strict=True sha=79deaf632233b997
+- [2026-09-12 16:31] GATE plan intake-admission-v1 approver=human tasks=6 sha=79deaf632233b997
+
+- [2026-09-12 16:48] GATE spec intake-admission-v1 approver=human strict=True sha=d3f123b9f0870d26
+- [2026-09-12 16:48] GATE plan intake-admission-v1 approver=human tasks=6 sha=d3f123b9f0870d26
+- [2026-09-12 16:49] GATE plan intake-admission-v1 approver=human tasks=6 sha=d3f123b9f0870d26

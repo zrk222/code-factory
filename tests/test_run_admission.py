@@ -9,6 +9,7 @@ import pytest
 from factoryline.cli import main
 from factoryline.loop_passport import build_loop_passport, init_loop
 from factoryline.run_admission import AdmissionError, prepare_admission, verify_admission
+from test_intake_admission import _intake
 
 
 def _passport(tmp_path: Path) -> Path:
@@ -98,3 +99,60 @@ def test_admission_cli_seals_then_reports_a_ready_packet(tmp_path: Path, capsys)
     assert sealed["markers"][0] == "ADMISSION_PACKET_SEALED"
     assert verify_code == 0
     assert ready["marker"] == "ADMISSION_READY"
+
+
+def test_strict_admission_binds_authoritative_intake_parameters(tmp_path: Path):
+    source = tmp_path / "source.txt"
+    source.write_text("source", encoding="utf-8")
+    intake_path, _ = _intake(tmp_path, scope=["source.txt"], mode="human_controlled")
+    passport = _passport(tmp_path)
+    request = _request(tmp_path)
+    payload = json.loads(request.read_text(encoding="utf-8"))
+    payload["paths"] = ["source.txt"]
+    payload["budget"] = {"max_iterations": 1, "max_wall_seconds": 100, "max_tokens": 0, "max_cost_usd": 0}
+    intake = json.loads(intake_path.read_text(encoding="utf-8"))
+    payload["intake_parameters"] = {"path": intake_path.relative_to(tmp_path).as_posix(), "parameter_sha256": intake["parameter_sha256"]}
+    request.write_text(json.dumps(payload), encoding="utf-8")
+
+    packet = prepare_admission(tmp_path, passport, request, require_intake=True)
+    verified = verify_admission(tmp_path, Path(packet["path"]))
+    assert packet["intake_parameters"]["parameter_sha256"] == intake["parameter_sha256"]
+    assert verified["marker"] == "ADMISSION_READY"
+
+
+def test_strict_admission_rejects_missing_intake_binding(tmp_path: Path):
+    with pytest.raises(AdmissionError) as raised:
+        prepare_admission(tmp_path, _passport(tmp_path), _request(tmp_path), require_intake=True)
+    assert raised.value.code == "E_INTAKE_BINDING_REQUIRED"
+
+
+def test_checkpoint_fix_is_bound_to_scope_patch_and_human_approval(tmp_path: Path):
+    source = tmp_path / "source.txt"
+    source.write_text("source", encoding="utf-8")
+    patch = tmp_path / "checkpoint.patch"
+    patch.write_text("diff --git a/source.txt b/source.txt\n", encoding="utf-8")
+    intake_path, _ = _intake(tmp_path, scope=["source.txt"], mode="human_controlled")
+    passport = _passport(tmp_path)
+    request = _request(tmp_path)
+    payload = json.loads(request.read_text(encoding="utf-8"))
+    payload["actions"] = ["read_repository", "write_workspace"]
+    payload["paths"] = ["source.txt"]
+    payload["budget"] = {"max_iterations": 1, "max_wall_seconds": 100, "max_tokens": 0, "max_cost_usd": 0}
+    intake = json.loads(intake_path.read_text(encoding="utf-8"))
+    payload["intake_parameters"] = {"path": intake_path.relative_to(tmp_path).as_posix(), "parameter_sha256": intake["parameter_sha256"]}
+    payload["checkpoint_fix"] = {
+        "checkpoint_id": "verify-1",
+        "patch_path": "checkpoint.patch",
+        "patch_sha256": __import__("hashlib").sha256(patch.read_bytes()).hexdigest(),
+        "paths": ["source.txt"],
+        "reason": "Repair the verified checkpoint defect before retrying the lane.",
+        "approved_by": "Rick Katz",
+        "approval_expires_at": payload["valid_until"],
+    }
+    request.write_text(json.dumps(payload), encoding="utf-8")
+
+    packet = prepare_admission(tmp_path, passport, request, require_intake=True)
+    verified = verify_admission(tmp_path, Path(packet["path"]))
+
+    assert packet["request"]["checkpoint_fix"]["checkpoint_id"] == "verify-1"
+    assert verified["checkpoint_fix"]["state"] == "BOUND_FOR_EXTERNAL_HARNESS"

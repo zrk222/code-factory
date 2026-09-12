@@ -1399,6 +1399,7 @@ def main(argv=None) -> int:
     admission_prepare.add_argument("request")
     admission_prepare.add_argument("--root", default=".")
     admission_prepare.add_argument("--out-dir")
+    admission_prepare.add_argument("--require-intake", action="store_true", help="require an authoritative intake-parameter binding before sealing admission")
     admission_prepare.add_argument("--json", action="store_true")
     admission_verify = admission_sub.add_parser("verify", help="revalidate one sealed packet before a harness consumes it")
     admission_verify.add_argument("packet")
@@ -1648,6 +1649,7 @@ def main(argv=None) -> int:
         command.add_argument("--trust-root", required=True)
         command.add_argument("--trust-root-sha256", required=True)
         command.add_argument("--environment-sha256", required=True)
+        command.add_argument("--require-intake", action="store_true", help="require the signed plan to bind an authoritative intake-parameter envelope")
         if action == "run":
             command.add_argument("--out", default=".factory/runtime-audits")
         command.add_argument("--json", action="store_true")
@@ -1803,6 +1805,8 @@ def main(argv=None) -> int:
     proof_review_quick.add_argument("--repair-patch")
     proof_review_quick.add_argument("--prior-receipt")
     proof_review_quick.add_argument("--session-phase", choices=["change", "post_repair"], default="change")
+    proof_review_quick.add_argument("--intake-parameters", help="optional authoritative intake-parameter envelope bound to changed paths")
+    proof_review_quick.add_argument("--require-intake", action="store_true", help="require an authoritative intake-parameter envelope")
     proof_review_quick.add_argument("--json", action="store_true")
     proof_review_verify = proof_review_sub.add_parser("verify", help="verify a proof review and every bound receipt")
     proof_review_verify.add_argument("review")
@@ -2175,6 +2179,8 @@ def main(argv=None) -> int:
     release_preflight_parser.add_argument("--artifact-dir", action="append", help="workspace-contained artifact directory; repeatable")
     release_preflight_parser.add_argument("--metadata-path", action="append", help="workspace-contained active metadata file; repeatable and audited when supplied")
     release_preflight_parser.add_argument("--supply-chain-manifest", help="optional workspace-contained signed-evidence manifest; blocks when supplied evidence is invalid")
+    release_preflight_parser.add_argument("--intake-parameters", help="optional workspace-contained authoritative intake-parameter envelope")
+    release_preflight_parser.add_argument("--require-intake", action="store_true", help="require an authoritative intake-parameter envelope for this release")
     release_preflight_parser.add_argument("--out", help="optional workspace-contained JSON receipt path")
     release_preflight_parser.add_argument("--json", action="store_true")
     release_decision_parser = release_sub.add_parser("decision", help="explain one strict local release decision without contacting a provider")
@@ -3231,7 +3237,7 @@ def main(argv=None) -> int:
         from .run_admission import AdmissionError, prepare_admission, verify_admission
         try:
             if a.admission_cmd == "prepare":
-                result = prepare_admission(Path(a.root), Path(a.passport), Path(a.request), Path(a.out_dir) if a.out_dir else None)
+                result = prepare_admission(Path(a.root), Path(a.passport), Path(a.request), Path(a.out_dir) if a.out_dir else None, require_intake=a.require_intake)
                 code = 0
             else:
                 result = verify_admission(Path(a.root), Path(a.packet))
@@ -3479,11 +3485,11 @@ def main(argv=None) -> int:
                 result = runtime_audit_status(root)
                 code = 0 if result["state"] in {"NOT_RUN", "READY_FOR_HUMAN_REVIEW"} else 1
             elif a.runtime_audit_cmd == "inspect":
-                result = verify_runtime_audit_plan(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root, a.environment_sha256)
+                result = verify_runtime_audit_plan(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root, a.environment_sha256, require_intake=a.require_intake)
                 result = {**result, "plan": {"id": result["plan"]["id"], "candidate_sha256": result["plan"]["candidate_sha256"], "lanes": [item["kind"] for item in result["plan"]["lanes"]]}, "action_summary": "Verified the signed audit authority and exact six-lane execution contract; no command ran."}
                 code = 0
             else:
-                result = execute_runtime_audit(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root, a.environment_sha256, Path(a.out))
+                result = execute_runtime_audit(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root, a.environment_sha256, Path(a.out), require_intake=a.require_intake)
                 code = 0 if result["receipt"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
         except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
             result = {"schema": "factory.runtime-audit.error.v1", "code": getattr(exc, "code", "E_RUNTIME_AUDIT"), "message": str(exc), "authority": "none"}
@@ -5076,6 +5082,8 @@ def main(argv=None) -> int:
                     repair_patch_path=Path(a.repair_patch) if a.repair_patch else None,
                     prior_receipt_path=Path(a.prior_receipt) if a.prior_receipt else None,
                     session_phase=a.session_phase,
+                    intake_parameters_path=Path(a.intake_parameters) if a.intake_parameters else None,
+                    require_intake=a.require_intake,
                 )
             elif a.proof_review_cmd == "verify":
                 payload = verify_quick_review(root, Path(a.review))
@@ -5409,7 +5417,8 @@ def main(argv=None) -> int:
             artifact_dirs = [Path(item) for item in a.artifact_dir] if a.artifact_dir else None
             metadata_paths = [Path(item) for item in a.metadata_path] if a.metadata_path else None
             supply_chain_manifest = Path(a.supply_chain_manifest) if a.supply_chain_manifest else None
-            result = write_release_candidate_preflight(root, Path(a.contract), artifact_dirs, Path(a.out), metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest) if a.out else release_candidate_preflight(root, Path(a.contract), artifact_dirs, metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest)
+            intake_parameters = Path(a.intake_parameters) if a.intake_parameters else None
+            result = write_release_candidate_preflight(root, Path(a.contract), artifact_dirs, Path(a.out), metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest, intake_parameters=intake_parameters, require_intake=a.require_intake) if a.out else release_candidate_preflight(root, Path(a.contract), artifact_dirs, metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest, intake_parameters=intake_parameters, require_intake=a.require_intake)
         except (OSError, UnicodeDecodeError, ValueError, TypeError) as exc:
             result = {"schema": "factory.release-candidate-preflight.v1", "marker": "RELEASE_CANDIDATE_PREFLIGHT_BLOCKED", "ok": False, "blockers": [{"code": "RELEASE_CANDIDATE_INPUT_INVALID", "detail": str(exc)[:240]}], "authority": {"execution": False, "approval": False, "repair": False, "merge": False, "publication": False, "deployment": False, "signing": False, "credential": False, "provider_call": False}}
         if a.json:

@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from .continuous_proof import assess_continuous_proof, verify_continuous_proof
+from .intake_parameters import verify_intake_binding
 
 
 INTENT_SCHEMA = "factory.intent-contract.v1"
@@ -280,6 +281,7 @@ def create_quick_review(
     session_path: Path | None = None, trajectory_path: Path | None = None,
     repair_scope_path: Path | None = None, repair_patch_path: Path | None = None,
     prior_receipt_path: Path | None = None, session_phase: str = "change",
+    intake_parameters_path: Path | None = None, require_intake: bool = False,
 ) -> dict[str, Any]:
     """Join current intent, change, session, repair, and trajectory evidence into one review route."""
     workspace = _workspace(root)
@@ -288,6 +290,8 @@ def create_quick_review(
     contract_check = verify_intent_contract(workspace, contract_path)
     if not contract_check.get("ok"):
         raise ProofReviewError("INTENT_CONTRACT_NOT_CURRENT", "intent contract must verify against current source bytes")
+    if intake_parameters_path is None and require_intake:
+        raise ProofReviewError("E_INTAKE_BINDING_REQUIRED", "strict proof review requires an authoritative intake-parameter envelope")
     contract, contract_file, contract_relative = _load(workspace, contract_path, "intent contract")
     continuous = assess_continuous_proof(
         workspace, review_id, contract_file, changed, session_path=session_path,
@@ -304,6 +308,13 @@ def create_quick_review(
         if not trajectory_check.get("ok") or trajectory_check.get("passed") is not True:
             route = "human_required"
             next_action = {"action": "inspect_agent_trajectory", "reason": "The agent trajectory is invalid, stale, or failed its independent policy audit."}
+    intake_binding: dict[str, str] | None = None
+    if intake_parameters_path is not None:
+        binding_check = verify_intake_binding(workspace, intake_parameters_path, scope_paths=changed)
+        if not binding_check.get("ok"):
+            first = (binding_check.get("errors") or [{"code": "E_INTAKE_PARAMETER_DRIFT", "detail": "intake binding failed"}])[0]
+            raise ProofReviewError(str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")), str(first.get("detail", "intake binding failed")))
+        intake_binding = {"path": Path(intake_parameters_path).resolve().relative_to(workspace).as_posix(), "parameter_sha256": str(binding_check.get("parameter_sha256"))}
     continuous_path = Path(continuous["artifacts"]["json"])
     core = {
         "schema": REVIEW_SCHEMA,
@@ -313,6 +324,7 @@ def create_quick_review(
         "intent_contract": {"path": contract_relative, "sha256": sha256(contract_file.read_bytes()).hexdigest(), "contract_sha256": contract["contract_sha256"]},
         "continuous_proof": {"path": continuous_path.relative_to(workspace).as_posix(), "sha256": sha256(continuous_path.read_bytes()).hexdigest(), "receipt_sha256": continuous["receipt_sha256"]},
         "trajectory": trajectory,
+        **({"intake_parameters": intake_binding} if intake_binding is not None else {}),
         "route": route,
         "next_action": next_action,
         "changed_paths": continuous["changed_paths"],
@@ -343,6 +355,13 @@ def _review_binding_failure(workspace: Path, value: dict[str, Any]) -> str | Non
         return "trajectory"
     if isinstance(trajectory, dict) and (not _binding_matches(workspace, trajectory) or not verify_trajectory(workspace, Path(trajectory.get("path", ""))).get("ok")):
         return "trajectory"
+    intake = value.get("intake_parameters")
+    if intake is not None:
+        if not isinstance(intake, dict) or set(intake) != {"path", "parameter_sha256"}:
+            return "intake_parameters"
+        check = verify_intake_binding(workspace, Path(str(intake.get("path"))), scope_paths=value.get("changed_paths"), binding_sha256=intake.get("parameter_sha256"))
+        if not check.get("ok"):
+            return "intake_parameters"
     return None
 
 
@@ -409,8 +428,10 @@ def team_proof_inbox(root: Path) -> dict[str, Any]:
             continue
         checked = verify_quick_review(workspace, path)
         if not checked.get("ok"):
-            if checked.get("marker") == "PROOF_REVIEW_STALE": stale += 1
-            else: invalid += 1
+            if checked.get("marker") == "PROOF_REVIEW_STALE":
+                stale += 1
+            else:
+                invalid += 1
             continue
         records.append({"review_id": value["review_id"], "recorded_at": value["recorded_at"], "route": value["route"], "next_action": value["next_action"], "changed_path_count": len(value["changed_paths"]), "review_sha256": value["review_sha256"], "path": path.relative_to(workspace).as_posix()})
     records.sort(key=lambda item: (_ROUTE_ORDER[item["route"]], item["recorded_at"], item["review_id"]))

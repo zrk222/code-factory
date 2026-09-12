@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "name": "intent_bound_admission_fail_closed",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_intake_admission.py','tests/test_runtime_audit_contract.py','tests/test_run_admission.py','tests/test_proof_review_workflow.py'])\nassert result==0\nprint('INTAKE_ADMISSION_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "INTAKE_ADMISSION_SMOKE_PASS",
+      "timeout_s": 180,
+      "must_fail_on_stub": true,
+      "covers": ["INTAKE_BINDING_DIGEST", "INTAKE_BINDING_SCOPE", "INTAKE_BINDING_LANES", "CHECKPOINT_FIX_BOUNDARY", "STRICT_RELEASE_GATE"]
+    }
+  ]
+}

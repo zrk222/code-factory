@@ -21,6 +21,7 @@ from factoryline.agent_proof_bridge import (
 from factoryline.graph_ops import graph_ops_snapshot
 from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
 from factoryline.semantic_authority import seal_authority_lease, seal_semantic_handoff
+from test_intake_admission import _intake
 
 
 AGENT = {"schema": "factory.agent-identity.v1", "subject": "portable-worker", "provider": "declared", "model": "declared-model"}
@@ -137,6 +138,29 @@ def test_profiles_bind_hash_only_portable_evidence(provider: str, tmp_path: Path
     projection = agent_proof_projection(tmp_path)
     assert projection["marker"] == MCP_MARKER
     assert projection["providers"][provider] == 1
+
+
+def test_bridge_can_require_an_authoritative_intake_binding(tmp_path: Path) -> None:
+    intake_path, _ = _intake(tmp_path, scope=["src"])
+    intake = json.loads(intake_path.read_text(encoding="utf-8"))
+    envelope = _envelope(tmp_path, provider="junie", run_id="intake-bound")
+    envelope["intake_parameters"] = {"path": intake_path.relative_to(tmp_path).as_posix(), "parameter_sha256": intake["parameter_sha256"]}
+
+    receipt = _import(tmp_path, envelope, "intake-bound.json")
+
+    assert receipt["intake_parameters"]["parameter_sha256"] == intake["parameter_sha256"]
+    assert verify_agent_proof(tmp_path, Path(receipt["path"]))["ok"] is True
+
+
+def test_bridge_rejects_advisory_intake_binding(tmp_path: Path) -> None:
+    intake_path, _ = _intake(tmp_path, scope=["src"], advisory=True)
+    intake = json.loads(intake_path.read_text(encoding="utf-8"))
+    envelope = _envelope(tmp_path, provider="junie", run_id="advisory-intake")
+    envelope["intake_parameters"] = {"path": intake_path.relative_to(tmp_path).as_posix(), "parameter_sha256": intake["parameter_sha256"]}
+
+    with pytest.raises(AgentProofBridgeError) as raised:
+        _import(tmp_path, envelope, "advisory-intake.json")
+    assert raised.value.code == "E_INTAKE_BINDING_ADVISORY"
 
 
 def test_graph_ops_projects_agent_bridge_as_read_only_handoff_evidence(tmp_path: Path) -> None:

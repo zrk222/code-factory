@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from .graph_ops import graph_ops_snapshot
 from .loop_passport import verify_loop_passport
 from .agent_license import AgentLicenseError, admission_license_decision, normalize_agent_identity
 from .oracle_firewall import OracleFirewallError, admission_oracle_decision
+from .intake_parameters import REQUIRED_AUDIT_LANES, verify_intake_binding
 
 
 ADMISSION_REQUEST_SCHEMA = "factory.run-admission.request.v1"
@@ -104,6 +106,44 @@ def _string_list(value: object, field: str, *, maximum: int = 64) -> list[str]:
     return result
 
 
+def _checkpoint_fix(root: Path, value: object, *, request_paths: list[str], actions: list[str], valid_until: datetime) -> dict[str, Any]:
+    """Validate a human-approved, hash-bound fix that a harness may consume at a checkpoint."""
+    if not isinstance(value, dict) or set(value) != {"checkpoint_id", "patch_path", "patch_sha256", "paths", "reason", "approved_by", "approval_expires_at"}:
+        raise AdmissionError("ADMISSION_CHECKPOINT_FIX_INVALID", "checkpoint_fix must contain the exact checkpoint, patch, scope, reason, and approval fields")
+    checkpoint_id = value.get("checkpoint_id")
+    if not isinstance(checkpoint_id, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,95}", checkpoint_id):
+        raise AdmissionError("ADMISSION_CHECKPOINT_FIX_INVALID", "checkpoint_id must be a safe identifier")
+    if "write_workspace" not in actions:
+        raise AdmissionError("ADMISSION_CHECKPOINT_FIX_UNAUTHORIZED", "checkpoint fixes require the declared write_workspace action")
+    paths = [_relative_path(item, "checkpoint_fix.paths") for item in _string_list(value.get("paths"), "checkpoint_fix.paths")]
+    if any(not any(scope == "." or item == scope or item.startswith(scope.rstrip("/") + "/") for scope in request_paths) for item in paths):
+        raise AdmissionError("ADMISSION_CHECKPOINT_FIX_SCOPE_ESCAPE", "checkpoint fix paths must remain inside the admitted request scope")
+    patch_path = _relative_path(value.get("patch_path"), "checkpoint_fix.patch_path")
+    patch = _inside(root, root / patch_path)
+    if not patch.is_file():
+        raise AdmissionError("ADMISSION_CHECKPOINT_FIX_INVALID", "checkpoint_fix.patch_path must name an existing file")
+    patch_sha256 = value.get("patch_sha256")
+    if not isinstance(patch_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", patch_sha256) or hashlib.sha256(patch.read_bytes()).hexdigest() != patch_sha256:
+        raise AdmissionError("ADMISSION_CHECKPOINT_FIX_INVALID", "checkpoint_fix.patch_sha256 does not match the current patch artifact")
+    reason = value.get("reason")
+    approved_by = value.get("approved_by")
+    if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 500 or not isinstance(approved_by, str) or not approved_by.strip():
+        raise AdmissionError("ADMISSION_CHECKPOINT_FIX_INVALID", "checkpoint fix reason and approver are required")
+    approval_expires = _utc(value.get("approval_expires_at"), "checkpoint_fix.approval_expires_at")
+    now = datetime.now(timezone.utc)
+    if approval_expires <= now or approval_expires < valid_until:
+        raise AdmissionError("ADMISSION_CHECKPOINT_FIX_APPROVAL_INVALID", "checkpoint fix approval must outlive the admitted run")
+    return {
+        "checkpoint_id": checkpoint_id,
+        "patch_path": patch_path,
+        "patch_sha256": patch_sha256,
+        "paths": paths,
+        "reason": reason.strip(),
+        "approved_by": approved_by.strip(),
+        "approval_expires_at": value["approval_expires_at"],
+    }
+
+
 def _validate_request(root: Path, request: dict[str, Any], passport: dict[str, Any]) -> dict[str, Any]:
     if request.get("schema") != ADMISSION_REQUEST_SCHEMA:
         raise AdmissionError("ADMISSION_REQUEST_INVALID", "unsupported admission request schema")
@@ -171,6 +211,18 @@ def _validate_request(root: Path, request: dict[str, Any], passport: dict[str, A
         normalized["agent"] = normalize_agent_identity(request.get("agent"), "agent")
     if "oracle_contract" in request:
         normalized["oracle_contract"] = _relative_path(request.get("oracle_contract"), "oracle_contract")
+    if "intake_parameters" in request:
+        binding = request.get("intake_parameters")
+        if not isinstance(binding, dict) or set(binding) != {"path", "parameter_sha256"}:
+            raise AdmissionError("ADMISSION_INTAKE_BINDING_INVALID", "intake_parameters must contain path and parameter_sha256")
+        path = _relative_path(binding.get("path"), "intake_parameters.path")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(binding.get("parameter_sha256"))):
+            raise AdmissionError("ADMISSION_INTAKE_BINDING_INVALID", "intake_parameters.parameter_sha256 must be a lowercase SHA-256 digest")
+        if not (_inside(root, root / path).is_file()):
+            raise AdmissionError("ADMISSION_INTAKE_BINDING_INVALID", "intake_parameters.path must name an existing file")
+        normalized["intake_parameters"] = {"path": path, "parameter_sha256": binding["parameter_sha256"]}
+    if "checkpoint_fix" in request:
+        normalized["checkpoint_fix"] = _checkpoint_fix(root, request.get("checkpoint_fix"), request_paths=paths, actions=actions, valid_until=valid_until)
     return normalized
 
 
@@ -181,7 +233,7 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def prepare_admission(root: Path, passport_path: Path, request_path: Path, out_dir: Path | None = None) -> dict[str, Any]:
+def prepare_admission(root: Path, passport_path: Path, request_path: Path, out_dir: Path | None = None, *, require_intake: bool = False) -> dict[str, Any]:
     """Seal one admissible external-run proposal without invoking a harness."""
     workspace = Path(root).resolve()
     passport_path = _inside(workspace, Path(passport_path))
@@ -204,6 +256,23 @@ def prepare_admission(root: Path, passport_path: Path, request_path: Path, out_d
     except AgentLicenseError as exc:
         raise AdmissionError(exc.code, str(exc)) from exc
     requested_autonomy = str(passport.get("autonomy") or "human_controlled")
+    intake_binding = request.get("intake_parameters")
+    if intake_binding is None and require_intake:
+        raise AdmissionError("E_INTAKE_BINDING_REQUIRED", "strict admission requires an authoritative intake_parameters binding")
+    if isinstance(intake_binding, dict):
+        binding = verify_intake_binding(
+            workspace,
+            Path(intake_binding["path"]),
+            scope_paths=request["paths"],
+            required_lanes=list(REQUIRED_AUDIT_LANES),
+            budgets=request["budget"],
+            mode=requested_autonomy,
+            expires_at=request["valid_until"],
+            binding_sha256=intake_binding["parameter_sha256"],
+        )
+        if not binding.get("ok"):
+            first = (binding.get("errors") or [{"code": "E_INTAKE_PARAMETER_DRIFT", "detail": "intake binding failed"}])[0]
+            raise AdmissionError(str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")), str(first.get("detail", "intake binding failed")))
     oracle_value = None
     if request.get("oracle_contract"):
         try:
@@ -230,6 +299,8 @@ def prepare_admission(root: Path, passport_path: Path, request_path: Path, out_d
             "The selected harness must enforce identity, sandboxing, network policy, credentials, and execution.",
         ],
     }
+    if isinstance(intake_binding, dict):
+        core["intake_parameters"] = dict(intake_binding)
     if license_value is not None:
         core["agent_license"] = {
             "license_sha256": license_value["license_sha256"],
@@ -301,6 +372,33 @@ def _request_binding_is_current(workspace: Path, packet: dict[str, Any], passpor
     return None if _sha(packet.get("request")) == packet.get("request_sha256") else "request_sha256_mismatch"
 
 
+def _intake_binding_is_current(workspace: Path, packet: dict[str, Any], passport_path: Path) -> str | None:
+    binding = packet.get("intake_parameters")
+    if binding is None:
+        return None
+    if not isinstance(binding, dict) or set(binding) != {"path", "parameter_sha256"}:
+        return "E_INTAKE_BINDING_INVALID"
+    request = packet.get("request", {})
+    passport = _load(passport_path)
+    try:
+        result = verify_intake_binding(
+            workspace,
+            Path(str(binding.get("path"))),
+            scope_paths=request.get("paths"),
+            required_lanes=list(REQUIRED_AUDIT_LANES),
+            budgets=request.get("budget"),
+            mode=str(passport.get("autonomy") or "human_controlled"),
+            expires_at=request.get("valid_until"),
+            binding_sha256=binding.get("parameter_sha256"),
+        )
+    except (TypeError, ValueError, OSError):
+        return "E_INTAKE_PARAMETER_DRIFT"
+    if result.get("ok"):
+        return None
+    first = (result.get("errors") or [{"code": "E_INTAKE_PARAMETER_DRIFT"}])[0]
+    return str(first.get("code", "E_INTAKE_PARAMETER_DRIFT"))
+
+
 def verify_admission(root: Path, packet_path: Path) -> dict[str, Any]:
     """Revalidate a packet immediately before an external harness may consume it."""
     workspace = Path(root).resolve()
@@ -326,6 +424,9 @@ def verify_admission(root: Path, packet_path: Path) -> dict[str, Any]:
     request_error = _request_binding_is_current(workspace, packet, passport_path)
     if request_error:
         return _blocked(request_error)
+    intake_error = _intake_binding_is_current(workspace, packet, passport_path)
+    if intake_error:
+        return _blocked(intake_error)
     # A packet is only an immutable snapshot if its derived license cap is also
     # re-derived at consumption time.  Otherwise an agent could keep a packet
     # after a demotion or a scope reduction and present yesterday's authority.
@@ -359,7 +460,7 @@ def verify_admission(root: Path, packet_path: Path) -> dict[str, Any]:
                 return _blocked("oracle_contract_sha256_mismatch")
         except (OracleFirewallError, TypeError, ValueError) as exc:
             return _blocked(getattr(exc, "code", "oracle_binding_invalid"))
-    return {
+    result = {
         "schema": ADMISSION_PACKET_SCHEMA,
         "verdict": "READY",
         "marker": "ADMISSION_READY",
@@ -367,3 +468,7 @@ def verify_admission(root: Path, packet_path: Path) -> dict[str, Any]:
         "authority": dict(_AUTHORITY),
         "scope_limits": ["A ready packet does not execute the selected harness."],
     }
+    fix = packet.get("request", {}).get("checkpoint_fix")
+    if isinstance(fix, dict):
+        result["checkpoint_fix"] = {"checkpoint_id": fix.get("checkpoint_id"), "patch_path": fix.get("patch_path"), "patch_sha256": fix.get("patch_sha256"), "state": "BOUND_FOR_EXTERNAL_HARNESS", "authority": "none"}
+    return result

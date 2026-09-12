@@ -188,7 +188,6 @@ def evaluate_runtime_audit(plan: dict[str, Any], executions: dict[str, Any], wor
         lanes.append(_evaluate_lane(lane, execution, plan))
     states = {item["state"] for item in lanes}
     boundary_result = _boundary_for_plan(plan, executions)
-    boundary = plan.get("runtime_boundary")
     boundary_ok = boundary_result is None or boundary_result["state"] in {"PASS", "SUPERVISED_ONLY"}
     decision = "READY_FOR_HUMAN_REVIEW" if len(lanes) == 6 and states == {"PASS"} and boundary_ok else "BLOCKED"
     affected = {item["lane"] for item in lanes if item["state"] != "PASS"}
@@ -233,15 +232,19 @@ def execute_runtime_audit(
     workspace_root: Path,
     environment_digest: str,
     output_root: Path,
+    *,
+    require_intake: bool = False,
 ) -> dict[str, Any]:
     """Verify, execute, reverify, evaluate, and persist one signed runtime assurance plan."""
-    verification = verify_runtime_audit_plan(plan_path, trust_root_path, trust_root_sha256, workspace_root, environment_digest)
+    verification = verify_runtime_audit_plan(plan_path, trust_root_path, trust_root_sha256, workspace_root, environment_digest, require_intake=require_intake)
     execution = run_runtime_audit_plan(verification["plan"], workspace_root, output_root, plan_sha256=verification["payload_sha256"])
-    post_verification = verify_runtime_audit_plan(plan_path, trust_root_path, trust_root_sha256, workspace_root, environment_digest)
+    post_verification = verify_runtime_audit_plan(plan_path, trust_root_path, trust_root_sha256, workspace_root, environment_digest, require_intake=require_intake)
     if post_verification["payload_sha256"] != verification["payload_sha256"]:
         raise RuntimeAuditError("E_PLAN_CHANGED", "plan changed during execution")
     receipt = evaluate_runtime_audit(verification["plan"], execution, workspace_root)
     receipt["plan_payload_sha256"] = verification["payload_sha256"]
+    if verification.get("intake_parameters") is not None:
+        receipt["intake_parameters"] = verification["intake_parameters"]
     receipt.pop("receipt_sha256", None)
     receipt["receipt_sha256"] = sha256_bytes(canonical_bytes(receipt))
     receipt_path = Path(execution["run_root"]) / "runtime-audit-receipt.json"

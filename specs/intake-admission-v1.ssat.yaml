@@ -1,0 +1,49 @@
+name: intake-admission-v1
+language: python
+modules:
+  - name: intake_binding
+    path: factoryline/intake_parameters.py
+    functions:
+      - name: verify_intake_binding
+        args: [root, receipt_path, scope_paths, required_lanes, budgets, mode, external_effects, expires_at, binding_sha256]
+        returns: dict[str, Any]
+  - name: runtime_plan
+    path: factoryline/runtime_audit_contract.py
+    functions:
+      - name: verify_runtime_audit_plan
+        args: [path, trust_root_path, trust_root_sha256, workspace_root, environment_digest, require_intake]
+        returns: dict[str, Any]
+  - name: run_admission
+    path: factoryline/run_admission.py
+    functions:
+      - name: prepare_admission
+        args: [root, passport_path, request_path, out_dir, require_intake]
+        returns: dict[str, Any]
+dependencies:
+  - factoryline.intake_parameters
+  - factoryline.runtime_audit_contract
+  - factoryline.proof_review_workflow
+  - factoryline.release_candidate
+invariants:
+  - name: binding_never_executes
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|socket\\.|os\\.system|Popen\\(|eval\\(|exec\\("
+    scopes:
+      - module: intake_parameters
+        symbol: verify_intake_binding
+        max_lines: 190
+  - name: checkpoint_fix_never_applies
+    forbid_pattern: "apply_patch|git\\s+(apply|commit)|subprocess"
+    scopes:
+      - module: run_admission
+        symbol: _checkpoint_fix
+        max_lines: 110
+tests:
+  - path: tests/test_intake_admission.py
+    command: py -3.11 -m pytest -q tests/test_intake_admission.py
+  - path: tests/test_runtime_audit_contract.py
+    command: py -3.11 -m pytest -q tests/test_runtime_audit_contract.py
+  - path: tests/test_run_admission.py
+    command: py -3.11 -m pytest -q tests/test_run_admission.py
+  - path: tests/test_proof_review_workflow.py
+    command: py -3.11 -m pytest -q tests/test_proof_review_workflow.py
+schema: factory.ssat.v1
