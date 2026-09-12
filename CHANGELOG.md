@@ -31,6 +31,18 @@
 
 ## Unreleased
 
+### Context efficiency and deterministic agent hand-offs
+
+- Add `factory efficiency pack|verify|status` for bounded, priority-aware
+  context packets. Stable source identities and SHA-256 digests make drift and
+  tamper visible before an agent hand-off; exact request/source matches reuse a
+  local content-addressed cache.
+- Keep the speed claim honest: excerpts are capped, secret-shaped or binary
+  sources are digest-only, and token counts are explicitly estimated from UTF-8
+  bytes rather than provider usage. Mission Control, Graph Ops, stdio MCP, and
+  WebMCP expose read-only status while preserving the established seven-reader
+  performance baseline.
+
 ### Supply-chain and reproducible-release integrity
 
 - Add an optional, fail-closed gate binding source files, lockfiles, CycloneDX

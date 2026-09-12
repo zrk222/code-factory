@@ -11,6 +11,7 @@ def test_webmcp_manifest_is_deterministic_read_only_and_progressive() -> None:
     assert "factory.saas_status" in [item["name"] for item in first["tools"]]
     assert "factory.oracle_firewall_status" in [item["name"] for item in first["tools"]]
     assert "factory.atomic_status" in [item["name"] for item in first["tools"]]
+    assert "factory.context_efficiency_status" in [item["name"] for item in first["tools"]]
     assert "factory.appforge_oracle_status" in [item["name"] for item in first["tools"]]
     assert "factory.appforge_device_reality_status" in [item["name"] for item in first["tools"]]
     assert "factory.appforge_release_rehearsal_status" in [item["name"] for item in first["tools"]]

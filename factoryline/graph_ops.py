@@ -53,6 +53,7 @@ from .repair_loop import repair_loop_projection
 from .deep_audit_loop import deep_audit_lineage
 from .mission_control_status import mission_control_status
 from .senior_engineering import senior_engineering_projection
+from .context_efficiency import context_efficiency_status
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -1954,6 +1955,8 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "repair_release_workflow", "A declared local release-workflow boundary failed. Repair its named local check before evaluating feature evidence or inspecting an external provider."
     if facts.get("supply_chain_blocked", 0) > 0:
         return "repair_supply_chain_attestation", "The local supply-chain receipt is blocked or integrity-invalid. Reconcile source, dependency, vulnerability, licence, reproducible-build, and artifact evidence before release review."
+    if facts.get("context_efficiency_blocked", 0) > 0:
+        return "repair_context_efficiency_packet", "A cached context packet is malformed or invalid. Rebuild it from the sealed request and current source digests before handing context to an agent."
     if facts.get("semantic_authority_expired_lease_count", 0) > 0:
         return "renew_semantic_authority", "An agent lease expired. Keep the handoff constrained and obtain a fresh named approval rather than extending or replaying the prior lease."
     if facts.get("semantic_authority_invalid_count", 0) > 0:
@@ -2312,9 +2315,16 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
         supply_id = f"supply-chain:{str(supply_chain.get('receipt_sha256') or 'not-requested')[:24]}"
         _node(state, node_id=supply_id, kind="supply_chain_integrity", label="Supply-chain integrity", source=".factory/supply-chain/supply-chain-receipt.json", status=supply_status,
               facts={key: value for key, value in supply_chain.items() if key not in {"schema", "claim_boundary"}})
+    context_efficiency = shared["context_efficiency"]
+    context_status = str(context_efficiency.get("state", "MISSING")).lower()
+    if context_status != "missing":
+        context_id = f"context-efficiency:{str(context_efficiency.get('schema', 'v1'))}:{context_efficiency.get('packet_count', 0)}"
+        _node(state, node_id=context_id, kind="context_efficiency", label="Context efficiency packets", source=".factory/context-efficiency", status=context_status,
+              facts={key: value for key, value in context_efficiency.items() if key not in {"schema", "claim_boundary", "packets"}})
     values.update({
         "mission_control": mission_control,
         "supply_chain": supply_chain,
+        "context_efficiency": context_efficiency,
         "release_decision": release_decision["facts"],
         "oracle_firewall": _append_oracle_firewall(state, workspace, shared["oracle"]),
         "proof_continuity": _append_proof_continuity(state, workspace),
@@ -2408,6 +2418,11 @@ def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list
         "release_decision_workflow_blocked": int(p["release_decision"]["state"] == "LOCAL_WORKFLOW_BLOCKED"),
         "supply_chain_state": p["supply_chain"].get("state", "MISSING"),
         "supply_chain_blocked": int(p["supply_chain"].get("state") in {"BLOCKED", "INCOMPLETE"}),
+        "context_efficiency_state": p["context_efficiency"].get("state", "MISSING"),
+        "context_efficiency_blocked": int(p["context_efficiency"].get("state") == "BLOCKED"),
+        "context_efficiency_packet_count": int(p["context_efficiency"].get("packet_count", 0)),
+        "context_efficiency_cache_hits": int(p["context_efficiency"].get("cache_hits", 0)),
+        "context_efficiency_estimated_tokens": int(p["context_efficiency"].get("estimated_tokens", 0)),
         "edge_count": len(edges),
         "appforge_design_current_count": appforge["current_count"],
         "appforge_design_invalid_count": appforge["invalid_count"],
@@ -2445,6 +2460,8 @@ def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]
         (p["release_decision"]["state"] == "LOCAL_WORKFLOW_BLOCKED", ("GRAPH_OPS_RELEASE_DECISION_WORKFLOW_BLOCKED",)),
         (p["supply_chain"].get("state") != "MISSING", ("GRAPH_OPS_SUPPLY_CHAIN_READ_ONLY",)),
         (p["supply_chain"].get("state") in {"BLOCKED", "INCOMPLETE"}, ("GRAPH_OPS_SUPPLY_CHAIN_REVIEW_REQUIRED",)),
+        (p["context_efficiency"].get("state") != "MISSING", ("GRAPH_OPS_CONTEXT_EFFICIENCY_READ_ONLY",)),
+        (p["context_efficiency"].get("state") == "BLOCKED", ("GRAPH_OPS_CONTEXT_EFFICIENCY_REVIEW_REQUIRED",)),
         (p["release_readiness"]["contract_count"] or p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_READ_ONLY",)),
         (p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_REVIEW_REQUIRED",)),
         (any((semantic["handoff_count"], semantic["lease_count"], semantic["invalid_count"])), ("GRAPH_OPS_SEMANTIC_AUTHORITY_READ_ONLY",)),

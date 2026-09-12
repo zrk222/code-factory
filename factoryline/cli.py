@@ -76,6 +76,12 @@ from .migration import (
     verify_migration_readiness,
     verify_repository_context,
 )
+from .context_efficiency import (
+    ContextEfficiencyError,
+    build_context_packet,
+    context_efficiency_status,
+    verify_context_packet,
+)
 from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .ide_playbook import AdoptionGuideError, adoption_guide
@@ -2642,6 +2648,21 @@ def main(argv=None) -> int:
     context_verify.add_argument("receipt")
     context_verify.add_argument("--json", action="store_true")
 
+    efficiency = sub.add_parser("efficiency", help="compile and verify bounded, cacheable context packets")
+    efficiency_sub = efficiency.add_subparsers(dest="efficiency_cmd", required=True)
+    efficiency_pack = efficiency_sub.add_parser("pack", help="build a read-only bounded context packet")
+    efficiency_pack.add_argument("--manifest", required=True, help="JSON request manifest")
+    efficiency_pack.add_argument("--root", default=".")
+    efficiency_pack.add_argument("--out")
+    efficiency_pack.add_argument("--json", action="store_true")
+    efficiency_verify = efficiency_sub.add_parser("verify", help="verify packet and source hashes")
+    efficiency_verify.add_argument("packet")
+    efficiency_verify.add_argument("--root", default=".")
+    efficiency_verify.add_argument("--json", action="store_true")
+    efficiency_status = efficiency_sub.add_parser("status", help="show bounded packet/cache metadata")
+    efficiency_status.add_argument("--root", default=".")
+    efficiency_status.add_argument("--json", action="store_true")
+
     opinion = sub.add_parser("opinion", help="maintain the owner-controlled architecture Opinion Dock")
     opinion_sub = opinion.add_subparsers(dest="opinion_cmd", required=True)
     opinion_init = opinion_sub.add_parser("init", help="create a compact default Opinion Dock")
@@ -2915,6 +2936,35 @@ def main(argv=None) -> int:
         if a.journey_cmd in {"workflow-proof", "heal-verify"} and result.get("decision") not in {"passed", "admissible_for_human_review"}:
             return 1
         return 0
+    if a.cmd == "efficiency":
+        root = Path(a.root).resolve()
+        try:
+            if a.efficiency_cmd == "pack":
+                request = json.loads(Path(a.manifest).read_text(encoding="utf-8-sig"))
+                result = build_context_packet(root, request, Path(a.out) if a.out else None)
+                code = 0
+            elif a.efficiency_cmd == "verify":
+                result = verify_context_packet(root, Path(a.packet))
+                code = 0 if result.get("valid") is True else 1
+            else:
+                result = context_efficiency_status(root)
+                code = 0
+        except (ContextEfficiencyError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {
+                "schema": "factory.context-efficiency-error.v1",
+                "marker": "CONTEXT_EFFICIENCY_REFUSED",
+                "code": getattr(exc, "code", "E_CONTEXT_INPUT"),
+                "message": getattr(exc, "message", str(exc)),
+            }
+            code = 2
+        if getattr(a, "json", False):
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            print(result.get("marker", result.get("state", "CONTEXT_EFFICIENCY_OK")))
+            print("authority   : bounded local context metadata only; no execution, approval, repair, release, publication, or credentials")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
     if a.cmd in {"prd", "intake", "product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider", "agent", "telemetry", "verifier"}:
         try:
             if a.cmd == "prd" and a.prd_cmd == "grill":

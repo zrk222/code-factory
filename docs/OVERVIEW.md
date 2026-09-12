@@ -55,6 +55,11 @@ known, what is missing, and the one fact-derived next action.
 - **Avoids unnecessary repeat work.** Content-addressed proof reuse can route a
   matching read-only validation to RUN, REUSE, SKIP, or BLOCK, preserving the
   reason and paired savings evidence instead of silently skipping a check.
+- **Makes hand-offs fast without weakening proof.** Context Efficiency builds a
+  bounded, priority-ordered packet from stable source hashes, reuses exact
+  request/source matches, and exposes only estimated token accounting. Drift,
+  traversal, symlinks, and secret-shaped material fail closed; the packet never
+  executes code or changes a gate.
 - **Turns a diff into a reviewable proof plan.** `factory change review` joins
   explicit change impact, stale proofs, coverage gaps, and existing risk policy
   into one analysis-only reviewer packet and Mermaid map.

@@ -50,6 +50,7 @@ from .operations_control import operations_control_projection
 from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
 from .mission_control_status import mission_control_status
+from .context_efficiency import context_efficiency_status
 from .runtime_audit import runtime_audit_status
 from .deep_audit import deep_audit_status
 from .codex_metadata import MetadataAuditError, audit_metadata
@@ -461,6 +462,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.mission_control_status",
             "description": "Read one bounded human/agent control-plane status built from local intent, operations, session, and repair evidence. It never grants authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.context_efficiency_status",
+            "description": "Read bounded context-packet cache metadata and estimated token budgets. It never executes sources, changes intent, or grants authority.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1274,6 +1281,17 @@ def _mission_control_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _context_efficiency_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.context_efficiency_status accepts no arguments")
+    return {
+        "marker": "CONTEXT_EFFICIENCY_MCP_READ_ONLY",
+        "action_summary": "Read bounded context-packet/cache metadata and estimated token accounting without reading source bodies or running any action.",
+        "status": context_efficiency_status(root),
+        "scope": "Read-only local metadata. No source execution, approval, repair, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
 def _deep_audit_status(root: Path, arguments: object) -> dict[str, object]:
     """Read local deep audit findings without execution or approval authority."""
     if arguments != {}:
@@ -1645,6 +1663,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_repair_loop_status(root, arguments))
     if name == "factory.mission_control_status":
         return _content(_mission_control_status(root, arguments))
+    if name == "factory.context_efficiency_status":
+        return _content(_context_efficiency_status(root, arguments))
     if name == "factory.deep_audit_status":
         return _content(_deep_audit_status(root, arguments))
     if name == "factory.runtime_audit_status":

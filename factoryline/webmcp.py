@@ -57,6 +57,11 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "description": "Read one bounded, hash-linked supervision view. It never grants approval, execution, repair, merge, publication, deployment, or credential access.",
     },
     {
+        "name": "factory.context_efficiency_status",
+        "title": "Read context packet efficiency",
+        "description": "Read bounded packet/cache metadata and estimated token budgets already visible on this page. It never executes sources or grants authority.",
+    },
+    {
         "name": "factory.appforge_oracle_status",
         "title": "Read AppForge policy authority",
         "description": "Read candidate-bound AppForge authority state already visible on this page. It never contacts Apple or changes a submission.",

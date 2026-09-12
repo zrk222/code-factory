@@ -21,6 +21,7 @@ from .deep_audit import deep_audit_status
 from .protocol_enums import MissionControlState
 from .release_integrity import release_integrity
 from .supply_chain import supply_chain_status
+from .context_efficiency import context_efficiency_status
 
 
 SCHEMA = "factory.mission-control-status.v1"
@@ -76,6 +77,9 @@ def _collect_evidence(root: Path, spans: list | None = None) -> dict[str, Any]:
     # this additional receipt is a read-only status projection, not a timed
     # gate and must not perturb existing profiling receipts.
     evidence["supply_chain"] = supply_chain_status(Path(root).resolve())
+    # Bounded cache metadata only; keep it outside the seven-reader timing
+    # baseline so the established performance receipt remains comparable.
+    evidence["context_efficiency"] = context_efficiency_status(Path(root).resolve())
     return evidence
 
 
@@ -112,6 +116,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
     runtime = evidence["runtime_assurance"]
     release_workflow = evidence["release_workflow_integrity"]
     supply_chain = evidence["supply_chain"]
+    context_efficiency = evidence["context_efficiency"]
     blockers = {
         "oracle_invalid": int(oracle.get("invalid_count", 0)),
         "oracle_weakening": int(oracle.get("blocked_drift_count", 0)),
@@ -123,6 +128,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
         "deep_audit_blocked": int(evidence["deep_audit"].get("state") in {"BLOCKED", "INCOMPLETE"}),
         "release_workflow_blocked": int(release_workflow.get("applicable") is True and release_workflow.get("ok") is not True),
         "supply_chain_blocked": int(supply_chain.get("state") in {"BLOCKED", "INCOMPLETE"}),
+        "context_efficiency_blocked": int(context_efficiency.get("state") == "BLOCKED"),
     }
     blocked = any(blockers.values())
     human_required = (
@@ -152,6 +158,8 @@ def mission_control_status(root: Path) -> dict[str, Any]:
                 if blockers["release_workflow_blocked"]
                 else "repair_supply_chain_attestation"
                 if blockers["supply_chain_blocked"]
+                else "repair_context_efficiency_packet"
+                if blockers["context_efficiency_blocked"]
                 else "repair_evidence_chain"
                 if blocked
                 else "named_human_review"
@@ -170,6 +178,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
                 "deep_audit_receipt",
                 "release_workflow_integrity",
                 "supply_chain_receipt",
+                "context_efficiency_packet",
             ],
             "may_not": [
                 "alter_intent",

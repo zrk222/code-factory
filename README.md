@@ -61,6 +61,11 @@ workflow itself, not from a JetBrains-specific adapter:
 - **Bounded resource cost:** evidence reads, workspace measurements, and
   process-bound replays have explicit limits and fresh-workspace rules, so the
   audit does not silently scan or mutate an entire project.
+- **Fast, repeatable agent context:** `factory efficiency pack` emits a
+  priority-ordered, hash-verified packet with bounded excerpts and exact cache
+  reuse, so unchanged context need not be reassembled for each hand-off.
+  Token counts are explicitly estimated—not provider-usage or savings claims—
+  and drift or secret-shaped material fails closed.
 - **Clear agent accountability:** the proof-coupled Junie handoff records the
   known tool, changed-file rationale, hashes, and explicit unknowns against a
   taxonomy digest, so an agent receives credit only for evidence a reviewer

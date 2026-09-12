@@ -68,7 +68,7 @@ _STAGES: tuple[dict[str, object], ...] = (
         "label": "3. Review — connect the diff to evidence",
         "default": True,
         "when": "After a proposed change or when deciding what must be rerun.",
-        "tools": ("factory.graph_ops", "factory.graph_impact", "factory.proof_delta_status", "factory.proof_reuse", "factory.proof_continuity_status", "factory.judgment_status", "factory.judgment_safety_case", "factory.workspace_advisor"),
+        "tools": ("factory.graph_ops", "factory.graph_impact", "factory.proof_delta_status", "factory.proof_reuse", "factory.context_efficiency_status", "factory.proof_continuity_status", "factory.judgment_status", "factory.judgment_safety_case", "factory.workspace_advisor"),
         "outcome": "An explainable source-to-evidence route and a bounded next action.",
     },
     {
