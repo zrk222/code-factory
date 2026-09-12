@@ -23,8 +23,8 @@ def test_public_audit_condition_count_is_recomputed_from_source():
     result = module.inventory()
     assert result["mandatory_audit_lanes"] == 6
     assert result["lane_specific_rejection_conditions"] == 81
-    assert result["crosscutting_rejection_conditions"] == 55
-    assert result["total_coded_rejection_conditions"] == 136
+    assert result["crosscutting_rejection_conditions"] == 56
+    assert result["total_coded_rejection_conditions"] == 137
     assert "E_POLICY" in result["crosscutting_condition_codes"]
     assert set(module.NON_CONDITION_MODULES) == {"runtime_audit_process.py"}
     assert not {

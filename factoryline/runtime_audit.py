@@ -15,6 +15,7 @@ from .runtime_audit_runner import run_runtime_audit_plan
 from .runtime_audit_stateful import evaluate_stateful
 from .runtime_audit_tenant import evaluate_tenant
 from .runtime_audit_integrity import index_executions, repair_guidance, validate_receipt_decision
+from .runtime_attestation import runtime_boundary_decision
 
 Evaluator = Callable[..., dict[str, Any]]
 EVALUATORS: dict[str, Evaluator] = {
@@ -101,67 +102,95 @@ def _command_terminal(kind: str, execution: dict[str, Any], negative: bool) -> d
     return None
 
 
+def _evaluate_artifact(lane: dict[str, Any], execution: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate one candidate or known-bad artifact against the shared mesh."""
+    kind = lane["kind"]
+    artifact = execution["artifact"]
+    scenario_sha256 = plan["counterfactual_mesh"]["scenario_sha256"]
+    if artifact.get("scenario_sha256") != scenario_sha256:
+        return lane_result(kind, "INCOMPLETE", "CROSS_LANE_SCENARIO_MISMATCH", "The artifact was not run against the approved shared counterfactual scenario.")
+    normalized = dict(artifact)
+    normalized.pop("scenario_sha256")
+    try:
+        return EVALUATORS[kind](normalized, lane["config"], engine=lane["engine"], engine_version=lane["engine_version"])
+    except (RuntimeAuditError, KeyError, TypeError, ValueError) as exc:
+        return lane_result(kind, "INCOMPLETE", getattr(exc, "code", "E_ARTIFACT_INVALID"), "The audit artifact could not be evaluated deterministically.", details={"message": str(exc)})
+
+
+def _evaluate_target(lane: dict[str, Any], execution: dict[str, Any] | None, plan: dict[str, Any]) -> dict[str, Any]:
+    if execution is None or execution.get("kind") != lane["kind"]:
+        return lane_result(lane["kind"], "INCOMPLETE", "RUNTIME_AUDIT_EXECUTION_MISSING", "This signed lane has no matching execution evidence.")
+    target = execution["target"]
+    terminal = _command_terminal(lane["kind"], target, False)
+    return terminal or _evaluate_artifact(lane, target, plan)
+
+
+def _evaluate_known_bad(lane: dict[str, Any], execution: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any] | None:
+    terminal = _command_terminal(lane["kind"], execution["known_bad"], True)
+    if terminal is not None:
+        return terminal
+    negative = _evaluate_artifact(lane, execution["known_bad"], plan)
+    if negative["state"] != "FAIL" or negative["finding"] != lane["expected_negative_code"]:
+        return lane_result(lane["kind"], "FAIL", "HOLLOW_RUNTIME_AUDIT", "The known-bad control did not trigger its signed expected finding.", details={"expected": lane["expected_negative_code"], "observed": negative["finding"], "observed_state": negative["state"]})
+    return None
+
+
+def _decorate_lane(lane: dict[str, Any], execution: dict[str, Any] | None, result: dict[str, Any]) -> dict[str, Any]:
+    target = execution.get("target", {}) if execution else {}
+    result.update({
+        "id": lane["id"],
+        "question": QUESTIONS[lane["kind"]],
+        "evidence_digest": target.get("artifact_sha256"),
+        "evidence": {
+            "target_artifact_sha256": target.get("artifact_sha256"),
+            "target_normalized_sha256": target.get("normalized_artifact_sha256"),
+            "known_bad_artifact_sha256": execution.get("known_bad", {}).get("artifact_sha256") if execution else None,
+            "target_stdout_sha256": target.get("execution", {}).get("stdout_sha256"),
+            "target_stderr_sha256": target.get("execution", {}).get("stderr_sha256"),
+        },
+        "replay": {"argv": list(lane["target_argv"]), "timeout_seconds": lane["timeout_seconds"]},
+        "remediation": REMEDIATIONS[lane["kind"]],
+        "scope_limitation": SCOPE,
+    })
+    result["repair_guidance"] = repair_guidance(result, lane)
+    return result
+
+
+def _evaluate_lane(lane: dict[str, Any], execution: dict[str, Any] | None, plan: dict[str, Any]) -> dict[str, Any]:
+    result = _evaluate_target(lane, execution, plan)
+    if execution is not None and execution.get("kind") == lane["kind"]:
+        negative_result = _evaluate_known_bad(lane, execution, plan)
+        if negative_result is not None:
+            result = negative_result
+    return _decorate_lane(lane, execution, result)
+
+
+def _boundary_for_plan(plan: dict[str, Any], executions: dict[str, Any]) -> dict[str, Any] | None:
+    boundary = plan.get("runtime_boundary")
+    if not isinstance(boundary, dict):
+        return None
+    return runtime_boundary_decision(
+        executions.get("runtime_boundary"),
+        candidate_sha256=plan["candidate_sha256"],
+        plan_sha256=executions.get("plan_sha256") or sha256_bytes(canonical_bytes(plan)),
+        environment_sha256=plan["environment"]["digest"],
+        requested_isolation=boundary["requested_isolation"],
+    )
+
+
 def evaluate_runtime_audit(plan: dict[str, Any], executions: dict[str, Any], workspace_root: Path) -> dict[str, Any]:
     """Join six computed lanes, their known-bad controls, cross-lane scenario, quality, and repair order."""
     del workspace_root  # source binding was already verified; evaluation has no filesystem authority.
     by_id = index_executions(plan, executions)
     lanes: list[dict[str, Any]] = []
     for lane in plan["lanes"]:
-        kind = lane["kind"]
         execution = by_id.get(lane["id"])
-        result: dict[str, Any]
-        if execution is None or execution.get("kind") != kind:
-            result = lane_result(kind, "INCOMPLETE", "RUNTIME_AUDIT_EXECUTION_MISSING", "This signed lane has no matching execution evidence.")
-        else:
-            result = _command_terminal(kind, execution["target"], False) or {}
-            if not result:
-                target_artifact = execution["target"]["artifact"]
-                if target_artifact.get("scenario_sha256") != plan["counterfactual_mesh"]["scenario_sha256"]:
-                    result = lane_result(kind, "INCOMPLETE", "CROSS_LANE_SCENARIO_MISMATCH", "The lane was not run against the approved shared counterfactual scenario.")
-                else:
-                    target_artifact = dict(target_artifact)
-                    target_artifact.pop("scenario_sha256")
-                try:
-                    if not result:
-                        result = EVALUATORS[kind](target_artifact, lane["config"], engine=lane["engine"], engine_version=lane["engine_version"])
-                except (RuntimeAuditError, KeyError, TypeError, ValueError) as exc:
-                    result = lane_result(kind, "INCOMPLETE", getattr(exc, "code", "E_ARTIFACT_INVALID"), "The target artifact could not be evaluated deterministically.", details={"message": str(exc)})
-            negative_terminal = _command_terminal(kind, execution["known_bad"], True)
-            if negative_terminal is not None:
-                result = negative_terminal
-            else:
-                try:
-                    negative_artifact = execution["known_bad"]["artifact"]
-                    if negative_artifact.get("scenario_sha256") != plan["counterfactual_mesh"]["scenario_sha256"]:
-                        negative_result = lane_result(kind, "INCOMPLETE", "CROSS_LANE_SCENARIO_MISMATCH", "The known-bad control used a different scenario.")
-                    else:
-                        negative_artifact = dict(negative_artifact)
-                        negative_artifact.pop("scenario_sha256")
-                        negative_result = EVALUATORS[kind](negative_artifact, lane["config"], engine=lane["engine"], engine_version=lane["engine_version"])
-                except (RuntimeAuditError, KeyError, TypeError, ValueError) as exc:
-                    negative_result = lane_result(kind, "INCOMPLETE", getattr(exc, "code", "E_ARTIFACT_INVALID"), "The known-bad artifact could not be evaluated deterministically.")
-                if negative_result["state"] != "FAIL" or negative_result["finding"] != lane["expected_negative_code"]:
-                    result = lane_result(kind, "FAIL", "HOLLOW_RUNTIME_AUDIT", "The known-bad control did not trigger its signed expected finding.", details={"expected": lane["expected_negative_code"], "observed": negative_result["finding"], "observed_state": negative_result["state"]})
-        target = execution.get("target", {}) if execution else {}
-        result.update({
-            "id": lane["id"],
-            "question": QUESTIONS[kind],
-            "evidence_digest": target.get("artifact_sha256"),
-            "evidence": {
-                "target_artifact_sha256": target.get("artifact_sha256"),
-                "target_normalized_sha256": target.get("normalized_artifact_sha256"),
-                "known_bad_artifact_sha256": execution.get("known_bad", {}).get("artifact_sha256") if execution else None,
-                "target_stdout_sha256": target.get("execution", {}).get("stdout_sha256"),
-                "target_stderr_sha256": target.get("execution", {}).get("stderr_sha256"),
-            },
-            "replay": {"argv": list(lane["target_argv"]), "timeout_seconds": lane["timeout_seconds"]},
-            "remediation": REMEDIATIONS[kind],
-            "scope_limitation": SCOPE,
-        })
-        result["repair_guidance"] = repair_guidance(result, lane)
-        lanes.append(result)
+        lanes.append(_evaluate_lane(lane, execution, plan))
     states = {item["state"] for item in lanes}
-    decision = "READY_FOR_HUMAN_REVIEW" if len(lanes) == 6 and states == {"PASS"} else "BLOCKED"
+    boundary_result = _boundary_for_plan(plan, executions)
+    boundary = plan.get("runtime_boundary")
+    boundary_ok = boundary_result is None or boundary_result["state"] in {"PASS", "SUPERVISED_ONLY"}
+    decision = "READY_FOR_HUMAN_REVIEW" if len(lanes) == 6 and states == {"PASS"} and boundary_ok else "BLOCKED"
     affected = {item["lane"] for item in lanes if item["state"] != "PASS"}
     repair_queue = [
         {"order": index + 1, "lane": item["lane"], "finding": item["finding"], "consequence": item["consequence"], "remediation": item["remediation"], "evidence_digest": item["evidence_digest"]}
@@ -191,6 +220,8 @@ def evaluate_runtime_audit(plan: dict[str, Any], executions: dict[str, Any], wor
         "repair_queue": repair_queue,
         "fact_index": facts,
     }
+    if boundary_result is not None:
+        receipt["runtime_boundary"] = boundary_result
     receipt["receipt_sha256"] = sha256_bytes(canonical_bytes(receipt))
     return receipt
 
@@ -205,7 +236,7 @@ def execute_runtime_audit(
 ) -> dict[str, Any]:
     """Verify, execute, reverify, evaluate, and persist one signed runtime assurance plan."""
     verification = verify_runtime_audit_plan(plan_path, trust_root_path, trust_root_sha256, workspace_root, environment_digest)
-    execution = run_runtime_audit_plan(verification["plan"], workspace_root, output_root)
+    execution = run_runtime_audit_plan(verification["plan"], workspace_root, output_root, plan_sha256=verification["payload_sha256"])
     post_verification = verify_runtime_audit_plan(plan_path, trust_root_path, trust_root_sha256, workspace_root, environment_digest)
     if post_verification["payload_sha256"] != verification["payload_sha256"]:
         raise RuntimeAuditError("E_PLAN_CHANGED", "plan changed during execution")
@@ -236,4 +267,4 @@ def runtime_audit_status(root: Path | str) -> dict[str, Any]:
         validate_receipt_decision(receipt)
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
         return {"schema": "factory.runtime-audit-status.v1", "state": "INCOMPLETE", "lanes": [], "authority": "none"}
-    return {"schema": "factory.runtime-audit-status.v1", "state": receipt.get("decision", "INCOMPLETE"), "receipt_path": str(receipt_paths[0]), "receipt_sha256": receipt.get("receipt_sha256"), "lanes": receipt.get("lanes", []), "authority": "none"}
+    return {"schema": "factory.runtime-audit-status.v1", "state": receipt.get("decision", "INCOMPLETE"), "receipt_path": str(receipt_paths[0]), "receipt_sha256": receipt.get("receipt_sha256"), "lanes": receipt.get("lanes", []), "runtime_boundary": receipt.get("runtime_boundary"), "authority": "none"}

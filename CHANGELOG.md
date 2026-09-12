@@ -31,6 +31,19 @@
 
 ## Unreleased
 
+### Runtime boundary attestation
+
+- Add a first-class runtime-boundary receipt above the six assurance lanes. The
+  local runner now records shell, stdin, output, environment-policy,
+  executable, cleanup, memory, and latency facts as `SUPERVISED_ONLY` rather
+  than implying sandbox isolation.
+- Verify fresh, self-hash-checked, candidate/plan/environment-bound DSSE
+  observations from approved external collectors; independent worker/VM modes
+  fail closed when only local supervision or weaker evidence is supplied.
+- Join the boundary result into the six-lane decision and expose an offline
+  `factory senior boundary` verifier. All receipts retain `authority: none`
+  and `release_approval: false`.
+
 ### Codex metadata integrity follow-up
 
 - Resolve the 91-record active metadata audit: compact ForgeLine receipt hashes

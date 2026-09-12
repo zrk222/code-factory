@@ -22,6 +22,8 @@ MAX_BYTES = 1_048_576
 _SCHEMAS = {
     "factory.execution-attestation.v1",
     "factory.execution-attestation-verification.v1",
+    "factory.runtime-boundary-attestation.v1",
+    "factory.runtime-boundary-verification.v1",
     "factory.defect-benchmark-receipt.v1",
     "factory.incremental-plan.v1",
     "factory.incremental-shadow.v1",
@@ -63,6 +65,14 @@ def _integrity(value: dict[str, Any]) -> tuple[bool, str | None]:
         supplied = value.get("brief_sha256")
         core = {key: item for key, item in value.items() if key != "brief_sha256"}
         expected = _digest(core)
+    elif schema == "factory.runtime-boundary-attestation.v1":
+        supplied = value.get("attestation_sha256")
+        core = {key: item for key, item in value.items() if key != "attestation_sha256"}
+        expected = _digest(core)
+    elif schema == "factory.runtime-boundary-verification.v1":
+        supplied = value.get("verification_sha256")
+        core = {key: item for key, item in value.items() if key != "verification_sha256"}
+        expected = _digest(core)
     else:
         return True, None
     if not isinstance(supplied, str):
@@ -76,6 +86,11 @@ def _status(value: dict[str, Any], schema: str, valid: bool) -> str:
     if not valid:
         return "INVALID"
     if schema == "factory.execution-attestation-verification.v1":
+        return str(value.get("state", "UNKNOWN"))
+    if schema == "factory.runtime-boundary-attestation.v1":
+        isolation = value.get("isolation")
+        return str(isolation.get("state", "UNKNOWN")) if isinstance(isolation, dict) else "UNKNOWN"
+    if schema == "factory.runtime-boundary-verification.v1":
         return str(value.get("state", "UNKNOWN"))
     if schema == "factory.defect-benchmark-receipt.v1":
         return str(value.get("decision", "UNKNOWN"))
@@ -113,15 +128,36 @@ def _summarize(path: Path, root: Path, value: dict[str, Any]) -> tuple[dict[str,
         "authority": value.get("authority", "none"),
     }
     if digest:
-        item["receipt_sha256"] = digest
+        if schema == "factory.runtime-boundary-attestation.v1":
+            item["attestation_sha256"] = digest
+        elif schema == "factory.runtime-boundary-verification.v1":
+            item["verification_sha256"] = digest
+        else:
+            item["receipt_sha256"] = digest
     if not integrity_ok:
-        item["error"] = "SELF_HASH_MISMATCH" if value.get("receipt_sha256") or value.get("plan_sha256") else "SELF_HASH_MISSING"
+        hash_fields = {
+            "factory.runtime-boundary-attestation.v1": "attestation_sha256",
+            "factory.runtime-boundary-verification.v1": "verification_sha256",
+            "factory.failure-brief.v1": "brief_sha256",
+            "factory.incremental-plan.v1": "plan_sha256",
+        }
+        supplied_field = hash_fields.get(schema, "receipt_sha256")
+        item["error"] = "SELF_HASH_MISMATCH" if value.get(supplied_field) else "SELF_HASH_MISSING"
     if schema == "factory.execution-attestation.v1":
         item["attestation_id"] = value.get("attestation_id")
         item["assurance_level"] = value.get("assurance_level")
     elif schema == "factory.execution-attestation-verification.v1":
         item["attestation_id"] = value.get("attestation_id")
         item["assurance_level"] = value.get("assurance_level")
+    elif schema == "factory.runtime-boundary-attestation.v1":
+        item["attestation_id"] = value.get("attestation_id")
+        item["requested_isolation"] = value.get("requested_isolation")
+        isolation = value.get("isolation")
+        item["observed_backend"] = isolation.get("backend") if isinstance(isolation, dict) else None
+    elif schema == "factory.runtime-boundary-verification.v1":
+        item["attestation_id"] = value.get("attestation_id")
+        item["requested_isolation"] = value.get("requested_isolation")
+        item["observed_backend"] = value.get("observed_backend")
     elif schema == "factory.defect-benchmark-receipt.v1":
         item["benchmark_id"] = (value.get("benchmark") or {}).get("benchmark_id") if isinstance(value.get("benchmark"), dict) else None
     elif schema == "factory.incremental-plan.v1":
@@ -182,7 +218,7 @@ def senior_engineering_projection(root: Path) -> dict[str, Any]:
     counts = {
         "receipt_count": len(receipts),
         "invalid_count": sum(not item.get("valid", False) for item in receipts),
-        "verified_count": sum(item.get("schema") in {"factory.execution-attestation-verification.v1", "factory.defect-benchmark-receipt.v1", "factory.replay-receipt.v1", "factory.repair-comparison.v1", "factory.evidence-reuse.v1", "factory.failure-brief.v1"} and item.get("valid") is True for item in receipts),
+        "verified_count": sum(item.get("schema") in {"factory.execution-attestation-verification.v1", "factory.runtime-boundary-verification.v1", "factory.defect-benchmark-receipt.v1", "factory.replay-receipt.v1", "factory.repair-comparison.v1", "factory.evidence-reuse.v1", "factory.failure-brief.v1"} and item.get("valid") is True for item in receipts),
         "blocked_count": sum(item.get("status") in {"BLOCKED", "MISMATCH", "INVALID"} for item in receipts),
         "run_count": sum(item.get("schema") == "factory.incremental-plan.v1" and item.get("counts", {}).get("RUN", 0) > 0 for item in receipts),
         "reuse_count": sum(item.get("schema") == "factory.incremental-plan.v1" and item.get("counts", {}).get("REUSE", 0) > 0 for item in receipts),

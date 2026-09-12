@@ -197,6 +197,7 @@ from .repair_loop import compare_deep_audit_repairs
 from .runtime_audit_common import RuntimeAuditError
 from .runtime_audit_contract import verify_runtime_audit_plan
 from .independent_execution import ExecutionAttestationError, verify_signed_execution_attestation
+from .runtime_attestation import RuntimeAttestationError, verify_signed_runtime_attestation
 from .benchmark_lab import BenchmarkError, evaluate_benchmark, load_benchmark_json
 from .incremental_scheduler import SchedulerError, compare_shadow, load_schedule_json, plan_incremental
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
@@ -1638,6 +1639,13 @@ def main(argv=None) -> int:
     senior_attest.add_argument("--candidate-sha256")
     senior_attest.add_argument("--plan-sha256")
     senior_attest.add_argument("--json", action="store_true")
+    senior_boundary = senior_sub.add_parser("boundary", help="verify one DSSE-signed runtime-boundary attestation")
+    senior_boundary.add_argument("receipt")
+    senior_boundary.add_argument("--trust-root", required=True)
+    senior_boundary.add_argument("--candidate-sha256")
+    senior_boundary.add_argument("--plan-sha256")
+    senior_boundary.add_argument("--environment-sha256")
+    senior_boundary.add_argument("--json", action="store_true")
     senior_benchmark = senior_sub.add_parser("benchmark", help="evaluate a manifest-bound buggy/fixed defect corpus")
     senior_benchmark.add_argument("manifest")
     senior_benchmark.add_argument("--observations", required=True)
@@ -3397,6 +3405,10 @@ def main(argv=None) -> int:
                 result = verify_signed_execution_attestation(Path(a.receipt), Path(a.trust_root), candidate_sha256=a.candidate_sha256, plan_sha256=a.plan_sha256)
                 code = 0
                 result["action_summary"] = "Verified an independently collected execution attestation; no command ran and release authority stayed disabled."
+            elif a.senior_cmd == "boundary":
+                result = verify_signed_runtime_attestation(Path(a.receipt), Path(a.trust_root), candidate_sha256=a.candidate_sha256, plan_sha256=a.plan_sha256, environment_sha256=a.environment_sha256)
+                code = 0
+                result["action_summary"] = "Verified an independently collected runtime boundary; no command ran and release authority stayed disabled."
             elif a.senior_cmd == "benchmark":
                 manifest = load_benchmark_json(Path(a.manifest))
                 observations = load_benchmark_json(Path(a.observations))

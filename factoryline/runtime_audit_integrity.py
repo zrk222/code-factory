@@ -48,7 +48,9 @@ def validate_receipt_decision(receipt):
     _validate_receipt_lanes(lanes)
     if receipt.get("authority") != "none" or receipt.get("release_approval") is not False:
         raise RuntimeAuditError("E_RECEIPT_AUTHORITY", "runtime audit cannot authorize release")
-    expected = "READY_FOR_HUMAN_REVIEW" if all(lane["state"] == "PASS" for lane in lanes) else "BLOCKED"
+    boundary = receipt.get("runtime_boundary")
+    boundary_blocked = isinstance(boundary, dict) and boundary.get("state") == "BLOCKED"
+    expected = "READY_FOR_HUMAN_REVIEW" if all(lane["state"] == "PASS" for lane in lanes) and not boundary_blocked else "BLOCKED"
     if receipt.get("decision") != expected:
         raise RuntimeAuditError("E_RECEIPT_DECISION", "decision contradicts lane results")
 

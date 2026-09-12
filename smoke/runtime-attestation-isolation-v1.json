@@ -1,0 +1,19 @@
+{
+  "checks": [
+    {
+      "name": "runtime_boundary_fails_closed_on_unproven_independence",
+      "kind": "python",
+      "run": "import hashlib\nfrom factoryline.runtime_attestation import capture_supervised_attestation, runtime_boundary_decision\nd=lambda value: hashlib.sha256(value.encode()).hexdigest()\na=capture_supervised_attestation(attestation_id='smoke', candidate_sha256=d('candidate'), plan_sha256=d('plan'), environment_sha256=d('environment'))\nr=runtime_boundary_decision(a, candidate_sha256=d('candidate'), plan_sha256=d('plan'), environment_sha256=d('environment'), requested_isolation='hardened_vm')\nassert r['state'] == 'BLOCKED' and r['finding'] == 'E_ISOLATION_UNPROVEN'\nprint('RUNTIME_BOUNDARY_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "RUNTIME_BOUNDARY_SMOKE_PASS",
+      "timeout_s": 60,
+      "covers": [
+        "RUNTIME_BOUNDARY_CAPTURE",
+        "RUNTIME_BOUNDARY_VERIFY",
+        "RUNTIME_BOUNDARY_JOIN",
+        "NO_RELEASE_AUTHORITY"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

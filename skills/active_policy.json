@@ -5,8 +5,8 @@
       "rule": "A_SUBPROC subprocess use in factoryline/cli.py",
       "promoted_from_count": 3,
       "promoted_at": "2026-08-19T03:42:59.193810+00:00",
-      "times_enforced": 19,
-      "prevented_recurrence": 19,
+      "times_enforced": 21,
+      "prevented_recurrence": 21,
       "status": "active"
     },
     "J_PARSER_UNSUPPORTED": {
@@ -41,8 +41,8 @@
       "rule": "QA_COMPLEXITY factoryline/appforge_oracle.py:verify_appforge_oracle_authority complexity 13 > 10; policy=hard",
       "promoted_from_count": 3,
       "promoted_at": "2026-09-04T02:53:26.586685+00:00",
-      "times_enforced": 43,
-      "prevented_recurrence": 43,
+      "times_enforced": 45,
+      "prevented_recurrence": 45,
       "status": "active"
     },
     "J_ARCH": {
@@ -73,6 +73,6 @@
       "status": "probation"
     }
   },
-  "version": 136,
-  "updated": "2026-09-06T13:33:13.731128+00:00"
+  "version": 139,
+  "updated": "2026-09-12T12:19:56.666553+00:00"
 }

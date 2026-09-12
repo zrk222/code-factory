@@ -1,0 +1,66 @@
+name: runtime-attestation-isolation-v1
+language: python
+modules:
+  - name: runtime_attestation
+    path: factoryline/runtime_attestation.py
+    functions:
+      - name: capture_supervised_attestation
+        args: []
+        returns: dict
+      - name: validate_runtime_attestation
+        args: [value]
+        returns: dict
+      - name: runtime_boundary_decision
+        args: [attestation]
+        returns: dict
+      - name: verify_signed_runtime_attestation
+        args: [path, trust_root_path]
+        returns: dict
+  - name: runtime_audit
+    path: factoryline/runtime_audit.py
+    functions:
+      - name: evaluate_runtime_audit
+        args: [plan, executions, workspace_root]
+        returns: dict
+  - name: runtime_audit_runner
+    path: factoryline/runtime_audit_runner.py
+    functions:
+      - name: run_runtime_audit_plan
+        args: [plan, workspace_root, output_root]
+        returns: dict
+dependencies:
+  - from: runtime_attestation
+    to: enterprise_receipts
+  - from: runtime_attestation
+    to: runtime_audit_common
+  - from: runtime_audit
+    to: runtime_attestation
+  - from: runtime_audit
+    to: runtime_audit_runner
+  - from: runtime_audit_runner
+    to: runtime_attestation
+invariants:
+  - name: observation_never_grants_release
+    forbid_pattern: "release_approval\\s*[:=]\\s*True|\\b(?:publish|deploy|approve)\\s*\\("
+    scopes:
+      - module: runtime_attestation
+        symbol: validate_runtime_attestation
+        max_lines: 220
+      - module: runtime_attestation
+        symbol: runtime_boundary_decision
+        max_lines: 100
+  - name: validator_never_executes_or_reads_secrets
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.environ|os\\.getenv"
+    scopes:
+      - module: runtime_attestation
+        symbol: validate_runtime_attestation
+        max_lines: 220
+      - module: runtime_attestation
+        symbol: verify_signed_runtime_attestation
+        max_lines: 100
+tests:
+  - path: tests/test_runtime_attestation.py
+    command: py -3.11 -m pytest -q tests/test_runtime_attestation.py
+  - path: tests/test_runtime_audit.py
+    command: py -3.11 -m pytest -q tests/test_runtime_audit.py
+schema: factory.ssat.v1

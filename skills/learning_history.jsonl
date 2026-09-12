@@ -506,3 +506,7 @@
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-09-06T13:31:42.446059+00:00"}
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-09-06T13:31:42.446059+00:00"}
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-09-06T13:33:07.850735+00:00"}
+{"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-09-12T12:14:29.590114+00:00"}
+{"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-09-12T12:14:29.591128+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-12T12:14:29.591128+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-12T12:14:29.591128+00:00"}

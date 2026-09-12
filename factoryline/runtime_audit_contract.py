@@ -13,6 +13,7 @@ from .enterprise_receipts import EnterpriseReceiptError, verify_signed_document
 from .runtime_audit_common import (RuntimeAuditError, canonical_bytes, exact_keys, require_digest,
     require_int, require_str, sha256_bytes, read_stable_json, parse_json_bytes)
 from .runtime_audit_policy import ENGINES, validate_lane_policy
+from .runtime_attestation import ISOLATION_MODES
 
 PLAN_TYPE = "application/vnd.factory.runtime-audit-plan.v1+json"
 PLAN_SCHEMA = "factory.runtime-audit-plan.v1"
@@ -109,7 +110,7 @@ def verify_runtime_audit_plan(
     plan = verified["payload"]
     if plan != parsed_payload or read_stable_json(trust_path)[1] != trust_digest or read_stable_json(Path(path), max_string_length=1_048_576)[1] != envelope_digest:
         raise RuntimeAuditError("E_INPUT_CHANGED", "signed inputs changed while verifying")
-    exact_keys(plan, {"schema", "id", "candidate_sha256", "issued_at", "expires_at", "environment", "sources", "lanes", "counterfactual_mesh"})
+    exact_keys(plan, {"schema", "id", "candidate_sha256", "issued_at", "expires_at", "environment", "sources", "lanes", "counterfactual_mesh"}, optional={"runtime_boundary"})
     require_str(plan["id"], "id", maximum=128)
     require_digest(plan["candidate_sha256"], "candidate_sha256")
     issued = _time(plan["issued_at"], "issued_at")
@@ -140,6 +141,22 @@ def verify_runtime_audit_plan(
             raise RuntimeAuditError("E_ENVIRONMENT", "origins must be credential-free HTTP(S) origins")
     if len(set(origins)) != len(origins):
         raise RuntimeAuditError("E_DUPLICATE_ID", "duplicate origins")
+
+    # This optional block is the only way a signed plan can request a runtime
+    # boundary.  Older six-lane plans remain wire-compatible; new strict plans
+    # must make the requested assurance explicit before execution starts.
+    boundary = plan.get("runtime_boundary")
+    if boundary is not None:
+        if not isinstance(boundary, dict):
+            raise RuntimeAuditError("E_RUNTIME_BOUNDARY", "runtime_boundary must be an object")
+        exact_keys(boundary, {"requested_isolation", "attestation_required"})
+        if boundary["requested_isolation"] not in ISOLATION_MODES:
+            raise RuntimeAuditError("E_RUNTIME_BOUNDARY", "unsupported requested isolation")
+        require_bool(boundary["attestation_required"], "runtime_boundary.attestation_required")
+        if boundary["attestation_required"] is not True:
+            raise RuntimeAuditError("E_RUNTIME_BOUNDARY", "runtime boundary evidence must be required explicitly")
+        if boundary["requested_isolation"] in {"isolated_worker", "hardened_vm"} and boundary["attestation_required"] is not True:
+            raise RuntimeAuditError("E_RUNTIME_BOUNDARY", "independent isolation requires an attestation")
 
     sources = plan["sources"]
     if not isinstance(sources, list) or not 1 <= len(sources) <= 128:
