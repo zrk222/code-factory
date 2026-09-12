@@ -41,8 +41,8 @@
       "rule": "QA_COMPLEXITY factoryline/appforge_oracle.py:verify_appforge_oracle_authority complexity 13 > 10; policy=hard",
       "promoted_from_count": 3,
       "promoted_at": "2026-09-04T02:53:26.586685+00:00",
-      "times_enforced": 45,
-      "prevented_recurrence": 45,
+      "times_enforced": 46,
+      "prevented_recurrence": 46,
       "status": "active"
     },
     "J_ARCH": {
@@ -50,8 +50,8 @@
       "rule": "J_ARCH E_INVARIANT_SCOPE graph_ops_is_only_a_projection: cannot resolve bounded symbol graph_ops.graph_ops_snapshot",
       "promoted_from_count": 3,
       "promoted_at": "2026-09-04T03:12:12.491065+00:00",
-      "times_enforced": 433,
-      "prevented_recurrence": 433,
+      "times_enforced": 435,
+      "prevented_recurrence": 435,
       "status": "active"
     },
     "E_INVARIANT_SCOPE": {
@@ -59,9 +59,9 @@
       "rule": "E_INVARIANT_SCOPE graph_ops_is_only_a_projection: cannot resolve bounded symbol graph_ops.graph_ops_snapshot",
       "promoted_from_count": 3,
       "promoted_at": "2026-09-04T03:12:12.491065+00:00",
-      "times_enforced": 0,
-      "prevented_recurrence": 0,
-      "status": "probation"
+      "times_enforced": 2,
+      "prevented_recurrence": 2,
+      "status": "active"
     },
     "E_SIG_DRIFT": {
       "code": "E_SIG_DRIFT",
@@ -73,6 +73,6 @@
       "status": "probation"
     }
   },
-  "version": 139,
-  "updated": "2026-09-12T12:19:56.666553+00:00"
+  "version": 142,
+  "updated": "2026-09-12T13:24:06.146533+00:00"
 }

@@ -20,6 +20,7 @@ from .runtime_audit import runtime_audit_status
 from .deep_audit import deep_audit_status
 from .protocol_enums import MissionControlState
 from .release_integrity import release_integrity
+from .supply_chain import supply_chain_status
 
 
 SCHEMA = "factory.mission-control-status.v1"
@@ -71,6 +72,10 @@ def _collect_evidence(root: Path, spans: list | None = None) -> dict[str, Any]:
         if spans is not None:
             spans.append({"name": name, "elapsed_ns": elapsed,
                           "output_sha256": _fingerprint(evidence[name])})
+    # Keep the established seven-reader profile stable for latency baselines;
+    # this additional receipt is a read-only status projection, not a timed
+    # gate and must not perturb existing profiling receipts.
+    evidence["supply_chain"] = supply_chain_status(Path(root).resolve())
     return evidence
 
 
@@ -106,6 +111,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
     repairs = evidence["repair_loops"]
     runtime = evidence["runtime_assurance"]
     release_workflow = evidence["release_workflow_integrity"]
+    supply_chain = evidence["supply_chain"]
     blockers = {
         "oracle_invalid": int(oracle.get("invalid_count", 0)),
         "oracle_weakening": int(oracle.get("blocked_drift_count", 0)),
@@ -116,6 +122,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
         "runtime_assurance_blocked": int(runtime.get("state") in {"BLOCKED", "INCOMPLETE"}),
         "deep_audit_blocked": int(evidence["deep_audit"].get("state") in {"BLOCKED", "INCOMPLETE"}),
         "release_workflow_blocked": int(release_workflow.get("applicable") is True and release_workflow.get("ok") is not True),
+        "supply_chain_blocked": int(supply_chain.get("state") in {"BLOCKED", "INCOMPLETE"}),
     }
     blocked = any(blockers.values())
     human_required = (
@@ -143,6 +150,8 @@ def mission_control_status(root: Path) -> dict[str, Any]:
             "next_action": (
                 "repair_release_workflow"
                 if blockers["release_workflow_blocked"]
+                else "repair_supply_chain_attestation"
+                if blockers["supply_chain_blocked"]
                 else "repair_evidence_chain"
                 if blocked
                 else "named_human_review"
@@ -160,6 +169,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
                 "runtime_assurance_receipt",
                 "deep_audit_receipt",
                 "release_workflow_integrity",
+                "supply_chain_receipt",
             ],
             "may_not": [
                 "alter_intent",

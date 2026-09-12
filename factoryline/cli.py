@@ -1226,6 +1226,18 @@ def main(argv=None) -> int:
     mutation = assurance_sub.add_parser("policy-mutate", help="emit explicit policy mutations for a challenge run")
     mutation.add_argument("policy")
     mutation.add_argument("--out", required=True)
+    supply_chain = assurance_sub.add_parser("supply-chain", help="verify a local source, dependency, vulnerability and reproducible-build manifest")
+    supply_chain.add_argument("manifest", help="workspace-relative supply-chain attestation JSON")
+    supply_chain.add_argument("--root", default=".")
+    supply_chain.add_argument("--out", default=".factory/supply-chain/supply-chain-receipt.json")
+    supply_chain.add_argument("--candidate-sha256")
+    supply_chain.add_argument("--json", action="store_true")
+    supply_chain_verify = assurance_sub.add_parser("supply-chain-verify", help="verify an independently collected signed supply-chain attestation")
+    supply_chain_verify.add_argument("attestation")
+    supply_chain_verify.add_argument("--root", default=".")
+    supply_chain_verify.add_argument("--trust-root", required=True)
+    supply_chain_verify.add_argument("--candidate-sha256")
+    supply_chain_verify.add_argument("--json", action="store_true")
 
     s = sub.add_parser("verify-policy", help="prove a policy evaluator catches every delete/invert mutation")
     s.add_argument("--root", default=".")
@@ -2150,6 +2162,7 @@ def main(argv=None) -> int:
     release_preflight_parser.add_argument("--contract", required=True, help="workspace-contained release contract with candidate source binding")
     release_preflight_parser.add_argument("--artifact-dir", action="append", help="workspace-contained artifact directory; repeatable")
     release_preflight_parser.add_argument("--metadata-path", action="append", help="workspace-contained active metadata file; repeatable and audited when supplied")
+    release_preflight_parser.add_argument("--supply-chain-manifest", help="optional workspace-contained signed-evidence manifest; blocks when supplied evidence is invalid")
     release_preflight_parser.add_argument("--out", help="optional workspace-contained JSON receipt path")
     release_preflight_parser.add_argument("--json", action="store_true")
     release_decision_parser = release_sub.add_parser("decision", help="explain one strict local release decision without contacting a provider")
@@ -5317,7 +5330,8 @@ def main(argv=None) -> int:
         try:
             artifact_dirs = [Path(item) for item in a.artifact_dir] if a.artifact_dir else None
             metadata_paths = [Path(item) for item in a.metadata_path] if a.metadata_path else None
-            result = write_release_candidate_preflight(root, Path(a.contract), artifact_dirs, Path(a.out), metadata_paths=metadata_paths) if a.out else release_candidate_preflight(root, Path(a.contract), artifact_dirs, metadata_paths=metadata_paths)
+            supply_chain_manifest = Path(a.supply_chain_manifest) if a.supply_chain_manifest else None
+            result = write_release_candidate_preflight(root, Path(a.contract), artifact_dirs, Path(a.out), metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest) if a.out else release_candidate_preflight(root, Path(a.contract), artifact_dirs, metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest)
         except (OSError, UnicodeDecodeError, ValueError, TypeError) as exc:
             result = {"schema": "factory.release-candidate-preflight.v1", "marker": "RELEASE_CANDIDATE_PREFLIGHT_BLOCKED", "ok": False, "blockers": [{"code": "RELEASE_CANDIDATE_INPUT_INVALID", "detail": str(exc)[:240]}], "authority": {"execution": False, "approval": False, "repair": False, "merge": False, "publication": False, "deployment": False, "signing": False, "credential": False, "provider_call": False}}
         if a.json:
@@ -5703,7 +5717,24 @@ def main(argv=None) -> int:
         return 0
     if a.cmd == "assurance":
         from .assurance import build_cyclonedx_sbom, build_evidence_graph, build_vex, policy_mutations
+        from .supply_chain import SupplyChainError, verify_signed_supply_chain_attestation, write_supply_chain_receipt
         try:
+            if a.assurance_cmd == "supply-chain":
+                root = Path(a.root).resolve()
+                manifest = Path(a.manifest)
+                manifest = manifest if manifest.is_absolute() else root / manifest
+                result = write_supply_chain_receipt(root, manifest, Path(a.out), candidate_sha256=a.candidate_sha256)
+                print(json.dumps(result, indent=2, sort_keys=True) if a.json else f"supply-chain: {result.get('decision')} ({result.get('path')})")
+                return 0 if result.get("decision") == "PASS" else 1
+            if a.assurance_cmd == "supply-chain-verify":
+                root = Path(a.root).resolve()
+                attestation = Path(a.attestation)
+                trust_root = Path(a.trust_root)
+                attestation = attestation if attestation.is_absolute() else root / attestation
+                trust_root = trust_root if trust_root.is_absolute() else root / trust_root
+                result = verify_signed_supply_chain_attestation(attestation, trust_root, root, candidate_sha256=a.candidate_sha256)
+                print(json.dumps(result, indent=2, sort_keys=True) if a.json else f"supply-chain signature: {result.get('state')} ({result.get('attestation_id')})")
+                return 0
             if a.assurance_cmd == "graph":
                 records = json.loads(Path(a.records).read_text(encoding="utf-8"))
                 result = build_evidence_graph(records, tenant_id=a.tenant)

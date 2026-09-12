@@ -48,6 +48,10 @@ known, what is missing, and the one fact-derived next action.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.
+- **Carries release integrity with the candidate.** The optional supply-chain
+  receipt binds source, dependencies, SBOM/VEX and licence policy, repeated
+  builds, and archive secret/path checks. Drift is blocked before a human
+  release review; the receipt never claims external approval.
 - **Avoids unnecessary repeat work.** Content-addressed proof reuse can route a
   matching read-only validation to RUN, REUSE, SKIP, or BLOCK, preserving the
   reason and paired savings evidence instead of silently skipping a check.

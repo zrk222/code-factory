@@ -1952,6 +1952,8 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "review_senior_engineering_block", "A supplied benchmark or incremental plan is blocked; inspect the bounded failure evidence before relying on the result."
     if facts.get("release_decision_workflow_blocked", 0) > 0:
         return "repair_release_workflow", "A declared local release-workflow boundary failed. Repair its named local check before evaluating feature evidence or inspecting an external provider."
+    if facts.get("supply_chain_blocked", 0) > 0:
+        return "repair_supply_chain_attestation", "The local supply-chain receipt is blocked or integrity-invalid. Reconcile source, dependency, vulnerability, licence, reproducible-build, and artifact evidence before release review."
     if facts.get("semantic_authority_expired_lease_count", 0) > 0:
         return "renew_semantic_authority", "An agent lease expired. Keep the handoff constrained and obtain a fresh named approval rather than extending or replaying the prior lease."
     if facts.get("semantic_authority_invalid_count", 0) > 0:
@@ -2304,8 +2306,15 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
     release_decision = release_workflow_decision_projection(shared["release_workflow_integrity"])
     _node(state, node_id=release_decision["id"], kind=release_decision["kind"], label=release_decision["label"],
           source=release_decision["source"], status=release_decision["status"], facts=release_decision["facts"])
+    supply_chain = shared["supply_chain"]
+    supply_status = str(supply_chain.get("state", "MISSING")).lower()
+    if supply_status != "missing":
+        supply_id = f"supply-chain:{str(supply_chain.get('receipt_sha256') or 'not-requested')[:24]}"
+        _node(state, node_id=supply_id, kind="supply_chain_integrity", label="Supply-chain integrity", source=".factory/supply-chain/supply-chain-receipt.json", status=supply_status,
+              facts={key: value for key, value in supply_chain.items() if key not in {"schema", "claim_boundary"}})
     values.update({
         "mission_control": mission_control,
+        "supply_chain": supply_chain,
         "release_decision": release_decision["facts"],
         "oracle_firewall": _append_oracle_firewall(state, workspace, shared["oracle"]),
         "proof_continuity": _append_proof_continuity(state, workspace),
@@ -2397,6 +2406,8 @@ def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list
         "mission_control_state": p["mission_control"]["state"],
         "release_decision_state": p["release_decision"]["state"],
         "release_decision_workflow_blocked": int(p["release_decision"]["state"] == "LOCAL_WORKFLOW_BLOCKED"),
+        "supply_chain_state": p["supply_chain"].get("state", "MISSING"),
+        "supply_chain_blocked": int(p["supply_chain"].get("state") in {"BLOCKED", "INCOMPLETE"}),
         "edge_count": len(edges),
         "appforge_design_current_count": appforge["current_count"],
         "appforge_design_invalid_count": appforge["invalid_count"],
@@ -2432,6 +2443,8 @@ def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]
         (p["jetbrains_handshake"]["state"] != "empty", ("GRAPH_OPS_JETBRAINS_HANDSHAKE_READ_ONLY",)),
         (True, ("GRAPH_OPS_RELEASE_DECISION_VISIBLE", "RELEASE_DECISION_GRAPH_READ_ONLY")),
         (p["release_decision"]["state"] == "LOCAL_WORKFLOW_BLOCKED", ("GRAPH_OPS_RELEASE_DECISION_WORKFLOW_BLOCKED",)),
+        (p["supply_chain"].get("state") != "MISSING", ("GRAPH_OPS_SUPPLY_CHAIN_READ_ONLY",)),
+        (p["supply_chain"].get("state") in {"BLOCKED", "INCOMPLETE"}, ("GRAPH_OPS_SUPPLY_CHAIN_REVIEW_REQUIRED",)),
         (p["release_readiness"]["contract_count"] or p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_READ_ONLY",)),
         (p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_REVIEW_REQUIRED",)),
         (any((semantic["handoff_count"], semantic["lease_count"], semantic["invalid_count"])), ("GRAPH_OPS_SEMANTIC_AUTHORITY_READ_ONLY",)),

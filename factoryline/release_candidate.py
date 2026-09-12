@@ -204,7 +204,14 @@ def _scan_artifacts(root: Path, expected_versions: dict[str, str | None], direct
     return {"directories": [Path(item).as_posix() for item in directories], "artifacts": inspected, "blockers": blockers, "versions_match": not blockers}
 
 
-def release_candidate_preflight(root: Path, contract: Path, artifact_dirs: Iterable[Path] | None = None, metadata_paths: Iterable[Path] | None = None) -> dict[str, Any]:
+def release_candidate_preflight(
+    root: Path,
+    contract: Path,
+    artifact_dirs: Iterable[Path] | None = None,
+    metadata_paths: Iterable[Path] | None = None,
+    *,
+    supply_chain_manifest: Path | None = None,
+) -> dict[str, Any]:
     """Evaluate contract/source/artifact identity without external authority."""
     workspace = Path(root).resolve()
     source = source_snapshot(workspace)
@@ -221,7 +228,8 @@ def release_candidate_preflight(root: Path, contract: Path, artifact_dirs: Itera
             "contract": {"path": str(contract), "feature": None, "marker": "RELEASE_CONTRACT_INVALID"},
             "artifacts": {"directories": [Path(item).as_posix() for item in (artifact_dirs or DEFAULT_ARTIFACT_DIRS)], "artifacts": [], "blockers": []},
             "metadata": {"scope": "active", "status": "NOT_REQUESTED", "findings": [], "files": []},
-            "facts": {"contract_valid": False, "artifact_versions_match": False, "metadata_lineage_valid": True, "ledger_drift": False, "windows_binding_proven": True},
+            "supply_chain": {"status": "NOT_REQUESTED"},
+            "facts": {"contract_valid": False, "artifact_versions_match": False, "metadata_lineage_valid": True, "ledger_drift": False, "windows_binding_proven": True, "supply_chain_verified": None},
             "checks": [{"id": "RELEASE_CONTRACT_VALID", "passed": False, "evidence": str(exc)}],
             "blockers": [{"code": "RELEASE_CONTRACT_INVALID", "detail": str(exc)}],
             "next_action": "repair_release_candidate",
@@ -283,7 +291,25 @@ def release_candidate_preflight(root: Path, contract: Path, artifact_dirs: Itera
     ledger_drift = any(item.get("code") in {"E_METADATA_LEDGER_ORDER", "E_METADATA_LEDGER_HEAD_MISMATCH"} for item in metadata.get("findings", []))
     metadata_ok = not metadata.get("findings")
     checks.append({"id": "CODEX_METADATA_INTEGRITY_ACTIVE", "passed": metadata_ok or metadata_paths is None, "evidence": "active metadata audit passed" if metadata_ok else ("active metadata audit not requested" if metadata_paths is None else "active metadata contains blocking findings")})
-    facts = {"contract_valid": bool(contract_result.get("ok")), "artifact_versions_match": bool(artifacts["versions_match"]), "metadata_lineage_valid": metadata_lineage_valid, "ledger_drift": ledger_drift, "windows_binding_proven": True}
+    supply_chain: dict[str, Any] = {"status": "NOT_REQUESTED"}
+    if supply_chain_manifest is not None:
+        from .supply_chain import evaluate_supply_chain
+        try:
+            supply_path = _inside(workspace, Path(supply_chain_manifest), "supply-chain manifest")
+            manifest_value = json.loads(supply_path.read_text(encoding="utf-8"))
+            supply_chain = evaluate_supply_chain(workspace, manifest_value)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            supply_chain = {
+                "schema": "factory.supply-chain-receipt.v1",
+                "decision": "BLOCKED",
+                "blockers": [{"code": "E_SUPPLY_CHAIN_INPUT", "detail": str(exc)[:240]}],
+                "authority": "none",
+                "release_approval": False,
+            }
+        supply_passed = supply_chain.get("decision") == "PASS"
+        checks.append({"id": "SUPPLY_CHAIN_INTEGRITY", "passed": supply_passed, "evidence": "source, lockfiles, SBOM, VEX, licences, reproducible builds and artifact scan passed" if supply_passed else "supply-chain evidence is blocked"})
+        blockers.extend(supply_chain.get("blockers", []))
+    facts = {"contract_valid": bool(contract_result.get("ok")), "artifact_versions_match": bool(artifacts["versions_match"]), "metadata_lineage_valid": metadata_lineage_valid, "ledger_drift": ledger_drift, "windows_binding_proven": True, "supply_chain_verified": (None if supply_chain_manifest is None else supply_chain.get("decision") == "PASS")}
     ok = bool(source.get("ok")) and binding_ok and not blockers
     body: dict[str, Any] = {
         "schema": SCHEMA,
@@ -293,6 +319,7 @@ def release_candidate_preflight(root: Path, contract: Path, artifact_dirs: Itera
         "contract": {"path": contract_path.relative_to(workspace).as_posix(), "feature": contract_value.get("feature") if contract_value else None, "marker": contract_result.get("marker"), "policy_digest": contract_result.get("policy_digest")},
         "artifacts": artifacts,
         "metadata": metadata,
+        "supply_chain": supply_chain,
         "facts": facts,
         "checks": checks,
         "blockers": blockers,
@@ -304,10 +331,10 @@ def release_candidate_preflight(root: Path, contract: Path, artifact_dirs: Itera
     return body
 
 
-def write_release_candidate_preflight(root: Path, contract: Path, artifact_dirs: Iterable[Path] | None, out: Path, *, metadata_paths: Iterable[Path] | None = None) -> dict[str, Any]:
+def write_release_candidate_preflight(root: Path, contract: Path, artifact_dirs: Iterable[Path] | None, out: Path, *, metadata_paths: Iterable[Path] | None = None, supply_chain_manifest: Path | None = None) -> dict[str, Any]:
     """Write a candidate receipt atomically after running the pure preflight."""
     workspace = Path(root).resolve()
-    result = release_candidate_preflight(workspace, contract, artifact_dirs, metadata_paths=metadata_paths)
+    result = release_candidate_preflight(workspace, contract, artifact_dirs, metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest)
     destination = _inside(workspace, Path(out), "release preflight output")
     destination.parent.mkdir(parents=True, exist_ok=True)
     payload = {**result, "marker": "RELEASE_CANDIDATE_PREFLIGHT_WRITTEN", "path": destination.relative_to(workspace).as_posix()}

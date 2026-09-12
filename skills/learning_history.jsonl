@@ -510,3 +510,8 @@
 {"code": "A_SUBPROC", "event": "enforce", "prevented": true, "ts": "2026-09-12T12:14:29.591128+00:00"}
 {"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-12T12:14:29.591128+00:00"}
 {"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-12T12:14:29.591128+00:00"}
+{"code": "J_ARCH", "event": "enforce", "prevented": true, "ts": "2026-09-12T13:22:33.981794+00:00"}
+{"code": "J_ARCH", "event": "enforce", "prevented": true, "ts": "2026-09-12T13:22:33.982780+00:00"}
+{"code": "E_INVARIANT_SCOPE", "event": "enforce", "prevented": true, "ts": "2026-09-12T13:22:33.982780+00:00"}
+{"code": "E_INVARIANT_SCOPE", "event": "enforce", "prevented": true, "ts": "2026-09-12T13:22:33.982780+00:00"}
+{"code": "QA_COMPLEXITY", "event": "enforce", "prevented": true, "ts": "2026-09-12T13:22:33.982780+00:00"}

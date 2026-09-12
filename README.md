@@ -65,6 +65,11 @@ workflow itself, not from a JetBrains-specific adapter:
   known tool, changed-file rationale, hashes, and explicit unknowns against a
   taxonomy digest, so an agent receives credit only for evidence a reviewer
   can inspect.
+- **Release evidence that travels with the artifact:** the optional
+  supply-chain gate binds source and lockfiles, SBOM/VEX and licence policy,
+  identical rebuilds, and package secret/path scans to one candidate digest.
+  It blocks drift without pretending that a local receipt is a marketplace or
+  security approval.
 
 These are workflow-efficiency improvements, not a promise that application
 code or tests execute faster. Actual time or cost savings remain unknown until

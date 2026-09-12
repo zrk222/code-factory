@@ -31,6 +31,16 @@
 
 ## Unreleased
 
+### Supply-chain and reproducible-release integrity
+
+- Add an optional, fail-closed gate binding source files, lockfiles, CycloneDX
+  SBOM, VEX severity thresholds, licence policy, repeated build outputs, and
+  archive secret/path checks to one candidate digest.
+- Add local and independent DSSE attestation verification plus Mission Control,
+  Graph Ops, senior-engineering, CLI, smoke, and release-preflight projections.
+  Evidence remains review-only: no receipt grants signing, merge, publication,
+  deployment, provider, or approval authority.
+
 ### Runtime boundary attestation
 
 - Add a first-class runtime-boundary receipt above the six assurance lanes. The
