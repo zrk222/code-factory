@@ -392,5 +392,7 @@ def revenueforge_projection(root: Path) -> dict[str, Any]:
         else:
             invalid += 1
     from .revenue_evidence import revenue_evidence_projection
+    from .revenue_integrity import revenue_integrity_projection
     evidence = revenue_evidence_projection(workspace)
-    return {"marker": "GRAPH_OPS_REVENUEFORGE_READ_ONLY", "current_count": current, "invalid_count": invalid + evidence["invalid_count"], "latest": latest, "evidence": evidence, "authority": AUTHORITY}
+    integrity = revenue_integrity_projection(workspace)
+    return {"marker": "GRAPH_OPS_REVENUEFORGE_READ_ONLY", "current_count": current, "invalid_count": invalid + evidence["invalid_count"] + integrity["invalid_count"], "latest": latest, "evidence": evidence, "integrity": integrity, "authority": AUTHORITY}

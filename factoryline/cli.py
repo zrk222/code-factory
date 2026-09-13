@@ -145,6 +145,11 @@ from .revenue_evidence import (
     sync_testflight_evidence,
     watch_policy_drift,
 )
+from .revenue_integrity import (
+    evaluate_revenue_integrity,
+    plan_revenue_experiment,
+    reconcile_billing_events,
+)
 from .appforge_design import appforge_design_projection, compile_appforge_design
 from .app_review_gate import verify_app_review_readiness
 from .appforge_store_media import StoreMediaError, verify_store_media
@@ -1977,6 +1982,26 @@ def main(argv=None) -> int:
     revenue_memory_query.add_argument("--journey", required=True)
     revenue_memory_query.add_argument("--at")
     revenue_memory_query.add_argument("--json", action="store_true")
+    revenue_billing = revenue_sub.add_parser("billing-reconcile", help="reconcile verified StoreKit, Play Billing, and server observations without granting access")
+    revenue_billing.add_argument("--root", default=".")
+    revenue_billing.add_argument("--products", required=True)
+    revenue_billing.add_argument("--events", required=True)
+    revenue_billing.add_argument("--out", default=".factory/revenueforge/default/billing-ledger.json")
+    revenue_billing.add_argument("--json", action="store_true")
+    revenue_experiment = revenue_sub.add_parser("experiment-plan", help="compile an approved-by-human, guardrail-bounded experiment plan without starting it")
+    revenue_experiment.add_argument("--root", default=".")
+    revenue_experiment.add_argument("--products", required=True)
+    revenue_experiment.add_argument("--experiment", required=True)
+    revenue_experiment.add_argument("--out", default=".factory/revenueforge/default/experiment-plan.json")
+    revenue_experiment.add_argument("--json", action="store_true")
+    revenue_integrity = revenue_sub.add_parser("integrity", help="evaluate manifest, billing, experiment, and baseline integrity without provider actions")
+    revenue_integrity.add_argument("--root", default=".")
+    revenue_integrity.add_argument("--products", required=True)
+    revenue_integrity.add_argument("--ledger", required=True)
+    revenue_integrity.add_argument("--experiment")
+    revenue_integrity.add_argument("--baseline")
+    revenue_integrity.add_argument("--out", default=".factory/revenueforge/default/integrity.json")
+    revenue_integrity.add_argument("--json", action="store_true")
     revenue_design = revenue_sub.add_parser("appforge-design", help="compile user intent into a story-led seven-discipline iOS design workspace")
     revenue_design.add_argument("--root", default=".")
     revenue_design.add_argument("--brief", required=True)
@@ -5279,6 +5304,19 @@ def main(argv=None) -> int:
                 payload = promote_evidence_memory(root, Path(a.entry), Path(a.out))
             elif a.revenue_cmd == "memory-query":
                 payload = query_evidence_memory(root, a.app_id, a.journey, a.at)
+            elif a.revenue_cmd == "billing-reconcile":
+                payload = reconcile_billing_events(root, Path(a.products), Path(a.events), Path(a.out))
+            elif a.revenue_cmd == "experiment-plan":
+                payload = plan_revenue_experiment(root, Path(a.products), Path(a.experiment), Path(a.out))
+            elif a.revenue_cmd == "integrity":
+                payload = evaluate_revenue_integrity(
+                    root,
+                    Path(a.products),
+                    Path(a.ledger),
+                    Path(a.experiment) if a.experiment else None,
+                    Path(a.baseline) if a.baseline else None,
+                    Path(a.out),
+                )
             elif a.revenue_cmd == "app-review-gate":
                 payload = verify_app_review_readiness(root, Path(a.contract), Path(a.evidence), Path(a.out))
             elif a.revenue_cmd == "store-media-gate":

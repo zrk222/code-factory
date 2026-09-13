@@ -800,3 +800,6 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-13 05:00] VERIFY full-stack-ux-harness-contract-v1 focused=19_passed full=1566_passed_7_skipped_0_warnings spec_strict=6_of_6 validators=6_of_6 forge=review_B_arch_gate=passed_verify_tests=2_of_2_smoke=2_of_2 package=0.46.4_wheel_sdist_twine_pass ruff=passed authority=none publish=not_requested
 
 - [2026-09-13] VERIFY stateless-mcp2-release-gate completed_leg=hash_bound_local_receipt input_required_failed_lane_projection=passed focused_mcp=27_passed full=1571_passed_7_skipped ruff=passed package=0.46.4_wheel_sdist_twine_pass authority=none publish=not_requested
+
+- [2026-09-13 12:15] GATE spec revenueforge-integrity-v1 approver=human strict=True sha=e8524c020f88163f
+- [2026-09-13 12:17] GATE plan revenueforge-integrity-v1 approver=human tasks=6 sha=e8524c020f88163f
