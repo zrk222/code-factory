@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.7 - 2026-09-13
+
+- Align the VS Code and Open VSX adapter version with the next protected
+  publication sequence while retaining the local, read-only proof boundary.
+- Keep the proof-coupled Junie handoff and AppForge evidence story visible in
+  the release metadata; provider publication still requires its own receipt.
+
 ## 0.9.6 - 2026-09-09
 
 - Align the VS Code and Open VSX adapters with Code Factory 0.46.4 and expose

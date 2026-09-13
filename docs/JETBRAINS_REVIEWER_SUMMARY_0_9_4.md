@@ -9,6 +9,11 @@ IDE or agent release authority:
   exact changed paths, per-file rationale, workspace-local hashes, explicit
   unknowns, and a visible credit line. The taxonomy digest prevents a card
   from silently changing the recognized tool inventory.
+- **Junie-native reviewer path:** the project pack exposes a hash-bound,
+  copy-only manifest plus an optional `factoryline-proof` Markdown subagent.
+  Its allowlist is limited to `Read`, `Grep`, `Glob`, and the `code-factory`
+  MCP server, so Junie can delegate evidence review without granting that
+  reviewer edit, shell, web, or release authority.
 - **Independent proof:** First Proof, Oracle Firewall, six audit lanes, and
   Graph Ops keep the request, forbidden behavior, test, evidence, and next
   human decision together. A green agent message alone is not promoted.

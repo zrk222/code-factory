@@ -2249,6 +2249,9 @@ def main(argv=None) -> int:
     junie_taxonomy_parser = junie_sub.add_parser("taxonomy", help="show the complete progressive Junie FactoryLine taxonomy")
     junie_taxonomy_parser.add_argument("--root", default=".")
     junie_taxonomy_parser.add_argument("--json", action="store_true")
+    junie_manifest_parser = junie_sub.add_parser("manifest", help="show the copy-only Junie FactoryLine project-pack manifest")
+    junie_manifest_parser.add_argument("--root", default=".")
+    junie_manifest_parser.add_argument("--json", action="store_true")
     junie_install = junie_sub.add_parser("install", help="install secret-free project Junie guidance and MCP config after exact confirmation")
     junie_install.add_argument("--root", default=".")
     junie_install.add_argument("--confirmation", required=True)
@@ -5616,12 +5619,14 @@ def main(argv=None) -> int:
             print(f"mcp failed: {exc.marker}: {exc}", file=sys.stderr)
             return 2
     if a.cmd == "junie":
-        from .junie_taxonomy import JunieTaxonomyError, install_junie_factoryline_pack, junie_taxonomy, validate_junie_contribution
+        from .junie_taxonomy import JunieTaxonomyError, install_junie_factoryline_pack, junie_manifest, junie_taxonomy, validate_junie_contribution
 
         try:
             root = Path(a.root)
             if a.junie_cmd == "taxonomy":
                 payload = junie_taxonomy(root)
+            elif a.junie_cmd == "manifest":
+                payload = junie_manifest(root)
             elif a.junie_cmd == "install":
                 payload = install_junie_factoryline_pack(root, a.confirmation)
             else:
@@ -5646,8 +5651,14 @@ def main(argv=None) -> int:
             for stage in payload["stages"]:
                 print(f"{stage['label']}: {stage['outcome']}")
             print("Boundary: local guidance only; Junie remains enabled under JetBrains controls.")
+        elif a.junie_cmd == "manifest":
+            print("FactoryLine Junie project-pack manifest")
+            print(f"Manifest digest: {payload['manifest_sha256']}")
+            for entry in payload["files"]:
+                print(f"  {entry['path']}: {entry['role']}")
+            print("Boundary: copy-only; the human enables Junie and its MCP server under JetBrains controls.")
         elif a.junie_cmd == "install":
-            print(f"Junie FactoryLine pack {payload['state']}: .junie/AGENTS.md + .junie/mcp/mcp.json")
+            print(f"Junie FactoryLine pack {payload['state']}: .junie/AGENTS.md + .junie/mcp/mcp.json + {payload['targets']['subagent']['path']}")
         else:
             print(payload["credit_line"])
         return 0

@@ -36,7 +36,7 @@ hollow negative control caught in a disposable sandbox, then open
 `factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
-**Current in 0.9.6:** the adapter metadata and installable artifact are aligned
+**Current in 0.9.7:** the adapter metadata and installable artifact are aligned
 with the Code Factory 0.46.4 release candidate. The proof-coupled Junie handoff
 story is visible beside the existing First Proof, AppForge, and evidence-boundary
 controls. Marketplace publication remains a protected provider action; this
@@ -153,7 +153,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.9.6.vsix
+code --install-extension factoryline-vscode-0.9.7.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

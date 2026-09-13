@@ -22,10 +22,14 @@ does not replace, control, or imply endorsement by either JetBrains product.
 rewrites of blocking/release Oracle rules and keeps AppForge authority receipts
 path-to-digest verifiable.
 
-**New in 0.9.4:** Junie handoffs can carry proof-coupled attribution: the
+**New in 0.9.5:** Junie handoffs can carry proof-coupled attribution: the
 known FactoryLine tool, changed-file rationale, workspace-local hashes,
 unknowns, and a visible credit line are checked against the taxonomy digest.
-The card is read-only and does not grant Junie execution or release authority.
+The project pack also exposes a copy-only manifest and, when supported by the
+installed Junie build, a read-only `factoryline-proof` subagent whose tool
+allowlist is limited to file inspection and the `code-factory` MCP server. The
+card and subagent are review aids; neither grants Junie execution or release
+authority.
 
 **New in 0.9.3:** senior teams can review candidate-bound execution
 attestations, real-defect benchmark metrics, and dependency-aware incremental
@@ -56,7 +60,7 @@ merge, publish, or deploy.
 - `FactoryLine: Review This File` runs the same analysis with an explicit active-editor path, so a developer can exclude unrelated local work from the review scope.
 - `FactoryLine: Save Review Handoff` writes the exact review JSON, Markdown, and Mermaid map below `.factory/change-reviews/` only after a second workspace confirmation. It is a local handoff packet, not an approval or an automatic repair.
 - `FactoryLine: Prepare Verified Repair Sandbox` selects one native Change List, seals its exact project paths and measured bytes in a local Scope Passport, then permits an explicit textual candidate-patch check. It never calls an AI runner, estimates token/credit savings, applies a patch, runs a test, or commits.
-- The Repair Sandbox can copy a sealed **AI Agent Proof Mission** for a manual agent paste, install a secret-free project Junie MCP entry or GitHub Copilot proof agent, then route the returned native Change List and Qodana or SonarQube SARIF into independent Proof Review. The mission forbids silent scope expansion and weakening a failing test merely to get green. None of these actions starts AI, reads a chat, uploads source, consumes AI credits, or grants execution authority.
+- The Repair Sandbox can copy a sealed **AI Agent Proof Mission** for a manual agent paste, install a secret-free project Junie MCP entry, the conflict-safe Junie project-pack manifest, or GitHub Copilot proof agent, then route the returned native Change List and Qodana or SonarQube SARIF into independent Proof Review. The mission forbids silent scope expansion and weakening a failing test merely to get green. None of these actions starts AI, reads a chat, uploads source, consumes AI credits, or grants execution authority.
 
 **Use your preferred coding agent and analyzer—FactoryLine independently decides whether their green result deserves trust.**
 - `FactoryLine: Open Latest Receipt` shows the newest JSON receipt below `.factory/` or `receipts/`.

@@ -23,6 +23,11 @@ The complete, versioned list is returned by the local read-only MCP tool
 `factory.junie_taxonomy`; it includes every tool that the same MCP server
 exposes.
 
+The copy-only pack manifest is available with `factory junie manifest`. It
+binds the exact guidance, MCP configuration, and optional proof-review
+subagent bytes to one digest so a project can review the handoff before
+installing it.
+
 ## Proof-coupled change acknowledgement
 
 The most useful additional JetBrains integration is not another agent switch:
@@ -61,10 +66,16 @@ identical:
 - `.junie/AGENTS.md` — the progressive working contract for Junie.
 - `.junie/mcp/mcp.json` — a local stdio `factory mcp serve --root <project>`
   configuration.
+- `.junie/agents/factoryline-proof.md` — an optional native Junie subagent
+  with YAML frontmatter that permits only `Read`, `Grep`, `Glob`, and the
+  `code-factory` MCP server. Its `plan` mode and 12-turn cap make it a
+  read-only evidence navigator; it cannot edit files or run shell commands.
 
-The installer refuses to overwrite a different team-owned guidance file or
-MCP entry. It does not enable a server, start Junie, edit source, run tests,
-approve, merge, publish, deploy, sign, use credentials, or contact JetBrains.
+The installer refuses to overwrite a different team-owned guidance file, MCP
+entry, or subagent. It does not enable a server, start Junie, edit source, run
+tests, approve, merge, publish, deploy, sign, use credentials, or contact
+JetBrains. Subagents are only discovered by Junie builds that support that
+feature; the MCP and guidelines remain independently useful.
 
 In JetBrains, the user must independently enable use of custom MCP servers for
 Junie and confirm that the local `code-factory` server is available. Junie

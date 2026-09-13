@@ -90,6 +90,8 @@ abstract class MarketplacePreflightTask : DefaultTask() {
             "Your IDE feels slow. Your AI code looks fine.",
             "Tuned for Junie. Not dependent on Junie.",
             "proof-coupled change acknowledgement",
+            "copy-only manifest",
+            "factoryline-proof",
             "Add Guardian Core as the first tool-window tab",
         )
         val missingDescriptorFragments = requiredDescriptorFragments.filterNot(pluginXml::contains)
@@ -138,7 +140,7 @@ plugins {
 }
 
 group = "app.factoryline"
-version = "0.9.4"
+version = "0.9.5"
 
 // Keep release task inputs configuration-cache safe. Do not resolve the
 // Project from a task action: Gradle 9.5 treats that as a release-gate error.

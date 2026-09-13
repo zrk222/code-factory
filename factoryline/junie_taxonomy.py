@@ -9,13 +9,14 @@ from __future__ import annotations
 from hashlib import sha256
 import json
 from pathlib import Path
-from typing import Any
 
 
 TAXONOMY_SCHEMA = "factory.junie-taxonomy.v1"
 INSTALL_SCHEMA = "factory.junie-install.v1"
 CONTRIBUTION_SCHEMA = "factory.junie-factoryline-contribution.v1"
+MANIFEST_SCHEMA = "factory.junie-manifest.v1"
 PACK_CONFIRMATION = "INSTALL Junie FactoryLine Pack"
+SUBAGENT_PATH = ".junie/agents/factoryline-proof.md"
 _AUTHORITY = {
     "agent_start": False,
     "source_modify": False,
@@ -280,6 +281,7 @@ def junie_taxonomy(root: Path | str) -> dict[str, object]:
         ],
         "claim_boundary": "Taxonomy describes local FactoryLine tools. It does not install, enable, start, observe, or control Junie, and does not prove any external JetBrains state.",
         "authority": dict(_AUTHORITY),
+        "project_pack": junie_manifest(workspace),
     }
     taxonomy_sha256 = _sha(core)
     return {**core, "taxonomy_sha256": taxonomy_sha256, "contribution_protocol": _contribution_protocol(taxonomy_sha256)}
@@ -330,6 +332,48 @@ FactoryLine's MCP tools are local and read-only. They do not enable or start
 Junie, edit source, run tests, approve, merge, publish, deploy, sign, use
 credentials, contact a provider, or grant connector authority. Junie must be
 enabled separately in JetBrains under the user’s own controls.
+
+The optional `.junie/agents/factoryline-proof.md` subagent is a read-only
+reviewer. Its allowlist permits file inspection and the `code-factory` MCP
+server only; it excludes editing, shell execution, web access, and user
+prompts.
+"""
+    return text.encode("utf-8")
+
+
+def _junie_proof_agent_bytes() -> bytes:
+    """Return the native Junie read-only proof-review subagent manifest."""
+    text = """---
+name: \"factoryline-proof\"
+description: \"Perform a read-only FactoryLine evidence review before a Junie handoff or release decision\"
+tools: [\"Read\", \"Grep\", \"Glob\"]
+mcpServers: [\"code-factory\"]
+permissionMode: \"plan\"
+maxTurns: 12
+allowPromptArgument: true
+---
+
+You are the FactoryLine proof reviewer. Work only as an evidence navigator;
+never edit files, execute shell commands, browse the web, or ask the user to
+change scope. Use the `code-factory` MCP server's read-only tools to inspect
+the progressive taxonomy and the relevant local status before forming a view.
+
+Follow this chain exactly:
+`source -> obligation -> forbidden behavior -> gate -> test -> evidence -> decision`.
+
+Preserve the human-owned intent contract, forbidden outcomes, negative cases,
+thresholds, exceptions, and sealed scope. If a required fact is absent, stale,
+or contradictory, report it as an unknown or blocker; never fill the gap from
+assumption. Never approve, merge, publish, deploy, sign, use credentials, or
+claim that a test ran unless a supplied receipt says so.
+
+Return a compact handoff containing: the exact paths inspected, FactoryLine
+tools called, evidence paths and digests supplied, findings by severity, one
+fact-derived next action, and unresolved unknowns. A FactoryLine result is
+review evidence, not Junie telemetry, proof of private tool calls, or release
+authority.
+
+User request: $prompt
 """
     return text.encode("utf-8")
 
@@ -337,6 +381,45 @@ enabled separately in JetBrains under the user’s own controls.
 def _junie_mcp_bytes(workspace: Path) -> bytes:
     payload = {"mcpServers": {"code-factory": {"command": "factory", "args": ["mcp", "serve", "--root", str(workspace)]}}}
     return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False).encode("utf-8") + b"\n"
+
+
+def junie_manifest(root: Path | str) -> dict[str, object]:
+    """Return the hash-bound, copy-only manifest for the Junie project pack.
+
+    The manifest describes files the explicit installer may create. It is not a
+    Junie settings file and carries no execution or release authority.
+    """
+    workspace = _workspace(root)
+    guidance = _guidance()
+    mcp = _junie_mcp_bytes(workspace)
+    subagent = _junie_proof_agent_bytes()
+    core: dict[str, object] = {
+        "schema": MANIFEST_SCHEMA,
+        "marker": "JUNIE_FACTORYLINE_MANIFEST_READY",
+        "client": "junie",
+        "workspace_root": str(workspace),
+        "files": [
+            {"path": ".junie/AGENTS.md", "role": "project_guidelines", "sha256": sha256(guidance).hexdigest()},
+            {"path": ".junie/mcp/mcp.json", "role": "project_mcp", "sha256": sha256(mcp).hexdigest()},
+            {"path": SUBAGENT_PATH, "role": "read_only_proof_subagent", "sha256": sha256(subagent).hexdigest()},
+        ],
+        "subagent": {
+            "name": "factoryline-proof",
+            "tool_allowlist": ["Read", "Grep", "Glob"],
+            "mcp_servers": ["code-factory"],
+            "permission_mode": "plan",
+            "max_turns": 12,
+            "supports_prompt_argument": True,
+        },
+        "discovery": {
+            "guidelines": ".junie/AGENTS.md",
+            "mcp": ".junie/mcp/mcp.json",
+            "subagents": ".junie/agents/",
+        },
+        "authority": dict(_AUTHORITY),
+        "claim_boundary": "This is a local, copy-only Junie project manifest. It does not enable, start, observe, or control Junie and does not grant edit, execution, approval, merge, publication, deployment, signing, credential, network, or connector authority.",
+    }
+    return {**core, "manifest_sha256": _sha(core)}
 
 
 def _planned_mcp_bytes(target: Path, workspace: Path) -> bytes:
@@ -377,14 +460,20 @@ def install_junie_factoryline_pack(root: Path | str, confirmation: str) -> dict[
         raise JunieTaxonomyError(f"confirmation must equal {PACK_CONFIRMATION}", "JUNIE_PACK_CONFIRMATION_REQUIRED")
     agents_target = workspace / ".junie" / "AGENTS.md"
     mcp_target = workspace / ".junie" / "mcp" / "mcp.json"
+    subagent_target = workspace / SUBAGENT_PATH
     agents = _guidance()
+    subagent = _junie_proof_agent_bytes()
     # Check every conflict before making either write.
     if agents_target.exists() and agents_target.read_bytes() != agents:
         raise JunieTaxonomyError("existing .junie/AGENTS.md differs; no overwrite was performed", "JUNIE_PACK_CONFLICT")
     mcp = _planned_mcp_bytes(mcp_target, workspace)
+    if subagent_target.exists() and subagent_target.read_bytes() != subagent:
+        raise JunieTaxonomyError(f"existing {SUBAGENT_PATH} differs; no overwrite was performed", "JUNIE_PACK_CONFLICT")
     changed_agents = _write_if_needed(agents_target, agents)
     changed_mcp = _write_if_needed(mcp_target, mcp)
-    state = "installed" if changed_agents or changed_mcp else "already_current"
+    changed_subagent = _write_if_needed(subagent_target, subagent)
+    state = "installed" if changed_agents or changed_mcp or changed_subagent else "already_current"
+    manifest = junie_manifest(workspace)
     return {
         "schema": INSTALL_SCHEMA,
         "marker": "JUNIE_FACTORYLINE_PACK_INSTALLED",
@@ -392,8 +481,10 @@ def install_junie_factoryline_pack(root: Path | str, confirmation: str) -> dict[
         "targets": {
             "guidance": {"path": ".junie/AGENTS.md", "sha256": sha256(agents).hexdigest()},
             "mcp": {"path": ".junie/mcp/mcp.json", "sha256": sha256(mcp).hexdigest()},
+            "subagent": {"path": SUBAGENT_PATH, "sha256": sha256(subagent).hexdigest()},
         },
+        "manifest": {"schema": MANIFEST_SCHEMA, "sha256": manifest["manifest_sha256"]},
         "taxonomy_sha256": junie_taxonomy(workspace)["taxonomy_sha256"],
         "authority": dict(_AUTHORITY),
-        "next_action": "In JetBrains, enable passing custom MCP servers for Junie, verify code-factory is visible, then ask Junie to call factory.junie_taxonomy. FactoryLine did not enable or contact Junie.",
+        "next_action": "In JetBrains, enable the project code-factory MCP server and, if supported by this Junie build, the read-only factoryline-proof subagent. Ask Junie to call factory.junie_taxonomy before a scoped mission. FactoryLine did not enable or contact Junie.",
     }
