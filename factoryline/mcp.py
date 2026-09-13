@@ -65,7 +65,7 @@ from .saas_proof import saas_proof_projection
 from .junie_taxonomy import JunieTaxonomyError, junie_taxonomy, validate_junie_contribution
 from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
 from .audit_rule_search import AuditRuleSearchError, search_audit_rules
-from .mcp_mrt import release_gate_input_required
+from .mcp_mrt import McpMrtError, release_gate_completed, release_gate_input_required
 from .mcp_replay import build_stateless_replay_hints
 
 
@@ -599,10 +599,26 @@ def _tool_definitions() -> list[dict[str, object]]:
         },
         {
             "name": "factory.release_decision",
-            "description": "Explain one strict local release decision without contacting a provider. It distinguishes local workflow or evidence blocks from unobserved external gates and never publishes, signs, deploys, repairs, or accesses credentials.",
+            "description": "Project a stateless MCP2 release-gate challenge or validate a submitted human decision into a local hash-bound receipt. It never approves a provider release, publishes, signs, deploys, repairs, or accesses credentials.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"feature": {"type": "string", "description": "1-64 lowercase letters, digits, dots, underscores, or hyphens"}},
+                "properties": {
+                    "feature": {"type": "string", "description": "1-64 lowercase letters, digits, dots, underscores, or hyphens"},
+                    "human_input": {
+                        "type": "object",
+                        "description": "Optional stateless second-leg human decision; returns a local receipt only.",
+                        "properties": {
+                            "decision": {"type": "string", "enum": ["APPROVE_RELEASE", "REJECT_RELEASE", "REQUEST_REPAIR_RETRY"]},
+                            "reviewerIdentity": {"type": "string", "minLength": 1},
+                            "reviewerNotes": {"type": "string"},
+                            "acknowledgedProofDebt": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["decision", "reviewerIdentity"],
+                        "additionalProperties": False,
+                    },
+                    "tool_call_id": {"type": "string", "description": "Optional binding to the input_required toolCallId."},
+                    "proof_card_hash": {"type": "string", "description": "Optional binding to the input_required proofCardHash."},
+                },
                 "required": ["feature"],
                 "additionalProperties": False,
             },
@@ -1489,15 +1505,34 @@ def _release_readiness_status(root: Path, arguments: object) -> dict[str, object
 
 
 def _release_decision_status(root: Path, arguments: object) -> dict[str, object]:
-    if not isinstance(arguments, dict) or set(arguments) != {"feature"}:
-        raise McpError("factory.release_decision requires exactly one feature argument", marker="RELEASE_DECISION_INPUT_REJECTED")
+    allowed = {"feature", "human_input", "tool_call_id", "proof_card_hash"}
+    if not isinstance(arguments, dict) or "feature" not in arguments or set(arguments) - allowed:
+        raise McpError("factory.release_decision requires feature and only approved MRT fields", marker="RELEASE_DECISION_INPUT_REJECTED")
     try:
         card = release_decision_card(root, arguments["feature"])
     except ValueError as exc:
         raise McpError(str(exc), marker="RELEASE_DECISION_INPUT_REJECTED") from exc
+    human_input = arguments.get("human_input")
+    if human_input is not None:
+        try:
+            completed = release_gate_completed(
+                card,
+                human_input,
+                tool_call_id=arguments.get("tool_call_id") if "tool_call_id" in arguments else None,
+                proof_card_hash=arguments.get("proof_card_hash") if "proof_card_hash" in arguments else None,
+            )
+        except McpMrtError as exc:
+            raise McpError(str(exc), marker=exc.marker) from exc
+        return {
+            "marker": "MCP_RELEASE_DECISION_COMPLETED",
+            "action_summary": "Validate and hash-seal one human decision against the local proof-card challenge without executing release work.",
+            "card": card,
+            "mcp2": completed,
+            "scope": "Read-only local acknowledgement; provider approval, publication, deployment, signing, credentials, connectors, and repair dispatch remain unobserved and untouched.",
+        }
     return {
         "marker": "MCP_RELEASE_DECISION_READ_ONLY",
-        "action_summary": "Classify one local strict release state without executing a provider, repair, or release action.",
+        "action_summary": "Project one stateless MCP2 input-required challenge without executing a provider, repair, or release action.",
         "card": card,
         "mcp2": release_gate_input_required(card),
         "scope": "Read-only local classification; provider state remains unobserved and no publication, approval, deployment, signing, credential, connector, or repair action ran.",

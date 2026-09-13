@@ -189,9 +189,12 @@ Every configured MCP client can inspect the same bounded surfaces:
 - `factory.graph_ops` for commit-local Proof-Delta halt telemetry: a
   `NO_GAIN_HALT` node explains the exact candidate/evidence digests, proof debt,
   and next fact-derived action without granting retry or execution authority;
-- `factory.release_decision` for an MCP2-style `input_required` handoff with a
-  hash-bound proof-card context and reviewer schema. It never accepts the
-  decision, retains a session, or emits a completed release receipt; and
+- `factory.release_decision` for a stateless MCP2-style `input_required`
+  handoff with a hash-bound proof-card context and reviewer schema, or a
+  validated `completed` local receipt when a human decision is supplied. The
+  second leg is deterministic and does not retain a session or write a receipt
+  file; it never approves, publishes, deploys, signs, or dispatches a provider
+  action; and
 - one-shot stateless responses include a client-only replay key, response
   digest, and bounded cache hint so retries can be deduplicated locally and
   revalidated without implying a server-side replay ledger; and

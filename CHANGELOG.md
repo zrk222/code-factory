@@ -31,6 +31,17 @@
 
 ## Unreleased
 
+### Stateless MCP2 release-gate MRT
+
+- Extend `factory.release_decision` with a bounded second leg: a supplied
+  human decision is validated against the exact `input_required` tool-call and
+  proof-card hashes, then returned as a deterministic local receipt.
+- Project explicitly lane-labelled blockers into `failedLanes` and include the
+  count in the review prompt; approval fails closed until every proof-debt code
+  is acknowledged.
+- Keep all provider, publication, deployment, signing, credential, connector,
+  retry-dispatch, persistence, and merge authority outside the local adapter.
+
 ### Full-Stack UX Harness contract adapter
 
 - Add strict native YAML/SSAT validation with duplicate-key rejection, exact

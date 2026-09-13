@@ -181,14 +181,21 @@ edits, approves, or publishes work.
 
 ### MCP2-style human gate handoff
 
-`factory.release_decision` also returns an `mcp2` `input_required` envelope.
-It contains a deterministic `toolCallId`, a minimal reviewer decision schema,
-the hash of the local proof card, unresolved proof debt, and the next
-fact-derived action. The envelope is safe to hand to a stateless HTTP bridge:
-the connection can close while a human reviews it. This is a projection, not
-MCP transport negotiation and not a completed response. Code Factory retains
-no session, does not accept the decision through MCP, and does not dispatch a
-retry or release; the human-controlled CLI must record any decision.
+`factory.release_decision` returns an `mcp2` `input_required` envelope with a
+deterministic `toolCallId`, explicit failed-lane findings, a minimal reviewer
+decision schema, the hash of the local proof card, unresolved proof debt, and
+the next fact-derived action. The envelope is safe to hand to a stateless HTTP
+bridge: the connection can close while a human reviews it.
+
+The same tool accepts an optional `human_input` second leg. Code Factory
+validates the decision, reviewer identity, debt acknowledgements, and the
+original `tool_call_id`/`proof_card_hash` bindings, then returns an `mcp2`
+`completed` response containing a deterministic local receipt digest. This is
+not MCP transport negotiation and is not provider approval: no session or
+receipt file is retained, and no retry, merge, release, publication,
+deployment, signing, credential, or connector action is performed. Provider
+state remains unobserved and the human-controlled release gates remain
+authoritative.
 
 ## Explicit gaps versus explicit contradictions
 
