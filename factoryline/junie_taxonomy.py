@@ -76,7 +76,7 @@ _STAGES: tuple[dict[str, object], ...] = (
         "label": "4. Audit — challenge code, behavior, and operational risk",
         "default": True,
         "when": "For meaningful code changes, risky workflows, or a failing gate.",
-        "tools": ("factory.verifier_status", "factory.gauntlet_status", "factory.cdte_status", "factory.journey_status", "factory.langgraph_assurance", "factory.deep_audit_status", "factory.runtime_audit_status", "factory.repair_loop_status", "factory.combine_status"),
+        "tools": ("factory.verifier_status", "factory.gauntlet_status", "factory.cdte_status", "factory.journey_status", "factory.langgraph_assurance", "factory.deep_audit_status", "factory.runtime_audit_status", "factory.search_audit_rules", "factory.repair_loop_status", "factory.combine_status"),
         "outcome": "Independent challenge state, runtime-risk evidence, and known gaps rather than a green-looking assertion.",
     },
     {

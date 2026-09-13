@@ -1,0 +1,20 @@
+{
+  "checks": [
+    {
+      "name": "strict_revocation_freshness",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_enterprise_receipts.py']) == 0\nprint('ENTERPRISE_REVOCATION_FRESHNESS_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "ENTERPRISE_REVOCATION_FRESHNESS_PASS",
+      "timeout_s": 120,
+      "covers": [
+        "E_REVOCATION_REQUIRED",
+        "E_REVOCATION_FRESHNESS",
+        "E_INVALID_REVOCATIONS",
+        "FRESH_CHECKED",
+        "AUTHORITY_NONE"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

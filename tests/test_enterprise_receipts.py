@@ -1,4 +1,5 @@
 import base64
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -8,13 +9,14 @@ import pytest
 enterprise = pytest.importorskip("factoryline.enterprise_receipts")
 from factoryline.enterprise_receipts import (  # noqa: E402
     DSSE_SCHEMA,
-    POLICY_BUNDLE_SCHEMA,
     REVOCATIONS_SCHEMA,
+    REVOCATIONS_PAYLOAD_TYPE,
     EnterpriseReceiptError,
     canonical_json,
     generate_key_material,
     receipt_v2_from_v1,
     seal_receipt_v2,
+    sign_payload,
     sign_policy_bundle,
     sign_revocations,
     verify_receipt_v2,
@@ -63,6 +65,25 @@ def _seal(tmp_path: Path, payload: dict | None = None, keys: dict | None = None)
         out=path,
     )
     return path, keys
+
+
+def _revocations_at(tmp_path: Path, keys: dict, generated_at: datetime, entries: list[dict] | None = None) -> Path:
+    payload = {
+        "schema": REVOCATIONS_SCHEMA,
+        "generated_at": generated_at.isoformat(),
+        "entries": entries or [],
+    }
+    envelope = sign_payload(
+        payload,
+        payload_type=REVOCATIONS_PAYLOAD_TYPE,
+        private_key_path=Path(keys["private_key"]),
+        keyid=keys["keyid"],
+        identity=keys["identity"],
+        issuer=keys["issuer"],
+    )
+    path = tmp_path / f"revocations-{generated_at.timestamp()}.dsse.json"
+    path.write_bytes(canonical_json(envelope) + b"\n")
+    return path
 
 
 def test_canonical_json_and_dsse_envelope_are_stable(tmp_path):
@@ -147,6 +168,119 @@ def test_revocation_list_rejects_signer_at_receipt_time(tmp_path):
     )
     with pytest.raises(EnterpriseReceiptError, match="E_SIGNER_REVOKED"):
         verify_receipt_v2(receipt_path, trust_root_path=Path(keys["trust_root"]), revocations_path=revocations_path)
+
+
+def test_strict_verification_requires_a_revocation_snapshot(tmp_path):
+    receipt_path, keys = _seal(tmp_path)
+    with pytest.raises(EnterpriseReceiptError, match="E_REVOCATION_REQUIRED"):
+        verify_receipt_v2(receipt_path, trust_root_path=Path(keys["trust_root"]), require_revocations=True)
+
+
+def test_strict_verification_reports_current_revocation_freshness(tmp_path):
+    keys = _keys(tmp_path)
+    receipt_path, _ = _seal(tmp_path, keys=keys)
+    now = datetime(2026, 7, 12, 0, 0, 30, tzinfo=timezone.utc)
+    revocations_path = _revocations_at(tmp_path, keys, now - timedelta(seconds=30))
+    result = verify_receipt_v2(
+        receipt_path,
+        trust_root_path=Path(keys["trust_root"]),
+        revocations_path=revocations_path,
+        require_revocations=True,
+        max_revocation_age_seconds=60,
+        now=now,
+    )
+    assert result["revocation_status"] == "FRESH_CHECKED"
+    assert result["revocation_freshness"] == "CURRENT"
+    assert result["revocation_age_seconds"] == 30
+    assert result["authority"] == "none"
+
+
+@pytest.mark.parametrize(
+    "generated_at, expected",
+    [
+        (datetime(2026, 7, 11, 22, 59, tzinfo=timezone.utc), "stale"),
+        (datetime(2026, 7, 12, 0, 1, tzinfo=timezone.utc), "future"),
+    ],
+)
+def test_strict_verification_rejects_stale_or_future_revocation_snapshot(tmp_path, generated_at, expected):
+    keys = _keys(tmp_path)
+    receipt_path, _ = _seal(tmp_path, keys=keys)
+    revocations_path = _revocations_at(tmp_path, keys, generated_at)
+    with pytest.raises(EnterpriseReceiptError, match="E_REVOCATION_FRESHNESS") as error:
+        verify_receipt_v2(
+            receipt_path,
+            trust_root_path=Path(keys["trust_root"]),
+            revocations_path=revocations_path,
+            require_revocations=True,
+            max_revocation_age_seconds=3600,
+            now=datetime(2026, 7, 12, 0, 0, tzinfo=timezone.utc),
+        )
+    assert expected in str(error.value)
+
+
+def test_optional_revocations_are_checked_historically_but_not_claimed_current(tmp_path):
+    keys = _keys(tmp_path)
+    receipt_path, _ = _seal(tmp_path, keys=keys)
+    revocations_path = _revocations_at(tmp_path, keys, datetime(2026, 1, 1, tzinfo=timezone.utc))
+    result = verify_receipt_v2(
+        receipt_path,
+        trust_root_path=Path(keys["trust_root"]),
+        revocations_path=revocations_path,
+        now=datetime(2026, 7, 12, tzinfo=timezone.utc),
+    )
+    assert result["revocation_status"] == "CHECKED"
+    assert result["revocation_freshness"] == "NOT_ASSERTED"
+    assert result["revocation_age_seconds"] is None
+
+
+def test_malformed_revocation_entries_fail_closed(tmp_path):
+    keys = _keys(tmp_path)
+    receipt_path, _ = _seal(tmp_path, keys=keys)
+    revocations_path = _revocations_at(
+        tmp_path,
+        keys,
+        datetime(2026, 7, 12, tzinfo=timezone.utc),
+        entries=[{"revoked_at": "not-a-timestamp"}],
+    )
+    with pytest.raises(EnterpriseReceiptError, match="E_INVALID_REVOCATIONS"):
+        verify_receipt_v2(
+            receipt_path,
+            trust_root_path=Path(keys["trust_root"]),
+            revocations_path=revocations_path,
+            require_revocations=True,
+            now=datetime(2026, 7, 12, 0, 0, tzinfo=timezone.utc),
+        )
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        ({"generated_at": "2026-07-12T00:00:00", "entries": []}, "E_REVOCATION_FRESHNESS"),
+        ({"generated_at": "2026-07-12T00:00:00+00:00", "entries": [{"keyid": "ci-main", "revoked_at": "2026-07-11T00:00:00"}]}, "E_INVALID_REVOCATIONS"),
+    ],
+)
+def test_revocation_timestamps_require_explicit_timezone(tmp_path, payload, expected):
+    keys = _keys(tmp_path)
+    receipt_path, _ = _seal(tmp_path, keys=keys)
+    snapshot = {"schema": REVOCATIONS_SCHEMA, **payload}
+    revocations_path = tmp_path / "naive-revocations.dsse.json"
+    envelope = sign_payload(
+        snapshot,
+        payload_type=REVOCATIONS_PAYLOAD_TYPE,
+        private_key_path=Path(keys["private_key"]),
+        keyid=keys["keyid"],
+        identity=keys["identity"],
+        issuer=keys["issuer"],
+    )
+    revocations_path.write_bytes(canonical_json(envelope) + b"\n")
+    with pytest.raises(EnterpriseReceiptError, match=expected):
+        verify_receipt_v2(
+            receipt_path,
+            trust_root_path=Path(keys["trust_root"]),
+            revocations_path=revocations_path,
+            require_revocations=True,
+            now=datetime(2026, 7, 12, 0, 0, tzinfo=timezone.utc),
+        )
 
 
 def test_v1_is_readable_but_not_enterprise_verified(tmp_path):

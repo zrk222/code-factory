@@ -33,6 +33,26 @@ agent is allowed to inspect. For example:
 
 The `--root` directory must already exist. The server will not create it.
 
+## One-shot stateless request
+
+Use the stateless path when a caller needs exactly one bounded request and
+cannot retain an MCP session:
+
+```powershell
+factory mcp request requests\status.json --root C:\work\my-mvp --json
+```
+
+The request file must be a workspace-relative UTF-8 JSON file containing one
+JSON-RPC object with only the core `jsonrpc`, `id`, `method`, and `params`
+fields. Session IDs, cursors, state extensions, absolute paths, parent
+traversal, and payloads larger than 65,536 bytes fail closed. The response is
+wrapped in `factory.mcp.stateless-response.v1`, marked
+`MCP_STATELESS_RESPONSE`, and binds the canonical request with
+`request_sha256`. No request history or server state is retained. This is a
+local read-only evaluation of the existing MCP handlers, not a hosted HTTP
+endpoint, and it adds no execution, approval, release, deployment, signing,
+credential, connector, or provider authority.
+
 ## Any coding assistant: one portable connection
 
 Code Factory is not tied to one model or IDE. Any assistant that supports a
@@ -111,6 +131,7 @@ network transport, or mutation authority.
 | `factory.proof_reuse` | Fails closed until a complete explicit proof request can establish a disposition | Read only |
 | `factory.context_efficiency_status` | Bounded context-packet/cache metadata and estimated token budget; no provider-usage or savings claim | Read only |
 | `factory.intake_parameters_status` | Bounded intake mode, risk, budget, scope, provenance, expiry, and canonical six-lane coverage | Read only |
+| `factory.search_audit_rules` | Context-bounded search over six-lane rejection conditions and required evidence; never executes a lane | Read only |
 | `factory.proof_delta_status` | Existing retry-admission evidence; never admits, starts, or repairs a retry | Read only |
 | `factory.cdte_status` | Latest existing deterministic CDTE scan; never creates a scan record | Read only |
 | `factory.prd_grill_status` | Existing source-bound PRD Grill state for the supplied PRD | Read only |
@@ -138,6 +159,28 @@ network transport, or mutation authority.
 Every tool declares MCP read-only, non-destructive, idempotent, and closed-world
 hints. Root-relative path input is mandatory; absolute paths and parent
 traversal fail with JSON-RPC `-32602`.
+
+### Proof-Delta halt telemetry
+
+The `factory.graph_ops` response includes `proof_delta_telemetry` records for
+each verified retry packet. A `NO_GAIN_HALT` record is bound to the exact
+candidate and evidence digests and includes the blocker type, candidate/evidence
+change flags, unresolved proof debt, and one fact-derived next action. The same
+record is projected as a `proof_delta_guard` node plus blocker, evidence,
+candidate, debt, and next-action edges in the Mermaid graph. This is an
+inspectable explanation of why a retry stopped; it never retries, executes,
+edits, approves, or publishes work.
+
+### MCP2-style human gate handoff
+
+`factory.release_decision` also returns an `mcp2` `input_required` envelope.
+It contains a deterministic `toolCallId`, a minimal reviewer decision schema,
+the hash of the local proof card, unresolved proof debt, and the next
+fact-derived action. The envelope is safe to hand to a stateless HTTP bridge:
+the connection can close while a human reviews it. This is a projection, not
+MCP transport negotiation and not a completed response. Code Factory retains
+no session, does not accept the decision through MCP, and does not dispatch a
+retry or release; the human-controlled CLI must record any decision.
 
 ## Explicit gaps versus explicit contradictions
 

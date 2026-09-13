@@ -1,0 +1,18 @@
+name: stateless-mcp-request-v1
+language: python
+modules:
+  - name: mcp
+    path: factoryline/mcp.py
+    functions:
+      - name: dispatch_stateless
+        args: ["request: object", "root: Path | str"]
+        returns: "dict[str, object]"
+        doc: "Dispatch one bounded self-contained MCP request and return a hash-bound read-only envelope."
+dependencies: []
+invariants:
+  - name: no-network-or-dynamic-execution
+    forbid_pattern: "(?i)(?:requests\\.|httpx\\.|urllib3\\.|socket\\.|eval\\s*\\(|exec\\s*\\()"
+    scopes:
+      - module: mcp
+        symbol: dispatch_stateless
+        max_lines: 100

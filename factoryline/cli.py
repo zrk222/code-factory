@@ -1095,6 +1095,8 @@ def main(argv=None) -> int:
     verify.add_argument("--trust-root", required=True)
     verify.add_argument("--policy-bundle")
     verify.add_argument("--revocations")
+    verify.add_argument("--require-revocations", action="store_true", help="require a signed current revocation snapshot")
+    verify.add_argument("--max-revocation-age", type=int, default=86400, help="maximum revocation snapshot age in seconds")
     policy = enterprise_sub.add_parser("policy-sign", help="sign a policy JSON document into a policy bundle")
     policy.add_argument("policy")
     policy.add_argument("--private-key", required=True)
@@ -2209,7 +2211,7 @@ def main(argv=None) -> int:
 
     mcp = sub.add_parser("mcp", help="serve or inspect the local read-only MCP adapter")
     mcp_sub = mcp.add_subparsers(required=True, dest="mcp_cmd")
-    mcp_status = mcp_sub.add_parser("status", help="show the stdio-only MCP boundary")
+    mcp_status = mcp_sub.add_parser("status", help="show the local read-only MCP boundary")
     mcp_status.add_argument("--root", default=".")
     mcp_status.add_argument("--json", action="store_true")
     mcp_config = mcp_sub.add_parser("config", help="render copy-only setup for a local stdio MCP client")
@@ -2221,7 +2223,11 @@ def main(argv=None) -> int:
     mcp_install.add_argument("--client", choices=["junie", "copilot"], required=True)
     mcp_install.add_argument("--confirmation", required=True)
     mcp_install.add_argument("--json", action="store_true")
-    mcp_serve = mcp_sub.add_parser("serve", help="serve newline-delimited JSON-RPC over stdio only")
+    mcp_request = mcp_sub.add_parser("request", help="evaluate one self-contained stateless JSON-RPC request")
+    mcp_request.add_argument("request", help="workspace-relative JSON request file")
+    mcp_request.add_argument("--root", default=".")
+    mcp_request.add_argument("--json", action="store_true")
+    mcp_serve = mcp_sub.add_parser("serve", help="serve newline-delimited JSON-RPC over stdio")
     mcp_serve.add_argument("--root", default=".")
 
     junie = sub.add_parser("junie", help="inspect or explicitly install the local Junie FactoryLine pack")
@@ -5526,7 +5532,7 @@ def main(argv=None) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True) if a.json else payload.get("mission_text", payload.get("marker", "JETBRAINS_PROOF_HANDSHAKE_OK")))
         return 1 if a.jetbrains_cmd == "handshake" and payload["verdict"] != "ready_for_human_review" else 0
     if a.cmd == "mcp":
-        from .mcp import McpError, mcp_status, serve_stdio
+        from .mcp import McpError, dispatch_stateless, mcp_status, serve_stdio
         from .mcp_setup import McpSetupError, install_project_mcp_config, mcp_connection_config
 
         try:
@@ -5559,6 +5565,28 @@ def main(argv=None) -> int:
             if a.mcp_cmd == "install":
                 payload = install_project_mcp_config(Path(a.root), a.client, a.confirmation)
                 print(json.dumps(payload, indent=2, sort_keys=True) if a.json else f"Factory MCP {payload['state']}: {payload['target']}")
+                return 0
+            if a.mcp_cmd == "request":
+                request_path = Path(a.request)
+                root = Path(a.root).resolve()
+                try:
+                    if request_path.is_absolute() or ".." in request_path.parts:
+                        raise McpError(
+                            "request must be a workspace-relative JSON file",
+                            "MCP_STATELESS_REQUEST_PATH_REJECTED",
+                        )
+                    request_path = (root / request_path).resolve()
+                    request_path.relative_to(root)
+                except ValueError as exc:
+                    raise McpError("request must be a workspace-relative JSON file", "MCP_STATELESS_REQUEST_PATH_REJECTED") from exc
+                if request_path.suffix.lower() != ".json" or not request_path.is_file():
+                    raise McpError("request must name an existing workspace-relative JSON file", "MCP_STATELESS_REQUEST_PATH_REJECTED")
+                try:
+                    request = json.loads(request_path.read_text(encoding="utf-8-sig"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise McpError("request file must contain valid UTF-8 JSON", "MCP_STATELESS_REQUEST_INVALID") from exc
+                payload = dispatch_stateless(request, root)
+                print(json.dumps(payload, indent=2, sort_keys=True) if a.json else json.dumps(payload, sort_keys=True))
                 return 0
             return serve_stdio(Path(a.root))
         except (McpError, McpSetupError) as exc:
@@ -5705,6 +5733,8 @@ def main(argv=None) -> int:
                     trust_root_path=Path(a.trust_root),
                     policy_bundle_path=Path(a.policy_bundle) if a.policy_bundle else None,
                     revocations_path=Path(a.revocations) if a.revocations else None,
+                    require_revocations=a.require_revocations,
+                    max_revocation_age_seconds=a.max_revocation_age,
                 )
             elif a.enterprise_cmd == "policy-sign":
                 policy_payload = json.loads(Path(a.policy).read_text(encoding="utf-8"))

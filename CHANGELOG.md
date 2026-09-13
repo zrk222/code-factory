@@ -31,6 +31,29 @@
 
 ## Unreleased
 
+### One-shot stateless MCP requests
+
+- Add `factory mcp request` and `dispatch_stateless` for one bounded,
+  self-contained JSON-RPC evaluation suitable for CI and HTTP bridges.
+- Bind each response to a canonical `request_sha256`, reject state/session
+  extensions, absolute or traversing request paths, malformed JSON, and
+  payloads over 65,536 bytes, and preserve the local read-only authority
+  boundary. The existing stdio server remains unchanged.
+- Add `factory.search_audit_rules`, a bounded rule-inventory search that keeps
+  the six-lane rejection vocabulary out of the default model context. Results
+  carry rule IDs, practical questions, evidence requirements, and an explicit
+  handoff to the signed human-controlled runtime-audit CLI; the MCP tool never
+  executes a lane or changes a gate.
+- Project verified Proof-Delta packets into Graph Ops telemetry. `NO_GAIN_HALT`
+  records bind candidate and evidence digests, blocker flags, proof debt, and a
+  fact-derived next action; Mermaid edges make the halt lineage inspectable.
+  The projection remains local, read-only, and authority-free.
+- Add an MCP2-style `input_required` release-gate projection to
+  `factory.release_decision`, carrying a deterministic tool call ID, minimal
+  reviewer schema, proof-card hash, debt, and next action. It is a stateless
+  handoff only; approval and completed receipts remain human-controlled CLI
+  operations.
+
 ### Deep-audit attestation and freshness
 
 - Add a review-only `factory.deep-audit attestation` verifier for independent
@@ -50,6 +73,15 @@
   deep-audit receipt, and graph lineage with exact hashes and stable fail-closed
   errors. Legacy graph receipts remain readable but cannot masquerade as
   current evidence; the result is review-only with no release authority.
+
+### Strict enterprise revocation freshness
+
+- Add an opt-in offline gate requiring a signed revocation snapshot, with
+  bounded age, future-timestamp rejection, malformed-entry rejection, and
+  explicit `FRESH_CHECKED` / `CURRENT` result facts.
+- Keep the existing optional historical signer check backward-compatible, but
+  label it `NOT_ASSERTED` for freshness so a checked-at-receipt-time list cannot
+  be mistaken for current hosted authorization.
 
 ### Intake parameter envelope
 

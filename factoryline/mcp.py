@@ -1,4 +1,10 @@
-"""Local stdio-only MCP adapter over deterministic Graph Ops facts."""
+"""Local read-only MCP adapter over deterministic Graph Ops facts.
+
+The normal transport is a newline-delimited stdio loop.  A separate one-shot
+stateless request helper is available for CI and HTTP bridges that cannot keep
+an MCP session: every request carries its own JSON-RPC method and parameters,
+and no server-side session or cursor is accepted or retained.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -58,6 +64,8 @@ from .codex_metadata import MetadataAuditError, audit_metadata
 from .saas_proof import saas_proof_projection
 from .junie_taxonomy import JunieTaxonomyError, junie_taxonomy, validate_junie_contribution
 from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
+from .audit_rule_search import AuditRuleSearchError, search_audit_rules
+from .mcp_mrt import release_gate_input_required
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -81,6 +89,7 @@ _READ_ONLY_ANNOTATIONS = {
 }
 _MAX_RECEIPT_BYTES = 262_144
 _MAX_RECEIPTS = 250
+_MAX_STATELESS_REQUEST_BYTES = 65_536
 _RECEIPT_ROOTS = (
     Path("receipts"),
     Path(".factory/proofs"),
@@ -489,6 +498,25 @@ def _tool_definitions() -> list[dict[str, object]]:
             "name": "factory.runtime_audit_status",
             "description": "Read the latest self-hash-verified six-lane runtime assurance result and actionable findings. It never runs an audit or grants release authority.",
             "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.search_audit_rules",
+            "description": "Search the bounded six-lane rejection inventory to select relevant rules without executing an audit or changing a gate.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "lane": {"type": "string", "enum": [
+                        "stateful_workflows", "authorization_tenant_isolation", "failure_recovery",
+                        "api_consumer_compatibility", "migration_data_integrity", "performance_resources",
+                    ]},
+                    "includeCrossCutting": {"type": "boolean", "default": True},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
@@ -1151,7 +1179,8 @@ def _combine_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 def _ide_playbook(root: Path, arguments: object) -> dict[str, object]:
-    if arguments != {}: raise McpError("factory.ide_playbook accepts no arguments")
+    if arguments != {}:
+        raise McpError("factory.ide_playbook accepts no arguments")
     return ide_playbook()
 
 
@@ -1469,6 +1498,7 @@ def _release_decision_status(root: Path, arguments: object) -> dict[str, object]
         "marker": "MCP_RELEASE_DECISION_READ_ONLY",
         "action_summary": "Classify one local strict release state without executing a provider, repair, or release action.",
         "card": card,
+        "mcp2": release_gate_input_required(card),
         "scope": "Read-only local classification; provider state remains unobserved and no publication, approval, deployment, signing, credential, connector, or repair action ran.",
     }
 
@@ -1690,6 +1720,11 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_deep_audit_status(root, arguments))
     if name == "factory.runtime_audit_status":
         return _content(_runtime_audit_status(root, arguments))
+    if name == "factory.search_audit_rules":
+        try:
+            return _content(search_audit_rules(arguments))
+        except AuditRuleSearchError as exc:
+            raise McpError(str(exc), exc.marker) from exc
     if name == "factory.agent_bridge_status":
         return _content(_agent_bridge_status(root, arguments))
     if name == "factory.agent_handoff_brief":
@@ -1845,6 +1880,48 @@ def dispatch(request: object, root: Path | str) -> dict[str, object] | None:
     except McpError as exc:
         return _error_or_notification(is_notification, request_id, -32602, str(exc), exc.marker)
     return _result_or_notification(is_notification, request_id, response)
+
+
+def dispatch_stateless(request: object, root: Path | str) -> dict[str, object]:
+    """Dispatch one self-contained MCP request and return a hash-bound envelope.
+
+    Stateless mode deliberately accepts only the JSON-RPC core fields.  A
+    caller cannot smuggle a session id, cursor, resume token, or other
+    stateful extension into the request, and the adapter keeps no request
+    history.  The returned envelope is local/read-only metadata around the
+    normal JSON-RPC response; it does not add execution or provider authority.
+    """
+    try:
+        encoded = _canonical(request).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise McpError("stateless request must be JSON-serializable", "MCP_STATELESS_REQUEST_INVALID") from exc
+    if len(encoded) > _MAX_STATELESS_REQUEST_BYTES:
+        raise McpError(
+            f"stateless request must be at most {_MAX_STATELESS_REQUEST_BYTES} bytes",
+            "MCP_STATELESS_REQUEST_TOO_LARGE",
+        )
+    if not isinstance(request, dict):
+        raise McpError("stateless request must be a JSON-RPC object", "MCP_STATELESS_REQUEST_INVALID")
+    if not all(isinstance(key, str) for key in request):
+        raise McpError("stateless request object keys must be strings", "MCP_STATELESS_REQUEST_INVALID")
+    allowed = {"jsonrpc", "id", "method", "params"}
+    unknown = sorted(set(request) - allowed)
+    if unknown:
+        raise McpError(
+            f"stateless request rejects session/state extensions: {', '.join(unknown)}",
+            "MCP_STATELESS_STATE_REJECTED",
+        )
+    response = dispatch(request, root)
+    return {
+        "schema": "factory.mcp.stateless-response.v1",
+        "marker": "MCP_STATELESS_RESPONSE",
+        "request_sha256": sha256(encoded).hexdigest(),
+        "response": response,
+        "state": "stateless",
+        "server_state": "none",
+        "authority": dict(_AUTHORITY),
+        "claim_boundary": "One self-contained local JSON-RPC evaluation; no session, cursor, request history, execution, approval, publication, deployment, signing, credential, connector, or provider action ran.",
+    }
 
 
 def serve_stdio(root: Path | str, *, input_stream: TextIO | None = None, output_stream: TextIO | None = None) -> int:

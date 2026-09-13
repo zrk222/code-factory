@@ -764,3 +764,30 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-12 20:03] GATE spec candidate-lineage-continuity-v1 approver=human strict=True sha=3c268008b716c450
 - [2026-09-12 20:03] GATE plan candidate-lineage-continuity-v1 approver=human tasks=10 sha=3c268008b716c450
 - [2026-09-12 20:04] VERIFY candidate-lineage-continuity-v1 focused=20_passed full=1520_passed_7_skipped_2_warnings smoke=1_passed verify_tests=1_passed forge_qa=A_100pct ruff=passed spec_strict=passed validators=1_of_1 twine=all_artifacts_passed wheel_module=present authority=review_only
+
+- [2026-09-13 02:39] GATE spec enterprise-revocation-freshness-v1 approver=human strict=True sha=62b9958a83c6d36e
+- [2026-09-13 02:39] GATE plan enterprise-revocation-freshness-v1 approver=human tasks=8 sha=62b9958a83c6d36e
+- [2026-09-13 02:40] GATE spec enterprise-revocation-freshness-v1 approver=human strict=True sha=bdb346ed35f0e3bd
+- [2026-09-13 02:40] GATE plan enterprise-revocation-freshness-v1 approver=human tasks=8 sha=bdb346ed35f0e3bd
+- [2026-09-13 02:40] GATE spec enterprise-revocation-freshness-v1 approver=human strict=True sha=bdb346ed35f0e3bd
+- [2026-09-13 02:40] GATE plan enterprise-revocation-freshness-v1 approver=human tasks=8 sha=bdb346ed35f0e3bd
+- [2026-09-13 02:42] GATE spec enterprise-revocation-freshness-v1 approver=human strict=True sha=bdb346ed35f0e3bd
+- [2026-09-13 02:42] GATE plan enterprise-revocation-freshness-v1 approver=human tasks=8 sha=bdb346ed35f0e3bd
+
+- [2026-09-12 22:49] VERIFY enterprise-revocation-freshness-v1 focused=19_passed full=1526_passed_7_skipped_2_warnings forge_review=A_93.7 forge_arch_gate=passed forge_qa=A_93.7 forge_verify_tests=passed smoke=passed ruff=passed diff_check=passed spec_strict=passed validators=2_of_2 package=0.46.4_wheel_sdist_twine_pass wheel_module=present authority=none publish=not_requested
+
+- [2026-09-13 02:51] GATE spec enterprise-revocation-freshness-v1 approver=human strict=True sha=bfa844ad073bfd48
+- [2026-09-13 02:51] GATE plan enterprise-revocation-freshness-v1 approver=human tasks=8 sha=bfa844ad073bfd48
+- [2026-09-13 03:15] GATE spec stateless-mcp-request-v1 approver=human strict=True sha=ed55dbe84e08738a
+- [2026-09-13 03:15] GATE plan stateless-mcp-request-v1 approver=human tasks=10 sha=ed55dbe84e08738a
+- [2026-09-13 03:16] GATE spec stateless-mcp-request-v1 approver=human strict=True sha=1e919a3bd476872b
+- [2026-09-13 03:16] GATE plan stateless-mcp-request-v1 approver=human tasks=10 sha=1e919a3bd476872b
+- [2026-09-13 03:16] GATE spec stateless-mcp-request-v1 approver=human strict=True sha=05df6c6eafe8df48
+- [2026-09-13 03:16] GATE plan stateless-mcp-request-v1 approver=human tasks=10 sha=05df6c6eafe8df48
+- [2026-09-13 03:18] GATE spec stateless-mcp-request-v1 approver=human strict=True sha=05df6c6eafe8df48
+- [2026-09-13 03:18] GATE plan stateless-mcp-request-v1 approver=human tasks=10 sha=05df6c6eafe8df48
+- [2026-09-13 03:28] GATE spec graph-ops-proof-delta-telemetry-v1 approver=human strict=True sha=ccfc05101719f3ce
+- [2026-09-13 03:29] GATE plan graph-ops-proof-delta-telemetry-v1 approver=human tasks=7 sha=ccfc05101719f3ce
+- [2026-09-13 03:31] GATE spec graph-ops-proof-delta-telemetry-v1 approver=human strict=True sha=ccfc05101719f3ce
+- [2026-09-13 03:31] GATE plan graph-ops-proof-delta-telemetry-v1 approver=human tasks=7 sha=ccfc05101719f3ce
+- [2026-09-12 23:43] VERIFY enterprise-revocation-freshness-v1+stateless-mcp-request-v1+graph-ops-proof-delta-telemetry-v1 focused=33_passed_24_deselected full=1551_passed_7_skipped_2_warnings spec_strict=3_passed validators=8_of_8 forge_graph=QA_A_100_arch_gate=passed_verify_tests=passed_smoke=passed package=0.46.4_wheel_sdist_twine_pass ruff_new_modules=passed diff_check=passed mcp2_mrt=read_only_input_required authority=none publish=not_requested

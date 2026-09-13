@@ -25,6 +25,7 @@ from .continuity import CONTINUITY_DB_RELATIVE_PATH, continuity_projection
 from .counterexample import CounterexampleError, verify_counterexample_plan
 from .guardrails import GuardrailError, verify_guardrail_evaluation
 from .proof_delta import ProofDeltaError, verify_proof_delta
+from .proof_delta_telemetry import build_proof_delta_telemetry
 from .intake_grill import verify_intake_confirmation
 from .gauntlet import GauntletError, validate_survival_card
 from .resilience import ResilienceError, verify_temporal_resilience_plan
@@ -768,9 +769,12 @@ def _append_continuity(state: dict[str, Any], root: Path) -> dict[str, int]:
     return facts
 
 
-def _append_proof_deltas(state: dict[str, Any], root: Path) -> dict[str, int]:
+def _append_proof_deltas(state: dict[str, Any], root: Path) -> dict[str, Any]:
     """Project retry-admission evidence without starting a retry or a worker."""
-    facts = {"count": 0, "advance_count": 0, "halted_count": 0, "invalid_count": 0}
+    facts: dict[str, Any] = {
+        "count": 0, "advance_count": 0, "halted_count": 0, "invalid_count": 0,
+        "telemetry_count": 0, "no_gain_halt_count": 0, "telemetry": [],
+    }
     directory = root / ".factory" / "proof-deltas"
     for path in sorted(directory.glob("*.json")):
         value, source = _load_json(root, path, state["errors"])
@@ -796,6 +800,81 @@ def _append_proof_deltas(state: dict[str, Any], root: Path) -> dict[str, int]:
                 "authority": verification["authority"], "execution": False,
             },
         )
+        telemetry = build_proof_delta_telemetry(verification, digest)
+        telemetry_id = f"proof_delta_guard:{telemetry['telemetrySha256'][:24]}"
+        _node(
+            state,
+            node_id=telemetry_id,
+            kind="proof_delta_guard",
+            label=f"{telemetry['status']} · proof-delta guard",
+            source=source,
+            status=telemetry["status"],
+            facts=telemetry,
+        )
+        _edge(state, node_id, telemetry_id, "projects_telemetry")
+        candidate = verification["repair_candidate"]["candidate"]
+        candidate_id = f"proof-delta-candidate:{candidate['diff_sha256'][:24]}"
+        _node(
+            state,
+            node_id=candidate_id,
+            kind="proof_delta_candidate",
+            label=f"candidate · {candidate['diff_sha256'][:12]}",
+            source=verification["repair_candidate"]["path"],
+            status="changed" if not telemetry["blocker"]["candidateUnchanged"] else "unchanged",
+            facts={
+                "candidateHash": candidate["diff_sha256"],
+                "changedPaths": candidate["changed_paths"],
+                "role": "repair",
+                "proofDeltaSha256": digest,
+                "authority": dict(_AUTHORITY),
+                "execution": False,
+            },
+        )
+        _edge(state, telemetry_id, candidate_id, "binds_candidate")
+        evidence_id = f"proof-delta-evidence:{telemetry['blocker']['evidenceDigest'][7:31]}"
+        _node(
+            state,
+            node_id=evidence_id,
+            kind="proof_delta_evidence",
+            label=f"evidence · {telemetry['blocker']['evidenceDigest'][7:19]}",
+            source=source,
+            status="fresh" if telemetry["status"] == "REPAIR_ADMITTED" else "stale_or_unchanged",
+            facts={
+                "evidenceDigest": telemetry["blocker"]["evidenceDigest"],
+                "newEvidenceCount": len(verification.get("new_evidence", [])),
+                "proofDeltaSha256": digest,
+                "authority": dict(_AUTHORITY),
+                "execution": False,
+            },
+        )
+        _edge(state, telemetry_id, evidence_id, "binds_evidence")
+        if telemetry["status"] == "NO_GAIN_HALT":
+            blocker_id = f"proof-delta-blocker:{telemetry['telemetrySha256'][:24]}"
+            _node(
+                state,
+                node_id=blocker_id,
+                kind="proof_delta_blocker",
+                label="NO_GAIN_HALT · unproductive retry",
+                source=source,
+                status="blocked",
+                facts={
+                    **telemetry["blocker"],
+                    "proofDeltaSha256": digest,
+                    "authority": dict(_AUTHORITY),
+                    "execution": False,
+                },
+            )
+            _edge(state, telemetry_id, blocker_id, "blocked_by")
+            for debt in telemetry["proofDebt"]:
+                debt_id = f"proof-delta-debt:{telemetry['telemetrySha256'][:16]}:{_sha(debt)[:8]}"
+                _node(state, node_id=debt_id, kind="proof_delta_proof_debt", label=debt[:240], source=source, status="unresolved", facts={"debt": debt, "proofDeltaSha256": digest, "authority": dict(_AUTHORITY), "execution": False})
+                _edge(state, telemetry_id, debt_id, "owes_proof")
+        action_id = f"proof-delta-action:{telemetry['telemetrySha256'][:24]}"
+        _node(state, node_id=action_id, kind="proof_delta_next_action", label="Next fact-derived action", source=source, status="review", facts={"action": telemetry["nextFactDerivedAction"], "proofDeltaSha256": digest, "authority": dict(_AUTHORITY), "execution": False})
+        _edge(state, telemetry_id, action_id, "next_fact_derived_action")
+        facts["telemetry"].append(telemetry)
+        facts["telemetry_count"] += 1
+        facts["no_gain_halt_count"] += int(telemetry["status"] == "NO_GAIN_HALT")
         mission_id = f"mission:{verification['mission_id']}"
         if mission_id in state["nodes"]:
             _edge(state, node_id, mission_id, "admits_retry_for")
@@ -2041,7 +2120,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
                     frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                    counterexamples: dict[str, int], oracle_firewall: dict[str, int], atomic_proof_adapter: dict[str, Any], agent_proof_bridge: dict[str, Any], proof_worklogs: dict[str, Any], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> dict[str, int]:
+                    counterexamples: dict[str, int], oracle_firewall: dict[str, int], atomic_proof_adapter: dict[str, Any], agent_proof_bridge: dict[str, Any], proof_worklogs: dict[str, Any], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, Any], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -2110,6 +2189,8 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "proof_delta_advance_count": proof_deltas["advance_count"],
         "proof_delta_halted_count": proof_deltas["halted_count"],
         "proof_delta_invalid_count": proof_deltas["invalid_count"],
+        "proof_delta_telemetry_count": proof_deltas.get("telemetry_count", 0),
+        "proof_delta_no_gain_halt_count": proof_deltas.get("no_gain_halt_count", 0),
         "gauntlet_card_count": survival_cards["count"],
         "gauntlet_survived_count": survival_cards["survived_count"],
         "gauntlet_hollow_count": survival_cards["hollow_count"],
@@ -2153,7 +2234,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
                       proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                      counterexamples: dict[str, int], oracle_firewall: dict[str, int], atomic_proof_adapter: dict[str, Any], agent_proof_bridge: dict[str, Any], proof_worklogs: dict[str, Any], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> list[str]:
+                      counterexamples: dict[str, int], oracle_firewall: dict[str, int], atomic_proof_adapter: dict[str, Any], agent_proof_bridge: dict[str, Any], proof_worklogs: dict[str, Any], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, Any], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -2208,6 +2289,10 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_TEMPORAL_RESILIENCE_READ_ONLY")
     if proof_deltas["count"]:
         markers.append("GRAPH_OPS_PROOF_DELTA_ADMISSION_READ_ONLY")
+    if proof_deltas.get("telemetry_count", 0):
+        markers.append("GRAPH_OPS_PROOF_DELTA_TELEMETRY_READ_ONLY")
+    if proof_deltas.get("no_gain_halt_count", 0):
+        markers.append("GRAPH_OPS_PROOF_DELTA_NO_GAIN_HALT")
     if survival_cards["count"]:
         markers.append("GRAPH_OPS_GAUNTLET_SURVIVAL_CARDS_READ_ONLY")
     if agent_supervision["license_count"]:
@@ -2569,6 +2654,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "saas_proof": p["saas_proof"],
         "jetbrains_handshake": p["jetbrains_handshake"],
         "release_readiness": p["release_readiness"],
+        "proof_delta_telemetry": p["proof_deltas"].get("telemetry", []),
     }
     return {**core, "base_graph_sha256": base_graph_sha256, "graph_sha256": _sha(core), "mermaid": _mermaid(projected_nodes, projected_edges)}
 

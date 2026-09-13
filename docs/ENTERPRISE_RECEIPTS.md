@@ -35,7 +35,26 @@ factory enterprise verify receipt.dsse.json \
 The verifier returns `VERIFIED` only when the exact payload bytes, DSSE PAE,
 signature, trusted key, identity, issuer, and receipt schema all pass. It also
 returns the tenant id, receipt digest, and whether policy and revocation checks
-were performed.
+were performed. By default, a supplied revocation list is a historical check
+against the receipt timestamp; it is not a claim that the list is current.
+
+For a release or security review that requires a current offline snapshot, opt
+into the strict freshness gate:
+
+```bash
+factory enterprise verify receipt.dsse.json \
+  --trust-root .factory/keys/trust-root.json \
+  --revocations revocations.dsse.json \
+  --require-revocations \
+  --max-revocation-age 86400
+```
+
+Strict mode fails closed when the snapshot is missing, future-dated, older than
+the declared bound, or malformed. A passing result reports
+`revocation_status: FRESH_CHECKED`, `revocation_freshness: CURRENT`, and the
+measured age in seconds. This is an offline evidence freshness fact, not hosted
+identity enforcement or proof that an external provider has accepted a
+revocation.
 
 ## Policy bundles
 
@@ -83,13 +102,17 @@ factory enterprise verify receipt.dsse.json \
 
 If the receipt signer is revoked at or before the receipt timestamp, verification
 returns `E_SIGNER_REVOKED`. An omitted revocation file is reported as
-`NOT_CHECKED`; it is never described as a fresh online revocation result.
+`NOT_CHECKED`; strict mode instead returns `E_REVOCATION_REQUIRED`. Optional
+lists report `CHECKED` with `NOT_ASSERTED` freshness, while strict current lists
+report `FRESH_CHECKED`. The verifier never describes either mode as an online
+revocation result.
 
 ## Fail-closed results
 
 The verifier uses closed codes including `E_SIGNATURE_INVALID`,
 `E_UNKNOWN_KEY`, `E_IDENTITY_MISMATCH`, `E_POLICY_DIGEST_MISMATCH`,
-`E_SIGNER_REVOKED`, and `E_POLICY_REQUIRED`. It never treats a hash as a
+`E_SIGNER_REVOKED`, `E_REVOCATION_REQUIRED`, `E_REVOCATION_FRESHNESS`,
+`E_INVALID_REVOCATIONS`, and `E_POLICY_REQUIRED`. It never treats a hash as a
 signature and never prints private key material.
 
 ## Scope
