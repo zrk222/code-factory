@@ -7,6 +7,9 @@ on:
       - "factoryline/full_stack_ux_spec.py"
       - "factoryline/full_stack_ux_harness.py"
       - "tests/test_full_stack_ux_*.py"
+      - "smoke/full-stack-ux-harness-contract-v1.json"
+      - "specs/full-stack-ux-harness-contract-v1.md"
+      - "docs/FULL_STACK_UX_HARNESS.md"
       - ".github/workflows/validate-ux-harness.yml"
   push:
     branches: [main]
@@ -15,6 +18,9 @@ on:
       - "factoryline/full_stack_ux_spec.py"
       - "factoryline/full_stack_ux_harness.py"
       - "tests/test_full_stack_ux_*.py"
+      - "smoke/full-stack-ux-harness-contract-v1.json"
+      - "specs/full-stack-ux-harness-contract-v1.md"
+      - "docs/FULL_STACK_UX_HARNESS.md"
       - ".github/workflows/validate-ux-harness.yml"
 
 permissions:
