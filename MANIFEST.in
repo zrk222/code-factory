@@ -15,4 +15,4 @@ prune editors/intellij/.gradle
 prune editors/intellij/.intellijPlatform
 prune editors/intellij/.kotlin
 prune editors/intellij/build
-global-exclude __pycache__ *.py[cod]
+global-exclude *.py[cod]

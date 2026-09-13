@@ -1,0 +1,21 @@
+{
+  "checks": [
+    {
+      "name": "stateless_replay_hints",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_mcp_replay.py', 'tests/test_mcp_stateless.py', '-k', 'replay or stateless']) == 0\nprint('STATELESS_REPLAY_HINTS_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "STATELESS_REPLAY_HINTS_PASS",
+      "timeout_s": 120,
+      "covers": [
+        "MCP_STATELESS_REPLAY_HINTS",
+        "requestKey",
+        "responseSha256",
+        "serverReplayStore",
+        "client_hint_only",
+        "authority_none"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

@@ -66,6 +66,7 @@ from .junie_taxonomy import JunieTaxonomyError, junie_taxonomy, validate_junie_c
 from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
 from .audit_rule_search import AuditRuleSearchError, search_audit_rules
 from .mcp_mrt import release_gate_input_required
+from .mcp_replay import build_stateless_replay_hints
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -1912,11 +1913,13 @@ def dispatch_stateless(request: object, root: Path | str) -> dict[str, object]:
             "MCP_STATELESS_STATE_REJECTED",
         )
     response = dispatch(request, root)
+    request_digest = sha256(encoded).hexdigest()
     return {
         "schema": "factory.mcp.stateless-response.v1",
         "marker": "MCP_STATELESS_RESPONSE",
-        "request_sha256": sha256(encoded).hexdigest(),
+        "request_sha256": request_digest,
         "response": response,
+        "replay": build_stateless_replay_hints(request_digest, response),
         "state": "stateless",
         "server_state": "none",
         "authority": dict(_AUTHORITY),

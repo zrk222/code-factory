@@ -192,6 +192,9 @@ Every configured MCP client can inspect the same bounded surfaces:
 - `factory.release_decision` for an MCP2-style `input_required` handoff with a
   hash-bound proof-card context and reviewer schema. It never accepts the
   decision, retains a session, or emits a completed release receipt; and
+- one-shot stateless responses include a client-only replay key, response
+  digest, and bounded cache hint so retries can be deduplicated locally and
+  revalidated without implying a server-side replay ledger; and
 - `factory.langgraph_assurance` for a hash-only comparison of two already
   recorded LangGraph transition receipts; it never invokes the graph;
 - `factory.agent_license_status` and `factory.combine_status` for current local

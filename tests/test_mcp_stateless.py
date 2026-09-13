@@ -37,6 +37,11 @@ def test_one_shot_request_is_hash_bound_and_does_not_mutate_workspace(tmp_path: 
     assert first["state"] == "stateless"
     assert first["server_state"] == "none"
     assert first["response"]["result"]["marker"] == "FACTORY_MCP_TOOL_INVENTORY"
+    assert first["replay"]["marker"] == "MCP_STATELESS_REPLAY_HINTS"
+    assert first["replay"]["requestKey"] == f"sha256:{first['request_sha256']}"
+    assert first["replay"]["retry"]["safe"] is True
+    assert first["replay"]["retry"]["serverReplayStore"] is False
+    assert first["replay"]["cache"]["cacheable"] is True
     assert all(value is False for value in first["authority"].values())
     assert _files(tmp_path) == before
 
@@ -97,6 +102,7 @@ def test_cli_request_reads_relative_json_without_writing(tmp_path: Path, capsys:
     assert payload["marker"] == "MCP_STATELESS_RESPONSE"
     assert payload["request_sha256"] == _request_digest(request)
     assert payload["server_state"] == "none"
+    assert payload["replay"]["cache"]["cacheable"] is True
     assert _files(tmp_path) == before
 
 

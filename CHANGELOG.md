@@ -53,6 +53,10 @@
   reviewer schema, proof-card hash, debt, and next action. It is a stateless
   handoff only; approval and completed receipts remain human-controlled CLI
   operations.
+- Add deterministic client-only replay and cache hints to each stateless
+  response. Request/response digests support local retry deduplication and
+  bounded revalidation without introducing a server replay ledger or hidden
+  execution authority; errors and notifications are explicitly non-cacheable.
 
 ### Deep-audit attestation and freshness
 

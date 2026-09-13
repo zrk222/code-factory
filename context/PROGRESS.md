@@ -791,3 +791,9 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-13 03:31] GATE spec graph-ops-proof-delta-telemetry-v1 approver=human strict=True sha=ccfc05101719f3ce
 - [2026-09-13 03:31] GATE plan graph-ops-proof-delta-telemetry-v1 approver=human tasks=7 sha=ccfc05101719f3ce
 - [2026-09-12 23:43] VERIFY enterprise-revocation-freshness-v1+stateless-mcp-request-v1+graph-ops-proof-delta-telemetry-v1 focused=33_passed_24_deselected full=1551_passed_7_skipped_2_warnings spec_strict=3_passed validators=8_of_8 forge_graph=QA_A_100_arch_gate=passed_verify_tests=passed_smoke=passed package=0.46.4_wheel_sdist_twine_pass ruff_new_modules=passed diff_check=passed mcp2_mrt=read_only_input_required authority=none publish=not_requested
+- [2026-09-13 00:19] VERIFY warning-fix+stateless-replay-hints-v1 readiness=2_passed_0_warnings focused_mcp=30_passed full=1561_passed_7_skipped_0_warnings spec_strict=passed validators=5_of_5 forge=QA_A_100_arch_gate=passed_verify_tests=passed_smoke=passed package=0.46.4_wheel_sdist_twine_pass ruff=passed authority=none publish=not_requested
+
+- [2026-09-13 04:10] GATE spec stateless-replay-hints-v1 approver=human strict=True sha=20f741b7ed6e74bf
+- [2026-09-13 04:10] GATE plan stateless-replay-hints-v1 approver=human tasks=7 sha=20f741b7ed6e74bf
+- [2026-09-13 04:11] GATE spec stateless-replay-hints-v1 approver=human strict=True sha=20f741b7ed6e74bf
+- [2026-09-13 04:11] GATE plan stateless-replay-hints-v1 approver=human tasks=7 sha=20f741b7ed6e74bf

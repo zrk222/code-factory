@@ -53,6 +53,14 @@ local read-only evaluation of the existing MCP handlers, not a hosted HTTP
 endpoint, and it adds no execution, approval, release, deployment, signing,
 credential, connector, or provider authority.
 
+Each stateless envelope also includes `MCP_STATELESS_REPLAY_HINTS`. The
+`requestKey` and `responseSha256` let an IDE or CI client deduplicate its own
+retry work and compare a fresh response; successful read-only responses carry
+a 300-second client cache hint, while errors and notifications are never
+cacheable. This is deliberately client-side guidance: Code Factory keeps no
+replay ledger, does not promise server-side deduplication, and requires a
+fresh request for revalidation.
+
 ## Any coding assistant: one portable connection
 
 Code Factory is not tied to one model or IDE. Any assistant that supports a
