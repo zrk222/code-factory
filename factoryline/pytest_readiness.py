@@ -32,7 +32,22 @@ class _Results:
 def collect_pytest_readiness(test_paths: list[str]) -> dict[str, int]:
     """Run strict pytest and count pass, skip, and xfail outcomes across phases."""
     results = _Results()
-    exit_code = pytest.main(["-q", "--strict-markers", "--strict-config", *test_paths], plugins=[results])
+    # The readiness probe runs a nested pytest session from an arbitrary
+    # temporary directory, so the repository's pyproject configuration is not
+    # discovered.  Keep the async fixture scope explicit here as well; this
+    # prevents pytest-asyncio's deprecation warning without globally filtering
+    # warnings from the probe.
+    exit_code = pytest.main(
+        [
+            "-q",
+            "--strict-markers",
+            "--strict-config",
+            "-o",
+            "asyncio_default_fixture_loop_scope=function",
+            *test_paths,
+        ],
+        plugins=[results],
+    )
     return {
         "exit_code": int(exit_code),
         "passed": results.passed,
