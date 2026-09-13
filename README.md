@@ -98,6 +98,28 @@ analyzer evidence, SaaS checks examine customer journeys, and AppForge organizes
 mobile build, design, privacy, signing, and store-submission evidence. AppForge
 does not replace the other audit lanes or promise store approval.
 
+### Full-Stack UX Harness contract
+
+For mobile and full-stack releases, the **Full-Stack UX Harness** turns the
+release brief into a strict, local contract that AppForge can consume. It
+normalizes six evidence categories—visual media, privacy-to-listing,
+release-chain, design-system, production-signal, and Android parity—and keeps
+the source YAML, normalized projection, and receipt hash-bound. Validate the
+repository contract before running an audit, then replay the receipt in a
+fresh workspace:
+
+```text
+python -m factoryline.cli quality-harness spec-validate full-stack-ux-harness-v1.ssat.yaml --root .
+python -m factoryline.cli quality-harness spec-verify .factory/receipts/full-stack-ux-harness-v1.json --root .
+```
+
+The CI workflow at `.github/workflows/validate-ux-harness.yml` runs the same
+fail-closed checks and focused tests on pull requests. It validates intent and
+evidence structure only; it does not access credentials, run provider uploads,
+or mark an App Store/Play submission approved. See
+[`docs/FULL_STACK_UX_HARNESS.md`](docs/FULL_STACK_UX_HARNESS.md) for the direct
+and legacy SSAT forms and the exact evidence boundary.
+
 ### Choose your review path
 
 ```powershell

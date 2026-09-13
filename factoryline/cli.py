@@ -97,6 +97,11 @@ from .full_stack_ux_harness import (
     verify_quality_harness,
     write_quality_harness_template,
 )
+from .full_stack_ux_spec import (
+    FullStackUXSpecError,
+    validate_ux_harness_spec,
+    verify_ux_harness_spec_receipt,
+)
 from .graph_portfolio import graph_portfolio_plan
 from .graph_forensics import GraphForensicsError, graph_forensics, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
 from .candidate_lineage import CandidateLineageError, verify_candidate_lineage
@@ -660,6 +665,15 @@ def main(argv=None) -> int:
     quality_verify.add_argument("--root", default=".")
     quality_verify.add_argument("--out")
     quality_verify.add_argument("--json", action="store_true")
+    quality_spec_validate = quality_sub.add_parser("spec-validate", help="strictly validate the Full-Stack UX Harness SSAT/YAML contract and write a local receipt")
+    quality_spec_validate.add_argument("spec", help="workspace-contained full-stack-ux-harness-v1.ssat.yaml or explicit v1alpha1 contract")
+    quality_spec_validate.add_argument("--root", default=".")
+    quality_spec_validate.add_argument("--out")
+    quality_spec_validate.add_argument("--json", action="store_true")
+    quality_spec_verify = quality_sub.add_parser("spec-verify", help="replay a Full-Stack UX Harness spec receipt against its current source")
+    quality_spec_verify.add_argument("receipt", help="workspace-contained spec receipt")
+    quality_spec_verify.add_argument("--root", default=".")
+    quality_spec_verify.add_argument("--json", action="store_true")
 
     code_audit = sub.add_parser("audit", help="inspect peer-pattern irregularities and guard-bypass paths without executing code")
     code_audit.add_argument("tool", choices=["patterns", "guard-paths", "all"])
@@ -3752,12 +3766,18 @@ def main(argv=None) -> int:
             if a.quality_cmd == "template":
                 result = write_quality_harness_template(Path(a.root), Path(a.out), ui_in_scope=a.ui)
                 code = 0
+            elif a.quality_cmd == "spec-validate":
+                result = validate_ux_harness_spec(Path(a.root), Path(a.spec), out=Path(a.out) if a.out else None)
+                code = 0 if result["ok"] else 1
+            elif a.quality_cmd == "spec-verify":
+                result = verify_ux_harness_spec_receipt(Path(a.root), Path(a.receipt))
+                code = 0 if result["ok"] else 1
             else:
                 result = verify_quality_harness(
                     Path(a.root), Path(a.manifest), out=Path(a.out) if a.out else None,
                 )
                 code = 0 if result["decision"] == "READY_FOR_HUMAN_RELEASE_REVIEW" else 1
-        except (FullStackUXHarnessError, OSError, json.JSONDecodeError, ValueError) as exc:
+        except (FullStackUXHarnessError, FullStackUXSpecError, OSError, json.JSONDecodeError, ValueError) as exc:
             result = {
                 "schema": "factory.full-stack-ux-harness.error.v1",
                 "decision": "REJECTED",
@@ -3770,7 +3790,10 @@ def main(argv=None) -> int:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
         elif code == 0:
             print(f"Quality harness: {result.get('decision', 'TEMPLATE_WRITTEN')}")
-            print(f"Receipt: {result['path']}")
+            if result.get("path"):
+                print(f"Receipt: {result['path']}")
+            elif result.get("source"):
+                print(f"Source: {result['source']}")
         else:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
         return code

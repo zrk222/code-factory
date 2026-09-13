@@ -1,0 +1,30 @@
+{
+  "schema": "factory.smoke.v1",
+  "feature": "full-stack-ux-harness-contract-v1",
+  "command": "python -m factoryline.cli quality-harness spec-validate full-stack-ux-harness-v1.ssat.yaml --root . --json",
+  "expected_marker": "FULL_STACK_UX_HARNESS_SPEC_VALIDATED",
+  "checks": [
+    {
+      "name": "ux_spec_adapter_is_present",
+      "kind": "python",
+      "run": "from pathlib import Path; raise SystemExit(0 if Path('factoryline/full_stack_ux_spec.py').is_file() else 1)",
+      "expect_exit": 0,
+      "timeout_s": 5,
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "ux_contract_source_is_present",
+      "kind": "python",
+      "run": "from pathlib import Path; raise SystemExit(0 if Path('full-stack-ux-harness-v1.ssat.yaml').is_file() else 1)",
+      "expect_exit": 0,
+      "timeout_s": 5,
+      "must_fail_on_stub": true
+    }
+  ],
+  "authority": {
+    "execution": false,
+    "provider_access": false,
+    "approval": false,
+    "deployment": false
+  }
+}

@@ -31,6 +31,20 @@
 
 ## Unreleased
 
+### Full-Stack UX Harness contract adapter
+
+- Add strict native YAML/SSAT validation with duplicate-key rejection, exact
+  field and category checks, workspace-safe paths, digest validation, and
+  immutable source-bound receipts.
+- Normalize the established `full-stack-ux-harness-v1.ssat.yaml` envelope and
+  the explicit `code-factory.io/v1alpha1` mobile envelope into the same six
+  mobile evidence categories: visual media, privacy-to-listing, release chain,
+  design system, production signal, and Android parity.
+- Expose `factory quality-harness spec-validate` and `spec-verify`, plus a
+  read-only Python CI workflow and replay-focused regression tests. Contract
+  validation never executes tools, accesses credentials, contacts providers, or
+  grants release authority.
+
 ### One-shot stateless MCP requests
 
 - Add `factory mcp request` and `dispatch_stateless` for one bounded,
