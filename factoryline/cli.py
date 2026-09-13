@@ -1195,6 +1195,50 @@ def main(argv=None) -> int:
     audit_verify = control_sub.add_parser("audit-verify", help="verify the tenant audit hash chain")
     add_control_identity(audit_verify, default_role="viewer")
 
+    controls = sub.add_parser("controls", help="evaluate versioned policy packs and evidence without release authority")
+    controls_sub = controls.add_subparsers(required=True, dest="controls_cmd")
+    controls_manifest = controls_sub.add_parser("manifest", help="resolve a policy pack and inherited controls")
+    controls_manifest.add_argument("--root", default=".")
+    controls_manifest.add_argument("--policy", default="controls/policy-pack.json")
+    controls_manifest.add_argument("--json", action="store_true")
+    controls_evaluate = controls_sub.add_parser("evaluate", help="evaluate supplied immutable receipts for an event")
+    controls_evaluate.add_argument("--root", default=".")
+    controls_evaluate.add_argument("--policy", default="controls/policy-pack.json")
+    controls_evaluate.add_argument("--event-kind", choices=["working_tree", "merge", "agent_action", "deployment"], default="working_tree")
+    controls_evaluate.add_argument("--actor", default="local")
+    controls_evaluate.add_argument("--commit")
+    controls_evaluate.add_argument("--changed", action="append", default=[])
+    controls_evaluate.add_argument("--evidence", action="append", default=[])
+    controls_evaluate.add_argument("--exception", action="append", default=[])
+    controls_evaluate.add_argument("--baseline", help="workspace-relative baseline evaluation JSON")
+    controls_evaluate.add_argument("--out")
+    controls_evaluate.add_argument("--json", action="store_true")
+    controls_exception = controls_sub.add_parser("exception", help="create an expiry-bound, separately approved exception")
+    controls_exception.add_argument("control_id")
+    controls_exception.add_argument("--root", default=".")
+    controls_exception.add_argument("--policy", default="controls/policy-pack.json")
+    controls_exception.add_argument("--owner", required=True)
+    controls_exception.add_argument("--reason", required=True)
+    controls_exception.add_argument("--scope", required=True)
+    controls_exception.add_argument("--ttl-days", required=True, type=int)
+    controls_exception.add_argument("--evidence", required=True)
+    controls_exception.add_argument("--author", required=True)
+    controls_exception.add_argument("--approver", required=True)
+    controls_exception.add_argument("--out", required=True)
+    controls_exception.add_argument("--json", action="store_true")
+    controls_dossier = controls_sub.add_parser("dossier", help="write JSON, Markdown, and Mermaid review artifacts")
+    controls_dossier.add_argument("evaluation")
+    controls_dossier.add_argument("--root", default=".")
+    controls_dossier.add_argument("--out-dir", default=".factory/controls/dossiers")
+    controls_dossier.add_argument("--json", action="store_true")
+    controls_fleet = controls_sub.add_parser("fleet", help="show cross-repository policy coverage")
+    controls_fleet.add_argument("--root", default=".")
+    controls_fleet.add_argument("--manifest", default="controls/fleet.json")
+    controls_fleet.add_argument("--json", action="store_true")
+    controls_projection = controls_sub.add_parser("projection", help="read the bounded Graph Ops controls projection")
+    controls_projection.add_argument("--root", default=".")
+    controls_projection.add_argument("--json", action="store_true")
+
     engineering_memory = sub.add_parser("evidence-memory", help="recall current evidence-backed engineering metadata without gate authority")
     engineering_memory.add_argument("--root", default=".")
     engineering_memory.add_argument("--tenant", required=True)
@@ -5821,6 +5865,82 @@ def main(argv=None) -> int:
             return 1
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
+    if a.cmd == "controls":
+        from .continuous_controls import (
+            ControlsError,
+            continuous_controls_projection,
+            create_exception,
+            evaluate_controls,
+            fleet_coverage,
+            load_policy_pack,
+            write_control_evaluation,
+            write_controls_dossier,
+        )
+        try:
+            root = Path(a.root).resolve()
+            if a.controls_cmd == "manifest":
+                result = load_policy_pack(root, a.policy)
+                code = 0
+            elif a.controls_cmd == "evaluate":
+                baseline = None
+                if a.baseline:
+                    baseline = json.loads((root / a.baseline).read_text(encoding="utf-8"))
+                result = evaluate_controls(
+                    root,
+                    a.policy,
+                    evidence_paths=a.evidence,
+                    exception_paths=a.exception,
+                    baseline=baseline,
+                    event={"kind": a.event_kind, "actor": a.actor, "commit": a.commit, "changed_paths": a.changed},
+                )
+                stored = write_control_evaluation(root, result, a.out)
+                result = {"evaluation": result, "receipt": {"path": stored["path"], "sha256": stored["sha256"]}}
+                code = 0 if result["evaluation"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
+            elif a.controls_cmd == "exception":
+                result = create_exception(
+                    root,
+                    a.policy,
+                    a.control_id,
+                    owner=a.owner,
+                    reason=a.reason,
+                    scope=a.scope,
+                    ttl_days=a.ttl_days,
+                    evidence_path=a.evidence,
+                    author=a.author,
+                    approver=a.approver,
+                    out=a.out,
+                )
+                code = 0
+            elif a.controls_cmd == "dossier":
+                evaluation_path = (root / a.evaluation).resolve() if not Path(a.evaluation).is_absolute() else Path(a.evaluation)
+                evaluation = json.loads(evaluation_path.read_text(encoding="utf-8"))
+                result = write_controls_dossier(root, evaluation, a.out_dir)
+                code = 0
+            elif a.controls_cmd == "fleet":
+                result = fleet_coverage(root, a.manifest)
+                code = 0 if all(not item["missing_baseline"] for item in result["repositories"]) else 1
+            else:
+                result = continuous_controls_projection(root)
+                code = 0 if result["invalid_count"] == 0 else 1
+        except (ControlsError, OSError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.continuous-controls.result.v1", "verdict": "ERROR", "error": {"code": getattr(exc, "code", "E_INPUT"), "message": str(exc)}}
+            code = 1
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            if a.controls_cmd == "manifest":
+                print(f"policy {result['pack_id']}@{result['version']}: {result['status']} ({len(result['controls'])} controls)")
+            elif a.controls_cmd == "evaluate":
+                print(f"controls: {result['evaluation']['decision']} ({result['receipt']['path']})")
+            elif a.controls_cmd == "dossier":
+                print(f"controls dossier: {result['directory']}")
+            elif a.controls_cmd == "fleet":
+                print(f"fleet coverage: {len(result['repositories'])} repositories")
+            else:
+                print(f"controls projection: {result['evaluation_count']} evaluations")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
     if a.cmd == "control":
         from .control_plane import ControlPlaneError, EvidenceStore, principal_from_args
         try:

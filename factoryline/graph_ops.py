@@ -55,6 +55,7 @@ from .deep_audit_loop import deep_audit_lineage
 from .mission_control_status import mission_control_status
 from .senior_engineering import senior_engineering_projection
 from .context_efficiency import context_efficiency_status
+from .continuous_controls import continuous_controls_projection, build_control_graph
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -2371,6 +2372,33 @@ def _append_senior_engineering(state: dict[str, Any], root: Path) -> dict[str, A
     return projection
 
 
+def _append_continuous_controls(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
+    """Project the latest controls evaluation into the read-only Graph Ops ledger."""
+    projection = continuous_controls_projection(workspace)
+    latest = projection.get("latest") if isinstance(projection, dict) else None
+    if not isinstance(latest, dict) or not latest.get("path"):
+        return projection
+    try:
+        evaluation_path = workspace / Path(str(latest["path"]))
+        evaluation = json.loads(evaluation_path.read_text(encoding="utf-8"))
+        graph = build_control_graph(evaluation)
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return projection
+    for node in graph.get("nodes", []):
+        _node(
+            state,
+            node_id=f"controls:{node['id']}",
+            kind=f"controls_{node.get('kind', 'node')}",
+            label=str(node.get("label", node["id"])),
+            source=str(latest["path"]),
+            status=str(node.get("status", "declared")),
+            facts={key: value for key, value in node.items() if key not in {"id", "kind", "label", "status"}} | {"authority": _AUTHORITY, "execution": False},
+        )
+    for edge in graph.get("edges", []):
+        _edge(state, f"controls:{edge['source']}", f"controls:{edge['target']}", f"controls_{edge['relation']}")
+    return {**projection, "latest_graph_sha256": graph.get("graph_sha256"), "latest_graph": graph}
+
+
 def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
     """Collect every bounded local projection without deciding presentation."""
     from .jetbrains_handshake import jetbrains_handshake_projection
@@ -2451,6 +2479,7 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
         "jetbrains_handshake": jetbrains_handshake_projection(workspace),
         "senior_engineering": _append_senior_engineering(state, workspace),
     })
+    values["continuous_controls"] = _append_continuous_controls(state, workspace)
     return values
 
 
@@ -2460,7 +2489,12 @@ def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list
     continuity = p["proof_continuity"]
     enterprise = p["enterprise_enforcement"]
     appforge = p["appforge"]
+    controls = p.get("continuous_controls", {})
     facts.update({
+        "continuous_controls_evaluation_count": int(controls.get("evaluation_count", 0)),
+        "continuous_controls_invalid_count": int(controls.get("invalid_count", 0)),
+        "continuous_controls_latest_decision": (controls.get("latest") or {}).get("decision"),
+        "continuous_controls_latest_drift": (controls.get("latest") or {}).get("drift"),
         "journey_proof_count": p["journey_proofs"]["count"],
         "journey_proof_admissible_count": p["journey_proofs"]["admissible_count"],
         "journey_proof_invalid_count": p["journey_proofs"]["invalid_count"],
@@ -2550,6 +2584,7 @@ def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list
 def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]:
     """Apply optional projection markers as declarative read-only rules."""
     appforge = p["appforge"]; semantic = p["semantic_authority"]; enterprise = p["enterprise_enforcement"]
+    controls = p.get("continuous_controls", {})
     rules = [
         (p["journey_proofs"]["count"], ("JOURNEY_STATUS_READ_ONLY", "GRAPH_OPS_JOURNEY_PROOF_READ_ONLY")),
         (any((p["continuous_proof"]["count"], p["continuous_proof"]["invalid_count"])), ("CONTINUOUS_PROOF_HISTORY_READ_ONLY", "GRAPH_OPS_CONTINUOUS_PROOF_READ_ONLY")),
@@ -2580,6 +2615,8 @@ def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]
         (any((p["repair_loops"]["receipt_count"], p["repair_loops"]["invalid_count"])), ("GRAPH_OPS_REPAIR_LOOP_READ_ONLY",)),
         (p["senior_engineering"]["receipt_count"] or p["senior_engineering"]["invalid_count"], ("GRAPH_OPS_SENIOR_ENGINEERING_READ_ONLY",)),
         (p["senior_engineering"]["invalid_count"] or p["senior_engineering"]["shadow_mismatch_count"] or p["senior_engineering"]["blocked_count"], ("GRAPH_OPS_SENIOR_ENGINEERING_REVIEW_REQUIRED",)),
+        (controls.get("evaluation_count", 0), ("GRAPH_OPS_CONTINUOUS_CONTROLS_READ_ONLY",)),
+        (controls.get("invalid_count", 0), ("GRAPH_OPS_CONTINUOUS_CONTROLS_REVIEW_REQUIRED",)),
     ]
     return sorted({*markers, *(marker for enabled, additions in rules if enabled for marker in additions)})
 
@@ -2655,6 +2692,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "jetbrains_handshake": p["jetbrains_handshake"],
         "release_readiness": p["release_readiness"],
         "proof_delta_telemetry": p["proof_deltas"].get("telemetry", []),
+        "continuous_controls": p["continuous_controls"],
     }
     return {**core, "base_graph_sha256": base_graph_sha256, "graph_sha256": _sha(core), "mermaid": _mermaid(projected_nodes, projected_edges)}
 
