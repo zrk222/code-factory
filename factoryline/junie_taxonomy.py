@@ -53,7 +53,7 @@ _STAGES: tuple[dict[str, object], ...] = (
         "label": "1. Orient — inspect before deciding",
         "default": True,
         "when": "At the start of any task or when prior context is uncertain.",
-        "tools": ("factory.status", "factory.next_action", "factory.ide_playbook", "factory.junie_taxonomy", "factory.junie_contribution", "factory.mission_control_status", "factory.developer_memory", "factory.list_receipts", "factory.get_receipt"),
+        "tools": ("factory.status", "factory.first_lap_status", "factory.agui_review_events", "factory.next_action", "factory.ide_playbook", "factory.junie_taxonomy", "factory.junie_contribution", "factory.mission_control_status", "factory.developer_memory", "factory.list_receipts", "factory.get_receipt"),
         "outcome": "A fact-derived local route and explicit unknowns.",
     },
     {

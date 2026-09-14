@@ -36,6 +36,8 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
     assert status["workspace_root"] == str(tmp_path.resolve())
     assert status["tools"] == [
         "factory.status",
+        "factory.first_lap_status",
+        "factory.agui_review_events",
         "factory.graph_ops",
         "factory.journey_status",
         "factory.graph_impact",
@@ -111,7 +113,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {"name": "code-factory", "version": "0.46.4"},
+                "serverInfo": {"name": "code-factory", "version": "0.46.5"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }
@@ -236,6 +238,31 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     }, tmp_path)
     assert resource["result"]["marker"] == "MCP_RESOURCES_PARITY"
     assert json.loads(resource["result"]["contents"][0]["text"]) == graph_ops_snapshot(tmp_path)
+    assert _files(tmp_path) == before
+
+
+def test_mcp_first_lap_status_is_integrity_checked_and_read_only(tmp_path: Path):
+    from factoryline.first_lap import initialize_first_lap
+
+    initialize_first_lap(tmp_path, mission="Ship the approved outcome", journeys=["User can complete the flow"], holdouts=["Invalid input is rejected"])
+    before = _files(tmp_path)
+    status = _content(dispatch({
+        "jsonrpc": "2.0", "id": 901, "method": "tools/call",
+        "params": {"name": "factory.first_lap_status"},
+    }, tmp_path))
+    assert status["marker"] == "MCP_FIRST_LAP_STATUS_READ_ONLY"
+    assert status["status"]["marker"] == "FIRST_LAP_INITIALIZED"
+    assert status["status"]["state"] == "INITIALIZED"
+    assert status["status"]["journey_count"] == 1
+    assert all(item["state"] == "VERIFIED" for item in status["status"]["artifacts"])
+    assert all(value is False for value in status["status"]["authority"].values())
+    events = _content(dispatch({
+        "jsonrpc": "2.0", "id": 902, "method": "tools/call",
+        "params": {"name": "factory.agui_review_events"},
+    }, tmp_path))
+    assert events["marker"] == "MCP_AGUI_REVIEW_EVENTS_READ_ONLY"
+    assert [event["type"] for event in events["events"]] == ["RUN_STARTED", "STATE_SNAPSHOT", "REVIEW_CARD", "RUN_FINISHED"]
+    assert all(event["payload"].get("authority", {}).get("release") is False for event in events["events"] if isinstance(event.get("payload"), dict) and "authority" in event["payload"])
     assert _files(tmp_path) == before
 
 

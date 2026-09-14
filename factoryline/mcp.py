@@ -65,6 +65,8 @@ from .saas_proof import saas_proof_projection
 from .junie_taxonomy import JunieTaxonomyError, junie_taxonomy, validate_junie_contribution
 from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
 from .audit_rule_search import AuditRuleSearchError, search_audit_rules
+from .first_lap import FirstLapError, first_lap_status
+from .agui import AguiError, build_review_events
 from .mcp_mrt import McpMrtError, release_gate_completed, release_gate_input_required
 from .mcp_replay import build_stateless_replay_hints
 
@@ -117,6 +119,7 @@ _RECEIPT_ROOTS = (
     Path(".factory/operations-control"),
     Path(".factory/lifecycle"),
     Path(".factory/repair-loops"),
+    Path(".factory/first-lap"),
 )
 
 
@@ -145,6 +148,18 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.status",
             "description": "Return the local Code Factory MCP boundary, version, workspace root, and tool inventory. Read only.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.first_lap_status",
+            "description": "Read the initialized First Lap contract, generated-file integrity, and next deterministic CLI steps. It never executes journeys, opens holdouts, changes source, or grants release authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.agui_review_events",
+            "description": "Return a bounded, deterministic AGUI-style controlled review event stream for Mission Control and IDE cards. It maps existing local status only; it never executes work, captures prompts, grants approval, or contacts a provider.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1088,6 +1103,36 @@ def _proof_delta_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _first_lap_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.first_lap_status accepts no arguments")
+    try:
+        status = first_lap_status(root)
+    except FirstLapError as exc:
+        raise McpError(str(exc), exc.code) from exc
+    return {
+        "marker": "MCP_FIRST_LAP_STATUS_READ_ONLY",
+        "status": status,
+        "scope": "Read-only First Lap contract and file-integrity projection; no journey, holdout, agent, provider, release, or publication action ran.",
+    }
+
+
+def _agui_review_events(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.agui_review_events accepts no arguments")
+    try:
+        status = first_lap_status(root)
+        events = build_review_events(status, run_id="local-review", surface="mission_control")
+    except (FirstLapError, AguiError) as exc:
+        raise McpError(str(exc), getattr(exc, "code", "MCP_AGUI_REJECTED")) from exc
+    return {
+        "marker": "MCP_AGUI_REVIEW_EVENTS_READ_ONLY",
+        "schema": "factory.agui.events.v1",
+        "events": events,
+        "scope": "Controlled/declarative review events derived from local First Lap status; no agent, execution, approval, provider, credential, or transport action ran.",
+    }
+
+
 def _cdte_status(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) - {"feature"}:
         raise McpError("factory.cdte_status accepts only optional feature")
@@ -1710,6 +1755,10 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_proof_reuse(root, arguments))
     if name == "factory.proof_delta_status":
         return _content(_proof_delta_status(root, arguments))
+    if name == "factory.first_lap_status":
+        return _content(_first_lap_status(root, arguments))
+    if name == "factory.agui_review_events":
+        return _content(_agui_review_events(root, arguments))
     if name == "factory.cdte_status":
         return _content(_cdte_status(root, arguments))
     if name == "factory.prd_grill_status":

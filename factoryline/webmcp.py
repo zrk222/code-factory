@@ -7,6 +7,16 @@ from typing import Any
 WEBMCP_SPEC_STATUS = "draft-community-group-report"
 WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
     {
+        "name": "factory.first_lap_status",
+        "title": "Read First Lap readiness",
+        "description": "Read the initialized mission, journey, holdout, and integrity status already visible on this page. No journey or holdout is executed.",
+    },
+    {
+        "name": "factory.agui_review_events",
+        "title": "Render controlled review events",
+        "description": "Read a bounded AGUI-style event stream for Mission Control cards and human interrupts derived from the local First Lap status. It never executes work or grants authority.",
+    },
+    {
         "name": "factory.graph_summary",
         "title": "Read proof graph summary",
         "description": "Read a bounded summary of the Graph Ops snapshot already visible on this page. No work is executed.",
