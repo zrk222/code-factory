@@ -42,11 +42,19 @@ def collect_pytest_readiness(test_paths: list[str]) -> dict[str, int]:
     # otherwise treat a backslash-containing drive path as a collection root
     # and walk the protected ``C:\\Documents and Settings`` junction.
     normalized_paths = [Path(path).resolve().as_posix() for path in test_paths]
+    # Pin collection to the supplied suite directory.  On Windows, pytest's
+    # upward root discovery can otherwise select the drive root and traverse
+    # the protected ``Documents and Settings`` junction before it reaches the
+    # explicit file path.  The readiness probe only needs the named suites,
+    # so a local root is both safer and deterministic.
+    probe_root = str(Path(normalized_paths[0]).parent) if normalized_paths else "."
     exit_code = pytest.main(
         [
             "-q",
             "--strict-markers",
             "--strict-config",
+            "--rootdir",
+            probe_root,
             "-o",
             "asyncio_default_fixture_loop_scope=function",
             *normalized_paths,
