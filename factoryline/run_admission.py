@@ -14,6 +14,7 @@ from .loop_passport import verify_loop_passport
 from .agent_license import AgentLicenseError, admission_license_decision, normalize_agent_identity
 from .oracle_firewall import OracleFirewallError, admission_oracle_decision
 from .intake_parameters import REQUIRED_AUDIT_LANES, verify_intake_binding
+from .first_lap import verify_activation_receipt
 
 
 ADMISSION_REQUEST_SCHEMA = "factory.run-admission.request.v1"
@@ -281,6 +282,10 @@ def prepare_admission(root: Path, passport_path: Path, request_path: Path, out_d
             raise AdmissionError(exc.code, str(exc)) from exc
     elif requested_autonomy == "autonomous" and license_value is not None and license_value.get("tier") == "autonomous":
         raise AdmissionError("ORACLE_CONTRACT_REQUIRED", "autonomous admission requires a current sealed Oracle Firewall contract")
+    if requested_autonomy == "autonomous":
+        activation = verify_activation_receipt(workspace, require_strict=True)
+        if activation.get("state") != "READY" or activation.get("verified") is not True:
+            raise AdmissionError("FIRST_LAP_ACTIVATION_REQUIRED", "autonomous admission requires a strict, immutable First Lap activation receipt")
     target_dir = _inside(workspace, Path(out_dir) if out_dir is not None else workspace / ".factory" / "admissions")
     workspace_sha256 = _fingerprint(workspace)
     core = {
@@ -317,6 +322,8 @@ def prepare_admission(root: Path, passport_path: Path, request_path: Path, out_d
             "requested_autonomy": oracle_value["requested_autonomy"],
             "scope_paths": oracle_value["scope_paths"],
         }
+    if requested_autonomy == "autonomous":
+        core["first_lap_activation"] = {"receipt_sha256": activation["receipt_sha256"], "path": activation["path"]}
     packet = {**core, "packet_sha256": _sha(core)}
     path = target_dir / f"{request['id']}.admission.json"
     if path.exists():
