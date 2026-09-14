@@ -1,5 +1,14 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.9.6 - 2026-09-13
+
+- Add a read-only First Lap status surface so JetBrains users and Junie can
+  see the initialized mission, journey, verifier-only holdout, integrity
+  state, and exact next CLI steps before any execution.
+- Keep First Lap, MCP, and WebMCP discovery bounded to local evidence; the
+  plugin never executes a journey, opens a holdout, grants release authority,
+  or publishes a build.
+
 ## 0.9.5 - 2026-09-13
 
 - Fine-tune the Junie project pack with a hash-bound copy-only manifest and an

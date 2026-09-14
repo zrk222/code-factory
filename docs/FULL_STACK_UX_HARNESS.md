@@ -17,6 +17,29 @@ repository's established SSAT envelope and the explicit
 `code-factory.io/v1alpha1 / FullStackUXHarness` envelope from the integration
 blueprint. Both normalize to the same six mobile evidence categories:
 
+## First Lap is the AppForge entry boundary
+
+Before AppForge accepts a mobile candidate for evidence normalization, the
+operator can run `factory first-lap status --root .` (or call the equivalent
+read-only `factory.first_lap_status` MCP/WebMCP tool). This adds the controls
+introduced by the senior-engineering upgrade without turning AppForge into a
+second authority plane:
+
+- the mission and forbidden outcomes are explicit before a storyboard or
+  device capture is reviewed;
+- observable iPhone/iPad journeys are named before visual, privacy, or release
+  evidence is considered;
+- verifier-only negative cases remain hash-bound and contamination is a
+  blocker, so a builder cannot quietly redefine what “ready” means; and
+- calibration, human-observed sequencing, typed retry policy, and incident
+  promotion are visible as prerequisites rather than hidden assumptions.
+
+AppForge then binds its candidate, user design input, storyboard, six mobile
+evidence categories, and final dossier to the same source-to-obligation chain.
+The CLI, local MCP, WebMCP, and AppForge Mission Control all expose bounded
+facts; none executes a device, opens a holdout, changes a gate, contacts Apple
+or Google, or grants release authority.
+
 1. visual media — snapshots, device frames, layout, contrast, accessibility,
    and store assets;
 2. privacy-to-listing — permissions, privacy manifest, tracking disclosure,

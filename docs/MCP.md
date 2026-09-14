@@ -128,6 +128,8 @@ network transport, or mutation authority.
 | Surface | Purpose | Authority |
 | --- | --- | --- |
 | `factory.status` | Local MCP boundary, version, and tool inventory | Read only |
+| `factory.first_lap_status` | First Lap mission, journey, holdout, and generated-file integrity status | Read only |
+| `factory.agui_review_events` | Bounded AGUI-style review cards and human-interrupt events derived from local First Lap status | Read only |
 | `factory.graph_ops` | Current deterministic Graph Ops snapshot | Read only |
 | `factory.graph_impact` | Impact of 1–50 explicit root-relative changed paths | Read only |
 | `factory.developer_memory` | Exact-diff next-proof guidance with redacted continuity facts and observed local Git contribution context | Read only |
@@ -167,6 +169,30 @@ network transport, or mutation authority.
 Every tool declares MCP read-only, non-destructive, idempotent, and closed-world
 hints. Root-relative path input is mandatory; absolute paths and parent
 traversal fail with JSON-RPC `-32602`.
+
+### First Lap discovery
+
+`factory.first_lap_status` is the lowest-cost starting point for a new agent or
+IDE integration. It verifies only the initialization receipt and the hashes of
+`MISSION.md`, `END-TO-END.md`, and `.factory/holdouts/HOLDOUT.md`; it does not
+open the holdout, run tests, execute a journey, or infer readiness. A
+`NOT_INITIALIZED` result points to `factory first-lap init --root .`; a
+`BLOCKED` result identifies stale or missing generated files and tells the
+operator to restore or re-initialize them before calibration. The same
+read-only projection is available as `factory.first_lap_status` in the
+progressive WebMCP manifest.
+
+### AGUI review events
+
+`factory.agui_review_events` is the compact presentation bridge for Mission
+Control and IDE clients. It emits a controlled `RUN_STARTED` →
+`STATE_SNAPSHOT` → `REVIEW_CARD` → `RUN_FINISHED` stream with stable event and
+payload hashes. Clients may map the declarative `ReviewCard` hint to their own
+UI catalog; no generated component is executed by Code Factory. MCP2
+`input_required` and `completed` release-gate envelopes can be projected to
+the same `INTERRUPT` and `RUN_FINISHED` shapes by `factoryline.agui` while
+keeping release authority human-owned. The adapter is local and read-only; it
+does not claim a full external AGUI transport or open-ended generative UI.
 
 ### Proof-Delta halt telemetry
 

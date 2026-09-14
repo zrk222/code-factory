@@ -118,3 +118,10 @@
 
 - Run FactoryLine assembly and feature verification from VS Code.
 - Render local JSON receipts in an adjacent editor panel.
+## 0.9.8 - 2026-09-13
+
+- Add First Lap onboarding for `MISSION.md`, `END-TO-END.md`, and verifier-only
+  holdout scenarios.
+- Require three-point verifier calibration, a complete human-observed lap, and
+  fail-closed holdout contamination checks before supervised autonomy.
+- Add incident-to-invariant promotion and typed retry classification.

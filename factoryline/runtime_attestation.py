@@ -21,6 +21,7 @@ import platform
 import sys
 from typing import Any, Iterable
 
+from . import __version__
 from .enterprise_receipts import EnterpriseReceiptError, verify_signed_document
 from .runtime_audit_common import canonical_bytes, exact_keys, require_bool, require_digest, require_int, require_str, sha256_bytes
 
@@ -315,7 +316,7 @@ def capture_supervised_attestation(
         "issued_at": issued.isoformat(),
         "expires_at": expires.isoformat(),
         "requested_isolation": _SUPERVISED_MODE,
-        "collector": {"id": "factoryline-supervisor", "version": "0.46.4", "role": "local_supervisor", "backend": "local_supervised", "executable_sha256": executable_sha},
+        "collector": {"id": "factoryline-supervisor", "version": __version__, "role": "local_supervisor", "backend": "local_supervised", "executable_sha256": executable_sha},
         "observations": {
             "shell": False,
             "stdin": "devnull",

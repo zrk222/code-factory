@@ -57,7 +57,7 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-09-09"
+    assert _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$") == "2026-09-13"
 
     descriptor = json.loads((ROOT / "mcp" / "server.json").read_text(encoding="utf-8"))
     package = descriptor["packages"][0]
@@ -355,10 +355,10 @@ def test_hosted_release_and_editor_versions_are_declared():
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(encoding="utf-8")
     hosted_workflow = (ROOT / ".github" / "workflows" / "hosted-adapter.yml").read_text(encoding="utf-8")
 
-    assert project["version"] == "0.46.4"
+    assert project["version"] == "0.46.5"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.9.7"
-    assert 'version = "0.9.5"' in gradle
+    assert vscode["version"] == "0.9.8"
+    assert 'version = "0.9.6"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
@@ -551,7 +551,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert metadata["access_right"] == "open"
     assert metadata["creators"] == [{"name": "Katz, Richard"}]
     assert metadata["related_identifiers"][0]["identifier"] == "https://github.com/zrk222/code-factory"
-    assert metadata["version"] == "0.46.4"
+    assert metadata["version"] == "0.46.5"
     assert metadata["publication_date"] == "2026-09-09"
     assert "read-only Agent Proof Bridge" in metadata["description"]
     assert "Proof Worklog" in metadata["description"]

@@ -80,6 +80,36 @@ These are workflow-efficiency improvements, not a promise that application
 code or tests execute faster. Actual time or cost savings remain unknown until
 your project supplies a baseline and an evidence window.
 
+Agents can start with `factory first-lap status` or the read-only
+`factory.first_lap_status` tool over local MCP; browser-capable clients see the
+same bounded status through WebMCP. All three surfaces report the same
+integrity state and next action without executing a journey or granting release
+authority.
+
+Mission Control and IDE clients can also request `factory.agui_review_events`
+or run `factory agui review-events --json` to render the same state as a small,
+hash-bound controlled event stream (`RUN_STARTED → STATE_SNAPSHOT →
+REVIEW_CARD → RUN_FINISHED`). This is a presentation bridge for review cards
+and human interrupts—not open-ended generated UI, provider transport, or agent
+authority. See [AGUI and MCP2 review surface](docs/AGUI_MCP2.md).
+
+### New: First Lap activation control
+
+The new `factory first-lap` path makes the safest part of Code Factory the
+easiest to start. One command creates three plain-language files: `MISSION.md`
+for intended and forbidden outcomes, `END-TO-END.md` for observable journeys,
+and verifier-only `.factory/holdouts/HOLDOUT.md` for independent failure cases.
+Before supervised autonomy is considered, every critical verifier must pass a
+three-point calibration (approved candidate passes, a deliberate defect fails,
+and the wrong candidate is inconclusive or blocked), one human must observe the
+complete intake-to-handoff lap, and any builder access to a holdout blocks the
+run. A new incident can be promoted through
+`incident → failure code → invariant → reproducer → mutation → permanent gate → owner`,
+turning past failures into executable regression controls. Retry policy is
+typed and fail-closed: only a narrowly classified transient provider failure
+is retryable; stale evidence, product failures, identity mismatches, and setup
+failures remain review events. See [First Lap](docs/FIRST_LAP.md).
+
 ### Built for the way you work
 
 - **Solo developers and vibe coders:** get a second opinion before a plausible
@@ -215,7 +245,7 @@ checks under one signed plan. Every failed lane returns the consequence,
 evidence digest, exact replay, and next repair. A six-lane pass means ready for
 human review—not approved for release.
 
-### Senior engineering controls in 0.46.3
+### Senior engineering controls in 0.46.5
 
 When a team needs stronger evidence than a self-reported green build, use the
 [senior-engineering integration](docs/SENIOR_ENGINEERING_INTEGRATION.md):
@@ -627,7 +657,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [0.46.4 core release notes](docs/RELEASE_NOTES_0.46.4.md), the
+- See the [0.46.5 core release notes](docs/RELEASE_NOTES_0.46.5.md), the
   [grilling ladder](docs/GRILLING_LADDER.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.

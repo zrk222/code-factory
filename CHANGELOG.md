@@ -83,6 +83,16 @@
   bounded revalidation without introducing a server replay ledger or hidden
   execution authority; errors and notifications are explicitly non-cacheable.
 
+### Controlled AGUI review surface
+
+- Add `factory.agui_review_events` (MCP/WebMCP) and `factory agui
+  review-events` (CLI) for a bounded, hash-bound `RUN_STARTED` →
+  `STATE_SNAPSHOT` → `REVIEW_CARD` → `RUN_FINISHED` stream.
+- Map MCP2 human release-gate envelopes to controlled interrupts without
+  exposing credentials, raw prompts, transcripts, execution, or release
+  authority. This is a local presentation adapter, not a claim of full AGUI
+  transport or open-ended generated UI.
+
 ### Deep-audit attestation and freshness
 
 - Add a review-only `factory.deep-audit attestation` verifier for independent
@@ -1043,3 +1053,19 @@
 - Added Product Graphs, value slices, bounded Missions, no-finish verification,
   evidence-linked PR drafts, classified outcomes, Meter v2, Studio product
   controls, IDE requirement proof links, and the first four signed target packs.
+## 0.46.5 - 2026-09-13
+
+- Add the First Lap activation control: one command creates plain-language
+  `MISSION.md`, `END-TO-END.md`, and verifier-only holdout scenarios without
+  overwriting existing user-authored files.
+- Require three-point verifier calibration (approved pass, deliberate defect
+  fail, wrong candidate inconclusive or blocked) and one human-observed,
+  intake-to-handoff lifecycle before supervised autonomy is considered.
+- Add an append-only incident ledger and promotion chain that turns
+  `incident → failure code → invariant → reproducer → mutation` into a
+  permanent, human-owned regression gate.
+- Add holdout contamination detection and typed failure classification; only
+  transient provider failures are retryable. Stale evidence, product failures,
+  identity mismatches, and environment/setup failures remain blocked.
+- Expose the same bounded, local, authority-free workflow in the CLI, VS Code,
+  JetBrains, Graph Ops, and agent handoff documentation.
