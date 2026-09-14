@@ -31,6 +31,14 @@
 
 ## Unreleased
 
+### Release preflight hardening
+
+- Add a bounded `context/RELEASE_PROOF.md` ledger for marketplace preflight so
+  stale or out-of-order operator notes cannot block a current candidate or be
+  mistaken for release evidence.
+- Include `pytest-asyncio` in the `dev` extra so clean CI environments honor
+  the repository's asyncio test configuration and reproduce local readiness.
+
 ### Stateless MCP2 release-gate MRT
 
 - Extend `factory.release_decision` with a bounded second leg: a supplied

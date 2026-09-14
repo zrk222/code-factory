@@ -113,7 +113,7 @@ jobs:
             --root . \
             --contract "$RELEASE_CONTRACT_PATH" \
             --artifact-dir editors/intellij/build/distributions \
-            --metadata-path context/PROGRESS.md \
+            --metadata-path context/RELEASE_PROOF.md \
             --out editors/intellij/build/distributions/release-preflight.json \
             --json
       - name: Seal the verified Marketplace candidate
