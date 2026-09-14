@@ -135,7 +135,7 @@ jobs:
             --root . \
             --contract "$RELEASE_CONTRACT_PATH" \
             --artifact-dir editors/vscode \
-            --metadata-path context/RELEASE_PROOF.md \
+            --metadata-path context/PROGRESS.md \
             --out editors/vscode/openvsx-preflight.json \
             --json
       - name: Seal the verified Open VSX candidate
