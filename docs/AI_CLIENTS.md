@@ -21,6 +21,25 @@ The directory must already exist. Keep the path explicit when the client may
 open more than one workspace; this prevents an agent from silently inspecting
 the wrong checkout.
 
+## One-shot stateless requests
+
+For CI jobs or HTTP bridges that cannot keep a local MCP session, evaluate one
+self-contained request without starting a server loop:
+
+```powershell
+factory mcp request requests\status.json --root C:\work\my-mvp --json
+```
+
+The input is one workspace-relative UTF-8 JSON-RPC object. Stateless mode
+accepts only `jsonrpc`, `id`, `method`, and `params`, rejects session IDs,
+cursors, state extensions, parent traversal, absolute paths, and payloads over
+65,536 bytes, then returns `factory.mcp.stateless-response.v1` with a
+`request_sha256` digest. Each call is dispatched once and retains no request
+history or server state. It remains local, read-only, and authority-free: no
+execution, approval, publication, deployment, signing, credentials,
+connectors, or provider calls are performed. Use `factory mcp serve` when a
+long-lived stdio connection is wanted.
+
 ## Any MCP-capable coding assistant
 
 Use the generic renderer whenever the assistant accepts a local stdio MCP
@@ -164,6 +183,21 @@ Every configured MCP client can inspect the same bounded surfaces:
   redacted Continuity facts and observed local Git contribution context;
 - `factory.gauntlet_status` for read-only Survival Card facts, including
   whether a card bound only redacted verified Continuity metadata; and
+- `factory.search_audit_rules` for context-bounded discovery of relevant
+  six-lane rejection conditions and required evidence before a human-run audit;
+  it never executes the selected lane; and
+- `factory.graph_ops` for commit-local Proof-Delta halt telemetry: a
+  `NO_GAIN_HALT` node explains the exact candidate/evidence digests, proof debt,
+  and next fact-derived action without granting retry or execution authority;
+- `factory.release_decision` for a stateless MCP2-style `input_required`
+  handoff with a hash-bound proof-card context and reviewer schema, or a
+  validated `completed` local receipt when a human decision is supplied. The
+  second leg is deterministic and does not retain a session or write a receipt
+  file; it never approves, publishes, deploys, signs, or dispatches a provider
+  action; and
+- one-shot stateless responses include a client-only replay key, response
+  digest, and bounded cache hint so retries can be deduplicated locally and
+  revalidated without implying a server-side replay ledger; and
 - `factory.langgraph_assurance` for a hash-only comparison of two already
   recorded LangGraph transition receipts; it never invokes the graph;
 - `factory.agent_license_status` and `factory.combine_status` for current local

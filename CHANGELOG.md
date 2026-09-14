@@ -31,6 +31,170 @@
 
 ## Unreleased
 
+### Release preflight hardening
+
+- Add a bounded `context/RELEASE_PROOF.md` ledger for marketplace preflight so
+  stale or out-of-order operator notes cannot block a current candidate or be
+  mistaken for release evidence.
+- Include `pytest-asyncio` in the `dev` extra so clean CI environments honor
+  the repository's asyncio test configuration and reproduce local readiness.
+
+### Stateless MCP2 release-gate MRT
+
+- Extend `factory.release_decision` with a bounded second leg: a supplied
+  human decision is validated against the exact `input_required` tool-call and
+  proof-card hashes, then returned as a deterministic local receipt.
+- Project explicitly lane-labelled blockers into `failedLanes` and include the
+  count in the review prompt; approval fails closed until every proof-debt code
+  is acknowledged.
+- Keep all provider, publication, deployment, signing, credential, connector,
+  retry-dispatch, persistence, and merge authority outside the local adapter.
+
+### Full-Stack UX Harness contract adapter
+
+- Add strict native YAML/SSAT validation with duplicate-key rejection, exact
+  field and category checks, workspace-safe paths, digest validation, and
+  immutable source-bound receipts.
+- Normalize the established `full-stack-ux-harness-v1.ssat.yaml` envelope and
+  the explicit `code-factory.io/v1alpha1` mobile envelope into the same six
+  mobile evidence categories: visual media, privacy-to-listing, release chain,
+  design system, production signal, and Android parity.
+- Expose `factory quality-harness spec-validate` and `spec-verify`, plus a
+  read-only Python CI workflow and replay-focused regression tests. Contract
+  validation never executes tools, accesses credentials, contacts providers, or
+  grants release authority.
+
+### One-shot stateless MCP requests
+
+- Add `factory mcp request` and `dispatch_stateless` for one bounded,
+  self-contained JSON-RPC evaluation suitable for CI and HTTP bridges.
+- Bind each response to a canonical `request_sha256`, reject state/session
+  extensions, absolute or traversing request paths, malformed JSON, and
+  payloads over 65,536 bytes, and preserve the local read-only authority
+  boundary. The existing stdio server remains unchanged.
+- Add `factory.search_audit_rules`, a bounded rule-inventory search that keeps
+  the six-lane rejection vocabulary out of the default model context. Results
+  carry rule IDs, practical questions, evidence requirements, and an explicit
+  handoff to the signed human-controlled runtime-audit CLI; the MCP tool never
+  executes a lane or changes a gate.
+- Project verified Proof-Delta packets into Graph Ops telemetry. `NO_GAIN_HALT`
+  records bind candidate and evidence digests, blocker flags, proof debt, and a
+  fact-derived next action; Mermaid edges make the halt lineage inspectable.
+  The projection remains local, read-only, and authority-free.
+- Add an MCP2-style `input_required` release-gate projection to
+  `factory.release_decision`, carrying a deterministic tool call ID, minimal
+  reviewer schema, proof-card hash, debt, and next action. It is a stateless
+  handoff only; approval and completed receipts remain human-controlled CLI
+  operations.
+- Add deterministic client-only replay and cache hints to each stateless
+  response. Request/response digests support local retry deduplication and
+  bounded revalidation without introducing a server replay ledger or hidden
+  execution authority; errors and notifications are explicitly non-cacheable.
+
+### Controlled AGUI review surface
+
+- Add `factory.agui_review_events` (MCP/WebMCP) and `factory agui
+  review-events` (CLI) for a bounded, hash-bound `RUN_STARTED` →
+  `STATE_SNAPSHOT` → `REVIEW_CARD` → `RUN_FINISHED` stream.
+- Map MCP2 human release-gate envelopes to controlled interrupts without
+  exposing credentials, raw prompts, transcripts, execution, or release
+  authority. This is a local presentation adapter, not a claim of full AGUI
+  transport or open-ended generated UI.
+
+### Deep-audit attestation and freshness
+
+- Add a review-only `factory.deep-audit attestation` verifier for independent
+  DSSE evidence bound to the exact deep-audit receipt, signed plan, candidate,
+  rules, canaries, and complete report coverage.
+- Add bounded timezone-aware freshness checks, analyzer-self-attestation
+  rejection, stable `E_DEEP_ATTESTATION_*` failures, and strict comparison
+  flags that require both attestations plus an operator-pinned trust root.
+- Preserve the legacy self-hash comparison for compatibility; no path executes,
+  repairs, approves, publishes, deploys, or grants credentials.
+
+### Candidate continuity across Graph Ops
+
+- Bind sealed graph lineage to an optional candidate SHA-256 and require that
+  binding when a reviewer verifies cross-artifact continuity.
+- Add `factory graph lineage-continuity` to join the current Oracle contract,
+  deep-audit receipt, and graph lineage with exact hashes and stable fail-closed
+  errors. Legacy graph receipts remain readable but cannot masquerade as
+  current evidence; the result is review-only with no release authority.
+
+### Strict enterprise revocation freshness
+
+- Add an opt-in offline gate requiring a signed revocation snapshot, with
+  bounded age, future-timestamp rejection, malformed-entry rejection, and
+  explicit `FRESH_CHECKED` / `CURRENT` result facts.
+- Keep the existing optional historical signer check backward-compatible, but
+  label it `NOT_ASSERTED` for freshness so a checked-at-receipt-time list cannot
+  be mistaken for current hosted authorization.
+
+### Intake parameter envelope
+
+- Add `factory intake parameters seal|verify|status`, a confirmation-bound,
+  self-hash-verified operating envelope for mode, risk, budgets, scope,
+  external-effects posture, provenance, expiry, and all six runtime-audit lanes.
+- Agent-proposed or production-observed values remain `REVIEW_REQUIRED`; only
+  human-confirmed or trusted-source values are authoritative. Traversal,
+  symlinks, secrets, widening, drift, expiry, incomplete lanes, and autonomy
+  outside local-only effects fail closed.
+- Surface bounded status and one recovery action in Mission Control, Graph Ops,
+  stdio MCP, WebMCP, and the Junie taxonomy. No new execution, approval,
+  credential, provider, publication, or deployment authority is introduced.
+
+### Intent-bound audit admission
+
+- Add one shared `factory.intake-binding.v1` verifier and wire it into runtime
+  audit plans, external-agent admission, the proof bridge, Proof Review, and
+  release preflight. Strict consumers now fail closed when scope, the canonical
+  six lanes, budgets, autonomy, external-effects posture, expiry, or the sealed
+  intake digest drifts.
+- Permit agents to request a checkpoint-scoped fix allowance without granting
+  repair authority. Each allowance is limited to `write_workspace`, an
+  in-scope hash-bound patch, a named approver, and an expiry covering the run;
+  CF reports `BOUND_FOR_EXTERNAL_HARNESS` and revalidates the binding at
+  consumption time, but never applies the patch.
+- Add stable `E_INTAKE_BINDING_*` failure codes, strict CLI flags, a SpecLine
+  contract, and deterministic mismatch/replay coverage. Existing consumers
+  remain compatible unless `--require-intake` is selected or a binding is
+  supplied.
+
+### Context efficiency and deterministic agent hand-offs
+
+- Add `factory efficiency pack|verify|status` for bounded, priority-aware
+  context packets. Stable source identities and SHA-256 digests make drift and
+  tamper visible before an agent hand-off; exact request/source matches reuse a
+  local content-addressed cache.
+- Keep the speed claim honest: excerpts are capped, secret-shaped or binary
+  sources are digest-only, and token counts are explicitly estimated from UTF-8
+  bytes rather than provider usage. Mission Control, Graph Ops, stdio MCP, and
+  WebMCP expose read-only status while preserving the established seven-reader
+  performance baseline.
+
+### Supply-chain and reproducible-release integrity
+
+- Add an optional, fail-closed gate binding source files, lockfiles, CycloneDX
+  SBOM, VEX severity thresholds, licence policy, repeated build outputs, and
+  archive secret/path checks to one candidate digest.
+- Add local and independent DSSE attestation verification plus Mission Control,
+  Graph Ops, senior-engineering, CLI, smoke, and release-preflight projections.
+  Evidence remains review-only: no receipt grants signing, merge, publication,
+  deployment, provider, or approval authority.
+
+### Runtime boundary attestation
+
+- Add a first-class runtime-boundary receipt above the six assurance lanes. The
+  local runner now records shell, stdin, output, environment-policy,
+  executable, cleanup, memory, and latency facts as `SUPERVISED_ONLY` rather
+  than implying sandbox isolation.
+- Verify fresh, self-hash-checked, candidate/plan/environment-bound DSSE
+  observations from approved external collectors; independent worker/VM modes
+  fail closed when only local supervision or weaker evidence is supplied.
+- Join the boundary result into the six-lane decision and expose an offline
+  `factory senior boundary` verifier. All receipts retain `authority: none`
+  and `release_approval: false`.
+
 ### Codex metadata integrity follow-up
 
 - Resolve the 91-record active metadata audit: compact ForgeLine receipt hashes
@@ -897,3 +1061,19 @@
 - Added Product Graphs, value slices, bounded Missions, no-finish verification,
   evidence-linked PR drafts, classified outcomes, Meter v2, Studio product
   controls, IDE requirement proof links, and the first four signed target packs.
+## 0.46.5 - 2026-09-13
+
+- Add the First Lap activation control: one command creates plain-language
+  `MISSION.md`, `END-TO-END.md`, and verifier-only holdout scenarios without
+  overwriting existing user-authored files.
+- Require three-point verifier calibration (approved pass, deliberate defect
+  fail, wrong candidate inconclusive or blocked) and one human-observed,
+  intake-to-handoff lifecycle before supervised autonomy is considered.
+- Add an append-only incident ledger and promotion chain that turns
+  `incident → failure code → invariant → reproducer → mutation` into a
+  permanent, human-owned regression gate.
+- Add holdout contamination detection and typed failure classification; only
+  transient provider failures are retryable. Stale evidence, product failures,
+  identity mismatches, and environment/setup failures remain blocked.
+- Expose the same bounded, local, authority-free workflow in the CLI, VS Code,
+  JetBrains, Graph Ops, and agent handoff documentation.

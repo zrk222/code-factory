@@ -36,11 +36,18 @@ hollow negative control caught in a disposable sandbox, then open
 `factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
-**Current in 0.9.6:** the adapter metadata and installable artifact are aligned
-with the Code Factory 0.46.4 release candidate. The proof-coupled Junie handoff
+**Current in 0.9.8:** the adapter metadata and installable artifact are aligned
+with the Code Factory 0.46.5 release candidate. The proof-coupled Junie handoff
 story is visible beside the existing First Proof, AppForge, and evidence-boundary
 controls. Marketplace publication remains a protected provider action; this
 repository does not claim a live listing until a provider read-back confirms it.
+
+**New First Lap control:** `factory first-lap init` creates plain-language
+`MISSION.md`, `END-TO-END.md`, and verifier-only holdout scenarios. Critical
+verifiers must pass approved/defective/wrong-candidate calibration and one
+human-observed intake-to-handoff lap before supervised autonomy is considered.
+Incidents can be promoted into permanent regression gates, and only typed
+transient provider failures are retryable. See [First Lap](../../docs/FIRST_LAP.md).
 
 **New in 0.9.4:** the Oracle Firewall blocks same-ID rewrites of a blocking or
 release obligation's meaning, source binding, provenance, criticality, effect,
@@ -153,7 +160,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.9.6.vsix
+code --install-extension factoryline-vscode-0.9.8.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

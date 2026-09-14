@@ -25,6 +25,7 @@ from .continuity import CONTINUITY_DB_RELATIVE_PATH, continuity_projection
 from .counterexample import CounterexampleError, verify_counterexample_plan
 from .guardrails import GuardrailError, verify_guardrail_evaluation
 from .proof_delta import ProofDeltaError, verify_proof_delta
+from .proof_delta_telemetry import build_proof_delta_telemetry
 from .intake_grill import verify_intake_confirmation
 from .gauntlet import GauntletError, validate_survival_card
 from .resilience import ResilienceError, verify_temporal_resilience_plan
@@ -53,6 +54,8 @@ from .repair_loop import repair_loop_projection
 from .deep_audit_loop import deep_audit_lineage
 from .mission_control_status import mission_control_status
 from .senior_engineering import senior_engineering_projection
+from .context_efficiency import context_efficiency_status
+from .continuous_controls import continuous_controls_projection, build_control_graph
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -767,9 +770,12 @@ def _append_continuity(state: dict[str, Any], root: Path) -> dict[str, int]:
     return facts
 
 
-def _append_proof_deltas(state: dict[str, Any], root: Path) -> dict[str, int]:
+def _append_proof_deltas(state: dict[str, Any], root: Path) -> dict[str, Any]:
     """Project retry-admission evidence without starting a retry or a worker."""
-    facts = {"count": 0, "advance_count": 0, "halted_count": 0, "invalid_count": 0}
+    facts: dict[str, Any] = {
+        "count": 0, "advance_count": 0, "halted_count": 0, "invalid_count": 0,
+        "telemetry_count": 0, "no_gain_halt_count": 0, "telemetry": [],
+    }
     directory = root / ".factory" / "proof-deltas"
     for path in sorted(directory.glob("*.json")):
         value, source = _load_json(root, path, state["errors"])
@@ -795,6 +801,81 @@ def _append_proof_deltas(state: dict[str, Any], root: Path) -> dict[str, int]:
                 "authority": verification["authority"], "execution": False,
             },
         )
+        telemetry = build_proof_delta_telemetry(verification, digest)
+        telemetry_id = f"proof_delta_guard:{telemetry['telemetrySha256'][:24]}"
+        _node(
+            state,
+            node_id=telemetry_id,
+            kind="proof_delta_guard",
+            label=f"{telemetry['status']} · proof-delta guard",
+            source=source,
+            status=telemetry["status"],
+            facts=telemetry,
+        )
+        _edge(state, node_id, telemetry_id, "projects_telemetry")
+        candidate = verification["repair_candidate"]["candidate"]
+        candidate_id = f"proof-delta-candidate:{candidate['diff_sha256'][:24]}"
+        _node(
+            state,
+            node_id=candidate_id,
+            kind="proof_delta_candidate",
+            label=f"candidate · {candidate['diff_sha256'][:12]}",
+            source=verification["repair_candidate"]["path"],
+            status="changed" if not telemetry["blocker"]["candidateUnchanged"] else "unchanged",
+            facts={
+                "candidateHash": candidate["diff_sha256"],
+                "changedPaths": candidate["changed_paths"],
+                "role": "repair",
+                "proofDeltaSha256": digest,
+                "authority": dict(_AUTHORITY),
+                "execution": False,
+            },
+        )
+        _edge(state, telemetry_id, candidate_id, "binds_candidate")
+        evidence_id = f"proof-delta-evidence:{telemetry['blocker']['evidenceDigest'][7:31]}"
+        _node(
+            state,
+            node_id=evidence_id,
+            kind="proof_delta_evidence",
+            label=f"evidence · {telemetry['blocker']['evidenceDigest'][7:19]}",
+            source=source,
+            status="fresh" if telemetry["status"] == "REPAIR_ADMITTED" else "stale_or_unchanged",
+            facts={
+                "evidenceDigest": telemetry["blocker"]["evidenceDigest"],
+                "newEvidenceCount": len(verification.get("new_evidence", [])),
+                "proofDeltaSha256": digest,
+                "authority": dict(_AUTHORITY),
+                "execution": False,
+            },
+        )
+        _edge(state, telemetry_id, evidence_id, "binds_evidence")
+        if telemetry["status"] == "NO_GAIN_HALT":
+            blocker_id = f"proof-delta-blocker:{telemetry['telemetrySha256'][:24]}"
+            _node(
+                state,
+                node_id=blocker_id,
+                kind="proof_delta_blocker",
+                label="NO_GAIN_HALT · unproductive retry",
+                source=source,
+                status="blocked",
+                facts={
+                    **telemetry["blocker"],
+                    "proofDeltaSha256": digest,
+                    "authority": dict(_AUTHORITY),
+                    "execution": False,
+                },
+            )
+            _edge(state, telemetry_id, blocker_id, "blocked_by")
+            for debt in telemetry["proofDebt"]:
+                debt_id = f"proof-delta-debt:{telemetry['telemetrySha256'][:16]}:{_sha(debt)[:8]}"
+                _node(state, node_id=debt_id, kind="proof_delta_proof_debt", label=debt[:240], source=source, status="unresolved", facts={"debt": debt, "proofDeltaSha256": digest, "authority": dict(_AUTHORITY), "execution": False})
+                _edge(state, telemetry_id, debt_id, "owes_proof")
+        action_id = f"proof-delta-action:{telemetry['telemetrySha256'][:24]}"
+        _node(state, node_id=action_id, kind="proof_delta_next_action", label="Next fact-derived action", source=source, status="review", facts={"action": telemetry["nextFactDerivedAction"], "proofDeltaSha256": digest, "authority": dict(_AUTHORITY), "execution": False})
+        _edge(state, telemetry_id, action_id, "next_fact_derived_action")
+        facts["telemetry"].append(telemetry)
+        facts["telemetry_count"] += 1
+        facts["no_gain_halt_count"] += int(telemetry["status"] == "NO_GAIN_HALT")
         mission_id = f"mission:{verification['mission_id']}"
         if mission_id in state["nodes"]:
             _edge(state, node_id, mission_id, "admits_retry_for")
@@ -1952,6 +2033,14 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
         return "review_senior_engineering_block", "A supplied benchmark or incremental plan is blocked; inspect the bounded failure evidence before relying on the result."
     if facts.get("release_decision_workflow_blocked", 0) > 0:
         return "repair_release_workflow", "A declared local release-workflow boundary failed. Repair its named local check before evaluating feature evidence or inspecting an external provider."
+    if facts.get("supply_chain_blocked", 0) > 0:
+        return "repair_supply_chain_attestation", "The local supply-chain receipt is blocked or integrity-invalid. Reconcile source, dependency, vulnerability, licence, reproducible-build, and artifact evidence before release review."
+    if facts.get("context_efficiency_blocked", 0) > 0:
+        return "repair_context_efficiency_packet", "A cached context packet is malformed or invalid. Rebuild it from the sealed request and current source digests before handing context to an agent."
+    if facts.get("intake_parameters_blocked", 0) > 0:
+        return "repair_intake_parameters", "An intake parameter envelope is invalid, expired, or drifted. Repair the source-bound envelope before any agent receives operating parameters."
+    if facts.get("intake_parameters_review_required", 0) > 0:
+        return "review_intake_parameters", "An intake parameter envelope contains advisory agent or production values. A named human must promote them before they can influence a blocking or release decision."
     if facts.get("semantic_authority_expired_lease_count", 0) > 0:
         return "renew_semantic_authority", "An agent lease expired. Keep the handoff constrained and obtain a fresh named approval rather than extending or replaying the prior lease."
     if facts.get("semantic_authority_invalid_count", 0) > 0:
@@ -2032,7 +2121,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
                     gates: Counter[str], verifier_sessions: dict[str, int],
                     forensics: dict[str, int], proofsearch: dict[str, int],
                     frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                    counterexamples: dict[str, int], oracle_firewall: dict[str, int], atomic_proof_adapter: dict[str, Any], agent_proof_bridge: dict[str, Any], proof_worklogs: dict[str, Any], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> dict[str, int]:
+                    counterexamples: dict[str, int], oracle_firewall: dict[str, int], atomic_proof_adapter: dict[str, Any], agent_proof_bridge: dict[str, Any], proof_worklogs: dict[str, Any], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, Any], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> dict[str, int]:
     requirement_nodes = [node["id"] for node in nodes if node["kind"] == "requirement"]
     return {
         "node_count": len(nodes),
@@ -2101,6 +2190,8 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
         "proof_delta_advance_count": proof_deltas["advance_count"],
         "proof_delta_halted_count": proof_deltas["halted_count"],
         "proof_delta_invalid_count": proof_deltas["invalid_count"],
+        "proof_delta_telemetry_count": proof_deltas.get("telemetry_count", 0),
+        "proof_delta_no_gain_halt_count": proof_deltas.get("no_gain_halt_count", 0),
         "gauntlet_card_count": survival_cards["count"],
         "gauntlet_survived_count": survival_cards["survived_count"],
         "gauntlet_hollow_count": survival_cards["hollow_count"],
@@ -2144,7 +2235,7 @@ def _snapshot_facts(nodes: list[dict[str, Any]], evidenced: set[str], stale_proo
 def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
                       verifier_sessions: dict[str, int], forensics: dict[str, int],
                       proofsearch: dict[str, int], frontier: dict[str, int], reality: dict[str, int], authorizations: dict[str, int], assurance: dict[str, int], continuity: dict[str, int],
-                      counterexamples: dict[str, int], oracle_firewall: dict[str, int], atomic_proof_adapter: dict[str, Any], agent_proof_bridge: dict[str, Any], proof_worklogs: dict[str, Any], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, int], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> list[str]:
+                      counterexamples: dict[str, int], oracle_firewall: dict[str, int], atomic_proof_adapter: dict[str, Any], agent_proof_bridge: dict[str, Any], proof_worklogs: dict[str, Any], guardrails: dict[str, int], resilience: dict[str, int], proof_deltas: dict[str, Any], survival_cards: dict[str, int], agent_supervision: dict[str, int], judgment: dict[str, int], external_evidence: dict[str, int], intent_traces: dict[str, int]) -> list[str]:
     markers = [
         "GRAPH_OPS_UNIFIED_READ_ONLY", "GRAPH_OPS_TYPED_LOCAL_NODES", "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
@@ -2199,6 +2290,10 @@ def _snapshot_markers(state: dict[str, Any], nodes: list[dict[str, Any]],
         markers.append("GRAPH_OPS_TEMPORAL_RESILIENCE_READ_ONLY")
     if proof_deltas["count"]:
         markers.append("GRAPH_OPS_PROOF_DELTA_ADMISSION_READ_ONLY")
+    if proof_deltas.get("telemetry_count", 0):
+        markers.append("GRAPH_OPS_PROOF_DELTA_TELEMETRY_READ_ONLY")
+    if proof_deltas.get("no_gain_halt_count", 0):
+        markers.append("GRAPH_OPS_PROOF_DELTA_NO_GAIN_HALT")
     if survival_cards["count"]:
         markers.append("GRAPH_OPS_GAUNTLET_SURVIVAL_CARDS_READ_ONLY")
     if agent_supervision["license_count"]:
@@ -2277,6 +2372,33 @@ def _append_senior_engineering(state: dict[str, Any], root: Path) -> dict[str, A
     return projection
 
 
+def _append_continuous_controls(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
+    """Project the latest controls evaluation into the read-only Graph Ops ledger."""
+    projection = continuous_controls_projection(workspace)
+    latest = projection.get("latest") if isinstance(projection, dict) else None
+    if not isinstance(latest, dict) or not latest.get("path"):
+        return projection
+    try:
+        evaluation_path = workspace / Path(str(latest["path"]))
+        evaluation = json.loads(evaluation_path.read_text(encoding="utf-8"))
+        graph = build_control_graph(evaluation)
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return projection
+    for node in graph.get("nodes", []):
+        _node(
+            state,
+            node_id=f"controls:{node['id']}",
+            kind=f"controls_{node.get('kind', 'node')}",
+            label=str(node.get("label", node["id"])),
+            source=str(latest["path"]),
+            status=str(node.get("status", "declared")),
+            facts={key: value for key, value in node.items() if key not in {"id", "kind", "label", "status"}} | {"authority": _AUTHORITY, "execution": False},
+        )
+    for edge in graph.get("edges", []):
+        _edge(state, f"controls:{edge['source']}", f"controls:{edge['target']}", f"controls_{edge['relation']}")
+    return {**projection, "latest_graph_sha256": graph.get("graph_sha256"), "latest_graph": graph}
+
+
 def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
     """Collect every bounded local projection without deciding presentation."""
     from .jetbrains_handshake import jetbrains_handshake_projection
@@ -2304,8 +2426,29 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
     release_decision = release_workflow_decision_projection(shared["release_workflow_integrity"])
     _node(state, node_id=release_decision["id"], kind=release_decision["kind"], label=release_decision["label"],
           source=release_decision["source"], status=release_decision["status"], facts=release_decision["facts"])
+    supply_chain = shared["supply_chain"]
+    supply_status = str(supply_chain.get("state", "MISSING")).lower()
+    if supply_status != "missing":
+        supply_id = f"supply-chain:{str(supply_chain.get('receipt_sha256') or 'not-requested')[:24]}"
+        _node(state, node_id=supply_id, kind="supply_chain_integrity", label="Supply-chain integrity", source=".factory/supply-chain/supply-chain-receipt.json", status=supply_status,
+              facts={key: value for key, value in supply_chain.items() if key not in {"schema", "claim_boundary"}})
+    context_efficiency = shared["context_efficiency"]
+    context_status = str(context_efficiency.get("state", "MISSING")).lower()
+    if context_status != "missing":
+        context_id = f"context-efficiency:{str(context_efficiency.get('schema', 'v1'))}:{context_efficiency.get('packet_count', 0)}"
+        _node(state, node_id=context_id, kind="context_efficiency", label="Context efficiency packets", source=".factory/context-efficiency", status=context_status,
+              facts={key: value for key, value in context_efficiency.items() if key not in {"schema", "claim_boundary", "packets"}})
+    intake_parameters = shared["intake_parameters"]
+    intake_parameters_state = str(intake_parameters.get("state", "MISSING")).lower()
+    if intake_parameters_state != "missing":
+        intake_parameters_id = f"intake-parameters:{intake_parameters.get('receipt_count', 0)}:{intake_parameters.get('invalid_count', 0)}"
+        _node(state, node_id=intake_parameters_id, kind="intake_parameters", label="Intake parameter envelope", source=".factory/intake-parameters", status=intake_parameters_state,
+              facts={key: value for key, value in intake_parameters.items() if key not in {"schema", "claim_boundary", "latest", "invalid"}})
     values.update({
         "mission_control": mission_control,
+        "supply_chain": supply_chain,
+        "context_efficiency": context_efficiency,
+        "intake_parameters": intake_parameters,
         "release_decision": release_decision["facts"],
         "oracle_firewall": _append_oracle_firewall(state, workspace, shared["oracle"]),
         "proof_continuity": _append_proof_continuity(state, workspace),
@@ -2336,6 +2479,7 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
         "jetbrains_handshake": jetbrains_handshake_projection(workspace),
         "senior_engineering": _append_senior_engineering(state, workspace),
     })
+    values["continuous_controls"] = _append_continuous_controls(state, workspace)
     return values
 
 
@@ -2345,7 +2489,12 @@ def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list
     continuity = p["proof_continuity"]
     enterprise = p["enterprise_enforcement"]
     appforge = p["appforge"]
+    controls = p.get("continuous_controls", {})
     facts.update({
+        "continuous_controls_evaluation_count": int(controls.get("evaluation_count", 0)),
+        "continuous_controls_invalid_count": int(controls.get("invalid_count", 0)),
+        "continuous_controls_latest_decision": (controls.get("latest") or {}).get("decision"),
+        "continuous_controls_latest_drift": (controls.get("latest") or {}).get("drift"),
         "journey_proof_count": p["journey_proofs"]["count"],
         "journey_proof_admissible_count": p["journey_proofs"]["admissible_count"],
         "journey_proof_invalid_count": p["journey_proofs"]["invalid_count"],
@@ -2397,6 +2546,20 @@ def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list
         "mission_control_state": p["mission_control"]["state"],
         "release_decision_state": p["release_decision"]["state"],
         "release_decision_workflow_blocked": int(p["release_decision"]["state"] == "LOCAL_WORKFLOW_BLOCKED"),
+        "supply_chain_state": p["supply_chain"].get("state", "MISSING"),
+        "supply_chain_blocked": int(p["supply_chain"].get("state") in {"BLOCKED", "INCOMPLETE"}),
+        "context_efficiency_state": p["context_efficiency"].get("state", "MISSING"),
+        "context_efficiency_blocked": int(p["context_efficiency"].get("state") == "BLOCKED"),
+        "context_efficiency_packet_count": int(p["context_efficiency"].get("packet_count", 0)),
+        "context_efficiency_cache_hits": int(p["context_efficiency"].get("cache_hits", 0)),
+        "context_efficiency_estimated_tokens": int(p["context_efficiency"].get("estimated_tokens", 0)),
+        "intake_parameters_state": p["intake_parameters"].get("state", "MISSING"),
+        "intake_parameters_blocked": int(p["intake_parameters"].get("state") == "BLOCKED"),
+        "intake_parameters_review_required": int(p["intake_parameters"].get("state") == "REVIEW_REQUIRED"),
+        "intake_parameters_receipt_count": int(p["intake_parameters"].get("receipt_count", 0)),
+        "intake_parameters_authoritative_count": int(p["intake_parameters"].get("ready_count", 0)),
+        "intake_parameters_advisory_count": int(p["intake_parameters"].get("review_required_count", 0)),
+        "intake_parameters_invalid_count": int(p["intake_parameters"].get("invalid_count", 0)),
         "edge_count": len(edges),
         "appforge_design_current_count": appforge["current_count"],
         "appforge_design_invalid_count": appforge["invalid_count"],
@@ -2421,6 +2584,7 @@ def _update_snapshot_facts(facts: dict[str, Any], p: dict[str, Any], edges: list
 def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]:
     """Apply optional projection markers as declarative read-only rules."""
     appforge = p["appforge"]; semantic = p["semantic_authority"]; enterprise = p["enterprise_enforcement"]
+    controls = p.get("continuous_controls", {})
     rules = [
         (p["journey_proofs"]["count"], ("JOURNEY_STATUS_READ_ONLY", "GRAPH_OPS_JOURNEY_PROOF_READ_ONLY")),
         (any((p["continuous_proof"]["count"], p["continuous_proof"]["invalid_count"])), ("CONTINUOUS_PROOF_HISTORY_READ_ONLY", "GRAPH_OPS_CONTINUOUS_PROOF_READ_ONLY")),
@@ -2432,6 +2596,12 @@ def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]
         (p["jetbrains_handshake"]["state"] != "empty", ("GRAPH_OPS_JETBRAINS_HANDSHAKE_READ_ONLY",)),
         (True, ("GRAPH_OPS_RELEASE_DECISION_VISIBLE", "RELEASE_DECISION_GRAPH_READ_ONLY")),
         (p["release_decision"]["state"] == "LOCAL_WORKFLOW_BLOCKED", ("GRAPH_OPS_RELEASE_DECISION_WORKFLOW_BLOCKED",)),
+        (p["supply_chain"].get("state") != "MISSING", ("GRAPH_OPS_SUPPLY_CHAIN_READ_ONLY",)),
+        (p["supply_chain"].get("state") in {"BLOCKED", "INCOMPLETE"}, ("GRAPH_OPS_SUPPLY_CHAIN_REVIEW_REQUIRED",)),
+        (p["context_efficiency"].get("state") != "MISSING", ("GRAPH_OPS_CONTEXT_EFFICIENCY_READ_ONLY",)),
+        (p["context_efficiency"].get("state") == "BLOCKED", ("GRAPH_OPS_CONTEXT_EFFICIENCY_REVIEW_REQUIRED",)),
+        (p["intake_parameters"].get("state") != "MISSING", ("GRAPH_OPS_INTAKE_PARAMETERS_READ_ONLY",)),
+        (p["intake_parameters"].get("state") in {"BLOCKED", "REVIEW_REQUIRED"}, ("GRAPH_OPS_INTAKE_PARAMETERS_REVIEW_REQUIRED",)),
         (p["release_readiness"]["contract_count"] or p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_READ_ONLY",)),
         (p["release_readiness"]["invalid_count"], ("GRAPH_OPS_RELEASE_READINESS_REVIEW_REQUIRED",)),
         (any((semantic["handoff_count"], semantic["lease_count"], semantic["invalid_count"])), ("GRAPH_OPS_SEMANTIC_AUTHORITY_READ_ONLY",)),
@@ -2445,6 +2615,8 @@ def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]
         (any((p["repair_loops"]["receipt_count"], p["repair_loops"]["invalid_count"])), ("GRAPH_OPS_REPAIR_LOOP_READ_ONLY",)),
         (p["senior_engineering"]["receipt_count"] or p["senior_engineering"]["invalid_count"], ("GRAPH_OPS_SENIOR_ENGINEERING_READ_ONLY",)),
         (p["senior_engineering"]["invalid_count"] or p["senior_engineering"]["shadow_mismatch_count"] or p["senior_engineering"]["blocked_count"], ("GRAPH_OPS_SENIOR_ENGINEERING_REVIEW_REQUIRED",)),
+        (controls.get("evaluation_count", 0), ("GRAPH_OPS_CONTINUOUS_CONTROLS_READ_ONLY",)),
+        (controls.get("invalid_count", 0), ("GRAPH_OPS_CONTINUOUS_CONTROLS_REVIEW_REQUIRED",)),
     ]
     return sorted({*markers, *(marker for enabled, additions in rules if enabled for marker in additions)})
 
@@ -2519,6 +2691,8 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "saas_proof": p["saas_proof"],
         "jetbrains_handshake": p["jetbrains_handshake"],
         "release_readiness": p["release_readiness"],
+        "proof_delta_telemetry": p["proof_deltas"].get("telemetry", []),
+        "continuous_controls": p["continuous_controls"],
     }
     return {**core, "base_graph_sha256": base_graph_sha256, "graph_sha256": _sha(core), "mermaid": _mermaid(projected_nodes, projected_edges)}
 

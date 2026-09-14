@@ -91,6 +91,26 @@ def test_lineage_seal_is_atomic_and_rejects_invalid_steps(tmp_path: Path):
     assert rejected.exists() is False
 
 
+def test_candidate_binding_roundtrips_and_is_required_when_expected(tmp_path: Path):
+    steps = tmp_path / "steps.json"
+    steps.write_text(json.dumps(_baseline()), encoding="utf-8")
+    candidate = hashlib.sha256(b"candidate").hexdigest()
+    bound = tmp_path / "bound.lineage.json"
+
+    seal_graph_lineage("bound", "checkout", steps, bound, candidate_sha256=candidate)
+
+    assert verify_graph_lineage(bound, expected_candidate_sha256=candidate)["valid"] is True
+    mismatch = verify_graph_lineage(bound, expected_candidate_sha256="a" * 64)
+    assert mismatch["valid"] is False
+    assert any("differs from expected candidate" in error for error in mismatch["errors"])
+
+    legacy = tmp_path / "legacy.lineage.json"
+    seal_graph_lineage("legacy", "checkout", steps, legacy)
+    missing = verify_graph_lineage(legacy, expected_candidate_sha256=candidate)
+    assert missing["valid"] is False
+    assert any("required for the expected candidate" in error for error in missing["errors"])
+
+
 def test_forensics_finds_first_divergence_and_smallest_causal_recovery(tmp_path: Path):
     good = _write_lineage(tmp_path / "good.json", "good", _baseline())
     bad_steps = _baseline()

@@ -1,0 +1,24 @@
+name: supply-chain-integrity-v1
+language: python
+modules:
+  - name: supply_chain
+    path: factoryline/supply_chain.py
+    functions:
+      - name: evaluate_supply_chain
+        args: [root, manifest]
+        returns: dict
+      - name: verify_signed_supply_chain_attestation
+        args: [path, trust_root_path, root]
+        returns: dict
+      - name: supply_chain_status
+        args: [root]
+        returns: dict
+invariants:
+  - name: no_release_authority
+    forbid_pattern: "release_approval\\s*[:=]\\s*True|authority\\s*[:=]\\s*['\"](publish|release|deploy)"
+  - name: bounded_paths
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|os\\.environ"
+tests:
+  - path: tests/test_supply_chain.py
+    command: py -3.11 -m pytest -q tests/test_supply_chain.py
+schema: factory.ssat.v1

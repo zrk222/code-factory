@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.46.4"
+version = "0.46.5"
 description = "Independent local audit for AI-built code: catch hollow tests, security, recovery, compatibility, migration, and performance gaps before review."
 authors = [
   { name = "Richard Katz" },
@@ -75,6 +75,7 @@ Changelog = "https://github.com/zrk222/code-factory/releases"
 dev = [
   "hypothesis>=6.135,<7",
   "pytest>=8.0",
+  "pytest-asyncio>=0.24,<1",
   "tomli>=2.0; python_version < '3.11'",
 ]
 sigstore = ["sigstore>=4.4,<5"]
@@ -91,6 +92,7 @@ langgraph = [
 
 [tool.pytest.ini_options]
 pythonpath = ["tests", "."]
+asyncio_default_fixture_loop_scope = "function"
 
 [project.scripts]
 factory = "factoryline.cli:main"

@@ -722,3 +722,84 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-09 06:15] GATE plan full-stack-ux-harness-v1 approver=human tasks=3 sha=6d7d53d4f39dec32
 - [2026-09-09 06:31] GATE spec junie-factoryline-taxonomy-v1 approver=human strict=True sha=fb8fd802e7735c69
 - [2026-09-09 06:31] GATE plan junie-factoryline-taxonomy-v1 approver=human tasks=3 sha=fb8fd802e7735c69
+- [2026-09-12 13:16] GATE spec supply-chain-integrity-v1 approver=human strict=True sha=533fbaab36479c4d
+- [2026-09-12 13:22] GATE plan supply-chain-integrity-v1 approver=Codex local tasks=8 sha=822fdc563e23a23b
+- [2026-09-12 14:08] GATE spec context-efficiency-v1 approver=local-review strict=True sha=c535d740ece430ec
+- [2026-09-12 14:09] GATE spec context-efficiency-v1 approver=local-review strict=True sha=c535d740ece430ec
+- [2026-09-12 14:10] GATE plan context-efficiency-v1 approver=local-review tasks=7 sha=c535d740ece430ec
+- [2026-09-12 14:10] GATE code context-efficiency-v1 approver=local-review reviewer=personas/reviewer.md auditor=personas/security_auditor.md
+- [2026-09-12 14:44] GATE spec intake-parameters-v1 approver=human strict=True sha=c7c7449afe770d82
+- [2026-09-12 14:44] GATE plan intake-parameters-v1 approver=human tasks=5 sha=c7c7449afe770d82
+- [2026-09-12 14:52] GATE spec intake-parameters-v1 approver=human strict=True sha=c7c7449afe770d82
+- [2026-09-12 14:52] GATE plan intake-parameters-v1 approver=human tasks=5 sha=c7c7449afe770d82
+- [2026-09-12 12:29] GATE spec intake-admission-v1 approver=human strict=True sha=79deaf632233b997
+- [2026-09-12 12:29] GATE plan intake-admission-v1 approver=human tasks=6 sha=79deaf632233b997
+- [2026-09-12 12:49] GATE spec intake-admission-v1 approver=human strict=True validators=5/5 sha=d3f123b9f0870d26
+- [2026-09-12 12:49] GATE plan intake-admission-v1 approver=human tasks=6 sha=d3f123b9f0870d26
+- [2026-09-12 12:49] VERIFY intake-admission-v1 smoke=32_passed focused=63_passed full=1505_passed_7_skipped_2_warnings ruff=passed build=wheel_sdist twine=passed forgeline_assembly=dry_run_topology_verified
+- [2026-09-12 16:31] GATE spec intake-admission-v1 approver=human strict=True sha=79deaf632233b997
+- [2026-09-12 16:31] GATE plan intake-admission-v1 approver=human tasks=6 sha=79deaf632233b997
+
+- [2026-09-12 16:48] GATE spec intake-admission-v1 approver=human strict=True sha=d3f123b9f0870d26
+- [2026-09-12 16:48] GATE plan intake-admission-v1 approver=human tasks=6 sha=d3f123b9f0870d26
+- [2026-09-12 16:49] GATE plan intake-admission-v1 approver=human tasks=6 sha=d3f123b9f0870d26
+
+- [2026-09-12 14:46] GATE spec deep-audit-attestation-v1 approver=human strict=True validators=1/1 sha=853df60d2ead0c2c
+- [2026-09-12 14:46] GATE plan deep-audit-attestation-v1 approver=human tasks=8 sha=28496a7a8bd16492
+- [2026-09-12 14:46] VERIFY deep-audit-attestation-v1 focused=18_passed deep_audit_family=74_passed full=1513_passed_7_skipped_2_warnings ruff=passed audit=0_drift wheel_sdist=0.46.4 twine=passed wheel_module=present
+
+- [2026-09-12 18:31] GATE spec deep-audit-attestation-v1 approver=human strict=True sha=853df60d2ead0c2c
+- [2026-09-12 18:34] GATE plan deep-audit-attestation-v1 approver=human tasks=8 sha=4dd955baa00945cc
+- [2026-09-12 18:41] GATE plan deep-audit-attestation-v1 approver=human tasks=8 sha=28496a7a8bd16492
+
+- [2026-09-12 18:46] GATE spec deep-audit-attestation-v1 approver=human strict=True sha=28496a7a8bd16492
+- [2026-09-12 18:46] GATE plan deep-audit-attestation-v1 approver=human tasks=8 sha=28496a7a8bd16492
+- [2026-09-12 18:46] VERIFY deep-audit-attestation-v1 focused=18_passed deep_audit_family=74_passed full=1513_passed_7_skipped_2_warnings ruff=passed audit=0_drift wheel_sdist=0.46.4-r2 twine=passed wheel_module=present smoke=passed
+
+- [2026-09-12 19:41] GATE spec candidate-lineage-continuity-v1 approver=human strict=True sha=e1eb432e50500082
+- [2026-09-12 19:44] GATE spec candidate-lineage-continuity-v1 approver=human strict=True sha=049e4835c8b11e17
+- [2026-09-12 19:44] GATE plan candidate-lineage-continuity-v1 approver=human tasks=9 sha=252e8372d5548350
+- [2026-09-12 19:45] GATE plan candidate-lineage-continuity-v1 approver=human tasks=9 sha=3c268008b716c450
+- [2026-09-12 19:50] GATE plan candidate-lineage-continuity-v1 approver=human tasks=10 sha=3c268008b716c450
+- [2026-09-12 20:03] GATE spec candidate-lineage-continuity-v1 approver=human strict=True sha=3c268008b716c450
+- [2026-09-12 20:03] GATE plan candidate-lineage-continuity-v1 approver=human tasks=10 sha=3c268008b716c450
+- [2026-09-12 20:04] VERIFY candidate-lineage-continuity-v1 focused=20_passed full=1520_passed_7_skipped_2_warnings smoke=1_passed verify_tests=1_passed forge_qa=A_100pct ruff=passed spec_strict=passed validators=1_of_1 twine=all_artifacts_passed wheel_module=present authority=review_only
+
+- [2026-09-13 02:39] GATE spec enterprise-revocation-freshness-v1 approver=human strict=True sha=62b9958a83c6d36e
+- [2026-09-13 02:39] GATE plan enterprise-revocation-freshness-v1 approver=human tasks=8 sha=62b9958a83c6d36e
+- [2026-09-13 02:40] GATE spec enterprise-revocation-freshness-v1 approver=human strict=True sha=bdb346ed35f0e3bd
+- [2026-09-13 02:40] GATE plan enterprise-revocation-freshness-v1 approver=human tasks=8 sha=bdb346ed35f0e3bd
+- [2026-09-13 02:40] GATE spec enterprise-revocation-freshness-v1 approver=human strict=True sha=bdb346ed35f0e3bd
+- [2026-09-13 02:40] GATE plan enterprise-revocation-freshness-v1 approver=human tasks=8 sha=bdb346ed35f0e3bd
+- [2026-09-13 02:42] GATE spec enterprise-revocation-freshness-v1 approver=human strict=True sha=bdb346ed35f0e3bd
+- [2026-09-13 02:42] GATE plan enterprise-revocation-freshness-v1 approver=human tasks=8 sha=bdb346ed35f0e3bd
+
+- [2026-09-12 22:49] VERIFY enterprise-revocation-freshness-v1 focused=19_passed full=1526_passed_7_skipped_2_warnings forge_review=A_93.7 forge_arch_gate=passed forge_qa=A_93.7 forge_verify_tests=passed smoke=passed ruff=passed diff_check=passed spec_strict=passed validators=2_of_2 package=0.46.4_wheel_sdist_twine_pass wheel_module=present authority=none publish=not_requested
+
+- [2026-09-13 02:51] GATE spec enterprise-revocation-freshness-v1 approver=human strict=True sha=bfa844ad073bfd48
+- [2026-09-13 02:51] GATE plan enterprise-revocation-freshness-v1 approver=human tasks=8 sha=bfa844ad073bfd48
+- [2026-09-13 03:15] GATE spec stateless-mcp-request-v1 approver=human strict=True sha=ed55dbe84e08738a
+- [2026-09-13 03:15] GATE plan stateless-mcp-request-v1 approver=human tasks=10 sha=ed55dbe84e08738a
+- [2026-09-13 03:16] GATE spec stateless-mcp-request-v1 approver=human strict=True sha=1e919a3bd476872b
+- [2026-09-13 03:16] GATE plan stateless-mcp-request-v1 approver=human tasks=10 sha=1e919a3bd476872b
+- [2026-09-13 03:16] GATE spec stateless-mcp-request-v1 approver=human strict=True sha=05df6c6eafe8df48
+- [2026-09-13 03:16] GATE plan stateless-mcp-request-v1 approver=human tasks=10 sha=05df6c6eafe8df48
+- [2026-09-13 03:18] GATE spec stateless-mcp-request-v1 approver=human strict=True sha=05df6c6eafe8df48
+- [2026-09-13 03:18] GATE plan stateless-mcp-request-v1 approver=human tasks=10 sha=05df6c6eafe8df48
+- [2026-09-13 03:28] GATE spec graph-ops-proof-delta-telemetry-v1 approver=human strict=True sha=ccfc05101719f3ce
+- [2026-09-13 03:29] GATE plan graph-ops-proof-delta-telemetry-v1 approver=human tasks=7 sha=ccfc05101719f3ce
+- [2026-09-13 03:31] GATE spec graph-ops-proof-delta-telemetry-v1 approver=human strict=True sha=ccfc05101719f3ce
+- [2026-09-13 03:31] GATE plan graph-ops-proof-delta-telemetry-v1 approver=human tasks=7 sha=ccfc05101719f3ce
+- [2026-09-12 23:43] VERIFY enterprise-revocation-freshness-v1+stateless-mcp-request-v1+graph-ops-proof-delta-telemetry-v1 focused=33_passed_24_deselected full=1551_passed_7_skipped_2_warnings spec_strict=3_passed validators=8_of_8 forge_graph=QA_A_100_arch_gate=passed_verify_tests=passed_smoke=passed package=0.46.4_wheel_sdist_twine_pass ruff_new_modules=passed diff_check=passed mcp2_mrt=read_only_input_required authority=none publish=not_requested
+- [2026-09-13 00:19] VERIFY warning-fix+stateless-replay-hints-v1 readiness=2_passed_0_warnings focused_mcp=30_passed full=1561_passed_7_skipped_0_warnings spec_strict=passed validators=5_of_5 forge=QA_A_100_arch_gate=passed_verify_tests=passed_smoke=passed package=0.46.4_wheel_sdist_twine_pass ruff=passed authority=none publish=not_requested
+
+- [2026-09-13 04:10] GATE spec stateless-replay-hints-v1 approver=human strict=True sha=20f741b7ed6e74bf
+- [2026-09-13 04:10] GATE plan stateless-replay-hints-v1 approver=human tasks=7 sha=20f741b7ed6e74bf
+- [2026-09-13 04:11] GATE spec stateless-replay-hints-v1 approver=human strict=True sha=20f741b7ed6e74bf
+- [2026-09-13 04:11] GATE plan stateless-replay-hints-v1 approver=human tasks=7 sha=20f741b7ed6e74bf
+- [2026-09-13 05:00] VERIFY full-stack-ux-harness-contract-v1 focused=19_passed full=1566_passed_7_skipped_0_warnings spec_strict=6_of_6 validators=6_of_6 forge=review_B_arch_gate=passed_verify_tests=2_of_2_smoke=2_of_2 package=0.46.4_wheel_sdist_twine_pass ruff=passed authority=none publish=not_requested
+
+- [2026-09-13] VERIFY stateless-mcp2-release-gate completed_leg=hash_bound_local_receipt input_required_failed_lane_projection=passed focused_mcp=27_passed full=1571_passed_7_skipped ruff=passed package=0.46.4_wheel_sdist_twine_pass authority=none publish=not_requested
+
+- [2026-09-13 12:15] GATE spec revenueforge-integrity-v1 approver=human strict=True sha=e8524c020f88163f
+- [2026-09-13 12:17] GATE plan revenueforge-integrity-v1 approver=human tasks=6 sha=e8524c020f88163f

@@ -20,6 +20,9 @@ from .runtime_audit import runtime_audit_status
 from .deep_audit import deep_audit_status
 from .protocol_enums import MissionControlState
 from .release_integrity import release_integrity
+from .supply_chain import supply_chain_status
+from .context_efficiency import context_efficiency_status
+from .intake_parameters import intake_parameters_status
 
 
 SCHEMA = "factory.mission-control-status.v1"
@@ -71,6 +74,16 @@ def _collect_evidence(root: Path, spans: list | None = None) -> dict[str, Any]:
         if spans is not None:
             spans.append({"name": name, "elapsed_ns": elapsed,
                           "output_sha256": _fingerprint(evidence[name])})
+    # Keep the established seven-reader profile stable for latency baselines;
+    # this additional receipt is a read-only status projection, not a timed
+    # gate and must not perturb existing profiling receipts.
+    evidence["supply_chain"] = supply_chain_status(Path(root).resolve())
+    # Bounded cache metadata only; keep it outside the seven-reader timing
+    # baseline so the established performance receipt remains comparable.
+    evidence["context_efficiency"] = context_efficiency_status(Path(root).resolve())
+    # Keep the established seven-reader timing baseline stable; this envelope
+    # is an additional bounded, read-only projection.
+    evidence["intake_parameters"] = intake_parameters_status(Path(root).resolve())
     return evidence
 
 
@@ -106,6 +119,9 @@ def mission_control_status(root: Path) -> dict[str, Any]:
     repairs = evidence["repair_loops"]
     runtime = evidence["runtime_assurance"]
     release_workflow = evidence["release_workflow_integrity"]
+    supply_chain = evidence["supply_chain"]
+    context_efficiency = evidence["context_efficiency"]
+    intake_parameters = evidence["intake_parameters"]
     blockers = {
         "oracle_invalid": int(oracle.get("invalid_count", 0)),
         "oracle_weakening": int(oracle.get("blocked_drift_count", 0)),
@@ -116,6 +132,10 @@ def mission_control_status(root: Path) -> dict[str, Any]:
         "runtime_assurance_blocked": int(runtime.get("state") in {"BLOCKED", "INCOMPLETE"}),
         "deep_audit_blocked": int(evidence["deep_audit"].get("state") in {"BLOCKED", "INCOMPLETE"}),
         "release_workflow_blocked": int(release_workflow.get("applicable") is True and release_workflow.get("ok") is not True),
+        "supply_chain_blocked": int(supply_chain.get("state") in {"BLOCKED", "INCOMPLETE"}),
+        "context_efficiency_blocked": int(context_efficiency.get("state") == "BLOCKED"),
+        "intake_parameters_blocked": int(intake_parameters.get("state") == "BLOCKED"),
+        "intake_parameters_review_required": int(intake_parameters.get("state") == "REVIEW_REQUIRED"),
     }
     blocked = any(blockers.values())
     human_required = (
@@ -124,6 +144,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
         or runtime.get("state") == "READY_FOR_HUMAN_REVIEW"
         or int(lifecycle.get("review_required_count", 0)) > 0
         or int(repairs.get("receipt_count", 0)) > 0
+        or intake_parameters.get("state") == "REVIEW_REQUIRED"
     )
     state = (
         MissionControlState.BLOCKED.value
@@ -143,6 +164,14 @@ def mission_control_status(root: Path) -> dict[str, Any]:
             "next_action": (
                 "repair_release_workflow"
                 if blockers["release_workflow_blocked"]
+                else "repair_supply_chain_attestation"
+                if blockers["supply_chain_blocked"]
+                else "repair_context_efficiency_packet"
+                if blockers["context_efficiency_blocked"]
+                else "repair_intake_parameters"
+                if blockers["intake_parameters_blocked"]
+                else "review_intake_parameters"
+                if intake_parameters.get("state") == "REVIEW_REQUIRED"
                 else "repair_evidence_chain"
                 if blocked
                 else "named_human_review"
@@ -160,6 +189,9 @@ def mission_control_status(root: Path) -> dict[str, Any]:
                 "runtime_assurance_receipt",
                 "deep_audit_receipt",
                 "release_workflow_integrity",
+                "supply_chain_receipt",
+                "context_efficiency_packet",
+                "intake_parameters_envelope",
             ],
             "may_not": [
                 "alter_intent",

@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "name": "intake_parameters_fail_closed_and_read_only",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_intake_parameters.py','tests/test_mcp.py','tests/test_webmcp.py'])\nassert result==0\nprint('INTAKE_PARAMETERS_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "INTAKE_PARAMETERS_SMOKE_PASS",
+      "timeout_s": 120,
+      "must_fail_on_stub": true,
+      "covers": ["INTAKE_PARAMETERS_PROVENANCE", "INTAKE_PARAMETERS_BOUNDS", "INTAKE_PARAMETERS_DRIFT", "INTAKE_PARAMETERS_READ_ONLY"]
+    }
+  ]
+}

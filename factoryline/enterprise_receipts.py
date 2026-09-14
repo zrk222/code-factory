@@ -35,6 +35,9 @@ RECEIPT_PAYLOAD_TYPE = "application/vnd.factory.receipt.v2+json"
 POLICY_PAYLOAD_TYPE = "application/vnd.factory.policy.bundle.v1+json"
 REVOCATIONS_PAYLOAD_TYPE = "application/vnd.factory.revocations.v1+json"
 RESULT_SCHEMA = "factory.enterprise.result.v1"
+DEFAULT_MAX_REVOCATION_AGE_SECONDS = 86400
+MAX_REVOCATION_AGE_SECONDS = 604800
+MAX_REVOCATION_ENTRIES = 4096
 
 
 class EnterpriseReceiptError(RuntimeError):
@@ -305,7 +308,108 @@ def _revoked(revocations: dict, *, keyid: str, identity: str, receipt_ts: dateti
     return False
 
 
-def verify_receipt_v2(path: Path, trust_root_path: Path, policy_bundle_path: Path | None = None, revocations_path: Path | None = None) -> dict:
+def _revocation_timestamp(value: object, *, code: str, field: str) -> datetime:
+    """Parse a revocation timestamp while requiring an explicit timezone."""
+    if not isinstance(value, str):
+        raise EnterpriseReceiptError(code, f"{field} must be a timezone-aware timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise EnterpriseReceiptError(code, f"{field} must be a timezone-aware timestamp") from exc
+    if parsed.tzinfo is None:
+        raise EnterpriseReceiptError(code, f"{field} must be a timezone-aware timestamp")
+    return parsed.astimezone(timezone.utc)
+
+
+def _validate_revocations_payload(payload: dict) -> datetime:
+    """Validate the signed revocation snapshot and return its generation time."""
+    if payload.get("schema") != REVOCATIONS_SCHEMA:
+        raise EnterpriseReceiptError("E_INVALID_REVOCATIONS", f"expected {REVOCATIONS_SCHEMA}")
+    generated_at = _revocation_timestamp(payload.get("generated_at"), code="E_REVOCATION_FRESHNESS", field="generated_at")
+    entries = payload.get("entries")
+    if not isinstance(entries, list) or len(entries) > MAX_REVOCATION_ENTRIES:
+        raise EnterpriseReceiptError("E_INVALID_REVOCATIONS", f"entries must contain 0 to {MAX_REVOCATION_ENTRIES} objects")
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict) or not (isinstance(entry.get("keyid"), str) or isinstance(entry.get("identity"), str)):
+            raise EnterpriseReceiptError("E_INVALID_REVOCATIONS", f"entry {index} must identify a keyid or identity")
+        if "revoked_at" in entry:
+            _revocation_timestamp(entry["revoked_at"], code="E_INVALID_REVOCATIONS", field=f"entry {index} revoked_at")
+    return generated_at
+
+
+def _revocation_freshness(generated_at: datetime, *, now: datetime | None, max_age_seconds: int) -> int:
+    if not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool) or not 1 <= max_age_seconds <= MAX_REVOCATION_AGE_SECONDS:
+        raise EnterpriseReceiptError("E_REVOCATION_FRESHNESS", f"max_revocation_age_seconds must be 1 through {MAX_REVOCATION_AGE_SECONDS}")
+    current = datetime.now(timezone.utc) if now is None else now
+    if not isinstance(current, datetime) or current.tzinfo is None:
+        raise EnterpriseReceiptError("E_REVOCATION_FRESHNESS", "now must be a timezone-aware timestamp")
+    current = current.astimezone(timezone.utc)
+    age = int((current - generated_at).total_seconds())
+    if age < 0:
+        raise EnterpriseReceiptError("E_REVOCATION_FRESHNESS", "revocation snapshot is issued in the future")
+    if age > max_age_seconds:
+        raise EnterpriseReceiptError("E_REVOCATION_FRESHNESS", "revocation snapshot is stale")
+    return age
+
+
+def _verify_policy_status(payload: dict, *, trust_root: dict, policy_bundle_path: Path | None) -> str:
+    """Verify a declared policy bundle and return its evidence status."""
+    policy_digest = payload.get("policy_sha256")
+    if not policy_digest:
+        return "NOT_DECLARED"
+    if policy_bundle_path is None:
+        raise EnterpriseReceiptError("E_POLICY_REQUIRED", "receipt declares policy_sha256 but no bundle was supplied")
+    policy, _ = _verify_signed_document(
+        Path(policy_bundle_path),
+        payload_type=POLICY_PAYLOAD_TYPE,
+        schema=POLICY_BUNDLE_SCHEMA,
+        trust_root=trust_root,
+    )
+    if policy.get("policy_sha256") != policy_digest:
+        raise EnterpriseReceiptError("E_POLICY_DIGEST_MISMATCH", "receipt and policy bundle digests differ")
+    return "VERIFIED"
+
+
+def _verify_revocation_status(
+    *,
+    signature: dict,
+    receipt_ts: datetime,
+    trust_root: dict,
+    revocations_path: Path | None,
+    require_revocations: bool,
+    max_revocation_age_seconds: int,
+    now: datetime | None,
+) -> tuple[str, str, int | None]:
+    """Verify an optional or strict revocation snapshot and return its markers."""
+    if require_revocations and revocations_path is None:
+        raise EnterpriseReceiptError("E_REVOCATION_REQUIRED", "strict verification requires a signed revocation snapshot")
+    if revocations_path is None:
+        return "NOT_CHECKED", "NOT_CHECKED", None
+    revocations, _ = _verify_signed_document(
+        Path(revocations_path),
+        payload_type=REVOCATIONS_PAYLOAD_TYPE,
+        schema=REVOCATIONS_SCHEMA,
+        trust_root=trust_root,
+    )
+    generated_at = _validate_revocations_payload(revocations)
+    age = _revocation_freshness(generated_at, now=now, max_age_seconds=max_revocation_age_seconds) if require_revocations else None
+    freshness = "CURRENT" if require_revocations else "NOT_ASSERTED"
+    if _revoked(revocations, keyid=signature["keyid"], identity=signature["identity"], receipt_ts=receipt_ts):
+        raise EnterpriseReceiptError("E_SIGNER_REVOKED", "signer was revoked at receipt timestamp")
+    status = "FRESH_CHECKED" if require_revocations else "CHECKED"
+    return status, freshness, age
+
+
+def verify_receipt_v2(
+    path: Path,
+    trust_root_path: Path,
+    policy_bundle_path: Path | None = None,
+    revocations_path: Path | None = None,
+    *,
+    require_revocations: bool = False,
+    max_revocation_age_seconds: int = DEFAULT_MAX_REVOCATION_AGE_SECONDS,
+    now: datetime | None = None,
+) -> dict:
     """Verify DSSE, identity, policy, and revocation or raise EnterpriseReceiptError."""
     envelope = _read_json(Path(path))
     if envelope.get("schema") != DSSE_SCHEMA:
@@ -316,20 +420,16 @@ def verify_receipt_v2(path: Path, trust_root_path: Path, policy_bundle_path: Pat
     payload, signature, _ = _verify_envelope(envelope, expected_payload_type=RECEIPT_PAYLOAD_TYPE, trust_root=trust_root)
     validate_receipt_v2(payload)
     receipt_ts = _timestamp(payload["ts"])
-    policy_status = "NOT_DECLARED"
-    if payload.get("policy_sha256"):
-        if policy_bundle_path is None:
-            raise EnterpriseReceiptError("E_POLICY_REQUIRED", "receipt declares policy_sha256 but no bundle was supplied")
-        policy, _ = _verify_signed_document(Path(policy_bundle_path), payload_type=POLICY_PAYLOAD_TYPE, schema=POLICY_BUNDLE_SCHEMA, trust_root=trust_root)
-        if policy.get("policy_sha256") != payload["policy_sha256"]:
-            raise EnterpriseReceiptError("E_POLICY_DIGEST_MISMATCH", "receipt and policy bundle digests differ")
-        policy_status = "VERIFIED"
-    revocation_status = "NOT_CHECKED"
-    if revocations_path is not None:
-        revocations, _ = _verify_signed_document(Path(revocations_path), payload_type=REVOCATIONS_PAYLOAD_TYPE, schema=REVOCATIONS_SCHEMA, trust_root=trust_root)
-        if _revoked(revocations, keyid=signature["keyid"], identity=signature["identity"], receipt_ts=receipt_ts):
-            raise EnterpriseReceiptError("E_SIGNER_REVOKED", "signer was revoked at receipt timestamp")
-        revocation_status = "CHECKED"
+    policy_status = _verify_policy_status(payload, trust_root=trust_root, policy_bundle_path=policy_bundle_path)
+    revocation_status, revocation_freshness, revocation_age_seconds = _verify_revocation_status(
+        signature=signature,
+        receipt_ts=receipt_ts,
+        trust_root=trust_root,
+        revocations_path=revocations_path,
+        require_revocations=require_revocations,
+        max_revocation_age_seconds=max_revocation_age_seconds,
+        now=now,
+    )
     return {
         "schema": RESULT_SCHEMA,
         "verdict": "VERIFIED",
@@ -341,6 +441,9 @@ def verify_receipt_v2(path: Path, trust_root_path: Path, policy_bundle_path: Pat
         "keyid": signature["keyid"],
         "policy_status": policy_status,
         "revocation_status": revocation_status,
+        "revocation_freshness": revocation_freshness,
+        "revocation_age_seconds": revocation_age_seconds,
+        "authority": "none",
     }
 
 

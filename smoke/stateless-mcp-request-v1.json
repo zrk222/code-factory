@@ -1,0 +1,22 @@
+{
+  "checks": [
+    {
+      "name": "stateless_mcp_request",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_mcp_stateless.py']) == 0\nprint('STATELESS_MCP_REQUEST_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "STATELESS_MCP_REQUEST_PASS",
+      "timeout_s": 120,
+      "covers": [
+        "MCP_STATELESS_RESPONSE",
+        "MCP_STATELESS_STATE_REJECTED",
+        "MCP_STATELESS_REQUEST_TOO_LARGE",
+        "MCP_STATELESS_REQUEST_INVALID",
+        "MCP_STATELESS_REQUEST_PATH_REJECTED",
+        "REQUEST_SHA256",
+        "SERVER_STATE_NONE"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

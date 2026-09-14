@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "name": "context_efficiency_is_bounded_and_read_only",
+      "kind": "python",
+      "run": "import pytest\nresult=pytest.main(['-q','tests/test_context_efficiency.py','tests/test_assembly_read_efficiency.py'])\nassert result==0\nprint('CONTEXT_EFFICIENCY_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "CONTEXT_EFFICIENCY_SMOKE_PASS",
+      "timeout_s": 120,
+      "must_fail_on_stub": true,
+      "covers": ["CONTEXT_EFFICIENCY_PACKET", "CONTEXT_EFFICIENCY_CACHE", "CONTEXT_EFFICIENCY_DRIFT", "CONTEXT_EFFICIENCY_STATUS"]
+    }
+  ]
+}

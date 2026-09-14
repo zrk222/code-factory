@@ -12,6 +12,9 @@ factory revenue failure-matrix --root . --products products.yaml --evidence fail
 factory revenue policy-watch --root . --registry apple-policy-registry.json --snapshot apple-policy-snapshot.json --out .factory/revenueforge/my-app/policy-drift.json --json
 factory revenue memory-promote --root . --entry approved-lesson.json --out .factory/revenueforge/memory/restore-lesson.json --json
 factory revenue memory-query --root . --app-id com.example.app --journey restore --json
+factory revenue billing-reconcile --root . --products products.yaml --events billing-events.json --out .factory/revenueforge/my-app/billing-ledger.json --json
+factory revenue experiment-plan --root . --products products.yaml --experiment experiment.json --out .factory/revenueforge/my-app/experiment-plan.json --json
+factory revenue integrity --root . --products products.yaml --ledger .factory/revenueforge/my-app/billing-ledger.json --experiment .factory/revenueforge/my-app/experiment-plan.json --out .factory/revenueforge/my-app/integrity.json --json
 factory revenue appforge-design --root . --brief appforge-design-brief.json --out-dir .factory/appforge/design --json
 factory revenue app-review-gate --root . --contract app-review-contract.json --evidence app-review-evidence.json --out .factory/appforge/app-review.json --json
 ```
@@ -37,6 +40,9 @@ The generated receipt proves local scaffold content and deterministic checks. It
 - **Monetization Failure Matrix** requires observed results for cancellation, pending, unverified transactions, empty restore, duplicate/out-of-order notifications, refund/revocation, retry/grace, offline stale entitlement, and storefront/price mismatch. Every applicable scenario must pass before the matrix can be green.
 - **Policy Drift Watch** compares reviewed official-Apple source hashes. A changed source invalidates only its declared rule/app/artifact bindings and requires human reassessment; hash drift is not itself a legal or compliance conclusion.
 - **Evidence Memory** promotes only named-human-approved lessons backed by valid RevenueForge receipts. Retrieval is exact-app, exact-journey, expiry-aware, and cross-tenant disabled; conflicting active decisions are quarantined. A retrieved lesson recommends the next check but never substitutes for current-build evidence.
+- **Billing Integrity Ledger** reconciles verified StoreKit, Play Billing, and server observations. Exact retries collapse by idempotency key; conflicts block and suppress grant candidates; refunds and revocations deterministically make a prior entitlement inactive. It stores no customer identity and never grants access.
+- **Experiment Guard** compiles a hypothesis, cohort, metric, numeric guardrail, sample bound, and two-or-three-treatment plan. Agent proposals remain `AWAITING_HUMAN_APPROVAL`; separate approval moves them only to `READY_FOR_HUMAN_START`. Starting traffic, changing prices, and promoting a winner remain locked.
+- **Revenue Integrity Review** binds the current manifest to ledger and experiment receipts, detects manifest drift, and returns one remediation. Its `READY_FOR_HUMAN_REVIEW` result is local evidence, not a revenue, legal, provider, or App Review claim.
 
 Graph Ops shows these receipts read-only. It offers no button that can purchase, submit, publish, reply to a tester, change price, start an experiment, deploy, or access credentials.
 

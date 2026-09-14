@@ -72,3 +72,31 @@ The hardening prevents a local promotion decision from treating missing or
 malformed evidence as a pass. It cannot prove an LLM understood an unprovided
 intent, make a supplied report truthful, or replace independent security,
 device, provider, and human review.
+
+## Verification receipt (2026-09-12)
+
+The six-lane implementation and its release boundary were re-verified from the
+current checkout (`068ba75`) without provider or publication actions:
+
+- Focused regression gate: **189 passed** (`factoryline`, AppForge evidence and
+  submission, release integrity/preflight, assembly, runtime-audit lanes,
+  Codex metadata, and MCP surfaces).
+- Full repository suite: **1455 passed, 7 skipped, 2 warnings**. The warnings
+  are pytest-asyncio loop-scope configuration notices only.
+- SpecLine: strict lint **16/16** and validator mutation challenge **16/16**;
+  runtime-assurance plan has **12 atomic tasks**.
+- ForgeLine: six-lane smoke verifier **1/1**, with the known stub correctly
+  rejected; the persisted feature state is `smoked` and the next state remains
+  the human-controlled `ship` gate.
+- Release-train E2E: incomplete evidence rejected, strict Oracle-bound evidence
+  accepted, and stale receipt binding rejected.
+- Wheel: `factoryline_code_factory-0.46.4-py3-none-any.whl`, SHA-256
+  `20117bddf8b31f81c1365f8d094a2b324d33bcdbffdacf6ceb33a0d727ab29af`, passes
+  `twine check` and contains the
+  six runtime-audit adapters, AppForge mobile evidence, and release-contract
+  modules. An isolated install reports `factory 0.46.4` and imports those
+  modules successfully.
+
+These are local deterministic receipts, not native-device, provider-review,
+publication, deployment, signing, sandbox-isolation, or production-load
+approval. The supervised runner remains explicitly **not a sandbox**.

@@ -22,3 +22,16 @@ review; no background loop, arbitrary retry budget or schedule was introduced.
 
 Public release packaging, complete discovery documentation and publication tasks
 remain separate from this implementation slice.
+
+## Attestation freshness gate
+
+The deep-audit comparison now accepts optional independent DSSE attestations.
+Each attestation is checked offline against an operator-pinned trust root and the
+exact self-hash receipt it accompanies. Signer identity, complete target/canary
+coverage, plan/candidate/ruleset/canary bindings, timezone-aware timestamps and
+the bounded age window are verified before a comparison result is returned.
+`--require-attestation` requires both sides; missing, invalid, analyzer-self,
+future, expired or stale evidence returns a stable `E_DEEP_ATTESTATION_*` code.
+The legacy self-hash-only path remains available when no attestation is supplied.
+Neither path executes analyzers, applies repairs, approves a change, or grants
+release authority.

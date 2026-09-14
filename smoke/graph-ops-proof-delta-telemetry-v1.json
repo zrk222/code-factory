@@ -1,0 +1,21 @@
+{
+  "checks": [
+    {
+      "name": "graph_ops_proof_delta_telemetry",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_graph_ops.py', '-k', 'proof_delta']) == 0\nprint('GRAPH_OPS_PROOF_DELTA_TELEMETRY_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "GRAPH_OPS_PROOF_DELTA_TELEMETRY_PASS",
+      "timeout_s": 120,
+      "covers": [
+        "GRAPH_OPS_PROOF_DELTA_TELEMETRY_READ_ONLY",
+        "GRAPH_OPS_PROOF_DELTA_NO_GAIN_HALT",
+        "NO_GAIN_HALT",
+        "STALE_EVIDENCE_OR_UNCHANGED_CANDIDATE",
+        "authority_none",
+        "nextFactDerivedAction"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

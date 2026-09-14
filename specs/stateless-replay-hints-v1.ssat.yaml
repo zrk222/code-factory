@@ -1,0 +1,23 @@
+name: stateless-replay-hints-v1
+language: python
+modules:
+  - name: mcp_replay
+    path: factoryline/mcp_replay.py
+    functions:
+      - name: build_stateless_replay_hints
+        args: ["request_sha256: str", "response: object"]
+        returns: "dict[str, object]"
+        doc: "Build deterministic client-only retry and cache hints for one-shot MCP responses."
+dependencies: []
+tests:
+  - path: tests/test_mcp_replay.py
+    command: py -3.11 -m pytest -q tests/test_mcp_replay.py
+  - path: tests/test_mcp_stateless.py
+    command: py -3.11 -m pytest -q tests/test_mcp_stateless.py
+invariants:
+  - name: no-io-network-or-dynamic-execution
+    forbid_pattern: "(?i)(?:requests\\.|httpx\\.|urllib3\\.|socket\\.|open\\s*\\(|eval\\s*\\(|exec\\s*\\()"
+    scopes:
+      - module: mcp_replay
+        symbol: build_stateless_replay_hints
+        max_lines: 120

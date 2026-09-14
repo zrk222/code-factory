@@ -11,8 +11,10 @@ from typing import Any
 
 from .enterprise_receipts import EnterpriseReceiptError, verify_signed_document
 from .runtime_audit_common import (RuntimeAuditError, canonical_bytes, exact_keys, require_digest,
-    require_int, require_str, sha256_bytes, read_stable_json, parse_json_bytes)
+    require_int, require_str, require_bool, sha256_bytes, read_stable_json, parse_json_bytes)
 from .runtime_audit_policy import ENGINES, validate_lane_policy
+from .runtime_attestation import ISOLATION_MODES
+from .intake_parameters import verify_intake_binding
 
 PLAN_TYPE = "application/vnd.factory.runtime-audit-plan.v1+json"
 PLAN_SCHEMA = "factory.runtime-audit-plan.v1"
@@ -85,6 +87,7 @@ def verify_runtime_audit_plan(
     environment_digest: str,
     *,
     now: datetime | None = None,
+    require_intake: bool = False,
 ) -> dict[str, Any]:
     """Verify a signed, expiring six-lane plan, its trust pin, sources, scenario, and environment binding."""
     root = Path(workspace_root).resolve()
@@ -109,7 +112,7 @@ def verify_runtime_audit_plan(
     plan = verified["payload"]
     if plan != parsed_payload or read_stable_json(trust_path)[1] != trust_digest or read_stable_json(Path(path), max_string_length=1_048_576)[1] != envelope_digest:
         raise RuntimeAuditError("E_INPUT_CHANGED", "signed inputs changed while verifying")
-    exact_keys(plan, {"schema", "id", "candidate_sha256", "issued_at", "expires_at", "environment", "sources", "lanes", "counterfactual_mesh"})
+    exact_keys(plan, {"schema", "id", "candidate_sha256", "issued_at", "expires_at", "environment", "sources", "lanes", "counterfactual_mesh"}, optional={"runtime_boundary", "intake_parameters"})
     require_str(plan["id"], "id", maximum=128)
     require_digest(plan["candidate_sha256"], "candidate_sha256")
     issued = _time(plan["issued_at"], "issued_at")
@@ -140,6 +143,22 @@ def verify_runtime_audit_plan(
             raise RuntimeAuditError("E_ENVIRONMENT", "origins must be credential-free HTTP(S) origins")
     if len(set(origins)) != len(origins):
         raise RuntimeAuditError("E_DUPLICATE_ID", "duplicate origins")
+
+    # This optional block is the only way a signed plan can request a runtime
+    # boundary.  Older six-lane plans remain wire-compatible; new strict plans
+    # must make the requested assurance explicit before execution starts.
+    boundary = plan.get("runtime_boundary")
+    if boundary is not None:
+        if not isinstance(boundary, dict):
+            raise RuntimeAuditError("E_RUNTIME_BOUNDARY", "runtime_boundary must be an object")
+        exact_keys(boundary, {"requested_isolation", "attestation_required"})
+        if boundary["requested_isolation"] not in ISOLATION_MODES:
+            raise RuntimeAuditError("E_RUNTIME_BOUNDARY", "unsupported requested isolation")
+        require_bool(boundary["attestation_required"], "runtime_boundary.attestation_required")
+        if boundary["attestation_required"] is not True:
+            raise RuntimeAuditError("E_RUNTIME_BOUNDARY", "runtime boundary evidence must be required explicitly")
+        if boundary["requested_isolation"] in {"isolated_worker", "hardened_vm"} and boundary["attestation_required"] is not True:
+            raise RuntimeAuditError("E_RUNTIME_BOUNDARY", "independent isolation requires an attestation")
 
     sources = plan["sources"]
     if not isinstance(sources, list) or not 1 <= len(sources) <= 128:
@@ -207,6 +226,36 @@ def verify_runtime_audit_plan(
             raise RuntimeAuditError("E_NEGATIVE_CONTROL", "target and known-bad commands must be distinct")
     if seen_kinds != set(LANES):
         raise RuntimeAuditError("E_LANES", f"required lane kinds are {list(LANES)}")
+    intake_binding = plan.get("intake_parameters")
+    if intake_binding is None:
+        if require_intake:
+            raise RuntimeAuditError("E_INTAKE_BINDING_REQUIRED", "strict runtime admission requires a signed intake_parameters binding")
+    else:
+        if not isinstance(intake_binding, dict):
+            raise RuntimeAuditError("E_INTAKE_BINDING_INVALID", "intake_parameters must be an object")
+        exact_keys(intake_binding, {"path", "parameter_sha256", "external_effects"})
+        binding_path = require_str(intake_binding["path"], "intake_parameters.path", maximum=512)
+        if Path(binding_path).is_absolute() or PureWindowsPath(binding_path).drive or ".." in binding_path.replace("\\", "/").split("/"):
+            raise RuntimeAuditError("E_INTAKE_BINDING_INVALID", "intake_parameters.path must remain workspace-relative")
+        binding_digest = require_digest(intake_binding["parameter_sha256"], "intake_parameters.parameter_sha256")
+        effects = require_str(intake_binding["external_effects"], "intake_parameters.external_effects", maximum=32)
+        if effects not in {"local_only", "human_controlled"}:
+            raise RuntimeAuditError("E_INTAKE_BINDING_INVALID", "intake_parameters.external_effects is unsupported")
+        scope_paths = [item["path"] for item in sources]
+        max_wall = sum(item["timeout_seconds"] for item in lanes)
+        binding = verify_intake_binding(
+            root,
+            Path(binding_path),
+            scope_paths=scope_paths,
+            required_lanes=list(LANES),
+            budgets={"max_wall_seconds": max_wall},
+            external_effects=effects,
+            expires_at=plan["expires_at"],
+            binding_sha256=binding_digest,
+        )
+        if not binding.get("ok"):
+            first = (binding.get("errors") or [{"code": "E_INTAKE_PARAMETER_DRIFT", "detail": "intake binding failed"}])[0]
+            raise RuntimeAuditError(str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")), str(first.get("detail", "intake binding failed")))
     return {
         "schema": "factory.runtime-audit-plan-verification.v1",
         "verification": verified["verification"],
@@ -214,5 +263,6 @@ def verify_runtime_audit_plan(
         "trust_root_sha256": expected_trust,
         "environment_digest": digest,
         "plan": plan,
+        "intake_parameters": intake_binding,
         "authority": "none",
     }

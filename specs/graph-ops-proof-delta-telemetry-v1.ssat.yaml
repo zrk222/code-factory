@@ -1,0 +1,18 @@
+name: graph-ops-proof-delta-telemetry-v1
+language: python
+modules:
+  - name: proof_delta_telemetry
+    path: factoryline/proof_delta_telemetry.py
+    functions:
+      - name: build_proof_delta_telemetry
+        args: ["verification: dict[str, object]", "proof_delta_sha256: str"]
+        returns: "dict[str, object]"
+        doc: "Build a deterministic, authority-free Proof-Delta telemetry record."
+dependencies: []
+invariants:
+  - name: no-execution-or-network
+    forbid_pattern: "(?i)(?:requests\\.|httpx\\.|urllib3\\.|socket\\.|eval\\s*\\(|exec\\s*\\()"
+    scopes:
+      - module: proof_delta_telemetry
+        symbol: build_proof_delta_telemetry
+        max_lines: 80

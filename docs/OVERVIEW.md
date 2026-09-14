@@ -15,6 +15,16 @@ known, what is missing, and the one fact-derived next action.
 - **Clarifies the contract before automation compounds it.** `factory prd grill
   PRD.md --root .` creates a capped, source-bound question sheet with answer
   stubs. It does not rewrite the PRD, invent answers, or authorize a build.
+- **Pins down the operating envelope before a worker starts.** `factory intake
+  parameters seal|verify|status` binds mode, risk, budgets, scope, external
+  effects, provenance, expiry, and the complete six-lane runtime audit to the
+  verified human intake. Agent-proposed values remain advisory; drift,
+  widening, and incomplete lanes fail closed.
+- **Keeps every consumer on the same intent.** Runtime audit, agent admission,
+  proof handoff, Proof Review, and release preflight can require the sealed
+  intake digest. A checkpoint fix may be offered to an external harness only as
+  an in-scope, hash-bound, named-and-expiring allowance; CF rechecks it and
+  never applies it or treats it as approval.
 - **Makes delivery state legible.** Factory Studio, Graph Ops, and the VS Code
   and JetBrains integrations present requirements, gates, proofs, and blocked
   work in one local, read-only view.
@@ -22,6 +32,12 @@ known, what is missing, and the one fact-derived next action.
   state lineage, identifies the first semantic divergence, detects stale reads,
   unsafe parallel writes, and repeated effects, then previews the smallest
   human-reviewed recovery fork without executing it.
+- **Authenticates deep-audit observations without pretending they are approval.**
+  An independent verifier can sign a receipt-bound DSSE attestation; CF checks
+  the operator-pinned signer, complete report coverage, and bounded freshness
+  offline before strict comparisons. Invalid, stale, or analyzer-self evidence
+  fails closed, while the result remains `authority: none` and requires human
+  review.
 - **Chooses the smallest repair that still carries complete proof.**
   `factory proofsearch` verifies supplied patch and receipt hashes, required
   gates, mutation results, scope, and safety declarations across 2 through 12
@@ -48,9 +64,18 @@ known, what is missing, and the one fact-derived next action.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.
+- **Carries release integrity with the candidate.** The optional supply-chain
+  receipt binds source, dependencies, SBOM/VEX and licence policy, repeated
+  builds, and archive secret/path checks. Drift is blocked before a human
+  release review; the receipt never claims external approval.
 - **Avoids unnecessary repeat work.** Content-addressed proof reuse can route a
   matching read-only validation to RUN, REUSE, SKIP, or BLOCK, preserving the
   reason and paired savings evidence instead of silently skipping a check.
+- **Makes hand-offs fast without weakening proof.** Context Efficiency builds a
+  bounded, priority-ordered packet from stable source hashes, reuses exact
+  request/source matches, and exposes only estimated token accounting. Drift,
+  traversal, symlinks, and secret-shaped material fail closed; the packet never
+  executes code or changes a gate.
 - **Turns a diff into a reviewable proof plan.** `factory change review` joins
   explicit change impact, stale proofs, coverage gaps, and existing risk policy
   into one analysis-only reviewer packet and Mermaid map.

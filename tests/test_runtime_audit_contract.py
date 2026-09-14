@@ -10,6 +10,8 @@ import pytest
 from factoryline.enterprise_receipts import generate_key_material, sign_payload
 from factoryline.runtime_audit_common import RuntimeAuditError, canonical_bytes, sha256_bytes
 from factoryline.runtime_audit_contract import PLAN_SCHEMA, PLAN_TYPE, verify_runtime_audit_plan
+from factoryline.intake_parameters import REQUIRED_AUDIT_LANES
+from test_intake_admission import _intake
 
 D = hashlib.sha256(b"x").hexdigest()
 
@@ -26,7 +28,8 @@ def _configs():
 
 
 def signed_plan(tmp_path: Path):
-    source = tmp_path / "candidate.txt"; source.write_text("candidate", encoding="utf-8")
+    source = tmp_path / "candidate.txt"
+    source.write_text("candidate", encoding="utf-8")
     raw = source.read_bytes()
     sources = [{"path": "candidate.txt", "sha256": sha256_bytes(raw), "bytes": len(raw)}]
     engines = {"stateful_invariant": "hypothesis", "tenant_isolation": "runtime_http_matrix", "failure_recovery": "approved_fault_runner", "consumer_compatibility": "pact_verifier", "migration_integrity": "database_rehearsal", "performance_regression": "approved_load_runner"}
@@ -36,8 +39,10 @@ def signed_plan(tmp_path: Path):
         plan["lanes"].append({"id": kind.replace("_", "-"), "kind": kind, "engine": engines[kind], "engine_version": "1", "timeout_seconds": 5, "target_argv": ["python", "runner.py", kind, "{artifact}"], "known_bad_argv": ["python", "runner.py", kind, "bad", "{artifact}"], "expected_negative_code": {"stateful_invariant": "STATEFUL_INVARIANT_VIOLATION", "tenant_isolation": "TENANT_ISOLATION_VIOLATION", "failure_recovery": "RECOVERY_INVARIANT_VIOLATION", "consumer_compatibility": "CONSUMER_CONTRACT_BROKEN", "migration_integrity": "MIGRATION_INTEGRITY_VIOLATION", "performance_regression": "PERFORMANCE_OR_RESOURCE_REGRESSION"}[kind], "config": config})
     material = generate_key_material(out_dir=tmp_path/"keys", keyid="operator", identity="operator@example.test", issuer="https://issuer.example.test")
     envelope = sign_payload(plan, payload_type=PLAN_TYPE, private_key_path=Path(material["private_key"]), keyid=material["keyid"], identity=material["identity"], issuer=material["issuer"])
-    plan_path = tmp_path/"plan.json"; plan_path.write_text(json.dumps(envelope), encoding="utf-8")
-    trust = Path(material["trust_root"]); trust_sha = sha256_bytes(trust.read_bytes())
+    plan_path = tmp_path/"plan.json"
+    plan_path.write_text(json.dumps(envelope), encoding="utf-8")
+    trust = Path(material["trust_root"])
+    trust_sha = sha256_bytes(trust.read_bytes())
     return plan_path, trust, trust_sha, plan
 
 
@@ -56,3 +61,32 @@ def test_contract_rejects_environment_source_and_signature_drift(tmp_path):
         verify_runtime_audit_plan(plan_path, trust, trust_sha, tmp_path, D)
     with pytest.raises(RuntimeAuditError, match="E_TRUST_ROOT_DRIFT"):
         verify_runtime_audit_plan(plan_path, trust, "0"*64, tmp_path, D)
+
+
+def test_strict_runtime_plan_requires_authoritative_intake_binding(tmp_path):
+    plan_path, trust, trust_sha, _ = signed_plan(tmp_path)
+    with pytest.raises(RuntimeAuditError, match="E_INTAKE_BINDING_REQUIRED"):
+        verify_runtime_audit_plan(plan_path, trust, trust_sha, tmp_path, D, require_intake=True)
+
+
+def test_runtime_plan_binding_matches_scope_digest_and_six_lanes(tmp_path):
+    intake_path, _ = _intake(tmp_path, scope=["candidate.txt"])
+    plan_path, trust, trust_sha, plan = signed_plan(tmp_path)
+    intake = json.loads(intake_path.read_text(encoding="utf-8"))
+    plan["intake_parameters"] = {
+        "path": intake_path.relative_to(tmp_path).as_posix(),
+        "parameter_sha256": intake["parameter_sha256"],
+        "external_effects": "local_only",
+    }
+    envelope = sign_payload(
+        plan,
+        payload_type=PLAN_TYPE,
+        private_key_path=tmp_path / "keys" / "operator.private.pem",
+        keyid="operator",
+        identity="operator@example.test",
+        issuer="https://issuer.example.test",
+    )
+    plan_path.write_text(json.dumps(envelope), encoding="utf-8")
+    result = verify_runtime_audit_plan(plan_path, trust, trust_sha, tmp_path, D, require_intake=True)
+    assert result["intake_parameters"]["parameter_sha256"] == intake["parameter_sha256"]
+    assert set(result["plan"]["lanes"][index]["kind"] for index in range(6)) == set(REQUIRED_AUDIT_LANES)

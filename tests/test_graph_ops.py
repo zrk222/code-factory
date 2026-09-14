@@ -80,6 +80,46 @@ def test_graph_ops_marks_stale_proof_and_prioritizes_rerun_without_execution(tmp
     assert "GRAPH_OPS_PROOF_HASH_STATUS" in snapshot["markers"]
 
 
+def test_graph_ops_projects_proof_delta_no_gain_halt_telemetry(tmp_path: Path):
+    from test_mission_graph import _pipeline
+    from test_proof_delta import _candidate as make_candidate, _failure
+    from factoryline.proof_delta import create_proof_delta, verify_proof_delta
+    from factoryline.proof_delta_telemetry import build_proof_delta_telemetry
+
+    mission = _pipeline(tmp_path)
+    prior = make_candidate(tmp_path, "prior.json", mission, "a" * 64, "same.txt")
+    repair = make_candidate(tmp_path, "repair.json", mission, "b" * 64, "same.txt")
+    failure = _failure(tmp_path, mission)
+    delta = tmp_path / ".factory" / "proof-deltas" / "halt.json"
+    create_proof_delta(
+        tmp_path, Path(mission["path"]), prior, repair, failure,
+        mission["completion_contract"]["criteria"][0]["id"], delta,
+    )
+
+    snapshot = graph_ops_snapshot(tmp_path)
+
+    assert snapshot["facts"]["proof_delta_no_gain_halt_count"] == 1
+    assert snapshot["facts"]["proof_delta_telemetry_count"] == 1
+    assert "GRAPH_OPS_PROOF_DELTA_TELEMETRY_READ_ONLY" in snapshot["markers"]
+    assert "GRAPH_OPS_PROOF_DELTA_NO_GAIN_HALT" in snapshot["markers"]
+    telemetry = snapshot["proof_delta_telemetry"][0]
+    assert build_proof_delta_telemetry(verify_proof_delta(tmp_path, delta), telemetry["proofDeltaSha256"]) == telemetry
+    assert telemetry["schema"] == "factory.graph-ops.proof-delta-telemetry.v1"
+    assert telemetry["nodeId"] == "proof_delta_guard"
+    assert telemetry["status"] == "NO_GAIN_HALT"
+    assert telemetry["blocker"]["type"] == "STALE_EVIDENCE_OR_UNCHANGED_CANDIDATE"
+    assert telemetry["blocker"]["candidateHash"] == "b" * 64
+    assert telemetry["blocker"]["evidenceDigest"].startswith("sha256:")
+    assert telemetry["proofDebt"]
+    assert "modified implementation candidate" in telemetry["nextFactDerivedAction"]
+    guard = next(node for node in snapshot["nodes"] if node["kind"] == "proof_delta_guard")
+    assert guard["facts"] == telemetry
+    blocker = next(node for node in snapshot["nodes"] if node["kind"] == "proof_delta_blocker")
+    assert blocker["facts"]["candidateHash"] == "b" * 64
+    assert any(edge["target"] == guard["id"] and edge["relation"] == "projects_telemetry" for edge in snapshot["edges"])
+    assert snapshot["authority"]["execution"] is False
+
+
 def test_graph_ops_impact_maps_only_explicit_changed_input_edges_to_stale_reruns(tmp_path: Path, capsys):
     input_file = tmp_path / "input.txt"
     output_file = tmp_path / "output.txt"

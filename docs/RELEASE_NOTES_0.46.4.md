@@ -4,8 +4,8 @@ Code Factory 0.46.4 makes the review story easier to understand while keeping
 the authority boundary hard. This is a patch release for the additive Junie
 handoff work and the public explanation of workflow performance.
 
-6 mandatory audit lanes. 136 coded rejection conditions. One human-owned release decision.
-The source inventory remains **81 lane-specific and 55 cross-cutting**
+6 mandatory audit lanes. 140 coded rejection conditions. One human-owned release decision.
+The source inventory now reports **81 lane-specific and 59 cross-cutting**
 conditions; a project executes only the checks its approved
 scope and configured runners can support.
 

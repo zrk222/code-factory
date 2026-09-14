@@ -4,6 +4,7 @@ from pathlib import Path
 
 from factoryline.graph_ops import graph_ops_snapshot
 from factoryline.incremental_scheduler import plan_incremental
+from factoryline.runtime_attestation import capture_supervised_attestation
 from factoryline.senior_engineering import senior_engineering_projection
 
 
@@ -66,3 +67,27 @@ def test_projection_reads_failure_brief_as_review_only_evidence(tmp_path: Path):
     assert result["receipt_count"] == 1
     assert result["invalid_count"] == 0
     assert result["receipts"][0]["schema"] == "factory.failure-brief.v1"
+
+
+def test_projection_surfaces_runtime_boundary_attestation_and_detects_tamper(tmp_path: Path):
+    directory = tmp_path / ".factory" / "senior"
+    directory.mkdir(parents=True)
+    attestation = capture_supervised_attestation(
+        attestation_id="boundary-graph-001",
+        candidate_sha256=hashlib.sha256(b"candidate").hexdigest(),
+        plan_sha256=hashlib.sha256(b"plan").hexdigest(),
+        environment_sha256=hashlib.sha256(b"environment").hexdigest(),
+    )
+    path = directory / "runtime-boundary.json"
+    path.write_text(json.dumps(attestation), encoding="utf-8")
+    result = senior_engineering_projection(tmp_path)
+    assert result["invalid_count"] == 0
+    assert result["receipts"][0]["status"] == "SUPERVISED_ONLY"
+    assert result["receipts"][0]["attestation_sha256"] == attestation["attestation_sha256"]
+
+    tampered = json.loads(path.read_text(encoding="utf-8"))
+    tampered["observations"]["platform"] = "tampered"
+    path.write_text(json.dumps(tampered), encoding="utf-8")
+    failed = senior_engineering_projection(tmp_path)
+    assert failed["invalid_count"] == 1
+    assert failed["errors"][0]["code"] == "SELF_HASH_MISMATCH"

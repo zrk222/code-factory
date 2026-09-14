@@ -1,4 +1,10 @@
-"""Local stdio-only MCP adapter over deterministic Graph Ops facts."""
+"""Local read-only MCP adapter over deterministic Graph Ops facts.
+
+The normal transport is a newline-delimited stdio loop.  A separate one-shot
+stateless request helper is available for CI and HTTP bridges that cannot keep
+an MCP session: every request carries its own JSON-RPC method and parameters,
+and no server-side session or cursor is accepted or retained.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -20,6 +26,7 @@ from .proof_delta import proof_delta_status
 from .proof_reuse import verify_proof_receipt
 from .prd_grill import verify_prd_grill
 from .intake_grill import intake_status
+from .intake_parameters import intake_parameters_status
 from .gauntlet import gauntlet_status
 from .agent_license import AgentLicenseError, derive_license, license_projection, normalize_agent_identity
 from .combine import combine_projection
@@ -50,12 +57,18 @@ from .operations_control import operations_control_projection
 from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
 from .mission_control_status import mission_control_status
+from .context_efficiency import context_efficiency_status
 from .runtime_audit import runtime_audit_status
 from .deep_audit import deep_audit_status
 from .codex_metadata import MetadataAuditError, audit_metadata
 from .saas_proof import saas_proof_projection
 from .junie_taxonomy import JunieTaxonomyError, junie_taxonomy, validate_junie_contribution
 from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
+from .audit_rule_search import AuditRuleSearchError, search_audit_rules
+from .first_lap import FirstLapError, first_lap_status
+from .agui import AguiError, build_review_events
+from .mcp_mrt import McpMrtError, release_gate_completed, release_gate_input_required
+from .mcp_replay import build_stateless_replay_hints
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -79,6 +92,7 @@ _READ_ONLY_ANNOTATIONS = {
 }
 _MAX_RECEIPT_BYTES = 262_144
 _MAX_RECEIPTS = 250
+_MAX_STATELESS_REQUEST_BYTES = 65_536
 _RECEIPT_ROOTS = (
     Path("receipts"),
     Path(".factory/proofs"),
@@ -92,6 +106,7 @@ _RECEIPT_ROOTS = (
     Path(".factory/proof-deltas"),
     Path(".factory/intake-grills"),
     Path(".factory/intake-confirmations"),
+    Path(".factory/intake-parameters"),
     Path(".factory/gauntlets"),
     Path(".factory/agent-licenses"),
     Path(".factory/combines"),
@@ -104,6 +119,7 @@ _RECEIPT_ROOTS = (
     Path(".factory/operations-control"),
     Path(".factory/lifecycle"),
     Path(".factory/repair-loops"),
+    Path(".factory/first-lap"),
 )
 
 
@@ -132,6 +148,18 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.status",
             "description": "Return the local Code Factory MCP boundary, version, workspace root, and tool inventory. Read only.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.first_lap_status",
+            "description": "Read the initialized First Lap contract, generated-file integrity, and next deterministic CLI steps. It never executes journeys, opens holdouts, changes source, or grants release authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.agui_review_events",
+            "description": "Return a bounded, deterministic AGUI-style controlled review event stream for Mission Control and IDE cards. It maps existing local status only; it never executes work, captures prompts, grants approval, or contacts a provider.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -465,6 +493,18 @@ def _tool_definitions() -> list[dict[str, object]]:
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
+            "name": "factory.context_efficiency_status",
+            "description": "Read bounded context-packet cache metadata and estimated token budgets. It never executes sources, changes intent, or grants authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.intake_parameters_status",
+            "description": "Read bounded intake operating parameters, provenance, expiry, and canonical six-lane coverage. It never changes intent, authorizes execution, or grants provider access.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
             "name": "factory.deep_audit_status",
             "description": "Read local deep-audit blockers and repair guidance. Self-hash only, not signer authentication or freshness. Never executes, repairs or approves.",
             "inputSchema": no_args,
@@ -474,6 +514,25 @@ def _tool_definitions() -> list[dict[str, object]]:
             "name": "factory.runtime_audit_status",
             "description": "Read the latest self-hash-verified six-lane runtime assurance result and actionable findings. It never runs an audit or grants release authority.",
             "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.search_audit_rules",
+            "description": "Search the bounded six-lane rejection inventory to select relevant rules without executing an audit or changing a gate.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "lane": {"type": "string", "enum": [
+                        "stateful_workflows", "authorization_tenant_isolation", "failure_recovery",
+                        "api_consumer_compatibility", "migration_data_integrity", "performance_resources",
+                    ]},
+                    "includeCrossCutting": {"type": "boolean", "default": True},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
@@ -555,11 +614,31 @@ def _tool_definitions() -> list[dict[str, object]]:
         },
         {
             "name": "factory.release_decision",
-            "description": "Explain one strict local release decision without contacting a provider. It distinguishes local workflow or evidence blocks from unobserved external gates and never publishes, signs, deploys, repairs, or accesses credentials.",
+            "description": "Project a stateless MCP2 release-gate challenge or validate a submitted human decision into a local hash-bound receipt. It never approves a provider release, publishes, signs, deploys, repairs, or accesses credentials.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"feature": {"type": "string", "description": "1-64 lowercase letters, digits, dots, underscores, or hyphens"}},
+                "properties": {
+                    "feature": {"type": "string", "description": "1-64 lowercase letters, digits, dots, underscores, or hyphens"},
+                    "human_input": {
+                        "type": "object",
+                        "description": "Optional stateless second-leg human decision; returns a local receipt only.",
+                        "properties": {
+                            "decision": {"type": "string", "enum": ["APPROVE_RELEASE", "REJECT_RELEASE", "REQUEST_REPAIR_RETRY"]},
+                            "reviewerIdentity": {"type": "string", "minLength": 1},
+                            "reviewerNotes": {"type": "string"},
+                            "acknowledgedProofDebt": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["decision", "reviewerIdentity"],
+                        "additionalProperties": False,
+                    },
+                    "tool_call_id": {"type": "string", "description": "Required with human_input: binding to the input_required toolCallId."},
+                    "proof_card_hash": {"type": "string", "description": "Required with human_input: binding to the input_required proofCardHash."},
+                },
                 "required": ["feature"],
+                "allOf": [{
+                    "if": {"required": ["human_input"]},
+                    "then": {"required": ["tool_call_id", "proof_card_hash"]},
+                }],
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -1028,6 +1107,36 @@ def _proof_delta_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _first_lap_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.first_lap_status accepts no arguments")
+    try:
+        status = first_lap_status(root)
+    except FirstLapError as exc:
+        raise McpError(str(exc), exc.code) from exc
+    return {
+        "marker": "MCP_FIRST_LAP_STATUS_READ_ONLY",
+        "status": status,
+        "scope": "Read-only First Lap contract and file-integrity projection; no journey, holdout, agent, provider, release, or publication action ran.",
+    }
+
+
+def _agui_review_events(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.agui_review_events accepts no arguments")
+    try:
+        status = first_lap_status(root)
+        events = build_review_events(status, run_id="local-review", surface="mission_control")
+    except (FirstLapError, AguiError) as exc:
+        raise McpError(str(exc), getattr(exc, "code", "MCP_AGUI_REJECTED")) from exc
+    return {
+        "marker": "MCP_AGUI_REVIEW_EVENTS_READ_ONLY",
+        "schema": "factory.agui.events.v1",
+        "events": events,
+        "scope": "Controlled/declarative review events derived from local First Lap status; no agent, execution, approval, provider, credential, or transport action ran.",
+    }
+
+
 def _cdte_status(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) - {"feature"}:
         raise McpError("factory.cdte_status accepts only optional feature")
@@ -1136,7 +1245,8 @@ def _combine_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 def _ide_playbook(root: Path, arguments: object) -> dict[str, object]:
-    if arguments != {}: raise McpError("factory.ide_playbook accepts no arguments")
+    if arguments != {}:
+        raise McpError("factory.ide_playbook accepts no arguments")
     return ide_playbook()
 
 
@@ -1271,6 +1381,28 @@ def _mission_control_status(root: Path, arguments: object) -> dict[str, object]:
         "action_summary": "Read the shared human and agent control-plane state without granting an agent, human, or provider any action authority.",
         "status": mission_control_status(root),
         "scope": "Read-only local control-plane facts. No agent execution, repair, approval, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _context_efficiency_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.context_efficiency_status accepts no arguments")
+    return {
+        "marker": "CONTEXT_EFFICIENCY_MCP_READ_ONLY",
+        "action_summary": "Read bounded context-packet/cache metadata and estimated token accounting without reading source bodies or running any action.",
+        "status": context_efficiency_status(root),
+        "scope": "Read-only local metadata. No source execution, approval, repair, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _intake_parameters_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.intake_parameters_status accepts no arguments")
+    return {
+        "marker": "INTAKE_PARAMETERS_MCP_READ_ONLY",
+        "action_summary": "Read bounded intake parameters, provenance, expiry, and six-lane coverage without changing the intake or granting authority.",
+        "status": intake_parameters_status(root),
+        "scope": "Read-only local metadata. No intent change, execution, approval, repair, merge, publication, deployment, credential, or connector action ran.",
     }
 
 
@@ -1422,16 +1554,36 @@ def _release_readiness_status(root: Path, arguments: object) -> dict[str, object
 
 
 def _release_decision_status(root: Path, arguments: object) -> dict[str, object]:
-    if not isinstance(arguments, dict) or set(arguments) != {"feature"}:
-        raise McpError("factory.release_decision requires exactly one feature argument", marker="RELEASE_DECISION_INPUT_REJECTED")
+    allowed = {"feature", "human_input", "tool_call_id", "proof_card_hash"}
+    if not isinstance(arguments, dict) or "feature" not in arguments or set(arguments) - allowed:
+        raise McpError("factory.release_decision requires feature and only approved MRT fields", marker="RELEASE_DECISION_INPUT_REJECTED")
     try:
         card = release_decision_card(root, arguments["feature"])
     except ValueError as exc:
         raise McpError(str(exc), marker="RELEASE_DECISION_INPUT_REJECTED") from exc
+    human_input = arguments.get("human_input")
+    if human_input is not None:
+        try:
+            completed = release_gate_completed(
+                card,
+                human_input,
+                tool_call_id=arguments.get("tool_call_id") if "tool_call_id" in arguments else None,
+                proof_card_hash=arguments.get("proof_card_hash") if "proof_card_hash" in arguments else None,
+            )
+        except McpMrtError as exc:
+            raise McpError(str(exc), marker=exc.marker) from exc
+        return {
+            "marker": "MCP_RELEASE_DECISION_COMPLETED",
+            "action_summary": "Validate and hash-seal one human decision against the local proof-card challenge without executing release work.",
+            "card": card,
+            "mcp2": completed,
+            "scope": "Read-only local acknowledgement; provider approval, publication, deployment, signing, credentials, connectors, and repair dispatch remain unobserved and untouched.",
+        }
     return {
         "marker": "MCP_RELEASE_DECISION_READ_ONLY",
-        "action_summary": "Classify one local strict release state without executing a provider, repair, or release action.",
+        "action_summary": "Project one stateless MCP2 input-required challenge without executing a provider, repair, or release action.",
         "card": card,
+        "mcp2": release_gate_input_required(card),
         "scope": "Read-only local classification; provider state remains unobserved and no publication, approval, deployment, signing, credential, connector, or repair action ran.",
     }
 
@@ -1607,6 +1759,10 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_proof_reuse(root, arguments))
     if name == "factory.proof_delta_status":
         return _content(_proof_delta_status(root, arguments))
+    if name == "factory.first_lap_status":
+        return _content(_first_lap_status(root, arguments))
+    if name == "factory.agui_review_events":
+        return _content(_agui_review_events(root, arguments))
     if name == "factory.cdte_status":
         return _content(_cdte_status(root, arguments))
     if name == "factory.prd_grill_status":
@@ -1645,10 +1801,19 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_repair_loop_status(root, arguments))
     if name == "factory.mission_control_status":
         return _content(_mission_control_status(root, arguments))
+    if name == "factory.context_efficiency_status":
+        return _content(_context_efficiency_status(root, arguments))
+    if name == "factory.intake_parameters_status":
+        return _content(_intake_parameters_status(root, arguments))
     if name == "factory.deep_audit_status":
         return _content(_deep_audit_status(root, arguments))
     if name == "factory.runtime_audit_status":
         return _content(_runtime_audit_status(root, arguments))
+    if name == "factory.search_audit_rules":
+        try:
+            return _content(search_audit_rules(arguments))
+        except AuditRuleSearchError as exc:
+            raise McpError(str(exc), exc.marker) from exc
     if name == "factory.agent_bridge_status":
         return _content(_agent_bridge_status(root, arguments))
     if name == "factory.agent_handoff_brief":
@@ -1804,6 +1969,50 @@ def dispatch(request: object, root: Path | str) -> dict[str, object] | None:
     except McpError as exc:
         return _error_or_notification(is_notification, request_id, -32602, str(exc), exc.marker)
     return _result_or_notification(is_notification, request_id, response)
+
+
+def dispatch_stateless(request: object, root: Path | str) -> dict[str, object]:
+    """Dispatch one self-contained MCP request and return a hash-bound envelope.
+
+    Stateless mode deliberately accepts only the JSON-RPC core fields.  A
+    caller cannot smuggle a session id, cursor, resume token, or other
+    stateful extension into the request, and the adapter keeps no request
+    history.  The returned envelope is local/read-only metadata around the
+    normal JSON-RPC response; it does not add execution or provider authority.
+    """
+    try:
+        encoded = _canonical(request).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise McpError("stateless request must be JSON-serializable", "MCP_STATELESS_REQUEST_INVALID") from exc
+    if len(encoded) > _MAX_STATELESS_REQUEST_BYTES:
+        raise McpError(
+            f"stateless request must be at most {_MAX_STATELESS_REQUEST_BYTES} bytes",
+            "MCP_STATELESS_REQUEST_TOO_LARGE",
+        )
+    if not isinstance(request, dict):
+        raise McpError("stateless request must be a JSON-RPC object", "MCP_STATELESS_REQUEST_INVALID")
+    if not all(isinstance(key, str) for key in request):
+        raise McpError("stateless request object keys must be strings", "MCP_STATELESS_REQUEST_INVALID")
+    allowed = {"jsonrpc", "id", "method", "params"}
+    unknown = sorted(set(request) - allowed)
+    if unknown:
+        raise McpError(
+            f"stateless request rejects session/state extensions: {', '.join(unknown)}",
+            "MCP_STATELESS_STATE_REJECTED",
+        )
+    response = dispatch(request, root)
+    request_digest = sha256(encoded).hexdigest()
+    return {
+        "schema": "factory.mcp.stateless-response.v1",
+        "marker": "MCP_STATELESS_RESPONSE",
+        "request_sha256": request_digest,
+        "response": response,
+        "replay": build_stateless_replay_hints(request_digest, response),
+        "state": "stateless",
+        "server_state": "none",
+        "authority": dict(_AUTHORITY),
+        "claim_boundary": "One self-contained local JSON-RPC evaluation; no session, cursor, request history, execution, approval, publication, deployment, signing, credential, connector, or provider action ran.",
+    }
 
 
 def serve_stdio(root: Path | str, *, input_stream: TextIO | None = None, output_stream: TextIO | None = None) -> int:

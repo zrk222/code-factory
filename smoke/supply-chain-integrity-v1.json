@@ -1,0 +1,21 @@
+{
+  "checks": [
+    {
+      "name": "supply_chain_gate",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_supply_chain.py']) == 0\nprint('SUPPLY_CHAIN_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "SUPPLY_CHAIN_SMOKE_PASS",
+      "timeout_s": 120,
+      "covers": [
+        "SOURCE_MANIFEST_BOUND",
+        "VEX_POLICY_BOUND",
+        "LICENSE_POLICY_BOUND",
+        "REPRO_BUILD_DRIFT",
+        "E_SECRET_IN_ARTIFACT",
+        "offline_dsse_ed25519"
+      ],
+      "must_fail_on_stub": true
+    }
+  ]
+}

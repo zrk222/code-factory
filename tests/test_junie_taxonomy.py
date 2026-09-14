@@ -10,6 +10,7 @@ from factoryline.junie_taxonomy import (
     JunieTaxonomyError,
     PACK_CONFIRMATION,
     install_junie_factoryline_pack,
+    junie_manifest,
     junie_taxonomy,
     validate_junie_contribution,
 )
@@ -36,6 +37,23 @@ def test_taxonomy_is_complete_progressive_and_has_no_external_effect_authority(t
     assert protocol["marker"] == "JUNIE_FACTORYLINE_CONTRIBUTION_PROTOCOL_READY"
     assert protocol["taxonomy_sha256"] == taxonomy["taxonomy_sha256"]
     assert "cannot authenticate Junie" in protocol["claim_boundary"]
+    manifest = junie_manifest(tmp_path)
+    assert manifest["schema"] == "factory.junie-manifest.v1"
+    assert manifest["marker"] == "JUNIE_FACTORYLINE_MANIFEST_READY"
+    assert taxonomy["project_pack"]["manifest_sha256"] == manifest["manifest_sha256"]
+    assert {entry["path"] for entry in manifest["files"]} == {
+        ".junie/AGENTS.md",
+        ".junie/mcp/mcp.json",
+        ".junie/agents/factoryline-proof.md",
+    }
+    assert manifest["subagent"] == {
+        "name": "factoryline-proof",
+        "tool_allowlist": ["Read", "Grep", "Glob"],
+        "mcp_servers": ["code-factory"],
+        "permission_mode": "plan",
+        "max_turns": 12,
+        "supports_prompt_argument": True,
+    }
 
 
 def test_contribution_gives_visible_bounded_credit_and_hashes_only_cited_local_files(tmp_path: Path) -> None:
@@ -127,6 +145,7 @@ def test_project_pack_requires_confirmation_is_idempotent_and_preserves_owned_fi
     repeated = install_junie_factoryline_pack(tmp_path, PACK_CONFIRMATION)
     guidance = (tmp_path / ".junie/AGENTS.md").read_text(encoding="utf-8")
     config = json.loads((tmp_path / ".junie/mcp/mcp.json").read_text(encoding="utf-8"))
+    subagent = (tmp_path / ".junie/agents/factoryline-proof.md").read_text(encoding="utf-8")
     assert installed["marker"] == "JUNIE_FACTORYLINE_PACK_INSTALLED"
     assert installed["state"] == "installed"
     assert repeated["state"] == "already_current"
@@ -134,6 +153,13 @@ def test_project_pack_requires_confirmation_is_idempotent_and_preserves_owned_fi
     assert "factory.junie_taxonomy" in guidance
     assert "factory.junie_contribution" in guidance
     assert "Do not create or alter those facts" in guidance
+    assert "name: \"factoryline-proof\"" in subagent
+    assert 'tools: ["Read", "Grep", "Glob"]' in subagent
+    assert 'mcpServers: ["code-factory"]' in subagent
+    assert 'permissionMode: "plan"' in subagent
+    assert "User request: $prompt" in subagent
+    assert installed["targets"]["subagent"]["path"] == ".junie/agents/factoryline-proof.md"
+    assert installed["manifest"]["schema"] == "factory.junie-manifest.v1"
     assert all(value is False for value in installed["authority"].values())
 
     (tmp_path / ".junie/AGENTS.md").write_text("team-owned guidance\n", encoding="utf-8")
@@ -153,15 +179,31 @@ def test_project_pack_rejects_conflicting_mcp_before_creating_guidance(tmp_path:
     assert not (tmp_path / ".junie/AGENTS.md").exists()
 
 
+def test_project_pack_rejects_conflicting_read_only_subagent_before_writing_other_files(tmp_path: Path) -> None:
+    target = tmp_path / ".junie/agents/factoryline-proof.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("team-owned subagent\n", encoding="utf-8")
+
+    with pytest.raises(JunieTaxonomyError, match="no overwrite"):
+        install_junie_factoryline_pack(tmp_path, PACK_CONFIRMATION)
+    assert not (tmp_path / ".junie/AGENTS.md").exists()
+    assert not (tmp_path / ".junie/mcp/mcp.json").exists()
+
+
 def test_cli_exposes_taxonomy_and_only_installs_after_the_exact_phrase(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["junie", "taxonomy", "--root", str(tmp_path), "--json"]) == 0
     taxonomy = json.loads(capsys.readouterr().out)
     assert taxonomy["marker"] == "JUNIE_FACTORYLINE_TAXONOMY_READY"
 
+    assert main(["junie", "manifest", "--root", str(tmp_path), "--json"]) == 0
+    manifest = json.loads(capsys.readouterr().out)
+    assert manifest["marker"] == "JUNIE_FACTORYLINE_MANIFEST_READY"
+
     assert main(["junie", "install", "--root", str(tmp_path), "--confirmation", PACK_CONFIRMATION, "--json"]) == 0
     installed = json.loads(capsys.readouterr().out)
     assert installed["targets"]["guidance"]["path"] == ".junie/AGENTS.md"
     assert installed["targets"]["mcp"]["path"] == ".junie/mcp/mcp.json"
+    assert installed["targets"]["subagent"]["path"] == ".junie/agents/factoryline-proof.md"
 
     evidence = tmp_path / "receipt.json"
     evidence.write_text("{}\n", encoding="utf-8")

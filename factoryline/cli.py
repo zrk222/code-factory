@@ -76,6 +76,18 @@ from .migration import (
     verify_migration_readiness,
     verify_repository_context,
 )
+from .context_efficiency import (
+    ContextEfficiencyError,
+    build_context_packet,
+    context_efficiency_status,
+    verify_context_packet,
+)
+from .intake_parameters import (
+    IntakeParametersError,
+    intake_parameters_status,
+    seal_intake_parameters,
+    verify_intake_parameters,
+)
 from .studio import StudioRequestError, serve_studio, studio_status
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .ide_playbook import AdoptionGuideError, adoption_guide
@@ -85,8 +97,14 @@ from .full_stack_ux_harness import (
     verify_quality_harness,
     write_quality_harness_template,
 )
+from .full_stack_ux_spec import (
+    FullStackUXSpecError,
+    validate_ux_harness_spec,
+    verify_ux_harness_spec_receipt,
+)
 from .graph_portfolio import graph_portfolio_plan
 from .graph_forensics import GraphForensicsError, graph_forensics, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
+from .candidate_lineage import CandidateLineageError, verify_candidate_lineage
 from .langgraph_assurance import LangGraphAssuranceError, verify_langgraph_resume_parity
 from .proofsearch import ProofSearchError, create_proofsearch_plan, evaluate_proofsearch, verify_proofsearch_evaluation
 from .evidence_frontier import EvidenceFrontierError, plan_evidence_frontier, verify_evidence_frontier
@@ -126,6 +144,11 @@ from .revenue_evidence import (
     replay_purchase_journey,
     sync_testflight_evidence,
     watch_policy_drift,
+)
+from .revenue_integrity import (
+    evaluate_revenue_integrity,
+    plan_revenue_experiment,
+    reconcile_billing_events,
 )
 from .appforge_design import appforge_design_projection, compile_appforge_design
 from .app_review_gate import verify_app_review_readiness
@@ -193,10 +216,12 @@ from .senior_assurance import (
 )
 from .runtime_audit import execute_runtime_audit, runtime_audit_status
 from .deep_audit import execute_deep_audit, deep_audit_status
+from .deep_audit_attestation import DeepAuditAttestationError, verify_deep_audit_attestation
 from .repair_loop import compare_deep_audit_repairs
 from .runtime_audit_common import RuntimeAuditError
 from .runtime_audit_contract import verify_runtime_audit_plan
 from .independent_execution import ExecutionAttestationError, verify_signed_execution_attestation
+from .runtime_attestation import RuntimeAttestationError, verify_signed_runtime_attestation
 from .benchmark_lab import BenchmarkError, evaluate_benchmark, load_benchmark_json
 from .incremental_scheduler import SchedulerError, compare_shadow, load_schedule_json, plan_incremental
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
@@ -361,6 +386,21 @@ from .learning_loop import (
     propose_instruction_candidate,
     validate_instruction_candidate,
 )
+from .first_lap import (
+    FirstLapError,
+    classify_failure,
+    first_lap_status,
+    initialize_first_lap,
+    promote_incident,
+    record_incident,
+    verify_activation,
+    verify_activation_receipt,
+    verify_holdout_boundary,
+    verify_promoted_incident_gates,
+    verify_observed_first_lap,
+    verify_verifier_calibration,
+)
+from .agui import AguiError, build_review_events
 
 
 def _cli_command(name: str) -> str:
@@ -629,6 +669,64 @@ def main(argv=None) -> int:
     first_proof.add_argument("--out-dir", help="optional workspace-contained output directory")
     first_proof.add_argument("--json", action="store_true")
 
+    first_lap = sub.add_parser("first-lap", help="prepare and verify the human-observed first activation lap")
+    first_lap_sub = first_lap.add_subparsers(required=True, dest="first_lap_cmd")
+    first_lap_init = first_lap_sub.add_parser("init", help="write MISSION.md, END-TO-END.md, verifier-only HOLDOUT.md, and an immutable receipt")
+    first_lap_init.add_argument("--root", default=".")
+    first_lap_init.add_argument("--mission", default="Deliver the requested outcome without violating the forbidden outcomes.")
+    first_lap_init.add_argument("--journey", action="append", dest="journeys")
+    first_lap_init.add_argument("--holdout", action="append", dest="holdouts")
+    first_lap_init.add_argument("--force", action="store_true", help="replace only the generated files and receipt")
+    first_lap_init.add_argument("--json", action="store_true")
+    first_lap_status_parser = first_lap_sub.add_parser("status", help="read and integrity-check the initialized First Lap files without executing them")
+    first_lap_status_parser.add_argument("--root", default=".")
+    first_lap_status_parser.add_argument("--json", action="store_true")
+    first_lap_calibrate = first_lap_sub.add_parser("calibrate", help="verify approved, defective, and wrong-candidate calibration cases")
+    first_lap_calibrate.add_argument("input", help="JSON object containing approved_candidate, defective_candidate, and wrong_candidate statuses")
+    first_lap_calibrate.add_argument("--root", default=".")
+    first_lap_calibrate.add_argument("--strict", action="store_true", help="require candidate and contract identity bindings")
+    first_lap_calibrate.add_argument("--json", action="store_true")
+    first_lap_incident = first_lap_sub.add_parser("incident", help="append a complete incident-to-invariant chain")
+    first_lap_incident.add_argument("input", help="incident JSON object")
+    first_lap_incident.add_argument("--root", default=".")
+    first_lap_incident.add_argument("--promote", action="store_true", help="also compile the incident into a permanent regression gate")
+    first_lap_incident.add_argument("--json", action="store_true")
+    first_lap_promote = first_lap_sub.add_parser("promote", help="compile an incident JSON object into a permanent regression gate")
+    first_lap_promote.add_argument("input", help="incident JSON object")
+    first_lap_promote.add_argument("--root", default=".")
+    first_lap_promote.add_argument("--json", action="store_true")
+    first_lap_holdout = first_lap_sub.add_parser("holdout", help="verify verifier-only holdout binding and contamination state")
+    first_lap_holdout.add_argument("input", help="holdout boundary JSON object")
+    first_lap_holdout.add_argument("--root", default=".")
+    first_lap_holdout.add_argument("--json", action="store_true")
+    first_lap_holdout.add_argument("--strict", action="store_true", help="require an externally isolated holdout")
+    first_lap_observe = first_lap_sub.add_parser("observe", help="verify the exact human-observed first-lap phase sequence")
+    first_lap_observe.add_argument("input", help="JSON array of phase/evidence_sha256 events")
+    first_lap_observe.add_argument("--strict", action="store_true", help="require named human observer and run metadata")
+    first_lap_observe.add_argument("--json", action="store_true")
+    first_lap_failure = first_lap_sub.add_parser("failure", help="classify a failure and derive its retry policy")
+    first_lap_failure.add_argument("kind", choices=["definitive_product_failure", "transient_provider_failure", "unverifiable_candidate_identity", "stale_evidence", "environment_setup_failure"])
+    first_lap_failure.add_argument("--provider")
+    first_lap_failure.add_argument("--retry-after", type=int)
+    first_lap_failure.add_argument("--strict", action="store_true", help="require provider evidence for retryable failures")
+    first_lap_failure.add_argument("--json", action="store_true")
+    first_lap_verify = first_lap_sub.add_parser("verify", help="compose calibration, holdout, and observed-lap receipts into one activation gate")
+    first_lap_verify.add_argument("--calibration", required=True)
+    first_lap_verify.add_argument("--holdout", required=True)
+    first_lap_verify.add_argument("--observed", required=True)
+    first_lap_verify.add_argument("--root", default=".")
+    first_lap_verify.add_argument("--strict", action="store_true", help="require all identity, isolation, observation, and incident gates")
+    first_lap_verify.add_argument("--persist", action="store_true", help="write immutable activation receipt")
+    first_lap_verify.add_argument("--json", action="store_true")
+
+    agui = sub.add_parser("agui", help="emit controlled, deterministic AGUI-style review events")
+    agui_sub = agui.add_subparsers(required=True, dest="agui_cmd")
+    agui_review = agui_sub.add_parser("review-events", help="map local First Lap status to review cards for Mission Control or an IDE")
+    agui_review.add_argument("--root", default=".")
+    agui_review.add_argument("--run-id", default="local-review")
+    agui_review.add_argument("--surface", default="mission_control")
+    agui_review.add_argument("--json", action="store_true")
+
     guide = sub.add_parser("guide", help="choose one plain-language path before opening advanced controls")
     guide.add_argument("--journey", help="one of: solo, team, enterprise")
     guide.add_argument("--json", action="store_true")
@@ -645,6 +743,15 @@ def main(argv=None) -> int:
     quality_verify.add_argument("--root", default=".")
     quality_verify.add_argument("--out")
     quality_verify.add_argument("--json", action="store_true")
+    quality_spec_validate = quality_sub.add_parser("spec-validate", help="strictly validate the Full-Stack UX Harness SSAT/YAML contract and write a local receipt")
+    quality_spec_validate.add_argument("spec", help="workspace-contained full-stack-ux-harness-v1.ssat.yaml or explicit v1alpha1 contract")
+    quality_spec_validate.add_argument("--root", default=".")
+    quality_spec_validate.add_argument("--out")
+    quality_spec_validate.add_argument("--json", action="store_true")
+    quality_spec_verify = quality_sub.add_parser("spec-verify", help="replay a Full-Stack UX Harness spec receipt against its current source")
+    quality_spec_verify.add_argument("receipt", help="workspace-contained spec receipt")
+    quality_spec_verify.add_argument("--root", default=".")
+    quality_spec_verify.add_argument("--json", action="store_true")
 
     code_audit = sub.add_parser("audit", help="inspect peer-pattern irregularities and guard-bypass paths without executing code")
     code_audit.add_argument("tool", choices=["patterns", "guard-paths", "all"])
@@ -1080,6 +1187,8 @@ def main(argv=None) -> int:
     verify.add_argument("--trust-root", required=True)
     verify.add_argument("--policy-bundle")
     verify.add_argument("--revocations")
+    verify.add_argument("--require-revocations", action="store_true", help="require a signed current revocation snapshot")
+    verify.add_argument("--max-revocation-age", type=int, default=86400, help="maximum revocation snapshot age in seconds")
     policy = enterprise_sub.add_parser("policy-sign", help="sign a policy JSON document into a policy bundle")
     policy.add_argument("policy")
     policy.add_argument("--private-key", required=True)
@@ -1164,6 +1273,50 @@ def main(argv=None) -> int:
     audit_verify = control_sub.add_parser("audit-verify", help="verify the tenant audit hash chain")
     add_control_identity(audit_verify, default_role="viewer")
 
+    controls = sub.add_parser("controls", help="evaluate versioned policy packs and evidence without release authority")
+    controls_sub = controls.add_subparsers(required=True, dest="controls_cmd")
+    controls_manifest = controls_sub.add_parser("manifest", help="resolve a policy pack and inherited controls")
+    controls_manifest.add_argument("--root", default=".")
+    controls_manifest.add_argument("--policy", default="controls/policy-pack.json")
+    controls_manifest.add_argument("--json", action="store_true")
+    controls_evaluate = controls_sub.add_parser("evaluate", help="evaluate supplied immutable receipts for an event")
+    controls_evaluate.add_argument("--root", default=".")
+    controls_evaluate.add_argument("--policy", default="controls/policy-pack.json")
+    controls_evaluate.add_argument("--event-kind", choices=["working_tree", "merge", "agent_action", "deployment"], default="working_tree")
+    controls_evaluate.add_argument("--actor", default="local")
+    controls_evaluate.add_argument("--commit")
+    controls_evaluate.add_argument("--changed", action="append", default=[])
+    controls_evaluate.add_argument("--evidence", action="append", default=[])
+    controls_evaluate.add_argument("--exception", action="append", default=[])
+    controls_evaluate.add_argument("--baseline", help="workspace-relative baseline evaluation JSON")
+    controls_evaluate.add_argument("--out")
+    controls_evaluate.add_argument("--json", action="store_true")
+    controls_exception = controls_sub.add_parser("exception", help="create an expiry-bound, separately approved exception")
+    controls_exception.add_argument("control_id")
+    controls_exception.add_argument("--root", default=".")
+    controls_exception.add_argument("--policy", default="controls/policy-pack.json")
+    controls_exception.add_argument("--owner", required=True)
+    controls_exception.add_argument("--reason", required=True)
+    controls_exception.add_argument("--scope", required=True)
+    controls_exception.add_argument("--ttl-days", required=True, type=int)
+    controls_exception.add_argument("--evidence", required=True)
+    controls_exception.add_argument("--author", required=True)
+    controls_exception.add_argument("--approver", required=True)
+    controls_exception.add_argument("--out", required=True)
+    controls_exception.add_argument("--json", action="store_true")
+    controls_dossier = controls_sub.add_parser("dossier", help="write JSON, Markdown, and Mermaid review artifacts")
+    controls_dossier.add_argument("evaluation")
+    controls_dossier.add_argument("--root", default=".")
+    controls_dossier.add_argument("--out-dir", default=".factory/controls/dossiers")
+    controls_dossier.add_argument("--json", action="store_true")
+    controls_fleet = controls_sub.add_parser("fleet", help="show cross-repository policy coverage")
+    controls_fleet.add_argument("--root", default=".")
+    controls_fleet.add_argument("--manifest", default="controls/fleet.json")
+    controls_fleet.add_argument("--json", action="store_true")
+    controls_projection = controls_sub.add_parser("projection", help="read the bounded Graph Ops controls projection")
+    controls_projection.add_argument("--root", default=".")
+    controls_projection.add_argument("--json", action="store_true")
+
     engineering_memory = sub.add_parser("evidence-memory", help="recall current evidence-backed engineering metadata without gate authority")
     engineering_memory.add_argument("--root", default=".")
     engineering_memory.add_argument("--tenant", required=True)
@@ -1225,6 +1378,18 @@ def main(argv=None) -> int:
     mutation = assurance_sub.add_parser("policy-mutate", help="emit explicit policy mutations for a challenge run")
     mutation.add_argument("policy")
     mutation.add_argument("--out", required=True)
+    supply_chain = assurance_sub.add_parser("supply-chain", help="verify a local source, dependency, vulnerability and reproducible-build manifest")
+    supply_chain.add_argument("manifest", help="workspace-relative supply-chain attestation JSON")
+    supply_chain.add_argument("--root", default=".")
+    supply_chain.add_argument("--out", default=".factory/supply-chain/supply-chain-receipt.json")
+    supply_chain.add_argument("--candidate-sha256")
+    supply_chain.add_argument("--json", action="store_true")
+    supply_chain_verify = assurance_sub.add_parser("supply-chain-verify", help="verify an independently collected signed supply-chain attestation")
+    supply_chain_verify.add_argument("attestation")
+    supply_chain_verify.add_argument("--root", default=".")
+    supply_chain_verify.add_argument("--trust-root", required=True)
+    supply_chain_verify.add_argument("--candidate-sha256")
+    supply_chain_verify.add_argument("--json", action="store_true")
 
     s = sub.add_parser("verify-policy", help="prove a policy evaluator catches every delete/invert mutation")
     s.add_argument("--root", default=".")
@@ -1348,19 +1513,26 @@ def main(argv=None) -> int:
     graph_portfolio.add_argument("--json", action="store_true")
     graph_lineage = graph_sub.add_parser("lineage-verify", help="verify one hash-sealed semantic graph lineage receipt")
     graph_lineage.add_argument("lineage")
+    graph_lineage.add_argument("--candidate-sha256", help="require this candidate digest in the lineage receipt")
     graph_lineage.add_argument("--json", action="store_true")
     graph_seal = graph_sub.add_parser("lineage-seal", help="validate step objects and atomically write a hash-sealed lineage receipt")
     graph_seal.add_argument("--run-id", required=True)
     graph_seal.add_argument("--graph-id", required=True)
     graph_seal.add_argument("--steps", required=True)
     graph_seal.add_argument("--out", required=True)
+    graph_seal.add_argument("--candidate-sha256", help="bind the sealed lineage to a candidate digest")
     graph_seal.add_argument("--json", action="store_true")
     graph_mission = graph_sub.add_parser("lineage-mission", help="export a verified native mission event chain as sealed lineage")
     graph_mission.add_argument("mission")
     graph_mission.add_argument("--root", default=".")
     graph_mission.add_argument("--run-id", required=True)
     graph_mission.add_argument("--out", required=True)
+    graph_mission.add_argument("--candidate-sha256", help="bind the exported lineage to a candidate digest")
     graph_mission.add_argument("--json", action="store_true")
+    graph_continuity = graph_sub.add_parser("lineage-continuity", help="verify one candidate across Oracle, deep-audit, and graph lineage evidence")
+    graph_continuity.add_argument("manifest")
+    graph_continuity.add_argument("--root", default=".")
+    graph_continuity.add_argument("--json", action="store_true")
     graph_forensic = graph_sub.add_parser("forensics", help="compare verified graph runs and preview a bounded recovery fork")
     graph_forensic.add_argument("--baseline", required=True)
     graph_forensic.add_argument("--candidate", required=True)
@@ -1374,6 +1546,7 @@ def main(argv=None) -> int:
     admission_prepare.add_argument("request")
     admission_prepare.add_argument("--root", default=".")
     admission_prepare.add_argument("--out-dir")
+    admission_prepare.add_argument("--require-intake", action="store_true", help="require an authoritative intake-parameter binding before sealing admission")
     admission_prepare.add_argument("--json", action="store_true")
     admission_verify = admission_sub.add_parser("verify", help="revalidate one sealed packet before a harness consumes it")
     admission_verify.add_argument("packet")
@@ -1603,13 +1776,23 @@ def main(argv=None) -> int:
 
     deep = sub.add_parser("deep-audit", help="evaluate signed analyzer evidence or read local repair guidance; never release approval")
     deep_sub = deep.add_subparsers(required=True, dest="deep_cmd")
-    for action in ("evaluate", "status", "compare"):
+    for action in ("evaluate", "status", "compare", "attestation"):
         command = deep_sub.add_parser(action)
         command.add_argument("--root", default=".")
         command.add_argument("--json", action="store_true")
         if action == "compare":
             command.add_argument("--before", required=True)
             command.add_argument("--after", required=True)
+            command.add_argument("--before-attestation")
+            command.add_argument("--after-attestation")
+            command.add_argument("--trust-root")
+            command.add_argument("--require-attestation", action="store_true")
+            command.add_argument("--max-age-seconds", type=int, default=3600)
+        if action == "attestation":
+            command.add_argument("attestation")
+            command.add_argument("--receipt", required=True)
+            command.add_argument("--trust-root", required=True)
+            command.add_argument("--max-age-seconds", type=int, default=3600)
         if action == "evaluate":
             command.add_argument("--plan", required=True)
             command.add_argument("--trust-root", required=True)
@@ -1623,6 +1806,7 @@ def main(argv=None) -> int:
         command.add_argument("--trust-root", required=True)
         command.add_argument("--trust-root-sha256", required=True)
         command.add_argument("--environment-sha256", required=True)
+        command.add_argument("--require-intake", action="store_true", help="require the signed plan to bind an authoritative intake-parameter envelope")
         if action == "run":
             command.add_argument("--out", default=".factory/runtime-audits")
         command.add_argument("--json", action="store_true")
@@ -1638,6 +1822,13 @@ def main(argv=None) -> int:
     senior_attest.add_argument("--candidate-sha256")
     senior_attest.add_argument("--plan-sha256")
     senior_attest.add_argument("--json", action="store_true")
+    senior_boundary = senior_sub.add_parser("boundary", help="verify one DSSE-signed runtime-boundary attestation")
+    senior_boundary.add_argument("receipt")
+    senior_boundary.add_argument("--trust-root", required=True)
+    senior_boundary.add_argument("--candidate-sha256")
+    senior_boundary.add_argument("--plan-sha256")
+    senior_boundary.add_argument("--environment-sha256")
+    senior_boundary.add_argument("--json", action="store_true")
     senior_benchmark = senior_sub.add_parser("benchmark", help="evaluate a manifest-bound buggy/fixed defect corpus")
     senior_benchmark.add_argument("manifest")
     senior_benchmark.add_argument("--observations", required=True)
@@ -1771,6 +1962,8 @@ def main(argv=None) -> int:
     proof_review_quick.add_argument("--repair-patch")
     proof_review_quick.add_argument("--prior-receipt")
     proof_review_quick.add_argument("--session-phase", choices=["change", "post_repair"], default="change")
+    proof_review_quick.add_argument("--intake-parameters", help="optional authoritative intake-parameter envelope bound to changed paths")
+    proof_review_quick.add_argument("--require-intake", action="store_true", help="require an authoritative intake-parameter envelope")
     proof_review_quick.add_argument("--json", action="store_true")
     proof_review_verify = proof_review_sub.add_parser("verify", help="verify a proof review and every bound receipt")
     proof_review_verify.add_argument("review")
@@ -1862,6 +2055,26 @@ def main(argv=None) -> int:
     revenue_memory_query.add_argument("--journey", required=True)
     revenue_memory_query.add_argument("--at")
     revenue_memory_query.add_argument("--json", action="store_true")
+    revenue_billing = revenue_sub.add_parser("billing-reconcile", help="reconcile verified StoreKit, Play Billing, and server observations without granting access")
+    revenue_billing.add_argument("--root", default=".")
+    revenue_billing.add_argument("--products", required=True)
+    revenue_billing.add_argument("--events", required=True)
+    revenue_billing.add_argument("--out", default=".factory/revenueforge/default/billing-ledger.json")
+    revenue_billing.add_argument("--json", action="store_true")
+    revenue_experiment = revenue_sub.add_parser("experiment-plan", help="compile an approved-by-human, guardrail-bounded experiment plan without starting it")
+    revenue_experiment.add_argument("--root", default=".")
+    revenue_experiment.add_argument("--products", required=True)
+    revenue_experiment.add_argument("--experiment", required=True)
+    revenue_experiment.add_argument("--out", default=".factory/revenueforge/default/experiment-plan.json")
+    revenue_experiment.add_argument("--json", action="store_true")
+    revenue_integrity = revenue_sub.add_parser("integrity", help="evaluate manifest, billing, experiment, and baseline integrity without provider actions")
+    revenue_integrity.add_argument("--root", default=".")
+    revenue_integrity.add_argument("--products", required=True)
+    revenue_integrity.add_argument("--ledger", required=True)
+    revenue_integrity.add_argument("--experiment")
+    revenue_integrity.add_argument("--baseline")
+    revenue_integrity.add_argument("--out", default=".factory/revenueforge/default/integrity.json")
+    revenue_integrity.add_argument("--json", action="store_true")
     revenue_design = revenue_sub.add_parser("appforge-design", help="compile user intent into a story-led seven-discipline iOS design workspace")
     revenue_design.add_argument("--root", default=".")
     revenue_design.add_argument("--brief", required=True)
@@ -2142,6 +2355,9 @@ def main(argv=None) -> int:
     release_preflight_parser.add_argument("--contract", required=True, help="workspace-contained release contract with candidate source binding")
     release_preflight_parser.add_argument("--artifact-dir", action="append", help="workspace-contained artifact directory; repeatable")
     release_preflight_parser.add_argument("--metadata-path", action="append", help="workspace-contained active metadata file; repeatable and audited when supplied")
+    release_preflight_parser.add_argument("--supply-chain-manifest", help="optional workspace-contained signed-evidence manifest; blocks when supplied evidence is invalid")
+    release_preflight_parser.add_argument("--intake-parameters", help="optional workspace-contained authoritative intake-parameter envelope")
+    release_preflight_parser.add_argument("--require-intake", action="store_true", help="require an authoritative intake-parameter envelope for this release")
     release_preflight_parser.add_argument("--out", help="optional workspace-contained JSON receipt path")
     release_preflight_parser.add_argument("--json", action="store_true")
     release_decision_parser = release_sub.add_parser("decision", help="explain one strict local release decision without contacting a provider")
@@ -2151,7 +2367,7 @@ def main(argv=None) -> int:
 
     mcp = sub.add_parser("mcp", help="serve or inspect the local read-only MCP adapter")
     mcp_sub = mcp.add_subparsers(required=True, dest="mcp_cmd")
-    mcp_status = mcp_sub.add_parser("status", help="show the stdio-only MCP boundary")
+    mcp_status = mcp_sub.add_parser("status", help="show the local read-only MCP boundary")
     mcp_status.add_argument("--root", default=".")
     mcp_status.add_argument("--json", action="store_true")
     mcp_config = mcp_sub.add_parser("config", help="render copy-only setup for a local stdio MCP client")
@@ -2163,7 +2379,11 @@ def main(argv=None) -> int:
     mcp_install.add_argument("--client", choices=["junie", "copilot"], required=True)
     mcp_install.add_argument("--confirmation", required=True)
     mcp_install.add_argument("--json", action="store_true")
-    mcp_serve = mcp_sub.add_parser("serve", help="serve newline-delimited JSON-RPC over stdio only")
+    mcp_request = mcp_sub.add_parser("request", help="evaluate one self-contained stateless JSON-RPC request")
+    mcp_request.add_argument("request", help="workspace-relative JSON request file")
+    mcp_request.add_argument("--root", default=".")
+    mcp_request.add_argument("--json", action="store_true")
+    mcp_serve = mcp_sub.add_parser("serve", help="serve newline-delimited JSON-RPC over stdio")
     mcp_serve.add_argument("--root", default=".")
 
     junie = sub.add_parser("junie", help="inspect or explicitly install the local Junie FactoryLine pack")
@@ -2171,6 +2391,9 @@ def main(argv=None) -> int:
     junie_taxonomy_parser = junie_sub.add_parser("taxonomy", help="show the complete progressive Junie FactoryLine taxonomy")
     junie_taxonomy_parser.add_argument("--root", default=".")
     junie_taxonomy_parser.add_argument("--json", action="store_true")
+    junie_manifest_parser = junie_sub.add_parser("manifest", help="show the copy-only Junie FactoryLine project-pack manifest")
+    junie_manifest_parser.add_argument("--root", default=".")
+    junie_manifest_parser.add_argument("--json", action="store_true")
     junie_install = junie_sub.add_parser("install", help="install secret-free project Junie guidance and MCP config after exact confirmation")
     junie_install.add_argument("--root", default=".")
     junie_install.add_argument("--confirmation", required=True)
@@ -2479,6 +2702,21 @@ def main(argv=None) -> int:
     intake_read.add_argument("--root", default=".")
     intake_read.add_argument("--prd")
     intake_read.add_argument("--json", action="store_true")
+    intake_parameters = intake_sub.add_parser("parameters", aliases=("params",), help="seal or verify bounded intake operating parameters")
+    intake_parameters_sub = intake_parameters.add_subparsers(dest="intake_parameters_cmd", required=True)
+    intake_parameters_seal = intake_parameters_sub.add_parser("seal", help="seal a confirmation-bound intake parameter envelope")
+    intake_parameters_seal.add_argument("request")
+    intake_parameters_seal.add_argument("--root", default=".")
+    intake_parameters_seal.add_argument("--out")
+    intake_parameters_seal.add_argument("--force", action="store_true")
+    intake_parameters_seal.add_argument("--json", action="store_true")
+    intake_parameters_verify = intake_parameters_sub.add_parser("verify", help="verify a sealed intake parameter envelope")
+    intake_parameters_verify.add_argument("receipt")
+    intake_parameters_verify.add_argument("--root", default=".")
+    intake_parameters_verify.add_argument("--json", action="store_true")
+    intake_parameters_read = intake_parameters_sub.add_parser("status", help="read intake parameter envelope status")
+    intake_parameters_read.add_argument("--root", default=".")
+    intake_parameters_read.add_argument("--json", action="store_true")
 
     mission = sub.add_parser("mission", help="create or verify a supervised, passport-bound value mission")
     mission_sub = mission.add_subparsers(dest="mission_cmd", required=True)
@@ -2620,6 +2858,21 @@ def main(argv=None) -> int:
     context_verify = context_sub.add_parser("verify", help="verify AutoWiki and Lore hashes")
     context_verify.add_argument("receipt")
     context_verify.add_argument("--json", action="store_true")
+
+    efficiency = sub.add_parser("efficiency", help="compile and verify bounded, cacheable context packets")
+    efficiency_sub = efficiency.add_subparsers(dest="efficiency_cmd", required=True)
+    efficiency_pack = efficiency_sub.add_parser("pack", help="build a read-only bounded context packet")
+    efficiency_pack.add_argument("--manifest", required=True, help="JSON request manifest")
+    efficiency_pack.add_argument("--root", default=".")
+    efficiency_pack.add_argument("--out")
+    efficiency_pack.add_argument("--json", action="store_true")
+    efficiency_verify = efficiency_sub.add_parser("verify", help="verify packet and source hashes")
+    efficiency_verify.add_argument("packet")
+    efficiency_verify.add_argument("--root", default=".")
+    efficiency_verify.add_argument("--json", action="store_true")
+    efficiency_status = efficiency_sub.add_parser("status", help="show bounded packet/cache metadata")
+    efficiency_status.add_argument("--root", default=".")
+    efficiency_status.add_argument("--json", action="store_true")
 
     opinion = sub.add_parser("opinion", help="maintain the owner-controlled architecture Opinion Dock")
     opinion_sub = opinion.add_subparsers(dest="opinion_cmd", required=True)
@@ -2894,6 +3147,35 @@ def main(argv=None) -> int:
         if a.journey_cmd in {"workflow-proof", "heal-verify"} and result.get("decision") not in {"passed", "admissible_for_human_review"}:
             return 1
         return 0
+    if a.cmd == "efficiency":
+        root = Path(a.root).resolve()
+        try:
+            if a.efficiency_cmd == "pack":
+                request = json.loads(Path(a.manifest).read_text(encoding="utf-8-sig"))
+                result = build_context_packet(root, request, Path(a.out) if a.out else None)
+                code = 0
+            elif a.efficiency_cmd == "verify":
+                result = verify_context_packet(root, Path(a.packet))
+                code = 0 if result.get("valid") is True else 1
+            else:
+                result = context_efficiency_status(root)
+                code = 0
+        except (ContextEfficiencyError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {
+                "schema": "factory.context-efficiency-error.v1",
+                "marker": "CONTEXT_EFFICIENCY_REFUSED",
+                "code": getattr(exc, "code", "E_CONTEXT_INPUT"),
+                "message": getattr(exc, "message", str(exc)),
+            }
+            code = 2
+        if getattr(a, "json", False):
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            print(result.get("marker", result.get("state", "CONTEXT_EFFICIENCY_OK")))
+            print("authority   : bounded local context metadata only; no execution, approval, repair, release, publication, or credentials")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
     if a.cmd in {"prd", "intake", "product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider", "agent", "telemetry", "verifier"}:
         try:
             if a.cmd == "prd" and a.prd_cmd == "grill":
@@ -2913,6 +3195,12 @@ def main(argv=None) -> int:
                 )
             elif a.cmd == "intake" and a.intake_cmd == "verify":
                 result = verify_intake_confirmation(Path(a.root), Path(a.receipt)) if a.confirmation else verify_intake_grill(Path(a.root), Path(a.receipt))
+            elif a.cmd == "intake" and a.intake_cmd in {"parameters", "params"} and a.intake_parameters_cmd == "seal":
+                result = seal_intake_parameters(Path(a.root), Path(a.request), Path(a.out) if a.out else None, a.force)
+            elif a.cmd == "intake" and a.intake_cmd in {"parameters", "params"} and a.intake_parameters_cmd == "verify":
+                result = verify_intake_parameters(Path(a.root), Path(a.receipt))
+            elif a.cmd == "intake" and a.intake_cmd in {"parameters", "params"}:
+                result = intake_parameters_status(Path(a.root))
             elif a.cmd == "intake":
                 result = intake_status(Path(a.root), Path(a.prd) if a.prd else None)
             elif a.cmd == "agent" and a.agent_cmd == "contract":
@@ -3085,7 +3373,7 @@ def main(argv=None) -> int:
                 )
             else:
                 result = outcome_summary(Path(a.root), a.mission_id)
-        except (ProductMissionError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProofDeltaError, ProviderRouterError, AgentContractError, VerifierPlaneError, LangGraphAssuranceError) as exc:
+        except (ProductMissionError, IntakeParametersError, SignalLoopError, LearningLoopError, MigrationError, MissionGraphError, ProofDeltaError, ProviderRouterError, AgentContractError, VerifierPlaneError, LangGraphAssuranceError) as exc:
             print(json.dumps({
                 "schema": "factory.workflow_error.v1", "status": "failed",
                 "code": exc.code, "message": exc.message,
@@ -3114,6 +3402,7 @@ def main(argv=None) -> int:
             or (a.cmd == "provider" and a.provider_cmd == "verify")
             or (a.cmd == "agent" and a.agent_cmd in {"contract", "attestation"})
             or (a.cmd == "verifier" and a.verifier_cmd == "verify")
+            or (a.cmd == "intake" and a.intake_cmd in {"parameters", "params"} and a.intake_parameters_cmd == "verify")
         ):
             return 0 if result.get("valid", result.get("verdict") == "VERIFIED") else 1
         return 0
@@ -3132,7 +3421,7 @@ def main(argv=None) -> int:
         from .run_admission import AdmissionError, prepare_admission, verify_admission
         try:
             if a.admission_cmd == "prepare":
-                result = prepare_admission(Path(a.root), Path(a.passport), Path(a.request), Path(a.out_dir) if a.out_dir else None)
+                result = prepare_admission(Path(a.root), Path(a.passport), Path(a.request), Path(a.out_dir) if a.out_dir else None, require_intake=a.require_intake)
                 code = 0
             else:
                 result = verify_admission(Path(a.root), Path(a.packet))
@@ -3358,17 +3647,40 @@ def main(argv=None) -> int:
         try:
             root = Path(a.root).resolve()
             if a.deep_cmd == "compare":
-                result = compare_deep_audit_repairs(root, a.before, a.after)
+                result = compare_deep_audit_repairs(
+                    root,
+                    a.before,
+                    a.after,
+                    before_attestation=a.before_attestation,
+                    after_attestation=a.after_attestation,
+                    trust_root_path=Path(a.trust_root) if a.trust_root else None,
+                    require_attestation=a.require_attestation,
+                    max_age_seconds=a.max_age_seconds,
+                )
                 print(json.dumps(result, indent=2, sort_keys=True))
                 return 0 if result["state"] == "approval_required" else 1
             elif a.deep_cmd == "status":
                 result = deep_audit_status(root)
                 code = 0 if result["state"] == "READY_FOR_HUMAN_REVIEW" else 1
+            elif a.deep_cmd == "attestation":
+                result = verify_deep_audit_attestation(
+                    root,
+                    Path(a.attestation),
+                    Path(a.trust_root),
+                    Path(a.receipt),
+                    max_age_seconds=a.max_age_seconds,
+                )
+                code = 0 if result["state"] == "VERIFIED" else 1
             else:
                 result = execute_deep_audit(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root)
                 code = 0 if result["receipt"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
-            result["action_summary"] = "Read local deep-audit evidence." if a.deep_cmd == "status" else "Evaluated signed reports and saved a review receipt; no analyzer or repair ran."
-        except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
+            result["action_summary"] = (
+                "Read local deep-audit evidence." if a.deep_cmd == "status" else
+                "Verified one offline DSSE deep-audit attestation; no analyzer or repair ran." if a.deep_cmd == "attestation" else
+                "Compared signed deep-audit observations; no analyzer or repair ran." if a.deep_cmd == "compare" else
+                "Evaluated signed reports and saved a review receipt; no analyzer or repair ran."
+            )
+        except (DeepAuditAttestationError, RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
             result = {"code": getattr(exc, "code", "E_DEEP_AUDIT"), "message": str(exc), "authority": "none"}
             code = 2
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
@@ -3380,11 +3692,11 @@ def main(argv=None) -> int:
                 result = runtime_audit_status(root)
                 code = 0 if result["state"] in {"NOT_RUN", "READY_FOR_HUMAN_REVIEW"} else 1
             elif a.runtime_audit_cmd == "inspect":
-                result = verify_runtime_audit_plan(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root, a.environment_sha256)
+                result = verify_runtime_audit_plan(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root, a.environment_sha256, require_intake=a.require_intake)
                 result = {**result, "plan": {"id": result["plan"]["id"], "candidate_sha256": result["plan"]["candidate_sha256"], "lanes": [item["kind"] for item in result["plan"]["lanes"]]}, "action_summary": "Verified the signed audit authority and exact six-lane execution contract; no command ran."}
                 code = 0
             else:
-                result = execute_runtime_audit(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root, a.environment_sha256, Path(a.out))
+                result = execute_runtime_audit(Path(a.plan), Path(a.trust_root), a.trust_root_sha256, root, a.environment_sha256, Path(a.out), require_intake=a.require_intake)
                 code = 0 if result["receipt"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
         except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
             result = {"schema": "factory.runtime-audit.error.v1", "code": getattr(exc, "code", "E_RUNTIME_AUDIT"), "message": str(exc), "authority": "none"}
@@ -3397,6 +3709,10 @@ def main(argv=None) -> int:
                 result = verify_signed_execution_attestation(Path(a.receipt), Path(a.trust_root), candidate_sha256=a.candidate_sha256, plan_sha256=a.plan_sha256)
                 code = 0
                 result["action_summary"] = "Verified an independently collected execution attestation; no command ran and release authority stayed disabled."
+            elif a.senior_cmd == "boundary":
+                result = verify_signed_runtime_attestation(Path(a.receipt), Path(a.trust_root), candidate_sha256=a.candidate_sha256, plan_sha256=a.plan_sha256, environment_sha256=a.environment_sha256)
+                code = 0
+                result["action_summary"] = "Verified an independently collected runtime boundary; no command ran and release authority stayed disabled."
             elif a.senior_cmd == "benchmark":
                 manifest = load_benchmark_json(Path(a.manifest))
                 observations = load_benchmark_json(Path(a.observations))
@@ -3595,12 +3911,18 @@ def main(argv=None) -> int:
             if a.quality_cmd == "template":
                 result = write_quality_harness_template(Path(a.root), Path(a.out), ui_in_scope=a.ui)
                 code = 0
+            elif a.quality_cmd == "spec-validate":
+                result = validate_ux_harness_spec(Path(a.root), Path(a.spec), out=Path(a.out) if a.out else None)
+                code = 0 if result["ok"] else 1
+            elif a.quality_cmd == "spec-verify":
+                result = verify_ux_harness_spec_receipt(Path(a.root), Path(a.receipt))
+                code = 0 if result["ok"] else 1
             else:
                 result = verify_quality_harness(
                     Path(a.root), Path(a.manifest), out=Path(a.out) if a.out else None,
                 )
                 code = 0 if result["decision"] == "READY_FOR_HUMAN_RELEASE_REVIEW" else 1
-        except (FullStackUXHarnessError, OSError, json.JSONDecodeError, ValueError) as exc:
+        except (FullStackUXHarnessError, FullStackUXSpecError, OSError, json.JSONDecodeError, ValueError) as exc:
             result = {
                 "schema": "factory.full-stack-ux-harness.error.v1",
                 "decision": "REJECTED",
@@ -3613,7 +3935,10 @@ def main(argv=None) -> int:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
         elif code == 0:
             print(f"Quality harness: {result.get('decision', 'TEMPLATE_WRITTEN')}")
-            print(f"Receipt: {result['path']}")
+            if result.get("path"):
+                print(f"Receipt: {result['path']}")
+            elif result.get("source"):
+                print(f"Source: {result['source']}")
         else:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr if code == 2 else sys.stdout)
         return code
@@ -3647,6 +3972,83 @@ def main(argv=None) -> int:
                 print(f"Control  : {item['authority_boundary']}")
             print("\nAdvanced modules stay hidden until their trigger applies. No action was executed.")
         return 0
+    if a.cmd == "first-lap":
+        workspace = Path(a.root).resolve() if hasattr(a, "root") else Path(".").resolve()
+        try:
+            if a.first_lap_cmd == "init":
+                result = initialize_first_lap(workspace, mission=a.mission, journeys=a.journeys, holdouts=a.holdouts, overwrite=a.force)
+                code = 0
+            elif a.first_lap_cmd == "status":
+                result = first_lap_status(workspace)
+                code = 0 if result.get("state") in {"INITIALIZED", "NOT_INITIALIZED"} else 1
+            elif a.first_lap_cmd == "calibrate":
+                result = verify_verifier_calibration(workspace, json.loads(Path(a.input).read_text(encoding="utf-8")), strict=a.strict)
+                code = 0 if result.get("state") == "CALIBRATED" else 1
+            elif a.first_lap_cmd == "incident":
+                payload = json.loads(Path(a.input).read_text(encoding="utf-8"))
+                result = record_incident(workspace, payload)
+                if a.promote:
+                    result = {"recorded": result, "promoted": promote_incident(workspace, payload)}
+                code = 0
+            elif a.first_lap_cmd == "promote":
+                result = promote_incident(workspace, json.loads(Path(a.input).read_text(encoding="utf-8")))
+                code = 0
+            elif a.first_lap_cmd == "holdout":
+                result = verify_holdout_boundary(workspace, json.loads(Path(a.input).read_text(encoding="utf-8")), strict=a.strict)
+                code = 0 if result.get("state") == "VERIFIED" else 1
+            elif a.first_lap_cmd == "observe":
+                result = verify_observed_first_lap(json.loads(Path(a.input).read_text(encoding="utf-8")), strict=a.strict)
+                code = 0 if result.get("state") == "OBSERVED" else 1
+            elif a.first_lap_cmd == "failure":
+                result = classify_failure(a.kind, provider=a.provider, retry_after_seconds=a.retry_after, strict=a.strict)
+                code = 0
+            else:
+                result = verify_activation(
+                    workspace,
+                    calibration=json.loads(Path(a.calibration).read_text(encoding="utf-8")),
+                    holdout=json.loads(Path(a.holdout).read_text(encoding="utf-8")),
+                    observed=json.loads(Path(a.observed).read_text(encoding="utf-8")),
+                    strict=a.strict,
+                    persist=a.persist,
+                )
+                code = 0 if result.get("state") == "READY" else 1
+        except (FirstLapError, OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            result = {"schema": "factory.first-lap.error.v1", "marker": "FIRST_LAP_BLOCKED", "code": getattr(exc, "code", "E_FIRST_LAP_INPUT"), "message": str(exc), "authority": "none"}
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            print(f"first lap: {result.get('marker', result.get('state', 'READY'))}")
+            if result.get("paths"):
+                for name, path in result["paths"].items():
+                    print(f"  {name}: {path}")
+            if result.get("retry_allowed") is not None:
+                print(f"retry allowed: {result['retry_allowed']}")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
+    if a.cmd == "agui":
+        workspace = Path(a.root).resolve()
+        try:
+            status = first_lap_status(workspace)
+            result = {
+                "schema": "factory.agui.events.v1",
+                "marker": "AGUI_REVIEW_EVENTS_READY",
+                "events": build_review_events(status, run_id=a.run_id, surface=a.surface),
+                "scope": "Controlled/declarative review events only; no agent, execution, approval, provider, credential, or transport action ran.",
+            }
+            code = 0
+        except (FirstLapError, AguiError, OSError, TypeError, ValueError) as exc:
+            result = {"schema": "factory.agui.error.v1", "marker": "AGUI_REVIEW_EVENTS_BLOCKED", "code": getattr(exc, "code", "E_AGUI_INPUT"), "message": str(exc), "authority": "none"}
+            code = 2
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            print(f"AGUI review events: {len(result['events'])} controlled events")
+            print("authority: read-only review cards and human interrupts; no execution or release authority")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
     if a.cmd == "first-proof":
         workspace = Path(a.root).resolve()
         out_dir = Path(a.out_dir) if a.out_dir else None
@@ -4769,9 +5171,17 @@ def main(argv=None) -> int:
             return 0 if payload["valid"] else 1
         return 0
     if a.cmd == "graph":
+        if a.graph_cmd == "lineage-continuity":
+            try:
+                payload = verify_candidate_lineage(Path(a.root), Path(a.manifest))
+            except CandidateLineageError as exc:
+                print(json.dumps({"schema": "factory.candidate-lineage-error.v1", "code": exc.code, "message": str(exc)}, indent=2), file=sys.stderr)
+                return 2
+            print(json.dumps(payload, indent=2, sort_keys=True) if a.json else "candidate lineage: verified (review only)")
+            return 0
         if a.graph_cmd == "lineage-mission":
             try:
-                payload = seal_mission_graph_lineage(Path(a.mission), Path(a.root), a.run_id, Path(a.out))
+                payload = seal_mission_graph_lineage(Path(a.mission), Path(a.root), a.run_id, Path(a.out), a.candidate_sha256)
             except (GraphForensicsError, ValueError) as exc:
                 code = exc.code if isinstance(exc, GraphForensicsError) else "GRAPH_LINEAGE_HISTORY_INVALID"
                 print(json.dumps({"schema": "factory.graph-lineage.error.v1", "code": code, "message": str(exc)}, indent=2), file=sys.stderr)
@@ -4780,7 +5190,7 @@ def main(argv=None) -> int:
             return 0
         if a.graph_cmd == "lineage-seal":
             try:
-                payload = seal_graph_lineage(a.run_id, a.graph_id, Path(a.steps), Path(a.out))
+                payload = seal_graph_lineage(a.run_id, a.graph_id, Path(a.steps), Path(a.out), a.candidate_sha256)
             except GraphForensicsError as exc:
                 print(json.dumps({"schema": "factory.graph-lineage.error.v1", "code": exc.code, "message": str(exc)}, indent=2), file=sys.stderr)
                 return 2
@@ -4788,7 +5198,7 @@ def main(argv=None) -> int:
             return 0
         if a.graph_cmd == "lineage-verify":
             try:
-                payload = verify_graph_lineage(Path(a.lineage))
+                payload = verify_graph_lineage(Path(a.lineage), a.candidate_sha256)
             except GraphForensicsError as exc:
                 print(json.dumps({"schema": "factory.graph-lineage.error.v1", "code": exc.code, "message": str(exc)}, indent=2), file=sys.stderr)
                 return 2
@@ -4973,6 +5383,8 @@ def main(argv=None) -> int:
                     repair_patch_path=Path(a.repair_patch) if a.repair_patch else None,
                     prior_receipt_path=Path(a.prior_receipt) if a.prior_receipt else None,
                     session_phase=a.session_phase,
+                    intake_parameters_path=Path(a.intake_parameters) if a.intake_parameters else None,
+                    require_intake=a.require_intake,
                 )
             elif a.proof_review_cmd == "verify":
                 payload = verify_quick_review(root, Path(a.review))
@@ -5042,6 +5454,19 @@ def main(argv=None) -> int:
                 payload = promote_evidence_memory(root, Path(a.entry), Path(a.out))
             elif a.revenue_cmd == "memory-query":
                 payload = query_evidence_memory(root, a.app_id, a.journey, a.at)
+            elif a.revenue_cmd == "billing-reconcile":
+                payload = reconcile_billing_events(root, Path(a.products), Path(a.events), Path(a.out))
+            elif a.revenue_cmd == "experiment-plan":
+                payload = plan_revenue_experiment(root, Path(a.products), Path(a.experiment), Path(a.out))
+            elif a.revenue_cmd == "integrity":
+                payload = evaluate_revenue_integrity(
+                    root,
+                    Path(a.products),
+                    Path(a.ledger),
+                    Path(a.experiment) if a.experiment else None,
+                    Path(a.baseline) if a.baseline else None,
+                    Path(a.out),
+                )
             elif a.revenue_cmd == "app-review-gate":
                 payload = verify_app_review_readiness(root, Path(a.contract), Path(a.evidence), Path(a.out))
             elif a.revenue_cmd == "store-media-gate":
@@ -5305,7 +5730,9 @@ def main(argv=None) -> int:
         try:
             artifact_dirs = [Path(item) for item in a.artifact_dir] if a.artifact_dir else None
             metadata_paths = [Path(item) for item in a.metadata_path] if a.metadata_path else None
-            result = write_release_candidate_preflight(root, Path(a.contract), artifact_dirs, Path(a.out), metadata_paths=metadata_paths) if a.out else release_candidate_preflight(root, Path(a.contract), artifact_dirs, metadata_paths=metadata_paths)
+            supply_chain_manifest = Path(a.supply_chain_manifest) if a.supply_chain_manifest else None
+            intake_parameters = Path(a.intake_parameters) if a.intake_parameters else None
+            result = write_release_candidate_preflight(root, Path(a.contract), artifact_dirs, Path(a.out), metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest, intake_parameters=intake_parameters, require_intake=a.require_intake) if a.out else release_candidate_preflight(root, Path(a.contract), artifact_dirs, metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest, intake_parameters=intake_parameters, require_intake=a.require_intake)
         except (OSError, UnicodeDecodeError, ValueError, TypeError) as exc:
             result = {"schema": "factory.release-candidate-preflight.v1", "marker": "RELEASE_CANDIDATE_PREFLIGHT_BLOCKED", "ok": False, "blockers": [{"code": "RELEASE_CANDIDATE_INPUT_INVALID", "detail": str(exc)[:240]}], "authority": {"execution": False, "approval": False, "repair": False, "merge": False, "publication": False, "deployment": False, "signing": False, "credential": False, "provider_call": False}}
         if a.json:
@@ -5363,7 +5790,7 @@ def main(argv=None) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True) if a.json else payload.get("mission_text", payload.get("marker", "JETBRAINS_PROOF_HANDSHAKE_OK")))
         return 1 if a.jetbrains_cmd == "handshake" and payload["verdict"] != "ready_for_human_review" else 0
     if a.cmd == "mcp":
-        from .mcp import McpError, mcp_status, serve_stdio
+        from .mcp import McpError, dispatch_stateless, mcp_status, serve_stdio
         from .mcp_setup import McpSetupError, install_project_mcp_config, mcp_connection_config
 
         try:
@@ -5397,17 +5824,41 @@ def main(argv=None) -> int:
                 payload = install_project_mcp_config(Path(a.root), a.client, a.confirmation)
                 print(json.dumps(payload, indent=2, sort_keys=True) if a.json else f"Factory MCP {payload['state']}: {payload['target']}")
                 return 0
+            if a.mcp_cmd == "request":
+                request_path = Path(a.request)
+                root = Path(a.root).resolve()
+                try:
+                    if request_path.is_absolute() or ".." in request_path.parts:
+                        raise McpError(
+                            "request must be a workspace-relative JSON file",
+                            "MCP_STATELESS_REQUEST_PATH_REJECTED",
+                        )
+                    request_path = (root / request_path).resolve()
+                    request_path.relative_to(root)
+                except ValueError as exc:
+                    raise McpError("request must be a workspace-relative JSON file", "MCP_STATELESS_REQUEST_PATH_REJECTED") from exc
+                if request_path.suffix.lower() != ".json" or not request_path.is_file():
+                    raise McpError("request must name an existing workspace-relative JSON file", "MCP_STATELESS_REQUEST_PATH_REJECTED")
+                try:
+                    request = json.loads(request_path.read_text(encoding="utf-8-sig"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise McpError("request file must contain valid UTF-8 JSON", "MCP_STATELESS_REQUEST_INVALID") from exc
+                payload = dispatch_stateless(request, root)
+                print(json.dumps(payload, indent=2, sort_keys=True) if a.json else json.dumps(payload, sort_keys=True))
+                return 0
             return serve_stdio(Path(a.root))
         except (McpError, McpSetupError) as exc:
             print(f"mcp failed: {exc.marker}: {exc}", file=sys.stderr)
             return 2
     if a.cmd == "junie":
-        from .junie_taxonomy import JunieTaxonomyError, install_junie_factoryline_pack, junie_taxonomy, validate_junie_contribution
+        from .junie_taxonomy import JunieTaxonomyError, install_junie_factoryline_pack, junie_manifest, junie_taxonomy, validate_junie_contribution
 
         try:
             root = Path(a.root)
             if a.junie_cmd == "taxonomy":
                 payload = junie_taxonomy(root)
+            elif a.junie_cmd == "manifest":
+                payload = junie_manifest(root)
             elif a.junie_cmd == "install":
                 payload = install_junie_factoryline_pack(root, a.confirmation)
             else:
@@ -5432,8 +5883,14 @@ def main(argv=None) -> int:
             for stage in payload["stages"]:
                 print(f"{stage['label']}: {stage['outcome']}")
             print("Boundary: local guidance only; Junie remains enabled under JetBrains controls.")
+        elif a.junie_cmd == "manifest":
+            print("FactoryLine Junie project-pack manifest")
+            print(f"Manifest digest: {payload['manifest_sha256']}")
+            for entry in payload["files"]:
+                print(f"  {entry['path']}: {entry['role']}")
+            print("Boundary: copy-only; the human enables Junie and its MCP server under JetBrains controls.")
         elif a.junie_cmd == "install":
-            print(f"Junie FactoryLine pack {payload['state']}: .junie/AGENTS.md + .junie/mcp/mcp.json")
+            print(f"Junie FactoryLine pack {payload['state']}: .junie/AGENTS.md + .junie/mcp/mcp.json + {payload['targets']['subagent']['path']}")
         else:
             print(payload["credit_line"])
         return 0
@@ -5542,6 +5999,8 @@ def main(argv=None) -> int:
                     trust_root_path=Path(a.trust_root),
                     policy_bundle_path=Path(a.policy_bundle) if a.policy_bundle else None,
                     revocations_path=Path(a.revocations) if a.revocations else None,
+                    require_revocations=a.require_revocations,
+                    max_revocation_age_seconds=a.max_revocation_age,
                 )
             elif a.enterprise_cmd == "policy-sign":
                 policy_payload = json.loads(Path(a.policy).read_text(encoding="utf-8"))
@@ -5594,6 +6053,82 @@ def main(argv=None) -> int:
             return 1
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
+    if a.cmd == "controls":
+        from .continuous_controls import (
+            ControlsError,
+            continuous_controls_projection,
+            create_exception,
+            evaluate_controls,
+            fleet_coverage,
+            load_policy_pack,
+            write_control_evaluation,
+            write_controls_dossier,
+        )
+        try:
+            root = Path(a.root).resolve()
+            if a.controls_cmd == "manifest":
+                result = load_policy_pack(root, a.policy)
+                code = 0
+            elif a.controls_cmd == "evaluate":
+                baseline = None
+                if a.baseline:
+                    baseline = json.loads((root / a.baseline).read_text(encoding="utf-8"))
+                result = evaluate_controls(
+                    root,
+                    a.policy,
+                    evidence_paths=a.evidence,
+                    exception_paths=a.exception,
+                    baseline=baseline,
+                    event={"kind": a.event_kind, "actor": a.actor, "commit": a.commit, "changed_paths": a.changed},
+                )
+                stored = write_control_evaluation(root, result, a.out)
+                result = {"evaluation": result, "receipt": {"path": stored["path"], "sha256": stored["sha256"]}}
+                code = 0 if result["evaluation"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
+            elif a.controls_cmd == "exception":
+                result = create_exception(
+                    root,
+                    a.policy,
+                    a.control_id,
+                    owner=a.owner,
+                    reason=a.reason,
+                    scope=a.scope,
+                    ttl_days=a.ttl_days,
+                    evidence_path=a.evidence,
+                    author=a.author,
+                    approver=a.approver,
+                    out=a.out,
+                )
+                code = 0
+            elif a.controls_cmd == "dossier":
+                evaluation_path = (root / a.evaluation).resolve() if not Path(a.evaluation).is_absolute() else Path(a.evaluation)
+                evaluation = json.loads(evaluation_path.read_text(encoding="utf-8"))
+                result = write_controls_dossier(root, evaluation, a.out_dir)
+                code = 0
+            elif a.controls_cmd == "fleet":
+                result = fleet_coverage(root, a.manifest)
+                code = 0 if all(not item["missing_baseline"] for item in result["repositories"]) else 1
+            else:
+                result = continuous_controls_projection(root)
+                code = 0 if result["invalid_count"] == 0 else 1
+        except (ControlsError, OSError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.continuous-controls.result.v1", "verdict": "ERROR", "error": {"code": getattr(exc, "code", "E_INPUT"), "message": str(exc)}}
+            code = 1
+        if a.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif code == 0:
+            if a.controls_cmd == "manifest":
+                print(f"policy {result['pack_id']}@{result['version']}: {result['status']} ({len(result['controls'])} controls)")
+            elif a.controls_cmd == "evaluate":
+                print(f"controls: {result['evaluation']['decision']} ({result['receipt']['path']})")
+            elif a.controls_cmd == "dossier":
+                print(f"controls dossier: {result['directory']}")
+            elif a.controls_cmd == "fleet":
+                print(f"fleet coverage: {len(result['repositories'])} repositories")
+            else:
+                print(f"controls projection: {result['evaluation_count']} evaluations")
+        else:
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return code
     if a.cmd == "control":
         from .control_plane import ControlPlaneError, EvidenceStore, principal_from_args
         try:
@@ -5691,7 +6226,24 @@ def main(argv=None) -> int:
         return 0
     if a.cmd == "assurance":
         from .assurance import build_cyclonedx_sbom, build_evidence_graph, build_vex, policy_mutations
+        from .supply_chain import SupplyChainError, verify_signed_supply_chain_attestation, write_supply_chain_receipt
         try:
+            if a.assurance_cmd == "supply-chain":
+                root = Path(a.root).resolve()
+                manifest = Path(a.manifest)
+                manifest = manifest if manifest.is_absolute() else root / manifest
+                result = write_supply_chain_receipt(root, manifest, Path(a.out), candidate_sha256=a.candidate_sha256)
+                print(json.dumps(result, indent=2, sort_keys=True) if a.json else f"supply-chain: {result.get('decision')} ({result.get('path')})")
+                return 0 if result.get("decision") == "PASS" else 1
+            if a.assurance_cmd == "supply-chain-verify":
+                root = Path(a.root).resolve()
+                attestation = Path(a.attestation)
+                trust_root = Path(a.trust_root)
+                attestation = attestation if attestation.is_absolute() else root / attestation
+                trust_root = trust_root if trust_root.is_absolute() else root / trust_root
+                result = verify_signed_supply_chain_attestation(attestation, trust_root, root, candidate_sha256=a.candidate_sha256)
+                print(json.dumps(result, indent=2, sort_keys=True) if a.json else f"supply-chain signature: {result.get('state')} ({result.get('attestation_id')})")
+                return 0
             if a.assurance_cmd == "graph":
                 records = json.loads(Path(a.records).read_text(encoding="utf-8"))
                 result = build_evidence_graph(records, tenant_id=a.tenant)

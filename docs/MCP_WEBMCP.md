@@ -42,19 +42,33 @@ Every tool has a strict JSON input schema, a deterministic name, and read-only a
 
 ## Graph Ops WebMCP
 
-Graph Ops progressively registers four browser tools through `document.modelContext` when the browser supports the current WebMCP draft:
+Graph Ops progressively registers the following browser tools through
+`document.modelContext` when the browser supports the current WebMCP draft:
 
 1. `factory.graph_summary`
-2. `factory.next_action`
-3. `factory.revenue_status`
-4. `factory.appforge_status`
-5. `factory.oracle_firewall_status`
-6. `factory.appforge_oracle_status`
-7. `factory.appforge_device_reality_status`
-8. `factory.appforge_release_rehearsal_status`
-9. `factory.appforge_native_surface_status`
-10. `factory.appforge_surface_matrix_status`
-11. `factory.appforge_storefront_story_status`
+2. `factory.agui_review_events`
+3. `factory.next_action`
+4. `factory.revenue_status`
+5. `factory.appforge_status`
+6. `factory.oracle_firewall_status`
+7. `factory.appforge_oracle_status`
+8. `factory.appforge_device_reality_status`
+9. `factory.appforge_release_rehearsal_status`
+10. `factory.appforge_native_surface_status`
+11. `factory.appforge_surface_matrix_status`
+12. `factory.appforge_storefront_story_status`
+13. `factory.first_lap_status`
+
+`factory.first_lap_status` is the recommended first discovery call for a new
+agent. It exposes only the local First Lap initialization and generated-file
+integrity projection already loaded by the page. It never executes journeys,
+opens verifier holdouts, changes a mission, or grants approval. The CLI parity
+command is `factory first-lap status --root .`.
+
+`factory.agui_review_events` is the compact card/interrupt bridge for Mission
+Control. It returns stable, hash-bound controlled events derived from the same
+local First Lap status; it does not execute generated UI, retain sessions, or
+grant release authority. See [AGUI and MCP2 review surface](AGUI_MCP2.md).
 
 The handlers read only the most recent authenticated snapshot already loaded by the page. They do not make a second request, invoke an execution control, or return the complete graph. Outputs are deliberately bounded and marked read-only plus untrusted-content because project-controlled labels are data, not agent instructions.
 

@@ -1,10 +1,30 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.9.6 - 2026-09-13
+
+- Add a read-only First Lap status surface so JetBrains users and Junie can
+  see the initialized mission, journey, verifier-only holdout, integrity
+  state, and exact next CLI steps before any execution.
+- Keep First Lap, MCP, and WebMCP discovery bounded to local evidence; the
+  plugin never executes a journey, opens a holdout, grants release authority,
+  or publishes a build.
+
+## 0.9.5 - 2026-09-13
+
+- Fine-tune the Junie project pack with a hash-bound copy-only manifest and an
+  optional native `factoryline-proof` subagent restricted to read-only file
+  inspection plus the local FactoryLine MCP server.
+- Keep JetBrains compatibility and the human-owned release boundary explicit;
+  the plugin does not enable Junie or approve, merge, publish, or deploy work.
+
 ## 0.9.4 - 2026-09-09
 
 - Add proof-coupled Junie attribution: the IDE can inspect the known tool,
   changed-file rationale, hashes, unknowns, and visible credit line from a
   locally verified contribution card.
+- Fine-tune the Junie project pack with a hash-bound copy-only manifest and an
+  optional native `factoryline-proof` subagent restricted to read-only file
+  inspection plus the local FactoryLine MCP server.
 - Keep the handoff optional and read-only. FactoryLine remains useful beside
   Junie, Qodana, Copilot, or another analyzer and never executes, approves,
   merges, publishes, deploys, or receives credentials.

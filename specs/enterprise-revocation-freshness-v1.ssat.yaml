@@ -1,0 +1,28 @@
+name: enterprise-revocation-freshness-v1
+language: python
+modules:
+  - name: enterprise_receipts
+    path: factoryline/enterprise_receipts.py
+    functions:
+      - name: verify_receipt_v2
+        args: ["path: Path", "trust_root_path: Path", "policy_bundle_path: Path | None", "revocations_path: Path | None"]
+        returns: "dict"
+        doc: "Verify Receipt v2 offline; strict freshness controls are keyword-only and covered by behavioral tests."
+      - name: sign_revocations
+        args: ["entries: list[dict]", "private_key_path: Path", "keyid: str", "identity: str", "issuer: str", "out: Path"]
+        returns: "dict"
+        doc: "Write a signed revocation snapshot for offline verification."
+dependencies: []
+invariants:
+  - name: no-network-or-dynamic-execution
+    forbid_pattern: "(?i)(?:requests\\.|httpx\\.|urllib3\\.|socket\\.|eval\\s*\\(|exec\\s*\\()"
+    scopes:
+      - module: enterprise_receipts
+        symbol: verify_receipt_v2
+        max_lines: 130
+  - name: no-private-key-output
+    forbid_pattern: "BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY"
+    scopes:
+      - module: enterprise_receipts
+        symbol: verify_receipt_v2
+        max_lines: 130

@@ -1,0 +1,37 @@
+name: deep-audit-attestation-v1
+language: python
+modules:
+  - name: deep_audit_attestation
+    path: factoryline/deep_audit_attestation.py
+    functions:
+      - name: verify_deep_audit_attestation
+        args: [root, attestation_path, trust_root_path, receipt_path, now, max_age_seconds]
+        returns: dict[str, Any]
+  - name: deep_audit_loop
+    path: factoryline/deep_audit_loop.py
+    functions:
+      - name: compare_deep_audits
+        args: [root, before_path, after_path, before_attestation, after_attestation, trust_root_path, require_attestation, max_age_seconds]
+        returns: dict
+dependencies:
+  - factoryline.deep_audit
+  - factoryline.enterprise_receipts
+  - factoryline.deep_audit_io
+invariants:
+  - name: attestation_never_executes
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|socket\\.|os\\.system|Popen\\(|eval\\(|exec\\(|write_text|write_bytes"
+    scopes:
+      - module: deep_audit_attestation
+        symbol: verify_deep_audit_attestation
+        max_lines: 220
+  - name: comparison_never_executes
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|socket\\.|os\\.system|Popen\\(|eval\\(|exec\\(|write_text|write_bytes"
+    scopes:
+      - module: deep_audit_loop
+        symbol: compare_deep_audits
+        max_lines: 90
+tests:
+  - path: tests/test_deep_audit_attestation.py
+    command: py -3.11 -m pytest -q tests/test_deep_audit_attestation.py
+  - path: tests/test_deep_audit_loop.py
+    command: py -3.11 -m pytest -q tests/test_deep_audit_loop.py

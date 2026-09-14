@@ -7,6 +7,16 @@ from typing import Any
 WEBMCP_SPEC_STATUS = "draft-community-group-report"
 WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
     {
+        "name": "factory.first_lap_status",
+        "title": "Read First Lap readiness",
+        "description": "Read the initialized mission, journey, holdout, and integrity status already visible on this page. No journey or holdout is executed.",
+    },
+    {
+        "name": "factory.agui_review_events",
+        "title": "Render controlled review events",
+        "description": "Read a bounded AGUI-style event stream for Mission Control cards and human interrupts derived from the local First Lap status. It never executes work or grants authority.",
+    },
+    {
         "name": "factory.graph_summary",
         "title": "Read proof graph summary",
         "description": "Read a bounded summary of the Graph Ops snapshot already visible on this page. No work is executed.",
@@ -55,6 +65,16 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "name": "factory.mission_control_status",
         "title": "Read human and agent mission control",
         "description": "Read one bounded, hash-linked supervision view. It never grants approval, execution, repair, merge, publication, deployment, or credential access.",
+    },
+    {
+        "name": "factory.context_efficiency_status",
+        "title": "Read context packet efficiency",
+        "description": "Read bounded packet/cache metadata and estimated token budgets already visible on this page. It never executes sources or grants authority.",
+    },
+    {
+        "name": "factory.intake_parameters_status",
+        "title": "Read intake parameter envelope",
+        "description": "Read bounded intake parameters, provenance, expiry, and canonical six-lane coverage already visible on this page. It never changes intent or grants authority.",
     },
     {
         "name": "factory.appforge_oracle_status",

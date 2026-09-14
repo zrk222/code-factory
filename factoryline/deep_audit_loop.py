@@ -1,8 +1,12 @@
-"""Read-only repair comparisons and graph lineage; self-hashes grant no authority."""
+"""Read-only repair comparisons and graph lineage; attestations grant no authority."""
+from __future__ import annotations
+
+from datetime import datetime
 from pathlib import Path
 import re
 
 from .deep_audit import _read_receipt
+from .deep_audit_attestation import DeepAuditAttestationError, verify_deep_audit_attestation
 from .deep_audit_io import digest
 from .runtime_audit_common import RuntimeAuditError
 
@@ -69,18 +73,46 @@ def _compare(before: dict, after: dict) -> dict:
             "repair_queue": after["repair_queue"]}
 
 
-def compare_deep_audits(root: Path, before_path: str, after_path: str) -> dict:
-    """Compare two explicit local receipts; never authenticate, repair, approve or execute a loop."""
+def _attestation_summary(value: dict) -> dict:
+    return {key: value[key] for key in ("attestation_sha256", "keyid", "identity", "issuer", "verifier", "freshness")}
+
+
+def compare_deep_audits(
+    root: Path,
+    before_path: str,
+    after_path: str,
+    *,
+    before_attestation: str | None = None,
+    after_attestation: str | None = None,
+    trust_root_path: Path | None = None,
+    require_attestation: bool = False,
+    max_age_seconds: int = 3600,
+    now: datetime | None = None,
+) -> dict:
+    """Compare local receipts, optionally requiring independent fresh attestations; never repair or authorize."""
     root = Path(root).resolve()
     base = {"schema": "factory.deep-audit-comparison.v1", "authority": "none",
             "governance": "human_controlled", "verification": "self_hash_only_not_signature_or_freshness",
+            "attestation_required": require_attestation, "attestations": {},
             "action_summary": "Compare findings and blockers; stop for human review on incompatibility, regression or no progress."}
+    attestations = {}
     try:
+        if (before_attestation or after_attestation) and trust_root_path is None:
+            raise DeepAuditAttestationError("E_DEEP_ATTESTATION_REQUIRED", "a pinned trust root is required for attestations")
+        if require_attestation and (not before_attestation or not after_attestation or trust_root_path is None):
+            raise DeepAuditAttestationError("E_DEEP_ATTESTATION_REQUIRED", "strict comparison requires two attestations and a pinned trust root")
+        if before_attestation:
+            attestations["before"] = verify_deep_audit_attestation(root, Path(before_attestation), Path(trust_root_path), Path(before_path), now=now, max_age_seconds=max_age_seconds)
+        if after_attestation:
+            attestations["after"] = verify_deep_audit_attestation(root, Path(after_attestation), Path(trust_root_path), Path(after_path), now=now, max_age_seconds=max_age_seconds)
         before, after = _load(root, before_path), _load(root, after_path)
         compared = _compare(before, after)
-        return {**base, **compared, "before_sha256": before["receipt_sha256"], "after_sha256": after["receipt_sha256"]}
-    except (ValueError, OSError, KeyError, TypeError) as exc:
-        return {**base, "state": "blocked", "code": getattr(exc, "code", "E_DEEP_RECEIPT_INVALID")}
+        return {**base, **compared, "before_sha256": before["receipt_sha256"], "after_sha256": after["receipt_sha256"],
+                "attestations": {key: _attestation_summary(value) for key, value in attestations.items()},
+                "verification": "offline_dsse_and_freshness" if attestations else base["verification"]}
+    except (DeepAuditAttestationError, ValueError, OSError, KeyError, TypeError) as exc:
+        return {**base, "state": "blocked", "code": getattr(exc, "code", "E_DEEP_RECEIPT_INVALID"),
+                "attestations": {key: _attestation_summary(value) for key, value in attestations.items()}}
 
 
 def deep_audit_lineage(root: Path, status: dict) -> dict:

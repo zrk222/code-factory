@@ -178,25 +178,47 @@ def _validate_identity(value: dict[str, Any], errors: list[str]) -> None:
             errors.append(str(exc))
 
 
-def verify_graph_lineage(path: Path) -> dict[str, Any]:
-    """Verify schema, state-version contracts, ordering, and content hash."""
+def _candidate_binding(value: dict[str, Any], expected: str | None, errors: list[str]) -> str | None:
+    declared = value.get("candidate_sha256")
+    if declared is not None and (not isinstance(declared, str) or not _SHA.fullmatch(declared)):
+        errors.append("candidate_sha256 must be a lowercase SHA-256 digest")
+    if expected is not None:
+        if not isinstance(expected, str) or not _SHA.fullmatch(expected):
+            errors.append("expected_candidate_sha256 must be a lowercase SHA-256 digest")
+        elif declared is None:
+            errors.append("candidate_sha256 is required for the expected candidate")
+        elif declared != expected:
+            errors.append("candidate_sha256 differs from expected candidate")
+    return declared
+
+
+def _lineage_core(value: dict[str, Any], steps: list[dict[str, Any]], candidate: str | None) -> dict[str, Any]:
+    core = {"schema": LINEAGE_SCHEMA, "run_id": value.get("run_id"), "graph_id": value.get("graph_id"), "steps": steps}
+    if candidate is not None:
+        core["candidate_sha256"] = candidate
+    return core
+
+
+def verify_graph_lineage(path: Path, expected_candidate_sha256: str | None = None) -> dict[str, Any]:
+    """Verify schema, state-version contracts, ordering, and content hash.
+
+    ``candidate_sha256`` is optional for legacy lineage receipts.  A caller
+    that is proving cross-artifact continuity supplies ``expected_candidate_sha256``
+    and therefore requires the newer candidate-bound form.
+    """
     value = _load(path)
     errors: list[str] = []
     if value.get("schema") != LINEAGE_SCHEMA:
         errors.append(f"schema must be {LINEAGE_SCHEMA}")
     _validate_identity(value, errors)
+    declared_candidate = _candidate_binding(value, expected_candidate_sha256, errors)
     steps = _lineage_steps(value, errors)
     seen_sequences: set[int] = set()
     normalized_steps = [step for offset, raw in enumerate(steps) if (step := _normalize_step(raw, offset, seen_sequences, errors)) is not None]
     normalized_steps.sort(key=lambda item: item["sequence"])
     if normalized_steps and [item["sequence"] for item in normalized_steps] != list(range(1, len(normalized_steps) + 1)):
         errors.append("step sequences must be contiguous from 1")
-    core = {
-        "schema": LINEAGE_SCHEMA,
-        "run_id": value.get("run_id"),
-        "graph_id": value.get("graph_id"),
-        "steps": normalized_steps,
-    }
+    core = _lineage_core(value, normalized_steps, declared_candidate)
     calculated = _digest(core)
     if value.get("lineage_sha256") != calculated:
         errors.append("lineage_sha256 does not match canonical lineage content")
@@ -224,16 +246,29 @@ def _steps_for_seal(steps: list[object]) -> list[dict[str, Any]]:
     return normalized
 
 
-def seal_graph_lineage(run_id: str, graph_id: str, steps_path: Path, out: Path) -> dict[str, Any]:
-    """Validate supplied step objects and atomically write a sealed lineage receipt."""
+def _read_steps(path: Path) -> list[object]:
     try:
-        source = json.loads(Path(steps_path).read_text(encoding="utf-8"))
+        source = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise GraphForensicsError("GRAPH_LINEAGE_STEPS_UNREADABLE", "steps input must be readable JSON") from exc
     steps = source.get("steps") if isinstance(source, dict) else source
     if not isinstance(steps, list):
         raise GraphForensicsError("GRAPH_LINEAGE_INVALID", "steps input must be a list or an object containing steps")
-    core = {"schema": LINEAGE_SCHEMA, "run_id": _bounded(run_id, "run_id"), "graph_id": _bounded(graph_id, "graph_id"), "steps": _steps_for_seal(steps)}
+    return steps
+
+
+def _candidate_for_seal(candidate: str | None) -> str | None:
+    if candidate is not None and (not isinstance(candidate, str) or not _SHA.fullmatch(candidate)):
+        raise GraphForensicsError("GRAPH_LINEAGE_INVALID", "candidate_sha256 must be a lowercase SHA-256 digest")
+    return candidate
+
+
+def seal_graph_lineage(run_id: str, graph_id: str, steps_path: Path, out: Path, candidate_sha256: str | None = None) -> dict[str, Any]:
+    """Validate supplied step objects and atomically write a sealed lineage receipt."""
+    steps = _read_steps(steps_path)
+    candidate_sha256 = _candidate_for_seal(candidate_sha256)
+    identity = {"schema": LINEAGE_SCHEMA, "run_id": _bounded(run_id, "run_id"), "graph_id": _bounded(graph_id, "graph_id")}
+    core = _lineage_core(identity, _steps_for_seal(steps), candidate_sha256)
     payload = {**core, "lineage_sha256": _digest(core)}
     destination = Path(out)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -296,7 +331,7 @@ def mission_history_steps(history: dict[str, Any]) -> list[dict[str, Any]]:
     return steps
 
 
-def seal_mission_graph_lineage(mission_path: Path, root: Path, run_id: str, out: Path) -> dict[str, Any]:
+def seal_mission_graph_lineage(mission_path: Path, root: Path, run_id: str, out: Path, candidate_sha256: str | None = None) -> dict[str, Any]:
     """Export the verified Code Factory mission ledger as a sealed lineage receipt."""
     from .mission_graph import mission_graph_history
 
@@ -309,7 +344,7 @@ def seal_mission_graph_lineage(mission_path: Path, root: Path, run_id: str, out:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=destination.parent, prefix=".mission-steps.", suffix=".json", delete=False) as handle:
             json.dump(steps, handle, ensure_ascii=False, sort_keys=True)
             step_file = Path(handle.name)
-        result = seal_graph_lineage(run_id, str(history["mission_id"]), step_file, destination)
+        result = seal_graph_lineage(run_id, str(history["mission_id"]), step_file, destination, candidate_sha256)
     finally:
         if step_file is not None and step_file.exists():
             step_file.unlink()

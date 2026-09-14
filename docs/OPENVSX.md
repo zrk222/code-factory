@@ -8,7 +8,7 @@ surfaces. This repository contains a guarded, manual release workflow at
 ## Current status
 
 FactoryLine is published in Open VSX under the `zrk222` namespace. The next
-immutable candidate is **0.9.6**; the provider's live version and download
+immutable candidate is **0.9.7**; the provider's live version and download
 total must be read back after its protected workflow succeeds. Download totals
 are provider-reported and can change; they are not unique-user counts.
 
@@ -27,7 +27,7 @@ verified before that provider action occurs.
    repository, then store a least-privilege `OPENVSX_TOKEN` in the protected
    `openvsx` GitHub environment.
 2. Start **Publish Open VSX extension** manually and supply the immutable
-   repository tag `v0.46.4` for the 0.9.6 FactoryLine adapter.
+   repository tag `v0.46.4` for the 0.9.7 FactoryLine adapter.
 3. Leave `publish` false to produce and retain only the verified VSIX candidate,
    SHA-256 manifest, audit result, and tests.
 4. Set `publish` true only after the environment reviewer approves the target

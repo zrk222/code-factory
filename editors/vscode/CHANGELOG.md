@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.7 - 2026-09-13
+
+- Align the VS Code and Open VSX adapter version with the next protected
+  publication sequence while retaining the local, read-only proof boundary.
+- Keep the proof-coupled Junie handoff and AppForge evidence story visible in
+  the release metadata; provider publication still requires its own receipt.
+
 ## 0.9.6 - 2026-09-09
 
 - Align the VS Code and Open VSX adapters with Code Factory 0.46.4 and expose
@@ -111,3 +118,10 @@
 
 - Run FactoryLine assembly and feature verification from VS Code.
 - Render local JSON receipts in an adjacent editor panel.
+## 0.9.8 - 2026-09-13
+
+- Add First Lap onboarding for `MISSION.md`, `END-TO-END.md`, and verifier-only
+  holdout scenarios.
+- Require three-point verifier calibration, a complete human-observed lap, and
+  fail-closed holdout contamination checks before supervised autonomy.
+- Add incident-to-invariant promotion and typed retry classification.

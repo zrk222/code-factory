@@ -33,8 +33,8 @@ security, performance, cost, token, productivity, or release claim.
 ## Platform-ready summaries
 
 The current release story is: **Code Factory 0.46.4** is the core proof and
-orchestration release; **FactoryLine 0.9.6** is the current editor adapter
-artifact, with both Open VSX and Microsoft Marketplace targeted at 0.9.6. This
+orchestration release; **FactoryLine 0.9.7** is the current editor adapter
+artifact, with both Open VSX and Microsoft Marketplace targeted at 0.9.7. This
 is a provider-state distinction, not a hidden version claim.
 
 | Surface | Copy |

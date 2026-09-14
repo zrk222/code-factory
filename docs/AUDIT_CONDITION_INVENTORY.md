@@ -2,9 +2,9 @@
 
 Code Factory's senior-engineering runtime-assurance path has:
 
-**6 mandatory audit lanes. 136 coded rejection conditions. One human-owned release decision.**
+**6 mandatory audit lanes. 140 coded rejection conditions. One human-owned release decision.**
 
-The source inventory comprises **81 lane-specific and 55 cross-cutting** conditions:
+The source inventory comprises **81 lane-specific and 59 cross-cutting** conditions:
 
 | Audit area | Coded rejection conditions |
 | --- | ---: |
@@ -14,13 +14,13 @@ The source inventory comprises **81 lane-specific and 55 cross-cutting** conditi
 | API and consumer compatibility | 10 |
 | Database migration and data integrity | 12 |
 | Performance, memory and resource regression | 20 |
-| Cross-cutting contract, policy, provenance, evidence and execution integrity | 55 |
-| **Total** | **136** |
+| Cross-cutting contract, policy, provenance, evidence and execution integrity | 59 |
+| **Total** | **140** |
 
 Run `python scripts/audit_condition_inventory.py` to recompute the inventory
 from the implementation. CI requires the public totals to match that output.
 
-This is a source inventory, not a claim that every project executes 136 tests.
+This is a source inventory, not a claim that every project executes 140 tests.
 The six lanes are mandatory for a complete runtime-assurance decision, while
 the observations within each lane scale with the approved invariants, tenant
 surfaces, fault modes, consumers, tables, thresholds and evidence supplied for

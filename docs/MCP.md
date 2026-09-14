@@ -33,6 +33,34 @@ agent is allowed to inspect. For example:
 
 The `--root` directory must already exist. The server will not create it.
 
+## One-shot stateless request
+
+Use the stateless path when a caller needs exactly one bounded request and
+cannot retain an MCP session:
+
+```powershell
+factory mcp request requests\status.json --root C:\work\my-mvp --json
+```
+
+The request file must be a workspace-relative UTF-8 JSON file containing one
+JSON-RPC object with only the core `jsonrpc`, `id`, `method`, and `params`
+fields. Session IDs, cursors, state extensions, absolute paths, parent
+traversal, and payloads larger than 65,536 bytes fail closed. The response is
+wrapped in `factory.mcp.stateless-response.v1`, marked
+`MCP_STATELESS_RESPONSE`, and binds the canonical request with
+`request_sha256`. No request history or server state is retained. This is a
+local read-only evaluation of the existing MCP handlers, not a hosted HTTP
+endpoint, and it adds no execution, approval, release, deployment, signing,
+credential, connector, or provider authority.
+
+Each stateless envelope also includes `MCP_STATELESS_REPLAY_HINTS`. The
+`requestKey` and `responseSha256` let an IDE or CI client deduplicate its own
+retry work and compare a fresh response; successful read-only responses carry
+a 300-second client cache hint, while errors and notifications are never
+cacheable. This is deliberately client-side guidance: Code Factory keeps no
+replay ledger, does not promise server-side deduplication, and requires a
+fresh request for revalidation.
+
 ## Any coding assistant: one portable connection
 
 Code Factory is not tied to one model or IDE. Any assistant that supports a
@@ -100,6 +128,8 @@ network transport, or mutation authority.
 | Surface | Purpose | Authority |
 | --- | --- | --- |
 | `factory.status` | Local MCP boundary, version, and tool inventory | Read only |
+| `factory.first_lap_status` | First Lap mission, journey, holdout, and generated-file integrity status | Read only |
+| `factory.agui_review_events` | Bounded AGUI-style review cards and human-interrupt events derived from local First Lap status | Read only |
 | `factory.graph_ops` | Current deterministic Graph Ops snapshot | Read only |
 | `factory.graph_impact` | Impact of 1–50 explicit root-relative changed paths | Read only |
 | `factory.developer_memory` | Exact-diff next-proof guidance with redacted continuity facts and observed local Git contribution context | Read only |
@@ -109,6 +139,9 @@ network transport, or mutation authority.
 | `factory.get_receipt` | One local receipt by path or exact feature identifier | Read only |
 | `factory.verifier_status` | A verifier-session boundary with unknown worker/verifier evidence left explicit | Read only |
 | `factory.proof_reuse` | Fails closed until a complete explicit proof request can establish a disposition | Read only |
+| `factory.context_efficiency_status` | Bounded context-packet/cache metadata and estimated token budget; no provider-usage or savings claim | Read only |
+| `factory.intake_parameters_status` | Bounded intake mode, risk, budget, scope, provenance, expiry, and canonical six-lane coverage | Read only |
+| `factory.search_audit_rules` | Context-bounded search over six-lane rejection conditions and required evidence; never executes a lane | Read only |
 | `factory.proof_delta_status` | Existing retry-admission evidence; never admits, starts, or repairs a retry | Read only |
 | `factory.cdte_status` | Latest existing deterministic CDTE scan; never creates a scan record | Read only |
 | `factory.prd_grill_status` | Existing source-bound PRD Grill state for the supplied PRD | Read only |
@@ -136,6 +169,59 @@ network transport, or mutation authority.
 Every tool declares MCP read-only, non-destructive, idempotent, and closed-world
 hints. Root-relative path input is mandatory; absolute paths and parent
 traversal fail with JSON-RPC `-32602`.
+
+### First Lap discovery
+
+`factory.first_lap_status` is the lowest-cost starting point for a new agent or
+IDE integration. It verifies only the initialization receipt and the hashes of
+`MISSION.md`, `END-TO-END.md`, and `.factory/holdouts/HOLDOUT.md`; it does not
+open the holdout, run tests, execute a journey, or infer readiness. A
+`NOT_INITIALIZED` result points to `factory first-lap init --root .`; a
+`BLOCKED` result identifies stale or missing generated files and tells the
+operator to restore or re-initialize them before calibration. The same
+read-only projection is available as `factory.first_lap_status` in the
+progressive WebMCP manifest.
+
+### AGUI review events
+
+`factory.agui_review_events` is the compact presentation bridge for Mission
+Control and IDE clients. It emits a controlled `RUN_STARTED` →
+`STATE_SNAPSHOT` → `REVIEW_CARD` → `RUN_FINISHED` stream with stable event and
+payload hashes. Clients may map the declarative `ReviewCard` hint to their own
+UI catalog; no generated component is executed by Code Factory. MCP2
+`input_required` and `completed` release-gate envelopes can be projected to
+the same `INTERRUPT` and `RUN_FINISHED` shapes by `factoryline.agui` while
+keeping release authority human-owned. The adapter is local and read-only; it
+does not claim a full external AGUI transport or open-ended generative UI.
+
+### Proof-Delta halt telemetry
+
+The `factory.graph_ops` response includes `proof_delta_telemetry` records for
+each verified retry packet. A `NO_GAIN_HALT` record is bound to the exact
+candidate and evidence digests and includes the blocker type, candidate/evidence
+change flags, unresolved proof debt, and one fact-derived next action. The same
+record is projected as a `proof_delta_guard` node plus blocker, evidence,
+candidate, debt, and next-action edges in the Mermaid graph. This is an
+inspectable explanation of why a retry stopped; it never retries, executes,
+edits, approves, or publishes work.
+
+### MCP2-style human gate handoff
+
+`factory.release_decision` returns an `mcp2` `input_required` envelope with a
+deterministic `toolCallId`, explicit failed-lane findings, a minimal reviewer
+decision schema, the hash of the local proof card, unresolved proof debt, and
+the next fact-derived action. The envelope is safe to hand to a stateless HTTP
+bridge: the connection can close while a human reviews it.
+
+The same tool accepts an optional `human_input` second leg. Code Factory
+validates the decision, reviewer identity, debt acknowledgements, and the
+original `tool_call_id`/`proof_card_hash` bindings, then returns an `mcp2`
+`completed` response containing a deterministic local receipt digest. This is
+not MCP transport negotiation and is not provider approval: no session or
+receipt file is retained, and no retry, merge, release, publication,
+deployment, signing, credential, or connector action is performed. Provider
+state remains unobserved and the human-controlled release gates remain
+authoritative.
 
 ## Explicit gaps versus explicit contradictions
 

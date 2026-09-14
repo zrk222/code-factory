@@ -1,0 +1,36 @@
+name: context-efficiency-v1
+language: python
+modules:
+  - name: context_efficiency
+    path: factoryline/context_efficiency.py
+    functions:
+      - name: build_context_packet
+        args: [root, request, out]
+        returns: dict[str, Any]
+      - name: verify_context_packet
+        args: [root, packet_path]
+        returns: dict[str, Any]
+      - name: context_efficiency_status
+        args: [root]
+        returns: dict[str, Any]
+dependencies: []
+invariants:
+  - name: context_efficiency_never_executes_or_calls_network
+    forbid_pattern: "subprocess\\.|requests\\.|httpx\\.|urllib\\.|socket\\.|os\\.system|Popen\\(|eval\\(|exec\\("
+    scopes:
+      - module: context_efficiency
+        symbol: build_context_packet
+        max_lines: 170
+      - module: context_efficiency
+        symbol: verify_context_packet
+        max_lines: 100
+  - name: context_efficiency_is_bounded
+    forbid_pattern: "rglob\\(\\\"\\*\\\"\\)|read_bytes\\(\\)"
+    scopes:
+      - module: context_efficiency
+        symbol: context_efficiency_status
+        max_lines: 80
+tests:
+  - path: tests/test_context_efficiency.py
+    command: py -3.11 -m pytest -q tests/test_context_efficiency.py
+schema: factory.ssat.v1

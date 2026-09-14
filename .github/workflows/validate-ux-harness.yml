@@ -1,0 +1,63 @@
+name: Validate Full-Stack UX Harness Contract
+
+on:
+  pull_request:
+    paths:
+      - "full-stack-ux-harness-v1.ssat.yaml"
+      - "factoryline/full_stack_ux_spec.py"
+      - "factoryline/full_stack_ux_harness.py"
+      - "tests/test_full_stack_ux_*.py"
+      - "smoke/full-stack-ux-harness-contract-v1.json"
+      - "specs/full-stack-ux-harness-contract-v1.md"
+      - "docs/FULL_STACK_UX_HARNESS.md"
+      - ".github/workflows/validate-ux-harness.yml"
+  push:
+    branches: [main]
+    paths:
+      - "full-stack-ux-harness-v1.ssat.yaml"
+      - "factoryline/full_stack_ux_spec.py"
+      - "factoryline/full_stack_ux_harness.py"
+      - "tests/test_full_stack_ux_*.py"
+      - "smoke/full-stack-ux-harness-contract-v1.json"
+      - "specs/full-stack-ux-harness-contract-v1.md"
+      - "docs/FULL_STACK_UX_HARNESS.md"
+      - ".github/workflows/validate-ux-harness.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ux-harness-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: SSAT schema and evidence-contract checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Code Factory
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Validate the checked-in SSAT contract
+        run: >-
+          python -m factoryline.cli quality-harness spec-validate
+          full-stack-ux-harness-v1.ssat.yaml --root .
+          --out .factory/quality-harness/ci-full-stack-ux-harness.json --json
+
+      - name: Replay the immutable receipt
+        run: >-
+          python -m factoryline.cli quality-harness spec-verify
+          .factory/quality-harness/ci-full-stack-ux-harness.json --root . --json
+
+      - name: Run contract regression tests
+        run: python -m pytest -q tests/test_full_stack_ux_spec.py tests/test_full_stack_ux_harness.py

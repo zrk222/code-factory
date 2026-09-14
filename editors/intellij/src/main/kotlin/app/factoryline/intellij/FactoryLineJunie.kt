@@ -38,10 +38,11 @@ class FactoryLineJuniePanel(private val project: Project) : JPanel(BorderLayout(
 
             Enterprise, AppForge, SaaS, and delivery checks are optional routes—not
             a default burden for ordinary code review. The install writes only
-            .junie/AGENTS.md and .junie/mcp/mcp.json. It never overwrites a
-            different team file, enables Junie, starts an agent, runs tests, or
-            gives FactoryLine approval, merge, publish, deploy, credential, or
-            network authority.
+            .junie/AGENTS.md, .junie/mcp/mcp.json, and the optional native
+            .junie/agents/factoryline-proof.md read-only reviewer manifest. It
+            never overwrites a different team file, enables Junie, starts an
+            agent, runs tests, or gives FactoryLine approval, merge, publish,
+            deploy, credential, or network authority.
         """.trimIndent()
     }
 

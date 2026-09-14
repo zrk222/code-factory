@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import factoryline.release_candidate as candidate
+from test_intake_admission import _intake
 
 
 def _source(root: Path, *, version: str = "0.46.3") -> None:
@@ -89,3 +90,39 @@ def test_requested_active_metadata_is_part_of_candidate_decision(monkeypatch, tm
     assert result["ok"] is False
     assert result["facts"]["ledger_drift"] is True
     assert any(item["code"] == "E_METADATA_LEDGER_ORDER" for item in result["blockers"])
+
+
+def test_release_preflight_can_require_authoritative_intake(monkeypatch, tmp_path: Path) -> None:
+    _source(tmp_path)
+    monkeypatch.setattr(candidate, "_git_head", lambda _root: "a" * 40)
+    monkeypatch.setattr(candidate, "verify_release_contract", lambda *args: {"ok": True, "marker": "RELEASE_CONTRACT_VALID"})
+    artifact_dir = tmp_path / "candidate"
+    artifact_dir.mkdir()
+    (artifact_dir / "factoryline_code_factory-0.46.3-py3-none-any.whl").write_bytes(b"new")
+    intake_path, _ = _intake(tmp_path)
+
+    result = candidate.release_candidate_preflight(
+        tmp_path,
+        _contract(tmp_path),
+        [artifact_dir],
+        intake_parameters=intake_path,
+        require_intake=True,
+    )
+
+    assert result["ok"] is True
+    assert result["facts"]["intake_binding_verified"] is True
+    assert result["intake_parameters"]["marker"] == "INTAKE_BINDING_VERIFIED"
+
+
+def test_release_preflight_strict_mode_blocks_without_intake(monkeypatch, tmp_path: Path) -> None:
+    _source(tmp_path)
+    monkeypatch.setattr(candidate, "_git_head", lambda _root: "a" * 40)
+    monkeypatch.setattr(candidate, "verify_release_contract", lambda *args: {"ok": True, "marker": "RELEASE_CONTRACT_VALID"})
+    artifact_dir = tmp_path / "candidate"
+    artifact_dir.mkdir()
+    (artifact_dir / "factoryline_code_factory-0.46.3-py3-none-any.whl").write_bytes(b"new")
+
+    result = candidate.release_candidate_preflight(tmp_path, _contract(tmp_path), [artifact_dir], require_intake=True)
+
+    assert result["ok"] is False
+    assert any(item["code"] == "E_INTAKE_BINDING_REQUIRED" for item in result["blockers"])

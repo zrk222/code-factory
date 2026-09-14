@@ -9,7 +9,7 @@
 
 <!-- mcp-name: io.github.zrk222/code-factory -->
 
-> **6 mandatory audit lanes. 136 coded rejection conditions. One human-owned release decision.**
+> **6 mandatory audit lanes. 140 coded rejection conditions. One human-owned release decision.**
 
 ## Your code passed. But did it pass the right tests?
 
@@ -37,10 +37,10 @@ a weakened rule, the result does not quietly become a pass.
 | Migration and data integrity | Can the system upgrade without losing, corrupting, or stranding data? |
 | Performance and resources | Did latency, queries, memory, connections, or other resources regress against an approved baseline? |
 
-Those lanes contain **81 lane-specific and 55 cross-cutting coded rejection
+Those lanes contain **81 lane-specific and 59 cross-cutting coded rejection
 conditions**. The [source-bound inventory](docs/AUDIT_CONDITION_INVENTORY.md)
 recomputes the total from the implementation; it is not a claim that every
-project executes 136 tests.
+project executes 140 tests.
 
 ### What the Code Factory upgrade improves
 
@@ -61,14 +61,54 @@ workflow itself, not from a JetBrains-specific adapter:
 - **Bounded resource cost:** evidence reads, workspace measurements, and
   process-bound replays have explicit limits and fresh-workspace rules, so the
   audit does not silently scan or mutate an entire project.
+- **Fast, repeatable agent context:** `factory efficiency pack` emits a
+  priority-ordered, hash-verified packet with bounded excerpts and exact cache
+  reuse, so unchanged context need not be reassembled for each hand-off.
+  Token counts are explicitly estimated—not provider-usage or savings claims—
+  and drift or secret-shaped material fails closed.
 - **Clear agent accountability:** the proof-coupled Junie handoff records the
   known tool, changed-file rationale, hashes, and explicit unknowns against a
   taxonomy digest, so an agent receives credit only for evidence a reviewer
   can inspect.
+- **Release evidence that travels with the artifact:** the optional
+  supply-chain gate binds source and lockfiles, SBOM/VEX and licence policy,
+  identical rebuilds, and package secret/path scans to one candidate digest.
+  It blocks drift without pretending that a local receipt is a marketplace or
+  security approval.
 
 These are workflow-efficiency improvements, not a promise that application
 code or tests execute faster. Actual time or cost savings remain unknown until
 your project supplies a baseline and an evidence window.
+
+Agents can start with `factory first-lap status` or the read-only
+`factory.first_lap_status` tool over local MCP; browser-capable clients see the
+same bounded status through WebMCP. All three surfaces report the same
+integrity state and next action without executing a journey or granting release
+authority.
+
+Mission Control and IDE clients can also request `factory.agui_review_events`
+or run `factory agui review-events --json` to render the same state as a small,
+hash-bound controlled event stream (`RUN_STARTED → STATE_SNAPSHOT →
+REVIEW_CARD → RUN_FINISHED`). This is a presentation bridge for review cards
+and human interrupts—not open-ended generated UI, provider transport, or agent
+authority. See [AGUI and MCP2 review surface](docs/AGUI_MCP2.md).
+
+### New: First Lap activation control
+
+The new `factory first-lap` path makes the safest part of Code Factory the
+easiest to start. One command creates three plain-language files: `MISSION.md`
+for intended and forbidden outcomes, `END-TO-END.md` for observable journeys,
+and verifier-only `.factory/holdouts/HOLDOUT.md` for independent failure cases.
+Before supervised autonomy is considered, every critical verifier must pass a
+three-point calibration (approved candidate passes, a deliberate defect fails,
+and the wrong candidate is inconclusive or blocked), one human must observe the
+complete intake-to-handoff lap, and any builder access to a holdout blocks the
+run. A new incident can be promoted through
+`incident → failure code → invariant → reproducer → mutation → permanent gate → owner`,
+turning past failures into executable regression controls. Retry policy is
+typed and fail-closed: only a narrowly classified transient provider failure
+is retryable; stale evidence, product failures, identity mismatches, and setup
+failures remain review events. See [First Lap](docs/FIRST_LAP.md).
 
 ### Built for the way you work
 
@@ -87,6 +127,28 @@ Specialist modules join the same review when needed: Deep Defect Mesh consumes
 analyzer evidence, SaaS checks examine customer journeys, and AppForge organizes
 mobile build, design, privacy, signing, and store-submission evidence. AppForge
 does not replace the other audit lanes or promise store approval.
+
+### Full-Stack UX Harness contract
+
+For mobile and full-stack releases, the **Full-Stack UX Harness** turns the
+release brief into a strict, local contract that AppForge can consume. It
+normalizes six evidence categories—visual media, privacy-to-listing,
+release-chain, design-system, production-signal, and Android parity—and keeps
+the source YAML, normalized projection, and receipt hash-bound. Validate the
+repository contract before running an audit, then replay the receipt in a
+fresh workspace:
+
+```text
+python -m factoryline.cli quality-harness spec-validate full-stack-ux-harness-v1.ssat.yaml --root .
+python -m factoryline.cli quality-harness spec-verify .factory/receipts/full-stack-ux-harness-v1.json --root .
+```
+
+The CI workflow at `.github/workflows/validate-ux-harness.yml` runs the same
+fail-closed checks and focused tests on pull requests. It validates intent and
+evidence structure only; it does not access credentials, run provider uploads,
+or mark an App Store/Play submission approved. See
+[`docs/FULL_STACK_UX_HARNESS.md`](docs/FULL_STACK_UX_HARNESS.md) for the direct
+and legacy SSAT forms and the exact evidence boundary.
 
 ### Choose your review path
 
@@ -183,7 +245,7 @@ checks under one signed plan. Every failed lane returns the consequence,
 evidence digest, exact replay, and next repair. A six-lane pass means ready for
 human review—not approved for release.
 
-### Senior engineering controls in 0.46.3
+### Senior engineering controls in 0.46.5
 
 When a team needs stronger evidence than a self-reported green build, use the
 [senior-engineering integration](docs/SENIOR_ENGINEERING_INTEGRATION.md):
@@ -595,7 +657,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [0.46.4 core release notes](docs/RELEASE_NOTES_0.46.4.md), the
+- See the [0.46.5 core release notes](docs/RELEASE_NOTES_0.46.5.md), the
   [grilling ladder](docs/GRILLING_LADDER.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
