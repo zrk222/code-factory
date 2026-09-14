@@ -125,3 +125,29 @@ def test_tamper_and_status_are_visible_without_execution(tmp_path: Path):
     status = intake_parameters_status(tmp_path)
     assert status["state"] == "BLOCKED"
     assert status["invalid_count"] == 1
+
+
+def test_status_latest_is_newest_sealed_timestamp_not_hash_order(tmp_path: Path):
+    confirmation = _confirmation(tmp_path)
+    first_request = _request(tmp_path, confirmation)
+    first_request_path = tmp_path / "intake-request-first.json"
+    first_request.rename(first_request_path)
+    first = seal_intake_parameters(tmp_path, first_request_path)
+    second_request = _request(tmp_path, confirmation)
+    second_request_value = json.loads(second_request.read_text(encoding="utf-8"))
+    second_request_value["parameters"]["risk"] = "high"
+    second_request.write_text(json.dumps(second_request_value, indent=2) + "\n", encoding="utf-8")
+    second = seal_intake_parameters(tmp_path, second_request)
+
+    first_path = Path(first["path"])
+    second_path = Path(second["path"])
+    first_value = json.loads(first_path.read_text(encoding="utf-8"))
+    second_value = json.loads(second_path.read_text(encoding="utf-8"))
+    first_value["sealed_at"] = "2026-09-14T00:00:00Z"
+    second_value["sealed_at"] = "2026-09-14T01:00:00Z"
+    first_path.write_text(json.dumps(first_value, indent=2) + "\n", encoding="utf-8")
+    second_path.write_text(json.dumps(second_value, indent=2) + "\n", encoding="utf-8")
+
+    status = intake_parameters_status(tmp_path)
+    assert status["invalid_count"] == 0
+    assert status["latest"]["sealed_at"] == "2026-09-14T01:00:00Z"

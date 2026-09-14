@@ -228,7 +228,7 @@ def _validate_sbom(root: Path, descriptor: dict[str, Any]) -> dict[str, Any]:
     return {"path": descriptor["path"], "sha256": descriptor["sha256"], "component_count": len(components), "bom_sha256": supplied}
 
 
-def _validate_vex(root: Path, descriptor: dict[str, Any], now: datetime) -> tuple[dict[str, Any], dict[str, int]]:
+def _validate_vex(root: Path, descriptor: dict[str, Any], now: datetime) -> tuple[dict[str, Any], dict[str, int], list[tuple[str, str, str]]]:
     value = _read_json(root, descriptor, "vex")
     if value.get("schema") != "factory.vex.v1":
         raise SupplyChainError("E_VEX_SCHEMA", "VEX is not a Factory VEX artifact")
@@ -240,6 +240,7 @@ def _validate_vex(root: Path, descriptor: dict[str, Any], now: datetime) -> tupl
     if not isinstance(entries, list) or len(entries) > MAX_COMPONENTS:
         raise SupplyChainError("E_VEX_ENTRIES", "VEX entries are missing or too large")
     unresolved = {severity: 0 for severity in SEVERITIES}
+    unresolved_items: list[tuple[str, str, str]] = []
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             raise SupplyChainError("E_VEX_ENTRY", f"VEX entry {index} is not an object")
@@ -254,31 +255,48 @@ def _validate_vex(root: Path, descriptor: dict[str, Any], now: datetime) -> tupl
         if severity not in SEVERITIES:
             raise SupplyChainError("E_VEX_SEVERITY_UNKNOWN", f"unresolved {vulnerability} has no approved severity")
         unresolved[severity] += 1
-    return {"path": descriptor["path"], "sha256": descriptor["sha256"], "entry_count": len(entries), "vex_sha256": supplied}, unresolved
+        unresolved_items.append((vulnerability, entry["component"], severity))
+    return {"path": descriptor["path"], "sha256": descriptor["sha256"], "entry_count": len(entries), "vex_sha256": supplied}, unresolved, unresolved_items
 
 
-def _validate_policy(root: Path, value: Any, now: datetime, unresolved: dict[str, int]) -> dict[str, Any]:
+def _validate_policy(root: Path, value: Any, now: datetime, unresolved: dict[str, int], unresolved_items: list[tuple[str, str, str]]) -> dict[str, Any]:
     policy = _assert_exact(value, {"max_unresolved", "exceptions"}, "vex_policy")
     thresholds = _assert_exact(policy["max_unresolved"], set(SEVERITIES), "vex_policy.max_unresolved")
     normalized_thresholds: dict[str, int] = {}
     for severity in SEVERITIES:
         normalized_thresholds[severity] = require_int(thresholds[severity], f"max_unresolved.{severity}", minimum=0, maximum=MAX_COMPONENTS)
-        if unresolved[severity] > normalized_thresholds[severity]:
-            raise SupplyChainError("E_VULNERABILITY_THRESHOLD", f"{severity} unresolved count exceeds policy")
     exceptions = policy["exceptions"]
     if not isinstance(exceptions, list) or len(exceptions) > MAX_COMPONENTS:
         raise SupplyChainError("E_EXCEPTION_POLICY", "VEX exceptions are missing or too large")
+    unresolved_keys = set(unresolved_items)
+    unresolved_key_counts = {key: unresolved_items.count(key) for key in unresolved_keys}
+    exception_keys: set[tuple[str, str, str]] = set()
     for index, exception in enumerate(exceptions):
         item = _assert_exact(exception, {"id", "vulnerability", "component", "severity", "expires_at", "reason"}, f"vex_policy.exceptions[{index}]")
-        require_str(item["id"], f"exception[{index}].id")
-        require_str(item["vulnerability"], f"exception[{index}].vulnerability")
-        require_str(item["component"], f"exception[{index}].component")
+        exception_id = require_str(item["id"], f"exception[{index}].id")
+        vulnerability = require_str(item["vulnerability"], f"exception[{index}].vulnerability")
+        component = require_str(item["component"], f"exception[{index}].component")
         if item["severity"] not in SEVERITIES:
-            raise SupplyChainError("E_VEX_SEVERITY_UNKNOWN", f"exception {item['id']} has unsupported severity")
+            raise SupplyChainError("E_VEX_SEVERITY_UNKNOWN", f"exception {exception_id} has unsupported severity")
+        severity = item["severity"]
         if _timestamp(item["expires_at"], f"exception[{index}].expires_at") <= now:
-            raise SupplyChainError("E_EXCEPTION_EXPIRED", f"VEX exception {item['id']} is expired")
+            raise SupplyChainError("E_EXCEPTION_EXPIRED", f"VEX exception {exception_id} is expired")
         require_str(item["reason"], f"exception[{index}].reason", maximum=1024)
-    return {"max_unresolved": normalized_thresholds, "exception_count": len(exceptions)}
+        key = (vulnerability, component, severity)
+        if key in exception_keys:
+            raise SupplyChainError("E_EXCEPTION_DUPLICATE", f"VEX exception {exception_id} duplicates an existing exception")
+        if key not in unresolved_keys:
+            raise SupplyChainError("E_EXCEPTION_UNMATCHED", f"VEX exception {exception_id} does not match an unresolved finding")
+        if unresolved_key_counts[key] != 1:
+            raise SupplyChainError("E_EXCEPTION_AMBIGUOUS", f"VEX exception {exception_id} matches multiple unresolved findings")
+        exception_keys.add(key)
+    effective = dict(unresolved)
+    for _, _, severity in exception_keys:
+        effective[severity] -= 1
+    for severity in SEVERITIES:
+        if effective[severity] > normalized_thresholds[severity]:
+            raise SupplyChainError("E_VULNERABILITY_THRESHOLD", f"{severity} unresolved count exceeds policy after exceptions")
+    return {"max_unresolved": normalized_thresholds, "exception_count": len(exceptions), "excepted_count": len(exception_keys), "unresolved_after_exceptions": effective}
 
 
 def _validate_licenses(value: Any, now: datetime) -> dict[str, Any]:
@@ -377,14 +395,14 @@ def validate_attestation(root: Path, manifest: dict[str, Any], *, candidate_sha2
     sbom_descriptor = _descriptor(workspace, value["sbom"], "sbom")
     sbom = _validate_sbom(workspace, sbom_descriptor)
     vex_descriptor = _descriptor(workspace, value["vex"], "vex")
-    vex, unresolved = _validate_vex(workspace, vex_descriptor, current)
-    vex_policy = _validate_policy(workspace, value["vex_policy"], current, unresolved)
+    vex, unresolved, unresolved_items = _validate_vex(workspace, vex_descriptor, current)
+    vex_policy = _validate_policy(workspace, value["vex_policy"], current, unresolved, unresolved_items)
     licenses = _validate_licenses(value["licenses"], current)
     build = _validate_build(workspace, value["build"], current)
     artifacts = [{"path": item["path"], "sha256": item["sha256"], "bytes": next((a["bytes"] for a in value["build"]["rebuilds"][0]["artifacts"] if a.get("path") == item["path"]), 0)} for item in build["artifacts"]]
     secret_scan = _scan_artifact_secrets(workspace, artifacts)
     collector = _validate_collector(value["collector"], require_external=require_external)
-    return {"attestation_id": value["attestation_id"], "candidate_sha256": candidate, "source_manifest": source, "lockfiles": lockfiles, "sbom": sbom, "vex": vex, "vex_policy": vex_policy, "licenses": licenses, "build": build, "collector": collector, "facts": {"unresolved": unresolved, "lockfile_count": len(lockfiles), "component_count": sbom["component_count"], "vex_entry_count": vex["entry_count"], "artifact_count": build["artifact_count"], **secret_scan}}
+    return {"attestation_id": value["attestation_id"], "candidate_sha256": candidate, "source_manifest": source, "lockfiles": lockfiles, "sbom": sbom, "vex": vex, "vex_policy": vex_policy, "licenses": licenses, "build": build, "collector": collector, "facts": {"unresolved": unresolved, "unresolved_after_exceptions": vex_policy["unresolved_after_exceptions"], "excepted_count": vex_policy["excepted_count"], "lockfile_count": len(lockfiles), "component_count": sbom["component_count"], "vex_entry_count": vex["entry_count"], "artifact_count": build["artifact_count"], **secret_scan}}
 
 
 def _receipt(core: dict[str, Any]) -> dict[str, Any]:

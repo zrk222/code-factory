@@ -119,6 +119,32 @@ def test_vulnerability_threshold_and_archive_secret_fail_closed(tmp_path: Path) 
     assert blocked["blockers"][0]["code"] == "E_SECRET_IN_ARTIFACT"
 
 
+def test_vex_exception_is_bound_to_finding_before_threshold(tmp_path: Path) -> None:
+    manifest, now = _manifest(tmp_path)
+    vex = build_vex([{ "vulnerability": "CVE-1", "component": "x", "status": "affected" }])
+    vex["entries"][0]["severity"] = "high"
+    vex["vex_sha256"] = _digest({key: value for key, value in vex.items() if key != "vex_sha256"})
+    (tmp_path / "vex.json").write_text(json.dumps(vex, sort_keys=True), encoding="utf-8")
+    manifest["vex"] = _descriptor(tmp_path, "vex.json")
+    manifest["vex_policy"]["exceptions"] = [{
+        "id": "approved-cve-1",
+        "vulnerability": "CVE-1",
+        "component": "x",
+        "severity": "high",
+        "expires_at": (now + timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+        "reason": "A reviewed mitigation is active for this release.",
+    }]
+    passed = evaluate_supply_chain(tmp_path, manifest, now=now)
+    assert passed["decision"] == "PASS"
+    assert passed["facts"]["unresolved"] == {"critical": 0, "high": 1, "medium": 0, "low": 0}
+    assert passed["facts"]["unresolved_after_exceptions"] == {"critical": 0, "high": 0, "medium": 0, "low": 0}
+
+    unmatched = copy.deepcopy(manifest)
+    unmatched["vex_policy"]["exceptions"][0]["vulnerability"] = "CVE-NOT-PRESENT"
+    blocked = evaluate_supply_chain(tmp_path, unmatched, now=now)
+    assert blocked["blockers"][0]["code"] == "E_EXCEPTION_UNMATCHED"
+
+
 def test_external_signed_attestation_is_verified_but_local_is_rejected(tmp_path: Path) -> None:
     manifest, now = _manifest(tmp_path)
     manifest["collector"] = {"id": "independent", "role": "independent_builder", "backend": "remote-builder"}

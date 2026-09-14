@@ -366,6 +366,16 @@ def verify_intake_parameters(root: Path, receipt_path: Path) -> dict[str, Any]:
         if normalized["confirmation_sha256"] != receipt.get("intake", {}).get("confirmation_sha256"):
             errors.append("confirmation binding drift")
         _parse_expiry(receipt.get("expires_at"))
+        sealed_at = receipt.get("sealed_at")
+        if not isinstance(sealed_at, str):
+            errors.append("sealed_at is missing")
+        else:
+            try:
+                parsed_sealed_at = datetime.fromisoformat(sealed_at.replace("Z", "+00:00"))
+                if parsed_sealed_at.tzinfo is None:
+                    errors.append("sealed_at must include a timezone")
+            except ValueError:
+                errors.append("sealed_at is not RFC3339")
         if receipt.get("status") not in {"READY", "REVIEW_REQUIRED"}:
             errors.append("status invalid")
         expected_status = "READY" if not normalized["advisory_parameters"] else "REVIEW_REQUIRED"
@@ -528,12 +538,21 @@ def intake_parameters_status(root: Path) -> dict[str, Any]:
         try:
             check = verify_intake_parameters(workspace, path)
             row = {"path": check["path"], "valid": check["valid"], "state": check["state"], "marker": check["marker"]}
+            if check["valid"]:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                sealed_at = raw.get("sealed_at")
+                parsed = datetime.fromisoformat(str(sealed_at).replace("Z", "+00:00"))
+                row["sealed_at"] = _iso(parsed)
+                row["_sealed_at"] = parsed.astimezone(timezone.utc)
             rows.append(row)
             if not check["valid"]:
                 invalid.append({"path": check["path"], "error": "; ".join(check["errors"])[:240]})
         except IntakeParametersError as exc:
             invalid.append({"path": path.relative_to(workspace).as_posix(), "error": f"{exc.code}: {exc.message}"})
+    rows.sort(key=lambda row: (row.get("_sealed_at", datetime.min.replace(tzinfo=timezone.utc)), row["path"]))
     latest = rows[-1] if rows else None
+    for row in rows:
+        row.pop("_sealed_at", None)
     if invalid:
         state = "BLOCKED"
     elif not latest:
