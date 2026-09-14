@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -126,6 +127,22 @@ def test_tamper_and_status_are_visible_without_execution(tmp_path: Path):
     status = intake_parameters_status(tmp_path)
     assert status["state"] == "BLOCKED"
     assert status["invalid_count"] == 1
+
+
+def test_truncated_status_blocks_even_when_invalid_receipt_is_outside_scan(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("factoryline.intake_parameters.MAX_SCAN_RECEIPTS", 1)
+    confirmation = _confirmation(tmp_path)
+    receipt = seal_intake_parameters(tmp_path, _request(tmp_path, confirmation))
+    valid_path = Path(receipt["path"])
+    invalid_path = valid_path.with_name("old-invalid.json")
+    invalid_path.write_text("{}", encoding="utf-8")
+    os.utime(invalid_path, (1, 1))
+    status = intake_parameters_status(tmp_path)
+    assert status["receipt_count"] == 1
+    assert status["invalid_count"] == 0
+    assert status["truncated"] is True
+    assert status["state"] == "BLOCKED"
+    assert status["latest"] is None
 
 
 def test_status_latest_is_newest_sealed_timestamp_not_hash_order(tmp_path: Path):

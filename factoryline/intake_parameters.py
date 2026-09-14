@@ -585,10 +585,11 @@ def intake_parameters_status(root: Path) -> dict[str, Any]:
             if len(invalid) < MAX_SCAN_RECEIPTS:
                 invalid.append({"path": path.relative_to(workspace).as_posix(), "error": str(exc)})
     rows.sort(key=lambda row: (row.get("_sealed_at", datetime.min.replace(tzinfo=timezone.utc)), row["path"]))
-    latest = rows[-1] if rows else None
+    truncated = len(candidates) > MAX_SCAN_RECEIPTS
+    latest = rows[-1] if rows and not truncated else None
     for row in rows:
         row.pop("_sealed_at", None)
-    if invalid_count:
+    if invalid_count or truncated:
         state = "BLOCKED"
     elif not latest:
         state = "MISSING"
@@ -604,7 +605,7 @@ def intake_parameters_status(root: Path) -> dict[str, Any]:
         "ready_count": sum(row["state"] == "READY" and row["valid"] for row in rows),
         "review_required_count": sum(row["state"] == "REVIEW_REQUIRED" and row["valid"] for row in rows),
         "invalid_count": invalid_count,
-        "truncated": len(candidates) > MAX_SCAN_RECEIPTS,
+        "truncated": truncated,
         "latest": latest,
         "invalid": invalid,
         "authority": AUTHORITY,
