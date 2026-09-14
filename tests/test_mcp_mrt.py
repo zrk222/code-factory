@@ -92,14 +92,25 @@ def test_release_gate_completed_requires_proof_debt_acknowledgement() -> None:
         "state": "LOCAL_EVIDENCE_BLOCKED",
         "blockers": [{"code": "RELEASE_CONTRACT_MISSING"}],
     }
+    challenge = release_gate_input_required(card)
     with pytest.raises(McpMrtError, match="acknowledgement") as exc_info:
-        release_gate_completed(card, {"decision": "APPROVE_RELEASE", "reviewerIdentity": "lead"})
+        release_gate_completed(
+            card,
+            {"decision": "APPROVE_RELEASE", "reviewerIdentity": "lead"},
+            tool_call_id=challenge["toolCallId"],
+            proof_card_hash=challenge["context"]["proofCardHash"],
+        )
     assert exc_info.value.marker == "MCP2_RELEASE_DEBT_UNACKNOWLEDGED"
-    result = release_gate_completed(card, {
-        "decision": "APPROVE_RELEASE",
-        "reviewerIdentity": "lead",
-        "acknowledgedProofDebt": ["RELEASE_CONTRACT_MISSING"],
-    })
+    result = release_gate_completed(
+        card,
+        {
+            "decision": "APPROVE_RELEASE",
+            "reviewerIdentity": "lead",
+            "acknowledgedProofDebt": ["RELEASE_CONTRACT_MISSING"],
+        },
+        tool_call_id=challenge["toolCallId"],
+        proof_card_hash=challenge["context"]["proofCardHash"],
+    )
     assert result["status"] == "RELEASE_APPROVED"
 
 
@@ -112,6 +123,19 @@ def test_release_gate_completed_rejects_invalid_input_and_binding_mismatch() -> 
             card,
             {"decision": "REJECT_RELEASE", "reviewerIdentity": "lead"},
             tool_call_id="release-gate:wrong",
+            proof_card_hash=release_gate_input_required(card)["context"]["proofCardHash"],
+        )
+    assert exc_info.value.marker == "MCP2_RELEASE_GATE_BINDING_MISMATCH"
+
+
+def test_release_gate_completed_requires_both_stateless_bindings() -> None:
+    card = {"feature": "payments", "state": "EXTERNAL_GATES_UNOBSERVED"}
+    challenge = release_gate_input_required(card)
+    with pytest.raises(McpMrtError) as exc_info:
+        release_gate_completed(
+            card,
+            {"decision": "REJECT_RELEASE", "reviewerIdentity": "lead"},
+            tool_call_id=challenge["toolCallId"],
         )
     assert exc_info.value.marker == "MCP2_RELEASE_GATE_BINDING_MISMATCH"
 

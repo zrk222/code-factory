@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 
@@ -145,6 +146,14 @@ def test_status_latest_is_newest_sealed_timestamp_not_hash_order(tmp_path: Path)
     second_value = json.loads(second_path.read_text(encoding="utf-8"))
     first_value["sealed_at"] = "2026-09-14T00:00:00Z"
     second_value["sealed_at"] = "2026-09-14T01:00:00Z"
+    for value in (first_value, second_value):
+        value["receipt_integrity_sha256"] = hashlib.sha256(
+            json.dumps(
+                {"parameter_sha256": value["parameter_sha256"], "sealed_at": value["sealed_at"]},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
     first_path.write_text(json.dumps(first_value, indent=2) + "\n", encoding="utf-8")
     second_path.write_text(json.dumps(second_value, indent=2) + "\n", encoding="utf-8")
 

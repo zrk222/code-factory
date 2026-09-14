@@ -101,9 +101,16 @@ def release_gate_completed(
     acknowledged = [_require_mcp2_string(item, "acknowledgedProofDebt item", max_length=256) for item in acknowledged_value]
     if len(set(acknowledged)) != len(acknowledged):
         raise McpMrtError("acknowledgedProofDebt must not contain duplicates")
-    if tool_call_id is not None and tool_call_id != expected_tool_call_id:
+    # MRT is stateless: the second leg must carry both bindings from the
+    # original challenge.
+    if tool_call_id is None or proof_card_hash is None:
+        raise McpMrtError(
+            "tool_call_id and proof_card_hash are required for the stateless second leg",
+            "MCP2_RELEASE_GATE_BINDING_MISMATCH",
+        )
+    if tool_call_id != expected_tool_call_id:
         raise McpMrtError("toolCallId does not match the proof-card challenge", "MCP2_RELEASE_GATE_BINDING_MISMATCH")
-    if proof_card_hash is not None and proof_card_hash != expected_proof_card_hash:
+    if proof_card_hash != expected_proof_card_hash:
         raise McpMrtError("proofCardHash does not match the proof-card contents", "MCP2_RELEASE_GATE_BINDING_MISMATCH")
     debt = challenge["context"].get("proofDebt", [])
     if not isinstance(debt, list):

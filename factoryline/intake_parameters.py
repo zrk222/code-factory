@@ -49,7 +49,7 @@ REQUIRED_AUDIT_LANES = (
 PARAMETER_KEYS = ("mode", "risk", "budgets", "scope_paths", "required_lanes", "external_effects")
 BUDGET_KEYS = ("max_iterations", "max_wall_seconds", "max_tokens", "max_cost_usd")
 REQUEST_KEYS = {"schema", "intake_confirmation", "parameters", "provenance", "approved_by", "expires_at", "rationale"}
-RECEIPT_CORE_EXCLUDED = {"parameter_sha256", "sealed_at"}
+RECEIPT_CORE_EXCLUDED = {"parameter_sha256", "sealed_at", "receipt_integrity_sha256"}
 MAX_SCOPE_PATHS = 64
 MAX_SCAN_RECEIPTS = 100
 MAX_TEXT = 500
@@ -326,7 +326,16 @@ def seal_intake_parameters(root: Path, request_path: Path, out_path: Path | None
         "authority": AUTHORITY,
         "claim_boundary": "Hash-bound local intake parameters only; not execution, approval, credentials, publication, deployment, or provider state.",
     }
-    receipt = {**core, "parameter_sha256": _sha(core), "sealed_at": _iso(_now())}
+    sealed_at = _iso(_now())
+    parameter_sha256 = _sha(core)
+    receipt = {
+        **core,
+        "parameter_sha256": parameter_sha256,
+        "sealed_at": sealed_at,
+        # Ordering metadata is outside the semantic parameter digest but is
+        # itself hash-bound so it cannot silently reorder release state.
+        "receipt_integrity_sha256": _sha({"parameter_sha256": parameter_sha256, "sealed_at": sealed_at}),
+    }
     default = workspace / ".factory" / "intake-parameters" / project / f"{request_sha}.json"
     path = Path(out_path).resolve() if out_path and Path(out_path).is_absolute() else (workspace / Path(out_path) if out_path else default)
     _, relative = _relative(workspace, path, "out", exists=False, allow_absolute=True)
@@ -351,6 +360,15 @@ def verify_intake_parameters(root: Path, receipt_path: Path) -> dict[str, Any]:
     digest = receipt.get("parameter_sha256")
     if not isinstance(digest, str) or not _DIGEST.fullmatch(digest) or digest != _sha(_core(receipt)):
         errors.append("parameter receipt hash mismatch")
+    sealed_at = receipt.get("sealed_at")
+    receipt_integrity = receipt.get("receipt_integrity_sha256")
+    if (
+        not isinstance(sealed_at, str)
+        or not isinstance(receipt_integrity, str)
+        or not _DIGEST.fullmatch(receipt_integrity)
+        or receipt_integrity != _sha({"parameter_sha256": digest, "sealed_at": sealed_at})
+    ):
+        errors.append("receipt ordering metadata integrity mismatch")
     if receipt.get("authority") != AUTHORITY:
         errors.append("authority boundary invalid")
     try:
@@ -366,7 +384,6 @@ def verify_intake_parameters(root: Path, receipt_path: Path) -> dict[str, Any]:
         if normalized["confirmation_sha256"] != receipt.get("intake", {}).get("confirmation_sha256"):
             errors.append("confirmation binding drift")
         _parse_expiry(receipt.get("expires_at"))
-        sealed_at = receipt.get("sealed_at")
         if not isinstance(sealed_at, str):
             errors.append("sealed_at is missing")
         else:
@@ -374,8 +391,10 @@ def verify_intake_parameters(root: Path, receipt_path: Path) -> dict[str, Any]:
                 parsed_sealed_at = datetime.fromisoformat(sealed_at.replace("Z", "+00:00"))
                 if parsed_sealed_at.tzinfo is None:
                     errors.append("sealed_at must include a timezone")
-            except ValueError:
-                errors.append("sealed_at is not RFC3339")
+                else:
+                    parsed_sealed_at.astimezone(timezone.utc)
+            except (ValueError, OverflowError):
+                errors.append("sealed_at is not a representable RFC3339 timestamp")
         if receipt.get("status") not in {"READY", "REVIEW_REQUIRED"}:
             errors.append("status invalid")
         expected_status = "READY" if not normalized["advisory_parameters"] else "REVIEW_REQUIRED"
@@ -531,10 +550,11 @@ def intake_parameters_status(root: Path) -> dict[str, Any]:
     workspace = Path(root).resolve()
     rows: list[dict[str, Any]] = []
     invalid: list[dict[str, str]] = []
+    invalid_count = 0
+    scanned = 0
     directory = workspace / ".factory" / "intake-parameters"
-    paths = sorted(directory.glob("*/*.json"))[:MAX_SCAN_RECEIPTS]
-    truncated = len(list(directory.glob("*/*.json"))) > MAX_SCAN_RECEIPTS
-    for path in paths:
+    for path in directory.glob("*/*.json"):
+        scanned += 1
         try:
             check = verify_intake_parameters(workspace, path)
             row = {"path": check["path"], "valid": check["valid"], "state": check["state"], "marker": check["marker"]}
@@ -544,16 +564,23 @@ def intake_parameters_status(root: Path) -> dict[str, Any]:
                 parsed = datetime.fromisoformat(str(sealed_at).replace("Z", "+00:00"))
                 row["sealed_at"] = _iso(parsed)
                 row["_sealed_at"] = parsed.astimezone(timezone.utc)
-            rows.append(row)
+                rows.append(row)
+                rows.sort(key=lambda item: (item.get("_sealed_at", datetime.min.replace(tzinfo=timezone.utc)), item["path"]))
+                if len(rows) > MAX_SCAN_RECEIPTS:
+                    rows.pop(0)
             if not check["valid"]:
-                invalid.append({"path": check["path"], "error": "; ".join(check["errors"])[:240]})
-        except IntakeParametersError as exc:
-            invalid.append({"path": path.relative_to(workspace).as_posix(), "error": f"{exc.code}: {exc.message}"})
+                invalid_count += 1
+                if len(invalid) < MAX_SCAN_RECEIPTS:
+                    invalid.append({"path": check["path"], "error": "; ".join(check["errors"])[:240]})
+        except (IntakeParametersError, ValueError, OverflowError) as exc:
+            invalid_count += 1
+            if len(invalid) < MAX_SCAN_RECEIPTS:
+                invalid.append({"path": path.relative_to(workspace).as_posix(), "error": str(exc)})
     rows.sort(key=lambda row: (row.get("_sealed_at", datetime.min.replace(tzinfo=timezone.utc)), row["path"]))
     latest = rows[-1] if rows else None
     for row in rows:
         row.pop("_sealed_at", None)
-    if invalid:
+    if invalid_count:
         state = "BLOCKED"
     elif not latest:
         state = "MISSING"
@@ -568,8 +595,8 @@ def intake_parameters_status(root: Path) -> dict[str, Any]:
         "receipt_count": len(rows),
         "ready_count": sum(row["state"] == "READY" and row["valid"] for row in rows),
         "review_required_count": sum(row["state"] == "REVIEW_REQUIRED" and row["valid"] for row in rows),
-        "invalid_count": len(invalid),
-        "truncated": truncated,
+        "invalid_count": invalid_count,
+        "truncated": scanned > MAX_SCAN_RECEIPTS,
         "latest": latest,
         "invalid": invalid,
         "authority": AUTHORITY,
