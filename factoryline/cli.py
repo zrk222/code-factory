@@ -394,7 +394,9 @@ from .first_lap import (
     promote_incident,
     record_incident,
     verify_activation,
+    verify_activation_receipt,
     verify_holdout_boundary,
+    verify_promoted_incident_gates,
     verify_observed_first_lap,
     verify_verifier_calibration,
 )
@@ -682,6 +684,7 @@ def main(argv=None) -> int:
     first_lap_calibrate = first_lap_sub.add_parser("calibrate", help="verify approved, defective, and wrong-candidate calibration cases")
     first_lap_calibrate.add_argument("input", help="JSON object containing approved_candidate, defective_candidate, and wrong_candidate statuses")
     first_lap_calibrate.add_argument("--root", default=".")
+    first_lap_calibrate.add_argument("--strict", action="store_true", help="require candidate and contract identity bindings")
     first_lap_calibrate.add_argument("--json", action="store_true")
     first_lap_incident = first_lap_sub.add_parser("incident", help="append a complete incident-to-invariant chain")
     first_lap_incident.add_argument("input", help="incident JSON object")
@@ -696,19 +699,24 @@ def main(argv=None) -> int:
     first_lap_holdout.add_argument("input", help="holdout boundary JSON object")
     first_lap_holdout.add_argument("--root", default=".")
     first_lap_holdout.add_argument("--json", action="store_true")
+    first_lap_holdout.add_argument("--strict", action="store_true", help="require an externally isolated holdout")
     first_lap_observe = first_lap_sub.add_parser("observe", help="verify the exact human-observed first-lap phase sequence")
     first_lap_observe.add_argument("input", help="JSON array of phase/evidence_sha256 events")
+    first_lap_observe.add_argument("--strict", action="store_true", help="require named human observer and run metadata")
     first_lap_observe.add_argument("--json", action="store_true")
     first_lap_failure = first_lap_sub.add_parser("failure", help="classify a failure and derive its retry policy")
     first_lap_failure.add_argument("kind", choices=["definitive_product_failure", "transient_provider_failure", "unverifiable_candidate_identity", "stale_evidence", "environment_setup_failure"])
     first_lap_failure.add_argument("--provider")
     first_lap_failure.add_argument("--retry-after", type=int)
+    first_lap_failure.add_argument("--strict", action="store_true", help="require provider evidence for retryable failures")
     first_lap_failure.add_argument("--json", action="store_true")
     first_lap_verify = first_lap_sub.add_parser("verify", help="compose calibration, holdout, and observed-lap receipts into one activation gate")
     first_lap_verify.add_argument("--calibration", required=True)
     first_lap_verify.add_argument("--holdout", required=True)
     first_lap_verify.add_argument("--observed", required=True)
     first_lap_verify.add_argument("--root", default=".")
+    first_lap_verify.add_argument("--strict", action="store_true", help="require all identity, isolation, observation, and incident gates")
+    first_lap_verify.add_argument("--persist", action="store_true", help="write immutable activation receipt")
     first_lap_verify.add_argument("--json", action="store_true")
 
     agui = sub.add_parser("agui", help="emit controlled, deterministic AGUI-style review events")
@@ -3974,7 +3982,7 @@ def main(argv=None) -> int:
                 result = first_lap_status(workspace)
                 code = 0 if result.get("state") in {"INITIALIZED", "NOT_INITIALIZED"} else 1
             elif a.first_lap_cmd == "calibrate":
-                result = verify_verifier_calibration(workspace, json.loads(Path(a.input).read_text(encoding="utf-8")))
+                result = verify_verifier_calibration(workspace, json.loads(Path(a.input).read_text(encoding="utf-8")), strict=a.strict)
                 code = 0 if result.get("state") == "CALIBRATED" else 1
             elif a.first_lap_cmd == "incident":
                 payload = json.loads(Path(a.input).read_text(encoding="utf-8"))
@@ -3986,13 +3994,13 @@ def main(argv=None) -> int:
                 result = promote_incident(workspace, json.loads(Path(a.input).read_text(encoding="utf-8")))
                 code = 0
             elif a.first_lap_cmd == "holdout":
-                result = verify_holdout_boundary(workspace, json.loads(Path(a.input).read_text(encoding="utf-8")))
+                result = verify_holdout_boundary(workspace, json.loads(Path(a.input).read_text(encoding="utf-8")), strict=a.strict)
                 code = 0 if result.get("state") == "VERIFIED" else 1
             elif a.first_lap_cmd == "observe":
-                result = verify_observed_first_lap(json.loads(Path(a.input).read_text(encoding="utf-8")))
+                result = verify_observed_first_lap(json.loads(Path(a.input).read_text(encoding="utf-8")), strict=a.strict)
                 code = 0 if result.get("state") == "OBSERVED" else 1
             elif a.first_lap_cmd == "failure":
-                result = classify_failure(a.kind, provider=a.provider, retry_after_seconds=a.retry_after)
+                result = classify_failure(a.kind, provider=a.provider, retry_after_seconds=a.retry_after, strict=a.strict)
                 code = 0
             else:
                 result = verify_activation(
@@ -4000,6 +4008,8 @@ def main(argv=None) -> int:
                     calibration=json.loads(Path(a.calibration).read_text(encoding="utf-8")),
                     holdout=json.loads(Path(a.holdout).read_text(encoding="utf-8")),
                     observed=json.loads(Path(a.observed).read_text(encoding="utf-8")),
+                    strict=a.strict,
+                    persist=a.persist,
                 )
                 code = 0 if result.get("state") == "READY" else 1
         except (FirstLapError, OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:

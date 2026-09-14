@@ -14,6 +14,10 @@
         <p><strong>SaaS Reality:</strong> inspect whether OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation agree across Clerk, Auth0, Okta, Entra, Cognito, Supabase, Firebase, or another standards-compliant provider. The native status action and Graph Ops view read hash-verified local receipts; they never contact a provider, access credentials, change billing, grant access, deploy, or approve a release.</p>
         <p><strong>In 60 seconds:</strong> inspect an outcome, fuzzy PRD, or risky diff; challenge whether a test can actually reject the failure it claims to cover; then see the current proof gap before a human decides what may be applied.</p>
         <p><strong>Start now:</strong> open <strong>Tools | FactoryLine | Run First Proof</strong>, confirm the workspace, then inspect the local result. Generate an MVP when you need one; a starter is never called production-ready before relevant evidence exists.</p>
+        <h3>Technical information</h3>
+        <p><strong>Runtime:</strong> local JVM plugin for the IntelliJ Platform (2025.2 / build 252 baseline), with no hosted service, source upload, API key, or background agent.</p>
+        <p><strong>Integration:</strong> the plugin exposes supervised tool-window actions and read-only local MCP facts for First Proof, Oracle Firewall, Graph Ops, six audit lanes, session traces, and hash-bound receipts. It works with Junie, Codex, Copilot, CodeRabbit, Devin, Qodana, SonarQube, Cursor, and OpenCode, but does not require, control, or impersonate any of them.</p>
+        <p><strong>Support and feedback:</strong> report reproducible issues at <a href="https://github.com/zrk222/code-factory/issues">GitHub Issues</a>; read the <a href="https://github.com/zrk222/code-factory/discussions">community forum</a> for usage questions and release discussion. These links are the authoritative support channels for this plugin.</p>
         <h3>What this solves</h3>
         <ul>
             <li><strong>Passing tests that prove nothing:</strong> expose missing or stale proof before it turns into a confident-looking review green light.</li>
