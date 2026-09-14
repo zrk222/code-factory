@@ -551,10 +551,21 @@ def intake_parameters_status(root: Path) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     invalid: list[dict[str, str]] = []
     invalid_count = 0
-    scanned = 0
     directory = workspace / ".factory" / "intake-parameters"
-    for path in directory.glob("*/*.json"):
-        scanned += 1
+    candidates: list[tuple[int, Path]] = []
+    if directory.is_dir():
+        for project_dir in directory.iterdir():
+            if not project_dir.is_dir():
+                continue
+            for entry in os.scandir(project_dir):
+                if entry.is_file() and entry.name.endswith(".json"):
+                    try:
+                        candidates.append((entry.stat().st_mtime_ns, Path(entry.path)))
+                    except OSError:
+                        continue
+    candidates.sort(key=lambda item: (item[0], item[1].as_posix()), reverse=True)
+    paths = [path for _, path in candidates[:MAX_SCAN_RECEIPTS]]
+    for path in paths:
         try:
             check = verify_intake_parameters(workspace, path)
             row = {"path": check["path"], "valid": check["valid"], "state": check["state"], "marker": check["marker"]}
@@ -565,9 +576,6 @@ def intake_parameters_status(root: Path) -> dict[str, Any]:
                 row["sealed_at"] = _iso(parsed)
                 row["_sealed_at"] = parsed.astimezone(timezone.utc)
                 rows.append(row)
-                rows.sort(key=lambda item: (item.get("_sealed_at", datetime.min.replace(tzinfo=timezone.utc)), item["path"]))
-                if len(rows) > MAX_SCAN_RECEIPTS:
-                    rows.pop(0)
             if not check["valid"]:
                 invalid_count += 1
                 if len(invalid) < MAX_SCAN_RECEIPTS:
@@ -596,7 +604,7 @@ def intake_parameters_status(root: Path) -> dict[str, Any]:
         "ready_count": sum(row["state"] == "READY" and row["valid"] for row in rows),
         "review_required_count": sum(row["state"] == "REVIEW_REQUIRED" and row["valid"] for row in rows),
         "invalid_count": invalid_count,
-        "truncated": scanned > MAX_SCAN_RECEIPTS,
+        "truncated": len(candidates) > MAX_SCAN_RECEIPTS,
         "latest": latest,
         "invalid": invalid,
         "authority": AUTHORITY,
