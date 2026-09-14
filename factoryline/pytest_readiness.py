@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
 
 
 class _Results:
@@ -37,6 +38,10 @@ def collect_pytest_readiness(test_paths: list[str]) -> dict[str, int]:
     # discovered.  Keep the async fixture scope explicit here as well; this
     # prevents pytest-asyncio's deprecation warning without globally filtering
     # warnings from the probe.
+    # Normalize absolute paths for Windows.  Pytest's nested invocation can
+    # otherwise treat a backslash-containing drive path as a collection root
+    # and walk the protected ``C:\\Documents and Settings`` junction.
+    normalized_paths = [Path(path).resolve().as_posix() for path in test_paths]
     exit_code = pytest.main(
         [
             "-q",
@@ -44,7 +49,7 @@ def collect_pytest_readiness(test_paths: list[str]) -> dict[str, int]:
             "--strict-config",
             "-o",
             "asyncio_default_fixture_loop_scope=function",
-            *test_paths,
+            *normalized_paths,
         ],
         plugins=[results],
     )
