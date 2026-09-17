@@ -54,6 +54,13 @@ def test_taxonomy_is_complete_progressive_and_has_no_external_effect_authority(t
         "max_turns": 12,
         "supports_prompt_argument": True,
     }
+    profile = manifest["operating_profile"]
+    assert profile["version"] == "2"
+    assert profile["mode"] == "supervised"
+    assert profile["max_tools_per_round"] == 4
+    assert profile["prefer_bounded_queries"] is True
+    assert "oracle_weakening" in profile["stop_conditions"]
+    assert "evidence_digests" in profile["handoff_fields"]
 
 
 def test_contribution_gives_visible_bounded_credit_and_hashes_only_cited_local_files(tmp_path: Path) -> None:
@@ -152,6 +159,9 @@ def test_project_pack_requires_confirmation_is_idempotent_and_preserves_owned_fi
     assert config["mcpServers"]["code-factory"]["command"] == "factory"
     assert "factory.junie_taxonomy" in guidance
     assert "factory.junie_contribution" in guidance
+    assert "Efficiency profile" in guidance
+    assert "four or fewer" in guidance
+    assert "factory.search_audit_rules" in guidance
     assert "Do not create or alter those facts" in guidance
     assert "name: \"factoryline-proof\"" in subagent
     assert 'tools: ["Read", "Grep", "Glob"]' in subagent

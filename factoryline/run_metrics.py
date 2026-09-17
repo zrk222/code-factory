@@ -101,6 +101,7 @@ def public_metrics(root: Path) -> dict[str, Any]:
     all_exact = bool(rows) and len(exact) == len(rows)
     completed = terminals.get("completed", 0)
     from .telemetry import public_inventory_summary
+    from .ops_telemetry import lifecycle_inventory
 
     return {
         "schema": PUBLIC_SCHEMA,
@@ -133,6 +134,7 @@ def public_metrics(root: Path) -> dict[str, Any]:
             "reason": "A measured counterfactual baseline is required before savings can be claimed.",
         },
         "telemetry_reconciliation": public_inventory_summary(root),
+        "lifecycle": lifecycle_inventory(root),
     }
 
 

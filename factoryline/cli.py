@@ -19,6 +19,14 @@ import time
 import uuid
 from pathlib import Path
 
+# Keep parser construction independent from the optional app-builder module.
+# The implementation is still lazy-loaded only when an ``app`` command runs.
+_APP_STACK_CHOICES = (
+    "nextjs-fastapi-postgres",
+    "react-fastapi-postgres",
+    "react-fastapi-sqlite",
+)
+
 from .contract import MODULES, STAGES, ensure_layout, LAYOUT
 from .assembly import detect, assemble, DEFAULT_CHAIN, rollup_receipts
 from .continuation import ContinuationError, continue_assembly
@@ -59,7 +67,6 @@ from .proof import (
     verify_trace,
 )
 from .optimizer import optimize_pr, pr_pack, write_policy
-from .app_builder import STACKS, app_from_prd, app_from_prompt
 from .target_compiler import (
     SUPPORTED_TRIGGERS,
     TARGETS,
@@ -76,20 +83,12 @@ from .migration import (
     verify_migration_readiness,
     verify_repository_context,
 )
-from .context_efficiency import (
-    ContextEfficiencyError,
-    build_context_packet,
-    context_efficiency_status,
-    verify_context_packet,
-)
 from .intake_parameters import (
     IntakeParametersError,
     intake_parameters_status,
     seal_intake_parameters,
     verify_intake_parameters,
 )
-from .studio import StudioRequestError, serve_studio, studio_status
-from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .ide_playbook import AdoptionGuideError, adoption_guide
 from .capability_evidence import CapabilityEvidenceError, audit_capability_evidence
 from .full_stack_ux_harness import (
@@ -578,7 +577,7 @@ def _plan() -> int:
     return 0
 
 
-def main(argv=None) -> int:
+def _dispatch(argv=None) -> int:
     """Parse FactoryLine commands, dispatch one handler, and return its process code."""
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "--version":
@@ -604,6 +603,15 @@ def main(argv=None) -> int:
     s = sub.add_parser("doctor", help="show brick versions and command compatibility")
     s.add_argument("--strict", action="store_true")
     s.add_argument("--json", action="store_true")
+    architecture = sub.add_parser("architecture", help="measure architecture debt and enforce growth budgets")
+    architecture_sub = architecture.add_subparsers(required=True, dest="architecture_cmd")
+    architecture_health = architecture_sub.add_parser(
+        "health", help="report documentation, CLI, module-surface, and release-cadence health"
+    )
+    architecture_health.add_argument("--root", default=".")
+    architecture_health.add_argument("--policy", help="policy JSON; defaults to architecture-policy.json below root")
+    architecture_health.add_argument("--strict", action="store_true", help="treat existing architecture debt as blocking")
+    architecture_health.add_argument("--json", action="store_true")
     plan = sub.add_parser("plan", help="print the assembly pipeline or verify a human-approved agent plan")
     plan_sub = plan.add_subparsers(dest="plan_cmd")
     plan_verify = plan_sub.add_parser("verify", help="join an agent-plan envelope to local Diff-to-Proof facts without execution")
@@ -2455,14 +2463,14 @@ def main(argv=None) -> int:
     a_prd.add_argument("prd")
     a_prd.add_argument("--out", help="output directory; defaults to app slug")
     a_prd.add_argument("--name", help="app slug override")
-    a_prd.add_argument("--stack", default="nextjs-fastapi-postgres", choices=sorted(STACKS))
+    a_prd.add_argument("--stack", default="nextjs-fastapi-postgres", choices=sorted(_APP_STACK_CHOICES))
     a_prd.add_argument("--purpose", default="auto", help="auto, developer, healthcare, fintech, marketplace, saas")
     a_prd.add_argument("--json", action="store_true")
     a_prompt = app_sub.add_parser("from-prompt", help="scaffold an app from a plain-English app idea")
     a_prompt.add_argument("prompt")
     a_prompt.add_argument("--out", help="output directory; defaults to app slug")
     a_prompt.add_argument("--name", help="app slug override")
-    a_prompt.add_argument("--stack", default="nextjs-fastapi-postgres", choices=sorted(STACKS))
+    a_prompt.add_argument("--stack", default="nextjs-fastapi-postgres", choices=sorted(_APP_STACK_CHOICES))
     a_prompt.add_argument("--purpose", default="auto", help="auto, developer, healthcare, fintech, marketplace, saas")
     a_prompt.add_argument("--json", action="store_true")
 
@@ -2581,6 +2589,12 @@ def main(argv=None) -> int:
     ops_metadata.add_argument("--out", help="workspace-contained metadata audit receipt path")
     ops_metadata.add_argument("--scope", choices=["active", "archive", "all"], default="active", help="audit active records by default; choose archive or all explicitly")
     ops_metadata.add_argument("--json", action="store_true")
+    ops_receipts = ops_sub.add_parser("receipts", help="index receipts and produce a non-destructive retention plan")
+    ops_receipts.add_argument("--root", default=".")
+    ops_receipts.add_argument("--out")
+    ops_receipts.add_argument("--hot-days", type=int, default=30)
+    ops_receipts.add_argument("--max-files", type=int, default=2000)
+    ops_receipts.add_argument("--json", action="store_true")
 
     verifier = sub.add_parser(
         "verifier",
@@ -2874,6 +2888,30 @@ def main(argv=None) -> int:
     efficiency_status.add_argument("--root", default=".")
     efficiency_status.add_argument("--json", action="store_true")
 
+    grill = sub.add_parser("grill", help="run a deterministic one-question-at-a-time intent grill")
+    grill_sub = grill.add_subparsers(dest="grill_cmd", required=True)
+    grill_start = grill_sub.add_parser("start", help="start a source-bound grill session")
+    grill_start.add_argument("session_id")
+    grill_start.add_argument("--root", default=".")
+    grill_start.add_argument("--source")
+    grill_start.add_argument("--json", action="store_true")
+    grill_next = grill_sub.add_parser("next", help="show only the next unresolved question")
+    grill_next.add_argument("session_id")
+    grill_next.add_argument("--root", default=".")
+    grill_next.add_argument("--json", action="store_true")
+    grill_answer = grill_sub.add_parser("answer", help="record one human answer and advance the frontier")
+    grill_answer.add_argument("session_id")
+    grill_answer.add_argument("question_id")
+    grill_answer.add_argument("answer")
+    grill_answer.add_argument("--answered-by", required=True)
+    grill_answer.add_argument("--root", default=".")
+    grill_answer.add_argument("--json", action="store_true")
+    grill_confirm = grill_sub.add_parser("confirm", help="confirm shared understanding before implementation")
+    grill_confirm.add_argument("session_id")
+    grill_confirm.add_argument("--approved-by", required=True)
+    grill_confirm.add_argument("--root", default=".")
+    grill_confirm.add_argument("--json", action="store_true")
+
     opinion = sub.add_parser("opinion", help="maintain the owner-controlled architecture Opinion Dock")
     opinion_sub = opinion.add_subparsers(dest="opinion_cmd", required=True)
     opinion_init = opinion_sub.add_parser("init", help="create a compact default Opinion Dock")
@@ -3037,6 +3075,7 @@ def main(argv=None) -> int:
         )
         from .policy_compiler import PolicyCompileError, write_compiled_policy
         from .codex_metadata import MetadataAuditError, write_metadata_audit
+        from .receipt_index import write_receipt_index
         try:
             root = Path(a.root)
             if a.ops_cmd == "init":
@@ -3068,6 +3107,8 @@ def main(argv=None) -> int:
             elif a.ops_cmd == "metadata":
                 selected = [Path(item) for item in a.path] if a.path else None
                 result = write_metadata_audit(root, selected, Path(a.out) if a.out else None, scope=a.scope)
+            elif a.ops_cmd == "receipts":
+                result = write_receipt_index(root, Path(a.out) if a.out else None, hot_days=a.hot_days, max_files=a.max_files)
             else:
                 result = verify_workspace(root)
         except (EnterpriseOpsError, PolicyCompileError, MetadataAuditError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
@@ -3088,6 +3129,8 @@ def main(argv=None) -> int:
             return 0 if result.get("status") == "COMPILED" else 1
         if a.ops_cmd == "metadata":
             return 0 if result.get("status") == "VERIFIED" else 1
+        if a.ops_cmd == "receipts":
+            return 0
         if a.ops_cmd in {"summary", "otel", "export"}:
             return 0 if result.get("integrity", {}).get("valid", True) else 1
         return 0
@@ -3100,6 +3143,23 @@ def main(argv=None) -> int:
         return _home(Path(a.root), a.json)
     if a.cmd == "doctor":
         return _doctor(a.strict, a.json)
+    if a.cmd == "architecture":
+        from .architecture_health import ArchitectureHealthError, evaluate_architecture_health
+        try:
+            result = evaluate_architecture_health(
+                Path(a.root), Path(a.policy) if a.policy else None, strict=a.strict
+            )
+        except (ArchitectureHealthError, OSError, UnicodeDecodeError, ValueError) as exc:
+            error = {
+                "schema": "factory.architecture-health-error.v1",
+                "status": "failed",
+                "code": getattr(exc, "code", "E_ARCHITECTURE_HEALTH"),
+                "message": str(exc),
+            }
+            print(json.dumps(error, indent=2, sort_keys=True), file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 1 if result.get("decision") == "BLOCKED" else 0
     if a.cmd == "external":
         try:
             if a.external_cmd == "import":
@@ -3148,6 +3208,7 @@ def main(argv=None) -> int:
             return 1
         return 0
     if a.cmd == "efficiency":
+        from .context_efficiency import ContextEfficiencyError, build_context_packet, context_efficiency_status, verify_context_packet
         root = Path(a.root).resolve()
         try:
             if a.efficiency_cmd == "pack":
@@ -3176,6 +3237,24 @@ def main(argv=None) -> int:
         else:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
         return code
+    if a.cmd == "grill":
+        from .grill_engine import answer_question, confirm_grill, next_question, start_grill
+        root = Path(a.root).resolve()
+        try:
+            if a.grill_cmd == "start":
+                result = start_grill(root, a.session_id, Path(a.source) if a.source else None)
+            elif a.grill_cmd == "next":
+                result = next_question(root, a.session_id)
+            elif a.grill_cmd == "answer":
+                result = answer_question(root, a.session_id, a.question_id, a.answer, answered_by=a.answered_by)
+            else:
+                result = confirm_grill(root, a.session_id, approved_by=a.approved_by)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            result = {"schema": "factory.grill.error.v1", "status": "BLOCKED", "code": "GRILL_INPUT_INVALID", "message": str(exc)}
+            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2, sort_keys=True) if getattr(a, "json", False) else f"grill {a.grill_cmd}: {result.get('status', 'READY')}")
+        return 0
     if a.cmd in {"prd", "intake", "product", "mission", "pr", "outcome", "opinion", "signal", "learning", "migration", "context", "langgraph", "provider", "agent", "telemetry", "verifier"}:
         try:
             if a.cmd == "prd" and a.prd_cmd == "grill":
@@ -3858,6 +3937,7 @@ def main(argv=None) -> int:
             print(f"receipt        : {result['receipt']}")
         return 0
     if a.cmd == "studio":
+        from .studio import StudioRequestError, serve_studio, studio_status
         if a.check:
             payload = studio_status(Path(a.root), a.port)
             if a.json:
@@ -5171,6 +5251,7 @@ def main(argv=None) -> int:
             return 0 if payload["valid"] else 1
         return 0
     if a.cmd == "graph":
+        from .graph_ops import graph_ops_impact, graph_ops_snapshot
         if a.graph_cmd == "lineage-continuity":
             try:
                 payload = verify_candidate_lineage(Path(a.root), Path(a.manifest))
@@ -6442,6 +6523,7 @@ def main(argv=None) -> int:
             print("loop: max 5 iterations; no merge/publish/deploy without approval")
         return 0
     if a.cmd == "app":
+        from .app_builder import STACKS, app_from_prd, app_from_prompt
         if a.app_cmd == "stacks":
             payload = {"stacks": STACKS}
             print(json.dumps(payload, indent=2))
@@ -6473,6 +6555,31 @@ def main(argv=None) -> int:
         return 0
     p.print_help()
     return 0
+
+
+def main(argv=None) -> int:
+    """Record one lifecycle receipt around the command dispatcher."""
+    from .ops_telemetry import _root_from_argv, is_read_only_command, record_lifecycle
+    started = time.monotonic()
+    values = list(sys.argv[1:] if argv is None else argv)
+    root = _root_from_argv(values, Path.cwd())
+    read_only = is_read_only_command(values)
+    try:
+        code = int(_dispatch(values))
+    except BaseException as exc:
+        if not read_only:
+            try:
+                record_lifecycle(root, values, started_monotonic=started, exit_code=2, status="error", error_code=type(exc).__name__)
+            except Exception:
+                pass
+        raise
+    if not read_only:
+        try:
+            record_lifecycle(root, values, started_monotonic=started, exit_code=code, status="completed" if code == 0 else "blocked")
+        except Exception:
+            # Telemetry must never change the command's release semantics.
+            pass
+    return code
 
 
 if __name__ == "__main__":

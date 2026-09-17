@@ -306,6 +306,23 @@ def _scope_findings(findings: list[dict[str, str]], scope: str) -> list[dict[str
     return findings
 
 
+def _metadata_kind(relative: str) -> str:
+    """Classify metadata before applying execution-claim rules.
+
+    Skills and ordinary Markdown are documentation by default.  Progress logs,
+    JSON/JSONL, envelopes, and Forge state remain operational records.  This
+    prevents narrative prose from being mistaken for a live release decision.
+    """
+    normalized = relative.replace("\\", "/").lower()
+    if normalized.startswith("skills/") or normalized.startswith("docs/"):
+        return "documentation"
+    if normalized.endswith((".md", ".txt")) and "/context/" not in f"/{normalized}" and not normalized.startswith("context/"):
+        return "documentation"
+    if normalized.startswith(".forge/") or normalized.startswith("envelopes/") or normalized.startswith("context/"):
+        return "execution_record"
+    return "execution_record"
+
+
 def _workspace_head(workspace: Path) -> str | None:
     """Read the current Git head without spawning a process."""
     git = workspace / ".git"
@@ -447,9 +464,18 @@ def _audit_record(workspace: Path, path: str, location: str, record: dict[str, A
     return findings
 
 
-def _audit_text(workspace: Path, path: str, text: str) -> list[dict[str, str]]:
+def _audit_text(workspace: Path, path: str, text: str, *, documentation: bool = False) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
     for number, line in enumerate(text.splitlines(), start=1):
+        # Documentation is inspected for explicit machine-like claims only.
+        # Narrative sentences such as "the build is ready" are not execution
+        # records and must not create release blockers.
+        if documentation and not re.search(
+            r"^\s*(?:[-*]\s*)?(?:status|state|outcome|result|decision|phase|tests?[_ -]?passed|all[_ -]?green|gate[_ -]?passed|intent[_ -]?(?:id|hash|status|state)|provider)\s*[:=]",
+            line,
+            re.I,
+        ):
+            continue
         terminal = bool(_TERMINAL_RE.search(line))
         problem = bool(_PROBLEM_RE.search(line))
         evidence = bool(re.search(r"(?:sha256|receipt|artifact|command|read[ -]?back|https?://|evidence)", line, re.I))
@@ -579,6 +605,8 @@ def _audit_metadata_file(workspace: Path, path: Path, scope: str) -> tuple[dict[
     entry, raw, findings = _read_metadata_bytes(path, relative)
     if entry is None or raw is None:
         return entry, findings
+    kind = _metadata_kind(relative)
+    entry["metadata_kind"] = kind
     suffix = path.suffix.lower()
     if suffix not in SUPPORTED_SUFFIXES:
         findings.append(_finding("E_METADATA_FORMAT_UNSUPPORTED", relative, "file", f"unsupported metadata format: {suffix or '<none>'}"))
@@ -594,7 +622,7 @@ def _audit_metadata_file(workspace: Path, path: Path, scope: str) -> tuple[dict[
         findings.extend(_audit_jsonl(workspace, relative, text, entry, scope))
     else:
         if scope != "archive" or re.search(r"(?:^|[/\\])(?:archive|archived)(?:[/\\]|$)", relative, re.I):
-            findings.extend(_scope_findings(_audit_text(workspace, relative, text), "archive" if re.search(r"(?:^|[/\\])(?:archive|archived)(?:[/\\]|$)", relative, re.I) else "active"))
+            findings.extend(_scope_findings(_audit_text(workspace, relative, text, documentation=kind == "documentation"), "archive" if re.search(r"(?:^|[/\\])(?:archive|archived)(?:[/\\]|$)", relative, re.I) else "active"))
         if Path(relative).name.lower() == "progress.md" and scope in {"active", "all"}:
             findings.extend(_audit_progress_ledger(workspace, relative, text))
     return entry, findings

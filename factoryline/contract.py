@@ -130,6 +130,21 @@ class Receipt:
             self.producer_version = package_version(package)
         p = d / f"{self.module}-{self.feature}-{self.stage}-{self.run_id[:12]}.json"
         payload = asdict(self)
+        # Bind every standard receipt to the producing package/build.  The
+        # source commit may be null for a dirty checkout; that uncertainty is
+        # explicit and must not be upgraded into release provenance.
+        try:
+            from .provenance import provenance
+            payload["provenance"] = provenance()
+        except Exception:
+            payload["provenance"] = {
+                "schema": "factoryline.provenance.v1",
+                "package": "factoryline-code-factory",
+                "version": self.producer_version,
+                "source_commit": None,
+                "build_hash": None,
+                "identity_complete": False,
+            }
         p.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         return p
 

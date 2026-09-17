@@ -312,6 +312,22 @@ task.
 5. Return exact changed paths, tests run, supplied evidence paths, failures,
    and unknowns. A human decides approval, merge, release, and deployment.
 
+## Efficiency profile (bounded by the manifest)
+
+Use progressive disclosure. Start with `factory.status` and
+`factory.junie_taxonomy`, then query only the status or rule surface needed for
+the current scope. Prefer `factory.search_audit_rules` before loading a lane;
+do not dump the full rejection inventory into context. Reuse an immutable
+receipt only when its candidate, contract, and source digests match exactly;
+otherwise mark the evidence stale and re-run the named check. Keep each round
+to a small set of tools (four or fewer) and finish with one fact-derived next
+action, not a list of speculative work.
+
+The route is: orient -> bind intent -> map impact -> select rules -> challenge
+the implementation -> return a contribution card. If the intent is unclear,
+the scope changes, an oracle is weakened, evidence is stale, or a provider /
+release action is requested, stop and surface the exact human decision needed.
+
 ## FactoryLine contribution acknowledgement
 
 When you use one or more `factory.*` tools, call
@@ -357,6 +373,9 @@ You are the FactoryLine proof reviewer. Work only as an evidence navigator;
 never edit files, execute shell commands, browse the web, or ask the user to
 change scope. Use the `code-factory` MCP server's read-only tools to inspect
 the progressive taxonomy and the relevant local status before forming a view.
+Keep the review token-efficient: make bounded, path-scoped calls; use
+`factory.search_audit_rules` to discover only relevant rules; and never load
+the complete inventory when a lane query is sufficient.
 
 Follow this chain exactly:
 `source -> obligation -> forbidden behavior -> gate -> test -> evidence -> decision`.
@@ -369,9 +388,11 @@ claim that a test ran unless a supplied receipt says so.
 
 Return a compact handoff containing: the exact paths inspected, FactoryLine
 tools called, evidence paths and digests supplied, findings by severity, one
-fact-derived next action, and unresolved unknowns. A FactoryLine result is
-review evidence, not Junie telemetry, proof of private tool calls, or release
-authority.
+fact-derived next action, and unresolved unknowns. If any stop condition is
+encountered (missing intent, scope or oracle drift, stale evidence, or a
+provider/release action), report it explicitly and do not continue. A
+FactoryLine result is review evidence, not Junie telemetry, proof of private
+tool calls, or release authority.
 
 User request: $prompt
 """
@@ -415,6 +436,38 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
             "guidelines": ".junie/AGENTS.md",
             "mcp": ".junie/mcp/mcp.json",
             "subagents": ".junie/agents/",
+        },
+        "operating_profile": {
+            "version": "2",
+            "mode": "supervised",
+            "default_route": [
+                "factory.status",
+                "factory.junie_taxonomy",
+                "factory.intent_ledger",
+                "factory.graph_impact",
+                "factory.search_audit_rules",
+                "factory.runtime_audit_status",
+                "factory.junie_contribution",
+            ],
+            "max_tools_per_round": 4,
+            "prefer_bounded_queries": True,
+            "cache_only_immutable_receipts": True,
+            "stop_conditions": [
+                "missing_human_intent",
+                "scope_or_plan_drift",
+                "oracle_weakening",
+                "stale_or_missing_evidence",
+                "provider_or_release_action",
+            ],
+            "handoff_fields": [
+                "changed_paths",
+                "tests_run",
+                "evidence_paths",
+                "evidence_digests",
+                "findings",
+                "next_fact_derived_action",
+                "unknowns",
+            ],
         },
         "authority": dict(_AUTHORITY),
         "claim_boundary": "This is a local, copy-only Junie project manifest. It does not enable, start, observe, or control Junie and does not grant edit, execution, approval, merge, publication, deployment, signing, credential, network, or connector authority.",

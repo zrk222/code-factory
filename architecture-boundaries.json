@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema": "factory.module-boundaries.v1",
+  "defaultDomain": "core",
+  "purpose": "Discoverability map for the supported core and specialist packs. Matching is informational and does not grant execution authority.",
+  "domains": {
+    "appforge": [
+      "factoryline/appforge_*.py",
+      "factoryline/app_review_gate.py"
+    ],
+    "graph_ops": [
+      "factoryline/graph*.py",
+      "factoryline/mission_graph.py"
+    ],
+    "enterprise": [
+      "factoryline/enterprise_*.py",
+      "factoryline/revenue_*.py"
+    ],
+    "agent_protocols": [
+      "factoryline/mcp.py",
+      "factoryline/agui.py",
+      "factoryline/a2a*.py",
+      "factoryline/agent_*.py"
+    ],
+    "verification": [
+      "factoryline/*proof*.py",
+      "factoryline/*audit*.py",
+      "factoryline/gauntlet.py",
+      "factoryline/oracle*.py"
+    ]
+  },
+  "governance": {
+    "new_specialist_pack_requires": [
+      "an explicit domain glob",
+      "an owner",
+      "an executable contract test"
+    ],
+    "unknown_modules": "remain core until a human-approved boundary change classifies them"
+  }
+}

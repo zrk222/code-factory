@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema": "factory.architecture-policy.v1",
+  "baseline": {
+    "markdown_files": 655,
+    "python_files": 399,
+    "markdown_python_ratio": 1.6416,
+    "cli_lines": 6505,
+    "cli_command_declarations": 484,
+    "core_modules": 196,
+    "version": "0.46.5",
+    "captured_at": "2026-09-15"
+  },
+  "budgets": {
+    "max_markdown_files": 655,
+    "max_python_files": 419,
+    "max_markdown_python_ratio": 1.7,
+    "max_cli_lines": 6505,
+    "max_cli_command_declarations": 484,
+    "max_core_modules": 196
+  },
+  "review_thresholds": {
+    "markdown_python_ratio": 1.5,
+    "cli_lines": 5000,
+    "core_modules": 150
+  },
+  "release": {
+    "max_releases_30d": 4,
+    "minimum_days_between_releases": 7,
+    "requires_changelog_entry": true
+  },
+  "decomposition_plan": [
+    {
+      "id": "ARCH-CLI-01",
+      "target": "factoryline/cli.py",
+      "outcome": "Move command registration and dispatch into bounded modules while preserving the factory entry point.",
+      "acceptance": ["cli.py line count decreases", "existing CLI contract tests remain green", "each extracted command group has an owner"]
+    },
+    {
+      "id": "ARCH-SURFACE-01",
+      "target": "factoryline package",
+      "outcome": "Publish supported versus experimental module boundaries and stop unowned module accretion.",
+      "acceptance": ["new modules declare a boundary", "experimental adapters are opt-in", "public imports remain backward compatible"]
+    },
+    {
+      "id": "ARCH-DOCS-01",
+      "target": "Markdown corpus",
+      "outcome": "Keep one canonical explanation per capability and link every new document to executable behavior or a decision.",
+      "acceptance": ["superseded docs are indexed or archived", "new docs include an evidence or decision link", "ratio does not grow without executable coverage"]
+    },
+    {
+      "id": "ARCH-RELEASE-01",
+      "target": "release process",
+      "outcome": "Adopt a release train with changelog-backed version bumps instead of agent-paced patch churn.",
+      "acceptance": ["release cadence is measured", "version bump has a changelog entry", "exceptions carry human release authority"]
+    }
+  ],
+  "governance": {
+    "owner": "human-release-authority",
+    "change_requires": [
+      "architecture decision record",
+      "updated baseline or budget",
+      "executable test evidence"
+    ]
+  }
+}

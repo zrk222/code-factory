@@ -86,6 +86,22 @@ same bounded status through WebMCP. All three surfaces report the same
 integrity state and next action without executing a journey or granting release
 authority.
 
+## Start with the smallest useful path
+
+Six audit lanes turn a plausible change into a reviewable engineering decision
+before the first proof command is run.
+
+1. Run `factory first-proof --root .` to see a deliberately hollow check
+   caught by the local auditor.
+2. Run `factory first-lap status --root .` to inspect the human-observed,
+   evidence-bound activation path.
+3. Run `factory architecture health --root . --json` to check repository
+   complexity budgets before adding another command, module, or document.
+
+Only then move to the six-lane audit, Graph Ops, or specialist packs. Each
+step keeps the same evidence and authority boundaries; advanced controls add
+coverage, not permission to approve or release.
+
 Mission Control and IDE clients can also request `factory.agui_review_events`
 or run `factory agui review-events --json` to render the same state as a small,
 hash-bound controlled event stream (`RUN_STARTED → STATE_SNAPSHOT →
