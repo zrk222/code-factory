@@ -95,7 +95,7 @@ pythonpath = ["tests", "."]
 asyncio_default_fixture_loop_scope = "function"
 
 [project.scripts]
-factory = "factoryline.cli:main"
+factory = "factoryline.bootstrap:main"
 
 [tool.setuptools]
 packages = ["factoryline", "factoryline.builtin_packs"]
