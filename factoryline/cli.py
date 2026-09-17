@@ -549,6 +549,12 @@ from .first_lap import (
     verify_verifier_calibration,
 )
 from .agui import AguiError, build_review_events
+from .agentic_control import (
+    AgenticControlError,
+    agentic_control_projection,
+    build_extended_assurance_receipt,
+    verify_extended_assurance_receipt,
+)
 
 # Keep parser construction independent from the optional app-builder module.
 # The implementation is still lazy-loaded only when an ``app`` command runs.
@@ -4479,6 +4485,30 @@ def _dispatch(argv=None) -> int:
     agent_attest.add_argument("--mission-digest")
     agent_attest.add_argument("--contract-digest")
     agent_attest.add_argument("--json", action="store_true")
+    agent_control = agent_sub.add_parser(
+        "control",
+        help="show the deterministic agent-access control-plane projection",
+    )
+    agent_control.add_argument("--root", default=".")
+    agent_control.add_argument("--json", action="store_true")
+    agent_extended = agent_sub.add_parser(
+        "extended",
+        help="validate optional lanes 7-8 from supplied evidence into Receipt v2",
+    )
+    agent_extended.add_argument("feature")
+    agent_extended.add_argument("--root", default=".")
+    agent_extended.add_argument(
+        "--evidence", help="JSON evidence object for the two extended lanes"
+    )
+    agent_extended.add_argument("--extended-assurance", action="store_true")
+    agent_extended.add_argument("--required-lane", action="append", default=[])
+    agent_extended.add_argument("--tenant-id", default="local")
+    agent_extended.add_argument("--run-id", default="extended-assurance")
+    agent_extended.add_argument("--timestamp")
+    agent_extended.add_argument(
+        "--verify", help="verify an existing Receipt v2 payload instead of building one"
+    )
+    agent_extended.add_argument("--json", action="store_true")
 
     telemetry = sub.add_parser(
         "telemetry", help="reconcile local receipts, runs, traces, and meter ledgers"
@@ -5788,6 +5818,28 @@ def _dispatch(argv=None) -> int:
                     mission_digest=a.mission_digest,
                     contract_digest=a.contract_digest,
                 )
+            elif a.cmd == "agent" and a.agent_cmd == "control":
+                result = agentic_control_projection(Path(a.root))
+            elif a.cmd == "agent" and a.agent_cmd == "extended":
+                if a.verify:
+                    result = verify_extended_assurance_receipt(
+                        json.loads(Path(a.verify).read_text(encoding="utf-8"))
+                    )
+                else:
+                    evidence = (
+                        json.loads(Path(a.evidence).read_text(encoding="utf-8"))
+                        if a.evidence
+                        else {}
+                    )
+                    result = build_extended_assurance_receipt(
+                        a.feature,
+                        extended_assurance=a.extended_assurance,
+                        evidence=evidence,
+                        required_lanes=a.required_lane,
+                        tenant_id=a.tenant_id,
+                        run_id=a.run_id,
+                        timestamp=a.timestamp,
+                    )
             elif a.cmd == "telemetry":
                 result = telemetry_inventory(Path(a.root))
             elif a.cmd == "verifier" and a.verifier_cmd == "session":
@@ -6107,6 +6159,7 @@ def _dispatch(argv=None) -> int:
             ProofDeltaError,
             ProviderRouterError,
             AgentContractError,
+            AgenticControlError,
             VerifierPlaneError,
             LangGraphAssuranceError,
         ) as exc:

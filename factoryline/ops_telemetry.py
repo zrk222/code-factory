@@ -91,6 +91,7 @@ def is_read_only_command(argv: Iterable[str]) -> bool:
         ("intent", "inspect"),
         ("judgment", "safety-case"),
         ("mcp", "request"),
+        ("agent", "control"),
         ("workspace", "inspect"),
     }
 

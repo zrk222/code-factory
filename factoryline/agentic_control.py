@@ -1,0 +1,1005 @@
+"""Deterministic agent-access control plane for Code Factory.
+
+This module turns the agentic-access patterns into small, verifiable contracts:
+swim-lane events, model-tier routing, typed handoffs, lazy cookbook recipes,
+reusable workflow manifests, and read-only branch/merge boundaries.  It never
+starts a model, edits a checkout, creates a branch, or approves a merge.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+from typing import Any, Iterable
+
+
+SCHEMA = "factory.agentic-control.v1"
+HANDOFF_SCHEMA = "factory.agent-handoff.v1"
+SWIMLANE_SCHEMA = "factory.swimlane-event.v1"
+WORKFLOW_SCHEMA = "factory.reusable-workflow.v1"
+SANDBOX_SCHEMA = "factory.sandbox-boundary.v1"
+ROUTE_TRACE_SCHEMA = "factory.route-trace.v1"
+EXTENDED_RECEIPT_SCHEMA = "factory.receipt.v2"
+EXTENDED_ASSURANCE_SCHEMA = "factory.extended-assurance.v1"
+_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
+_SHA = re.compile(r"^[0-9a-f]{64}$")
+_GIT_SHA = re.compile(r"^[0-9a-f]{40,64}$")
+_PHASES = ("scout", "plan", "build", "verify", "handoff", "review")
+BASELINE_LANES = (
+    "stateful_workflows",
+    "authorization_tenant_isolation",
+    "failure_recovery",
+    "api_consumer_compatibility",
+    "migration_data_integrity",
+    "performance_resources",
+)
+EXTENDED_LANES = (
+    "supply_chain_provenance",
+    "semantic_robustness",
+)
+_AUTHORITY = {
+    "execution": False,
+    "approval": False,
+    "repair": False,
+    "merge": False,
+    "publication": False,
+    "deployment": False,
+    "signing": False,
+    "credential": False,
+    "connector": False,
+    "model_call": False,
+}
+
+
+class AgenticControlError(ValueError):
+    """Fail-closed validation error for the agent-access boundary."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _canonical(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _sha(value: object) -> str:
+    return hashlib.sha256(
+        value if isinstance(value, bytes) else _canonical(value)
+    ).hexdigest()
+
+
+def _id(value: object, label: str) -> str:
+    if not isinstance(value, str) or not _ID.fullmatch(value):
+        raise AgenticControlError("E_AGENTIC_ID", f"{label} must be a safe identifier")
+    return value
+
+
+def _digest(value: object, label: str) -> str:
+    if not isinstance(value, str) or not _SHA.fullmatch(value):
+        raise AgenticControlError(
+            "E_AGENTIC_DIGEST", f"{label} must be a SHA-256 digest"
+        )
+    return value
+
+
+def _route_fields(
+    route: dict[str, Any], *, require_schema: bool = True
+) -> dict[str, Any]:
+    """Validate and normalize the deterministic model-route fields."""
+    if require_schema and route.get("schema") != "factory.model-route.v1":
+        raise AgenticControlError(
+            "E_ROUTE_TRACE", "model route schema marker is missing"
+        )
+    tier = route.get("tier")
+    task_class = route.get("task_class")
+    risk = route.get("risk")
+    rationale = route.get("rationale")
+    if tier not in {"lightweight", "workhorse", "frontier"}:
+        raise AgenticControlError("E_ROUTE_TRACE", "model route tier is invalid")
+    if task_class not in {"routine", "standard", "critical"}:
+        raise AgenticControlError("E_ROUTE_TRACE", "model route task class is invalid")
+    if risk not in {"low", "medium", "high", "critical"}:
+        raise AgenticControlError("E_ROUTE_TRACE", "model route risk is invalid")
+    if not isinstance(rationale, str) or not rationale.strip():
+        raise AgenticControlError("E_ROUTE_TRACE", "model route rationale is required")
+    return {
+        "tier": tier,
+        "task_class": task_class,
+        "risk": risk,
+        "rationale": rationale,
+    }
+
+
+def route_model(
+    task_class: str,
+    *,
+    risk: str = "medium",
+    latency_budget_ms: int | None = None,
+    token_budget: int | None = None,
+) -> dict[str, Any]:
+    """Choose a model tier using explicit inputs only; no model is contacted."""
+    if task_class not in {"routine", "standard", "critical"}:
+        raise AgenticControlError(
+            "E_MODEL_ROUTE", "task_class must be routine, standard, or critical"
+        )
+    if risk not in {"low", "medium", "high", "critical"}:
+        raise AgenticControlError(
+            "E_MODEL_ROUTE", "risk must be low, medium, high, or critical"
+        )
+    for value, label in (
+        (latency_budget_ms, "latency_budget_ms"),
+        (token_budget, "token_budget"),
+    ):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            raise AgenticControlError(
+                "E_MODEL_ROUTE", f"{label} must be a non-negative integer or null"
+            )
+    if risk in {"high", "critical"} or task_class == "critical":
+        tier, reason = (
+            "frontier",
+            "high-risk or critical work requires the deepest review capacity",
+        )
+    elif task_class == "routine" and (
+        latency_budget_ms is not None and latency_budget_ms <= 1500
+    ):
+        tier, reason = (
+            "lightweight",
+            "bounded routine work prioritizes latency and cost",
+        )
+    elif token_budget is not None and token_budget < 4000 and task_class == "routine":
+        tier, reason = "lightweight", "bounded token budget fits a lightweight route"
+    else:
+        tier, reason = "workhorse", "standard work uses the balanced default tier"
+    return {
+        "schema": "factory.model-route.v1",
+        "tier": tier,
+        "task_class": task_class,
+        "risk": risk,
+        "budgets": {
+            "latency_budget_ms": latency_budget_ms,
+            "token_budget": token_budget,
+        },
+        "rationale": reason,
+        "authority": {"model_call": False, "execution": False},
+        "marker": "MODEL_ROUTE_DETERMINISTIC",
+    }
+
+
+def create_typed_handoff(
+    workflow_id: str,
+    stage: str,
+    source_agent: str,
+    target_agent: str,
+    intent_digest: str,
+    payload_digest: str,
+    *,
+    allowed_paths: Iterable[str] = (),
+    next_action: str,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """Create a secret-free, hash-bound handoff envelope."""
+    workflow_id, source_agent, target_agent = (
+        _id(workflow_id, "workflow_id"),
+        _id(source_agent, "source_agent"),
+        _id(target_agent, "target_agent"),
+    )
+    if not isinstance(stage, str) or stage not in _PHASES:
+        raise AgenticControlError(
+            "E_HANDOFF_STAGE", f"stage must be one of {', '.join(_PHASES)}"
+        )
+    _digest(intent_digest, "intent_digest")
+    _digest(payload_digest, "payload_digest")
+    if (
+        not isinstance(next_action, str)
+        or not next_action.strip()
+        or len(next_action) > 512
+    ):
+        raise AgenticControlError(
+            "E_HANDOFF_ACTION", "next_action must be a bounded non-empty string"
+        )
+    paths = []
+    for path in allowed_paths:
+        if (
+            not isinstance(path, str)
+            or not path.strip()
+            or Path(path).is_absolute()
+            or ".." in Path(path).parts
+        ):
+            raise AgenticControlError(
+                "E_HANDOFF_PATH", "allowed_paths must be workspace-relative"
+            )
+        paths.append(Path(path.replace("\\", "/")).as_posix())
+    timestamp = created_at or datetime.now(timezone.utc).isoformat()
+    if not isinstance(timestamp, str) or not timestamp.strip():
+        raise AgenticControlError(
+            "E_HANDOFF_TIME", "created_at must be a non-empty timestamp"
+        )
+    core = {
+        "schema": HANDOFF_SCHEMA,
+        "workflow_id": workflow_id,
+        "stage": stage,
+        "source_agent": source_agent,
+        "target_agent": target_agent,
+        "intent_digest": intent_digest,
+        "payload_digest": payload_digest,
+        "allowed_paths": sorted(set(paths)),
+        "next_action": next_action.strip(),
+        "created_at": timestamp,
+        "authority": dict(_AUTHORITY),
+    }
+    return {
+        **core,
+        "handoff_id": "handoff:" + _sha(core)[:32],
+        "handoff_sha256": _sha(core),
+    }
+
+
+def verify_typed_handoff(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Verify the exact handoff digest and reject unsupported mutations."""
+    if not isinstance(envelope, dict) or envelope.get("schema") != HANDOFF_SCHEMA:
+        raise AgenticControlError(
+            "E_HANDOFF_SCHEMA", f"handoff must use {HANDOFF_SCHEMA}"
+        )
+    required = {
+        "schema",
+        "workflow_id",
+        "stage",
+        "source_agent",
+        "target_agent",
+        "intent_digest",
+        "payload_digest",
+        "allowed_paths",
+        "next_action",
+        "created_at",
+        "authority",
+    }
+    if set(envelope) != required | {"handoff_id", "handoff_sha256"}:
+        raise AgenticControlError("E_HANDOFF_SCHEMA", "handoff fields are not exact")
+    core = {key: envelope[key] for key in required}
+    expected = _sha(core)
+    if (
+        envelope.get("handoff_sha256") != expected
+        or envelope.get("handoff_id") != "handoff:" + expected[:32]
+    ):
+        raise AgenticControlError(
+            "E_HANDOFF_TAMPERED", "handoff digest does not match its contents"
+        )
+    if any(value is not False for value in envelope["authority"].values()):
+        raise AgenticControlError(
+            "E_HANDOFF_AUTHORITY", "handoff cannot grant authority"
+        )
+    return dict(envelope)
+
+
+def create_route_trace(
+    route: dict[str, Any],
+    workflow: dict[str, Any],
+    handoff: dict[str, Any],
+    swimlane_events: Iterable[dict[str, Any]],
+) -> dict[str, Any]:
+    """Bind routing, workflow, handoff, and lane lineage into one trace."""
+    if not isinstance(route, dict):
+        raise AgenticControlError(
+            "E_ROUTE_TRACE", "a deterministic model route is required"
+        )
+    route_fields = _route_fields(route)
+    verified_workflow = verify_reusable_workflow(workflow)
+    verified_handoff = verify_typed_handoff(handoff)
+    events = verify_swimlane(swimlane_events)
+    if verified_workflow["workflow_id"] != verified_handoff["workflow_id"]:
+        raise AgenticControlError(
+            "E_ROUTE_TRACE", "workflow and handoff identifiers differ"
+        )
+    if events["workflow_id"] != verified_handoff["workflow_id"]:
+        raise AgenticControlError(
+            "E_ROUTE_TRACE", "swim-lane workflow identifier differs"
+        )
+    core = {
+        "schema": ROUTE_TRACE_SCHEMA,
+        "route": route_fields,
+        "workflow_sha256": verified_workflow["workflow_sha256"],
+        "handoff_sha256": verified_handoff["handoff_sha256"],
+        "swimlane_head_digest": events["head_digest"],
+        "event_count": events["events"],
+        "authority": dict(_AUTHORITY),
+    }
+    digest = _sha(core)
+    return {
+        **core,
+        "trace_id": "route:" + digest[:32],
+        "trace_sha256": digest,
+        "marker": "ROUTE_TRACE_HASH_BOUND",
+        "claim_boundary": "Route lineage only; no model call, source mutation, execution, approval, merge, or release action ran.",
+    }
+
+
+def verify_route_trace(trace: dict[str, Any]) -> dict[str, Any]:
+    """Verify route-trace hashes and ensure every linked authority is false."""
+    if not isinstance(trace, dict) or trace.get("schema") != ROUTE_TRACE_SCHEMA:
+        raise AgenticControlError(
+            "E_ROUTE_TRACE", f"trace must use {ROUTE_TRACE_SCHEMA}"
+        )
+    keys = (
+        "schema",
+        "route",
+        "workflow_sha256",
+        "handoff_sha256",
+        "swimlane_head_digest",
+        "event_count",
+        "authority",
+    )
+    core = {key: trace.get(key) for key in keys}
+    _route_fields(
+        core["route"] if isinstance(core["route"], dict) else {},
+        require_schema=False,
+    )
+    for key in ("workflow_sha256", "handoff_sha256", "swimlane_head_digest"):
+        _digest(core[key], key)
+    if (
+        isinstance(core["event_count"], bool)
+        or not isinstance(core["event_count"], int)
+        or core["event_count"] < 1
+    ):
+        raise AgenticControlError(
+            "E_ROUTE_TRACE", "event_count must be a positive integer"
+        )
+    if not isinstance(core["authority"], dict):
+        raise AgenticControlError(
+            "E_ROUTE_TRACE_AUTHORITY", "route authority must be an object"
+        )
+    expected = _sha(core)
+    if (
+        trace.get("trace_sha256") != expected
+        or trace.get("trace_id") != "route:" + expected[:32]
+    ):
+        raise AgenticControlError(
+            "E_ROUTE_TRACE_TAMPERED", "route trace digest does not match contents"
+        )
+    if any(value is not False for value in trace.get("authority", {}).values()):
+        raise AgenticControlError(
+            "E_ROUTE_TRACE_AUTHORITY", "route trace cannot grant authority"
+        )
+    return dict(trace)
+
+
+def new_swimlane_event(
+    workflow_id: str,
+    lane: str,
+    stage: str,
+    status: str,
+    *,
+    sequence: int,
+    artifact_digest: str | None = None,
+    previous_event_digest: str | None = None,
+    elapsed_ms: int | None = None,
+) -> dict[str, Any]:
+    """Create one append-only, observable swim-lane event."""
+    _id(workflow_id, "workflow_id")
+    if not isinstance(lane, str) or not lane.strip() or len(lane) > 96:
+        raise AgenticControlError(
+            "E_SWIMLANE_SCHEMA", "lane must be a bounded non-empty string"
+        )
+    if stage not in _PHASES or not isinstance(status, str) or not status.strip():
+        raise AgenticControlError("E_SWIMLANE_SCHEMA", "stage or status is invalid")
+    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+        raise AgenticControlError(
+            "E_SWIMLANE_SEQUENCE", "sequence must be a non-negative integer"
+        )
+    if artifact_digest is not None:
+        _digest(artifact_digest, "artifact_digest")
+    if previous_event_digest is not None:
+        _digest(previous_event_digest, "previous_event_digest")
+    if elapsed_ms is not None and (
+        isinstance(elapsed_ms, bool)
+        or not isinstance(elapsed_ms, int)
+        or elapsed_ms < 0
+    ):
+        raise AgenticControlError(
+            "E_SWIMLANE_SCHEMA", "elapsed_ms must be non-negative"
+        )
+    core = {
+        "schema": SWIMLANE_SCHEMA,
+        "workflow_id": workflow_id,
+        "lane": lane.strip(),
+        "stage": stage,
+        "status": status.strip(),
+        "sequence": sequence,
+        "artifact_digest": artifact_digest,
+        "previous_event_digest": previous_event_digest,
+        "elapsed_ms": elapsed_ms,
+    }
+    digest = _sha(core)
+    return {**core, "event_id": "swim:" + digest[:32], "event_digest": digest}
+
+
+def verify_swimlane(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Check contiguous ordering and hash-linked lineage for an event stream."""
+    rows = list(events)
+    if not rows:
+        raise AgenticControlError(
+            "E_SWIMLANE_EMPTY", "at least one swim-lane event is required"
+        )
+    previous = None
+    for index, event in enumerate(rows):
+        if not isinstance(event, dict) or event.get("schema") != SWIMLANE_SCHEMA:
+            raise AgenticControlError("E_SWIMLANE_SCHEMA", "event schema is invalid")
+        if (
+            event.get("sequence") != index
+            or event.get("previous_event_digest") != previous
+        ):
+            raise AgenticControlError(
+                "E_SWIMLANE_SEQUENCE", "swim-lane sequence or predecessor is invalid"
+            )
+        core = {
+            key: event.get(key)
+            for key in (
+                "schema",
+                "workflow_id",
+                "lane",
+                "stage",
+                "status",
+                "sequence",
+                "artifact_digest",
+                "previous_event_digest",
+                "elapsed_ms",
+            )
+        }
+        digest = _sha(core)
+        if (
+            event.get("event_digest") != digest
+            or event.get("event_id") != "swim:" + digest[:32]
+        ):
+            raise AgenticControlError(
+                "E_SWIMLANE_TAMPERED", "event digest does not match its contents"
+            )
+        previous = digest
+    return {
+        "schema": "factory.swimlane-ledger.v1",
+        "workflow_id": rows[0]["workflow_id"],
+        "events": len(rows),
+        "head_digest": previous,
+        "state": rows[-1]["status"],
+        "marker": "SWIMLANE_CHAIN_VERIFIED",
+    }
+
+
+@dataclass(frozen=True)
+class CookbookRecipe:
+    name: str
+    summary: str
+    required_inputs: tuple[str, ...]
+    allowed_tools: tuple[str, ...]
+    next_action: str
+
+
+_COOKBOOK = {
+    "first-proof": CookbookRecipe(
+        "first-proof",
+        "Run the smallest local proof path.",
+        ("root",),
+        ("factory first-proof",),
+        "Inspect the receipt and choose the next gate.",
+    ),
+    "pr-review": CookbookRecipe(
+        "pr-review",
+        "Bind a pull-request diff to deterministic proof evidence.",
+        ("root", "changed_paths"),
+        ("factory github proof-review",),
+        "Review proof debt before merge.",
+    ),
+    "mobile-evidence": CookbookRecipe(
+        "mobile-evidence",
+        "Normalize mobile build and storefront evidence.",
+        ("root", "evidence_manifest"),
+        ("factory revenue appforge-mobile-evidence",),
+        "Resolve missing evidence before submission.",
+    ),
+}
+
+
+def list_cookbook_recipes() -> list[str]:
+    """Return names only; recipe bodies remain lazy until requested."""
+    return sorted(_COOKBOOK)
+
+
+def load_cookbook_recipe(name: str) -> dict[str, Any]:
+    """Load exactly one bounded recipe and no standing prompt context."""
+    recipe = _COOKBOOK.get(name)
+    if recipe is None:
+        raise AgenticControlError(
+            "E_COOKBOOK_UNKNOWN", f"unknown cookbook recipe: {name}"
+        )
+    return {
+        "schema": "factory.cookbook-recipe.v1",
+        "name": recipe.name,
+        "summary": recipe.summary,
+        "required_inputs": list(recipe.required_inputs),
+        "allowed_tools": list(recipe.allowed_tools),
+        "next_action": recipe.next_action,
+        "authority": dict(_AUTHORITY),
+        "marker": "COOKBOOK_CONTEXT_LAZY",
+    }
+
+
+def compile_reusable_workflow(
+    workflow_id: str, phases: Iterable[dict[str, Any]]
+) -> dict[str, Any]:
+    """Compile a reusable phase recipe with strict order and unique stages."""
+    _id(workflow_id, "workflow_id")
+    rows = list(phases)
+    if not rows or len(rows) > len(_PHASES):
+        raise AgenticControlError(
+            "E_WORKFLOW_PHASES", "workflow must contain 1-6 phases"
+        )
+    normalized = []
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"stage", "recipe"}:
+            raise AgenticControlError(
+                "E_WORKFLOW_SCHEMA", "each phase must contain exactly stage and recipe"
+            )
+        stage = row["stage"]
+        if stage not in _PHASES or stage in seen:
+            raise AgenticControlError(
+                "E_WORKFLOW_PHASES", "phases must be unique known stages"
+            )
+        recipe = load_cookbook_recipe(row["recipe"])
+        seen.add(stage)
+        normalized.append({"stage": stage, "recipe": recipe["name"]})
+    order = [_PHASES.index(row["stage"]) for row in normalized]
+    if order != sorted(order):
+        raise AgenticControlError(
+            "E_WORKFLOW_ORDER", "phases must follow scout-to-review order"
+        )
+    core = {
+        "schema": WORKFLOW_SCHEMA,
+        "workflow_id": workflow_id,
+        "phases": normalized,
+        "authority": dict(_AUTHORITY),
+    }
+    digest = _sha(core)
+    return {
+        **core,
+        "workflow_sha256": digest,
+        "workflow_id": workflow_id,
+        "marker": "REUSABLE_WORKFLOW_HASH_BOUND",
+        "next_action": "Execute only after the caller supplies each phase's required evidence.",
+    }
+
+
+def verify_reusable_workflow(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Verify workflow phase order, recipe references, authority, and digest."""
+    if not isinstance(manifest, dict) or manifest.get("schema") != WORKFLOW_SCHEMA:
+        raise AgenticControlError(
+            "E_WORKFLOW_SCHEMA", f"workflow must use {WORKFLOW_SCHEMA}"
+        )
+    core = {
+        "schema": manifest["schema"],
+        "workflow_id": manifest["workflow_id"],
+        "phases": manifest["phases"],
+        "authority": manifest["authority"],
+    }
+    if manifest.get("workflow_sha256") != _sha(core):
+        raise AgenticControlError(
+            "E_WORKFLOW_TAMPERED", "workflow digest does not match contents"
+        )
+    return dict(manifest)
+
+
+def create_sandbox_boundary(
+    root: Path,
+    *,
+    repo_path: str = ".",
+    expected_branch: str | None = None,
+    expected_head_sha: str | None = None,
+) -> dict[str, Any]:
+    """Inspect a checkout and issue a non-mutating branch/merge boundary."""
+    workspace = Path(root).resolve()
+    relative = Path(repo_path.replace("\\", "/"))
+    if relative.is_absolute() or ".." in relative.parts:
+        raise AgenticControlError("E_SANDBOX_PATH", "repo_path escapes the workspace")
+    checkout = (workspace / relative).resolve()
+    try:
+        checkout.relative_to(workspace)
+    except ValueError as exc:
+        raise AgenticControlError(
+            "E_SANDBOX_PATH", "repo_path escapes the workspace"
+        ) from exc
+    if not checkout.is_dir():
+        raise AgenticControlError("E_SANDBOX_REPO", "repo_path is not a directory")
+
+    def git(*args: str) -> str:
+        run = subprocess.run(
+            ["git", "-C", str(checkout), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if run.returncode:
+            raise AgenticControlError(
+                "E_SANDBOX_GIT", run.stderr.strip() or "git inspection failed"
+            )
+        return run.stdout.strip()
+
+    branch = git("branch", "--show-current")
+    head = git("rev-parse", "HEAD")
+    status = git("status", "--porcelain")
+    if expected_branch is not None and branch != expected_branch:
+        raise AgenticControlError(
+            "E_SANDBOX_BRANCH",
+            f"expected branch {expected_branch!r}, observed {branch!r}",
+        )
+    if expected_head_sha is not None and (
+        not _GIT_SHA.fullmatch(expected_head_sha) or head != expected_head_sha
+    ):
+        raise AgenticControlError(
+            "E_SANDBOX_HEAD", "checkout head does not match the pinned base"
+        )
+    core = {
+        "schema": SANDBOX_SCHEMA,
+        "repo_path": relative.as_posix() or ".",
+        "branch": branch,
+        "head_sha": head,
+        "dirty": bool(status),
+        "expected_branch": expected_branch,
+        "expected_head_sha": expected_head_sha,
+        "merge": "human_confirmation_required",
+        "authority": dict(_AUTHORITY),
+    }
+    digest = _sha(core)
+    return {
+        **core,
+        "boundary_sha256": digest,
+        "marker": "SANDBOX_BOUNDARY_INSPECTED",
+        "next_action": "A human maintainer must review and apply any candidate in a separately provisioned branch; Code Factory did not mutate Git.",
+    }
+
+
+def verify_sandbox_boundary(boundary: dict[str, Any]) -> dict[str, Any]:
+    """Verify the inspected checkout binding and preserve human merge authority."""
+    if not isinstance(boundary, dict) or boundary.get("schema") != SANDBOX_SCHEMA:
+        raise AgenticControlError(
+            "E_SANDBOX_SCHEMA", f"boundary must use {SANDBOX_SCHEMA}"
+        )
+    core_keys = (
+        "schema",
+        "repo_path",
+        "branch",
+        "head_sha",
+        "dirty",
+        "expected_branch",
+        "expected_head_sha",
+        "merge",
+        "authority",
+    )
+    core = {key: boundary.get(key) for key in core_keys}
+    if boundary.get("boundary_sha256") != _sha(core):
+        raise AgenticControlError(
+            "E_SANDBOX_TAMPERED", "boundary digest does not match contents"
+        )
+    if boundary.get("merge") != "human_confirmation_required" or any(
+        value is not False for value in boundary["authority"].values()
+    ):
+        raise AgenticControlError(
+            "E_SANDBOX_AUTHORITY", "sandbox boundary cannot grant merge authority"
+        )
+    return dict(boundary)
+
+
+def agentic_control_projection(root: Path) -> dict[str, Any]:
+    """Return the Mission Control projection without reading prompts or executing work."""
+    root = Path(root).resolve()
+    return {
+        "schema": SCHEMA,
+        "root_bound": True,
+        "features": {
+            "observable_swim_lanes": {
+                "status": "available",
+                "event_schema": SWIMLANE_SCHEMA,
+            },
+            "tiered_model_routing": {
+                "status": "available",
+                "tiers": ["lightweight", "workhorse", "frontier"],
+            },
+            "typed_agent_handoffs": {"status": "available", "schema": HANDOFF_SCHEMA},
+            "route_tracing": {"status": "available", "schema": ROUTE_TRACE_SCHEMA},
+            "lazy_cookbook_context": {
+                "status": "available",
+                "recipes": list_cookbook_recipes(),
+            },
+            "reusable_workflows": {"status": "available", "schema": WORKFLOW_SCHEMA},
+            "sandboxed_branch_merge_boundaries": {
+                "status": "available",
+                "schema": SANDBOX_SCHEMA,
+            },
+        },
+        "extended_assurance": {
+            "status": "opt_in",
+            "lanes": list(EXTENDED_LANES),
+            "receipt_schema": EXTENDED_RECEIPT_SCHEMA,
+            "blocking_policy": "only explicitly required lanes can block release",
+        },
+        "authority": dict(_AUTHORITY),
+        "claim_boundary": "Control-plane metadata only; no model, source, branch, merge, approval, credential, or network action ran.",
+        "marker": "AGENTIC_CONTROL_PROJECTION_READY",
+    }
+
+
+def _required_digest(value: object, label: str) -> str:
+    """Accept a plain SHA-256 value or a sha256:<value> notation."""
+    if isinstance(value, str) and value.startswith("sha256:"):
+        value = value[7:]
+    return _digest(value, label)
+
+
+def _supply_chain_lane(evidence: object) -> dict[str, Any]:
+    if not isinstance(evidence, dict):
+        return {"status": "BLOCKED", "reason": "provenance evidence is required"}
+    required = ("source_sha256", "builder_id", "artifact_sha256", "dependencies_sha256")
+    if any(key not in evidence for key in required):
+        return {
+            "status": "BLOCKED",
+            "reason": "source, builder, artifact, and dependency bindings are required",
+        }
+    try:
+        source = _required_digest(evidence["source_sha256"], "source_sha256")
+        artifact = _required_digest(evidence["artifact_sha256"], "artifact_sha256")
+        dependencies = _required_digest(
+            evidence["dependencies_sha256"], "dependencies_sha256"
+        )
+    except AgenticControlError as exc:
+        return {"status": "BLOCKED", "reason": exc.message}
+    builder = evidence["builder_id"]
+    if not isinstance(builder, str) or not builder.strip() or len(builder) > 256:
+        return {
+            "status": "BLOCKED",
+            "reason": "builder_id must be a bounded non-empty identifier",
+        }
+    challenge = evidence.get("challenge")
+    if (
+        not isinstance(challenge, dict)
+        or challenge.get("provenance_mutation_rejected") is not True
+    ):
+        return {
+            "status": "BLOCKED",
+            "reason": "provenance mutation challenge must be rejected",
+        }
+    return {
+        "status": "PASSED",
+        "bindings": {
+            "source_sha256": source,
+            "artifact_sha256": artifact,
+            "dependencies_sha256": dependencies,
+            "builder_id": builder.strip(),
+        },
+        "challenge": {"provenance_mutation_rejected": True},
+    }
+
+
+def _semantic_lane(evidence: object) -> dict[str, Any]:
+    if not isinstance(evidence, dict):
+        return {
+            "status": "BLOCKED",
+            "reason": "semantic robustness evidence is required",
+        }
+    cases = evidence.get("cases")
+    if not isinstance(cases, list) or not cases:
+        return {
+            "status": "BLOCKED",
+            "reason": "at least one differential/property case is required",
+        }
+    normalized = []
+    for index, case in enumerate(cases):
+        if not isinstance(case, dict) or set(case) != {
+            "case_id",
+            "expected",
+            "observed",
+            "matched",
+        }:
+            return {
+                "status": "BLOCKED",
+                "reason": f"case {index} must contain case_id, expected, observed, and matched",
+            }
+        if (
+            not isinstance(case["case_id"], str)
+            or not case["case_id"].strip()
+            or not isinstance(case["matched"], bool)
+        ):
+            return {
+                "status": "BLOCKED",
+                "reason": f"case {index} has invalid identity or match flag",
+            }
+        normalized.append(
+            {
+                "case_id": case["case_id"].strip(),
+                "expected": str(case["expected"]),
+                "observed": str(case["observed"]),
+                "matched": case["matched"],
+            }
+        )
+    challenge = evidence.get("challenge")
+    if not isinstance(challenge, dict):
+        return {
+            "status": "BLOCKED",
+            "reason": "semantic mutation challenge is required",
+        }
+    attempted, caught = (
+        challenge.get("mutations_attempted"),
+        challenge.get("mutations_caught"),
+    )
+    if (
+        any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+            for value in (attempted, caught)
+        )
+        or caught != attempted
+    ):
+        return {"status": "BLOCKED", "reason": "every semantic mutation must be caught"}
+    if not all(case["matched"] for case in normalized):
+        return {
+            "status": "BLOCKED",
+            "reason": "differential/property observations diverge from their declared expectations",
+        }
+    return {
+        "status": "PASSED",
+        "cases": normalized,
+        "challenge": {"mutations_attempted": attempted, "mutations_caught": caught},
+    }
+
+
+def build_extended_assurance_receipt(
+    feature: str,
+    *,
+    extended_assurance: bool,
+    evidence: dict[str, Any] | None = None,
+    required_lanes: Iterable[str] = (),
+    tenant_id: str = "local",
+    run_id: str = "extended-assurance",
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Run optional lanes 7–8 from supplied evidence and emit Receipt v2 payload.
+
+    The function never invokes fuzzers, scanners, builders, or providers. It
+    validates externally produced evidence and creates a payload ready for the
+    existing enterprise Receipt v2 signing path.
+    """
+    feature = _id(feature, "feature")
+    tenant_id = _id(tenant_id, "tenant_id")
+    run_id = _id(run_id, "run_id")
+    selected = list(required_lanes)
+    if set(selected) - set(EXTENDED_LANES) or len(selected) != len(set(selected)):
+        raise AgenticControlError(
+            "E_EXTENDED_LANES", "required_lanes must be a unique subset of lanes 7-8"
+        )
+    evidence = evidence or {}
+    if not isinstance(evidence, dict):
+        raise AgenticControlError("E_EXTENDED_EVIDENCE", "evidence must be an object")
+    lane_results: dict[str, dict[str, Any]] = {}
+    if not extended_assurance:
+        for lane in EXTENDED_LANES:
+            lane_results[lane] = {
+                "status": "NOT_REQUESTED",
+                "required": lane in selected,
+            }
+    else:
+        lane_results["supply_chain_provenance"] = {
+            **_supply_chain_lane(evidence.get("supply_chain_provenance")),
+            "required": "supply_chain_provenance" in selected,
+        }
+        lane_results["semantic_robustness"] = {
+            **_semantic_lane(evidence.get("semantic_robustness")),
+            "required": "semantic_robustness" in selected,
+        }
+    blocking = [
+        lane
+        for lane, result in lane_results.items()
+        if result.get("required") and result.get("status") != "PASSED"
+    ]
+    ok = not blocking
+    now = timestamp or datetime.now(timezone.utc).isoformat()
+    if not isinstance(now, str) or not now.strip():
+        raise AgenticControlError(
+            "E_EXTENDED_TIME", "timestamp must be a non-empty timestamp"
+        )
+    events = []
+    previous = None
+    for sequence, lane in enumerate(EXTENDED_LANES):
+        event = new_swimlane_event(
+            feature,
+            lane,
+            "verify",
+            lane_results[lane]["status"],
+            sequence=sequence,
+            previous_event_digest=previous,
+        )
+        events.append(event)
+        previous = event["event_digest"]
+    payload = {
+        "schema": EXTENDED_RECEIPT_SCHEMA,
+        "module": "agentic-control",
+        "stage": "extended-assurance",
+        "feature": feature,
+        "ok": ok,
+        "tenant_id": tenant_id,
+        "run_id": run_id,
+        "ts": now,
+        "assurance_schema": EXTENDED_ASSURANCE_SCHEMA,
+        "extended_assurance": bool(extended_assurance),
+        "baseline_lanes": list(BASELINE_LANES),
+        "extended_lanes": lane_results,
+        "blocking_lanes": blocking,
+        "swimlane_events": events,
+        "authority": dict(_AUTHORITY),
+        "claim_boundary": "Receipt payload validates supplied lane evidence only; sign with the existing enterprise Receipt v2 DSSE path before treating signer identity as verified.",
+    }
+    payload["subject_sha256"] = _sha(
+        {"feature": feature, "extended_lanes": lane_results, "swimlane_events": events}
+    )
+    # Validate the common Receipt v2 shape without requiring cryptographic keys.
+    try:
+        from .enterprise_receipts import validate_receipt_v2
+
+        validate_receipt_v2(payload)
+    except ImportError:
+        pass
+    except Exception as exc:
+        raise AgenticControlError("E_EXTENDED_RECEIPT", str(exc)) from exc
+    return payload
+
+
+def verify_extended_assurance_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Verify Receipt v2 shape, lane challenge results, and swim-lane lineage."""
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schema") != EXTENDED_RECEIPT_SCHEMA
+    ):
+        raise AgenticControlError(
+            "E_EXTENDED_RECEIPT", "a factory.receipt.v2 payload is required"
+        )
+    if receipt.get("assurance_schema") != EXTENDED_ASSURANCE_SCHEMA:
+        raise AgenticControlError(
+            "E_EXTENDED_RECEIPT", "extended assurance schema marker is missing"
+        )
+    lane_results = receipt.get("extended_lanes")
+    if not isinstance(lane_results, dict) or set(lane_results) != set(EXTENDED_LANES):
+        raise AgenticControlError(
+            "E_EXTENDED_RECEIPT", "both extended lanes must be present"
+        )
+    verify_swimlane(receipt.get("swimlane_events", []))
+    blocking = [
+        lane
+        for lane, result in lane_results.items()
+        if result.get("required") and result.get("status") != "PASSED"
+    ]
+    expected_ok = not blocking
+    if (
+        receipt.get("ok") is not expected_ok
+        or receipt.get("blocking_lanes") != blocking
+    ):
+        raise AgenticControlError(
+            "E_EXTENDED_RECEIPT", "blocking lane summary does not match lane results"
+        )
+    return {
+        "schema": EXTENDED_ASSURANCE_SCHEMA,
+        "ok": expected_ok,
+        "blocking_lanes": blocking,
+        "marker": "EXTENDED_ASSURANCE_RECEIPT_VERIFIED",
+        "claim_boundary": receipt.get("claim_boundary"),
+    }
