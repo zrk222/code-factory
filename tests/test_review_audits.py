@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from factoryline.review_audits import ReviewAuditError, audit_code
+from factoryline.review_audits import ReviewAuditError, audit_code, audit_fingerprint
 from factoryline.change_review import ChangeReviewError, review_change
 from factoryline.cli import main
 
@@ -167,6 +167,54 @@ def test_cli_and_change_review_integration(tmp_path, capsys):
     assert "GUARD_PATH_BYPASS" in review["review_markdown"]
     assert "GUARD_PATH_BYPASS" in review["mermaid"]
     assert review["code_audits"] == result
+
+
+def test_audit_fingerprint_is_self_hash_bound_and_reusable(tmp_path):
+    workspace(tmp_path)
+    out = tmp_path / ".factory" / "fingerprint.json"
+    first = audit_fingerprint(tmp_path, out_path=out)
+    assert first["state"] == "CURRENT"
+    assert first["reusable"] is True
+    assert first["receipt_sha256"] == __import__("hashlib").sha256(
+        __import__("json").dumps({k: v for k, v in first.items() if k != "receipt_sha256"}, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    second = audit_fingerprint(tmp_path, baseline_path=out)
+    assert second["state"] == "CURRENT"
+    assert second["changes"]["policy"] is False
+
+
+def test_audit_fingerprint_blocks_stale_baseline_and_reports_added_finding(tmp_path):
+    workspace(tmp_path)
+    baseline = tmp_path / ".factory" / "fingerprint.json"
+    audit_fingerprint(tmp_path, out_path=baseline)
+    (tmp_path / "app.py").write_text(
+        "def safe():\n    require_auth()\n    store.delete()\n\ndef candidate():\n    store.delete()\n",
+        encoding="utf-8",
+    )
+    result = audit_fingerprint(tmp_path, baseline_path=baseline)
+    assert result["state"] == "DRIFT_DETECTED"
+    assert result["code"] == "E_AUDIT_FINGERPRINT_STALE"
+    assert result["reusable"] is False
+    assert result["changes"]["sources"] is True
+
+
+def test_audit_fingerprint_rejects_tampered_baseline(tmp_path):
+    workspace(tmp_path)
+    baseline = tmp_path / ".factory" / "fingerprint.json"
+    audit_fingerprint(tmp_path, out_path=baseline)
+    value = json.loads(baseline.read_text(encoding="utf-8"))
+    value["fingerprint"]["state"] = "findings"
+    baseline.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(ReviewAuditError, match="digest is invalid"):
+        audit_fingerprint(tmp_path, baseline_path=baseline)
+
+
+def test_audit_fingerprint_cli_emits_actionable_json(tmp_path, capsys):
+    workspace(tmp_path)
+    assert main(["audit", "fingerprint", "--root", str(tmp_path), "--out", ".factory/fingerprint.json", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["marker"] == "AUDIT_FINGERPRINT_READY"
+    assert result["authority"]["approval"] is False
 
 
 def test_no_policy_is_not_a_pass_and_invalid_policy_fails_closed(tmp_path, capsys):

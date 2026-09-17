@@ -14,6 +14,7 @@ import re
 from typing import Any
 
 SCHEMA = "factory.review-audit-policy.v1"
+FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
 MAX_BYTES = 1_000_000
 MAX_RULES = 128
 MAX_PATHS = 64
@@ -317,3 +318,111 @@ def audit_code(root: Path, policy_path: str = ".factory/review-audits.json", *, 
     except (OSError, UnicodeError, SyntaxError, RecursionError, ValueError) as exc:
         raise ReviewAuditError(str(exc)) from exc
     return _receipt(tool, bindings, results)
+
+
+def _fingerprint_payload(audit: dict) -> dict:
+    """Reduce one audit to stable, content-addressed facts for cross-run comparison."""
+    results = []
+    for result in audit.get("results", []):
+        results.append({
+            "rule_id": result.get("rule_id"),
+            "tool": result.get("tool"),
+            "state": result.get("state"),
+            "finding_codes": sorted(str(item.get("code")) for item in result.get("findings", []) if isinstance(item, dict)),
+            "analysis_gaps": sorted(str(item) for item in result.get("analysis_gaps", [])),
+        })
+    return {
+        "schema": FINGERPRINT_SCHEMA,
+        "policy_sha256": audit["policy"]["sha256"],
+        "sources": sorted(
+            ({"path": item["path"], "sha256": item["sha256"], "bytes": item["bytes"]} for item in audit["sources"]),
+            key=lambda item: item["path"],
+        ),
+        "results": sorted(results, key=lambda item: (str(item["tool"]), str(item["rule_id"]))),
+        "state": audit["state"],
+        "finding_codes": sorted(str(item.get("code")) for item in audit.get("findings", []) if isinstance(item, dict)),
+    }
+
+
+def _self_hash(value: dict, field: str) -> str:
+    body = {key: item for key, item in value.items() if key != field}
+    return sha256(json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _read_fingerprint(path: Path) -> dict:
+    """Read and validate a previously emitted fingerprint without trusting its labels."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ReviewAuditError(f"Invalid audit fingerprint: {path}") from exc
+    if not isinstance(value, dict) or value.get("schema") != FINGERPRINT_SCHEMA:
+        raise ReviewAuditError("Baseline is not a Code-Factory audit fingerprint.")
+    if not isinstance(value.get("fingerprint"), dict) or value.get("fingerprint_sha256") != _self_hash(value["fingerprint"], "fingerprint_sha256"):
+        raise ReviewAuditError("Baseline fingerprint digest is invalid.")
+    if value.get("receipt_sha256") != _self_hash(value, "receipt_sha256"):
+        raise ReviewAuditError("Baseline receipt digest is invalid.")
+    return value
+
+
+def _write_fingerprint(root: Path, path: Path, value: dict) -> None:
+    """Write only to an explicit workspace-contained path."""
+    workspace = root.resolve()
+    destination = path if path.is_absolute() else workspace / path
+    destination = destination.resolve()
+    if not destination.is_relative_to(workspace):
+        raise ReviewAuditError("Fingerprint output must remain inside the workspace.")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def audit_fingerprint(
+    root: Path,
+    policy_path: str = ".factory/review-audits.json",
+    *,
+    baseline_path: Path | None = None,
+    out_path: Path | None = None,
+) -> dict:
+    """Produce a deterministic audit fingerprint and fail closed on stale or contradictory reuse."""
+    workspace = Path(root).resolve()
+    try:
+        audit = audit_code(workspace, policy_path, tool="all")
+        fingerprint = _fingerprint_payload(audit)
+        result: dict[str, Any] = {
+            "schema": FINGERPRINT_SCHEMA,
+            "marker": "AUDIT_FINGERPRINT_READY",
+            "state": "CURRENT",
+            "reusable": True,
+            "fingerprint": fingerprint,
+            "fingerprint_sha256": _self_hash(fingerprint, "fingerprint_sha256"),
+            "changes": {"policy": False, "sources": False, "results": False, "finding_codes": {"added": [], "removed": []}},
+            "authority": {"execution": False, "approval": False, "publication": False, "deployment": False},
+            "claim_boundary": "Fresh local structural audit fingerprint only; no runtime correctness, security certification, or release authority.",
+        }
+        if baseline_path is not None:
+            baseline_file = (workspace / baseline_path).resolve() if not baseline_path.is_absolute() else baseline_path.resolve()
+            if not baseline_file.is_relative_to(workspace):
+                raise ReviewAuditError("Baseline fingerprint must remain inside the workspace.")
+            baseline = _read_fingerprint(baseline_file)
+            before = baseline["fingerprint"]
+            policy_changed = before.get("policy_sha256") != fingerprint["policy_sha256"]
+            sources_changed = before.get("sources") != fingerprint["sources"]
+            results_changed = before.get("results") != fingerprint["results"] or before.get("state") != fingerprint["state"]
+            added = sorted(set(fingerprint["finding_codes"]) - set(before.get("finding_codes", [])))
+            removed = sorted(set(before.get("finding_codes", [])) - set(fingerprint["finding_codes"]))
+            result["changes"] = {"policy": policy_changed, "sources": sources_changed, "results": results_changed, "finding_codes": {"added": added, "removed": removed}}
+            if not policy_changed and not sources_changed and results_changed:
+                result.update(marker="AUDIT_FINGERPRINT_CONTRADICTORY", state="CONTRADICTORY", reusable=False, code="E_AUDIT_RESULT_CONTRADICTION", action_summary="Block reuse: identical policy and source bytes produced different audit results.")
+            elif policy_changed or sources_changed:
+                result.update(marker="AUDIT_FINGERPRINT_DRIFT", state="DRIFT_DETECTED", reusable=False, code="E_AUDIT_FINGERPRINT_STALE", action_summary="Do not reuse the baseline: policy or audited source bytes changed; run a fresh review.")
+            else:
+                result["action_summary"] = "Baseline and current audit are byte-identical; reuse is content-addressed and still non-authorizing."
+        else:
+            result["action_summary"] = "Created a fresh content-addressed audit fingerprint; no baseline comparison was requested."
+        result["receipt_sha256"] = _self_hash(result, "receipt_sha256")
+        if out_path is not None:
+            _write_fingerprint(workspace, out_path, result)
+        return result
+    except ReviewAuditError:
+        raise
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
+        raise ReviewAuditError(str(exc)) from exc
