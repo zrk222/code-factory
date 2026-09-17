@@ -4,6 +4,7 @@ Organised by the property under test rather than by function, because the
 guarantees CDTE makes are what matter: detection is deterministic, proofs are
 never fabricated, and the fail-closed boundary cannot be bypassed silently.
 """
+
 from __future__ import annotations
 
 import json
@@ -18,7 +19,6 @@ from factoryline.cdte import (
     detect_conflicts,
     draft_adr,
     load_registry,
-    load_scans,
     normalize_constraints,
     public_cdte_report,
     record_scan,
@@ -57,13 +57,24 @@ def test_shipped_registry_is_valid():
 
 def test_registry_rejects_modeled_proof_without_assumptions(tmp_path):
     bad = tmp_path / "r.json"
-    bad.write_text(json.dumps({
-        "schema": "factory.lethal-pairs.v1", "version": 1,
-        "pairs": [{"id": "p", "severity": "high",
-                   "left": {"category": "a", "metric": "m", "value_in": ["x"]},
-                   "right": {"category": "b", "metric": "n", "value_in": ["y"]},
-                   "proof": {"tier": "modeled", "formula": "a - b"}}],
-    }), encoding="utf-8")
+    bad.write_text(
+        json.dumps(
+            {
+                "schema": "factory.lethal-pairs.v1",
+                "version": 1,
+                "pairs": [
+                    {
+                        "id": "p",
+                        "severity": "high",
+                        "left": {"category": "a", "metric": "m", "value_in": ["x"]},
+                        "right": {"category": "b", "metric": "n", "value_in": ["y"]},
+                        "proof": {"tier": "modeled", "formula": "a - b"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     with pytest.raises(CDTEError) as exc:
         load_registry(bad)
     assert exc.value.code == "PAIR_PROOF_ASSUMPTIONS_REQUIRED"
@@ -71,13 +82,24 @@ def test_registry_rejects_modeled_proof_without_assumptions(tmp_path):
 
 def test_registry_rejects_unknown_proof_tier(tmp_path):
     bad = tmp_path / "r.json"
-    bad.write_text(json.dumps({
-        "schema": "factory.lethal-pairs.v1", "version": 1,
-        "pairs": [{"id": "p", "severity": "high",
-                   "left": {"category": "a", "metric": "m", "value_in": ["x"]},
-                   "right": {"category": "b", "metric": "n", "value_in": ["y"]},
-                   "proof": {"tier": "vibes", "statement": "trust me"}}],
-    }), encoding="utf-8")
+    bad.write_text(
+        json.dumps(
+            {
+                "schema": "factory.lethal-pairs.v1",
+                "version": 1,
+                "pairs": [
+                    {
+                        "id": "p",
+                        "severity": "high",
+                        "left": {"category": "a", "metric": "m", "value_in": ["x"]},
+                        "right": {"category": "b", "metric": "n", "value_in": ["y"]},
+                        "proof": {"tier": "vibes", "statement": "trust me"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     with pytest.raises(CDTEError) as exc:
         load_registry(bad)
     assert exc.value.code == "PAIR_PROOF_TIER_INVALID"
@@ -100,7 +122,14 @@ def test_detects_structural_residency_conflict():
 
 def test_aligned_requirements_do_not_conflict():
     """The research's pass case: scalability plus an approved pattern."""
-    assert detect_conflicts(normalize_constraints([SCALE, c("c-006", "infrastructure", "event_driven", "sqs-lambda")])) == []
+    assert (
+        detect_conflicts(
+            normalize_constraints(
+                [SCALE, c("c-006", "infrastructure", "event_driven", "sqs-lambda")]
+            )
+        )
+        == []
+    )
 
 
 def test_latency_above_threshold_does_not_trigger():
@@ -109,16 +138,24 @@ def test_latency_above_threshold_does_not_trigger():
 
 
 def test_detection_is_deterministic_across_input_order():
-    a = detect_conflicts(normalize_constraints([LATENCY, ENCRYPTION, RESIDENCY, ROUTING]))
-    b = detect_conflicts(normalize_constraints([ROUTING, RESIDENCY, ENCRYPTION, LATENCY]))
+    a = detect_conflicts(
+        normalize_constraints([LATENCY, ENCRYPTION, RESIDENCY, ROUTING])
+    )
+    b = detect_conflicts(
+        normalize_constraints([ROUTING, RESIDENCY, ENCRYPTION, LATENCY])
+    )
     assert [x["pair_id"] for x in a] == [x["pair_id"] for x in b]
     assert a == b
 
 
 def test_conflicts_sorted_by_severity():
-    found = detect_conflicts(normalize_constraints([LATENCY, ENCRYPTION, RESIDENCY, ROUTING]))
+    found = detect_conflicts(
+        normalize_constraints([LATENCY, ENCRYPTION, RESIDENCY, ROUTING])
+    )
     severities = [f["severity"] for f in found]
-    assert severities == sorted(severities, key=["critical", "high", "medium", "low"].index)
+    assert severities == sorted(
+        severities, key=["critical", "high", "medium", "low"].index
+    )
 
 
 def test_single_constraint_cannot_conflict_with_itself():
@@ -129,7 +166,12 @@ def test_single_constraint_cannot_conflict_with_itself():
 
 
 def test_metric_and_category_are_canonicalized():
-    messy = {"constraintId": "c-1", "category": " Performance ", "metric": "P95_Latency_MS", "value": 50}
+    messy = {
+        "constraintId": "c-1",
+        "category": " Performance ",
+        "metric": "P95_Latency_MS",
+        "value": 50,
+    }
     found = detect_conflicts(normalize_constraints([messy, ENCRYPTION]))
     assert found, "canonicalization must not cause a silent miss"
 
@@ -192,7 +234,9 @@ def test_modeled_proof_always_ships_assumptions(tmp_path):
 
 def test_evidence_binding_requires_a_real_file(tmp_path):
     with pytest.raises(CDTEError) as exc:
-        record_scan(tmp_path, "run-a", [LATENCY, ENCRYPTION], evidence=tmp_path / "nope.json")
+        record_scan(
+            tmp_path, "run-a", [LATENCY, ENCRYPTION], evidence=tmp_path / "nope.json"
+        )
     assert exc.value.code == "EVIDENCE_MISSING"
 
 
@@ -259,8 +303,12 @@ def test_override_without_expiry_is_refused(tmp_path):
     scan = record_scan(tmp_path, "run-a", [LATENCY, ENCRYPTION])
     with pytest.raises(CDTEError) as exc:
         resolve_conflict(
-            tmp_path, "run-a", scan["conflicts"][0]["conflict_id"],
-            decision="accept the risk", approved_by="rick", override=True,
+            tmp_path,
+            "run-a",
+            scan["conflicts"][0]["conflict_id"],
+            decision="accept the risk",
+            approved_by="rick",
+            override=True,
         )
     assert exc.value.code == "OVERRIDE_EXPIRY_REQUIRED"
 
@@ -269,8 +317,13 @@ def test_override_requires_named_approver(tmp_path):
     scan = record_scan(tmp_path, "run-a", [LATENCY, ENCRYPTION])
     with pytest.raises(CDTEError) as exc:
         resolve_conflict(
-            tmp_path, "run-a", scan["conflicts"][0]["conflict_id"],
-            decision="accept", approved_by="  ", override=True, expires="2026-12-31",
+            tmp_path,
+            "run-a",
+            scan["conflicts"][0]["conflict_id"],
+            decision="accept",
+            approved_by="  ",
+            override=True,
+            expires="2026-12-31",
         )
     assert exc.value.code == "APPROVER_REQUIRED"
 
@@ -278,8 +331,13 @@ def test_override_requires_named_approver(tmp_path):
 def test_resolution_receipt_records_approver_and_expiry(tmp_path):
     scan = record_scan(tmp_path, "run-a", [LATENCY, ENCRYPTION])
     receipt = resolve_conflict(
-        tmp_path, "run-a", scan["conflicts"][0]["conflict_id"],
-        decision="Relax SLA to 250ms", approved_by="rick", override=True, expires="2026-12-31",
+        tmp_path,
+        "run-a",
+        scan["conflicts"][0]["conflict_id"],
+        decision="Relax SLA to 250ms",
+        approved_by="rick",
+        override=True,
+        expires="2026-12-31",
     )
     assert receipt["approved_by"] == "rick"
     assert receipt["expires"] == "2026-12-31"
@@ -307,7 +365,8 @@ def test_adr_is_drafted_with_tier_labelled(tmp_path):
 
 
 def test_adr_for_modeled_conflict_states_it_is_a_model(tmp_path):
-    bench = tmp_path / "b.json"; bench.write_text("{}", encoding="utf-8")
+    bench = tmp_path / "b.json"
+    bench.write_text("{}", encoding="utf-8")
     scan = record_scan(tmp_path, "run-a", [LATENCY, ENCRYPTION])
     path = draft_adr(tmp_path, scan, scan["conflicts"][0]["conflict_id"])
     text = path.read_text(encoding="utf-8")

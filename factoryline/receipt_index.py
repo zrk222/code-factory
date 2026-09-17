@@ -1,4 +1,5 @@
 """Bounded content-addressed receipt indexing and retention planning."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -26,11 +27,17 @@ def _candidate_paths(root: Path) -> list[Path]:
     paths: list[Path] = []
     for directory in (workspace / "receipts", workspace / ".factory"):
         if directory.is_dir():
-            paths.extend(path for path in directory.rglob("*") if path.is_file() and path.suffix.lower() in {".json", ".jsonl"})
+            paths.extend(
+                path
+                for path in directory.rglob("*")
+                if path.is_file() and path.suffix.lower() in {".json", ".jsonl"}
+            )
     return sorted(set(paths))
 
 
-def build_receipt_index(root: Path, *, hot_days: int = DEFAULT_HOT_DAYS, max_files: int = DEFAULT_MAX_FILES) -> dict[str, Any]:
+def build_receipt_index(
+    root: Path, *, hot_days: int = DEFAULT_HOT_DAYS, max_files: int = DEFAULT_MAX_FILES
+) -> dict[str, Any]:
     """Build an index and retention plan without deleting or moving evidence."""
     if isinstance(hot_days, bool) or not isinstance(hot_days, int) or hot_days < 0:
         raise ValueError("hot_days must be a non-negative integer")
@@ -57,9 +64,18 @@ def build_receipt_index(root: Path, *, hot_days: int = DEFAULT_HOT_DAYS, max_fil
         }
         entries.append(entry)
         duplicate_groups.setdefault(digest, []).append(relative)
-    entries.sort(key=lambda item: (item["temperature"] != "hot", item["modified_at"], item["path"]), reverse=True)
+    entries.sort(
+        key=lambda item: (
+            item["temperature"] != "hot",
+            item["modified_at"],
+            item["path"],
+        ),
+        reverse=True,
+    )
     over_limit = max(0, len(entries) - max_files)
-    duplicate_groups = {digest: paths for digest, paths in duplicate_groups.items() if len(paths) > 1}
+    duplicate_groups = {
+        digest: paths for digest, paths in duplicate_groups.items() if len(paths) > 1
+    }
     return {
         "schema": SCHEMA,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -83,11 +99,25 @@ def build_receipt_index(root: Path, *, hot_days: int = DEFAULT_HOT_DAYS, max_fil
     }
 
 
-def write_receipt_index(root: Path, out: Path | None = None, *, hot_days: int = DEFAULT_HOT_DAYS, max_files: int = DEFAULT_MAX_FILES) -> dict[str, Any]:
+def write_receipt_index(
+    root: Path,
+    out: Path | None = None,
+    *,
+    hot_days: int = DEFAULT_HOT_DAYS,
+    max_files: int = DEFAULT_MAX_FILES,
+) -> dict[str, Any]:
     """Write a deterministic, plan-only receipt index and return its hash-bound payload."""
     result = build_receipt_index(root, hot_days=hot_days, max_files=max_files)
-    destination = Path(out) if out is not None else Path(root).resolve() / ".factory" / "ops" / "receipt-index.json"
-    destination = destination if destination.is_absolute() else Path(root).resolve() / destination
+    destination = (
+        Path(out)
+        if out is not None
+        else Path(root).resolve() / ".factory" / "ops" / "receipt-index.json"
+    )
+    destination = (
+        destination if destination.is_absolute() else Path(root).resolve() / destination
+    )
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    destination.write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return {**result, "path": destination.relative_to(Path(root).resolve()).as_posix()}

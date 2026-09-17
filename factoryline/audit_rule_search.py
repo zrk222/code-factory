@@ -5,6 +5,7 @@ read time.  It is deliberately advisory: searching rules never executes an
 audit, changes a gate, or grants authority.  A signed runtime-audit plan and
 the existing human-controlled CLI remain the only execution path.
 """
+
 from __future__ import annotations
 
 import ast
@@ -23,12 +24,36 @@ class AuditRuleSearchError(ValueError):
 
 
 _LANE_SPECS: tuple[tuple[str, str, str], ...] = (
-    ("stateful_workflows", "Stateful workflows and business invariants", "Do workflow sequences preserve business invariants after retries and reversals?"),
-    ("authorization_tenant_isolation", "Authorization and tenant isolation", "Can one tenant reach another tenant's data through every request and background surface?"),
-    ("failure_recovery", "Failure, concurrency, retries and recovery", "Do timeouts, duplicate events, concurrent writes, and worker crashes recover safely?"),
-    ("api_consumer_compatibility", "API and consumer compatibility", "Will existing consumers continue to work with this contract and deployment?"),
-    ("migration_data_integrity", "Database migration and data integrity", "Can old and new versions migrate and recover without loss or constraint drift?"),
-    ("performance_resources", "Performance, memory and resource regression", "Does the candidate stay within approved latency, resource, and leak budgets?"),
+    (
+        "stateful_workflows",
+        "Stateful workflows and business invariants",
+        "Do workflow sequences preserve business invariants after retries and reversals?",
+    ),
+    (
+        "authorization_tenant_isolation",
+        "Authorization and tenant isolation",
+        "Can one tenant reach another tenant's data through every request and background surface?",
+    ),
+    (
+        "failure_recovery",
+        "Failure, concurrency, retries and recovery",
+        "Do timeouts, duplicate events, concurrent writes, and worker crashes recover safely?",
+    ),
+    (
+        "api_consumer_compatibility",
+        "API and consumer compatibility",
+        "Will existing consumers continue to work with this contract and deployment?",
+    ),
+    (
+        "migration_data_integrity",
+        "Database migration and data integrity",
+        "Can old and new versions migrate and recover without loss or constraint drift?",
+    ),
+    (
+        "performance_resources",
+        "Performance, memory and resource regression",
+        "Does the candidate stay within approved latency, resource, and leak budgets?",
+    ),
 )
 _LANE_MODULES = {
     "stateful_workflows": "runtime_audit_stateful.py",
@@ -48,20 +73,57 @@ _CROSSCUTTING_MODULES = (
 )
 _REJECTION_PREFIXES = ("E_", "RUNTIME_", "CROSS_", "HOLLOW_", "INCOMPLETE_")
 _NON_REJECTION_MARKERS = {
-    "PASS", "FAIL", "INCOMPLETE", "STATEFUL_INVARIANTS_HELD",
-    "TENANT_MATRIX_HELD", "RECOVERY_INVARIANTS_HELD",
-    "CONSUMER_CONTRACTS_HELD", "MIGRATION_REHEARSAL_HELD",
-    "PERFORMANCE_AND_RESOURCES_HELD", "BLOCKED", "NOT_RUN",
-    "READY_FOR_HUMAN_REVIEW", "SUPERVISED_ONLY",
+    "PASS",
+    "FAIL",
+    "INCOMPLETE",
+    "STATEFUL_INVARIANTS_HELD",
+    "TENANT_MATRIX_HELD",
+    "RECOVERY_INVARIANTS_HELD",
+    "CONSUMER_CONTRACTS_HELD",
+    "MIGRATION_REHEARSAL_HELD",
+    "PERFORMANCE_AND_RESOURCES_HELD",
+    "BLOCKED",
+    "NOT_RUN",
+    "READY_FOR_HUMAN_REVIEW",
+    "SUPERVISED_ONLY",
 }
 _EVIDENCE_TYPES = {
-    "stateful_workflows": ["state-machine traces", "property examples", "known-bad invariant result"],
-    "authorization_tenant_isolation": ["runtime request matrix", "tenant/resource identities", "denial evidence"],
-    "failure_recovery": ["fault schedule", "concurrency trace", "recovery postconditions"],
-    "api_consumer_compatibility": ["consumer contract", "schema digest", "deployment matrix"],
-    "migration_data_integrity": ["before/after schema digests", "sanitized fixture counts", "rollback or forward-fix evidence"],
-    "performance_resources": ["approved workload baseline", "latency/resource samples", "leak or retention evidence"],
-    "cross_cutting": ["signed plan", "candidate digest", "source and evidence hashes", "human release decision"],
+    "stateful_workflows": [
+        "state-machine traces",
+        "property examples",
+        "known-bad invariant result",
+    ],
+    "authorization_tenant_isolation": [
+        "runtime request matrix",
+        "tenant/resource identities",
+        "denial evidence",
+    ],
+    "failure_recovery": [
+        "fault schedule",
+        "concurrency trace",
+        "recovery postconditions",
+    ],
+    "api_consumer_compatibility": [
+        "consumer contract",
+        "schema digest",
+        "deployment matrix",
+    ],
+    "migration_data_integrity": [
+        "before/after schema digests",
+        "sanitized fixture counts",
+        "rollback or forward-fix evidence",
+    ],
+    "performance_resources": [
+        "approved workload baseline",
+        "latency/resource samples",
+        "leak or retention evidence",
+    ],
+    "cross_cutting": [
+        "signed plan",
+        "candidate digest",
+        "source and evidence hashes",
+        "human release decision",
+    ],
 }
 _ROOT = Path(__file__).resolve().parent
 
@@ -80,10 +142,17 @@ def _markers(module: str, *, lane_specific: bool = False) -> list[str]:
         and node.value.replace("_", "").isalnum()
         and node.value.upper() == node.value
     }
-    return sorted(value for value in values if value not in _NON_REJECTION_MARKERS and (lane_specific or value.startswith(_REJECTION_PREFIXES)))
+    return sorted(
+        value
+        for value in values
+        if value not in _NON_REJECTION_MARKERS
+        and (lane_specific or value.startswith(_REJECTION_PREFIXES))
+    )
 
 
-def _rule(rule_id: str, code: str, lane: str, label: str, module: str) -> dict[str, Any]:
+def _rule(
+    rule_id: str, code: str, lane: str, label: str, module: str
+) -> dict[str, Any]:
     name = code.replace("_", " ").title()
     return {
         "ruleId": rule_id,
@@ -91,7 +160,11 @@ def _rule(rule_id: str, code: str, lane: str, label: str, module: str) -> dict[s
         "lane": lane,
         "laneLabel": label,
         "description": f"Deterministic Code Factory rejection condition {code} in the {label} lane.",
-        "practicalQuestion": next(question for key, _, question in _LANE_SPECS if key == lane) if lane != "cross_cutting" else "Is the signed contract, evidence, and execution boundary still intact?",
+        "practicalQuestion": next(
+            question for key, _, question in _LANE_SPECS if key == lane
+        )
+        if lane != "cross_cutting"
+        else "Is the signed contract, evidence, and execution boundary still intact?",
         "rejectionCondition": code,
         "requiredEvidenceTypes": list(_EVIDENCE_TYPES[lane]),
         "sourceModule": module,
@@ -102,15 +175,32 @@ def _inventory() -> list[dict[str, Any]]:
     rules: list[dict[str, Any]] = []
     for lane, label, _ in _LANE_SPECS:
         for code in _markers(_LANE_MODULES[lane], lane_specific=True):
-            rules.append(_rule(f"CF-RULE-{code}", code, lane, label, _LANE_MODULES[lane]))
+            rules.append(
+                _rule(f"CF-RULE-{code}", code, lane, label, _LANE_MODULES[lane])
+            )
     seen_cross_cutting: set[str] = set()
     for module in _CROSSCUTTING_MODULES:
         for code in _markers(module):
             if code in seen_cross_cutting:
                 continue
             seen_cross_cutting.add(code)
-            rules.append(_rule(f"CF-RULE-{code}", code, "cross_cutting", "Cross-cutting contract, policy, provenance, evidence and execution integrity", module))
-    return sorted(rules, key=lambda item: (item["lane"], item["rejectionCondition"], item["sourceModule"]))
+            rules.append(
+                _rule(
+                    f"CF-RULE-{code}",
+                    code,
+                    "cross_cutting",
+                    "Cross-cutting contract, policy, provenance, evidence and execution integrity",
+                    module,
+                )
+            )
+    return sorted(
+        rules,
+        key=lambda item: (
+            item["lane"],
+            item["rejectionCondition"],
+            item["sourceModule"],
+        ),
+    )
 
 
 def _validate(arguments: object) -> tuple[str, str | None, bool, int]:
@@ -122,10 +212,14 @@ def _validate(arguments: object) -> tuple[str, str | None, bool, int]:
         raise AuditRuleSearchError("unsupported search fields: " + ", ".join(unknown))
     query = arguments.get("query")
     if not isinstance(query, str) or not query.strip() or len(query) > 200:
-        raise AuditRuleSearchError("query must be a non-empty string of at most 200 characters")
+        raise AuditRuleSearchError(
+            "query must be a non-empty string of at most 200 characters"
+        )
     lane = arguments.get("lane")
     if lane is not None and lane not in {key for key, _, _ in _LANE_SPECS}:
-        raise AuditRuleSearchError("lane must name one of the six mandatory audit lanes")
+        raise AuditRuleSearchError(
+            "lane must name one of the six mandatory audit lanes"
+        )
     include_cross_cutting = arguments.get("includeCrossCutting", True)
     if type(include_cross_cutting) is not bool:
         raise AuditRuleSearchError("includeCrossCutting must be boolean")
@@ -147,12 +241,21 @@ def search_audit_rules(arguments: object) -> dict[str, object]:
             continue
         haystack = " ".join(
             str(rule[field]).lower()
-            for field in ("name", "description", "practicalQuestion", "rejectionCondition", "lane", "laneLabel")
+            for field in (
+                "name",
+                "description",
+                "practicalQuestion",
+                "rejectionCondition",
+                "lane",
+                "laneLabel",
+            )
         )
         if query in haystack:
             searchable.append(rule)
     results = searchable[:limit]
-    index_sha256 = sha256(json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    index_sha256 = sha256(
+        json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     return {
         "marker": "MCP_AUDIT_RULE_SEARCH_READ_ONLY",
         "schema": "factory.audit-rule-search.v1",

@@ -1,7 +1,7 @@
 """Privacy-plane primitives: Merkle disclosure plus honest optional adapters."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 from typing import Any, Iterable
 
@@ -32,7 +32,9 @@ def merkle_root(leaves: Iterable[str]) -> str:
     """Compute a deterministic Merkle root for ordered disclosure values."""
     values = sorted({_leaf(value) for value in leaves})
     if not values:
-        raise PrivacyError("E_EMPTY_MERKLE", "Merkle commitment needs at least one leaf")
+        raise PrivacyError(
+            "E_EMPTY_MERKLE", "Merkle commitment needs at least one leaf"
+        )
     level = values
     while len(level) > 1:
         next_level = []
@@ -57,7 +59,12 @@ def merkle_disclosure(leaves: Iterable[str], disclosed: str) -> dict[str, Any]:
         sibling_index = cursor - 1 if cursor % 2 else cursor + 1
         if sibling_index >= len(level):
             sibling_index = cursor
-        proof.append({"position": "left" if cursor % 2 else "right", "digest": level[sibling_index]})
+        proof.append(
+            {
+                "position": "left" if cursor % 2 else "right",
+                "digest": level[sibling_index],
+            }
+        )
         next_level = []
         for offset in range(0, len(level), 2):
             right = level[offset + 1] if offset + 1 < len(level) else level[offset]
@@ -80,7 +87,11 @@ def verify_merkle_disclosure(disclosure: dict[str, Any]) -> bool:
     current = _leaf(disclosure.get("leaf"))
     for step in disclosure.get("proof", []):
         sibling = _leaf(step.get("digest"))
-        current = _parent(sibling, current) if step.get("position") == "left" else _parent(current, sibling)
+        current = (
+            _parent(sibling, current)
+            if step.get("position") == "left"
+            else _parent(current, sibling)
+        )
     return current == disclosure.get("root")
 
 
@@ -93,9 +104,16 @@ def bbs_status() -> dict[str, Any]:
             "schema": "factory.bbs.status.v1",
             "available": False,
             "verdict": "UNAVAILABLE",
-            "error": {"code": "E_BBS_UNAVAILABLE", "message": "install and configure a reviewed BBS backend before issuing credentials"},
+            "error": {
+                "code": "E_BBS_UNAVAILABLE",
+                "message": "install and configure a reviewed BBS backend before issuing credentials",
+            },
         }
-    return {"schema": "factory.bbs.status.v1", "available": True, "verdict": "BACKEND_PRESENT"}
+    return {
+        "schema": "factory.bbs.status.v1",
+        "available": True,
+        "verdict": "BACKEND_PRESENT",
+    }
 
 
 def issue_bbs_credential(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -103,7 +121,10 @@ def issue_bbs_credential(*args: Any, **kwargs: Any) -> dict[str, Any]:
     status = bbs_status()
     if not status["available"]:
         raise PrivacyError(status["error"]["code"], status["error"]["message"])
-    raise PrivacyError("E_BBS_REVIEW_REQUIRED", "BBS backend is present but issuance requires a reviewed integration")
+    raise PrivacyError(
+        "E_BBS_REVIEW_REQUIRED",
+        "BBS backend is present but issuance requires a reviewed integration",
+    )
 
 
 def zkvm_pilot_status() -> dict[str, Any]:
@@ -115,7 +136,13 @@ def zkvm_pilot_status() -> dict[str, Any]:
             "schema": "factory.zkvm.pilot.v1",
             "available": False,
             "verdict": "UNAVAILABLE",
-            "error": {"code": "E_ZKVM_UNAVAILABLE", "message": "zkVM pilot backend is not installed"},
+            "error": {
+                "code": "E_ZKVM_UNAVAILABLE",
+                "message": "zkVM pilot backend is not installed",
+            },
         }
-    return {"schema": "factory.zkvm.pilot.v1", "available": True, "verdict": "BACKEND_PRESENT"}
-
+    return {
+        "schema": "factory.zkvm.pilot.v1",
+        "available": True,
+        "verdict": "BACKEND_PRESENT",
+    }

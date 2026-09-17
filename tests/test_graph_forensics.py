@@ -7,10 +7,22 @@ from pathlib import Path
 import pytest
 
 from factoryline.cli import main
-from factoryline.graph_forensics import GraphForensicsError, graph_forensics, mission_history_steps, seal_graph_lineage, seal_mission_graph_lineage, verify_graph_lineage
+from factoryline.graph_forensics import (
+    GraphForensicsError,
+    graph_forensics,
+    mission_history_steps,
+    seal_graph_lineage,
+    seal_mission_graph_lineage,
+    verify_graph_lineage,
+)
 from factoryline.graph_ops import graph_ops_snapshot
 from factoryline.mission_graph import apply_mission_event, init_mission_graph
-from factoryline.product_missions import compile_product_prd, create_mission, decide_mission, plan_value_slices
+from factoryline.product_missions import (
+    compile_product_prd,
+    create_mission,
+    decide_mission,
+    plan_value_slices,
+)
 
 
 H0 = hashlib.sha256(b"zero").hexdigest()
@@ -19,17 +31,35 @@ H2 = hashlib.sha256(b"two").hexdigest()
 H3 = hashlib.sha256(b"three").hexdigest()
 
 
-def _write_lineage(path: Path, run_id: str, steps: list[dict], graph_id: str = "checkout") -> Path:
-    core = {"schema": "factory.graph-lineage.v1", "run_id": run_id, "graph_id": graph_id, "steps": steps}
+def _write_lineage(
+    path: Path, run_id: str, steps: list[dict], graph_id: str = "checkout"
+) -> Path:
+    core = {
+        "schema": "factory.graph-lineage.v1",
+        "run_id": run_id,
+        "graph_id": graph_id,
+        "steps": steps,
+    }
     core["lineage_sha256"] = hashlib.sha256(
-        json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
     ).hexdigest()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(core), encoding="utf-8")
     return path
 
 
-def _step(sequence: int, node: str, *, superstep: int | None = None, reads=None, writes=None, effects=None, route="next") -> dict:
+def _step(
+    sequence: int,
+    node: str,
+    *,
+    superstep: int | None = None,
+    reads=None,
+    writes=None,
+    effects=None,
+    route="next",
+) -> dict:
     return {
         "sequence": sequence,
         "superstep": sequence if superstep is None else superstep,
@@ -47,15 +77,42 @@ def _read(key: str, version: int, sha: str) -> dict:
     return {"key": key, "version": version, "sha256": sha}
 
 
-def _write(key: str, before: int, after: int, before_sha: str, after_sha: str, *, mode="replace", reducer=None) -> dict:
-    return {"key": key, "previous_version": before, "version": after, "before_sha256": before_sha, "after_sha256": after_sha, "mode": mode, "reducer": reducer}
+def _write(
+    key: str,
+    before: int,
+    after: int,
+    before_sha: str,
+    after_sha: str,
+    *,
+    mode="replace",
+    reducer=None,
+) -> dict:
+    return {
+        "key": key,
+        "previous_version": before,
+        "version": after,
+        "before_sha256": before_sha,
+        "after_sha256": after_sha,
+        "mode": mode,
+        "reducer": reducer,
+    }
 
 
 def _baseline() -> list[dict]:
     return [
         _step(1, "plan", writes=[_write("plan", 0, 1, H0, H1)]),
-        _step(2, "build", reads=[_read("plan", 1, H1)], writes=[_write("candidate", 0, 1, H0, H1)]),
-        _step(3, "verify", reads=[_read("candidate", 1, H1)], writes=[_write("verdict", 0, 1, H0, H1)]),
+        _step(
+            2,
+            "build",
+            reads=[_read("plan", 1, H1)],
+            writes=[_write("candidate", 0, 1, H0, H1)],
+        ),
+        _step(
+            3,
+            "verify",
+            reads=[_read("candidate", 1, H1)],
+            writes=[_write("verdict", 0, 1, H0, H1)],
+        ),
     ]
 
 
@@ -63,7 +120,10 @@ def test_lineage_verification_is_hash_sealed_and_tamper_evident(tmp_path: Path):
     path = _write_lineage(tmp_path / "run.json", "good", _baseline())
     verified = verify_graph_lineage(path)
     assert verified["valid"] is True
-    assert verified["markers"] == ["GRAPH_LINEAGE_VERIFIED", "GRAPH_LINEAGE_BOUNDS_ENFORCED"]
+    assert verified["markers"] == [
+        "GRAPH_LINEAGE_VERIFIED",
+        "GRAPH_LINEAGE_BOUNDS_ENFORCED",
+    ]
 
     payload = json.loads(path.read_text())
     payload["steps"][1]["decision"]["route"] = "skip"
@@ -99,23 +159,41 @@ def test_candidate_binding_roundtrips_and_is_required_when_expected(tmp_path: Pa
 
     seal_graph_lineage("bound", "checkout", steps, bound, candidate_sha256=candidate)
 
-    assert verify_graph_lineage(bound, expected_candidate_sha256=candidate)["valid"] is True
+    assert (
+        verify_graph_lineage(bound, expected_candidate_sha256=candidate)["valid"]
+        is True
+    )
     mismatch = verify_graph_lineage(bound, expected_candidate_sha256="a" * 64)
     assert mismatch["valid"] is False
-    assert any("differs from expected candidate" in error for error in mismatch["errors"])
+    assert any(
+        "differs from expected candidate" in error for error in mismatch["errors"]
+    )
 
     legacy = tmp_path / "legacy.lineage.json"
     seal_graph_lineage("legacy", "checkout", steps, legacy)
     missing = verify_graph_lineage(legacy, expected_candidate_sha256=candidate)
     assert missing["valid"] is False
-    assert any("required for the expected candidate" in error for error in missing["errors"])
+    assert any(
+        "required for the expected candidate" in error for error in missing["errors"]
+    )
 
 
 def test_forensics_finds_first_divergence_and_smallest_causal_recovery(tmp_path: Path):
     good = _write_lineage(tmp_path / "good.json", "good", _baseline())
     bad_steps = _baseline()
-    bad_steps[1] = _step(2, "build", reads=[_read("plan", 1, H1)], writes=[_write("candidate", 0, 1, H0, H2)], route="risky")
-    bad_steps[2] = _step(3, "verify", reads=[_read("candidate", 1, H2)], writes=[_write("verdict", 0, 1, H0, H2)])
+    bad_steps[1] = _step(
+        2,
+        "build",
+        reads=[_read("plan", 1, H1)],
+        writes=[_write("candidate", 0, 1, H0, H2)],
+        route="risky",
+    )
+    bad_steps[2] = _step(
+        3,
+        "verify",
+        reads=[_read("candidate", 1, H2)],
+        writes=[_write("verdict", 0, 1, H0, H2)],
+    )
     bad = _write_lineage(tmp_path / "bad.json", "bad", bad_steps)
 
     result = graph_forensics(good, bad)
@@ -139,15 +217,36 @@ def test_identical_semantics_require_no_recovery(tmp_path: Path):
     assert "semantically identical" in result["mermaid"]
 
 
-def test_concurrency_guard_detects_parallel_conflict_stale_read_and_duplicate_effect(tmp_path: Path):
+def test_concurrency_guard_detects_parallel_conflict_stale_read_and_duplicate_effect(
+    tmp_path: Path,
+):
     good = _write_lineage(tmp_path / "good.json", "good", _baseline())
-    effect = {"effect_id": "ticket-42", "idempotency_key": "key-a", "status": "completed"}
+    effect = {
+        "effect_id": "ticket-42",
+        "idempotency_key": "key-a",
+        "status": "completed",
+    }
     candidate_steps = [
         _step(1, "seed", writes=[_write("shared", 0, 1, H0, H1)], effects=[effect]),
-        _step(2, "worker-a", superstep=2, reads=[_read("shared", 0, H0)], writes=[_write("shared", 1, 2, H1, H2)], effects=[effect]),
-        _step(3, "worker-b", superstep=2, reads=[_read("shared", 1, H1)], writes=[_write("shared", 1, 3, H1, H3)]),
+        _step(
+            2,
+            "worker-a",
+            superstep=2,
+            reads=[_read("shared", 0, H0)],
+            writes=[_write("shared", 1, 2, H1, H2)],
+            effects=[effect],
+        ),
+        _step(
+            3,
+            "worker-b",
+            superstep=2,
+            reads=[_read("shared", 1, H1)],
+            writes=[_write("shared", 1, 3, H1, H3)],
+        ),
     ]
-    candidate = _write_lineage(tmp_path / "candidate.json", "candidate", candidate_steps)
+    candidate = _write_lineage(
+        tmp_path / "candidate.json", "candidate", candidate_steps
+    )
 
     result = graph_forensics(good, candidate)
     codes = {item["code"] for item in result["anomalies"]}
@@ -157,13 +256,25 @@ def test_concurrency_guard_detects_parallel_conflict_stale_read_and_duplicate_ef
 
 def test_common_parallel_reducer_is_not_reported_as_conflict(tmp_path: Path):
     steps = [
-        _step(1, "a", superstep=1, writes=[_write("items", 0, 1, H0, H1, mode="reduce", reducer="append")]),
-        _step(2, "b", superstep=1, writes=[_write("items", 0, 2, H0, H2, mode="reduce", reducer="append")]),
+        _step(
+            1,
+            "a",
+            superstep=1,
+            writes=[_write("items", 0, 1, H0, H1, mode="reduce", reducer="append")],
+        ),
+        _step(
+            2,
+            "b",
+            superstep=1,
+            writes=[_write("items", 0, 2, H0, H2, mode="reduce", reducer="append")],
+        ),
     ]
     left = _write_lineage(tmp_path / "left.json", "left", steps)
     right = _write_lineage(tmp_path / "right.json", "right", steps)
 
-    assert "PARALLEL_WRITE_CONFLICT" not in {item["code"] for item in graph_forensics(left, right)["anomalies"]}
+    assert "PARALLEL_WRITE_CONFLICT" not in {
+        item["code"] for item in graph_forensics(left, right)["anomalies"]
+    }
 
 
 def test_graph_mismatch_fails_closed(tmp_path: Path):
@@ -173,20 +284,50 @@ def test_graph_mismatch_fails_closed(tmp_path: Path):
         graph_forensics(left, right)
 
 
-def test_cli_and_graph_ops_surface_verified_forensics_without_writes(tmp_path: Path, capsys):
+def test_cli_and_graph_ops_surface_verified_forensics_without_writes(
+    tmp_path: Path, capsys
+):
     run_root = tmp_path / ".factory" / "graph-runs"
     good = _write_lineage(run_root / "01-good.lineage.json", "good", _baseline())
     bad_steps = _baseline()
-    bad_steps[1] = _step(2, "build", reads=[_read("plan", 1, H1)], writes=[_write("candidate", 0, 1, H0, H2)])
+    bad_steps[1] = _step(
+        2,
+        "build",
+        reads=[_read("plan", 1, H1)],
+        writes=[_write("candidate", 0, 1, H0, H2)],
+    )
     bad = _write_lineage(run_root / "02-bad.lineage.json", "bad", bad_steps)
-    before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
 
     assert main(["graph", "lineage-verify", str(good), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["valid"] is True
-    assert main(["graph", "forensics", "--baseline", str(good), "--candidate", str(bad), "--json"]) == 0
-    assert json.loads(capsys.readouterr().out)["divergence"]["candidate_node"] == "build"
+    assert (
+        main(
+            [
+                "graph",
+                "forensics",
+                "--baseline",
+                str(good),
+                "--candidate",
+                str(bad),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert (
+        json.loads(capsys.readouterr().out)["divergence"]["candidate_node"] == "build"
+    )
     snapshot = graph_ops_snapshot(tmp_path)
-    after = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    after = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
 
     assert "GRAPH_OPS_SEMANTIC_LINEAGE" in snapshot["markers"]
     assert "GRAPH_OPS_COUNTERFACTUAL_RECOVERY_PREVIEW" in snapshot["markers"]
@@ -205,7 +346,21 @@ def test_lineage_seal_cli_writes_only_explicit_output(tmp_path: Path, capsys):
     steps.write_text(json.dumps(_baseline()), encoding="utf-8")
     out = tmp_path / ".factory" / "graph-runs" / "cli.lineage.json"
 
-    code = main(["graph", "lineage-seal", "--run-id", "cli", "--graph-id", "checkout", "--steps", str(steps), "--out", str(out), "--json"])
+    code = main(
+        [
+            "graph",
+            "lineage-seal",
+            "--run-id",
+            "cli",
+            "--graph-id",
+            "checkout",
+            "--steps",
+            str(steps),
+            "--out",
+            str(out),
+            "--json",
+        ]
+    )
 
     payload = json.loads(capsys.readouterr().out)
     assert code == 0
@@ -213,10 +368,14 @@ def test_lineage_seal_cli_writes_only_explicit_output(tmp_path: Path, capsys):
     assert verify_graph_lineage(out)["valid"] is True
 
 
-def test_lineage_bounds_accept_2000_steps_and_reject_2001_or_401_state_items(tmp_path: Path):
+def test_lineage_bounds_accept_2000_steps_and_reject_2001_or_401_state_items(
+    tmp_path: Path,
+):
     steps = [_step(index, f"node-{index}") for index in range(1, 2001)]
     maximum = _write_lineage(tmp_path / "maximum.json", "maximum", steps)
-    over_steps = _write_lineage(tmp_path / "over-steps.json", "over-steps", [*steps, _step(2001, "node-2001")])
+    over_steps = _write_lineage(
+        tmp_path / "over-steps.json", "over-steps", [*steps, _step(2001, "node-2001")]
+    )
     crowded = _baseline()
     crowded[0]["reads"] = [_read(f"key-{index}", 0, H0) for index in range(401)]
     over_state = _write_lineage(tmp_path / "over-state.json", "over-state", crowded)
@@ -229,7 +388,9 @@ def test_lineage_bounds_accept_2000_steps_and_reject_2001_or_401_state_items(tmp
     assert any("at most 400 objects" in error for error in crowded_result["errors"])
 
 
-def test_lineage_verify_cli_fails_closed_for_missing_or_oversized_source(tmp_path: Path, capsys):
+def test_lineage_verify_cli_fails_closed_for_missing_or_oversized_source(
+    tmp_path: Path, capsys
+):
     missing = tmp_path / "missing.json"
     assert main(["graph", "lineage-verify", str(missing), "--json"]) == 2
     assert json.loads(capsys.readouterr().err)["code"] == "GRAPH_LINEAGE_UNREADABLE"
@@ -243,11 +404,17 @@ def test_native_mission_history_is_automatically_translated_to_control_state_lin
     history = {
         "schema": "factory.mission.graph.history.v1",
         "mission_id": "M-001",
-        "events": [{
-            "version": 1, "source_state": "planned", "target_state": "creator_running",
-            "event": "approve", "event_sha256": H2, "previous_sha256": "",
-            "receipt": {"path": "approval.json", "sha256": H1},
-        }],
+        "events": [
+            {
+                "version": 1,
+                "source_state": "planned",
+                "target_state": "creator_running",
+                "event": "approve",
+                "event_sha256": H2,
+                "previous_sha256": "",
+                "receipt": {"path": "approval.json", "sha256": H1},
+            }
+        ],
     }
 
     steps = mission_history_steps(history)
@@ -261,7 +428,8 @@ def test_native_mission_history_is_automatically_translated_to_control_state_lin
 
 def test_native_mission_ledger_is_verified_and_sealed_end_to_end(tmp_path: Path):
     prd = tmp_path / "PRD.md"
-    prd.write_text("""# Forensic fixture
+    prd.write_text(
+        """# Forensic fixture
 ## Actors
 - Maintainer: owns the proof.
 ## Outcomes
@@ -273,14 +441,32 @@ Scenario: Preserve proof
   Given one approved mission
   When its event ledger is exported
   Then its lineage is hash sealed
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
     product = compile_product_prd(prd, tmp_path)
     slices = plan_value_slices(Path(product["path"]), tmp_path)
-    mission = create_mission(Path(slices["path"]), slices["slices"][0]["id"], tmp_path, "owner")
+    mission = create_mission(
+        Path(slices["path"]), slices["slices"][0]["id"], tmp_path, "owner"
+    )
     mission_path = Path(mission["path"])
     init_mission_graph(mission_path, tmp_path)
-    approval = decide_mission(mission_path, tmp_path, owner="owner", decision="approved_execution", rationale="Approved for bounded proof.")
-    apply_mission_event(mission_path, tmp_path, "approve", "owner", "owner", "approve-forensics", Path(approval["path"]))
+    approval = decide_mission(
+        mission_path,
+        tmp_path,
+        owner="owner",
+        decision="approved_execution",
+        rationale="Approved for bounded proof.",
+    )
+    apply_mission_event(
+        mission_path,
+        tmp_path,
+        "approve",
+        "owner",
+        "owner",
+        "approve-forensics",
+        Path(approval["path"]),
+    )
 
     out = tmp_path / ".factory" / "graph-runs" / "mission.lineage.json"
     result = seal_mission_graph_lineage(mission_path, tmp_path, "mission-run", out)

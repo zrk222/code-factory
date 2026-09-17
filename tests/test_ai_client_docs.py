@@ -30,7 +30,11 @@ def test_cursor_and_opencode_examples_are_valid_and_use_local_mcp() -> None:
     assert opencode["$schema"] == "https://opencode.ai/config.json"
     assert opencode_server["type"] == "local"
     assert opencode_server["command"] == [
-        "factory", "mcp", "serve", "--root", r"C:\work\my-mvp"
+        "factory",
+        "mcp",
+        "serve",
+        "--root",
+        r"C:\work\my-mvp",
     ]
     assert opencode_server["enabled"] is True
     assert opencode_server["timeout"] == 5000

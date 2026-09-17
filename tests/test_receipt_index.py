@@ -21,7 +21,7 @@ def test_receipt_index_is_content_addressed_and_plan_only(tmp_path: Path) -> Non
 
 def test_receipt_index_cli_writes_local_index(tmp_path: Path, capsys) -> None:
     (tmp_path / "receipts").mkdir()
-    (tmp_path / "receipts" / "one.json").write_text('{}', encoding="utf-8")
+    (tmp_path / "receipts" / "one.json").write_text("{}", encoding="utf-8")
     assert main(["ops", "receipts", "--root", str(tmp_path), "--json"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["schema"] == "factory.receipt-index.v1"

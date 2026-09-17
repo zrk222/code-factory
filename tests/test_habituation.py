@@ -5,6 +5,7 @@ measured against a reviewer's own baseline and never against peers, an
 uncorrected proxy cannot block a merge, and no identity or per-person row
 reaches a public export.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,7 +13,6 @@ import json
 import pytest
 
 from factoryline.habituation import (
-    BLOCK_DRIFT,
     HabituationError,
     MIN_AGENT_REVIEWS,
     MIN_DEFECT_SAMPLE,
@@ -30,11 +30,23 @@ from factoryline.habituation import (
 )
 
 
-def review(rid, reviewer="alice", kind="agent", seconds=60.0, lines=100, comments=3, approved=True):
+def review(
+    rid,
+    reviewer="alice",
+    kind="agent",
+    seconds=60.0,
+    lines=100,
+    comments=3,
+    approved=True,
+):
     return {
-        "review_id": rid, "reviewer": reviewer, "author_kind": kind,
-        "review_seconds": seconds, "changed_lines": lines,
-        "inline_comments": comments, "approved": approved,
+        "review_id": rid,
+        "reviewer": reviewer,
+        "author_kind": kind,
+        "review_seconds": seconds,
+        "changed_lines": lines,
+        "inline_comments": comments,
+        "approved": approved,
     }
 
 
@@ -194,7 +206,9 @@ def test_resample_reviewer_must_differ_from_approver(tmp_path):
 
 def test_resample_outcome_recorded(tmp_path):
     record_review(tmp_path, review("a-1", reviewer="alice"))
-    receipt = record_resample_outcome(tmp_path, "a-1", defect_found=True, reviewer="bob")
+    receipt = record_resample_outcome(
+        tmp_path, "a-1", defect_found=True, reviewer="bob"
+    )
     assert receipt["defect_found"] is True
     assert "alice" not in json.dumps(receipt) and "bob" not in json.dumps(receipt)
 
@@ -264,12 +278,16 @@ def test_defect_linkage_withheld_below_sample_floor(tmp_path):
 def test_defect_linkage_emits_with_limits_once_sampled(tmp_path):
     for i in range(MIN_DEFECT_SAMPLE):
         record_review(tmp_path, review(f"a-{i}", reviewer="alice"))
-        record_resample_outcome(tmp_path, f"a-{i}", defect_found=(i % 4 == 0), reviewer="bob")
+        record_resample_outcome(
+            tmp_path, f"a-{i}", defect_found=(i % 4 == 0), reviewer="bob"
+        )
     linkage = defect_linkage(tmp_path, enable=True)
     assert linkage["withheld"] is False
     assert linkage["defect_rate_in_low_scrutiny_sample"] == 0.25
     assert "not attributable to any individual" in linkage["interpretation_limit"]
-    assert any("not evidence that low scrutiny caused" in a for a in linkage["assumptions"])
+    assert any(
+        "not evidence that low scrutiny caused" in a for a in linkage["assumptions"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +300,9 @@ def test_public_report_exports_no_identity_or_per_person_row(tmp_path):
     blob = json.dumps(report)
     assert "alice" not in blob and "bob" not in blob
     for row in load_reviews(tmp_path):
-        assert row["reviewer_key"] not in blob, "pseudonymous key still identifies a person"
+        assert row["reviewer_key"] not in blob, (
+            "pseudonymous key still identifies a person"
+        )
         assert row["review_id"] not in blob
     assert "calibrations" not in report, "no per-reviewer rows may be exported"
 
@@ -305,4 +325,7 @@ def test_public_report_on_empty_store(tmp_path):
 def test_public_report_export_round_trips(tmp_path):
     seed(tmp_path)
     out = export_public_habituation_report(tmp_path, tmp_path / "pub.json")
-    assert json.loads(out.read_text(encoding="utf-8"))["marker"] == "HABITUATION_PUBLIC_REPORT"
+    assert (
+        json.loads(out.read_text(encoding="utf-8"))["marker"]
+        == "HABITUATION_PUBLIC_REPORT"
+    )

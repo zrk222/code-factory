@@ -45,7 +45,10 @@ def test_changed_policy_blocks(tmp_path, key):
 def test_lost_coverage_blocks(tmp_path):
     receipt, path = initial(tmp_path)
     receipt["report_hashes"] = {}
-    assert compare_deep_audits(tmp_path, path, write(tmp_path, receipt))["state"] == "blocked"
+    assert (
+        compare_deep_audits(tmp_path, path, write(tmp_path, receipt))["state"]
+        == "blocked"
+    )
 
 
 def test_new_finding_and_new_blocker_regress(tmp_path):
@@ -53,10 +56,16 @@ def test_new_finding_and_new_blocker_regress(tmp_path):
     added = deepcopy(receipt["findings"][0])
     added["finding_id"] = "b" * 64
     receipt["findings"].append(added)
-    assert compare_deep_audits(tmp_path, path, write(tmp_path, receipt))["state"] == "regressed"
+    assert (
+        compare_deep_audits(tmp_path, path, write(tmp_path, receipt))["state"]
+        == "regressed"
+    )
     receipt["findings"].pop()
     receipt["repair_queue"].append({"code": "DEEP_TRACE_INCOMPLETE"})
-    assert compare_deep_audits(tmp_path, path, write(tmp_path, receipt))["state"] == "regressed"
+    assert (
+        compare_deep_audits(tmp_path, path, write(tmp_path, receipt))["state"]
+        == "regressed"
+    )
 
 
 def test_reduction_then_human_only_closure(tmp_path):
@@ -66,9 +75,15 @@ def test_reduction_then_human_only_closure(tmp_path):
     receipt["findings"].append(added)
     before = write(tmp_path, receipt)
     receipt["findings"].pop()
-    assert compare_deep_audits(tmp_path, before, write(tmp_path, receipt))["state"] == "repair_required"
+    assert (
+        compare_deep_audits(tmp_path, before, write(tmp_path, receipt))["state"]
+        == "repair_required"
+    )
     receipt.update(findings=[], repair_queue=[], decision="READY_FOR_HUMAN_REVIEW")
-    assert compare_deep_audits(tmp_path, before, write(tmp_path, receipt))["state"] == "approval_required"
+    assert (
+        compare_deep_audits(tmp_path, before, write(tmp_path, receipt))["state"]
+        == "approval_required"
+    )
 
 
 def test_invalid_and_escaping_inputs_block(tmp_path):
@@ -82,14 +97,19 @@ def test_graph_has_six_non_authorizing_stages(tmp_path):
     initial(tmp_path)
     result = graph_ops_snapshot(tmp_path)
     nodes = [n for n in result["nodes"] if n["kind"].startswith("deep_audit_")]
-    assert {n["kind"] for n in nodes} == {"deep_audit_" + k for k in ("source", "obligation", "finding", "evidence", "decision", "handoff")}
+    assert {n["kind"] for n in nodes} == {
+        "deep_audit_" + k
+        for k in ("source", "obligation", "finding", "evidence", "decision", "handoff")
+    }
     assert all(n["status"] == "unassessed" for n in nodes)
     assert result["deep_audit"]["authority"] == "none"
 
 
 def test_projection_bound_and_stale_observation(tmp_path):
     receipt, _ = initial(tmp_path)
-    receipt["findings"] = [{**receipt["findings"][0], "finding_id": digest(i)} for i in range(51)]
+    receipt["findings"] = [
+        {**receipt["findings"][0], "finding_id": digest(i)} for i in range(51)
+    ]
     write(tmp_path, receipt)
     status = deep_audit_status(tmp_path)
     result = deep_audit_lineage(tmp_path, status)
@@ -100,5 +120,19 @@ def test_projection_bound_and_stale_observation(tmp_path):
 
 def test_compare_cli(tmp_path, capsys):
     _, path = initial(tmp_path)
-    assert main(["deep-audit", "compare", "--root", str(tmp_path), "--before", path, "--after", path]) == 1
+    assert (
+        main(
+            [
+                "deep-audit",
+                "compare",
+                "--root",
+                str(tmp_path),
+                "--before",
+                path,
+                "--after",
+                path,
+            ]
+        )
+        == 1
+    )
     assert json.loads(capsys.readouterr().out)["state"] == "stagnated"

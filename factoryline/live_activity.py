@@ -7,13 +7,13 @@ an atomic *ephemeral state projection* alongside that ledger.  It is not a
 receipt, does not report tokens or cost, and never turns missing observations
 into zero.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 import tempfile
-import time
 from typing import Any
 
 
@@ -54,8 +54,12 @@ class LiveActivity:
 
     def _write(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        encoded = json.dumps(self._state, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=self.path.parent, delete=False) as handle:
+        encoded = json.dumps(
+            self._state, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=self.path.parent, delete=False
+        ) as handle:
             handle.write(encoded)
             temporary = Path(handle.name)
         temporary.replace(self.path)
@@ -82,7 +86,10 @@ class LiveActivity:
             "failed_stages": 0,
             "skipped_stages": 0,
             "recent_stages": [],
-            "markers": ["LIVE_ACTIVITY_LOCAL_ONLY", "TOKENS_COSTS_WITHHELD_UNTIL_REPORTED"],
+            "markers": [
+                "LIVE_ACTIVITY_LOCAL_ONLY",
+                "TOKENS_COSTS_WITHHELD_UNTIL_REPORTED",
+            ],
         }
         self._write()
 
@@ -111,12 +118,18 @@ class LiveActivity:
         if self._state.get("status") != "active":
             return
         now = _now()
-        self._state["current_stage"] = {"module": module, "stage": stage, "started_at": now}
+        self._state["current_stage"] = {
+            "module": module,
+            "stage": stage,
+            "started_at": now,
+        }
         self._state["heartbeat_at"] = now
         self._state["updated_at"] = now
         self._write()
 
-    def stage_finished(self, module: str, stage: str, status: str, *, wall_ms: int | None = None) -> None:
+    def stage_finished(
+        self, module: str, stage: str, status: str, *, wall_ms: int | None = None
+    ) -> None:
         """Record a bounded finished-stage summary in the live projection.
 
         Completed rows remain informational until their normal meter and proof
@@ -124,22 +137,37 @@ class LiveActivity:
         """
         if not self._state:
             return
-        row: dict[str, Any] = {"module": module, "stage": stage, "status": status, "finished_at": _now()}
+        row: dict[str, Any] = {
+            "module": module,
+            "stage": stage,
+            "status": status,
+            "finished_at": _now(),
+        }
         if wall_ms is not None:
             row["wall_ms"] = wall_ms
         recent = list(self._state.get("recent_stages", []))[-11:]
         recent.append(row)
         self._state["recent_stages"] = recent
         if status == "ok":
-            self._state["completed_stages"] = int(self._state.get("completed_stages", 0)) + 1
+            self._state["completed_stages"] = (
+                int(self._state.get("completed_stages", 0)) + 1
+            )
         elif status == "failed":
             self._state["failed_stages"] = int(self._state.get("failed_stages", 0)) + 1
         elif status in {"skipped", "would-run"}:
-            self._state["skipped_stages"] = int(self._state.get("skipped_stages", 0)) + 1
+            self._state["skipped_stages"] = (
+                int(self._state.get("skipped_stages", 0)) + 1
+            )
         self._state["current_stage"] = None
         self.heartbeat()
 
-    def finish(self, terminal: str, *, halted_at: str | None = None, paused_at: str | None = None) -> None:
+    def finish(
+        self,
+        terminal: str,
+        *,
+        halted_at: str | None = None,
+        paused_at: str | None = None,
+    ) -> None:
         """Mark the current local projection terminal without altering receipts.
 
         The terminal marker helps refresh clients retire activity state while the
@@ -148,15 +176,17 @@ class LiveActivity:
         if not self._state:
             return
         now = _now()
-        self._state.update({
-            "status": terminal,
-            "current_stage": None,
-            "finished_at": now,
-            "heartbeat_at": now,
-            "updated_at": now,
-            "halted_at": halted_at,
-            "paused_at": paused_at,
-        })
+        self._state.update(
+            {
+                "status": terminal,
+                "current_stage": None,
+                "finished_at": now,
+                "heartbeat_at": now,
+                "updated_at": now,
+                "halted_at": halted_at,
+                "paused_at": paused_at,
+            }
+        )
         self._write()
 
     def cancel_requested(self) -> bool:
@@ -165,10 +195,16 @@ class LiveActivity:
             value = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             return False
-        return isinstance(value, dict) and value.get("run_id") == self.run_id and bool(value.get("cancel_requested_at"))
+        return (
+            isinstance(value, dict)
+            and value.get("run_id") == self.run_id
+            and bool(value.get("cancel_requested_at"))
+        )
 
 
-def activity_snapshot(root: Path, *, stale_after_seconds: float = STALE_AFTER_SECONDS) -> dict[str, Any]:
+def activity_snapshot(
+    root: Path, *, stale_after_seconds: float = STALE_AFTER_SECONDS
+) -> dict[str, Any]:
     """Return one safe, current local activity projection for Studio surfaces."""
     path = Path(root).resolve() / ACTIVITY_RELATIVE_PATH
     unavailable = {
@@ -190,10 +226,16 @@ def activity_snapshot(root: Path, *, stale_after_seconds: float = STALE_AFTER_SE
     now = datetime.now(timezone.utc)
     started = _parse_time(value.get("started_at"))
     heartbeat = _parse_time(value.get("heartbeat_at"))
-    result["elapsed_ms"] = max(0, int((now - started).total_seconds() * 1000)) if started else None
-    if value.get("status") == "active" and (heartbeat is None or (now - heartbeat).total_seconds() > stale_after_seconds):
+    result["elapsed_ms"] = (
+        max(0, int((now - started).total_seconds() * 1000)) if started else None
+    )
+    if value.get("status") == "active" and (
+        heartbeat is None or (now - heartbeat).total_seconds() > stale_after_seconds
+    ):
         result["status"] = "stale"
-        result["stale_reason"] = "No heartbeat was observed within the local activity freshness window."
+        result["stale_reason"] = (
+            "No heartbeat was observed within the local activity freshness window."
+        )
         result["markers"] = list(value.get("markers", [])) + ["LIVE_ACTIVITY_STALE"]
     else:
         result["markers"] = list(value.get("markers", [])) + ["LIVE_ACTIVITY_FRESH"]
@@ -212,13 +254,21 @@ def request_stop(root: Path) -> dict[str, Any]:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("No readable active Factory activity exists.") from exc
-    if not isinstance(value, dict) or value.get("schema") != ACTIVITY_SCHEMA or value.get("status") != "active":
+    if (
+        not isinstance(value, dict)
+        or value.get("schema") != ACTIVITY_SCHEMA
+        or value.get("status") != "active"
+    ):
         raise ValueError("No active Factory assembly can be stopped.")
     value["cancel_requested_at"] = _now()
     value["updated_at"] = value["cancel_requested_at"]
     path.parent.mkdir(parents=True, exist_ok=True)
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=path.parent, delete=False
+    ) as handle:
         handle.write(encoded)
         temporary = Path(handle.name)
     temporary.replace(path)
@@ -227,5 +277,11 @@ def request_stop(root: Path) -> dict[str, Any]:
         "marker": "LIVE_ACTIVITY_STOP_REQUESTED",
         "run_id": value.get("run_id"),
         "feature": value.get("feature"),
-        "authority": {"stops_active_local_assembly": True, "publish": False, "deploy": False, "sign": False, "credentials": False},
+        "authority": {
+            "stops_active_local_assembly": True,
+            "publish": False,
+            "deploy": False,
+            "sign": False,
+            "credentials": False,
+        },
     }

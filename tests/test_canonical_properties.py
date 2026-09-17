@@ -9,7 +9,9 @@ import pytest
 from factoryline.enterprise_receipts import EnterpriseReceiptError, canonical_json
 
 
-UNICODE_TEXT = st.text(alphabet=st.characters(blacklist_categories=("Cs",)), max_size=80)
+UNICODE_TEXT = st.text(
+    alphabet=st.characters(blacklist_categories=("Cs",)), max_size=80
+)
 JSON_SCALARS = st.one_of(
     st.none(),
     st.booleans(),
@@ -36,7 +38,9 @@ def test_canonical_json_round_trip_is_byte_identical(value: object) -> None:
 
 
 @given(st.dictionaries(UNICODE_TEXT, JSON_VALUES, max_size=12))
-def test_canonical_json_ignores_dictionary_insertion_order(value: dict[str, object]) -> None:
+def test_canonical_json_ignores_dictionary_insertion_order(
+    value: dict[str, object],
+) -> None:
     reversed_value = dict(reversed(list(value.items())))
 
     assert canonical_json(value) == canonical_json(reversed_value)

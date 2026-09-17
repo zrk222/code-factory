@@ -1,4 +1,5 @@
 """PostgreSQL persistence for hosted PR assurance and its transactional outbox."""
+
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -17,9 +18,14 @@ MAX_OUTBOX_ATTEMPTS = 25
 
 def _validate_decision(principal: Principal, decision: str, reason: str) -> None:
     if "approver" not in principal.roles and "admin" not in principal.roles:
-        raise PRAssuranceError("E_ACTION_DENIED", "verified identity lacks approval authority")
+        raise PRAssuranceError(
+            "E_ACTION_DENIED", "verified identity lacks approval authority"
+        )
     if decision not in {"approved", "rejected"} or not reason.strip():
-        raise PRAssuranceError("E_INVALID_DECISION", "approved or rejected decision and reason are required")
+        raise PRAssuranceError(
+            "E_INVALID_DECISION",
+            "approved or rejected decision and reason are required",
+        )
 
 
 def _require_pending(row: Any, principal: Principal) -> None:
@@ -28,7 +34,10 @@ def _require_pending(row: Any, principal: Principal) -> None:
     if row[9] != "pending":
         raise PRAssuranceError("E_ALREADY_DECIDED", "approval is already terminal")
     if row[8] == principal.subject:
-        raise PRAssuranceError("E_SELF_APPROVAL", "requester cannot approve its own request")
+        raise PRAssuranceError(
+            "E_SELF_APPROVAL", "requester cannot approve its own request"
+        )
+
 
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS factory_installations (
@@ -117,13 +126,17 @@ def _default_connect(dsn: str):
     try:
         import psycopg
     except ImportError as exc:  # pragma: no cover - depends on optional install
-        raise PRAssuranceError("E_HOSTED_DEPENDENCY", "install factoryline-code-factory[hosted]") from exc
+        raise PRAssuranceError(
+            "E_HOSTED_DEPENDENCY", "install factoryline-code-factory[hosted]"
+        ) from exc
     return psycopg.connect(dsn)
 
 
 def _database_error(exc: Exception, duplicate_code: str) -> PRAssuranceError:
     if getattr(exc, "sqlstate", None) == "23505":
-        return PRAssuranceError(duplicate_code, "unique hosted assurance record already exists")
+        return PRAssuranceError(
+            duplicate_code, "unique hosted assurance record already exists"
+        )
     return PRAssuranceError("E_DATABASE", "hosted assurance database operation failed")
 
 
@@ -141,7 +154,9 @@ class PostgresAssuranceStore:
         with self.connect(self.dsn) as db:
             with db.cursor() as cursor:
                 if tenant_id is not None:
-                    cursor.execute("SELECT set_config('factory.tenant_id', %s, true)", (tenant_id,))
+                    cursor.execute(
+                        "SELECT set_config('factory.tenant_id', %s, true)", (tenant_id,)
+                    )
                 yield db, cursor
 
     def initialize(self) -> None:
@@ -164,7 +179,10 @@ class PostgresAssuranceStore:
     def register_installation(self, tenant_id: str, installation_id: int) -> None:
         """Create or confirm an immutable installation-to-tenant mapping."""
         if not tenant_id.strip() or installation_id <= 0:
-            raise PRAssuranceError("E_INSTALLATION_TENANT", "tenant and positive installation id are required")
+            raise PRAssuranceError(
+                "E_INSTALLATION_TENANT",
+                "tenant and positive installation id are required",
+            )
         try:
             with self._transaction() as (_db, cursor):
                 cursor.execute(
@@ -177,18 +195,26 @@ class PostgresAssuranceStore:
         except Exception as exc:
             raise _database_error(exc, "E_INSTALLATION_TENANT") from exc
         if bound != tenant_id:
-            raise PRAssuranceError("E_INSTALLATION_TENANT", "installation is already bound to another tenant")
+            raise PRAssuranceError(
+                "E_INSTALLATION_TENANT",
+                "installation is already bound to another tenant",
+            )
 
     def tenant_for_installation(self, installation_id: int) -> str:
         """Resolve the immutable routing tenant for one GitHub installation."""
         try:
             with self._transaction() as (_db, cursor):
-                cursor.execute("SELECT tenant_id FROM factory_installations WHERE installation_id = %s", (installation_id,))
+                cursor.execute(
+                    "SELECT tenant_id FROM factory_installations WHERE installation_id = %s",
+                    (installation_id,),
+                )
                 row = cursor.fetchone()
         except Exception as exc:
             raise _database_error(exc, "E_INSTALLATION_TENANT") from exc
         if not row:
-            raise PRAssuranceError("E_INSTALLATION_TENANT", "installation is not registered")
+            raise PRAssuranceError(
+                "E_INSTALLATION_TENANT", "installation is not registered"
+            )
         return str(row[0])
 
     def ingest(self, tenant_id: str, event: PullRequestEvent) -> dict[str, Any]:
@@ -210,16 +236,28 @@ class PostgresAssuranceStore:
                 )
                 mapped = cursor.fetchone()
                 if not mapped or mapped[0] != tenant_id:
-                    raise PRAssuranceError("E_INSTALLATION_TENANT", "installation does not belong to routed tenant")
+                    raise PRAssuranceError(
+                        "E_INSTALLATION_TENANT",
+                        "installation does not belong to routed tenant",
+                    )
                 cursor.execute(
                     """INSERT INTO factory_pr_deliveries
                        (tenant_id, delivery_id, installation_id, repository, pull_request, head_sha,
                         actor, action, payload_sha256, evidence_sha256, approval_id, requester)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (
-                        tenant_id, event.delivery_id, event.installation_id, event.repository,
-                        event.pull_request, event.head_sha, event.actor, event.action,
-                        event.payload_sha256, evidence_sha256, approval_id, requester,
+                        tenant_id,
+                        event.delivery_id,
+                        event.installation_id,
+                        event.repository,
+                        event.pull_request,
+                        event.head_sha,
+                        event.actor,
+                        event.action,
+                        event.payload_sha256,
+                        evidence_sha256,
+                        approval_id,
+                        requester,
                     ),
                 )
         except PRAssuranceError:
@@ -229,14 +267,19 @@ class PostgresAssuranceStore:
         return {
             "schema": POSTGRES_SCHEMA,
             "markers": [
-                "POSTGRES_RLS_BOUND", "INSTALLATION_TENANT_ROUTED", "HOSTED_INGRESS_TRANSACTIONAL",
+                "POSTGRES_RLS_BOUND",
+                "INSTALLATION_TENANT_ROUTED",
+                "HOSTED_INGRESS_TRANSACTIONAL",
             ],
             "tenant_id": tenant_id,
             "approval_id": approval_id,
             "evidence_sha256": evidence_sha256,
             "event": event.to_dict(),
             "check_request": github_check_request(
-                event, evidence_digest=evidence_sha256, approval_id=approval_id, status="pending"
+                event,
+                evidence_digest=evidence_sha256,
+                approval_id=approval_id,
+                status="pending",
             ),
         }
 
@@ -290,12 +333,21 @@ class PostgresAssuranceStore:
                     payload_sha256=payload_sha256,
                 )
                 request = github_check_request(
-                    event, evidence_digest=evidence_sha256, approval_id=approval_id, status=decision
+                    event,
+                    evidence_digest=evidence_sha256,
+                    approval_id=approval_id,
+                    status=decision,
                 )
                 cursor.execute(
                     """UPDATE factory_pr_deliveries SET approval_status=%s,approver=%s,
                        decision_reason=%s,decided_at=now() WHERE tenant_id=%s AND approval_id=%s""",
-                    (decision, principal.subject, reason.strip(), principal.tenant_id, approval_id),
+                    (
+                        decision,
+                        principal.subject,
+                        reason.strip(),
+                        principal.tenant_id,
+                        approval_id,
+                    ),
                 )
                 outbox_id = str(uuid.uuid4())
                 cursor.execute(
@@ -303,8 +355,12 @@ class PostgresAssuranceStore:
                        (outbox_id,tenant_id,approval_id,installation_id,repository,request_json)
                        VALUES (%s,%s,%s,%s,%s,%s::jsonb)""",
                     (
-                        outbox_id, principal.tenant_id, approval_id, event.installation_id,
-                        event.repository, canonical_json(request).decode("utf-8"),
+                        outbox_id,
+                        principal.tenant_id,
+                        approval_id,
+                        event.installation_id,
+                        event.repository,
+                        canonical_json(request).decode("utf-8"),
                     ),
                 )
         except PRAssuranceError:
@@ -324,7 +380,9 @@ class PostgresAssuranceStore:
     def claim_outbox(self, tenant_id: str, *, limit: int = 20) -> list[OutboxRecord]:
         """Claim pending Check rows with PostgreSQL skip-locked concurrency semantics."""
         if not 1 <= limit <= 20:
-            raise PRAssuranceError("E_OUTBOX_LIMIT", "outbox claim limit must be between 1 and 20")
+            raise PRAssuranceError(
+                "E_OUTBOX_LIMIT", "outbox claim limit must be between 1 and 20"
+            )
         with self._transaction(tenant_id) as (_db, cursor):
             cursor.execute(
                 """SELECT outbox_id,tenant_id,approval_id,installation_id,repository,request_json,attempts
@@ -337,11 +395,20 @@ class PostgresAssuranceStore:
             ids = [row[0] for row in rows]
             if ids:
                 cursor.execute(
-                    "UPDATE factory_check_outbox SET attempts=attempts+1 WHERE outbox_id = ANY(%s)", (ids,)
+                    "UPDATE factory_check_outbox SET attempts=attempts+1 WHERE outbox_id = ANY(%s)",
+                    (ids,),
                 )
         records = []
         for row in rows:
-            outbox_id, row_tenant, approval_id, installation_id, repository, request, attempts = row
+            (
+                outbox_id,
+                row_tenant,
+                approval_id,
+                installation_id,
+                repository,
+                request,
+                attempts,
+            ) = row
             records.append(
                 OutboxRecord(
                     outbox_id=str(outbox_id),
@@ -349,7 +416,9 @@ class PostgresAssuranceStore:
                     approval_id=str(approval_id),
                     installation_id=int(installation_id),
                     repository=repository,
-                    request=request if isinstance(request, dict) else json.loads(request),
+                    request=request
+                    if isinstance(request, dict)
+                    else json.loads(request),
                     attempts=int(attempts) + 1,
                 )
             )
@@ -358,7 +427,9 @@ class PostgresAssuranceStore:
     def mark_published(self, record: OutboxRecord, check_run_id: int) -> dict[str, Any]:
         """Store a positive remote Check id and mark the outbox row published."""
         if check_run_id <= 0:
-            raise PRAssuranceError("E_GITHUB_RESPONSE", "GitHub check-run id must be positive")
+            raise PRAssuranceError(
+                "E_GITHUB_RESPONSE", "GitHub check-run id must be positive"
+            )
         with self._transaction(record.tenant_id) as (_db, cursor):
             cursor.execute(
                 """UPDATE factory_check_outbox SET state='published',check_run_id=%s,published_at=now(),last_error=NULL
@@ -366,10 +437,14 @@ class PostgresAssuranceStore:
                 (check_run_id, record.tenant_id, record.outbox_id),
             )
             if cursor.rowcount != 1:
-                raise PRAssuranceError("E_OUTBOX_STATE", "outbox row is not publishable")
+                raise PRAssuranceError(
+                    "E_OUTBOX_STATE", "outbox row is not publishable"
+                )
         return {
-            "marker": "OUTBOX_PUBLISHED", "markers": ["GITHUB_APP_PUBLICATION_BOUND"],
-            "outbox_id": record.outbox_id, "check_run_id": check_run_id,
+            "marker": "OUTBOX_PUBLISHED",
+            "markers": ["GITHUB_APP_PUBLICATION_BOUND"],
+            "outbox_id": record.outbox_id,
+            "check_run_id": check_run_id,
         }
 
     def mark_failed(self, record: OutboxRecord, error_code: str) -> dict[str, Any]:
@@ -383,8 +458,10 @@ class PostgresAssuranceStore:
                 (state, safe_error, record.tenant_id, record.outbox_id),
             )
         return {
-            "marker": marker, "markers": ["OUTBOX_FAILURE_RETAINED"],
-            "outbox_id": record.outbox_id, "attempts": record.attempts,
+            "marker": marker,
+            "markers": ["OUTBOX_FAILURE_RETAINED"],
+            "outbox_id": record.outbox_id,
+            "attempts": record.attempts,
         }
 
 

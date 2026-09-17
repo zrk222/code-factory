@@ -1,4 +1,5 @@
 """Externally signed, expiring authority contracts for deep audit evidence intake."""
+
 from __future__ import annotations
 
 import base64
@@ -7,11 +8,26 @@ from pathlib import Path
 
 from .deep_audit_io import LIMIT, bound_bytes, digest, relative_path, strict_json
 from .enterprise_receipts import verify_signed_document
-from .runtime_audit_common import RuntimeAuditError, require_bool, require_digest, require_int, require_str, sha256_bytes
+from .runtime_audit_common import (
+    RuntimeAuditError,
+    require_bool,
+    require_digest,
+    require_int,
+    require_str,
+    sha256_bytes,
+)
 
 PLAN_TYPE = "application/vnd.factory.deep-audit-plan.v1+json"
 PLAN_SCHEMA = "factory.deep-audit-plan.v1"
-CATEGORIES = {"security", "memory", "concurrency", "error_handling", "correctness", "maintainability", "dependency"}
+CATEGORIES = {
+    "security",
+    "memory",
+    "concurrency",
+    "error_handling",
+    "correctness",
+    "maintainability",
+    "dependency",
+}
 
 
 def _keys(value: object, keys: str) -> dict:
@@ -84,13 +100,24 @@ def _rules(value: object, analyzer_ids: set) -> list:
     rules = _items(value, 256)
     aliases, ids = [], []
     for rule in rules:
-        _keys(rule, "id obligation_id category aliases severity max_new max_total min_trace_steps require_source_sink allowed_suppressions origin remediation consequence")
+        _keys(
+            rule,
+            "id obligation_id category aliases severity max_new max_total min_trace_steps require_source_sink allowed_suppressions origin remediation consequence",
+        )
         for field in ("id", "obligation_id", "remediation", "consequence"):
             require_str(rule[field], field, maximum=512)
         ids.append(rule["id"])
-        if require_str(rule["origin"], "origin") not in {"human_confirmed", "trusted_source"}:
-            raise RuntimeAuditError("E_RULE_AUTHORITY", "observations and agent proposals cannot authorize gates")
-        if require_str(rule["category"], "category") not in CATEGORIES or require_str(rule["severity"], "severity") not in {"critical", "high", "medium", "low"}:
+        if require_str(rule["origin"], "origin") not in {
+            "human_confirmed",
+            "trusted_source",
+        }:
+            raise RuntimeAuditError(
+                "E_RULE_AUTHORITY",
+                "observations and agent proposals cannot authorize gates",
+            )
+        if require_str(rule["category"], "category") not in CATEGORIES or require_str(
+            rule["severity"], "severity"
+        ) not in {"critical", "high", "medium", "low"}:
             raise RuntimeAuditError("E_RULE_POLICY", "unsupported category or severity")
         for key in ("max_new", "max_total"):
             require_int(rule[key], key, minimum=0, maximum=20_000)
@@ -113,16 +140,27 @@ def _rules(value: object, analyzer_ids: set) -> list:
 
 def _canaries(value: object, rules: list, analyzer_ids: set) -> list:
     canaries = _items(value, 128)
-    aliases = {(alias["analyzer_id"], alias["rule_id"]) for rule in rules for alias in rule["aliases"]}
+    aliases = {
+        (alias["analyzer_id"], alias["rule_id"])
+        for rule in rules
+        for alias in rule["aliases"]
+    }
     ids, identities = [], []
     covered = set()
     for item in canaries:
         _keys(item, "id analyzer_id rule_id fingerprint_sha256")
         ids.append(require_str(item["id"], "id"))
-        key = (require_str(item["analyzer_id"], "analyzer_id"), require_str(item["rule_id"], "rule_id"))
+        key = (
+            require_str(item["analyzer_id"], "analyzer_id"),
+            require_str(item["rule_id"], "rule_id"),
+        )
         if key not in aliases:
-            raise RuntimeAuditError("E_CANARY_POLICY", "canary does not reference an approved alias")
-        identities.append((*key, require_digest(item["fingerprint_sha256"], "fingerprint_sha256")))
+            raise RuntimeAuditError(
+                "E_CANARY_POLICY", "canary does not reference an approved alias"
+            )
+        identities.append(
+            (*key, require_digest(item["fingerprint_sha256"], "fingerprint_sha256"))
+        )
         covered.add(item["analyzer_id"])
     _unique(ids)
     _unique(identities)
@@ -138,27 +176,48 @@ def _read(path: Path) -> bytes:
     return raw
 
 
-def verify_deep_audit_plan(path: Path, trust_root_path: Path, trust_root_sha256: str, workspace_root: Path) -> dict:
+def verify_deep_audit_plan(
+    path: Path, trust_root_path: Path, trust_root_sha256: str, workspace_root: Path
+) -> dict:
     """Verify external signature, trust pin, authority, expiry and all source/report bindings without executing analyzers."""
     raw, trust = _read(path), _read(trust_root_path)
     if sha256_bytes(trust) != require_digest(trust_root_sha256, "trust pin"):
-        raise RuntimeAuditError("E_TRUST_ROOT_DRIFT", "trust root differs from operator pin")
+        raise RuntimeAuditError(
+            "E_TRUST_ROOT_DRIFT", "trust root differs from operator pin"
+        )
     envelope = strict_json(raw)
     try:
         encoded = envelope["payload"]
-        parsed = strict_json(base64.b64decode(encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True))
+        parsed = strict_json(
+            base64.b64decode(
+                encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True
+            )
+        )
     except (KeyError, TypeError, ValueError) as exc:
         raise RuntimeAuditError("E_PAYLOAD", "invalid signed payload") from exc
-    verified = verify_signed_document(path, payload_type=PLAN_TYPE, schema=PLAN_SCHEMA, trust_root_path=trust_root_path)
+    verified = verify_signed_document(
+        path,
+        payload_type=PLAN_TYPE,
+        schema=PLAN_SCHEMA,
+        trust_root_path=trust_root_path,
+    )
     plan = verified["payload"]
     if plan != parsed:
         raise RuntimeAuditError("E_INPUT_CHANGED", "signed payload changed")
-    _keys(plan, "schema id candidate_sha256 issued_at expires_at sources analyzers rules canaries")
+    _keys(
+        plan,
+        "schema id candidate_sha256 issued_at expires_at sources analyzers rules canaries",
+    )
     require_str(plan["id"], "id", maximum=128)
     issued, expires = _time(plan["issued_at"]), _time(plan["expires_at"])
     now = datetime.now(timezone.utc)
-    if not issued <= now < expires or not 0 < (expires-issued).total_seconds() <= 86_400:
-        raise RuntimeAuditError("E_PLAN_EXPIRED", "plan must be current and valid for at most 24 hours")
+    if (
+        not issued <= now < expires
+        or not 0 < (expires - issued).total_seconds() <= 86_400
+    ):
+        raise RuntimeAuditError(
+            "E_PLAN_EXPIRED", "plan must be current and valid for at most 24 hours"
+        )
     root = Path(workspace_root).resolve()
     sources = _sources(root, plan)
     analyzers = _analyzers(root, plan["analyzers"])
@@ -166,9 +225,24 @@ def verify_deep_audit_plan(path: Path, trust_root_path: Path, trust_root_sha256:
     rules = _rules(plan["rules"], analyzer_ids)
     canaries = _canaries(plan["canaries"], rules, analyzer_ids)
     _analyzers(root, plan["analyzers"])
-    if _read(path) != raw or _read(trust_root_path) != trust or _sources(root, plan) != sources:
-        raise RuntimeAuditError("E_INPUT_CHANGED", "contract changed during verification")
-    identities = [{key: item[key] for key in ("id", "driver", "version")} for item in analyzers]
-    return {"plan": plan, "plan_sha256": sha256_bytes(raw), "source_hashes": sources,
-            "ruleset_sha256": digest({"analyzers": identities, "rules": rules, "canaries": canaries}),
-            "canary_set_sha256": digest(canaries), "authority": "none"}
+    if (
+        _read(path) != raw
+        or _read(trust_root_path) != trust
+        or _sources(root, plan) != sources
+    ):
+        raise RuntimeAuditError(
+            "E_INPUT_CHANGED", "contract changed during verification"
+        )
+    identities = [
+        {key: item[key] for key in ("id", "driver", "version")} for item in analyzers
+    ]
+    return {
+        "plan": plan,
+        "plan_sha256": sha256_bytes(raw),
+        "source_hashes": sources,
+        "ruleset_sha256": digest(
+            {"analyzers": identities, "rules": rules, "canaries": canaries}
+        ),
+        "canary_set_sha256": digest(canaries),
+        "authority": "none",
+    }

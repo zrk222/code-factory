@@ -1,4 +1,5 @@
 """Read-only repair comparisons and graph lineage; attestations grant no authority."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -6,7 +7,10 @@ from pathlib import Path
 import re
 
 from .deep_audit import _read_receipt
-from .deep_audit_attestation import DeepAuditAttestationError, verify_deep_audit_attestation
+from .deep_audit_attestation import (
+    DeepAuditAttestationError,
+    verify_deep_audit_attestation,
+)
 from .deep_audit_io import digest
 from .runtime_audit_common import RuntimeAuditError
 
@@ -19,7 +23,12 @@ def _hash(value):
 
 def _load(root: Path, relative: str) -> dict:
     receipt, sha, _ = _read_receipt(root, root / relative)
-    for key in ("ruleset_sha256", "canary_set_sha256", "candidate_sha256", "plan_sha256"):
+    for key in (
+        "ruleset_sha256",
+        "canary_set_sha256",
+        "candidate_sha256",
+        "plan_sha256",
+    ):
         _hash(receipt[key])
     for key in ("report_hashes", "canary_hashes"):
         values = receipt[key]
@@ -46,16 +55,29 @@ def _validate_findings(receipt: dict) -> None:
 
 
 def _action_ids(receipt: dict) -> set:
-    return {digest({key: item.get(key) for key in ("code", "finding_id", "rule_id", "canary_id", "analyzer_id")})
-            for item in receipt["repair_queue"]}
+    return {
+        digest(
+            {
+                key: item.get(key)
+                for key in ("code", "finding_id", "rule_id", "canary_id", "analyzer_id")
+            }
+        )
+        for item in receipt["repair_queue"]
+    }
 
 
 def _compare(before: dict, after: dict) -> dict:
     for key in ("ruleset_sha256", "canary_set_sha256"):
         if before[key] != after[key]:
-            raise RuntimeAuditError("E_DEEP_POLICY_CHANGED", "Policy or canary set changed; request independent review.")
+            raise RuntimeAuditError(
+                "E_DEEP_POLICY_CHANGED",
+                "Policy or canary set changed; request independent review.",
+            )
     if set(before["report_hashes"]) != set(after["report_hashes"]):
-        raise RuntimeAuditError("E_DEEP_COVERAGE_CHANGED", "Analyzer coverage changed; comparison cannot justify progress.")
+        raise RuntimeAuditError(
+            "E_DEEP_COVERAGE_CHANGED",
+            "Analyzer coverage changed; comparison cannot justify progress.",
+        )
     old = {item["finding_id"] for item in before["findings"]}
     new = {item["finding_id"] for item in after["findings"]}
     introduced, resolved = sorted(new - old), sorted(old - new)
@@ -68,13 +90,28 @@ def _compare(before: dict, after: dict) -> dict:
         state = "repair_required"
     else:
         state = "stagnated"
-    return {"state": state, "introduced": introduced, "resolved": resolved,
-            "new_blocker_ids": new_actions, "remaining_findings": len(new),
-            "repair_queue": after["repair_queue"]}
+    return {
+        "state": state,
+        "introduced": introduced,
+        "resolved": resolved,
+        "new_blocker_ids": new_actions,
+        "remaining_findings": len(new),
+        "repair_queue": after["repair_queue"],
+    }
 
 
 def _attestation_summary(value: dict) -> dict:
-    return {key: value[key] for key in ("attestation_sha256", "keyid", "identity", "issuer", "verifier", "freshness")}
+    return {
+        key: value[key]
+        for key in (
+            "attestation_sha256",
+            "keyid",
+            "identity",
+            "issuer",
+            "verifier",
+            "freshness",
+        )
+    }
 
 
 def compare_deep_audits(
@@ -91,33 +128,80 @@ def compare_deep_audits(
 ) -> dict:
     """Compare local receipts, optionally requiring independent fresh attestations; never repair or authorize."""
     root = Path(root).resolve()
-    base = {"schema": "factory.deep-audit-comparison.v1", "authority": "none",
-            "governance": "human_controlled", "verification": "self_hash_only_not_signature_or_freshness",
-            "attestation_required": require_attestation, "attestations": {},
-            "action_summary": "Compare findings and blockers; stop for human review on incompatibility, regression or no progress."}
+    base = {
+        "schema": "factory.deep-audit-comparison.v1",
+        "authority": "none",
+        "governance": "human_controlled",
+        "verification": "self_hash_only_not_signature_or_freshness",
+        "attestation_required": require_attestation,
+        "attestations": {},
+        "action_summary": "Compare findings and blockers; stop for human review on incompatibility, regression or no progress.",
+    }
     attestations = {}
     try:
         if (before_attestation or after_attestation) and trust_root_path is None:
-            raise DeepAuditAttestationError("E_DEEP_ATTESTATION_REQUIRED", "a pinned trust root is required for attestations")
-        if require_attestation and (not before_attestation or not after_attestation or trust_root_path is None):
-            raise DeepAuditAttestationError("E_DEEP_ATTESTATION_REQUIRED", "strict comparison requires two attestations and a pinned trust root")
+            raise DeepAuditAttestationError(
+                "E_DEEP_ATTESTATION_REQUIRED",
+                "a pinned trust root is required for attestations",
+            )
+        if require_attestation and (
+            not before_attestation or not after_attestation or trust_root_path is None
+        ):
+            raise DeepAuditAttestationError(
+                "E_DEEP_ATTESTATION_REQUIRED",
+                "strict comparison requires two attestations and a pinned trust root",
+            )
         if before_attestation:
-            attestations["before"] = verify_deep_audit_attestation(root, Path(before_attestation), Path(trust_root_path), Path(before_path), now=now, max_age_seconds=max_age_seconds)
+            attestations["before"] = verify_deep_audit_attestation(
+                root,
+                Path(before_attestation),
+                Path(trust_root_path),
+                Path(before_path),
+                now=now,
+                max_age_seconds=max_age_seconds,
+            )
         if after_attestation:
-            attestations["after"] = verify_deep_audit_attestation(root, Path(after_attestation), Path(trust_root_path), Path(after_path), now=now, max_age_seconds=max_age_seconds)
+            attestations["after"] = verify_deep_audit_attestation(
+                root,
+                Path(after_attestation),
+                Path(trust_root_path),
+                Path(after_path),
+                now=now,
+                max_age_seconds=max_age_seconds,
+            )
         before, after = _load(root, before_path), _load(root, after_path)
         compared = _compare(before, after)
-        return {**base, **compared, "before_sha256": before["receipt_sha256"], "after_sha256": after["receipt_sha256"],
-                "attestations": {key: _attestation_summary(value) for key, value in attestations.items()},
-                "verification": "offline_dsse_and_freshness" if attestations else base["verification"]}
+        return {
+            **base,
+            **compared,
+            "before_sha256": before["receipt_sha256"],
+            "after_sha256": after["receipt_sha256"],
+            "attestations": {
+                key: _attestation_summary(value) for key, value in attestations.items()
+            },
+            "verification": "offline_dsse_and_freshness"
+            if attestations
+            else base["verification"],
+        }
     except (DeepAuditAttestationError, ValueError, OSError, KeyError, TypeError) as exc:
-        return {**base, "state": "blocked", "code": getattr(exc, "code", "E_DEEP_RECEIPT_INVALID"),
-                "attestations": {key: _attestation_summary(value) for key, value in attestations.items()}}
+        return {
+            **base,
+            "state": "blocked",
+            "code": getattr(exc, "code", "E_DEEP_RECEIPT_INVALID"),
+            "attestations": {
+                key: _attestation_summary(value) for key, value in attestations.items()
+            },
+        }
 
 
 def deep_audit_lineage(root: Path, status: dict) -> dict:
     """Project at most fifty finding chains from the exact observed receipt, without trusting its signer."""
-    base = {"state": status["state"], "chains": [], "truncated": False, "authority": "none"}
+    base = {
+        "state": status["state"],
+        "chains": [],
+        "truncated": False,
+        "authority": "none",
+    }
     if "receipt_path" not in status:
         return base
     try:
@@ -127,16 +211,27 @@ def deep_audit_lineage(root: Path, status: dict) -> dict:
         if receipt["receipt_sha256"] != status["receipt_sha256"]:
             raise ValueError("observation changed")
         chains = [_chain(item, receipt, relative) for item in receipt["findings"][:50]]
-        return {**base, "receipt_path": relative, "receipt_sha256": receipt["receipt_sha256"],
-                "chains": chains, "truncated": len(receipt["findings"]) > 50,
-                "verification": "self_hash_only_not_signature_or_freshness"}
+        return {
+            **base,
+            "receipt_path": relative,
+            "receipt_sha256": receipt["receipt_sha256"],
+            "chains": chains,
+            "truncated": len(receipt["findings"]) > 50,
+            "verification": "self_hash_only_not_signature_or_freshness",
+        }
     except (ValueError, OSError, KeyError, TypeError, IndexError):
         return {**base, "state": "INCOMPLETE"}
 
 
 def _chain(item: dict, receipt: dict, relative: str) -> dict:
     location = item["locations"][0]
-    return {"finding_id": item["finding_id"], "source": location["path"],
-            "source_sha256": location["source_sha256"], "obligation": item.get("obligation_id", "unmapped"),
-            "trace_sha256": item["trace_sha256"], "receipt_path": relative,
-            "decision": receipt["decision"], "handoff": "human_review_required"}
+    return {
+        "finding_id": item["finding_id"],
+        "source": location["path"],
+        "source_sha256": location["source_sha256"],
+        "obligation": item.get("obligation_id", "unmapped"),
+        "trace_sha256": item["trace_sha256"],
+        "receipt_path": relative,
+        "decision": receipt["decision"],
+        "handoff": "human_review_required",
+    }

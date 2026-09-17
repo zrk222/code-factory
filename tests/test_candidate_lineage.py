@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from factoryline.candidate_lineage import CandidateLineageError, verify_candidate_lineage
+from factoryline.candidate_lineage import (
+    CandidateLineageError,
+    verify_candidate_lineage,
+)
 from factoryline.cli import main
 from factoryline.deep_audit import execute_deep_audit
 from factoryline.graph_forensics import seal_graph_lineage
@@ -31,10 +34,22 @@ def _steps() -> list[dict]:
     ]
 
 
-def _manifest(root: Path, oracle: Path, candidate: str, deep: Path, graph: Path) -> Path:
+def _manifest(
+    root: Path, oracle: Path, candidate: str, deep: Path, graph: Path
+) -> Path:
     rows = []
-    for identifier, kind, path in (("deep", "deep_audit", deep), ("graph", "graph_lineage", graph)):
-        rows.append({"id": identifier, "kind": kind, "path": path.relative_to(root).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    for identifier, kind, path in (
+        ("deep", "deep_audit", deep),
+        ("graph", "graph_lineage", graph),
+    ):
+        rows.append(
+            {
+                "id": identifier,
+                "kind": kind,
+                "path": path.relative_to(root).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        )
     path = root / "continuity.json"
     path.write_text(
         json.dumps(
@@ -42,7 +57,12 @@ def _manifest(root: Path, oracle: Path, candidate: str, deep: Path, graph: Path)
                 "schema": "factory.candidate-lineage-input.v1",
                 "id": "candidate-review",
                 "candidate_sha256": candidate,
-                "oracle_contract": {"path": oracle.relative_to(root).as_posix(), "contract_sha256": json.loads(oracle.read_text())["contract_sha256"]},
+                "oracle_contract": {
+                    "path": oracle.relative_to(root).as_posix(),
+                    "contract_sha256": json.loads(oracle.read_text())[
+                        "contract_sha256"
+                    ],
+                },
                 "evidence": rows,
                 "authority": "none",
             }
@@ -62,7 +82,13 @@ def _fixture(root: Path) -> tuple[Path, Path, Path, Path, str]:
     steps.write_text(json.dumps(_steps()), encoding="utf-8")
     graph = root / "graph.json"
     seal_graph_lineage("run-1", "review", steps, graph, candidate_sha256=candidate)
-    return oracle, deep, graph, _manifest(root, oracle, candidate, deep, graph), candidate
+    return (
+        oracle,
+        deep,
+        graph,
+        _manifest(root, oracle, candidate, deep, graph),
+        candidate,
+    )
 
 
 def test_candidate_lineage_verifies_one_current_candidate(tmp_path: Path):
@@ -77,7 +103,19 @@ def test_candidate_lineage_verifies_one_current_candidate(tmp_path: Path):
 
 def test_cli_surfaces_continuity_receipt_without_authority(tmp_path: Path, capsys):
     _, _, _, manifest, _ = _fixture(tmp_path)
-    assert main(["graph", "lineage-continuity", str(manifest), "--root", str(tmp_path), "--json"]) == 0
+    assert (
+        main(
+            [
+                "graph",
+                "lineage-continuity",
+                str(manifest),
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
     payload = json.loads(capsys.readouterr().out)
     assert payload["marker"] == "CANDIDATE_LINEAGE_VERIFIED"
     assert payload["release_approval"] is False

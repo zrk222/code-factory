@@ -6,6 +6,7 @@ regressions* (which can block CI).  The policy is data-driven so a human can
 review an intentional architectural change instead of an agent silently
 redefining the gate.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,9 @@ from typing import Any
 
 
 DEFAULT_POLICY_NAME = "architecture-policy.json"
-_VERSION_RE = re.compile(r"^(?:version|__version__)\s*=\s*[\"']([^\"']+)[\"']", re.MULTILINE)
+_VERSION_RE = re.compile(
+    r"^(?:version|__version__)\s*=\s*[\"']([^\"']+)[\"']", re.MULTILINE
+)
 
 
 class ArchitectureHealthError(ValueError):
@@ -41,10 +44,16 @@ def _tracked_files(root: Path) -> list[Path]:
     except (OSError, subprocess.SubprocessError):
         completed = None
     if completed is not None:
-        names = [item for item in completed.stdout.decode("utf-8", "replace").split("\0") if item]
+        names = [
+            item
+            for item in completed.stdout.decode("utf-8", "replace").split("\0")
+            if item
+        ]
         return [root / name for name in names]
     ignored = {".git", ".venv", "venv", "node_modules", "dist", "build", "__pycache__"}
-    return [p for p in root.rglob("*") if p.is_file() and not ignored.intersection(p.parts)]
+    return [
+        p for p in root.rglob("*") if p.is_file() and not ignored.intersection(p.parts)
+    ]
 
 
 def _version(root: Path) -> str | None:
@@ -75,7 +84,11 @@ def _module_domains(root: Path, relative: list[str]) -> dict[str, int]:
     default = manifest.get("defaultDomain", "unclassified")
     domains.setdefault(default, 0)
     for path in relative:
-        if not path.startswith("factoryline/") or not path.endswith(".py") or path.endswith("/__init__.py"):
+        if (
+            not path.startswith("factoryline/")
+            or not path.endswith(".py")
+            or path.endswith("/__init__.py")
+        ):
             continue
         assigned = default
         for domain, globs in patterns.items():
@@ -91,7 +104,14 @@ def _recent_release_tags(root: Path, now: datetime | None = None) -> dict[str, A
     now = now or datetime.now(timezone.utc)
     try:
         completed = subprocess.run(
-            ["git", "-C", str(root), "for-each-ref", "refs/tags/v*", "--format=%(creatordate:iso-strict)"],
+            [
+                "git",
+                "-C",
+                str(root),
+                "for-each-ref",
+                "refs/tags/v*",
+                "--format=%(creatordate:iso-strict)",
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -102,7 +122,11 @@ def _recent_release_tags(root: Path, now: datetime | None = None) -> dict[str, A
     dates: list[datetime] = []
     for line in completed.stdout.splitlines():
         try:
-            dates.append(datetime.fromisoformat(line.strip().replace("Z", "+00:00")).astimezone(timezone.utc))
+            dates.append(
+                datetime.fromisoformat(line.strip().replace("Z", "+00:00")).astimezone(
+                    timezone.utc
+                )
+            )
         except ValueError:
             continue
     dates.sort(reverse=True)
@@ -123,14 +147,22 @@ def collect_architecture_health(root: Path) -> dict[str, Any]:
     markdown = [name for name in relative if name.lower().endswith(".md")]
     python = [name for name in relative if name.lower().endswith(".py")]
     core_modules = [
-        name for name in python
-        if name.startswith("factoryline/") and not name.rsplit("/", 1)[-1].startswith("__init__")
+        name
+        for name in python
+        if name.startswith("factoryline/")
+        and not name.rsplit("/", 1)[-1].startswith("__init__")
     ]
     cli_path = root / "factoryline" / "cli.py"
-    cli_lines = len(cli_path.read_text(encoding="utf-8").splitlines()) if cli_path.exists() else 0
+    cli_lines = (
+        len(cli_path.read_text(encoding="utf-8").splitlines())
+        if cli_path.exists()
+        else 0
+    )
     cli_command_declarations = 0
     if cli_path.exists():
-        cli_command_declarations = len(re.findall(r"\.add_parser\(", cli_path.read_text(encoding="utf-8")))
+        cli_command_declarations = len(
+            re.findall(r"\.add_parser\(", cli_path.read_text(encoding="utf-8"))
+        )
     ratio = round(len(markdown) / len(python), 4) if python else None
     return {
         "schema": "factory.architecture-health.v1",
@@ -150,7 +182,9 @@ def collect_architecture_health(root: Path) -> dict[str, Any]:
     }
 
 
-def _finding(code: str, severity: str, message: str, action: str, *, blocking: bool = False) -> dict[str, Any]:
+def _finding(
+    code: str, severity: str, message: str, action: str, *, blocking: bool = False
+) -> dict[str, Any]:
     return {
         "code": code,
         "severity": severity,
@@ -175,7 +209,9 @@ _ACCEPTED_METRIC_FOR_CODE = {
 }
 
 
-def _accepted_debt(policy: dict[str, Any], metrics: dict[str, Any], cadence: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+def _accepted_debt(
+    policy: dict[str, Any], metrics: dict[str, Any], cadence: dict[str, Any]
+) -> tuple[dict[str, Any] | None, str | None]:
     """Validate an explicit, expiring acceptance of measured architecture debt."""
     value = policy.get("accepted_debt")
     if value is None:
@@ -184,26 +220,56 @@ def _accepted_debt(policy: dict[str, Any], metrics: dict[str, Any], cadence: dic
         return None, "accepted_debt must be an object"
     required = {"decision_id", "owner", "expires_at", "reason", "codes", "metrics"}
     if set(value) != required:
-        return None, "accepted_debt must contain decision_id, owner, expires_at, reason, codes, and metrics"
-    if not all(isinstance(value.get(key), str) and value[key].strip() for key in ("decision_id", "owner", "reason")):
-        return None, "accepted_debt decision_id, owner, and reason must be non-empty strings"
+        return (
+            None,
+            "accepted_debt must contain decision_id, owner, expires_at, reason, codes, and metrics",
+        )
+    if not all(
+        isinstance(value.get(key), str) and value[key].strip()
+        for key in ("decision_id", "owner", "reason")
+    ):
+        return (
+            None,
+            "accepted_debt decision_id, owner, and reason must be non-empty strings",
+        )
     try:
-        expires = datetime.fromisoformat(str(value["expires_at"]).replace("Z", "+00:00"))
+        expires = datetime.fromisoformat(
+            str(value["expires_at"]).replace("Z", "+00:00")
+        )
         if expires.tzinfo is None or expires <= datetime.now(timezone.utc):
-            return None, "accepted_debt expires_at must be a future timezone-aware timestamp"
+            return (
+                None,
+                "accepted_debt expires_at must be a future timezone-aware timestamp",
+            )
     except ValueError:
         return None, "accepted_debt expires_at must be an ISO-8601 timestamp"
     codes = value.get("codes")
-    if not isinstance(codes, list) or not codes or len(codes) != len(set(codes)) or not all(isinstance(code, str) and code in _ACCEPTED_METRIC_FOR_CODE for code in codes):
-        return None, "accepted_debt codes must be a unique non-empty list of known debt codes"
+    if (
+        not isinstance(codes, list)
+        or not codes
+        or len(codes) != len(set(codes))
+        or not all(
+            isinstance(code, str) and code in _ACCEPTED_METRIC_FOR_CODE
+            for code in codes
+        )
+    ):
+        return (
+            None,
+            "accepted_debt codes must be a unique non-empty list of known debt codes",
+        )
     accepted_metrics = value.get("metrics")
     if not isinstance(accepted_metrics, dict):
         return None, "accepted_debt metrics must be an object"
     observed = {**metrics, "release_recent_count": cadence.get("recent_count")}
     for code in codes:
         metric = _ACCEPTED_METRIC_FOR_CODE[code]
-        if metric not in accepted_metrics or accepted_metrics[metric] != observed.get(metric):
-            return None, f"accepted_debt metric {metric} must exactly match the measured value"
+        if metric not in accepted_metrics or accepted_metrics[metric] != observed.get(
+            metric
+        ):
+            return (
+                None,
+                f"accepted_debt metric {metric} must exactly match the measured value",
+            )
     return {
         "decision_id": value["decision_id"],
         "owner": value["owner"],
@@ -249,85 +315,134 @@ def evaluate_architecture_health(
         value = metrics[key]
         limit = budgets.get(budget_key)
         if isinstance(value, int) and isinstance(limit, int) and value > limit:
-            regressions.append(_finding(
-                f"E_ARCH_{key.upper()}_GROWTH", "BLOCKER",
-                f"{key} grew to {value}; policy maximum is {limit}.",
-                f"Remove unrelated {key} growth or update the reviewed policy with an architecture decision.",
-                blocking=True,
-            ))
+            regressions.append(
+                _finding(
+                    f"E_ARCH_{key.upper()}_GROWTH",
+                    "BLOCKER",
+                    f"{key} grew to {value}; policy maximum is {limit}.",
+                    f"Remove unrelated {key} growth or update the reviewed policy with an architecture decision.",
+                    blocking=True,
+                )
+            )
     ratio = metrics["markdown_python_ratio"]
     ratio_limit = budgets.get("max_markdown_python_ratio")
-    if isinstance(ratio, (int, float)) and isinstance(ratio_limit, (int, float)) and ratio > ratio_limit:
-        regressions.append(_finding(
-            "E_ARCH_DOC_CODE_RATIO_GROWTH", "BLOCKER",
-            f"Markdown/Python ratio is {ratio}; policy maximum is {ratio_limit}.",
-            "Add executable coverage or consolidate stale documentation before adding more narrative surface.",
-            blocking=True,
-        ))
+    if (
+        isinstance(ratio, (int, float))
+        and isinstance(ratio_limit, (int, float))
+        and ratio > ratio_limit
+    ):
+        regressions.append(
+            _finding(
+                "E_ARCH_DOC_CODE_RATIO_GROWTH",
+                "BLOCKER",
+                f"Markdown/Python ratio is {ratio}; policy maximum is {ratio_limit}.",
+                "Add executable coverage or consolidate stale documentation before adding more narrative surface.",
+                blocking=True,
+            )
+        )
 
     debt: list[dict[str, Any]] = []
     domains = metrics.get("module_domains", {})
     if domains.get("manifest_invalid"):
-        regressions.append(_finding(
-            "E_ARCH_BOUNDARY_MANIFEST_INVALID", "BLOCKER",
-            "architecture-boundaries.json is malformed or uses an unsupported schema.",
-            "Restore the reviewed factory.module-boundaries.v1 manifest before merging architecture changes.",
-            blocking=True,
-        ))
+        regressions.append(
+            _finding(
+                "E_ARCH_BOUNDARY_MANIFEST_INVALID",
+                "BLOCKER",
+                "architecture-boundaries.json is malformed or uses an unsupported schema.",
+                "Restore the reviewed factory.module-boundaries.v1 manifest before merging architecture changes.",
+                blocking=True,
+            )
+        )
     elif domains.get("manifest_missing"):
-        debt.append(_finding(
-            "ARCH_BOUNDARY_MANIFEST_MISSING", "MEDIUM",
-            "No architecture-boundaries.json manifest was found for the measured repository.",
-            "Add a reviewed core-versus-specialist boundary manifest before expanding the module surface.",
-        ))
-    if metrics["cli_lines"] > policy.get("review_thresholds", {}).get("cli_lines", 5000):
-        debt.append(_finding(
-            "ARCH_CLI_MONOLITH", "HIGH",
-            f"factoryline/cli.py is {metrics['cli_lines']} lines and owns parser/dispatch assembly.",
-            "Extract command registration and dispatch into bounded command modules; retain cli.py as a compatibility entry point.",
-        ))
-    if metrics["cli_command_declarations"] > policy.get("review_thresholds", {}).get("cli_command_declarations", 300):
-        debt.append(_finding(
-            "ARCH_CLI_COMMAND_SURFACE", "HIGH",
-            f"factoryline/cli.py declares {metrics['cli_command_declarations']} parser commands and subcommands.",
-            "Group commands by bounded domain and expose a stable compatibility index instead of adding more parser branches.",
-        ))
-    if metrics["core_modules"] > policy.get("review_thresholds", {}).get("core_modules", 150):
-        debt.append(_finding(
-            "ARCH_CORE_SURFACE", "HIGH",
-            f"factoryline contains {metrics['core_modules']} implementation modules.",
-            "Publish a supported-module manifest and move experimental adapters behind explicit package boundaries.",
-        ))
-    if ratio is not None and ratio > policy.get("review_thresholds", {}).get("markdown_python_ratio", 1.5):
-        debt.append(_finding(
-            "ARCH_DOC_CODE_RATIO", "MEDIUM",
-            f"There are {metrics['markdown_files']} Markdown files for {metrics['python_files']} Python files (ratio {ratio}).",
-            "Index canonical docs, archive superseded narratives, and require each new document to link to executable behavior or a decision.",
-        ))
+        debt.append(
+            _finding(
+                "ARCH_BOUNDARY_MANIFEST_MISSING",
+                "MEDIUM",
+                "No architecture-boundaries.json manifest was found for the measured repository.",
+                "Add a reviewed core-versus-specialist boundary manifest before expanding the module surface.",
+            )
+        )
+    if metrics["cli_lines"] > policy.get("review_thresholds", {}).get(
+        "cli_lines", 5000
+    ):
+        debt.append(
+            _finding(
+                "ARCH_CLI_MONOLITH",
+                "HIGH",
+                f"factoryline/cli.py is {metrics['cli_lines']} lines and owns parser/dispatch assembly.",
+                "Extract command registration and dispatch into bounded command modules; retain cli.py as a compatibility entry point.",
+            )
+        )
+    if metrics["cli_command_declarations"] > policy.get("review_thresholds", {}).get(
+        "cli_command_declarations", 300
+    ):
+        debt.append(
+            _finding(
+                "ARCH_CLI_COMMAND_SURFACE",
+                "HIGH",
+                f"factoryline/cli.py declares {metrics['cli_command_declarations']} parser commands and subcommands.",
+                "Group commands by bounded domain and expose a stable compatibility index instead of adding more parser branches.",
+            )
+        )
+    if metrics["core_modules"] > policy.get("review_thresholds", {}).get(
+        "core_modules", 150
+    ):
+        debt.append(
+            _finding(
+                "ARCH_CORE_SURFACE",
+                "HIGH",
+                f"factoryline contains {metrics['core_modules']} implementation modules.",
+                "Publish a supported-module manifest and move experimental adapters behind explicit package boundaries.",
+            )
+        )
+    if ratio is not None and ratio > policy.get("review_thresholds", {}).get(
+        "markdown_python_ratio", 1.5
+    ):
+        debt.append(
+            _finding(
+                "ARCH_DOC_CODE_RATIO",
+                "MEDIUM",
+                f"There are {metrics['markdown_files']} Markdown files for {metrics['python_files']} Python files (ratio {ratio}).",
+                "Index canonical docs, archive superseded narratives, and require each new document to link to executable behavior or a decision.",
+            )
+        )
     cadence = snapshot["release_cadence"]
     cadence_policy = policy.get("release", {})
     if cadence.get("available") and cadence.get("recent_count") is not None:
         if cadence["recent_count"] > cadence_policy.get("max_releases_30d", 4):
-            debt.append(_finding(
-                "ARCH_RELEASE_CHURN", "MEDIUM",
-                f"{cadence['recent_count']} version tags were created in the last 30 days.",
-                "Use a release train and changelog entry; reserve patch releases for externally observable fixes.",
-            ))
+            debt.append(
+                _finding(
+                    "ARCH_RELEASE_CHURN",
+                    "MEDIUM",
+                    f"{cadence['recent_count']} version tags were created in the last 30 days.",
+                    "Use a release train and changelog entry; reserve patch releases for externally observable fixes.",
+                )
+            )
 
     accepted, acceptance_error = _accepted_debt(policy, metrics, cadence)
     if acceptance_error:
-        regressions.append(_finding(
-            "E_ARCH_ACCEPTANCE_INVALID", "BLOCKER", acceptance_error,
-            "Remove the acceptance or renew it with a named owner, future expiry, and exact measured values.",
-            blocking=True,
-        ))
+        regressions.append(
+            _finding(
+                "E_ARCH_ACCEPTANCE_INVALID",
+                "BLOCKER",
+                acceptance_error,
+                "Remove the acceptance or renew it with a named owner, future expiry, and exact measured values.",
+                blocking=True,
+            )
+        )
     accepted_codes = set(accepted["codes"]) if accepted else set()
     accepted_baseline_debt = [item for item in debt if item["code"] in accepted_codes]
     debt = [item for item in debt if item["code"] not in accepted_codes]
-    accepted_regressions = [item for item in regressions if item["code"] in accepted_codes]
+    accepted_regressions = [
+        item for item in regressions if item["code"] in accepted_codes
+    ]
     regressions = [item for item in regressions if item["code"] not in accepted_codes]
 
-    decision = "BLOCKED" if regressions or (strict and debt) else ("REVIEW_REQUIRED" if debt else "HEALTHY")
+    decision = (
+        "BLOCKED"
+        if regressions or (strict and debt)
+        else ("REVIEW_REQUIRED" if debt else "HEALTHY")
+    )
     return {
         **snapshot,
         "policy": {
@@ -344,11 +459,11 @@ def evaluate_architecture_health(
         "decision": decision,
         "next_action": (
             "Stop and resolve architecture budget regressions before merge."
-            if regressions else
-            "Strict mode requires an approved decomposition plan for all baseline debt."
-            if strict and debt else
-            "Keep the existing debt visible and execute the bounded decomposition plan."
-            if debt else
-            "Architecture budgets are within policy."
+            if regressions
+            else "Strict mode requires an approved decomposition plan for all baseline debt."
+            if strict and debt
+            else "Keep the existing debt visible and execute the bounded decomposition plan."
+            if debt
+            else "Architecture budgets are within policy."
         ),
     }

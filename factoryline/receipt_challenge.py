@@ -1,4 +1,5 @@
 """Offline mutation challenge for the enterprise receipt verification chain."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -79,7 +80,11 @@ def _challenge(
 def verify_receipt_mutations(root: Path, out: Path | None = None) -> dict[str, Any]:
     """Challenge Receipt v2 digest, signature, identity, and revocation checks offline."""
     root = Path(root).resolve()
-    output = Path(out) if out is not None else root / ".factory" / "challenges" / "verify-receipts.json"
+    output = (
+        Path(out)
+        if out is not None
+        else root / ".factory" / "challenges" / "verify-receipts.json"
+    )
     if not output.is_absolute():
         output = root / output
 
@@ -117,13 +122,21 @@ def verify_receipt_mutations(root: Path, out: Path | None = None) -> dict[str, A
         _write(rebound_path, rebound)
 
         swapped = copy.deepcopy(envelope)
-        swapped["signatures"][0]["identity"] = "https://example.invalid/swapped-identity"
+        swapped["signatures"][0]["identity"] = (
+            "https://example.invalid/swapped-identity"
+        )
         swapped_path = workspace / "identity-swap.dsse.json"
         _write(swapped_path, swapped)
 
         revocations_path = workspace / "backdated-revocations.dsse.json"
         sign_revocations(
-            [{"keyid": keys["keyid"], "revoked_at": "2026-07-17T00:00:00+00:00", "reason": "mutation challenge"}],
+            [
+                {
+                    "keyid": keys["keyid"],
+                    "revoked_at": "2026-07-17T00:00:00+00:00",
+                    "reason": "mutation challenge",
+                }
+            ],
             private_key_path=Path(keys["private_key"]),
             keyid=keys["keyid"],
             identity=keys["identity"],
@@ -163,7 +176,9 @@ def verify_receipt_mutations(root: Path, out: Path | None = None) -> dict[str, A
     receipt = {
         "schema": MUTATION_GATE_SCHEMA,
         "passed": passed,
-        "marker": "RECEIPT_MUTATIONS_REJECTED" if passed else "RECEIPT_MUTATION_SURVIVED",
+        "marker": "RECEIPT_MUTATIONS_REJECTED"
+        if passed
+        else "RECEIPT_MUTATION_SURVIVED",
         "control": {
             "verdict": control["verdict"],
             "receipt_sha256": control["receipt_sha256"],

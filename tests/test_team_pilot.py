@@ -34,11 +34,21 @@ def _packaging(root: Path, *, team_purchasable: bool = False) -> None:
     docs.mkdir(parents=True)
     payload = {
         "schema": "factory.commercial-packaging.v1",
-        "governance": {"classification": "human_controlled", "automation_may_activate": False},
+        "governance": {
+            "classification": "human_controlled",
+            "automation_may_activate": False,
+        },
         "current_verdict": "COMMERCIALIZATION_STAGED_NOT_SELLABLE",
-        "tiers": {"team_proof_hub": {"availability": "design_partner_only", "purchasable": team_purchasable}},
+        "tiers": {
+            "team_proof_hub": {
+                "availability": "design_partner_only",
+                "purchasable": team_purchasable,
+            }
+        },
     }
-    (docs / "COMMERCIAL_PACKAGING.json").write_text(json.dumps(payload), encoding="utf-8")
+    (docs / "COMMERCIAL_PACKAGING.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
 
 
 def _manifest(root: Path, **overrides: object) -> Path:
@@ -63,7 +73,9 @@ def _manifest(root: Path, **overrides: object) -> Path:
     return path
 
 
-def test_team_pilot_readiness_binds_all_required_evidence_and_writes_public_receipt(tmp_path: Path) -> None:
+def test_team_pilot_readiness_binds_all_required_evidence_and_writes_public_receipt(
+    tmp_path: Path,
+) -> None:
     manifest = _manifest(tmp_path)
 
     validated = validate_team_pilot_manifest(tmp_path, manifest)
@@ -97,7 +109,9 @@ def test_team_pilot_readiness_binds_all_required_evidence_and_writes_public_rece
     ],
 )
 def test_team_pilot_manifest_fails_closed_on_scope_and_governance_errors(
-    tmp_path: Path, overrides: dict[str, object], code: str,
+    tmp_path: Path,
+    overrides: dict[str, object],
+    code: str,
 ) -> None:
     manifest = _manifest(tmp_path, **overrides)
 
@@ -107,7 +121,9 @@ def test_team_pilot_manifest_fails_closed_on_scope_and_governance_errors(
     assert exc.value.code == code
 
 
-def test_team_pilot_rejects_digest_drift_and_workspace_escape_before_owner_review(tmp_path: Path) -> None:
+def test_team_pilot_rejects_digest_drift_and_workspace_escape_before_owner_review(
+    tmp_path: Path,
+) -> None:
     manifest = _manifest(tmp_path)
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     first = tmp_path / payload["evidence"][0]["path"]
@@ -126,7 +142,9 @@ def test_team_pilot_rejects_digest_drift_and_workspace_escape_before_owner_revie
     assert exc.value.code == "E_TEAM_PILOT_EVIDENCE_PATH"
 
 
-def test_team_pilot_rejects_commercial_boundary_drift_and_tampered_receipts(tmp_path: Path) -> None:
+def test_team_pilot_rejects_commercial_boundary_drift_and_tampered_receipts(
+    tmp_path: Path,
+) -> None:
     manifest = _manifest(tmp_path)
     packaging_path = tmp_path / "docs" / "COMMERCIAL_PACKAGING.json"
     packaging = json.loads(packaging_path.read_text(encoding="utf-8"))
@@ -145,13 +163,24 @@ def test_team_pilot_rejects_commercial_boundary_drift_and_tampered_receipts(tmp_
     assert exc.value.code == "E_TEAM_PILOT_RECEIPT_INVALID"
 
 
-def test_team_pilot_cli_is_json_safe_and_receipt_verifiable(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_team_pilot_cli_is_json_safe_and_receipt_verifiable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     manifest = _manifest(tmp_path)
 
-    code = main([
-        "team-pilot", "readiness", "--root", str(tmp_path), "--manifest", manifest.name,
-        "--out-dir", str(tmp_path / "packet"), "--json",
-    ])
+    code = main(
+        [
+            "team-pilot",
+            "readiness",
+            "--root",
+            str(tmp_path),
+            "--manifest",
+            manifest.name,
+            "--out-dir",
+            str(tmp_path / "packet"),
+            "--json",
+        ]
+    )
     output = json.loads(capsys.readouterr().out)
     receipt_path = Path(output["artifacts"]["paths"]["json"])
     assert code == 0

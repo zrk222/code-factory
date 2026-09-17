@@ -18,7 +18,9 @@ from factoryline.signed_receipts import (
 def _receipt(tmp_path: Path) -> Path:
     path = tmp_path / "build.json"
     path.write_text(
-        json.dumps({"schema": "factory.receipt.v2", "module": "factoryline", "ok": True}),
+        json.dumps(
+            {"schema": "factory.receipt.v2", "module": "factoryline", "ok": True}
+        ),
         encoding="utf-8",
     )
     return path
@@ -39,7 +41,9 @@ def test_unsigned_receipt_is_never_reported_verified(tmp_path):
 
 def test_missing_sigstore_returns_install_action(monkeypatch):
     monkeypatch.setattr("factoryline.signed_receipts.shutil.which", lambda name: None)
-    monkeypatch.setattr("factoryline.signed_receipts.importlib.util.find_spec", lambda name: None)
+    monkeypatch.setattr(
+        "factoryline.signed_receipts.importlib.util.find_spec", lambda name: None
+    )
     with pytest.raises(SignedReceiptError, match="E_SIGSTORE_UNAVAILABLE") as error:
         resolve_sigstore_command()
     assert "factoryline-code-factory[sigstore]" in str(error.value)
@@ -51,7 +55,9 @@ def test_sign_receipt_delegates_to_sigstore_and_requires_bundle(tmp_path, monkey
     def fake_run(args, **kwargs):
         assert args[-2:] == ["sign", str(receipt.resolve())]
         assert kwargs["timeout"] == 300
-        bundle_path_for(receipt.resolve()).write_text('{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}')
+        bundle_path_for(receipt.resolve()).write_text(
+            '{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}'
+        )
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr("factoryline.signed_receipts.subprocess.run", fake_run)
@@ -73,10 +79,14 @@ def test_sign_receipt_fails_when_sigstore_produces_no_bundle(tmp_path, monkeypat
 def test_verify_requires_expected_identity_before_running_sigstore(tmp_path):
     receipt = _receipt(tmp_path)
     with pytest.raises(SignedReceiptError, match="E_IDENTITY_REQUIRED"):
-        verify_receipt(receipt, cert_identity="", cert_oidc_issuer="issuer", command=["sigstore"])
+        verify_receipt(
+            receipt, cert_identity="", cert_oidc_issuer="issuer", command=["sigstore"]
+        )
 
 
-def test_verify_without_bundle_returns_unsigned_without_running_sigstore(tmp_path, monkeypatch):
+def test_verify_without_bundle_returns_unsigned_without_running_sigstore(
+    tmp_path, monkeypatch
+):
     receipt = _receipt(tmp_path)
     monkeypatch.setattr(
         "factoryline.signed_receipts.subprocess.run",
@@ -97,7 +107,10 @@ def test_verify_delegates_identity_chain_and_transparency_checks(tmp_path, monke
 
     def fake_run(args, **kwargs):
         assert args[-4:] == [
-            "--cert-identity", "workflow@example", "--cert-oidc-issuer", "https://issuer.example"
+            "--cert-identity",
+            "workflow@example",
+            "--cert-oidc-issuer",
+            "https://issuer.example",
         ]
         return subprocess.CompletedProcess(args, 0, "Verified OK", "")
 
@@ -117,7 +130,9 @@ def test_verify_is_fail_closed_on_sigstore_rejection(tmp_path, monkeypatch):
     bundle_path_for(receipt).write_text("{}", encoding="utf-8")
     monkeypatch.setattr(
         "factoryline.signed_receipts.subprocess.run",
-        lambda args, **kwargs: subprocess.CompletedProcess(args, 1, "", "signature mismatch"),
+        lambda args, **kwargs: subprocess.CompletedProcess(
+            args, 1, "", "signature mismatch"
+        ),
     )
     with pytest.raises(SignedReceiptError, match="E_VERIFICATION_FAILED"):
         verify_receipt(

@@ -25,6 +25,8 @@ def test_intent_quality_accepts_concrete_action_and_observation() -> None:
         ("The task runs", "acceptance", True, "INTENT_NOT_OBSERVABLE"),
     ],
 )
-def test_intent_quality_rejects_unverifiable_language(value: str, field: str, observable: bool, code: str) -> None:
+def test_intent_quality_rejects_unverifiable_language(
+    value: str, field: str, observable: bool, code: str
+) -> None:
     with pytest.raises(IntentQualityError, match=code):
         require_clear(value, field=field, require_observable=observable)

@@ -1,4 +1,5 @@
 """Local-only GitHub Check/comment renderer for Plan-to-Proof review facts."""
+
 from __future__ import annotations
 
 from hashlib import sha256
@@ -29,7 +30,9 @@ class GitHubPlanProofReviewError(ValueError):
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:
@@ -48,11 +51,22 @@ def _valid_head_sha(head_sha: str) -> str:
 
 def _cohort_for(path: str) -> str:
     for prefix, cohort in (
-        ("specs/", "contracts"), ("requirements/", "contracts"), ("tests/", "tests"), ("test/", "tests"),
-        (".github/", "delivery"), ("deploy/", "delivery"), ("infra/", "delivery"), ("docs/", "docs"),
-        ("factoryline/", "implementation"), ("src/", "implementation"), ("lib/", "implementation"),
-        ("app/", "implementation"), ("services/", "implementation"), ("editors/", "implementation"),
-        ("packages/", "implementation"), ("scripts/", "implementation"),
+        ("specs/", "contracts"),
+        ("requirements/", "contracts"),
+        ("tests/", "tests"),
+        ("test/", "tests"),
+        (".github/", "delivery"),
+        ("deploy/", "delivery"),
+        ("infra/", "delivery"),
+        ("docs/", "docs"),
+        ("factoryline/", "implementation"),
+        ("src/", "implementation"),
+        ("lib/", "implementation"),
+        ("app/", "implementation"),
+        ("services/", "implementation"),
+        ("editors/", "implementation"),
+        ("packages/", "implementation"),
+        ("scripts/", "implementation"),
     ):
         if path.startswith(prefix):
             return cohort
@@ -76,7 +90,8 @@ def _items(items: list[Any], render) -> str:
 def _walkthrough(core: dict[str, Any]) -> str:
     cohorts = _items(
         core["path_cohorts"],
-        lambda cohort: f"**{cohort['label']}** — " + ", ".join(f"`{path}`" for path in cohort["paths"]),
+        lambda cohort: f"**{cohort['label']}** — "
+        + ", ".join(f"`{path}`" for path in cohort["paths"]),
     )
     findings = _items(
         core["findings"],
@@ -86,65 +101,99 @@ def _walkthrough(core: dict[str, Any]) -> str:
         core["proof_debt"]["items"],
         lambda item: f"**{item['severity']}** `{item['kind']}` — {item['settlement']}",
     )
-    disabled = ", ".join(key.replace("_", " ") for key, value in core["authority"].items() if not value)
-    return "\n".join([
-        "<!-- factoryline-proof-review -->",
-        "# FactoryLine Plan-to-Proof Review",
-        "",
-        f"Commit: `{core['head_sha']}`",
-        f"Plan: `{core['plan']['provider']}/{core['plan']['plan_id']}` approved by `{core['plan']['approval']['approved_by']}`",
-        f"Plan SHA-256: `{core['plan_sha256']}`",
-        f"Plan-to-Proof Review SHA-256: `{core['review_sha256']}`",
-        f"GitHub payload SHA-256: `{core['payload_sha256']}`",
-        "",
-        "## Changed-scope walkthrough",
-        "",
-        cohorts,
-        "",
-        "## Fact-derived next action",
-        "",
-        f"- `{core['next_action']['action']}` — {core['next_action']['reason']}",
-        "",
-        "## Findings",
-        "",
-        findings,
-        "",
-        "## Proof debt",
-        "",
-        debt,
-        "",
-        "## Authority boundary",
-        "",
-        f"Advisory only. This payload has no {disabled} authority. It does not call a provider API, interpret AI comments as proof, approve, merge, or modify source.",
-        "",
-        "## Plan-to-Proof map",
-        "",
-        "```mermaid",
-        core["mermaid"].rstrip(),
-        "```",
-        "",
-    ])
+    disabled = ", ".join(
+        key.replace("_", " ") for key, value in core["authority"].items() if not value
+    )
+    return "\n".join(
+        [
+            "<!-- factoryline-proof-review -->",
+            "# FactoryLine Plan-to-Proof Review",
+            "",
+            f"Commit: `{core['head_sha']}`",
+            f"Plan: `{core['plan']['provider']}/{core['plan']['plan_id']}` approved by `{core['plan']['approval']['approved_by']}`",
+            f"Plan SHA-256: `{core['plan_sha256']}`",
+            f"Plan-to-Proof Review SHA-256: `{core['review_sha256']}`",
+            f"GitHub payload SHA-256: `{core['payload_sha256']}`",
+            "",
+            "## Changed-scope walkthrough",
+            "",
+            cohorts,
+            "",
+            "## Fact-derived next action",
+            "",
+            f"- `{core['next_action']['action']}` — {core['next_action']['reason']}",
+            "",
+            "## Findings",
+            "",
+            findings,
+            "",
+            "## Proof debt",
+            "",
+            debt,
+            "",
+            "## Authority boundary",
+            "",
+            f"Advisory only. This payload has no {disabled} authority. It does not call a provider API, interpret AI comments as proof, approve, merge, or modify source.",
+            "",
+            "## Plan-to-Proof map",
+            "",
+            "```mermaid",
+            core["mermaid"].rstrip(),
+            "```",
+            "",
+        ]
+    )
 
 
 def _review_fields(review: object) -> dict[str, Any]:
     try:
         review = validate_plan_proof_review(review)
     except PlanProofReviewError as exc:
-        raise GitHubPlanProofReviewError("GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", str(exc)) from exc
+        raise GitHubPlanProofReviewError(
+            "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", str(exc)
+        ) from exc
     if not isinstance(review, dict) or review.get("schema") != PLAN_PROOF_REVIEW_SCHEMA:
-        raise GitHubPlanProofReviewError("GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "a factory.plan_proof_review.v1 payload is required")
+        raise GitHubPlanProofReviewError(
+            "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID",
+            "a factory.plan_proof_review.v1 payload is required",
+        )
     required = {
-        "plan", "plan_sha256", "review_sha256", "changed_paths", "findings", "next_action", "proof_debt",
-        "mermaid", "authority", "scope_limits",
+        "plan",
+        "plan_sha256",
+        "review_sha256",
+        "changed_paths",
+        "findings",
+        "next_action",
+        "proof_debt",
+        "mermaid",
+        "authority",
+        "scope_limits",
     }
-    if not required.issubset(review) or review.get("authority", None) != {**GITHUB_AUTHORITY}:
-        raise GitHubPlanProofReviewError("GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "the Plan-to-Proof payload shape or authority boundary is invalid")
-    if not isinstance(review["changed_paths"], list) or not all(isinstance(path, str) and path for path in review["changed_paths"]):
-        raise GitHubPlanProofReviewError("GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "changed paths are invalid")
-    if not isinstance(review["findings"], list) or not all(isinstance(item, dict) for item in review["findings"]):
-        raise GitHubPlanProofReviewError("GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "findings are invalid")
-    if not isinstance(review["proof_debt"], dict) or not isinstance(review["proof_debt"].get("items"), list):
-        raise GitHubPlanProofReviewError("GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "proof debt is invalid")
+    if not required.issubset(review) or review.get("authority", None) != {
+        **GITHUB_AUTHORITY
+    }:
+        raise GitHubPlanProofReviewError(
+            "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID",
+            "the Plan-to-Proof payload shape or authority boundary is invalid",
+        )
+    if not isinstance(review["changed_paths"], list) or not all(
+        isinstance(path, str) and path for path in review["changed_paths"]
+    ):
+        raise GitHubPlanProofReviewError(
+            "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "changed paths are invalid"
+        )
+    if not isinstance(review["findings"], list) or not all(
+        isinstance(item, dict) for item in review["findings"]
+    ):
+        raise GitHubPlanProofReviewError(
+            "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "findings are invalid"
+        )
+    if not isinstance(review["proof_debt"], dict) or not isinstance(
+        review["proof_debt"].get("items"), list
+    ):
+        raise GitHubPlanProofReviewError(
+            "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "proof debt is invalid"
+        )
     return review
 
 
@@ -189,15 +238,26 @@ def render_github_plan_proof_review(review: object, head_sha: str) -> dict[str, 
         "conclusion": "neutral",
         "output": {"title": "Plan-to-Proof walkthrough", "summary": walkthrough},
     }
-    return {**core, "payload_sha256": payload_sha256, "check": check, "github_comment": walkthrough}
+    return {
+        **core,
+        "payload_sha256": payload_sha256,
+        "check": check,
+        "github_comment": walkthrough,
+    }
 
 
 def compile_github_plan_proof_review(
-    root: Path, plan_path: Path, *, base: str = "main", changed: list[str] | None = None, head_sha: str = "",
+    root: Path,
+    plan_path: Path,
+    *,
+    base: str = "main",
+    changed: list[str] | None = None,
+    head_sha: str = "",
 ) -> dict[str, Any]:
     """Compile a plan review and render its advisory GitHub delivery shape."""
     return render_github_plan_proof_review(
-        review_plan_proof(Path(root), Path(plan_path), base=base, changed=changed), head_sha,
+        review_plan_proof(Path(root), Path(plan_path), base=base, changed=changed),
+        head_sha,
     )
 
 
@@ -209,30 +269,63 @@ def _atomic_text(path: Path, content: str) -> str:
     return sha256(encoded).hexdigest()
 
 
-def write_github_plan_proof_review_artifacts(payload: dict[str, Any], out_dir: Path) -> dict[str, Any]:
+def write_github_plan_proof_review_artifacts(
+    payload: dict[str, Any], out_dir: Path
+) -> dict[str, Any]:
     """Write the plan-aware GitHub JSON and comment only below an explicit directory."""
-    if not isinstance(payload, dict) or payload.get("schema") != GITHUB_PLAN_PROOF_REVIEW_SCHEMA:
-        raise GitHubPlanProofReviewError("GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "a GitHub Plan-to-Proof payload is required")
-    core = {key: value for key, value in payload.items() if key not in {"payload_sha256", "check", "github_comment", "artifacts"}}
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != GITHUB_PLAN_PROOF_REVIEW_SCHEMA
+    ):
+        raise GitHubPlanProofReviewError(
+            "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID",
+            "a GitHub Plan-to-Proof payload is required",
+        )
+    core = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"payload_sha256", "check", "github_comment", "artifacts"}
+    }
     if payload.get("payload_sha256") != _sha(core):
-        raise GitHubPlanProofReviewError("GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "the GitHub Plan-to-Proof SHA-256 does not match")
-    expected_walkthrough = _walkthrough({**core, "payload_sha256": payload["payload_sha256"]})
+        raise GitHubPlanProofReviewError(
+            "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID",
+            "the GitHub Plan-to-Proof SHA-256 does not match",
+        )
+    expected_walkthrough = _walkthrough(
+        {**core, "payload_sha256": payload["payload_sha256"]}
+    )
     expected_check = {
         "name": "FactoryLine / Proof Review",
         "head_sha": core.get("head_sha"),
         "status": "completed",
         "conclusion": "neutral",
-        "output": {"title": "Plan-to-Proof walkthrough", "summary": expected_walkthrough},
+        "output": {
+            "title": "Plan-to-Proof walkthrough",
+            "summary": expected_walkthrough,
+        },
     }
-    if payload.get("github_comment") != expected_walkthrough or payload.get("check") != expected_check:
-        raise GitHubPlanProofReviewError("GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "the GitHub Plan-to-Proof delivery fields do not match canonical facts")
+    if (
+        payload.get("github_comment") != expected_walkthrough
+        or payload.get("check") != expected_check
+    ):
+        raise GitHubPlanProofReviewError(
+            "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID",
+            "the GitHub Plan-to-Proof delivery fields do not match canonical facts",
+        )
     destination = Path(out_dir).resolve()
     destination.mkdir(parents=True, exist_ok=True)
     stem = f"github-plan-proof-review-{payload['payload_sha256'][:12]}"
-    paths = {"json": destination / f"{stem}.json", "markdown": destination / f"{stem}.md"}
+    paths = {
+        "json": destination / f"{stem}.json",
+        "markdown": destination / f"{stem}.md",
+    }
     serializable = {key: value for key, value in payload.items() if key != "artifacts"}
     digests = {
-        "json": _atomic_text(paths["json"], json.dumps(serializable, ensure_ascii=False, indent=2, sort_keys=True) + "\n"),
+        "json": _atomic_text(
+            paths["json"],
+            json.dumps(serializable, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+        ),
         "markdown": _atomic_text(paths["markdown"], payload["github_comment"]),
     }
     return {

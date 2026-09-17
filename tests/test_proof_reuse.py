@@ -45,6 +45,7 @@ def _manifest(gate):
 @pytest.mark.parametrize("field", ["inputs", "outputs"])
 def test_malformed_artifact_rows_reject_without_crashing(tmp_path, row, field):
     from pathlib import Path
+
     _, _, gate = _workspace(tmp_path)
     saved = record_proof(tmp_path, gate, elapsed_ms=100)
     path = Path(saved["receipt"])
@@ -81,7 +82,11 @@ def test_exact_green_receipt_is_reused(tmp_path):
 def test_receipt_binds_regular_file_identity(tmp_path):
     _, _, gate = _workspace(tmp_path)
     receipt = record_proof(tmp_path, gate, elapsed_ms=1000)
-    payload = json.loads((tmp_path / ".factory" / "proofs" / f"{receipt['proof_key']}.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (tmp_path / ".factory" / "proofs" / f"{receipt['proof_key']}.json").read_text(
+            encoding="utf-8"
+        )
+    )
     for field in ("inputs", "outputs"):
         assert payload[field][0]["identity"]["inode"] >= 0
         assert payload[field][0]["identity"]["size"] > 0
@@ -172,7 +177,9 @@ def test_missing_or_escaping_input_blocks(tmp_path):
 def test_auto_savings_records_exact_pair_and_preserves_unknown_tokens(tmp_path):
     _, _, gate = _workspace(tmp_path)
     record_proof(tmp_path, gate, elapsed_ms=600_000)
-    plan = plan_proofs(tmp_path, _manifest(gate), changed_paths=["src/app.py"], auto_savings=True)
+    plan = plan_proofs(
+        tmp_path, _manifest(gate), changed_paths=["src/app.py"], auto_savings=True
+    )
     item = plan["items"][0]
     assert item["disposition"] == "REUSE"
     assert item["savings"]["time_saved_ms"] == 600_000 - item["routing_elapsed_ms"]
@@ -181,13 +188,20 @@ def test_auto_savings_records_exact_pair_and_preserves_unknown_tokens(tmp_path):
     assert "PROOF_TOKEN_SAVINGS_UNKNOWN" in item["markers"]
     pairs = list((tmp_path / ".factory" / "savings").glob("*.json"))
     assert len(pairs) == 1
-    assert json.loads(pairs[0].read_text(encoding="utf-8"))["schema"] == "factory.savings-pair.v1"
+    assert (
+        json.loads(pairs[0].read_text(encoding="utf-8"))["schema"]
+        == "factory.savings-pair.v1"
+    )
 
 
 def test_compact_plan_omits_raw_commands_and_absolute_paths(tmp_path):
     _, _, gate = _workspace(tmp_path)
     plan = plan_proofs(tmp_path, _manifest(gate), changed_paths=["src/app.py"])
-    persisted = json.loads((tmp_path / ".factory" / "proof-plans" / f"{plan['plan_sha256']}.json").read_text(encoding="utf-8"))
+    persisted = json.loads(
+        (
+            tmp_path / ".factory" / "proof-plans" / f"{plan['plan_sha256']}.json"
+        ).read_text(encoding="utf-8")
+    )
     encoded = json.dumps(persisted)
     assert "pytest" not in encoded
     assert str(tmp_path) not in encoded
@@ -199,19 +213,58 @@ def test_proofs_cli_record_plan_verify_and_challenge(tmp_path, capsys):
     _, _, gate = _workspace(tmp_path)
     manifest_path = tmp_path / "proofs.json"
     manifest_path.write_text(json.dumps(_manifest(gate)), encoding="utf-8")
-    assert main([
-        "proofs", "record", str(manifest_path), "--root", str(tmp_path),
-        "--elapsed-ms", "5000", "--json",
-    ]) == 0
+    assert (
+        main(
+            [
+                "proofs",
+                "record",
+                str(manifest_path),
+                "--root",
+                str(tmp_path),
+                "--elapsed-ms",
+                "5000",
+                "--json",
+            ]
+        )
+        == 0
+    )
     receipt = json.loads(capsys.readouterr().out)
     assert receipt["schema"] == "factory.proof-receipt.v1"
-    assert main([
-        "proofs", "plan", str(manifest_path), "--root", str(tmp_path),
-        "--changed", "src/app.py", "--json",
-    ]) == 0
+    assert (
+        main(
+            [
+                "proofs",
+                "plan",
+                str(manifest_path),
+                "--root",
+                str(tmp_path),
+                "--changed",
+                "src/app.py",
+                "--json",
+            ]
+        )
+        == 0
+    )
     plan = json.loads(capsys.readouterr().out)
     assert plan["items"][0]["disposition"] == "REUSE"
-    assert main(["proofs", "verify", receipt["receipt"], "--root", str(tmp_path), "--json"]) == 0
+    assert (
+        main(
+            ["proofs", "verify", receipt["receipt"], "--root", str(tmp_path), "--json"]
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["valid"] is True
-    assert main(["proofs", "challenge", receipt["receipt"], "--root", str(tmp_path), "--json"]) == 0
+    assert (
+        main(
+            [
+                "proofs",
+                "challenge",
+                receipt["receipt"],
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["marker"] == "PROOF_MUTATION_REJECTED"

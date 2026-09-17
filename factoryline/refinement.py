@@ -1,4 +1,5 @@
 """Factory-scope deterministic refinement and rejection accounting."""
+
 from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -33,18 +34,23 @@ def select_edit(target_stage: str, failure_class: FailureClass) -> Edit:
         FailureClass.SECURITY_FINDING,
     }
     edit_class = (
-        "structural" if failure_class in structural
-        else "configuration" if failure_class in configuration
+        "structural"
+        if failure_class in structural
+        else "configuration"
+        if failure_class in configuration
         else "parametric"
     )
-    return Edit(edit_class, target_stage, failure_class, "localized deterministic correction")
+    return Edit(
+        edit_class, target_stage, failure_class, "localized deterministic correction"
+    )
 
 
-def pareto_win(current: dict[str, float], previous: dict[str, float], target: str) -> bool:
+def pareto_win(
+    current: dict[str, float], previous: dict[str, float], target: str
+) -> bool:
     """Return whether the target improved without regressing any guarded metric."""
-    return (
-        current.get(target, 0.0) > previous.get(target, 0.0)
-        and all(current.get(stage, 0.0) >= rate for stage, rate in previous.items())
+    return current.get(target, 0.0) > previous.get(target, 0.0) and all(
+        current.get(stage, 0.0) >= rate for stage, rate in previous.items()
     )
 
 
@@ -55,8 +61,11 @@ class RejectionLedger:
     def log(self, edit: Edit, before: dict, after: dict):
         """Append one refinement decision and its before/after evidence to the ledger."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"edit": {**asdict(edit), "failure_class": edit.failure_class.value},
-                   "before_rates": before, "after_rates": after}
+        payload = {
+            "edit": {**asdict(edit), "failure_class": edit.failure_class.value},
+            "before_rates": before,
+            "after_rates": after,
+        }
         with self.path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(payload, sort_keys=True) + "\n")
 

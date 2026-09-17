@@ -5,6 +5,7 @@ POSIX launches use a fresh process group and Windows launches use a Job Object.
 This is process hygiene, not a security sandbox; it cannot prove that a hostile
 process which escapes that unit does not exist.
 """
+
 from __future__ import annotations
 
 import ctypes
@@ -29,7 +30,9 @@ WINDOWS_CREATE_SUSPENDED = 0x00000004
 # Keep their documented values available for deterministic cross-platform
 # tests that exercise the Windows branch without importing a Windows runtime.
 WINDOWS_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-WINDOWS_CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+WINDOWS_CREATE_NEW_PROCESS_GROUP = getattr(
+    subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
+)
 
 
 @dataclass(frozen=True)
@@ -45,7 +48,13 @@ class _PosixProcess:
 class _CleanupUnit:
     """The OS-owned unit used to observe and terminate one process tree."""
 
-    def __init__(self, *, pgid: int, job_handle: int | None = None, setup_error: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        pgid: int,
+        job_handle: int | None = None,
+        setup_error: str | None = None,
+    ) -> None:
         self.pgid = pgid
         self.job_handle = job_handle
         self.setup_error = setup_error
@@ -77,7 +86,12 @@ def _windows_job(child: subprocess.Popen) -> tuple[int | None, str | None]:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
         kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-        kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, wintypes.INT, wintypes.LPVOID, wintypes.DWORD]
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            wintypes.INT,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        ]
         kernel32.SetInformationJobObject.restype = wintypes.BOOL
         kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
@@ -96,10 +110,17 @@ def _windows_job(child: subprocess.Popen) -> tuple[int | None, str | None]:
             ]
 
         class IoCounters(ctypes.Structure):
-            _fields_ = [(name, ctypes.c_ulonglong) for name in (
-                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
-                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount",
-            )]
+            _fields_ = [
+                (name, ctypes.c_ulonglong)
+                for name in (
+                    "ReadOperationCount",
+                    "WriteOperationCount",
+                    "OtherOperationCount",
+                    "ReadTransferCount",
+                    "WriteTransferCount",
+                    "OtherTransferCount",
+                )
+            ]
 
         class ExtendedLimitInformation(ctypes.Structure):
             _fields_ = [
@@ -122,7 +143,9 @@ def _windows_job(child: subprocess.Popen) -> tuple[int | None, str | None]:
         # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE. Closing this handle is a bounded
         # final backstop if the explicit termination path races process exit.
         value.BasicLimitInformation.LimitFlags = 0x00002000
-        if not kernel32.SetInformationJobObject(handle, 9, ctypes.byref(value), ctypes.sizeof(value)):
+        if not kernel32.SetInformationJobObject(
+            handle, 9, ctypes.byref(value), ctypes.sizeof(value)
+        ):
             error = ctypes.get_last_error()
             kernel32.CloseHandle(handle)
             return None, f"SetInformationJobObject failed: {error}"
@@ -179,7 +202,7 @@ def _posix_group_members(pgid: int) -> set[int] | None:
             if close < 0:
                 complete = False
                 continue
-            fields = text[close + 2:].split()
+            fields = text[close + 2 :].split()
             # After the comm field: state, ppid, pgrp, session, ...
             if len(fields) < 3 or int(fields[2]) != pgid:
                 continue
@@ -245,10 +268,15 @@ def _posix_processes() -> dict[int, _PosixProcess] | None:
     return observed
 
 
-def _observe_descendants(child: subprocess.Popen, unit: _CleanupUnit, *, force: bool = False) -> None:
+def _observe_descendants(
+    child: subprocess.Popen, unit: _CleanupUnit, *, force: bool = False
+) -> None:
     """Record descendants while their parentage still proves invocation ownership."""
     now = time.monotonic()
-    if not force and now - unit.last_descendant_observation < PROCESS_SNAPSHOT_INTERVAL_SECONDS:
+    if (
+        not force
+        and now - unit.last_descendant_observation < PROCESS_SNAPSHOT_INTERVAL_SECONDS
+    ):
         return
     unit.last_descendant_observation = now
     processes = _posix_processes()
@@ -262,7 +290,11 @@ def _observe_descendants(child: subprocess.Popen, unit: _CleanupUnit, *, force: 
         if item is not None and item.identity == identity:
             known.add(pid)
     while True:
-        additions = [item for item in processes.values() if item.pid not in known and item.ppid in known]
+        additions = [
+            item
+            for item in processes.values()
+            if item.pid not in known and item.ppid in known
+        ]
         if not additions:
             return
         for item in additions:
@@ -304,11 +336,23 @@ def _windows_job_active(job_handle: int) -> int | None:
             ]
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.QueryInformationJobObject.argtypes = [wintypes.HANDLE, wintypes.INT, wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.QueryInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            wintypes.INT,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
         kernel32.QueryInformationJobObject.restype = wintypes.BOOL
         value = AccountingInformation()
         size = wintypes.DWORD()
-        if not kernel32.QueryInformationJobObject(ctypes.c_void_p(job_handle), 1, ctypes.byref(value), ctypes.sizeof(value), ctypes.byref(size)):
+        if not kernel32.QueryInformationJobObject(
+            ctypes.c_void_p(job_handle),
+            1,
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+            ctypes.byref(size),
+        ):
             return None
         return int(value.ActiveProcesses)
     except (AttributeError, OSError, TypeError, ValueError):
@@ -334,10 +378,14 @@ def _emergency_terminate(child: subprocess.Popen) -> None:
     """Best-effort fallback used when the cleanup unit cannot be created."""
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=CLEANUP_TIMEOUT_SECONDS,
-                           creationflags=WINDOWS_CREATE_NO_WINDOW, check=False)
+            subprocess.run(
+                ["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=CLEANUP_TIMEOUT_SECONDS,
+                creationflags=WINDOWS_CREATE_NO_WINDOW,
+                check=False,
+            )
         else:
             os.killpg(child.pid, signal.SIGKILL)
     except (OSError, subprocess.TimeoutExpired):
@@ -351,15 +399,29 @@ def _emergency_terminate(child: subprocess.Popen) -> None:
             pass
 
 
-def _launch(cli: str, args: list[str], cwd: Path, *, env: dict[str, str] | None = None) -> tuple[subprocess.Popen | None, _CleanupUnit | None, str | None]:
+def _launch(
+    cli: str, args: list[str], cwd: Path, *, env: dict[str, str] | None = None
+) -> tuple[subprocess.Popen | None, _CleanupUnit | None, str | None]:
     """Start a command and bind it to a process-group or Job Object."""
     options = (
-        {"creationflags": WINDOWS_CREATE_NO_WINDOW | WINDOWS_CREATE_NEW_PROCESS_GROUP | WINDOWS_CREATE_SUSPENDED}
-        if os.name == "nt" else {"start_new_session": True}
+        {
+            "creationflags": WINDOWS_CREATE_NO_WINDOW
+            | WINDOWS_CREATE_NEW_PROCESS_GROUP
+            | WINDOWS_CREATE_SUSPENDED
+        }
+        if os.name == "nt"
+        else {"start_new_session": True}
     )
     try:
-        child = subprocess.Popen([cli, *args], cwd=str(cwd), env=env, stdin=subprocess.DEVNULL,
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options)
+        child = subprocess.Popen(
+            [cli, *args],
+            cwd=str(cwd),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **options,
+        )
     except OSError:
         return None, None, f"{cli} unavailable or could not be started"
     unit = _CleanupUnit(pgid=child.pid)
@@ -407,10 +469,14 @@ def _terminate_unit(child: subprocess.Popen, unit: _CleanupUnit) -> bool:
                 if not kernel32.TerminateJobObject(ctypes.c_void_p(unit.job_handle), 1):
                     clean = False
             else:
-                subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               timeout=CLEANUP_TIMEOUT_SECONDS,
-                               creationflags=WINDOWS_CREATE_NO_WINDOW, check=False)
+                subprocess.run(
+                    ["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=CLEANUP_TIMEOUT_SECONDS,
+                    creationflags=WINDOWS_CREATE_NO_WINDOW,
+                    check=False,
+                )
                 clean = False
         else:
             status = _posix_group_status(unit.pgid)
@@ -428,7 +494,9 @@ def _terminate_unit(child: subprocess.Popen, unit: _CleanupUnit) -> bool:
     return clean
 
 
-def _await_cleanup(child: subprocess.Popen, unit: _CleanupUnit, *, terminate: bool) -> bool:
+def _await_cleanup(
+    child: subprocess.Popen, unit: _CleanupUnit, *, terminate: bool
+) -> bool:
     """Observe root and cleanup-unit exit within the ten-second hard bound."""
     clean = True
     if terminate:
@@ -463,14 +531,23 @@ def _monitor(child, unit, readers, failed, heartbeat, deadline: float) -> str:
             return "stop requested through the local Studio"
         if time.monotonic() >= deadline:
             return "stage timed out"
-        if child.poll() is not None and not any(reader.is_alive() for reader in readers):
+        if child.poll() is not None and not any(
+            reader.is_alive() for reader in readers
+        ):
             return ""
         time.sleep(0.05)
 
 
-def run_cli_detailed(cli: str, args: list[str], cwd: Path, *, heartbeat: Callable[[], bool] | None = None,
-                     timeout: float = 300, max_stream_bytes: int = MAX_STREAM_BYTES,
-                     env: dict[str, str] | None = None) -> dict[str, object]:
+def run_cli_detailed(
+    cli: str,
+    args: list[str],
+    cwd: Path,
+    *,
+    heartbeat: Callable[[], bool] | None = None,
+    timeout: float = 300,
+    max_stream_bytes: int = MAX_STREAM_BYTES,
+    env: dict[str, str] | None = None,
+) -> dict[str, object]:
     """Return a bounded CLI result with an explicit cleanup receipt.
 
     ``cleanup_confirmed`` is true only after the root process, its captured
@@ -495,12 +572,18 @@ def run_cli_detailed(cli: str, args: list[str], cwd: Path, *, heartbeat: Callabl
         }
     outputs = [bytearray(), bytearray()]
     failed = threading.Event()
-    readers = [threading.Thread(target=_drain, args=(stream, output, failed, max_stream_bytes), daemon=True)
-               for stream, output in zip((child.stdout, child.stderr), outputs)]
+    readers = [
+        threading.Thread(
+            target=_drain, args=(stream, output, failed, max_stream_bytes), daemon=True
+        )
+        for stream, output in zip((child.stdout, child.stderr), outputs)
+    ]
     for reader in readers:
         reader.start()
     try:
-        reason = _monitor(child, unit, readers, failed, heartbeat, time.monotonic() + timeout)
+        reason = _monitor(
+            child, unit, readers, failed, heartbeat, time.monotonic() + timeout
+        )
     except BaseException:
         _stop(child, unit)
         unit.close()
@@ -511,15 +594,30 @@ def run_cli_detailed(cli: str, args: list[str], cwd: Path, *, heartbeat: Callabl
         unit.close()
 
 
-def run_cli(cli: str, args: list[str], cwd: Path, *, heartbeat: Callable[[], bool] | None = None,
-            timeout: float = 300, max_stream_bytes: int = MAX_STREAM_BYTES) -> tuple[bool, str]:
+def run_cli(
+    cli: str,
+    args: list[str],
+    cwd: Path,
+    *,
+    heartbeat: Callable[[], bool] | None = None,
+    timeout: float = 300,
+    max_stream_bytes: int = MAX_STREAM_BYTES,
+) -> tuple[bool, str]:
     """Capture a CLI result with finite memory and finite failure cleanup waits."""
-    result = run_cli_detailed(cli, args, cwd, heartbeat=heartbeat, timeout=timeout,
-                              max_stream_bytes=max_stream_bytes)
+    result = run_cli_detailed(
+        cli,
+        args,
+        cwd,
+        heartbeat=heartbeat,
+        timeout=timeout,
+        max_stream_bytes=max_stream_bytes,
+    )
     return bool(result["ok"]), str(result["output"])
 
 
-def _finish_result(child, unit: _CleanupUnit, readers, outputs, reason: str) -> dict[str, object]:
+def _finish_result(
+    child, unit: _CleanupUnit, readers, outputs, reason: str
+) -> dict[str, object]:
     """Bound cleanup and never return success without observable tree exit."""
     cleanup_confirmed = _stop(child, unit)
     for reader in readers:
@@ -533,7 +631,10 @@ def _finish_result(child, unit: _CleanupUnit, readers, outputs, reason: str) -> 
     if reason:
         output = f"factory {reason}\n" + output
     return {
-        "ok": not reason and cleanup_confirmed and streams_closed and child.returncode == 0,
+        "ok": not reason
+        and cleanup_confirmed
+        and streams_closed
+        and child.returncode == 0,
         "output": output,
         "stdout": bytes(outputs[0]),
         "stderr": bytes(outputs[1]),
@@ -544,7 +645,9 @@ def _finish_result(child, unit: _CleanupUnit, readers, outputs, reason: str) -> 
     }
 
 
-def _finish(child, unit: _CleanupUnit, readers, outputs, reason: str) -> tuple[bool, str]:
+def _finish(
+    child, unit: _CleanupUnit, readers, outputs, reason: str
+) -> tuple[bool, str]:
     """Compatibility wrapper for callers that use the historical tuple shape."""
     result = _finish_result(child, unit, readers, outputs, reason)
     return bool(result["ok"]), str(result["output"])

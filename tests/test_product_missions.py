@@ -78,7 +78,9 @@ def _pipeline(tmp_path: Path):
     prd.write_text(PRD, encoding="utf-8")
     graph = compile_product_prd(prd, tmp_path)
     slices = plan_value_slices(Path(graph["path"]), tmp_path, max_requirements=2)
-    mission = create_mission(Path(slices["path"]), slices["slices"][-1]["id"], tmp_path, "release-owner")
+    mission = create_mission(
+        Path(slices["path"]), slices["slices"][-1]["id"], tmp_path, "release-owner"
+    )
     return graph, slices, mission
 
 
@@ -89,7 +91,11 @@ def test_product_graph_is_stable_bound_and_ux_complete(tmp_path: Path):
     second = compile_product_prd(prd, tmp_path)
     assert second["idempotent"] is True
     assert first["graph_sha256"] == second["graph_sha256"]
-    assert [item["id"] for item in first["requirements"]] == ["REQ-LOGIN", "REQ-DASH", "REQ-EXPORT"]
+    assert [item["id"] for item in first["requirements"]] == [
+        "REQ-LOGIN",
+        "REQ-DASH",
+        "REQ-EXPORT",
+    ]
     assert set(first["ux_states"].values()) == {"declared"}
     assert first["journeys"] and first["business_rules"]
     assert first["data_ownership"] and first["trust_boundaries"]
@@ -106,19 +112,27 @@ def _validation_for(mission: dict, creator: str, verifier: str, evidence: Path) 
             screenshot = evidence.parent / "browser-flow.png"
             screenshot.write_bytes(b"png evidence")
             proof = evidence.parent / "browser-flow.json"
-            proof.write_text(json.dumps({
-                "schema": "factory.browser-flow.evidence.v1",
-                "mission_id": mission["id"],
-                "criterion_id": item["id"],
-                "verifier_id": verifier,
-                "start_url": "http://127.0.0.1:3000/",
-                "expected_url": "http://127.0.0.1:3000/dashboard",
-                "observed_url": "http://127.0.0.1:3000/dashboard",
-                "clicks": 2,
-                "steps": [{"action": "open", "passed": True}, {"action": "submit", "passed": True}],
-                "assertions": [{"name": "dashboard visible", "passed": True}],
-                "artifacts": [str(screenshot)],
-            }), encoding="utf-8")
+            proof.write_text(
+                json.dumps(
+                    {
+                        "schema": "factory.browser-flow.evidence.v1",
+                        "mission_id": mission["id"],
+                        "criterion_id": item["id"],
+                        "verifier_id": verifier,
+                        "start_url": "http://127.0.0.1:3000/",
+                        "expected_url": "http://127.0.0.1:3000/dashboard",
+                        "observed_url": "http://127.0.0.1:3000/dashboard",
+                        "clicks": 2,
+                        "steps": [
+                            {"action": "open", "passed": True},
+                            {"action": "submit", "passed": True},
+                        ],
+                        "assertions": [{"name": "dashboard visible", "passed": True}],
+                        "artifacts": [str(screenshot)],
+                    }
+                ),
+                encoding="utf-8",
+            )
         criteria.append({"id": item["id"], "passed": True, "evidence": [str(proof)]})
     return {
         "schema": "factory.mission.validation-input.v1",
@@ -147,7 +161,9 @@ def test_mission_completion_requires_fresh_context_and_all_evidence(tmp_path: Pa
     evidence = tmp_path / "test-results.json"
     evidence.write_text('{"passed": true}\n')
     validation = tmp_path / "validation.json"
-    validation.write_text(json.dumps(_validation_for(mission, "worker-1", "worker-1", evidence)))
+    validation.write_text(
+        json.dumps(_validation_for(mission, "worker-1", "worker-1", evidence))
+    )
     with pytest.raises(ProductMissionError, match="VERIFIER_IDENTITY_DISTINCT"):
         close_mission(Path(mission["path"]), validation, tmp_path)
     assert not (Path(mission["path"]).parent / "completion.json").exists()
@@ -158,7 +174,9 @@ def test_mission_completion_requires_fresh_context_and_all_evidence(tmp_path: Pa
     with pytest.raises(ProductMissionError, match="NO_FINISH_CONTRACT"):
         close_mission(Path(mission["path"]), validation, tmp_path)
 
-    validation.write_text(json.dumps(_validation_for(mission, "worker-1", "verifier-1", evidence)))
+    validation.write_text(
+        json.dumps(_validation_for(mission, "worker-1", "verifier-1", evidence))
+    )
     completion = close_mission(Path(mission["path"]), validation, tmp_path)
     assert completion["status"] == "completed"
     assert completion["creator_id"] != completion["verifier_id"]
@@ -171,15 +189,24 @@ def test_mission_completion_requires_fresh_context_and_all_evidence(tmp_path: Pa
 
 def test_browser_control_is_a_bounded_no_finish_criterion(tmp_path: Path):
     _graph, _slices, mission = _pipeline(tmp_path)
-    browser = next(item for item in mission["completion_contract"]["criteria"] if item["verification_kind"] == "browser_control")
+    browser = next(
+        item
+        for item in mission["completion_contract"]["criteria"]
+        if item["verification_kind"] == "browser_control"
+    )
     assert browser["evidence_contract"]["max_clicks"] == 3
     assert mission["completion_contract"]["hypotheses"]
     assert mission["orchestration"]["attempt_policy"]["fresh_session_required"] is True
-    assert mission["orchestration"]["routing_policy"]["provider_binding"] == "external_adapter_required"
+    assert (
+        mission["orchestration"]["routing_policy"]["provider_binding"]
+        == "external_adapter_required"
+    )
     evidence = tmp_path / "test-results.json"
     evidence.write_text('{"passed": true}\n')
     payload = _validation_for(mission, "worker", "verifier", evidence)
-    browser_row = next(item for item in payload["criteria"] if item["id"] == browser["id"])
+    browser_row = next(
+        item for item in payload["criteria"] if item["id"] == browser["id"]
+    )
     browser_path = Path(browser_row["evidence"][0])
     receipt = json.loads(browser_path.read_text(encoding="utf-8"))
     receipt["clicks"] = 4
@@ -195,12 +222,18 @@ def test_mission_decision_is_owner_bound_and_cannot_authorize_release(tmp_path: 
     _graph, _slices, mission = _pipeline(tmp_path)
     with pytest.raises(ProductMissionError, match="MISSION_DECISION_OWNER_MISMATCH"):
         decide_mission(
-            Path(mission["path"]), tmp_path, owner="someone-else",
-            decision="approved_execution", rationale="Approve.",
+            Path(mission["path"]),
+            tmp_path,
+            owner="someone-else",
+            decision="approved_execution",
+            rationale="Approve.",
         )
     decision = decide_mission(
-        Path(mission["path"]), tmp_path, owner="release-owner",
-        decision="approved_execution", rationale="The bounded slice is ready for its executor.",
+        Path(mission["path"]),
+        tmp_path,
+        owner="release-owner",
+        decision="approved_execution",
+        rationale="The bounded slice is ready for its executor.",
     )
     assert decision["execution_authorized"] is True
     assert decision["authority"] == {
@@ -216,7 +249,9 @@ def test_mission_decision_is_owner_bound_and_cannot_authorize_release(tmp_path: 
 
 def test_product_graph_blocks_slicing_when_acceptance_is_missing(tmp_path: Path):
     prd = tmp_path / "thin.md"
-    prd.write_text("# Thin\n\n## Requirements\n- The system must save a draft.\n", encoding="utf-8")
+    prd.write_text(
+        "# Thin\n\n## Requirements\n- The system must save a draft.\n", encoding="utf-8"
+    )
     graph = compile_product_prd(prd, tmp_path)
     assert graph["status"] == "needs_input"
     with pytest.raises(ProductMissionError, match="MISSION_BLOCKED_BY_PRODUCT_GAPS"):
@@ -224,24 +259,48 @@ def test_product_graph_blocks_slicing_when_acceptance_is_missing(tmp_path: Path)
     assert not list((tmp_path / ".factory" / "missions").glob("**/*"))
 
 
-def test_value_slices_cover_every_requirement_once_and_preserve_dependencies(tmp_path: Path):
+def test_value_slices_cover_every_requirement_once_and_preserve_dependencies(
+    tmp_path: Path,
+):
     graph, slices, _mission = _pipeline(tmp_path)
     assigned = [req for item in slices["slices"] for req in item["requirement_ids"]]
     assert sorted(assigned) == sorted(item["id"] for item in graph["requirements"])
     assert len(assigned) == len(set(assigned))
-    owner = {req: item["id"] for item in slices["slices"] for req in item["requirement_ids"]}
-    dash = next(item for item in slices["slices"] if "REQ-DASH" in item["requirement_ids"])
+    owner = {
+        req: item["id"] for item in slices["slices"] for req in item["requirement_ids"]
+    }
+    dash = next(
+        item for item in slices["slices"] if "REQ-DASH" in item["requirement_ids"]
+    )
     if owner["REQ-DASH"] != owner["REQ-LOGIN"]:
         assert owner["REQ-LOGIN"] in dash["depends_on"]
-    assert all(set(item["score"]) == {
-        "user_value", "uncertainty_retired", "dependency_unlock",
-        "security_change_risk", "implementation_review_cost", "priority",
-    } for item in slices["slices"])
-    assert all(set(item["vertical_contract"]) == {
-        "ui", "behavior", "api_data", "tests", "observability", "rollback",
-    } for item in slices["slices"])
+    assert all(
+        set(item["score"])
+        == {
+            "user_value",
+            "uncertainty_retired",
+            "dependency_unlock",
+            "security_change_risk",
+            "implementation_review_cost",
+            "priority",
+        }
+        for item in slices["slices"]
+    )
+    assert all(
+        set(item["vertical_contract"])
+        == {
+            "ui",
+            "behavior",
+            "api_data",
+            "tests",
+            "observability",
+            "rollback",
+        }
+        for item in slices["slices"]
+    )
     assert [item["score"]["priority"] for item in slices["slices"]] == sorted(
-        (item["score"]["priority"] for item in slices["slices"]), reverse=True,
+        (item["score"]["priority"] for item in slices["slices"]),
+        reverse=True,
     )
 
 
@@ -249,24 +308,38 @@ def test_mission_is_supervised_budgeted_and_hash_bound(tmp_path: Path):
     _graph, _slices, mission = _pipeline(tmp_path)
     assert mission["approval_state"] == "required_before_execution"
     assert mission["authority"] == {
-        "execute": "human_approval", "merge": False, "publish": False,
-        "deploy": False, "external_message": False,
+        "execute": "human_approval",
+        "merge": False,
+        "publish": False,
+        "deploy": False,
+        "external_message": False,
     }
     assert mission["loop"]["verdict"] == "VERIFIED"
     assert mission["workspace_contract"]["mode"] == "worktree"
     assert mission["workspace_contract"]["count"] == 1
     assert mission["workspace_contract"]["branch"].startswith("codex/")
     assert set(mission["role_permissions"]) == {"builder", "checker", "ux_reviewer"}
-    assert mission["context_packet"]["requirement_ids"] == mission["slice"]["requirement_ids"]
+    assert (
+        mission["context_packet"]["requirement_ids"]
+        == mission["slice"]["requirement_ids"]
+    )
     assert verify_mission(Path(mission["path"]))["valid"] is True
 
 
 def test_mission_refuses_excess_budget_and_detects_input_drift(tmp_path: Path):
     _graph, slices, mission = _pipeline(tmp_path)
     with pytest.raises(ProductMissionError, match="MISSION_BUDGET_INVALID"):
-        create_mission(Path(slices["path"]), slices["slices"][0]["id"], tmp_path, "owner", max_tokens=100001)
+        create_mission(
+            Path(slices["path"]),
+            slices["slices"][0]["id"],
+            tmp_path,
+            "owner",
+            max_tokens=100001,
+        )
     graph_path = Path(mission["inputs"]["graph_path"])
-    graph_path.write_text(graph_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    graph_path.write_text(
+        graph_path.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+    )
     result = verify_mission(Path(mission["path"]))
     assert result["valid"] is False
     assert result["marker"] == "MISSION_INPUT_DRIFT"
@@ -283,10 +356,20 @@ def test_pr_draft_links_local_evidence_but_has_no_promotion_authority(tmp_path: 
     assert draft["architecture_changes"] and draft["data_contract_changes"]
     assert draft["budget_consumption"]["measured"] is None
     assert set(draft["review_evidence"]) == {
-        "screenshots", "responsive", "accessibility", "tests", "mutations", "gates", "traces",
+        "screenshots",
+        "responsive",
+        "accessibility",
+        "tests",
+        "mutations",
+        "gates",
+        "traces",
     }
     assert draft["outcome_events"] == ["signal_review_completed within five minutes."]
-    assert all(value is False for key, value in draft["authority"].items() if key != "draft_only")
+    assert all(
+        value is False
+        for key, value in draft["authority"].items()
+        if key != "draft_only"
+    )
     assert draft["authority"]["draft_only"] is True
     outside = tmp_path.parent / "outside-evidence.txt"
     outside.write_text("outside", encoding="utf-8")
@@ -300,9 +383,27 @@ def test_pr_draft_links_local_evidence_but_has_no_promotion_authority(tmp_path: 
 def test_outcomes_preserve_evidence_class_and_hash_chain(tmp_path: Path):
     _graph, _slices, mission = _pipeline(tmp_path)
     with pytest.raises(ProductMissionError, match="MEASURED_SOURCE_REQUIRED"):
-        record_outcome(Path(mission["path"]), tmp_path, "completion_rate", 0.8, 0.7, "measured")
-    first = record_outcome(Path(mission["path"]), tmp_path, "completion_rate", 0.8, 0.7, "measured", "analytics/run-42")
-    second = record_outcome(Path(mission["path"]), tmp_path, "qualitative_fit", None, None, "observed", "research/session-7")
+        record_outcome(
+            Path(mission["path"]), tmp_path, "completion_rate", 0.8, 0.7, "measured"
+        )
+    first = record_outcome(
+        Path(mission["path"]),
+        tmp_path,
+        "completion_rate",
+        0.8,
+        0.7,
+        "measured",
+        "analytics/run-42",
+    )
+    second = record_outcome(
+        Path(mission["path"]),
+        tmp_path,
+        "qualitative_fit",
+        None,
+        None,
+        "observed",
+        "research/session-7",
+    )
     assert second["previous_sha256"] == first["record_sha256"]
     summary = outcome_summary(tmp_path, mission["id"])
     assert summary["chain_valid"] is True
@@ -319,33 +420,61 @@ def test_outcomes_preserve_evidence_class_and_hash_chain(tmp_path: Path):
 def test_requirement_change_invalidates_existing_mission(tmp_path: Path):
     graph, _slices, mission = _pipeline(tmp_path)
     prd = tmp_path / "PRD.md"
-    prd.write_text(PRD.replace("prioritized signals", "ranked customer signals"), encoding="utf-8")
+    prd.write_text(
+        PRD.replace("prioritized signals", "ranked customer signals"), encoding="utf-8"
+    )
     changed = compile_product_prd(prd, tmp_path, force=True)
     assert changed["graph_sha256"] != graph["graph_sha256"]
     assert verify_mission(Path(mission["path"]))["valid"] is False
 
 
-def test_requirement_change_invalidates_stale_slice_plan_before_new_mission(tmp_path: Path):
+def test_requirement_change_invalidates_stale_slice_plan_before_new_mission(
+    tmp_path: Path,
+):
     graph, slices, _mission = _pipeline(tmp_path)
     prd = tmp_path / "PRD.md"
     prd.write_text(PRD.replace("REQ-EXPORT:", "REQ-ARCHIVE:"), encoding="utf-8")
     changed = compile_product_prd(prd, tmp_path, force=True)
     assert changed["graph_sha256"] != graph["graph_sha256"]
     with pytest.raises(ProductMissionError, match="MISSION_INPUT_DRIFT"):
-        create_mission(Path(slices["path"]), slices["slices"][0]["id"], tmp_path, "owner")
+        create_mission(
+            Path(slices["path"]), slices["slices"][0]["id"], tmp_path, "owner"
+        )
 
 
 def test_meter_v2_preserves_unknowns_and_computes_complete_flow(tmp_path: Path):
-    MeterLog(tmp_path).record(StageTiming(
-        "factoryline", "compile-product", 100, 1, 600, 400, True,
-        mission_id="mission-1", queue_ms=50, human_review_ms=25,
-        rework_lines=3, cache_hits=2, invalidated_stages=1,
-        outcome_status="achieved", usage_quality="exact",
-        agent_ms=60, deterministic_tool_ms=40, changed_lines=30,
-        replay_hits=1, model_calls_avoided=2, first_pass=True,
-        retry_count=0, requirements_accepted=2, cost_usd=0.02,
-        cost_quality="exact", escaped_defects=0, releases=1, rollbacks=0,
-    ))
+    MeterLog(tmp_path).record(
+        StageTiming(
+            "factoryline",
+            "compile-product",
+            100,
+            1,
+            600,
+            400,
+            True,
+            mission_id="mission-1",
+            queue_ms=50,
+            human_review_ms=25,
+            rework_lines=3,
+            cache_hits=2,
+            invalidated_stages=1,
+            outcome_status="achieved",
+            usage_quality="exact",
+            agent_ms=60,
+            deterministic_tool_ms=40,
+            changed_lines=30,
+            replay_hits=1,
+            model_calls_avoided=2,
+            first_pass=True,
+            retry_count=0,
+            requirements_accepted=2,
+            cost_usd=0.02,
+            cost_quality="exact",
+            escaped_defects=0,
+            releases=1,
+            rollbacks=0,
+        )
+    )
     snapshot = live_snapshot(tmp_path)
     flow = snapshot["summary"]["flow"]
     assert snapshot["schema"] == "factory.meter.live.v2"
@@ -368,16 +497,35 @@ def test_meter_v2_preserves_unknowns_and_computes_complete_flow(tmp_path: Path):
 def test_product_mission_cli_runs_the_local_compile_chain(tmp_path: Path, capsys):
     prd = tmp_path / "PRD.md"
     prd.write_text(PRD, encoding="utf-8")
-    assert main(["product", "compile", str(prd), "--root", str(tmp_path), "--json"]) == 0
+    assert (
+        main(["product", "compile", str(prd), "--root", str(tmp_path), "--json"]) == 0
+    )
     graph = json.loads(capsys.readouterr().out)
     assert main(["product", "verify", graph["path"], "--json"]) == 0
     capsys.readouterr()
-    assert main(["product", "slices", graph["path"], "--root", str(tmp_path), "--json"]) == 0
+    assert (
+        main(["product", "slices", graph["path"], "--root", str(tmp_path), "--json"])
+        == 0
+    )
     slices = json.loads(capsys.readouterr().out)
-    assert main([
-        "mission", "create", slices["path"], slices["slices"][0]["id"],
-        "--root", str(tmp_path), "--owner", "cli-owner", "--executor", "codex", "--json",
-    ]) == 0
+    assert (
+        main(
+            [
+                "mission",
+                "create",
+                slices["path"],
+                slices["slices"][0]["id"],
+                "--root",
+                str(tmp_path),
+                "--owner",
+                "cli-owner",
+                "--executor",
+                "codex",
+                "--json",
+            ]
+        )
+        == 0
+    )
     mission = json.loads(capsys.readouterr().out)
     assert main(["mission", "verify", mission["path"], "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["valid"] is True

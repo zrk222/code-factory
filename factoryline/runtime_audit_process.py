@@ -1,4 +1,5 @@
 """Bounded, secret-minimized subprocess supervision; NOT a security sandbox."""
+
 from __future__ import annotations
 
 import hashlib
@@ -28,17 +29,28 @@ def _facts() -> dict:
 
 def _environment(scratch: Path) -> dict[str, str]:
     allowed = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL"}
-    environment = {key: value for key, value in os.environ.items() if key.upper() in allowed}
+    environment = {
+        key: value for key, value in os.environ.items() if key.upper() in allowed
+    }
     home = scratch.resolve() / "runtime-home"
     home.mkdir(parents=True, exist_ok=False)
-    environment.update({
-        "HOME": str(home), "USERPROFILE": str(home), "TMP": str(home), "TEMP": str(home),
-        "TMPDIR": str(home), "PYTHONNOUSERSITE": "1", "PYTHONHASHSEED": "0",
-    })
+    environment.update(
+        {
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "TMP": str(home),
+            "TEMP": str(home),
+            "TMPDIR": str(home),
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONHASHSEED": "0",
+        }
+    )
     return environment
 
 
-def _launch(argv: list[str], cwd: Path, environment: dict[str, str]) -> subprocess.Popen:
+def _launch(
+    argv: list[str], cwd: Path, environment: dict[str, str]
+) -> subprocess.Popen:
     return subprocess.Popen(
         argv,
         cwd=cwd,
@@ -48,8 +60,11 @@ def _launch(argv: list[str], cwd: Path, environment: dict[str, str]) -> subproce
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=os.name != "nt",
-        creationflags=(subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
-        if os.name == "nt" else 0,
+        creationflags=(
+            subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+        if os.name == "nt"
+        else 0,
     )
 
 
@@ -58,8 +73,13 @@ def _stop(child: subprocess.Popen) -> bool:
     if os.name == "nt":
         # Only the process tree created by this invocation is addressed.
         try:
-            stopped = subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
+            stopped = subprocess.run(
+                ["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False,
+            )
             cleanup_confirmed = stopped.returncode == 0
         except subprocess.TimeoutExpired:
             cleanup_confirmed = False
@@ -73,8 +93,12 @@ def _stop(child: subprocess.Popen) -> bool:
     return cleanup_confirmed
 
 
-def _drain_stream(name: str, stream: BinaryIO, overflow: threading.Event,
-                  streams: dict[str, tuple[str, int]]) -> None:
+def _drain_stream(
+    name: str,
+    stream: BinaryIO,
+    overflow: threading.Event,
+    streams: dict[str, tuple[str, int]],
+) -> None:
     """Hash one captured stream and retain only its digest and byte count."""
     digest, size = hashlib.sha256(), 0
     try:
@@ -88,10 +112,15 @@ def _drain_stream(name: str, stream: BinaryIO, overflow: threading.Event,
         stream.close()
 
 
-def _start_stream_readers(child: subprocess.Popen, overflow: threading.Event,
-                          streams: dict[str, tuple[str, int]]) -> list[threading.Thread]:
+def _start_stream_readers(
+    child: subprocess.Popen,
+    overflow: threading.Event,
+    streams: dict[str, tuple[str, int]],
+) -> list[threading.Thread]:
     threads = [
-        threading.Thread(target=_drain_stream, args=(name, stream, overflow, streams), daemon=True)
+        threading.Thread(
+            target=_drain_stream, args=(name, stream, overflow, streams), daemon=True
+        )
         for name, stream in (("stdout", child.stdout), ("stderr", child.stderr))
     ]
     for thread in threads:
@@ -99,16 +128,20 @@ def _start_stream_readers(child: subprocess.Popen, overflow: threading.Event,
     return threads
 
 
-def _wait_for_exit_or_limit(child: subprocess.Popen, timeout_seconds: int,
-                            overflow: threading.Event) -> bool:
+def _wait_for_exit_or_limit(
+    child: subprocess.Popen, timeout_seconds: int, overflow: threading.Event
+) -> bool:
     deadline = time.monotonic() + timeout_seconds
-    while child.poll() is None and time.monotonic() < deadline and not overflow.is_set():
+    while (
+        child.poll() is None and time.monotonic() < deadline and not overflow.is_set()
+    ):
         time.sleep(0.01)
     return child.poll() is None and time.monotonic() >= deadline
 
 
-def _join_stream_readers(child: subprocess.Popen, threads: list[threading.Thread],
-                         cleanup_confirmed: bool) -> tuple[bool, bool]:
+def _join_stream_readers(
+    child: subprocess.Popen, threads: list[threading.Thread], cleanup_confirmed: bool
+) -> tuple[bool, bool]:
     for thread in threads:
         thread.join(timeout=0.5)
     if any(thread.is_alive() for thread in threads):
@@ -119,7 +152,9 @@ def _join_stream_readers(child: subprocess.Popen, threads: list[threading.Thread
     return cleanup_confirmed, streams_closed
 
 
-def _await_cleanup(child: subprocess.Popen, threads: list[threading.Thread]) -> tuple[bool, bool]:
+def _await_cleanup(
+    child: subprocess.Popen, threads: list[threading.Thread]
+) -> tuple[bool, bool]:
     cleanup_confirmed = True
     if child.poll() is None:
         cleanup_confirmed = _stop(child)
@@ -131,14 +166,20 @@ def _await_cleanup(child: subprocess.Popen, threads: list[threading.Thread]) -> 
     return _join_stream_readers(child, threads, cleanup_confirmed)
 
 
-def _cleanup_is_confirmed(child: subprocess.Popen, cleanup_confirmed: bool,
-                          streams_closed: bool) -> bool:
+def _cleanup_is_confirmed(
+    child: subprocess.Popen, cleanup_confirmed: bool, streams_closed: bool
+) -> bool:
     # A Windows taskkill can race an already-exiting supervisor and return a
     # nonzero status even after the inherited streams have closed. Do not turn
     # that transient status into a false failure, but require both the root
     # exit and closed captured streams before accepting cleanup. This remains
     # bounded process supervision, not a sandbox or hidden-descendant proof.
-    if os.name == "nt" and not cleanup_confirmed and child.poll() is not None and streams_closed:
+    if (
+        os.name == "nt"
+        and not cleanup_confirmed
+        and child.poll() is not None
+        and streams_closed
+    ):
         cleanup_confirmed = True
     return cleanup_confirmed and child.poll() is not None and streams_closed
 
@@ -151,7 +192,9 @@ def _stream_facts(facts: dict, streams: dict[str, tuple[str, int]]) -> None:
         facts[f"{name}_bytes"] = size
 
 
-def run_bounded_command(argv: list[str], cwd: Path, timeout_seconds: int, scratch: Path) -> dict:
+def run_bounded_command(
+    argv: list[str], cwd: Path, timeout_seconds: int, scratch: Path
+) -> dict:
     """Hash streams without retaining logs; terminate on timeout/output overflow."""
     facts = _facts()
     try:
@@ -164,7 +207,9 @@ def run_bounded_command(argv: list[str], cwd: Path, timeout_seconds: int, scratc
     facts["timed_out"] = _wait_for_exit_or_limit(child, timeout_seconds, overflow)
     facts["output_limit_exceeded"] = overflow.is_set()
     cleanup_confirmed, streams_closed = _await_cleanup(child, threads)
-    facts["cleanup_confirmed"] = _cleanup_is_confirmed(child, cleanup_confirmed, streams_closed)
+    facts["cleanup_confirmed"] = _cleanup_is_confirmed(
+        child, cleanup_confirmed, streams_closed
+    )
     facts["exit_code"] = child.returncode
     _stream_facts(facts, streams)
     facts["output_limit_exceeded"] = overflow.is_set()

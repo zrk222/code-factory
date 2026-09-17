@@ -4,6 +4,7 @@ This is intentionally separate from :mod:`factoryline.control_plane`, which is
 the tenant-scoped evidence store.  It only summarizes hash-bound local facts;
 it cannot approve, execute, repair, merge, publish, or access credentials.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -72,8 +73,13 @@ def _collect_evidence(root: Path, spans: list | None = None) -> dict[str, Any]:
         evidence[name] = reader(root)
         elapsed = time.perf_counter_ns() - started
         if spans is not None:
-            spans.append({"name": name, "elapsed_ns": elapsed,
-                          "output_sha256": _fingerprint(evidence[name])})
+            spans.append(
+                {
+                    "name": name,
+                    "elapsed_ns": elapsed,
+                    "output_sha256": _fingerprint(evidence[name]),
+                }
+            )
     # Keep the established seven-reader profile stable for latency baselines;
     # this additional receipt is a read-only status projection, not a timed
     # gate and must not perturb existing profiling receipts.
@@ -88,8 +94,9 @@ def _collect_evidence(root: Path, spans: list | None = None) -> dict[str, Any]:
 
 
 def _fingerprint(value: Any) -> str:
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
-                         ensure_ascii=True, allow_nan=False).encode("utf-8")
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -97,8 +104,9 @@ def mission_control_profile(root: Path) -> dict[str, Any]:
     """Measure local evidence readers without exporting their bodies or authorizing any action."""
     spans: list[dict[str, Any]] = []
     _collect_evidence(Path(root).resolve(), spans)
-    identities = [{"name": span["name"], "output_sha256": span["output_sha256"]}
-                  for span in spans]
+    identities = [
+        {"name": span["name"], "output_sha256": span["output_sha256"]} for span in spans
+    ]
     return {
         "schema": "factory.mission-control-profile.v1",
         "spans": spans,
@@ -129,13 +137,24 @@ def mission_control_status(root: Path) -> dict[str, Any]:
         "operations_invalid": int(operations.get("invalid_count", 0)),
         "lifecycle_invalid": int(lifecycle.get("invalid_count", 0)),
         "repair_invalid": int(repairs.get("invalid_count", 0)),
-        "runtime_assurance_blocked": int(runtime.get("state") in {"BLOCKED", "INCOMPLETE"}),
-        "deep_audit_blocked": int(evidence["deep_audit"].get("state") in {"BLOCKED", "INCOMPLETE"}),
-        "release_workflow_blocked": int(release_workflow.get("applicable") is True and release_workflow.get("ok") is not True),
-        "supply_chain_blocked": int(supply_chain.get("state") in {"BLOCKED", "INCOMPLETE"}),
+        "runtime_assurance_blocked": int(
+            runtime.get("state") in {"BLOCKED", "INCOMPLETE"}
+        ),
+        "deep_audit_blocked": int(
+            evidence["deep_audit"].get("state") in {"BLOCKED", "INCOMPLETE"}
+        ),
+        "release_workflow_blocked": int(
+            release_workflow.get("applicable") is True
+            and release_workflow.get("ok") is not True
+        ),
+        "supply_chain_blocked": int(
+            supply_chain.get("state") in {"BLOCKED", "INCOMPLETE"}
+        ),
         "context_efficiency_blocked": int(context_efficiency.get("state") == "BLOCKED"),
         "intake_parameters_blocked": int(intake_parameters.get("state") == "BLOCKED"),
-        "intake_parameters_review_required": int(intake_parameters.get("state") == "REVIEW_REQUIRED"),
+        "intake_parameters_review_required": int(
+            intake_parameters.get("state") == "REVIEW_REQUIRED"
+        ),
     }
     blocked = any(blockers.values())
     human_required = (

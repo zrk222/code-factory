@@ -7,6 +7,7 @@ to exit zero and a negative mutation expected to exit non-zero.  The resulting
 receipt binds only the commands, captured output digests, and declared local
 artifacts supplied for that run.
 """
+
 from __future__ import annotations
 
 from base64 import b64decode, b64encode
@@ -51,7 +52,9 @@ class E2EProofError(ValueError):
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _sha_bytes(value: bytes) -> str:
@@ -66,11 +69,20 @@ def _reject(code: str, message: str) -> None:
     raise E2EProofError(code, message)
 
 
-def _workspace_path(root: Path, value: object, field: str, *, directory: bool = False) -> Path:
+def _workspace_path(
+    root: Path, value: object, field: str, *, directory: bool = False
+) -> Path:
     if not isinstance(value, str) or not value.strip():
-        _reject("E2E_MANIFEST_INVALID", f"{field} must be a non-empty workspace-relative path")
+        _reject(
+            "E2E_MANIFEST_INVALID",
+            f"{field} must be a non-empty workspace-relative path",
+        )
     raw = value.replace("\\", "/").strip()
-    if raw.startswith("/") or re.match(r"^[A-Za-z]:/", raw) or any(part == ".." for part in raw.split("/")):
+    if (
+        raw.startswith("/")
+        or re.match(r"^[A-Za-z]:/", raw)
+        or any(part == ".." for part in raw.split("/"))
+    ):
         _reject("E2E_MANIFEST_INVALID", f"{field} must stay inside the workspace")
     resolved = (root / raw).resolve()
     try:
@@ -78,7 +90,9 @@ def _workspace_path(root: Path, value: object, field: str, *, directory: bool = 
     except ValueError:
         _reject("E2E_MANIFEST_INVALID", f"{field} resolves outside the workspace")
     if directory and not resolved.is_dir():
-        _reject("E2E_MANIFEST_INVALID", f"{field} must name an existing workspace directory")
+        _reject(
+            "E2E_MANIFEST_INVALID", f"{field} must name an existing workspace directory"
+        )
     return resolved
 
 
@@ -86,7 +100,13 @@ def _relative(root: Path, path: Path) -> str:
     return path.resolve().relative_to(root).as_posix()
 
 
-def _text(value: object, field: str, *, pattern: re.Pattern[str] | None = None, limit: int = 128) -> str:
+def _text(
+    value: object,
+    field: str,
+    *,
+    pattern: re.Pattern[str] | None = None,
+    limit: int = 128,
+) -> str:
     if not isinstance(value, str) or not value.strip():
         _reject("E2E_MANIFEST_INVALID", f"{field} must be a non-empty string")
     result = value.strip()
@@ -99,11 +119,22 @@ def _text(value: object, field: str, *, pattern: re.Pattern[str] | None = None, 
 
 def _argv(value: object, field: str) -> list[str]:
     if not isinstance(value, list) or not value or len(value) > MAX_ARGV_ITEMS:
-        _reject("E2E_MANIFEST_INVALID", f"{field} must contain 1 through {MAX_ARGV_ITEMS} argv items")
+        _reject(
+            "E2E_MANIFEST_INVALID",
+            f"{field} must contain 1 through {MAX_ARGV_ITEMS} argv items",
+        )
     result: list[str] = []
     for index, item in enumerate(value):
-        if not isinstance(item, str) or not item or "\x00" in item or len(item) > MAX_ARGV_ITEM_CHARS:
-            _reject("E2E_MANIFEST_INVALID", f"{field}[{index}] must be a non-empty argv string of at most {MAX_ARGV_ITEM_CHARS} characters")
+        if (
+            not isinstance(item, str)
+            or not item
+            or "\x00" in item
+            or len(item) > MAX_ARGV_ITEM_CHARS
+        ):
+            _reject(
+                "E2E_MANIFEST_INVALID",
+                f"{field}[{index}] must be a non-empty argv string of at most {MAX_ARGV_ITEM_CHARS} characters",
+            )
         result.append(item)
     return result
 
@@ -128,26 +159,52 @@ def _load_manifest(root: Path, manifest_path: Path) -> tuple[dict[str, Any], Pat
 
 def _validate_manifest_shape(source: dict[str, Any]) -> None:
     allowed = {
-        "schema", "id", "approval", "working_directory", "timeout_seconds",
-        "network_egress", "positive", "negative", "artifact_paths",
+        "schema",
+        "id",
+        "approval",
+        "working_directory",
+        "timeout_seconds",
+        "network_egress",
+        "positive",
+        "negative",
+        "artifact_paths",
     }
     if set(source) != allowed:
-        _reject("E2E_MANIFEST_INVALID", "manifest must contain exactly schema, id, approval, working_directory, timeout_seconds, network_egress, positive, negative, and artifact_paths")
+        _reject(
+            "E2E_MANIFEST_INVALID",
+            "manifest must contain exactly schema, id, approval, working_directory, timeout_seconds, network_egress, positive, negative, and artifact_paths",
+        )
     if source.get("schema") != E2E_PROOF_MANIFEST_SCHEMA:
         _reject("E2E_MANIFEST_INVALID", f"schema must be {E2E_PROOF_MANIFEST_SCHEMA}")
 
 
 def _validate_approval(value: object) -> dict[str, str]:
     if not isinstance(value, dict) or set(value) != {"state", "approved_by"}:
-        _reject("E2E_MANIFEST_INVALID", "approval must contain exactly state and approved_by")
+        _reject(
+            "E2E_MANIFEST_INVALID",
+            "approval must contain exactly state and approved_by",
+        )
     if value.get("state") != "approved":
-        _reject("E2E_MANIFEST_UNAPPROVED", "approval.state must be approved before commands can run")
-    return {"state": "approved", "approved_by": _text(value.get("approved_by"), "approval.approved_by")}
+        _reject(
+            "E2E_MANIFEST_UNAPPROVED",
+            "approval.state must be approved before commands can run",
+        )
+    return {
+        "state": "approved",
+        "approved_by": _text(value.get("approved_by"), "approval.approved_by"),
+    }
 
 
 def _validate_timeout(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_TIMEOUT_SECONDS:
-        _reject("E2E_MANIFEST_INVALID", f"timeout_seconds must be an integer from 1 through {MAX_TIMEOUT_SECONDS}")
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= MAX_TIMEOUT_SECONDS
+    ):
+        _reject(
+            "E2E_MANIFEST_INVALID",
+            f"timeout_seconds must be an integer from 1 through {MAX_TIMEOUT_SECONDS}",
+        )
     return value
 
 
@@ -164,7 +221,9 @@ def _validate_commands(source: dict[str, Any]) -> dict[str, dict[str, list[str]]
 def _validate_artifact_paths(root: Path, value: object) -> list[str]:
     if not isinstance(value, list):
         _reject("E2E_MANIFEST_INVALID", "artifact_paths must be an array")
-    relative_paths = [_relative(root, _workspace_path(root, item, "artifact_paths")) for item in value]
+    relative_paths = [
+        _relative(root, _workspace_path(root, item, "artifact_paths")) for item in value
+    ]
     if len(relative_paths) != len(set(relative_paths)):
         _reject("E2E_MANIFEST_INVALID", "artifact_paths must not contain duplicates")
     return relative_paths
@@ -176,9 +235,14 @@ def validate_e2e_proof_manifest(root: Path, manifest_path: Path) -> dict[str, An
     source, path, manifest_sha256 = _load_manifest(workspace, manifest_path)
     _validate_manifest_shape(source)
     approval = _validate_approval(source.get("approval"))
-    working_directory = _workspace_path(workspace, source.get("working_directory"), "working_directory", directory=True)
+    working_directory = _workspace_path(
+        workspace, source.get("working_directory"), "working_directory", directory=True
+    )
     if source.get("network_egress") != "not_granted":
-        _reject("E2E_EGRESS_NOT_GRANTED", "network_egress must be not_granted; this runner cannot enforce host egress")
+        _reject(
+            "E2E_EGRESS_NOT_GRANTED",
+            "network_egress must be not_granted; this runner cannot enforce host egress",
+        )
     return {
         "schema": E2E_PROOF_MANIFEST_SCHEMA,
         "id": _text(source.get("id"), "id", pattern=_IDENTIFIER),
@@ -187,7 +251,9 @@ def validate_e2e_proof_manifest(root: Path, manifest_path: Path) -> dict[str, An
         "timeout_seconds": _validate_timeout(source.get("timeout_seconds")),
         "network_egress": "not_granted",
         **_validate_commands(source),
-        "artifact_paths": _validate_artifact_paths(workspace, source.get("artifact_paths")),
+        "artifact_paths": _validate_artifact_paths(
+            workspace, source.get("artifact_paths")
+        ),
         "manifest_path": _relative(workspace, path),
         "manifest_sha256": manifest_sha256,
     }
@@ -199,10 +265,19 @@ def _capture(value: bytes | str | None) -> bytes:
     return value.encode("utf-8", errors="replace") if isinstance(value, str) else value
 
 
-def _run_command(argv: list[str], *, cwd: Path, timeout_seconds: int) -> tuple[dict[str, Any], dict[str, str]]:
+def _run_command(
+    argv: list[str], *, cwd: Path, timeout_seconds: int
+) -> tuple[dict[str, Any], dict[str, str]]:
     started = perf_counter_ns()
     try:
-        completed = subprocess.run(argv, cwd=str(cwd), shell=False, capture_output=True, timeout=timeout_seconds, check=False)
+        completed = subprocess.run(
+            argv,
+            cwd=str(cwd),
+            shell=False,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
         stdout, stderr = _capture(completed.stdout), _capture(completed.stderr)
         status = "completed"
         exit_code: int | None = completed.returncode
@@ -210,10 +285,16 @@ def _run_command(argv: list[str], *, cwd: Path, timeout_seconds: int) -> tuple[d
         stdout, stderr = _capture(exc.stdout), _capture(exc.stderr)
         status, exit_code = "timed_out", None
     except OSError as exc:
-        stdout, stderr = b"", f"E2E_COMMAND_ERROR: {exc}".encode("utf-8", errors="replace")
+        stdout, stderr = (
+            b"",
+            f"E2E_COMMAND_ERROR: {exc}".encode("utf-8", errors="replace"),
+        )
         status, exit_code = "spawn_error", None
     duration_ms = (perf_counter_ns() - started) // 1_000_000
-    captures = {"stdout": b64encode(stdout).decode("ascii"), "stderr": b64encode(stderr).decode("ascii")}
+    captures = {
+        "stdout": b64encode(stdout).decode("ascii"),
+        "stderr": b64encode(stderr).decode("ascii"),
+    }
     return {
         "argv": list(argv),
         "status": status,
@@ -224,7 +305,9 @@ def _run_command(argv: list[str], *, cwd: Path, timeout_seconds: int) -> tuple[d
     }, captures
 
 
-def run_supervised_command(argv: list[str], *, cwd: Path, timeout_seconds: int) -> dict[str, Any]:
+def run_supervised_command(
+    argv: list[str], *, cwd: Path, timeout_seconds: int
+) -> dict[str, Any]:
     """Run one caller-approved no-shell argv and return bounded, log-free facts."""
     result, _captures = _run_command(argv, cwd=cwd, timeout_seconds=timeout_seconds)
     return {
@@ -236,7 +319,9 @@ def run_supervised_command(argv: list[str], *, cwd: Path, timeout_seconds: int) 
     }
 
 
-def _artifact_hashes(root: Path, artifact_paths: list[str]) -> tuple[list[dict[str, str]], list[str]]:
+def _artifact_hashes(
+    root: Path, artifact_paths: list[str]
+) -> tuple[list[dict[str, str]], list[str]]:
     found: list[dict[str, str]] = []
     missing: list[str] = []
     for relative in artifact_paths:
@@ -248,7 +333,9 @@ def _artifact_hashes(root: Path, artifact_paths: list[str]) -> tuple[list[dict[s
     return found, missing
 
 
-def _terminal(positive: dict[str, Any], negative: dict[str, Any], missing_artifacts: list[str]) -> tuple[str, str, bool]:
+def _terminal(
+    positive: dict[str, Any], negative: dict[str, Any], missing_artifacts: list[str]
+) -> tuple[str, str, bool]:
     if positive["status"] == "timed_out":
         return "positive_timeout", "E2E_POSITIVE_TIMEOUT", False
     if positive["status"] == "spawn_error" or positive["exit_code"] != 0:
@@ -264,38 +351,42 @@ def _terminal(positive: dict[str, Any], negative: dict[str, Any], missing_artifa
 
 def _mermaid(receipt: dict[str, Any]) -> str:
     marker = receipt["marker"]
-    return "\n".join([
-        "flowchart LR",
-        '  P["Approved positive command"] --> POS["Positive result"]',
-        '  N["Declared negative mutation"] --> NEG["Negative result"]',
-        '  POS --> G["Native E2E Proof Gate"]',
-        '  NEG --> G',
-        f'  G --> R["{marker}"]',
-        '  R --> H["Human release decision remains external"]',
-        "",
-    ])
+    return "\n".join(
+        [
+            "flowchart LR",
+            '  P["Approved positive command"] --> POS["Positive result"]',
+            '  N["Declared negative mutation"] --> NEG["Negative result"]',
+            '  POS --> G["Native E2E Proof Gate"]',
+            "  NEG --> G",
+            f'  G --> R["{marker}"]',
+            '  R --> H["Human release decision remains external"]',
+            "",
+        ]
+    )
 
 
 def _markdown(receipt: dict[str, Any]) -> str:
     manifest = receipt["manifest"]
-    return "\n".join([
-        "# E2E Proof Gate",
-        "",
-        f"- Proof ID: `{manifest['id']}`",
-        f"- Approver: `{manifest['approval']['approved_by']}`",
-        f"- Result: `{receipt['marker']}` ({'passing' if receipt['ok'] else 'non-passing'})",
-        f"- Receipt SHA-256: `{receipt['receipt_sha256']}`",
-        "",
-        "## Command evidence",
-        "",
-        f"- Positive: `{receipt['commands']['positive']['status']}`, exit `{receipt['commands']['positive']['exit_code']}`",
-        f"- Negative: `{receipt['commands']['negative']['status']}`, exit `{receipt['commands']['negative']['exit_code']}`",
-        "",
-        "## Scope limit",
-        "",
-        "This receipt proves only the declared local command pair and captured output digests. It does not enforce egress, isolate a browser or host, approve a merge, or establish production readiness.",
-        "",
-    ])
+    return "\n".join(
+        [
+            "# E2E Proof Gate",
+            "",
+            f"- Proof ID: `{manifest['id']}`",
+            f"- Approver: `{manifest['approval']['approved_by']}`",
+            f"- Result: `{receipt['marker']}` ({'passing' if receipt['ok'] else 'non-passing'})",
+            f"- Receipt SHA-256: `{receipt['receipt_sha256']}`",
+            "",
+            "## Command evidence",
+            "",
+            f"- Positive: `{receipt['commands']['positive']['status']}`, exit `{receipt['commands']['positive']['exit_code']}`",
+            f"- Negative: `{receipt['commands']['negative']['status']}`, exit `{receipt['commands']['negative']['exit_code']}`",
+            "",
+            "## Scope limit",
+            "",
+            "This receipt proves only the declared local command pair and captured output digests. It does not enforce egress, isolate a browser or host, approve a merge, or establish production readiness.",
+            "",
+        ]
+    )
 
 
 def _public(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -306,10 +397,22 @@ def verify_e2e_proof(root: Path, manifest_path: Path) -> dict[str, Any]:
     """Run the exact approved E2E command pair and return a bounded receipt."""
     workspace = Path(root).resolve()
     manifest = validate_e2e_proof_manifest(workspace, manifest_path)
-    cwd = _workspace_path(workspace, manifest["working_directory"], "working_directory", directory=True)
-    positive, positive_captures = _run_command(manifest["positive"]["argv"], cwd=cwd, timeout_seconds=manifest["timeout_seconds"])
-    negative, negative_captures = _run_command(manifest["negative"]["argv"], cwd=cwd, timeout_seconds=manifest["timeout_seconds"])
-    artifacts, missing_artifacts = _artifact_hashes(workspace, manifest["artifact_paths"])
+    cwd = _workspace_path(
+        workspace, manifest["working_directory"], "working_directory", directory=True
+    )
+    positive, positive_captures = _run_command(
+        manifest["positive"]["argv"],
+        cwd=cwd,
+        timeout_seconds=manifest["timeout_seconds"],
+    )
+    negative, negative_captures = _run_command(
+        manifest["negative"]["argv"],
+        cwd=cwd,
+        timeout_seconds=manifest["timeout_seconds"],
+    )
+    artifacts, missing_artifacts = _artifact_hashes(
+        workspace, manifest["artifact_paths"]
+    )
     run_state, marker, ok = _terminal(positive, negative, missing_artifacts)
     core = {
         "schema": E2E_PROOF_RECEIPT_SCHEMA,
@@ -331,20 +434,39 @@ def verify_e2e_proof(root: Path, manifest_path: Path) -> dict[str, Any]:
     receipt = {**core, "receipt_sha256": _sha(core)}
     receipt["mermaid"] = _mermaid(receipt)
     receipt["receipt_markdown"] = _markdown(receipt)
-    receipt["_captures"] = {"positive": positive_captures, "negative": negative_captures}
+    receipt["_captures"] = {
+        "positive": positive_captures,
+        "negative": negative_captures,
+    }
     return receipt
 
 
 def _validate_receipt_shape(value: object) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("schema") != E2E_PROOF_RECEIPT_SCHEMA:
-        _reject("E2E_PROOF_RECEIPT_INVALID", f"a {E2E_PROOF_RECEIPT_SCHEMA} payload is required")
+        _reject(
+            "E2E_PROOF_RECEIPT_INVALID",
+            f"a {E2E_PROOF_RECEIPT_SCHEMA} payload is required",
+        )
     required = {
-        "schema", "marker", "ok", "run_state", "manifest", "commands", "artifacts", "missing_artifacts",
-        "authority", "scope_limits", "receipt_sha256", "mermaid", "receipt_markdown",
+        "schema",
+        "marker",
+        "ok",
+        "run_state",
+        "manifest",
+        "commands",
+        "artifacts",
+        "missing_artifacts",
+        "authority",
+        "scope_limits",
+        "receipt_sha256",
+        "mermaid",
+        "receipt_markdown",
     }
     allowed = required | {"_captures"}
     if not required.issubset(value) or set(value) - allowed:
-        _reject("E2E_PROOF_RECEIPT_INVALID", "receipt has unsupported or missing fields")
+        _reject(
+            "E2E_PROOF_RECEIPT_INVALID", "receipt has unsupported or missing fields"
+        )
     if value["authority"] != AUTHORITY:
         _reject("E2E_PROOF_RECEIPT_INVALID", "E2E Proof authority boundary changed")
     return value
@@ -352,9 +474,17 @@ def _validate_receipt_shape(value: object) -> dict[str, Any]:
 
 def _validate_receipt_hash(value: dict[str, Any]) -> None:
     required = set(value) - {"_captures"}
-    core = {key: value[key] for key in required - {"receipt_sha256", "mermaid", "receipt_markdown"}}
-    if not isinstance(value["receipt_sha256"], str) or not _SHA256.fullmatch(value["receipt_sha256"]):
-        _reject("E2E_PROOF_RECEIPT_INVALID", "receipt_sha256 must be a lowercase SHA-256 digest")
+    core = {
+        key: value[key]
+        for key in required - {"receipt_sha256", "mermaid", "receipt_markdown"}
+    }
+    if not isinstance(value["receipt_sha256"], str) or not _SHA256.fullmatch(
+        value["receipt_sha256"]
+    ):
+        _reject(
+            "E2E_PROOF_RECEIPT_INVALID",
+            "receipt_sha256 must be a lowercase SHA-256 digest",
+        )
     if value["receipt_sha256"] != _sha(core):
         _reject("E2E_PROOF_RECEIPT_INVALID", "receipt SHA-256 does not match")
 
@@ -369,15 +499,28 @@ def _validate_receipt_result(value: dict[str, Any]) -> None:
         "proof_pass": ("E2E_PROOF_PASS", True),
     }
     state = value["run_state"]
-    if not isinstance(value["ok"], bool) or state not in expected or (value["marker"], value["ok"]) != expected[state]:
-        _reject("E2E_PROOF_RECEIPT_INVALID", "marker, ok, and run_state are inconsistent")
+    if (
+        not isinstance(value["ok"], bool)
+        or state not in expected
+        or (value["marker"], value["ok"]) != expected[state]
+    ):
+        _reject(
+            "E2E_PROOF_RECEIPT_INVALID", "marker, ok, and run_state are inconsistent"
+        )
 
 
 def _validate_receipt_views(value: dict[str, Any]) -> None:
-    if not isinstance(value["mermaid"], str) or not isinstance(value["receipt_markdown"], str):
+    if not isinstance(value["mermaid"], str) or not isinstance(
+        value["receipt_markdown"], str
+    ):
         _reject("E2E_PROOF_RECEIPT_INVALID", "receipt views must be strings")
-    if value["mermaid"] != _mermaid(value) or value["receipt_markdown"] != _markdown(value):
-        _reject("E2E_PROOF_RECEIPT_INVALID", "receipt Markdown or Mermaid does not match the receipt facts")
+    if value["mermaid"] != _mermaid(value) or value["receipt_markdown"] != _markdown(
+        value
+    ):
+        _reject(
+            "E2E_PROOF_RECEIPT_INVALID",
+            "receipt Markdown or Mermaid does not match the receipt facts",
+        )
 
 
 def _validate_captures(value: dict[str, Any]) -> None:
@@ -385,7 +528,10 @@ def _validate_captures(value: dict[str, Any]) -> None:
     if captures is None:
         return
     if not isinstance(captures, dict) or set(captures) != {"positive", "negative"}:
-        _reject("E2E_PROOF_RECEIPT_INVALID", "private captures must contain positive and negative command output")
+        _reject(
+            "E2E_PROOF_RECEIPT_INVALID",
+            "private captures must contain positive and negative command output",
+        )
     for name in ("positive", "negative"):
         capture = captures[name]
         if not isinstance(capture, dict) or set(capture) != {"stdout", "stderr"}:
@@ -394,9 +540,15 @@ def _validate_captures(value: dict[str, Any]) -> None:
             try:
                 raw = b64decode(capture[stream].encode("ascii"), validate=True)
             except (AttributeError, ValueError) as exc:
-                raise E2EProofError("E2E_PROOF_RECEIPT_INVALID", f"private {name} {stream} capture is invalid base64") from exc
+                raise E2EProofError(
+                    "E2E_PROOF_RECEIPT_INVALID",
+                    f"private {name} {stream} capture is invalid base64",
+                ) from exc
             if _sha_bytes(raw) != value["commands"][name][f"{stream}_sha256"]:
-                _reject("E2E_PROOF_RECEIPT_INVALID", f"private {name} {stream} capture hash does not match")
+                _reject(
+                    "E2E_PROOF_RECEIPT_INVALID",
+                    f"private {name} {stream} capture hash does not match",
+                )
 
 
 def validate_e2e_proof_receipt(value: object) -> dict[str, Any]:
@@ -421,7 +573,10 @@ def write_e2e_proof_artifacts(receipt: dict, out_dir: Path) -> dict:
     receipt = validate_e2e_proof_receipt(receipt)
     captures = receipt.get("_captures")
     if captures is None:
-        raise E2EProofError("E2E_PROOF_CAPTURE_UNAVAILABLE", "captured output is unavailable; run the proof in this process before writing artifacts")
+        raise E2EProofError(
+            "E2E_PROOF_CAPTURE_UNAVAILABLE",
+            "captured output is unavailable; run the proof in this process before writing artifacts",
+        )
     destination = Path(out_dir).resolve()
     destination.mkdir(parents=True, exist_ok=True)
     stem = f"e2e-proof-{receipt['receipt_sha256'][:12]}"
@@ -436,7 +591,10 @@ def write_e2e_proof_artifacts(receipt: dict, out_dir: Path) -> dict:
     }
     public = _public(receipt)
     contents = {
-        "json": json.dumps(public, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n",
+        "json": json.dumps(public, ensure_ascii=False, indent=2, sort_keys=True).encode(
+            "utf-8"
+        )
+        + b"\n",
         "markdown": receipt["receipt_markdown"].encode("utf-8"),
         "mermaid": receipt["mermaid"].encode("utf-8"),
         "positive_stdout": b64decode(captures["positive"]["stdout"].encode("ascii")),
@@ -444,7 +602,9 @@ def write_e2e_proof_artifacts(receipt: dict, out_dir: Path) -> dict:
         "negative_stdout": b64decode(captures["negative"]["stdout"].encode("ascii")),
         "negative_stderr": b64decode(captures["negative"]["stderr"].encode("ascii")),
     }
-    digests = {name: _atomic_bytes(paths[name], content) for name, content in contents.items()}
+    digests = {
+        name: _atomic_bytes(paths[name], content) for name, content in contents.items()
+    }
     return {
         "marker": "E2E_PROOF_ARTIFACTS_WRITTEN",
         "paths": {name: str(path) for name, path in paths.items()},

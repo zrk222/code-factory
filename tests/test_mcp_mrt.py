@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 
 import factoryline.mcp as mcp
-from factoryline.mcp_mrt import McpMrtError, release_gate_completed, release_gate_input_required
+from factoryline.mcp_mrt import (
+    McpMrtError,
+    release_gate_completed,
+    release_gate_input_required,
+)
 
 
 def test_release_gate_input_required_is_deterministic_and_authority_free() -> None:
@@ -11,7 +15,13 @@ def test_release_gate_input_required_is_deterministic_and_authority_free() -> No
         "feature": "payments",
         "state": "LOCAL_EVIDENCE_BLOCKED",
         "classification": "local_evidence_failure",
-        "blockers": [{"source": "strict_release_verification", "code": "RELEASE_CONTRACT_MISSING", "detail": "contract absent"}],
+        "blockers": [
+            {
+                "source": "strict_release_verification",
+                "code": "RELEASE_CONTRACT_MISSING",
+                "detail": "contract absent",
+            }
+        ],
         "next_action": {"action": "create_or_restore_release_contract"},
     }
     first = release_gate_input_required(card)
@@ -28,7 +38,11 @@ def test_release_gate_input_required_is_deterministic_and_authority_free() -> No
 
 
 def test_release_gate_input_required_preserves_empty_proof_debt() -> None:
-    card = {"feature": "payments", "state": "EXTERNAL_GATES_UNOBSERVED", "next_action": {"action": "review_external_publish_gates"}}
+    card = {
+        "feature": "payments",
+        "state": "EXTERNAL_GATES_UNOBSERVED",
+        "next_action": {"action": "review_external_publish_gates"},
+    }
     result = release_gate_input_required(card)
     assert result["context"]["hasUnresolvedProofDebt"] is False
     assert result["context"]["proofDebt"] == []
@@ -39,22 +53,26 @@ def test_release_gate_input_required_projects_explicit_failed_lane() -> None:
     card = {
         "feature": "payments",
         "state": "LOCAL_EVIDENCE_BLOCKED",
-        "blockers": [{
+        "blockers": [
+            {
+                "lane": "authorization_tenant_isolation",
+                "rejectionCondition": "CF-RULE-AUTH-04",
+                "evidenceDigest": "sha256:evidence_456",
+                "riskSeverity": "HIGH",
+                "code": "AUTH_TENANT_SCOPE",
+            }
+        ],
+    }
+    result = release_gate_input_required(card)
+    assert "1 failed audit lane(s)" in result["prompt"]
+    assert result["context"]["failedLanes"] == [
+        {
             "lane": "authorization_tenant_isolation",
             "rejectionCondition": "CF-RULE-AUTH-04",
             "evidenceDigest": "sha256:evidence_456",
             "riskSeverity": "HIGH",
-            "code": "AUTH_TENANT_SCOPE",
-        }],
-    }
-    result = release_gate_input_required(card)
-    assert "1 failed audit lane(s)" in result["prompt"]
-    assert result["context"]["failedLanes"] == [{
-        "lane": "authorization_tenant_isolation",
-        "rejectionCondition": "CF-RULE-AUTH-04",
-        "evidenceDigest": "sha256:evidence_456",
-        "riskSeverity": "HIGH",
-    }]
+        }
+    ]
 
 
 def test_release_gate_completed_is_deterministic_and_authority_free() -> None:
@@ -117,13 +135,17 @@ def test_release_gate_completed_requires_proof_debt_acknowledgement() -> None:
 def test_release_gate_completed_rejects_invalid_input_and_binding_mismatch() -> None:
     card = {"feature": "payments", "state": "EXTERNAL_GATES_UNOBSERVED"}
     with pytest.raises(McpMrtError, match="decision"):
-        release_gate_completed(card, {"decision": "INVALID", "reviewerIdentity": "lead"})
+        release_gate_completed(
+            card, {"decision": "INVALID", "reviewerIdentity": "lead"}
+        )
     with pytest.raises(McpMrtError) as exc_info:
         release_gate_completed(
             card,
             {"decision": "REJECT_RELEASE", "reviewerIdentity": "lead"},
             tool_call_id="release-gate:wrong",
-            proof_card_hash=release_gate_input_required(card)["context"]["proofCardHash"],
+            proof_card_hash=release_gate_input_required(card)["context"][
+                "proofCardHash"
+            ],
         )
     assert exc_info.value.marker == "MCP2_RELEASE_GATE_BINDING_MISMATCH"
 
@@ -140,17 +162,22 @@ def test_release_gate_completed_requires_both_stateless_bindings() -> None:
     assert exc_info.value.marker == "MCP2_RELEASE_GATE_BINDING_MISMATCH"
 
 
-def test_factory_release_decision_bridges_both_stateless_mrt_legs(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_factory_release_decision_bridges_both_stateless_mrt_legs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     card = {"feature": "payments", "state": "EXTERNAL_GATES_UNOBSERVED"}
     monkeypatch.setattr(mcp, "release_decision_card", lambda _root, _feature: card)
     challenge = mcp._release_decision_status(tmp_path, {"feature": "payments"})
     challenge_payload = challenge["mcp2"]
-    completed = mcp._release_decision_status(tmp_path, {
-        "feature": "payments",
-        "tool_call_id": challenge_payload["toolCallId"],
-        "proof_card_hash": challenge_payload["context"]["proofCardHash"],
-        "human_input": {"decision": "REJECT_RELEASE", "reviewerIdentity": "lead"},
-    })
+    completed = mcp._release_decision_status(
+        tmp_path,
+        {
+            "feature": "payments",
+            "tool_call_id": challenge_payload["toolCallId"],
+            "proof_card_hash": challenge_payload["context"]["proofCardHash"],
+            "human_input": {"decision": "REJECT_RELEASE", "reviewerIdentity": "lead"},
+        },
+    )
     assert challenge["marker"] == "MCP_RELEASE_DECISION_READ_ONLY"
     assert completed["marker"] == "MCP_RELEASE_DECISION_COMPLETED"
     assert completed["mcp2"]["status"] == "RELEASE_REJECTED"

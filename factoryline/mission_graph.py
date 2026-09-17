@@ -4,6 +4,7 @@ The stdlib SQLite store is authoritative.  LangGraph is an optional adapter
 that checkpoints calls into the same transition validator; a framework
 checkpoint never proves that a Code Factory transition is valid.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -29,11 +30,19 @@ USAGE_SCHEMA = "factory.mission.usage.v1"
 MAX_EVENT_BYTES = 65536
 MAX_TEXT = 120
 QUALITY_TIERS = ("economy", "balanced", "frontier")
-ACTIVE_STATES = frozenset({
-    "planned", "deferred", "creator_running", "independent_verification",
-    "correction_required", "paused_for_review", "completion_receipted",
-    "awaiting_release_authority", "release_decided",
-})
+ACTIVE_STATES = frozenset(
+    {
+        "planned",
+        "deferred",
+        "creator_running",
+        "independent_verification",
+        "correction_required",
+        "paused_for_review",
+        "completion_receipted",
+        "awaiting_release_authority",
+        "release_decided",
+    }
+)
 TERMINAL_STATES = frozenset({"rejected", "budget_exhausted", "outcome_observed"})
 
 
@@ -68,10 +77,16 @@ def _now() -> str:
 def _canonical(value: object) -> bytes:
     try:
         return json.dumps(
-            value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
         ).encode("utf-8")
     except (TypeError, ValueError) as exc:
-        raise MissionGraphError("MISSION_GRAPH_EVENT_INVALID", f"event must be canonical JSON: {exc}") from exc
+        raise MissionGraphError(
+            "MISSION_GRAPH_EVENT_INVALID", f"event must be canonical JSON: {exc}"
+        ) from exc
 
 
 def _sha_bytes(value: bytes) -> str:
@@ -86,16 +101,23 @@ def _load_json(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise MissionGraphError("MISSION_GRAPH_RECEIPT_INVALID", f"cannot read JSON receipt {path}: {exc}") from exc
+        raise MissionGraphError(
+            "MISSION_GRAPH_RECEIPT_INVALID", f"cannot read JSON receipt {path}: {exc}"
+        ) from exc
     if not isinstance(value, dict):
-        raise MissionGraphError("MISSION_GRAPH_RECEIPT_INVALID", f"receipt must be a JSON object: {path}")
+        raise MissionGraphError(
+            "MISSION_GRAPH_RECEIPT_INVALID", f"receipt must be a JSON object: {path}"
+        )
     return value
 
 
 def _bounded_text(value: str, field: str) -> str:
     text = value.strip() if isinstance(value, str) else ""
     if not text or len(text) > MAX_TEXT:
-        raise MissionGraphError("MISSION_GRAPH_EVENT_INVALID", f"{field} must contain 1-{MAX_TEXT} characters")
+        raise MissionGraphError(
+            "MISSION_GRAPH_EVENT_INVALID",
+            f"{field} must contain 1-{MAX_TEXT} characters",
+        )
     return text
 
 
@@ -104,7 +126,10 @@ def _reject_sensitive_payload(value: Any, path: str = "payload") -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             if sensitive.search(str(key)):
-                raise MissionGraphError("MISSION_GRAPH_SENSITIVE_PAYLOAD", f"sensitive field is forbidden: {path}.{key}")
+                raise MissionGraphError(
+                    "MISSION_GRAPH_SENSITIVE_PAYLOAD",
+                    f"sensitive field is forbidden: {path}.{key}",
+                )
             _reject_sensitive_payload(item, f"{path}.{key}")
     elif isinstance(value, list):
         for index, item in enumerate(value):
@@ -125,7 +150,9 @@ def _mission(root: Path, mission_path: Path) -> tuple[Path, dict[str, Any]]:
     path = _resolve_under(root, mission_path, "MISSION_GRAPH_MISSION_OUTSIDE_ROOT")
     verification = verify_mission(path)
     if not verification["valid"]:
-        raise MissionGraphError("MISSION_GRAPH_MISSION_INVALID", "; ".join(verification["errors"]))
+        raise MissionGraphError(
+            "MISSION_GRAPH_MISSION_INVALID", "; ".join(verification["errors"])
+        )
     mission = _load_json(path)
     return path, mission
 
@@ -199,12 +226,18 @@ def _milestones(mission: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _readiness(mission: dict[str, Any]) -> dict[str, Any]:
-    gates = {str(item).lower() for item in mission.get("slice", {}).get("required_gates", [])}
+    gates = {
+        str(item).lower() for item in mission.get("slice", {}).get("required_gates", [])
+    }
     criteria = mission.get("completion_contract", {}).get("criteria", [])
     joined = " ".join([*gates, *(str(item.get("id", "")) for item in criteria)]).lower()
     checks = {
-        "tests": any(word in joined for word in ("test", "unit", "integration", "browser")),
-        "lint_or_static_analysis": any(word in joined for word in ("lint", "static", "type", "architecture")),
+        "tests": any(
+            word in joined for word in ("test", "unit", "integration", "browser")
+        ),
+        "lint_or_static_analysis": any(
+            word in joined for word in ("lint", "static", "type", "architecture")
+        ),
         "acceptance_validators": bool(criteria),
     }
     ready = all(checks.values())
@@ -237,8 +270,12 @@ def _row_state(row: sqlite3.Row, mission: dict[str, Any]) -> dict[str, Any]:
             "failed": sum(item["status"] == "failed" for item in milestones),
             "total": len(milestones),
         },
-        "plan_receipt": json.loads(row["plan_receipt_json"]) if row["plan_receipt_json"] else None,
-        "context_receipt": json.loads(row["context_receipt_json"]) if row["context_receipt_json"] else None,
+        "plan_receipt": json.loads(row["plan_receipt_json"])
+        if row["plan_receipt_json"]
+        else None,
+        "context_receipt": json.loads(row["context_receipt_json"])
+        if row["context_receipt_json"]
+        else None,
         "event_tip": row["event_tip"],
         "readiness": _readiness(mission),
         "authority": {
@@ -249,16 +286,22 @@ def _row_state(row: sqlite3.Row, mission: dict[str, Any]) -> dict[str, Any]:
             "external_message": False,
         },
         "markers": [
-            "MISSION_GRAPH_RESUMABLE", "MISSION_GRAPH_MILESTONES_BOUND",
-            "MISSION_GRAPH_RELEASE_AUTHORITY_SEPARATE", "MISSION_GRAPH_READINESS_GATED",
+            "MISSION_GRAPH_RESUMABLE",
+            "MISSION_GRAPH_MILESTONES_BOUND",
+            "MISSION_GRAPH_RELEASE_AUTHORITY_SEPARATE",
+            "MISSION_GRAPH_READINESS_GATED",
         ],
     }
 
 
 def _thread(connection: sqlite3.Connection, mission_id: str) -> sqlite3.Row:
-    row = connection.execute("SELECT * FROM graph_threads WHERE thread_id=?", (mission_id,)).fetchone()
+    row = connection.execute(
+        "SELECT * FROM graph_threads WHERE thread_id=?", (mission_id,)
+    ).fetchone()
     if row is None:
-        raise MissionGraphError("MISSION_GRAPH_NOT_INITIALIZED", "run `factory langgraph init` first")
+        raise MissionGraphError(
+            "MISSION_GRAPH_NOT_INITIALIZED", "run `factory langgraph init` first"
+        )
     return row
 
 
@@ -270,16 +313,32 @@ def init_mission_graph(mission_path: Path, root: Path) -> dict:
     try:
         connection.execute("BEGIN IMMEDIATE")
         existing = connection.execute(
-            "SELECT * FROM graph_threads WHERE thread_id=?", (mission["id"],),
+            "SELECT * FROM graph_threads WHERE thread_id=?",
+            (mission["id"],),
         ).fetchone()
         if existing is not None:
-            if existing["mission_sha"] != mission["mission_sha256"] or existing["mission_file_sha"] != _sha_path(mission_path):
-                raise MissionGraphError("MISSION_GRAPH_DRIFT", "stored mission binding differs from the current mission")
+            if existing["mission_sha"] != mission["mission_sha256"] or existing[
+                "mission_file_sha"
+            ] != _sha_path(mission_path):
+                raise MissionGraphError(
+                    "MISSION_GRAPH_DRIFT",
+                    "stored mission binding differs from the current mission",
+                )
             connection.commit()
             result = _row_state(existing, mission)
-            return {**result, "database": str(database), "idempotent": True, "marker": "MISSION_GRAPH_IDEMPOTENT"}
+            return {
+                **result,
+                "database": str(database),
+                "idempotent": True,
+                "marker": "MISSION_GRAPH_IDEMPOTENT",
+            }
         timestamp = _now()
-        usage = {"tokens": None, "cost_usd": None, "wall_seconds": None, "evidence_class": "unknown"}
+        usage = {
+            "tokens": None,
+            "cost_usd": None,
+            "wall_seconds": None,
+            "evidence_class": "unknown",
+        }
         connection.execute(
             """INSERT INTO graph_threads
                (thread_id,schema_name,mission_path,mission_file_sha,mission_sha,state,version,attempts,
@@ -287,9 +346,15 @@ def init_mission_graph(mission_path: Path, root: Path) -> dict:
                 context_receipt_json,event_tip,created_at,updated_at)
                VALUES (?,?,?,?,?,'planned',0,0,NULL,NULL,NULL,?,?,NULL,NULL,'',?,?)""",
             (
-                mission["id"], GRAPH_SCHEMA, str(mission_path), _sha_path(mission_path),
-                mission["mission_sha256"], json.dumps(usage, sort_keys=True),
-                json.dumps(_milestones(mission), sort_keys=True), timestamp, timestamp,
+                mission["id"],
+                GRAPH_SCHEMA,
+                str(mission_path),
+                _sha_path(mission_path),
+                mission["mission_sha256"],
+                json.dumps(usage, sort_keys=True),
+                json.dumps(_milestones(mission), sort_keys=True),
+                timestamp,
+                timestamp,
             ),
         )
         connection.commit()
@@ -300,7 +365,8 @@ def init_mission_graph(mission_path: Path, root: Path) -> dict:
             "database": str(database),
             "idempotent": False,
             "marker": "MISSION_GRAPH_INITIALIZED",
-            "markers": result["markers"] + ["MISSION_GRAPH_INITIALIZED", "MISSION_GRAPH_HASH_CHAIN_BOUND"],
+            "markers": result["markers"]
+            + ["MISSION_GRAPH_INITIALIZED", "MISSION_GRAPH_HASH_CHAIN_BOUND"],
         }
     except Exception:
         connection.rollback()
@@ -309,24 +375,45 @@ def init_mission_graph(mission_path: Path, root: Path) -> dict:
         connection.close()
 
 
-def _bound_receipt(root: Path, receipt_path: Path | None, mission_id: str) -> tuple[Path, dict[str, Any], str]:
+def _bound_receipt(
+    root: Path, receipt_path: Path | None, mission_id: str
+) -> tuple[Path, dict[str, Any], str]:
     if receipt_path is None:
-        raise MissionGraphError("MISSION_GRAPH_RECEIPT_REQUIRED", "this transition requires a local receipt")
+        raise MissionGraphError(
+            "MISSION_GRAPH_RECEIPT_REQUIRED", "this transition requires a local receipt"
+        )
     path = _resolve_under(root, receipt_path, "MISSION_GRAPH_RECEIPT_OUTSIDE_ROOT")
     if not path.is_file() or path.stat().st_size > MAX_EVENT_BYTES:
-        raise MissionGraphError("MISSION_GRAPH_RECEIPT_INVALID", f"receipt must be a file of at most {MAX_EVENT_BYTES} bytes")
+        raise MissionGraphError(
+            "MISSION_GRAPH_RECEIPT_INVALID",
+            f"receipt must be a file of at most {MAX_EVENT_BYTES} bytes",
+        )
     receipt = _load_json(path)
     if not isinstance(receipt.get("schema"), str) or not receipt["schema"]:
-        raise MissionGraphError("MISSION_GRAPH_RECEIPT_INVALID", "receipt schema is required")
+        raise MissionGraphError(
+            "MISSION_GRAPH_RECEIPT_INVALID", "receipt schema is required"
+        )
     receipt_mission = receipt.get("mission_id")
     if receipt_mission is not None and receipt_mission != mission_id:
-        raise MissionGraphError("MISSION_GRAPH_RECEIPT_INVALID", "receipt mission_id mismatch")
+        raise MissionGraphError(
+            "MISSION_GRAPH_RECEIPT_INVALID", "receipt mission_id mismatch"
+        )
     return path, receipt, _sha_path(path)
 
 
-def _decision_receipt(receipt: dict[str, Any], mission: dict[str, Any], event: str, actor: str) -> None:
-    expected = {"approve": "approved_execution", "defer": "deferred", "reject": "rejected"}[event]
-    core = {key: value for key, value in receipt.items() if key not in {"decision_sha256", "generated_at", "path"}}
+def _decision_receipt(
+    receipt: dict[str, Any], mission: dict[str, Any], event: str, actor: str
+) -> None:
+    expected = {
+        "approve": "approved_execution",
+        "defer": "deferred",
+        "reject": "rejected",
+    }[event]
+    core = {
+        key: value
+        for key, value in receipt.items()
+        if key not in {"decision_sha256", "generated_at", "path"}
+    }
     if (
         receipt.get("schema") != "factory.mission.decision.v1"
         or receipt.get("mission_id") != mission["id"]
@@ -335,33 +422,61 @@ def _decision_receipt(receipt: dict[str, Any], mission: dict[str, Any], event: s
         or _sha_bytes(_canonical(core)) != receipt.get("decision_sha256")
         or receipt.get("mission", {}).get("mission_sha256") != mission["mission_sha256"]
     ):
-        raise MissionGraphError("MISSION_GRAPH_OWNER_DECISION_INVALID", "owner decision receipt does not verify for this event")
+        raise MissionGraphError(
+            "MISSION_GRAPH_OWNER_DECISION_INVALID",
+            "owner decision receipt does not verify for this event",
+        )
 
 
-def _completion_receipt(path: Path, receipt: dict[str, Any], mission: dict[str, Any], actor: str, creator_id: str | None) -> None:
+def _completion_receipt(
+    path: Path,
+    receipt: dict[str, Any],
+    mission: dict[str, Any],
+    actor: str,
+    creator_id: str | None,
+) -> None:
     verification = verify_mission_completion(path)
     if not verification["valid"]:
-        raise MissionGraphError("MISSION_GRAPH_COMPLETION_INVALID", "; ".join(verification["errors"]))
+        raise MissionGraphError(
+            "MISSION_GRAPH_COMPLETION_INVALID", "; ".join(verification["errors"])
+        )
     if (
         receipt.get("mission", {}).get("mission_sha256") != mission["mission_sha256"]
         or receipt.get("verifier_id") != actor
         or receipt.get("creator_id") != creator_id
         or receipt.get("creator_id") == receipt.get("verifier_id")
     ):
-        raise MissionGraphError("MISSION_GRAPH_COMPLETION_INVALID", "completion identities or mission binding do not match the graph")
+        raise MissionGraphError(
+            "MISSION_GRAPH_COMPLETION_INVALID",
+            "completion identities or mission binding do not match the graph",
+        )
 
 
 def _usage(receipt: dict[str, Any], mission_id: str) -> dict[str, Any]:
     if receipt.get("schema") != USAGE_SCHEMA or receipt.get("mission_id") != mission_id:
-        raise MissionGraphError("MISSION_GRAPH_USAGE_INVALID", f"usage receipt must use {USAGE_SCHEMA} and the current mission_id")
+        raise MissionGraphError(
+            "MISSION_GRAPH_USAGE_INVALID",
+            f"usage receipt must use {USAGE_SCHEMA} and the current mission_id",
+        )
     evidence_class = receipt.get("evidence_class")
     if evidence_class not in {"measured", "modeled", "unknown"}:
-        raise MissionGraphError("MISSION_GRAPH_USAGE_INVALID", "usage evidence_class must be measured, modeled, or unknown")
+        raise MissionGraphError(
+            "MISSION_GRAPH_USAGE_INVALID",
+            "usage evidence_class must be measured, modeled, or unknown",
+        )
     values: dict[str, Any] = {"evidence_class": evidence_class}
     for name in ("tokens", "cost_usd", "wall_seconds"):
         value = receipt.get(name)
-        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0):
-            raise MissionGraphError("MISSION_GRAPH_USAGE_INVALID", f"{name} must be a finite non-negative number or null")
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            raise MissionGraphError(
+                "MISSION_GRAPH_USAGE_INVALID",
+                f"{name} must be a finite non-negative number or null",
+            )
         values[name] = value
     return values
 
@@ -390,19 +505,43 @@ def _transition(state: str, event: str) -> tuple[str, frozenset[str]]:
         ("planned", "reject"): ("rejected", frozenset({"owner"})),
         ("deferred", "approve"): ("creator_running", frozenset({"owner"})),
         ("deferred", "reject"): ("rejected", frozenset({"owner"})),
-        ("creator_running", "candidate_ready"): ("independent_verification", frozenset({"worker"})),
+        ("creator_running", "candidate_ready"): (
+            "independent_verification",
+            frozenset({"worker"}),
+        ),
         ("creator_running", "pause"): ("paused_for_review", frozenset({"owner"})),
-        ("independent_verification", "validation_failed"): ("correction_required", frozenset({"validator"})),
-        ("independent_verification", "validation_passed"): ("completion_receipted", frozenset({"validator"})),
-        ("independent_verification", "pause"): ("paused_for_review", frozenset({"owner"})),
+        ("independent_verification", "validation_failed"): (
+            "correction_required",
+            frozenset({"validator"}),
+        ),
+        ("independent_verification", "validation_passed"): (
+            "completion_receipted",
+            frozenset({"validator"}),
+        ),
+        ("independent_verification", "pause"): (
+            "paused_for_review",
+            frozenset({"owner"}),
+        ),
         ("correction_required", "retry"): ("creator_running", frozenset({"owner"})),
         ("correction_required", "pause"): ("paused_for_review", frozenset({"owner"})),
-        ("paused_for_review", "plan_revised"): ("paused_for_review", frozenset({"owner"})),
+        ("paused_for_review", "plan_revised"): (
+            "paused_for_review",
+            frozenset({"owner"}),
+        ),
         ("paused_for_review", "resume"): ("creator_running", frozenset({"owner"})),
         ("paused_for_review", "reject"): ("rejected", frozenset({"owner"})),
-        ("completion_receipted", "release_requested"): ("awaiting_release_authority", frozenset({"owner"})),
-        ("awaiting_release_authority", "release_decided"): ("release_decided", frozenset({"owner"})),
-        ("release_decided", "outcome_recorded"): ("outcome_observed", frozenset({"owner"})),
+        ("completion_receipted", "release_requested"): (
+            "awaiting_release_authority",
+            frozenset({"owner"}),
+        ),
+        ("awaiting_release_authority", "release_decided"): (
+            "release_decided",
+            frozenset({"owner"}),
+        ),
+        ("release_decided", "outcome_recorded"): (
+            "outcome_observed",
+            frozenset({"owner"}),
+        ),
     }
     if event in {"usage_recorded", "context_refreshed"} and state in ACTIVE_STATES:
         return state, frozenset({"owner", "worker", "validator", "operator"})
@@ -415,15 +554,25 @@ def _transition(state: str, event: str) -> tuple[str, frozenset[str]]:
         ) from exc
 
 
-def _verify_chain(connection: sqlite3.Connection, row: sqlite3.Row, mission_path: Path, mission: dict[str, Any]) -> list[str]:
+def _verify_chain(
+    connection: sqlite3.Connection,
+    row: sqlite3.Row,
+    mission_path: Path,
+    mission: dict[str, Any],
+) -> list[str]:
     errors: list[str] = []
-    if row["mission_path"] != str(mission_path) or row["mission_file_sha"] != _sha_path(mission_path) or row["mission_sha"] != mission["mission_sha256"]:
+    if (
+        row["mission_path"] != str(mission_path)
+        or row["mission_file_sha"] != _sha_path(mission_path)
+        or row["mission_sha"] != mission["mission_sha256"]
+    ):
         errors.append("mission binding drift")
     previous = ""
     expected_version = 1
     last_state = "planned"
     events = connection.execute(
-        "SELECT * FROM graph_events WHERE thread_id=? ORDER BY version", (mission["id"],),
+        "SELECT * FROM graph_events WHERE thread_id=? ORDER BY version",
+        (mission["id"],),
     ).fetchall()
     for stored in events:
         try:
@@ -432,16 +581,24 @@ def _verify_chain(connection: sqlite3.Connection, row: sqlite3.Row, mission_path
             errors.append(f"event {expected_version} JSON invalid")
             break
         calculated = _sha_bytes(_canonical(core))
-        if stored["version"] != expected_version or core.get("version") != expected_version:
+        if (
+            stored["version"] != expected_version
+            or core.get("version") != expected_version
+        ):
             errors.append(f"event version discontinuity at {expected_version}")
         if core.get("previous_sha256") != previous or stored["event_sha"] != calculated:
             errors.append(f"event hash-chain drift at {expected_version}")
         if core.get("source_state") != last_state:
             errors.append(f"event source-state drift at {expected_version}")
-        receipt_ref = core.get("receipt") if isinstance(core.get("receipt"), dict) else {}
+        receipt_ref = (
+            core.get("receipt") if isinstance(core.get("receipt"), dict) else {}
+        )
         calculated_intent = _intent(
-            core.get("event", ""), core.get("actor", ""), core.get("role", ""),
-            core.get("payload", {}), receipt_ref.get("sha256"),
+            core.get("event", ""),
+            core.get("actor", ""),
+            core.get("role", ""),
+            core.get("payload", {}),
+            receipt_ref.get("sha256"),
         )
         if stored["intent_sha"] != calculated_intent:
             errors.append(f"event intent drift at {expected_version}")
@@ -452,92 +609,207 @@ def _verify_chain(connection: sqlite3.Connection, row: sqlite3.Row, mission_path
         previous = calculated
         last_state = core.get("target_state", "")
         expected_version += 1
-    if row["version"] != len(events) or row["event_tip"] != previous or row["state"] != last_state:
+    if (
+        row["version"] != len(events)
+        or row["event_tip"] != previous
+        or row["state"] != last_state
+    ):
         errors.append("thread head differs from event chain")
     return errors
 
 
-def _intent(event: str, actor: str, role: str, payload: dict[str, Any], receipt_sha: str | None) -> str:
-    return _sha_bytes(_canonical({
-        "event": event, "actor": actor, "role": role, "payload": payload, "receipt_sha256": receipt_sha,
-    }))
+def _intent(
+    event: str, actor: str, role: str, payload: dict[str, Any], receipt_sha: str | None
+) -> str:
+    return _sha_bytes(
+        _canonical(
+            {
+                "event": event,
+                "actor": actor,
+                "role": role,
+                "payload": payload,
+                "receipt_sha256": receipt_sha,
+            }
+        )
+    )
 
 
-def _guard_actor(row: sqlite3.Row, mission: dict[str, Any], event: str,
-                 actor: str, role: str, roles: frozenset[str]) -> None:
+def _guard_actor(
+    row: sqlite3.Row,
+    mission: dict[str, Any],
+    event: str,
+    actor: str,
+    role: str,
+    roles: frozenset[str],
+) -> None:
     if role not in roles:
-        raise MissionGraphError("MISSION_GRAPH_ROLE_INVALID", f"role {role!r} cannot submit {event!r}")
+        raise MissionGraphError(
+            "MISSION_GRAPH_ROLE_INVALID", f"role {role!r} cannot submit {event!r}"
+        )
     if role == "owner" and actor != mission["owner"]:
-        raise MissionGraphError("MISSION_GRAPH_OWNER_MISMATCH", "owner actor must match the mission owner")
-    if event in {"validation_failed", "validation_passed"} and actor == row["creator_id"]:
-        raise MissionGraphError("MISSION_GRAPH_VERIFIER_NOT_DISTINCT", "worker and validator identities must differ")
+        raise MissionGraphError(
+            "MISSION_GRAPH_OWNER_MISMATCH", "owner actor must match the mission owner"
+        )
+    if (
+        event in {"validation_failed", "validation_passed"}
+        and actor == row["creator_id"]
+    ):
+        raise MissionGraphError(
+            "MISSION_GRAPH_VERIFIER_NOT_DISTINCT",
+            "worker and validator identities must differ",
+        )
 
 
-def _guard_decision_candidate(receipt: dict[str, Any], mission: dict[str, Any],
-                              event: str, actor: str) -> None:
+def _guard_decision_candidate(
+    receipt: dict[str, Any], mission: dict[str, Any], event: str, actor: str
+) -> None:
     if event in {"approve", "defer", "reject"}:
         _decision_receipt(receipt, mission, event, actor)
-    if event == "candidate_ready" and receipt.get("schema") != "factory.mission.candidate.v1":
-        raise MissionGraphError("MISSION_GRAPH_CANDIDATE_INVALID", "candidate receipt schema must be factory.mission.candidate.v1")
+    if (
+        event == "candidate_ready"
+        and receipt.get("schema") != "factory.mission.candidate.v1"
+    ):
+        raise MissionGraphError(
+            "MISSION_GRAPH_CANDIDATE_INVALID",
+            "candidate receipt schema must be factory.mission.candidate.v1",
+        )
 
 
-def _guard_validation(row: sqlite3.Row, receipt_file: Path, receipt: dict[str, Any],
-                      mission: dict[str, Any], event: str, actor: str,
-                      payload: dict[str, Any]) -> None:
+def _guard_validation(
+    row: sqlite3.Row,
+    receipt_file: Path,
+    receipt: dict[str, Any],
+    mission: dict[str, Any],
+    event: str,
+    actor: str,
+    payload: dict[str, Any],
+) -> None:
     if event == "validation_passed":
         _completion_receipt(receipt_file, receipt, mission, actor, row["creator_id"])
     if event != "validation_failed":
         return
     criterion_id = payload.get("criterion_id")
-    if receipt.get("schema") != "factory.mission.validation-failure.v1" or not criterion_id:
-        raise MissionGraphError("MISSION_GRAPH_VALIDATION_INVALID", "failed validation requires its schema and criterion_id")
+    if (
+        receipt.get("schema") != "factory.mission.validation-failure.v1"
+        or not criterion_id
+    ):
+        raise MissionGraphError(
+            "MISSION_GRAPH_VALIDATION_INVALID",
+            "failed validation requires its schema and criterion_id",
+        )
     if criterion_id not in {item["id"] for item in json.loads(row["milestones_json"])}:
-        raise MissionGraphError("MISSION_GRAPH_VALIDATION_INVALID", "criterion_id is not a mission milestone")
+        raise MissionGraphError(
+            "MISSION_GRAPH_VALIDATION_INVALID",
+            "criterion_id is not a mission milestone",
+        )
 
 
-def _latest_correction_binding(connection: sqlite3.Connection, mission_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+def _latest_correction_binding(
+    connection: sqlite3.Connection, mission_id: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return the candidate and failure events that bind the current correction."""
-    events = [json.loads(item["event_json"]) for item in connection.execute(
-        "SELECT event_json FROM graph_events WHERE thread_id=? ORDER BY version", (mission_id,),
-    ).fetchall()]
-    failure_index = next((index for index in range(len(events) - 1, -1, -1) if events[index].get("event") == "validation_failed"), None)
+    events = [
+        json.loads(item["event_json"])
+        for item in connection.execute(
+            "SELECT event_json FROM graph_events WHERE thread_id=? ORDER BY version",
+            (mission_id,),
+        ).fetchall()
+    ]
+    failure_index = next(
+        (
+            index
+            for index in range(len(events) - 1, -1, -1)
+            if events[index].get("event") == "validation_failed"
+        ),
+        None,
+    )
     if failure_index is None:
-        raise MissionGraphError("MISSION_GRAPH_PROOF_DELTA_INVALID", "retry has no preceding validation failure")
-    candidate = next((item for item in reversed(events[:failure_index]) if item.get("event") == "candidate_ready"), None)
+        raise MissionGraphError(
+            "MISSION_GRAPH_PROOF_DELTA_INVALID",
+            "retry has no preceding validation failure",
+        )
+    candidate = next(
+        (
+            item
+            for item in reversed(events[:failure_index])
+            if item.get("event") == "candidate_ready"
+        ),
+        None,
+    )
     if candidate is None:
-        raise MissionGraphError("MISSION_GRAPH_PROOF_DELTA_INVALID", "retry has no candidate bound before the validation failure")
+        raise MissionGraphError(
+            "MISSION_GRAPH_PROOF_DELTA_INVALID",
+            "retry has no candidate bound before the validation failure",
+        )
     return candidate, events[failure_index]
 
 
-def _guard_retry_review(connection: sqlite3.Connection, row: sqlite3.Row, root: Path,
-                        receipt_file: Path, receipt: dict[str, Any], event: str,
-                        payload: dict[str, Any]) -> None:
+def _guard_retry_review(
+    connection: sqlite3.Connection,
+    row: sqlite3.Row,
+    root: Path,
+    receipt_file: Path,
+    receipt: dict[str, Any],
+    event: str,
+    payload: dict[str, Any],
+) -> None:
     if event == "retry" and payload.get("fresh_context") is not True:
-        raise MissionGraphError("MISSION_GRAPH_FRESH_CONTEXT_REQUIRED", "retry must attest fresh_context=true")
+        raise MissionGraphError(
+            "MISSION_GRAPH_FRESH_CONTEXT_REQUIRED",
+            "retry must attest fresh_context=true",
+        )
     if event == "retry":
         if receipt.get("schema") != "factory.mission.proof-delta.v1":
-            raise MissionGraphError("MISSION_GRAPH_PROOF_DELTA_REQUIRED", "retry requires a factory.mission.proof-delta.v1 receipt")
+            raise MissionGraphError(
+                "MISSION_GRAPH_PROOF_DELTA_REQUIRED",
+                "retry requires a factory.mission.proof-delta.v1 receipt",
+            )
         try:
             proof_delta = verify_proof_delta(root, receipt_file)
         except ProofDeltaError as exc:
-            raise MissionGraphError("MISSION_GRAPH_PROOF_DELTA_INVALID", exc.message) from exc
+            raise MissionGraphError(
+                "MISSION_GRAPH_PROOF_DELTA_INVALID", exc.message
+            ) from exc
         if not proof_delta["eligible"]:
-            raise MissionGraphError("MISSION_GRAPH_NO_EVIDENCE_GAIN", "retry is blocked because the repair packet adds no new hash-bound evidence")
-        candidate_event, failure_event = _latest_correction_binding(connection, row["thread_id"])
+            raise MissionGraphError(
+                "MISSION_GRAPH_NO_EVIDENCE_GAIN",
+                "retry is blocked because the repair packet adds no new hash-bound evidence",
+            )
+        candidate_event, failure_event = _latest_correction_binding(
+            connection, row["thread_id"]
+        )
         candidate_ref = candidate_event.get("receipt", {})
         failure_ref = failure_event.get("receipt", {})
         if (
             proof_delta["prior_candidate"]["sha256"] != candidate_ref.get("sha256")
             or proof_delta["failure"]["sha256"] != failure_ref.get("sha256")
-            or proof_delta["criterion_id"] != failure_event.get("payload", {}).get("criterion_id")
+            or proof_delta["criterion_id"]
+            != failure_event.get("payload", {}).get("criterion_id")
         ):
-            raise MissionGraphError("MISSION_GRAPH_PROOF_DELTA_INVALID", "proof delta must bind the current candidate, failed criterion, and validation failure")
-    if event == "pause" and receipt.get("schema") != "factory.mission.human-interrupt.v1":
-        raise MissionGraphError("MISSION_GRAPH_INTERRUPT_INVALID", "pause requires factory.mission.human-interrupt.v1")
-    if event in {"plan_revised", "resume"} and receipt.get("schema") != "factory.mission.plan-revision.v1":
-        raise MissionGraphError("MISSION_GRAPH_PLAN_INVALID", "plan revision receipt schema is required")
+            raise MissionGraphError(
+                "MISSION_GRAPH_PROOF_DELTA_INVALID",
+                "proof delta must bind the current candidate, failed criterion, and validation failure",
+            )
+    if (
+        event == "pause"
+        and receipt.get("schema") != "factory.mission.human-interrupt.v1"
+    ):
+        raise MissionGraphError(
+            "MISSION_GRAPH_INTERRUPT_INVALID",
+            "pause requires factory.mission.human-interrupt.v1",
+        )
+    if (
+        event in {"plan_revised", "resume"}
+        and receipt.get("schema") != "factory.mission.plan-revision.v1"
+    ):
+        raise MissionGraphError(
+            "MISSION_GRAPH_PLAN_INVALID", "plan revision receipt schema is required"
+        )
     if event == "resume" and payload.get("fresh_context") is not True:
-        raise MissionGraphError("MISSION_GRAPH_FRESH_CONTEXT_REQUIRED", "resume must attest fresh_context=true")
+        raise MissionGraphError(
+            "MISSION_GRAPH_FRESH_CONTEXT_REQUIRED",
+            "resume must attest fresh_context=true",
+        )
 
 
 def _guard_context(receipt_file: Path, event: str) -> None:
@@ -545,11 +817,18 @@ def _guard_context(receipt_file: Path, event: str) -> None:
         return
     context_check = verify_repository_context(receipt_file)
     if not context_check["valid"]:
-        raise MissionGraphError("MISSION_GRAPH_CONTEXT_INVALID", "; ".join(context_check["errors"]))
+        raise MissionGraphError(
+            "MISSION_GRAPH_CONTEXT_INVALID", "; ".join(context_check["errors"])
+        )
 
 
-def _reduce_usage(row: sqlite3.Row, receipt: dict[str, Any], mission: dict[str, Any],
-                  event: str, target: str) -> tuple[dict[str, Any], str, str]:
+def _reduce_usage(
+    row: sqlite3.Row,
+    receipt: dict[str, Any],
+    mission: dict[str, Any],
+    event: str,
+    target: str,
+) -> tuple[dict[str, Any], str, str]:
     usage = json.loads(row["usage_json"])
     if event != "usage_recorded":
         return usage, target, "MISSION_GRAPH_TRANSITION_GUARDED"
@@ -561,13 +840,25 @@ def _reduce_usage(row: sqlite3.Row, receipt: dict[str, Any], mission: dict[str, 
         usage["evidence_class"] = "measured"
     elif usage["evidence_class"] == "unknown":
         usage = sample
-    limits = (("tokens", "max_tokens"), ("cost_usd", "max_cost_usd"), ("wall_seconds", "max_wall_seconds"))
-    exhausted = any(usage[name] is not None and usage[name] >= mission["budgets"][budget] for name, budget in limits)
-    return (usage, "budget_exhausted", "MISSION_GRAPH_BUDGET_ENFORCED") if exhausted else (usage, target, "MISSION_GRAPH_USAGE_RECEIPT_BOUND")
+    limits = (
+        ("tokens", "max_tokens"),
+        ("cost_usd", "max_cost_usd"),
+        ("wall_seconds", "max_wall_seconds"),
+    )
+    exhausted = any(
+        usage[name] is not None and usage[name] >= mission["budgets"][budget]
+        for name, budget in limits
+    )
+    return (
+        (usage, "budget_exhausted", "MISSION_GRAPH_BUDGET_ENFORCED")
+        if exhausted
+        else (usage, target, "MISSION_GRAPH_USAGE_RECEIPT_BOUND")
+    )
 
 
-def _reduce_milestones(row: sqlite3.Row, receipt: dict[str, Any], event: str,
-                       payload: dict[str, Any]) -> list[dict[str, Any]]:
+def _reduce_milestones(
+    row: sqlite3.Row, receipt: dict[str, Any], event: str, payload: dict[str, Any]
+) -> list[dict[str, Any]]:
     milestones = json.loads(row["milestones_json"])
     if event == "validation_failed":
         for item in milestones:
@@ -578,27 +869,50 @@ def _reduce_milestones(row: sqlite3.Row, receipt: dict[str, Any], event: str,
             if item["status"] == "failed":
                 item["status"] = "pending"
     if event == "validation_passed":
-        passed = {item["id"] for item in receipt.get("criteria", []) if item.get("passed") is True}
+        passed = {
+            item["id"]
+            for item in receipt.get("criteria", [])
+            if item.get("passed") is True
+        }
         if passed != {item["id"] for item in milestones}:
-            raise MissionGraphError("MISSION_GRAPH_COMPLETION_INVALID", "completion receipt must pass every milestone")
+            raise MissionGraphError(
+                "MISSION_GRAPH_COMPLETION_INVALID",
+                "completion receipt must pass every milestone",
+            )
         for item in milestones:
             item["status"] = "passed"
     return milestones
 
 
-def _reduce_thread(row: sqlite3.Row, event: str, actor: str, target: str,
-                   receipt_file: Path, receipt_sha: str, marker: str) -> dict[str, Any]:
+def _reduce_thread(
+    row: sqlite3.Row,
+    event: str,
+    actor: str,
+    target: str,
+    receipt_file: Path,
+    receipt_sha: str,
+    marker: str,
+) -> dict[str, Any]:
     state = {
-        "attempts": row["attempts"], "creator_id": row["creator_id"], "verifier_id": row["verifier_id"],
-        "paused_from": row["paused_from"], "plan_json": row["plan_receipt_json"],
-        "context_json": row["context_receipt_json"], "marker": marker,
+        "attempts": row["attempts"],
+        "creator_id": row["creator_id"],
+        "verifier_id": row["verifier_id"],
+        "paused_from": row["paused_from"],
+        "plan_json": row["plan_receipt_json"],
+        "context_json": row["context_receipt_json"],
+        "marker": marker,
     }
     event_markers = {
-        "defer": "MISSION_GRAPH_OWNER_DECISION_BOUND", "reject": "MISSION_GRAPH_OWNER_DECISION_BOUND",
-        "candidate_ready": "MISSION_GRAPH_CANDIDATE_BOUND", "validation_failed": "MISSION_GRAPH_VALIDATION_FAILED_BOUND",
-        "validation_passed": "MISSION_GRAPH_COMPLETION_BOUND", "pause": "MISSION_GRAPH_HUMAN_INTERRUPT",
-        "plan_revised": "MISSION_GRAPH_PLAN_REVISION_BOUND", "resume": "MISSION_GRAPH_PLAN_REVISION_BOUND",
-        "context_refreshed": "MISSION_GRAPH_CONTEXT_REFRESH_BOUND", "release_requested": "MISSION_GRAPH_RELEASE_AUTHORITY_SEPARATE",
+        "defer": "MISSION_GRAPH_OWNER_DECISION_BOUND",
+        "reject": "MISSION_GRAPH_OWNER_DECISION_BOUND",
+        "candidate_ready": "MISSION_GRAPH_CANDIDATE_BOUND",
+        "validation_failed": "MISSION_GRAPH_VALIDATION_FAILED_BOUND",
+        "validation_passed": "MISSION_GRAPH_COMPLETION_BOUND",
+        "pause": "MISSION_GRAPH_HUMAN_INTERRUPT",
+        "plan_revised": "MISSION_GRAPH_PLAN_REVISION_BOUND",
+        "resume": "MISSION_GRAPH_PLAN_REVISION_BOUND",
+        "context_refreshed": "MISSION_GRAPH_CONTEXT_REFRESH_BOUND",
+        "release_requested": "MISSION_GRAPH_RELEASE_AUTHORITY_SEPARATE",
         "release_decided": "MISSION_GRAPH_RELEASE_AUTHORITY_SEPARATE",
     }
     state["marker"] = event_markers.get(event, state["marker"])
@@ -609,12 +923,20 @@ def _reduce_thread(row: sqlite3.Row, event: str, actor: str, target: str,
     if event in {"validation_failed", "validation_passed"}:
         state["verifier_id"] = actor
     if event == "retry":
-        state.update(marker="MISSION_GRAPH_BUDGET_ENFORCED" if target == "budget_exhausted" else "MISSION_GRAPH_PROOF_DELTA_BOUND")
+        state.update(
+            marker="MISSION_GRAPH_BUDGET_ENFORCED"
+            if target == "budget_exhausted"
+            else "MISSION_GRAPH_PROOF_DELTA_BOUND"
+        )
         if target != "budget_exhausted":
-            state.update(attempts=state["attempts"] + 1, creator_id=None, verifier_id=None)
+            state.update(
+                attempts=state["attempts"] + 1, creator_id=None, verifier_id=None
+            )
     if event == "pause":
         state["paused_from"] = row["state"]
-    receipt_ref = json.dumps({"path": str(receipt_file), "sha256": receipt_sha}, sort_keys=True)
+    receipt_ref = json.dumps(
+        {"path": str(receipt_file), "sha256": receipt_sha}, sort_keys=True
+    )
     if event in {"plan_revised", "resume"}:
         state["plan_json"] = receipt_ref
     if event == "resume":
@@ -624,9 +946,16 @@ def _reduce_thread(row: sqlite3.Row, event: str, actor: str, target: str,
     return state
 
 
-def apply_mission_event(mission_path: Path, root: Path, event: str, actor: str, role: str,
-                        idempotency_key: str, receipt_path: Path | None = None,
-                        payload: dict[str, Any] | None = None) -> dict:
+def apply_mission_event(
+    mission_path: Path,
+    root: Path,
+    event: str,
+    actor: str,
+    role: str,
+    idempotency_key: str,
+    receipt_path: Path | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict:
     """Validate and atomically append one governed mission transition."""
     root = Path(root).resolve()
     mission_path, mission = _mission(root, mission_path)
@@ -637,8 +966,13 @@ def apply_mission_event(mission_path: Path, root: Path, event: str, actor: str, 
     payload = dict(payload or {})
     _reject_sensitive_payload(payload)
     if len(_canonical(payload)) > MAX_EVENT_BYTES:
-        raise MissionGraphError("MISSION_GRAPH_EVENT_INVALID", f"payload exceeds {MAX_EVENT_BYTES} canonical UTF-8 bytes")
-    receipt_file, receipt, receipt_sha = _bound_receipt(root, receipt_path, mission["id"])
+        raise MissionGraphError(
+            "MISSION_GRAPH_EVENT_INVALID",
+            f"payload exceeds {MAX_EVENT_BYTES} canonical UTF-8 bytes",
+        )
+    receipt_file, receipt, receipt_sha = _bound_receipt(
+        root, receipt_path, mission["id"]
+    )
     intent_sha = _intent(event, actor, role, payload, receipt_sha)
     database = _db_path(root, mission_path)
     if not database.exists():
@@ -656,17 +990,29 @@ def apply_mission_event(mission_path: Path, root: Path, event: str, actor: str, 
         ).fetchone()
         if duplicate is not None:
             if duplicate["intent_sha"] != intent_sha:
-                raise MissionGraphError("MISSION_GRAPH_IDEMPOTENCY_CONFLICT", "idempotency key was already used for different event bytes")
+                raise MissionGraphError(
+                    "MISSION_GRAPH_IDEMPOTENCY_CONFLICT",
+                    "idempotency key was already used for different event bytes",
+                )
             connection.commit()
             current = _row_state(row, mission)
-            return {**current, "event": json.loads(duplicate["event_json"]), "marker": "MISSION_GRAPH_IDEMPOTENT"}
+            return {
+                **current,
+                "event": json.loads(duplicate["event_json"]),
+                "marker": "MISSION_GRAPH_IDEMPOTENT",
+            }
         target, roles = _transition(row["state"], event)
         _guard_actor(row, mission, event, actor, role, roles)
         _guard_decision_candidate(receipt, mission, event, actor)
         _guard_validation(row, receipt_file, receipt, mission, event, actor, payload)
-        _guard_retry_review(connection, row, root, receipt_file, receipt, event, payload)
+        _guard_retry_review(
+            connection, row, root, receipt_file, receipt, event, payload
+        )
         _guard_context(receipt_file, event)
-        if event == "retry" and row["attempts"] + 1 > mission["budgets"]["max_iterations"]:
+        if (
+            event == "retry"
+            and row["attempts"] + 1 > mission["budgets"]["max_iterations"]
+        ):
             target = "budget_exhausted"
         usage, target, marker = _reduce_usage(row, receipt, mission, event, target)
         milestones = _reduce_milestones(row, receipt, event, payload)
@@ -683,21 +1029,38 @@ def apply_mission_event(mission_path: Path, root: Path, event: str, actor: str, 
             "source_state": row["state"],
             "target_state": target,
             "payload": payload,
-            "receipt": {"path": str(receipt_file), "sha256": receipt_sha, "schema": receipt["schema"]},
+            "receipt": {
+                "path": str(receipt_file),
+                "sha256": receipt_sha,
+                "schema": receipt["schema"],
+            },
             "previous_sha256": row["event_tip"],
-            "authority": {"merge": False, "publish": False, "deploy": False, "external_message": False},
+            "authority": {
+                "merge": False,
+                "publish": False,
+                "deploy": False,
+                "external_message": False,
+            },
             "created_at": _now(),
         }
         event_sha = _sha_bytes(_canonical(event_core))
-        reduced = _reduce_thread(row, event, actor, target, receipt_file, receipt_sha, marker)
+        reduced = _reduce_thread(
+            row, event, actor, target, receipt_file, receipt_sha, marker
+        )
         marker = reduced["marker"]
         connection.execute(
             """INSERT INTO graph_events
                (thread_id,version,idempotency_key,intent_sha,event_json,event_sha,receipt_path,receipt_sha)
                VALUES (?,?,?,?,?,?,?,?)""",
             (
-                mission["id"], version, idempotency_key, intent_sha,
-                json.dumps(event_core, sort_keys=True), event_sha, str(receipt_file), receipt_sha,
+                mission["id"],
+                version,
+                idempotency_key,
+                intent_sha,
+                json.dumps(event_core, sort_keys=True),
+                event_sha,
+                str(receipt_file),
+                receipt_sha,
             ),
         )
         connection.execute(
@@ -705,9 +1068,19 @@ def apply_mission_event(mission_path: Path, root: Path, event: str, actor: str, 
                paused_from=?,usage_json=?,milestones_json=?,plan_receipt_json=?,context_receipt_json=?,
                event_tip=?,updated_at=? WHERE thread_id=?""",
             (
-                target, version, reduced["attempts"], reduced["creator_id"], reduced["verifier_id"], reduced["paused_from"],
-                json.dumps(usage, sort_keys=True), json.dumps(milestones, sort_keys=True),
-                reduced["plan_json"], reduced["context_json"], event_sha, _now(), mission["id"],
+                target,
+                version,
+                reduced["attempts"],
+                reduced["creator_id"],
+                reduced["verifier_id"],
+                reduced["paused_from"],
+                json.dumps(usage, sort_keys=True),
+                json.dumps(milestones, sort_keys=True),
+                reduced["plan_json"],
+                reduced["context_json"],
+                event_sha,
+                _now(),
+                mission["id"],
             ),
         )
         connection.commit()
@@ -716,7 +1089,12 @@ def apply_mission_event(mission_path: Path, root: Path, event: str, actor: str, 
             **current,
             "event": {**event_core, "event_sha256": event_sha},
             "marker": marker,
-            "markers": current["markers"] + [marker, "MISSION_GRAPH_HASH_CHAIN_BOUND", "MISSION_GRAPH_TRANSITION_GUARDED"],
+            "markers": current["markers"]
+            + [
+                marker,
+                "MISSION_GRAPH_HASH_CHAIN_BOUND",
+                "MISSION_GRAPH_TRANSITION_GUARDED",
+            ],
         }
     except Exception:
         connection.rollback()
@@ -738,7 +1116,12 @@ def mission_graph_status(mission_path: Path, root: Path) -> dict:
         if errors:
             raise MissionGraphError("MISSION_GRAPH_DRIFT", "; ".join(errors))
         result = _row_state(row, mission)
-        return {**result, "database": str(database), "allowed_events": _allowed_events(row["state"]), "marker": "MISSION_GRAPH_RESUMABLE"}
+        return {
+            **result,
+            "database": str(database),
+            "allowed_events": _allowed_events(row["state"]),
+            "marker": "MISSION_GRAPH_RESUMABLE",
+        }
     finally:
         connection.close()
 
@@ -752,7 +1135,8 @@ def mission_graph_history(mission_path: Path, root: Path) -> dict:
         events = [
             {**json.loads(row["event_json"]), "event_sha256": row["event_sha"]}
             for row in connection.execute(
-                "SELECT * FROM graph_events WHERE thread_id=? ORDER BY version", (mission["id"],),
+                "SELECT * FROM graph_events WHERE thread_id=? ORDER BY version",
+                (mission["id"],),
             )
         ]
     finally:
@@ -774,7 +1158,9 @@ def verify_mission_graph(mission_path: Path, root: Path) -> dict:
         mission_path, mission = _mission(root, mission_path)
         database = _db_path(root, mission_path)
         if not database.exists():
-            raise MissionGraphError("MISSION_GRAPH_NOT_INITIALIZED", "mission graph database is missing")
+            raise MissionGraphError(
+                "MISSION_GRAPH_NOT_INITIALIZED", "mission graph database is missing"
+            )
         connection = _connect(database)
         try:
             row = _thread(connection, mission["id"])
@@ -789,28 +1175,45 @@ def verify_mission_graph(mission_path: Path, root: Path) -> dict:
         "mission_id": mission.get("id"),
         "valid": not errors,
         "status": "verified" if not errors else "invalid",
-        "marker": "MISSION_GRAPH_HASH_CHAIN_BOUND" if not errors else "MISSION_GRAPH_DRIFT",
+        "marker": "MISSION_GRAPH_HASH_CHAIN_BOUND"
+        if not errors
+        else "MISSION_GRAPH_DRIFT",
         "errors": errors,
         "authority": "verification only; no execution or release authority",
     }
     if errors:
-        result["failure"] = explain_failure("MISSION_GRAPH_DRIFT", "; ".join(errors), errors=errors)
+        result["failure"] = explain_failure(
+            "MISSION_GRAPH_DRIFT", "; ".join(errors), errors=errors
+        )
     return result
 
 
 def export_mission_graph(mission_path: Path, root: Path) -> dict:
     """Export the declared topology and highlight the current state as Mermaid."""
     status = mission_graph_status(mission_path, root)
-    mission_path = _resolve_under(root, mission_path, "MISSION_GRAPH_MISSION_OUTSIDE_ROOT")
+    mission_path = _resolve_under(
+        root, mission_path, "MISSION_GRAPH_MISSION_OUTSIDE_ROOT"
+    )
     states = [
-        "planned", "creator_running", "independent_verification", "correction_required",
-        "paused_for_review", "completion_receipted", "awaiting_release_authority",
-        "release_decided", "outcome_observed", "deferred", "rejected", "budget_exhausted",
+        "planned",
+        "creator_running",
+        "independent_verification",
+        "correction_required",
+        "paused_for_review",
+        "completion_receipted",
+        "awaiting_release_authority",
+        "release_decided",
+        "outcome_observed",
+        "deferred",
+        "rejected",
+        "budget_exhausted",
     ]
     lines = ["stateDiagram-v2", "    [*] --> planned"]
     edges = [
-        ("planned", "creator_running", "approve"), ("planned", "deferred", "defer"),
-        ("planned", "rejected", "reject"), ("creator_running", "independent_verification", "candidate_ready"),
+        ("planned", "creator_running", "approve"),
+        ("planned", "deferred", "defer"),
+        ("planned", "rejected", "reject"),
+        ("creator_running", "independent_verification", "candidate_ready"),
         ("independent_verification", "correction_required", "validation_failed"),
         ("correction_required", "creator_running", "retry + fresh context"),
         ("independent_verification", "completion_receipted", "validation_passed"),
@@ -821,9 +1224,15 @@ def export_mission_graph(mission_path: Path, root: Path) -> dict:
         ("awaiting_release_authority", "release_decided", "human decision only"),
         ("release_decided", "outcome_observed", "outcome_recorded"),
     ]
-    lines.extend(f"    {source} --> {target}: {label}" for source, target, label in edges)
-    lines.extend(f"    {state} --> budget_exhausted: hard budget reached" for state in states if state in ACTIVE_STATES)
-    lines.append(f"    classDef current fill:#fef3c7,stroke:#d97706,color:#451a03")
+    lines.extend(
+        f"    {source} --> {target}: {label}" for source, target, label in edges
+    )
+    lines.extend(
+        f"    {state} --> budget_exhausted: hard budget reached"
+        for state in states
+        if state in ACTIVE_STATES
+    )
+    lines.append("    classDef current fill:#fef3c7,stroke:#d97706,color:#451a03")
     lines.append(f"    class {status['state']} current")
     output = mission_path.parent / "mission-graph.mmd"
     output.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -840,7 +1249,11 @@ def export_mission_graph(mission_path: Path, root: Path) -> dict:
 def langgraph_doctor() -> dict:
     """Report optional LangGraph readiness without importing unavailable packages."""
     available = importlib.util.find_spec("langgraph") is not None
-    sqlite_available = importlib.util.find_spec("langgraph.checkpoint.sqlite") is not None if available else False
+    sqlite_available = (
+        importlib.util.find_spec("langgraph.checkpoint.sqlite") is not None
+        if available
+        else False
+    )
     ready = available and sqlite_available
     return {
         "schema": "factory.langgraph.doctor.v1",
@@ -858,7 +1271,9 @@ def langgraph_doctor() -> dict:
 def _remaining_budget_ratio(status: dict[str, Any]) -> float | None:
     remaining = []
     for usage_name, budget_name in (
-        ("tokens", "max_tokens"), ("cost_usd", "max_cost_usd"), ("wall_seconds", "max_wall_seconds"),
+        ("tokens", "max_tokens"),
+        ("cost_usd", "max_cost_usd"),
+        ("wall_seconds", "max_wall_seconds"),
     ):
         used, maximum = status["usage"][usage_name], status["budgets"][budget_name]
         if used is not None and maximum:
@@ -866,27 +1281,47 @@ def _remaining_budget_ratio(status: dict[str, Any]) -> float | None:
     return min(remaining) if remaining else None
 
 
-def _route_reasons(risk: str, floor: str, failures: int, progress: float,
-                   remaining: float | None, cache_continuity: bool) -> list[str]:
+def _route_reasons(
+    risk: str,
+    floor: str,
+    failures: int,
+    progress: float,
+    remaining: float | None,
+    cache_continuity: bool,
+) -> list[str]:
     reasons = [f"declared risk={risk}", f"quality floor={floor}"]
     if failures:
         reasons.append("failed milestone requires stronger reasoning")
     if progress >= 0.8 and not failures:
-        reasons.append("completion is near; lower-cost tier is permitted above the quality floor")
+        reasons.append(
+            "completion is near; lower-cost tier is permitted above the quality floor"
+        )
     if remaining is not None:
         reasons.append(f"minimum remaining measured budget ratio={remaining:.3f}")
     if cache_continuity:
-        reasons.append("preserve model family when switching would break a useful prompt cache")
+        reasons.append(
+            "preserve model family when switching would break a useful prompt cache"
+        )
     return reasons
 
 
-def recommend_mission_route(mission_path: Path, root: Path, risk: str,
-                            quality_floor: str = "balanced", cache_continuity: bool = True) -> dict:
+def recommend_mission_route(
+    mission_path: Path,
+    root: Path,
+    risk: str,
+    quality_floor: str = "balanced",
+    cache_continuity: bool = True,
+) -> dict:
     """Recommend an abstract model tier from verified state and budget facts."""
     if risk not in {"low", "medium", "high"}:
-        raise MissionGraphError("MISSION_GRAPH_ROUTE_INVALID", "risk must be low, medium, or high")
+        raise MissionGraphError(
+            "MISSION_GRAPH_ROUTE_INVALID", "risk must be low, medium, or high"
+        )
     if quality_floor not in QUALITY_TIERS:
-        raise MissionGraphError("MISSION_GRAPH_ROUTE_INVALID", "quality_floor must be economy, balanced, or frontier")
+        raise MissionGraphError(
+            "MISSION_GRAPH_ROUTE_INVALID",
+            "quality_floor must be economy, balanced, or frontier",
+        )
     status = mission_graph_status(mission_path, root)
     floor = QUALITY_TIERS.index(quality_floor)
     tier = max(floor, {"low": 0, "medium": 1, "high": 2}[risk])
@@ -895,12 +1330,15 @@ def recommend_mission_route(mission_path: Path, root: Path, risk: str,
         tier = max(tier, 2)
     progress = (
         status["milestone_progress"]["passed"] / status["milestone_progress"]["total"]
-        if status["milestone_progress"]["total"] else 0.0
+        if status["milestone_progress"]["total"]
+        else 0.0
     )
     if progress >= 0.8 and not failures:
         tier = max(floor, tier - 1)
     remaining_ratio = _remaining_budget_ratio(status)
-    reasons = _route_reasons(risk, quality_floor, failures, progress, remaining_ratio, cache_continuity)
+    reasons = _route_reasons(
+        risk, quality_floor, failures, progress, remaining_ratio, cache_continuity
+    )
     return {
         "schema": "factory.mission.route-recommendation.v1",
         "mission_id": status["mission_id"],
@@ -917,7 +1355,9 @@ def recommend_mission_route(mission_path: Path, root: Path, risk: str,
     }
 
 
-def build_langgraph_adapter(mission_path: Path, root: Path, checkpointer: Any | None = None) -> Any:
+def build_langgraph_adapter(
+    mission_path: Path, root: Path, checkpointer: Any | None = None
+) -> Any:
     """Compile an optional resumable LangGraph adapter over the native transition guard."""
     doctor = langgraph_doctor()
     if not doctor["available"]:
@@ -930,8 +1370,12 @@ def build_langgraph_adapter(mission_path: Path, root: Path, checkpointer: Any | 
             raise MissionGraphError("LANGGRAPH_SQLITE_NOT_INSTALLED", doctor["install"])
         from langgraph.checkpoint.sqlite import SqliteSaver
 
-        checkpoint_path = _db_path(Path(root), Path(mission_path)).with_name("langgraph-checkpoints.sqlite3")
-        checkpoint_connection = sqlite3.connect(checkpoint_path, check_same_thread=False)
+        checkpoint_path = _db_path(Path(root), Path(mission_path)).with_name(
+            "langgraph-checkpoints.sqlite3"
+        )
+        checkpoint_connection = sqlite3.connect(
+            checkpoint_path, check_same_thread=False
+        )
         saver = SqliteSaver(checkpoint_connection)
     else:
         saver = checkpointer
@@ -942,7 +1386,10 @@ def build_langgraph_adapter(mission_path: Path, root: Path, checkpointer: Any | 
         result = apply_mission_event(
             Path(state.get("mission_path", bound_mission)),
             Path(state.get("root", bound_root)),
-            state["event"], state["actor"], state["role"], state["idempotency_key"],
+            state["event"],
+            state["actor"],
+            state["role"],
+            state["idempotency_key"],
             Path(state["receipt_path"]) if state.get("receipt_path") else None,
             state.get("payload", {}),
         )

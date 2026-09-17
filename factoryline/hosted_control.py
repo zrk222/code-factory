@@ -1,4 +1,5 @@
 """Supervised tenant lifecycle and operator read model for the hosted adapter."""
+
 from __future__ import annotations
 
 import base64
@@ -121,7 +122,10 @@ def _utcnow() -> datetime:
 def _tenant_id(value: str) -> str:
     normalized = str(value).strip()
     if not TENANT_RE.fullmatch(normalized):
-        raise PRAssuranceError("E_TENANT_INVALID", "tenant id must be 2-63 lowercase letters, digits, or hyphens")
+        raise PRAssuranceError(
+            "E_TENANT_INVALID",
+            "tenant id must be 2-63 lowercase letters, digits, or hyphens",
+        )
     return normalized
 
 
@@ -129,10 +133,14 @@ def _authorize(principal: Principal, tenant_id: str, *, write: bool) -> str:
     selected = _tenant_id(tenant_id)
     platform = "platform_admin" in principal.roles and principal.tenant_id == "*"
     if not platform and principal.tenant_id != selected:
-        raise PRAssuranceError("E_TENANT_BOUNDARY", "principal cannot administer another tenant")
+        raise PRAssuranceError(
+            "E_TENANT_BOUNDARY", "principal cannot administer another tenant"
+        )
     allowed = {"admin"} if write else {"admin", "viewer"}
     if not platform and not allowed.intersection(principal.roles):
-        raise PRAssuranceError("E_ACTION_DENIED", "verified identity lacks hosted control authority")
+        raise PRAssuranceError(
+            "E_ACTION_DENIED", "verified identity lacks hosted control authority"
+        )
     return selected
 
 
@@ -146,26 +154,41 @@ def _https_url(value: str, name: str) -> str:
         or parts.query
         or parts.fragment
     ):
-        raise PRAssuranceError("E_IDENTITY_CONFIG", f"{name} must be credential-free HTTPS without query or fragment")
+        raise PRAssuranceError(
+            "E_IDENTITY_CONFIG",
+            f"{name} must be credential-free HTTPS without query or fragment",
+        )
     return str(value).strip().rstrip("/")
 
 
 def _secret_reference(value: str) -> str:
     reference = str(value).strip()
     if not ENV_REFERENCE_RE.fullmatch(reference):
-        raise PRAssuranceError("E_SECRET_REFERENCE", "reference must be env:// followed by an uppercase environment name")
+        raise PRAssuranceError(
+            "E_SECRET_REFERENCE",
+            "reference must be env:// followed by an uppercase environment name",
+        )
     return reference
 
 
 def _safe_role_map(value: Mapping[str, str]) -> dict[str, str]:
     if not isinstance(value, Mapping) or not 1 <= len(value) <= 50:
-        raise PRAssuranceError("E_ROLE_MAPPING", "role mapping must contain 1-50 groups")
+        raise PRAssuranceError(
+            "E_ROLE_MAPPING", "role mapping must contain 1-50 groups"
+        )
     result: dict[str, str] = {}
     for group, role in value.items():
         group_name = str(group).strip()
         role_name = str(role).strip()
-        if not group_name or len(group_name) > 200 or role_name not in ALLOWED_ROLES or group_name in result:
-            raise PRAssuranceError("E_ROLE_MAPPING", "role mapping contains an invalid group or role")
+        if (
+            not group_name
+            or len(group_name) > 200
+            or role_name not in ALLOWED_ROLES
+            or group_name in result
+        ):
+            raise PRAssuranceError(
+                "E_ROLE_MAPPING", "role mapping contains an invalid group or role"
+            )
         result[group_name] = role_name
     return result
 
@@ -178,9 +201,13 @@ def _state_hint(token: str) -> str:
         decoded = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
         claims = json.loads(decoded)
     except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise PRAssuranceError("E_OIDC_MALFORMED", "OIDC tenant lookup hint is invalid") from exc
+        raise PRAssuranceError(
+            "E_OIDC_MALFORMED", "OIDC tenant lookup hint is invalid"
+        ) from exc
     if not isinstance(claims, dict):
-        raise PRAssuranceError("E_OIDC_MALFORMED", "OIDC tenant lookup hint must be an object")
+        raise PRAssuranceError(
+            "E_OIDC_MALFORMED", "OIDC tenant lookup hint must be an object"
+        )
     return _tenant_id(str(claims.get("tenant_id", "")))
 
 
@@ -206,14 +233,19 @@ class EnvSecretResolver:
         name = match.group(1) if match else ""
         value = self.environ.get(name, "").encode("utf-8")
         if len(value) < 16:
-            raise PRAssuranceError("E_SECRET_UNAVAILABLE", "referenced secret is missing or shorter than 16 bytes")
+            raise PRAssuranceError(
+                "E_SECRET_UNAVAILABLE",
+                "referenced secret is missing or shorter than 16 bytes",
+            )
         return value
 
 
 class PostgresControlStore:
     """PostgreSQL tenant lifecycle store with forced RLS and hash-linked audit events."""
 
-    def __init__(self, assurance_store: Any, *, clock: Callable[[], datetime] = _utcnow):
+    def __init__(
+        self, assurance_store: Any, *, clock: Callable[[], datetime] = _utcnow
+    ):
         self.assurance_store = assurance_store
         self.clock = clock
 
@@ -226,7 +258,9 @@ class PostgresControlStore:
             with self._transaction() as (_db, cursor):
                 cursor.execute(CONTROL_SCHEMA_SQL)
         except Exception as exc:
-            raise PRAssuranceError("E_DATABASE", "hosted control schema initialization failed") from exc
+            raise PRAssuranceError(
+                "E_DATABASE", "hosted control schema initialization failed"
+            ) from exc
 
     def _audit(
         self,
@@ -277,27 +311,46 @@ class PostgresControlStore:
             (hashlib.sha256(canonical_json(event)).hexdigest(), tenant_id, sequence),
         )
 
-    def create_tenant(self, principal: Principal, tenant_id: str, display_name: str) -> dict[str, Any]:
+    def create_tenant(
+        self, principal: Principal, tenant_id: str, display_name: str
+    ) -> dict[str, Any]:
         """Create one tenant for bootstrap platform authority or raise ``PRAssuranceError``."""
         if "platform_admin" not in principal.roles or principal.tenant_id != "*":
-            raise PRAssuranceError("E_ACTION_DENIED", "tenant creation requires bootstrap platform_admin authority")
+            raise PRAssuranceError(
+                "E_ACTION_DENIED",
+                "tenant creation requires bootstrap platform_admin authority",
+            )
         selected = _tenant_id(tenant_id)
         name = str(display_name).strip()
         if not 1 <= len(name) <= 120:
-            raise PRAssuranceError("E_TENANT_INVALID", "display name must contain 1-120 characters")
+            raise PRAssuranceError(
+                "E_TENANT_INVALID", "display name must contain 1-120 characters"
+            )
         try:
             with self._transaction() as (_db, cursor):
-                cursor.execute("SELECT display_name FROM factory_tenants WHERE tenant_id=%s FOR UPDATE", (selected,))
+                cursor.execute(
+                    "SELECT display_name FROM factory_tenants WHERE tenant_id=%s FOR UPDATE",
+                    (selected,),
+                )
                 row = cursor.fetchone()
                 if row:
                     if str(row[0]) != name:
-                        raise PRAssuranceError("E_TENANT_CONFLICT", "tenant id is already bound to another display name")
-                    return {"schema": CONTROL_SCHEMA, "marker": "TENANT_EXISTS", "tenant_id": selected}
+                        raise PRAssuranceError(
+                            "E_TENANT_CONFLICT",
+                            "tenant id is already bound to another display name",
+                        )
+                    return {
+                        "schema": CONTROL_SCHEMA,
+                        "marker": "TENANT_EXISTS",
+                        "tenant_id": selected,
+                    }
                 cursor.execute(
                     "INSERT INTO factory_tenants (tenant_id,display_name,created_by) VALUES (%s,%s,%s)",
                     (selected, name, principal.subject),
                 )
-                cursor.execute("SELECT set_config('factory.tenant_id', %s, true)", (selected,))
+                cursor.execute(
+                    "SELECT set_config('factory.tenant_id', %s, true)", (selected,)
+                )
                 self._audit(
                     cursor,
                     tenant_id=selected,
@@ -332,14 +385,22 @@ class PostgresControlStore:
         trusted_jwks = _https_url(jwks_url, "JWKS URL")
         trusted_audience = str(audience).strip()
         if not 1 <= len(trusted_audience) <= 200:
-            raise PRAssuranceError("E_IDENTITY_CONFIG", "audience must contain 1-200 characters")
+            raise PRAssuranceError(
+                "E_IDENTITY_CONFIG", "audience must contain 1-200 characters"
+            )
         with self._transaction(selected) as (_db, cursor):
             cursor.execute(
                 """INSERT INTO factory_tenant_identity
                    (tenant_id,issuer,audience,jwks_url,updated_by) VALUES (%s,%s,%s,%s,%s)
                    ON CONFLICT (tenant_id) DO UPDATE SET issuer=EXCLUDED.issuer,audience=EXCLUDED.audience,
                      jwks_url=EXCLUDED.jwks_url,updated_by=EXCLUDED.updated_by,updated_at=now()""",
-                (selected, trusted_issuer, trusted_audience, trusted_jwks, principal.subject),
+                (
+                    selected,
+                    trusted_issuer,
+                    trusted_audience,
+                    trusted_jwks,
+                    principal.subject,
+                ),
             )
             self._audit(
                 cursor,
@@ -347,20 +408,33 @@ class PostgresControlStore:
                 action="identity.configured",
                 actor=principal.subject,
                 resource_id=selected,
-                payload={"issuer": trusted_issuer, "audience": trusted_audience, "jwks_url": trusted_jwks},
+                payload={
+                    "issuer": trusted_issuer,
+                    "audience": trusted_audience,
+                    "jwks_url": trusted_jwks,
+                },
             )
         return {
             "schema": CONTROL_SCHEMA,
-            "markers": ["OIDC_CONFIG_VERIFIED", "ADMIN_ACTION_AUDITED", "CONTROL_RLS_BOUND"],
+            "markers": [
+                "OIDC_CONFIG_VERIFIED",
+                "ADMIN_ACTION_AUDITED",
+                "CONTROL_RLS_BOUND",
+            ],
             "tenant_id": selected,
         }
 
-    def replace_roles(self, principal: Principal, tenant_id: str, mappings: Mapping[str, str]) -> dict[str, Any]:
+    def replace_roles(
+        self, principal: Principal, tenant_id: str, mappings: Mapping[str, str]
+    ) -> dict[str, Any]:
         """Atomically replace one tenant role map or raise ``PRAssuranceError``."""
         selected = _authorize(principal, tenant_id, write=True)
         safe = _safe_role_map(mappings)
         with self._transaction(selected) as (_db, cursor):
-            cursor.execute("DELETE FROM factory_tenant_role_mappings WHERE tenant_id=%s", (selected,))
+            cursor.execute(
+                "DELETE FROM factory_tenant_role_mappings WHERE tenant_id=%s",
+                (selected,),
+            )
             for group, role in sorted(safe.items()):
                 cursor.execute(
                     """INSERT INTO factory_tenant_role_mappings
@@ -377,7 +451,11 @@ class PostgresControlStore:
             )
         return {
             "schema": CONTROL_SCHEMA,
-            "markers": ["ROLE_MAPPING_BOUND", "ADMIN_ACTION_AUDITED", "CONTROL_RLS_BOUND"],
+            "markers": [
+                "ROLE_MAPPING_BOUND",
+                "ADMIN_ACTION_AUDITED",
+                "CONTROL_RLS_BOUND",
+            ],
             "tenant_id": selected,
             "count": len(safe),
         }
@@ -409,7 +487,11 @@ class PostgresControlStore:
             )
         return {
             "schema": CONTROL_SCHEMA,
-            "markers": ["SECRET_REFERENCE_BOUND", "ADMIN_ACTION_AUDITED", "CONTROL_RLS_BOUND"],
+            "markers": [
+                "SECRET_REFERENCE_BOUND",
+                "ADMIN_ACTION_AUDITED",
+                "CONTROL_RLS_BOUND",
+            ],
             "tenant_id": selected,
             "purpose": safe_purpose,
         }
@@ -437,7 +519,11 @@ class PostgresControlStore:
             )
         return {
             "schema": CONTROL_SCHEMA,
-            "markers": ["INSTALLATION_STATE_ISSUED", "ADMIN_ACTION_AUDITED", "CONTROL_RLS_BOUND"],
+            "markers": [
+                "INSTALLATION_STATE_ISSUED",
+                "ADMIN_ACTION_AUDITED",
+                "CONTROL_RLS_BOUND",
+            ],
             "tenant_id": selected,
             "state": raw,
             "expires_in": INSTALLATION_STATE_SECONDS,
@@ -450,10 +536,16 @@ class PostgresControlStore:
         now = self.clock()
         try:
             with self._transaction() as (_db, cursor):
-                tenant_id, issued_by = self._locked_installation_state(cursor, digest, now)
-                self._store_installation_binding(cursor, tenant_id, issued_by, installation_id)
+                tenant_id, issued_by = self._locked_installation_state(
+                    cursor, digest, now
+                )
+                self._store_installation_binding(
+                    cursor, tenant_id, issued_by, installation_id
+                )
                 self._consume_installation_state(cursor, digest, now)
-                cursor.execute("SELECT set_config('factory.tenant_id', %s, true)", (tenant_id,))
+                cursor.execute(
+                    "SELECT set_config('factory.tenant_id', %s, true)", (tenant_id,)
+                )
                 self._audit(
                     cursor,
                     tenant_id=tenant_id,
@@ -468,7 +560,11 @@ class PostgresControlStore:
             raise PRAssuranceError("E_DATABASE", "installation binding failed") from exc
         return {
             "schema": CONTROL_SCHEMA,
-            "markers": ["INSTALLATION_BOUND", "ADMIN_ACTION_AUDITED", "CONTROL_RLS_BOUND"],
+            "markers": [
+                "INSTALLATION_BOUND",
+                "ADMIN_ACTION_AUDITED",
+                "CONTROL_RLS_BOUND",
+            ],
             "tenant_id": tenant_id,
             "installation_id": installation_id,
         }
@@ -482,10 +578,15 @@ class PostgresControlStore:
             or isinstance(installation_id, bool)
             or installation_id <= 0
         ):
-            raise PRAssuranceError("E_INSTALLATION_STATE", "valid state and positive installation id are required")
+            raise PRAssuranceError(
+                "E_INSTALLATION_STATE",
+                "valid state and positive installation id are required",
+            )
 
     @staticmethod
-    def _locked_installation_state(cursor: Any, digest: str, now: datetime) -> tuple[str, str]:
+    def _locked_installation_state(
+        cursor: Any, digest: str, now: datetime
+    ) -> tuple[str, str]:
         cursor.execute(
             """SELECT tenant_id,issued_by,expires_at,used_at FROM factory_installation_states
                WHERE state_sha256=%s FOR UPDATE""",
@@ -493,7 +594,10 @@ class PostgresControlStore:
         )
         row = cursor.fetchone()
         if not row or row[3] is not None or row[2] < now:
-            raise PRAssuranceError("E_INSTALLATION_STATE", "installation state is missing, expired, or already used")
+            raise PRAssuranceError(
+                "E_INSTALLATION_STATE",
+                "installation state is missing, expired, or already used",
+            )
         return str(row[0]), str(row[1])
 
     @staticmethod
@@ -506,7 +610,10 @@ class PostgresControlStore:
         )
         bound = cursor.fetchone()
         if bound and str(bound[0]) != tenant_id:
-            raise PRAssuranceError("E_INSTALLATION_TENANT", "installation is already bound to another tenant")
+            raise PRAssuranceError(
+                "E_INSTALLATION_TENANT",
+                "installation is already bound to another tenant",
+            )
         if not bound:
             cursor.execute(
                 "INSERT INTO factory_installations (installation_id,tenant_id,bound_by) VALUES (%s,%s,%s)",
@@ -520,7 +627,9 @@ class PostgresControlStore:
             (now, digest),
         )
         if cursor.rowcount != 1:
-            raise PRAssuranceError("E_INSTALLATION_STATE", "installation state lost a concurrent race")
+            raise PRAssuranceError(
+                "E_INSTALLATION_STATE", "installation state lost a concurrent race"
+            )
 
     def identity_config(self, tenant_id: str) -> TenantIdentityConfig:
         """Return public tenant OIDC configuration or raise ``PRAssuranceError``."""
@@ -532,7 +641,9 @@ class PostgresControlStore:
             )
             row = cursor.fetchone()
         if not row:
-            raise PRAssuranceError("E_IDENTITY_CONFIG", "tenant identity is not configured")
+            raise PRAssuranceError(
+                "E_IDENTITY_CONFIG", "tenant identity is not configured"
+            )
         return TenantIdentityConfig(selected, str(row[0]), str(row[1]), str(row[2]))
 
     def role_map(self, tenant_id: str) -> dict[str, str]:
@@ -545,16 +656,25 @@ class PostgresControlStore:
             )
             rows = cursor.fetchall()
         if not rows:
-            raise PRAssuranceError("E_ROLE_MAPPING", "tenant role mapping is not configured")
+            raise PRAssuranceError(
+                "E_ROLE_MAPPING", "tenant role mapping is not configured"
+            )
         return {str(row[0]): str(row[1]) for row in rows}
 
-    def secret_reference_for_installation(self, installation_id: int, purpose: str) -> tuple[str, str]:
+    def secret_reference_for_installation(
+        self, installation_id: int, purpose: str
+    ) -> tuple[str, str]:
         """Resolve installation routing to a tenant secret reference without reading its value."""
         with self._transaction() as (_db, cursor):
-            cursor.execute("SELECT tenant_id FROM factory_installations WHERE installation_id=%s", (installation_id,))
+            cursor.execute(
+                "SELECT tenant_id FROM factory_installations WHERE installation_id=%s",
+                (installation_id,),
+            )
             row = cursor.fetchone()
         if not row:
-            raise PRAssuranceError("E_INSTALLATION_TENANT", "installation is not registered")
+            raise PRAssuranceError(
+                "E_INSTALLATION_TENANT", "installation is not registered"
+            )
         tenant_id = str(row[0])
         with self._transaction(tenant_id) as (_db, cursor):
             cursor.execute(
@@ -563,18 +683,25 @@ class PostgresControlStore:
             )
             reference = cursor.fetchone()
         if not reference:
-            raise PRAssuranceError("E_SECRET_REFERENCE", "tenant secret reference is not configured")
+            raise PRAssuranceError(
+                "E_SECRET_REFERENCE", "tenant secret reference is not configured"
+            )
         return tenant_id, str(reference[0])
 
     def overview(self, principal: Principal, tenant_id: str) -> dict[str, Any]:
         """Return an allowlisted tenant read model or raise ``PRAssuranceError``."""
         selected = _authorize(principal, tenant_id, write=False)
         with self._transaction(selected) as (_db, cursor):
-            cursor.execute("SELECT display_name,status FROM factory_tenants WHERE tenant_id=%s", (selected,))
+            cursor.execute(
+                "SELECT display_name,status FROM factory_tenants WHERE tenant_id=%s",
+                (selected,),
+            )
             tenant = cursor.fetchone()
             if not tenant:
                 raise PRAssuranceError("E_NOT_FOUND", "tenant was not found")
-            cursor.execute("SELECT 1 FROM factory_tenant_identity WHERE tenant_id=%s", (selected,))
+            cursor.execute(
+                "SELECT 1 FROM factory_tenant_identity WHERE tenant_id=%s", (selected,)
+            )
             identity_configured = cursor.fetchone() is not None
             cursor.execute(
                 "SELECT factory_role,count(*) FROM factory_tenant_role_mappings WHERE tenant_id=%s GROUP BY factory_role",
@@ -582,7 +709,8 @@ class PostgresControlStore:
             )
             role_counts = {str(row[0]): int(row[1]) for row in cursor.fetchall()}
             cursor.execute(
-                "SELECT purpose FROM factory_tenant_secret_refs WHERE tenant_id=%s ORDER BY purpose", (selected,)
+                "SELECT purpose FROM factory_tenant_secret_refs WHERE tenant_id=%s ORDER BY purpose",
+                (selected,),
             )
             secret_purposes = [str(row[0]) for row in cursor.fetchall()]
             cursor.execute(
@@ -592,7 +720,8 @@ class PostgresControlStore:
             )
             audit_rows = cursor.fetchall()
             cursor.execute(
-                "SELECT state,count(*) FROM factory_check_outbox WHERE tenant_id=%s GROUP BY state", (selected,)
+                "SELECT state,count(*) FROM factory_check_outbox WHERE tenant_id=%s GROUP BY state",
+                (selected,),
             )
             outbox_counts = {str(row[0]): int(row[1]) for row in cursor.fetchall()}
             cursor.execute(
@@ -602,7 +731,8 @@ class PostgresControlStore:
             approval_counts = {str(row[0]): int(row[1]) for row in cursor.fetchall()}
         with self._transaction() as (_db, cursor):
             cursor.execute(
-                "SELECT installation_id FROM factory_installations WHERE tenant_id=%s ORDER BY installation_id", (selected,)
+                "SELECT installation_id FROM factory_installations WHERE tenant_id=%s ORDER BY installation_id",
+                (selected,),
             )
             installation_ids = [int(row[0]) for row in cursor.fetchall()]
         audit_events = []
@@ -623,20 +753,28 @@ class PostgresControlStore:
                 "created_at": created_at,
             }
             expected = hashlib.sha256(canonical_json(event)).hexdigest()
-            audit_valid = audit_valid and str(row[5]) == previous and str(row[6]) == expected
+            audit_valid = (
+                audit_valid and str(row[5]) == previous and str(row[6]) == expected
+            )
             previous = str(row[6])
-            audit_events.append({
-                "sequence": int(row[0]),
-                "action": str(row[1]),
-                "actor": str(row[2]),
-                "resource_id": str(row[3]),
-                "event_hash": str(row[6]),
-                "created_at": created_at,
-            })
+            audit_events.append(
+                {
+                    "sequence": int(row[0]),
+                    "action": str(row[1]),
+                    "actor": str(row[2]),
+                    "resource_id": str(row[3]),
+                    "event_hash": str(row[6]),
+                    "created_at": created_at,
+                }
+            )
         return {
             "schema": "factory.hosted-control.overview.v1",
             "markers": ["CONTROL_OVERVIEW_REDACTED", "CONTROL_RLS_BOUND"],
-            "tenant": {"tenant_id": selected, "display_name": str(tenant[0]), "status": str(tenant[1])},
+            "tenant": {
+                "tenant_id": selected,
+                "display_name": str(tenant[0]),
+                "status": str(tenant[1]),
+            },
             "identity_configured": identity_configured,
             "role_counts": role_counts,
             "installation_ids": installation_ids,
@@ -662,12 +800,18 @@ class TenantIdentityVerifier:
         cache = self._caches.setdefault(
             (tenant_id, config.jwks_url), JwksCache(config.jwks_url, self.transport)
         )
-        claims = verify_oidc_token(token, get_jwks(cache), config.issuer, config.audience)
+        claims = verify_oidc_token(
+            token, get_jwks(cache), config.issuer, config.audience
+        )
         principal = principal_from_verified_oidc(
-            claims, expected_issuer=config.issuer, role_map=self.store.role_map(tenant_id)
+            claims,
+            expected_issuer=config.issuer,
+            role_map=self.store.role_map(tenant_id),
         )
         if principal.tenant_id != tenant_id:
-            raise PRAssuranceError("E_TENANT_BOUNDARY", "verified tenant differs from lookup hint")
+            raise PRAssuranceError(
+                "E_TENANT_BOUNDARY", "verified tenant differs from lookup hint"
+            )
         return principal, {**claims, "marker": "TENANT_IDENTITY_VERIFIED"}
 
 

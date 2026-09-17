@@ -36,40 +36,72 @@ def _identity():
     private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     numbers = private.public_key().public_numbers()
     jwks = {
-        "keys": [{
-            "kty": "RSA", "kid": "key-1", "use": "sig", "alg": "RS256",
-            "n": _b64(numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, "big")),
-            "e": _b64(numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, "big")),
-        }]
+        "keys": [
+            {
+                "kty": "RSA",
+                "kid": "key-1",
+                "use": "sig",
+                "alg": "RS256",
+                "n": _b64(numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, "big")),
+                "e": _b64(numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, "big")),
+            }
+        ]
     }
     return private, jwks
 
 
-def _token(private, *, subject="reviewer", tenant="tenant-a", audience=AUDIENCE, jti="token-1", groups=None):
-    header = _b64(json.dumps({"alg": "RS256", "kid": "key-1", "typ": "JWT"}, separators=(",", ":")).encode())
-    payload = _b64(json.dumps({
-        "iss": ISSUER, "aud": audience, "sub": subject, "tenant_id": tenant,
-        "groups": groups or ["release-approvers"], "jti": jti,
-        "iat": NOW - 5, "nbf": NOW - 5, "exp": NOW + 300,
-    }, separators=(",", ":")).encode())
+def _token(
+    private,
+    *,
+    subject="reviewer",
+    tenant="tenant-a",
+    audience=AUDIENCE,
+    jti="token-1",
+    groups=None,
+):
+    header = _b64(
+        json.dumps(
+            {"alg": "RS256", "kid": "key-1", "typ": "JWT"}, separators=(",", ":")
+        ).encode()
+    )
+    payload = _b64(
+        json.dumps(
+            {
+                "iss": ISSUER,
+                "aud": audience,
+                "sub": subject,
+                "tenant_id": tenant,
+                "groups": groups or ["release-approvers"],
+                "jti": jti,
+                "iat": NOW - 5,
+                "nbf": NOW - 5,
+                "exp": NOW + 300,
+            },
+            separators=(",", ":"),
+        ).encode()
+    )
     signing_input = f"{header}.{payload}".encode()
     signature = private.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
     return f"{header}.{payload}.{_b64(signature)}"
 
 
 def _webhook(*, delivery="delivery-1", action="opened", actor="alice"):
-    body = json.dumps({
-        "action": action,
-        "number": 17,
-        "repository": {"full_name": "acme/payments"},
-        "installation": {"id": 4421},
-        "sender": {"login": actor},
-        "pull_request": {"number": 17, "head": {"sha": "a" * 40}},
-    }, separators=(",", ":")).encode()
+    body = json.dumps(
+        {
+            "action": action,
+            "number": 17,
+            "repository": {"full_name": "acme/payments"},
+            "installation": {"id": 4421},
+            "sender": {"login": actor},
+            "pull_request": {"number": 17, "head": {"sha": "a" * 40}},
+        },
+        separators=(",", ":"),
+    ).encode()
     headers = {
         "X-GitHub-Event": "pull_request",
         "X-GitHub-Delivery": delivery,
-        "X-Hub-Signature-256": "sha256=" + hmac.new(SECRET, body, hashlib.sha256).hexdigest(),
+        "X-Hub-Signature-256": "sha256="
+        + hmac.new(SECRET, body, hashlib.sha256).hexdigest(),
     }
     return body, headers
 
@@ -82,9 +114,17 @@ def _ingest(store, *, delivery="delivery-1", actor="alice"):
 
 def _decide(store, approval_id, token, jwks, *, tenant="tenant-a", decision="approved"):
     return decide_pull_request(
-        store, approval_id, token, jwks, ISSUER, AUDIENCE,
-        tenant_id=tenant, role_map={"release-approvers": "approver"},
-        decision=decision, reason="independent review complete", now=NOW,
+        store,
+        approval_id,
+        token,
+        jwks,
+        ISSUER,
+        AUDIENCE,
+        tenant_id=tenant,
+        role_map={"release-approvers": "approver"},
+        decision=decision,
+        reason="independent review complete",
+        now=NOW,
     )
 
 
@@ -94,15 +134,24 @@ def test_authenticated_pr_reaches_independent_approval_and_bound_check(tmp_path)
     private, jwks = _identity()
     pending = _ingest(store)
     assert pending["markers"] == [
-        "WEBHOOK_SIGNATURE_VERIFIED", "PR_EVENT_BOUND", "DELIVERY_RECORDED",
-        "PR_APPROVAL_SINGLETON", "AUTHORITY_BOUNDARY_OFFLINE",
+        "WEBHOOK_SIGNATURE_VERIFIED",
+        "PR_EVENT_BOUND",
+        "DELIVERY_RECORDED",
+        "PR_APPROVAL_SINGLETON",
+        "AUTHORITY_BOUNDARY_OFFLINE",
     ]
     assert pending["check_request"]["status"] == "queued"
     completed = _decide(store, pending["approval_id"], _token(private), jwks)
-    assert completed["markers"] == ["OIDC_IDENTITY_VERIFIED", "APPROVAL_APPROVED", "GITHUB_CHECK_BOUND"]
+    assert completed["markers"] == [
+        "OIDC_IDENTITY_VERIFIED",
+        "APPROVAL_APPROVED",
+        "GITHUB_CHECK_BOUND",
+    ]
     assert completed["check_request"]["conclusion"] == "success"
     assert completed["check_request"]["head_sha"] == "a" * 40
-    audit = store.evidence.verify_audit(Principal("audit", "tenant-a", ("viewer",)), "tenant-a")
+    audit = store.evidence.verify_audit(
+        Principal("audit", "tenant-a", ("viewer",)), "tenant-a"
+    )
     assert audit["valid"] is True and audit["events"] == 3
 
 
@@ -120,7 +169,10 @@ def test_webhook_signature_is_verified_before_json_and_replay_is_durable(tmp_pat
     assert replay.value.code == "E_WEBHOOK_REPLAY"
     with sqlite3.connect(store.path) as db:
         assert db.execute("SELECT count(*) FROM approvals").fetchone()[0] == 1
-        assert db.execute("SELECT count(*) FROM pr_assurance_deliveries").fetchone()[0] == 1
+        assert (
+            db.execute("SELECT count(*) FROM pr_assurance_deliveries").fetchone()[0]
+            == 1
+        )
     assert first["approval_id"]
 
 
@@ -131,18 +183,30 @@ def test_unbound_installation_is_rejected_before_delivery_reservation(tmp_path):
         ingest_pull_request(store, body, headers, SECRET, "tenant-a")
     assert error.value.code == "E_INSTALLATION_TENANT"
     with sqlite3.connect(store.path) as db:
-        assert db.execute("SELECT count(*) FROM pr_assurance_deliveries").fetchone()[0] == 0
+        assert (
+            db.execute("SELECT count(*) FROM pr_assurance_deliveries").fetchone()[0]
+            == 0
+        )
 
 
-@pytest.mark.parametrize("mutation,code", [
-    (lambda token: token.rsplit(".", 1)[0] + "." + _b64(b"bad"), "E_OIDC_SIGNATURE"),
-    (lambda token: token.replace("RS256", "RS256"), None),
-])
+@pytest.mark.parametrize(
+    "mutation,code",
+    [
+        (
+            lambda token: token.rsplit(".", 1)[0] + "." + _b64(b"bad"),
+            "E_OIDC_SIGNATURE",
+        ),
+        (lambda token: token.replace("RS256", "RS256"), None),
+    ],
+)
 def test_oidc_signature_mutation_fails_closed(mutation, code):
     private, jwks = _identity()
     token = mutation(_token(private))
     if code is None:
-        assert verify_oidc_token(token, jwks, ISSUER, AUDIENCE, now=NOW)["sub"] == "reviewer"
+        assert (
+            verify_oidc_token(token, jwks, ISSUER, AUDIENCE, now=NOW)["sub"]
+            == "reviewer"
+        )
     else:
         with pytest.raises(PRAssuranceError) as error:
             verify_oidc_token(token, jwks, ISSUER, AUDIENCE, now=NOW)
@@ -173,8 +237,10 @@ def test_cross_tenant_and_self_approval_leave_request_pending(tmp_path):
     assert cross_tenant.value.code == "E_TENANT_BOUNDARY"
     with pytest.raises(ControlPlaneError) as self_approval:
         _decide(
-            store, pending["approval_id"],
-            _token(private, subject="github-app:4421", jti="self"), jwks,
+            store,
+            pending["approval_id"],
+            _token(private, subject="github-app:4421", jti="self"),
+            jwks,
         )
     assert self_approval.value.code == "E_SELF_APPROVAL"
     row = store.evidence.get_approval(
@@ -183,13 +249,21 @@ def test_cross_tenant_and_self_approval_leave_request_pending(tmp_path):
     assert row["status"] == "pending"
 
 
-def test_rejected_decision_emits_failure_without_network_authority(tmp_path, monkeypatch):
+def test_rejected_decision_emits_failure_without_network_authority(
+    tmp_path, monkeypatch
+):
     store = PRAssuranceStore(tmp_path / "assurance.sqlite3")
     private, jwks = _identity()
     pending = _ingest(store)
-    completed = _decide(store, pending["approval_id"], _token(private), jwks, decision="rejected")
+    completed = _decide(
+        store, pending["approval_id"], _token(private), jwks, decision="rejected"
+    )
     serialized = json.dumps(completed)
-    assert completed["markers"] == ["OIDC_IDENTITY_VERIFIED", "APPROVAL_REJECTED", "GITHUB_CHECK_BOUND"]
+    assert completed["markers"] == [
+        "OIDC_IDENTITY_VERIFIED",
+        "APPROVAL_REJECTED",
+        "GITHUB_CHECK_BOUND",
+    ]
     assert completed["check_request"]["conclusion"] == "failure"
     assert "url" not in serialized.lower() and "token" not in serialized.lower()
 
@@ -198,7 +272,9 @@ def test_github_check_request_rejects_unknown_status():
     body, headers = _webhook()
     event = verify_github_webhook(body, headers, SECRET)
     with pytest.raises(PRAssuranceError) as error:
-        github_check_request(event, evidence_digest="b" * 64, approval_id="approval", status="unknown")
+        github_check_request(
+            event, evidence_digest="b" * 64, approval_id="approval", status="unknown"
+        )
     assert error.value.code == "E_CHECK_STATUS"
 
 

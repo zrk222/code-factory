@@ -1,4 +1,5 @@
 """Versioned cross-brick protocol and compatibility checks."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,7 +23,18 @@ REQUIRED_COMMANDS = {
     "specline": {"strict", "verify-validators", "challenge"},
     "forgeline": {"gate", "fill", "verify-tests", "challenge"},
     "hsf": {"compile", "goldens", "challenge"},
-    "prestige": {"audit", "render-audit", "challenge", "tokens", "verify-tokens", "init", "report", "pr", "ci", "benchmark"},
+    "prestige": {
+        "audit",
+        "render-audit",
+        "challenge",
+        "tokens",
+        "verify-tokens",
+        "init",
+        "report",
+        "pr",
+        "ci",
+        "benchmark",
+    },
 }
 
 
@@ -70,7 +82,13 @@ def compatibility(
     version = package_version(meta["pip"]) or reported_version
     minimum = MINIMUM_VERSIONS[module]
     required = REQUIRED_COMMANDS[module]
-    missing = tuple(sorted(command for command in required if help_text is not None and command not in help_text))
+    missing = tuple(
+        sorted(
+            command
+            for command in required
+            if help_text is not None and command not in help_text
+        )
+    )
     return Compatibility(
         module=module,
         cli=meta["cli"],
@@ -78,7 +96,8 @@ def compatibility(
         installed=installed,
         version=version,
         minimum=minimum,
-        version_ok=version is not None and version_tuple(version) >= version_tuple(minimum),
+        version_ok=version is not None
+        and version_tuple(version) >= version_tuple(minimum),
         commands_ok=None if help_text is None else not missing,
         missing_commands=missing,
     )

@@ -5,6 +5,7 @@ agent decides which workflow to run.  Importing the full command registry for
 that probe is unnecessary and expensive, so this module keeps the version
 path dependency-light and imports :mod:`factoryline.cli` only for real work.
 """
+
 from __future__ import annotations
 
 import json
@@ -16,7 +17,11 @@ def _emit_version(as_json: bool) -> int:
     from .provenance import provenance
 
     payload = provenance()
-    print(json.dumps(payload, indent=2, sort_keys=True) if as_json else f"factory {payload['version']}")
+    print(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if as_json
+        else f"factory {payload['version']}"
+    )
     return 0
 
 

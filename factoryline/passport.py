@@ -1,4 +1,5 @@
 """Factory Passport: portable proof-by-sabotage evidence and Mermaid graph."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -42,10 +43,12 @@ def mermaid_for(passport: dict) -> str:
             lines.append(f'    {node} --> P["Factory Passport"]')
     else:
         lines.append('    C --> P["Factory Passport"]')
-    lines.extend([
-        '    B --> P',
-        '    P --> G["GitHub PR summary + badge + attestations"]',
-    ])
+    lines.extend(
+        [
+            "    B --> P",
+            '    P --> G["GitHub PR summary + badge + attestations"]',
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -63,13 +66,17 @@ def _badge(passport: dict) -> str:
 </svg>\n'''
 
 
-def build_passport(root: Path, feature: str, trace_path: Path, challenge_paths: list[Path]) -> dict:
+def build_passport(
+    root: Path, feature: str, trace_path: Path, challenge_paths: list[Path]
+) -> dict:
     """Build a hash-bound feature passport from trace and challenge evidence."""
     root = Path(root)
     trace_path = Path(trace_path)
     verification = verify_trace(trace_path, root=root)
     if not verification["valid"]:
-        raise ValueError("trace verification failed: " + "; ".join(verification["errors"]))
+        raise ValueError(
+            "trace verification failed: " + "; ".join(verification["errors"])
+        )
     challenges = []
     for path in challenge_paths:
         path = Path(path)
@@ -81,15 +88,17 @@ def build_passport(root: Path, feature: str, trace_path: Path, challenge_paths: 
         total = int(payload.get("mutants_total", 0))
         killed = int(payload.get("mutants_killed", 0))
         passed = bool(payload.get("passed")) and total > 0 and killed == total
-        challenges.append({
-            "brick": payload["brick"],
-            "stage": payload.get("stage", "challenge"),
-            "passed": passed,
-            "mutants_total": total,
-            "mutants_killed": killed,
-            "receipt_path": str(path.resolve()),
-            "receipt_sha256": _sha256(path),
-        })
+        challenges.append(
+            {
+                "brick": payload["brick"],
+                "stage": payload.get("stage", "challenge"),
+                "passed": passed,
+                "mutants_total": total,
+                "mutants_killed": killed,
+                "receipt_path": str(path.resolve()),
+                "receipt_sha256": _sha256(path),
+            }
+        )
     if not challenges:
         raise ValueError("at least one counterfactual challenge receipt is required")
     challenge_keys = [(item["brick"], item["stage"]) for item in challenges]
@@ -114,10 +123,19 @@ def build_passport(root: Path, feature: str, trace_path: Path, challenge_paths: 
     json_path = out_dir / f"{feature}.passport.json"
     mmd_path = out_dir / f"{feature}.passport.mmd"
     svg_path = out_dir / f"{feature}.passport.svg"
-    json_path.write_text(json.dumps(passport, indent=2, sort_keys=True), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(passport, indent=2, sort_keys=True), encoding="utf-8"
+    )
     mmd_path.write_text(mermaid_for(passport), encoding="utf-8")
     svg_path.write_text(_badge(passport), encoding="utf-8")
-    return {**passport, "paths": {"json": str(json_path), "mermaid": str(mmd_path), "badge": str(svg_path)}}
+    return {
+        **passport,
+        "paths": {
+            "json": str(json_path),
+            "mermaid": str(mmd_path),
+            "badge": str(svg_path),
+        },
+    }
 
 
 def verify_passport(path: Path) -> dict:
@@ -127,7 +145,11 @@ def verify_passport(path: Path) -> dict:
     errors = []
     if payload.get("schema") != PASSPORT_SCHEMA:
         errors.append("unsupported passport schema")
-    core = {key: value for key, value in payload.items() if key not in {"passport_sha256", "paths"}}
+    core = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"passport_sha256", "paths"}
+    }
     if hashlib.sha256(_canonical(core)).hexdigest() != payload.get("passport_sha256"):
         errors.append("passport hash mismatch")
     for item in payload.get("challenges", []):
@@ -148,4 +170,9 @@ def verify_passport(path: Path) -> dict:
         errors.append("passport contains no challenge receipts")
     if not payload.get("verified"):
         errors.append("passport verdict is blocked")
-    return {"valid": not errors, "errors": errors, "feature": payload.get("feature"), "passport_sha256": payload.get("passport_sha256")}
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "feature": payload.get("feature"),
+        "passport_sha256": payload.get("passport_sha256"),
+    }

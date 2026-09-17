@@ -1,6 +1,9 @@
 import json
 import pytest
-from factoryline.knowledge_handoff import create_knowledge_handoff, receive_knowledge_handoff
+from factoryline.knowledge_handoff import (
+    create_knowledge_handoff,
+    receive_knowledge_handoff,
+)
 from factoryline.continuity import ContinuityError
 from factoryline.cli import main
 from test_engineering_memory import setup
@@ -8,7 +11,15 @@ from test_continuity import _principal, PURPOSE, SCOPE
 
 
 def arguments(root):
-    return (root, _principal("reader", ("reader",)), "tenant-a", PURPOSE, SCOPE, "specline", "forgeline")
+    return (
+        root,
+        _principal("reader", ("reader",)),
+        "tenant-a",
+        PURPOSE,
+        SCOPE,
+        "specline",
+        "forgeline",
+    )
 
 
 def test_compact_deterministic_roundtrip(tmp_path):
@@ -23,7 +34,9 @@ def test_compact_deterministic_roundtrip(tmp_path):
     assert result["authority"] == "none"
 
 
-@pytest.mark.parametrize("change", ["artifact", "withdraw", "packet", "scope", "route", "sender"])
+@pytest.mark.parametrize(
+    "change", ["artifact", "withdraw", "packet", "scope", "route", "sender"]
+)
 def test_receiver_rejects_stale_or_misrouted_knowledge(tmp_path, change):
     store = setup(tmp_path)
     args = list(arguments(tmp_path))
@@ -31,7 +44,13 @@ def test_receiver_rejects_stale_or_misrouted_knowledge(tmp_path, change):
     if change == "artifact":
         (tmp_path / "proof.json").write_text("changed")
     elif change == "withdraw":
-        store.withdraw(_principal("reviewer", ("promoter",)), "tenant-a", "one", status="revoked", reason="invalid")
+        store.withdraw(
+            _principal("reviewer", ("promoter",)),
+            "tenant-a",
+            "one",
+            status="revoked",
+            reason="invalid",
+        )
     elif change == "packet":
         packet["authority"] = "release"
     elif change == "scope":
@@ -47,8 +66,23 @@ def test_receiver_rejects_stale_or_misrouted_knowledge(tmp_path, change):
 
 def test_cli_packet_and_receive(tmp_path, capsys):
     setup(tmp_path)
-    args = ["evidence-memory", "--root", str(tmp_path), "--tenant", "tenant-a", "--subject", "reader",
-            "--purpose", PURPOSE, "--scope", SCOPE, "--sender", "specline", "--receiver", "forgeline"]
+    args = [
+        "evidence-memory",
+        "--root",
+        str(tmp_path),
+        "--tenant",
+        "tenant-a",
+        "--subject",
+        "reader",
+        "--purpose",
+        PURPOSE,
+        "--scope",
+        SCOPE,
+        "--sender",
+        "specline",
+        "--receiver",
+        "forgeline",
+    ]
     assert main(args) == 0
     packet = capsys.readouterr().out
     (tmp_path / "packet.json").write_text(packet)

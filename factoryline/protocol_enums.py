@@ -5,6 +5,7 @@ their existing JSON string values.  This module centralizes only values shared
 between control-plane boundaries; feature-local vocabulary remains local to
 avoid turning ordinary configuration into a global compatibility contract.
 """
+
 from __future__ import annotations
 
 from enum import Enum

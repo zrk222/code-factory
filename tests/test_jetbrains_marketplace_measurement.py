@@ -37,13 +37,23 @@ def test_marketplace_measurement_reports_only_observed_download_movement() -> No
     assert result["download_delta_state"] == "observed"
     assert result["conversion_rate"] is None
     assert result["causal_uplift"] is None
-    assert result["conversion_rate_state"] == "unavailable_without_marketplace_impressions_or_page_views"
-    assert result["causal_uplift_state"] == "unavailable_without_a_controlled_experiment_or_attribution_data"
+    assert (
+        result["conversion_rate_state"]
+        == "unavailable_without_marketplace_impressions_or_page_views"
+    )
+    assert (
+        result["causal_uplift_state"]
+        == "unavailable_without_a_controlled_experiment_or_attribution_data"
+    )
 
 
-def test_marketplace_measurement_requires_a_well_formed_baseline(tmp_path: Path) -> None:
+def test_marketplace_measurement_requires_a_well_formed_baseline(
+    tmp_path: Path,
+) -> None:
     invalid = tmp_path / "baseline.json"
-    invalid.write_text(json.dumps({"schema": BASELINE_SCHEMA, "plugin_id": 33009, "downloads": -1}))
+    invalid.write_text(
+        json.dumps({"schema": BASELINE_SCHEMA, "plugin_id": 33009, "downloads": -1})
+    )
 
     with pytest.raises(BaselineError, match="BASELINE_DOWNLOADS_INVALID"):
         load_baseline(invalid)

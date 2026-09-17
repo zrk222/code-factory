@@ -1,4 +1,5 @@
 """Exact paired savings receipts and publication-safe aggregates."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -32,17 +33,25 @@ def _observation(value: dict[str, Any], label: str) -> dict[str, Any]:
         raise SavingsError("OBSERVATION_INVALID", f"{label} must be an object")
     elapsed = value.get("elapsed_ms")
     if not isinstance(elapsed, int) or isinstance(elapsed, bool) or elapsed <= 0:
-        raise SavingsError("ELAPSED_INVALID", f"{label}.elapsed_ms must be a positive integer")
+        raise SavingsError(
+            "ELAPSED_INVALID", f"{label}.elapsed_ms must be a positive integer"
+        )
     result: dict[str, Any] = {"elapsed_ms": elapsed}
     tokens = value.get("tokens")
-    if tokens is not None and (not isinstance(tokens, int) or isinstance(tokens, bool) or tokens < 0):
-        raise SavingsError("TOKENS_INVALID", f"{label}.tokens must be a non-negative integer or null")
+    if tokens is not None and (
+        not isinstance(tokens, int) or isinstance(tokens, bool) or tokens < 0
+    ):
+        raise SavingsError(
+            "TOKENS_INVALID", f"{label}.tokens must be a non-negative integer or null"
+        )
     result["tokens"] = tokens
     cost = value.get("cost_usd")
     if cost is not None and (
         not isinstance(cost, (int, float)) or isinstance(cost, bool) or cost < 0
     ):
-        raise SavingsError("COST_INVALID", f"{label}.cost_usd must be non-negative or null")
+        raise SavingsError(
+            "COST_INVALID", f"{label}.cost_usd must be non-negative or null"
+        )
     result["cost_usd"] = float(cost) if cost is not None else None
     return result
 
@@ -70,7 +79,9 @@ def _ratio(numerator: Any, denominator: Any) -> float | None:
     return float(_exact(numerator) / _exact(denominator))
 
 
-def _delta(baseline: dict[str, Any], factory: dict[str, Any], key: str) -> tuple[Any, Any]:
+def _delta(
+    baseline: dict[str, Any], factory: dict[str, Any], key: str
+) -> tuple[Any, Any]:
     before, after = baseline.get(key), factory.get(key)
     if before is None or after is None:
         return None, None
@@ -89,7 +100,9 @@ def _evidence_digest(equivalent_outcome: bool, evidence: Path | None) -> str | N
     if not equivalent_outcome:
         return None
     if evidence is None or not Path(evidence).is_file():
-        raise SavingsError("EQUIVALENCE_EVIDENCE_REQUIRED", "an existing evidence file is required")
+        raise SavingsError(
+            "EQUIVALENCE_EVIDENCE_REQUIRED", "an existing evidence file is required"
+        )
     return hashlib.sha256(Path(evidence).read_bytes()).hexdigest()
 
 
@@ -99,10 +112,17 @@ def _pair_markers(
     has_unknown: bool,
 ) -> list[str]:
     markers = [
-        "SAVINGS_RECORD_COMMAND", "PAIR_ID_VALIDATED", "SIGNED_DELTA_COMPUTED",
-        "TIME_SAVINGS_RATE_EXACT", "SAVINGS_PAIR_RECEIPTED",
+        "SAVINGS_RECORD_COMMAND",
+        "PAIR_ID_VALIDATED",
+        "SIGNED_DELTA_COMPUTED",
+        "TIME_SAVINGS_RATE_EXACT",
+        "SAVINGS_PAIR_RECEIPTED",
     ]
-    markers.append("EQUIVALENCE_EVIDENCE_HASHED" if evidence_digest else "PRODUCTIVITY_GAIN_WITHHELD")
+    markers.append(
+        "EQUIVALENCE_EVIDENCE_HASHED"
+        if evidence_digest
+        else "PRODUCTIVITY_GAIN_WITHHELD"
+    )
     if evidence_digest:
         markers.append("PRODUCTIVITY_GAIN_EXACT")
     if has_unknown:
@@ -128,11 +148,15 @@ def record_savings_pair(
         or len(pair_id) > MAX_PAIR_ID_LENGTH
         or not PAIR_ID.fullmatch(pair_id)
     ):
-        raise SavingsError("PAIR_ID_INVALID", "pair id must match [a-z0-9][a-z0-9._-]{0,79}")
+        raise SavingsError(
+            "PAIR_ID_INVALID", "pair id must match [a-z0-9][a-z0-9._-]{0,79}"
+        )
     before, after = _observation(baseline, "baseline"), _observation(factory, "factory")
     destination = _savings_dir(root) / f"{pair_id}.json"
     if destination.exists() and not replace:
-        raise SavingsError("PAIR_OVERWRITE_REFUSED", "pair already exists; pass --replace explicitly")
+        raise SavingsError(
+            "PAIR_OVERWRITE_REFUSED", "pair already exists; pass --replace explicitly"
+        )
     evidence_digest = _evidence_digest(equivalent_outcome, evidence)
     time_saved, time_rate = _delta(before, after, "elapsed_ms")
     tokens_saved, token_rate = _delta(before, after, "tokens")
@@ -167,7 +191,9 @@ def record_savings_pair(
             "cost_saved_usd": cost_saved,
             "cost_savings_rate": cost_rate,
             "productivity_gain_rate": productivity,
-            "productivity_reason": None if productivity is not None else "Equivalent-outcome evidence is required.",
+            "productivity_reason": None
+            if productivity is not None
+            else "Equivalent-outcome evidence is required.",
         },
     }
     _atomic_json(destination, receipt)
@@ -189,10 +215,18 @@ def load_savings_pairs(root: Path) -> list[dict[str, Any]]:
 
 
 def _metric(rows: list[dict[str, Any]], key: str, saved_key: str) -> dict[str, Any]:
-    exact = [row for row in rows if row["baseline"].get(key) is not None and row["factory"].get(key) is not None]
-    before = _plain(sum((_exact(row["baseline"][key]) for row in exact), start=_exact(0)))
+    exact = [
+        row
+        for row in rows
+        if row["baseline"].get(key) is not None and row["factory"].get(key) is not None
+    ]
+    before = _plain(
+        sum((_exact(row["baseline"][key]) for row in exact), start=_exact(0))
+    )
     after = _plain(sum((_exact(row["factory"][key]) for row in exact), start=_exact(0)))
-    saved = _plain(sum((_exact(row["savings"][saved_key]) for row in exact), start=_exact(0)))
+    saved = _plain(
+        sum((_exact(row["savings"][saved_key]) for row in exact), start=_exact(0))
+    )
     return {
         "exact_pairs": len(exact),
         "coverage_rate": len(exact) / len(rows) if rows else None,
@@ -224,7 +258,9 @@ def public_savings_report(root: Path) -> dict[str, Any]:
             "exact_pairs": len(equivalent),
             "coverage_rate": len(equivalent) / len(rows) if rows else None,
             "gain_rate": productivity,
-            "reason": None if productivity is not None else "Equivalent-outcome evidence is required.",
+            "reason": None
+            if productivity is not None
+            else "Equivalent-outcome evidence is required.",
         },
     }
     if any(

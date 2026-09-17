@@ -4,6 +4,7 @@ The module implements the small DSSE subset needed by FactoryLine. It keeps
 networked Sigstore verification as a separate v1 compatibility path and uses
 Ed25519 plus an explicit local trust root for offline enterprise checks.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -15,7 +16,10 @@ from typing import Any
 
 try:
     from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey,
+        Ed25519PublicKey,
+    )
     from cryptography.exceptions import InvalidSignature
 except ImportError:
     serialization = None
@@ -49,12 +53,21 @@ class EnterpriseReceiptError(RuntimeError):
 
 def _require_crypto() -> None:
     if Ed25519PrivateKey is None or Ed25519PublicKey is None:
-        raise EnterpriseReceiptError("E_CRYPTO_UNAVAILABLE", "install with: pip install factoryline-code-factory[enterprise]")
+        raise EnterpriseReceiptError(
+            "E_CRYPTO_UNAVAILABLE",
+            "install with: pip install factoryline-code-factory[enterprise]",
+        )
 
 
 def _canonical(value: Any) -> bytes:
     try:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
     except (TypeError, ValueError, UnicodeEncodeError) as exc:
         raise EnterpriseReceiptError("E_INVALID_PAYLOAD", str(exc)) from exc
 
@@ -72,7 +85,9 @@ def _b64d(value: str, field: str) -> bytes:
     if not isinstance(value, str) or not value:
         raise EnterpriseReceiptError("E_INVALID_ENVELOPE", f"{field} is required")
     try:
-        return base64.urlsafe_b64decode((value + "=" * (-len(value) % 4)).encode("ascii"))
+        return base64.urlsafe_b64decode(
+            (value + "=" * (-len(value) % 4)).encode("ascii")
+        )
     except (ValueError, UnicodeEncodeError) as exc:
         raise EnterpriseReceiptError("E_INVALID_ENVELOPE", f"invalid {field}") from exc
 
@@ -97,7 +112,9 @@ def _read_json(path: Path) -> dict:
     except (OSError, json.JSONDecodeError) as exc:
         raise EnterpriseReceiptError("E_INVALID_JSON", str(exc)) from exc
     if not isinstance(value, dict):
-        raise EnterpriseReceiptError("E_INVALID_JSON", "top-level JSON must be an object")
+        raise EnterpriseReceiptError(
+            "E_INVALID_JSON", "top-level JSON must be an object"
+        )
     return value
 
 
@@ -116,7 +133,9 @@ def _timestamp(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise EnterpriseReceiptError("E_INVALID_RECEIPT", "invalid receipt timestamp") from exc
+        raise EnterpriseReceiptError(
+            "E_INVALID_RECEIPT", "invalid receipt timestamp"
+        ) from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
@@ -126,21 +145,40 @@ def _validate_optional_digest(payload: dict, field: str) -> None:
     if field not in payload:
         return
     value = payload[field]
-    if not isinstance(value, str) or len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value.lower()):
-        raise EnterpriseReceiptError("E_INVALID_RECEIPT", f"{field} must be a SHA-256 hex digest")
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(ch not in "0123456789abcdef" for ch in value.lower())
+    ):
+        raise EnterpriseReceiptError(
+            "E_INVALID_RECEIPT", f"{field} must be a SHA-256 hex digest"
+        )
 
 
 def validate_receipt_v2(payload: dict) -> dict:
     """Validate a Receipt v2 payload or raise EnterpriseReceiptError with a stable code."""
-    required = {"schema", "module", "stage", "feature", "ok", "tenant_id", "run_id", "ts"}
+    required = {
+        "schema",
+        "module",
+        "stage",
+        "feature",
+        "ok",
+        "tenant_id",
+        "run_id",
+        "ts",
+    }
     if payload.get("schema") != RECEIPT_V2_SCHEMA:
-        raise EnterpriseReceiptError("E_INVALID_RECEIPT", "schema must be factory.receipt.v2")
+        raise EnterpriseReceiptError(
+            "E_INVALID_RECEIPT", "schema must be factory.receipt.v2"
+        )
     missing = sorted(required - payload.keys())
     if missing:
         raise EnterpriseReceiptError("E_INVALID_RECEIPT", f"missing fields: {missing}")
     for field in ("module", "stage", "feature", "tenant_id", "run_id", "ts"):
         if not isinstance(payload[field], str) or not payload[field].strip():
-            raise EnterpriseReceiptError("E_INVALID_RECEIPT", f"{field} must be non-empty")
+            raise EnterpriseReceiptError(
+                "E_INVALID_RECEIPT", f"{field} must be non-empty"
+            )
     if not isinstance(payload["ok"], bool):
         raise EnterpriseReceiptError("E_INVALID_RECEIPT", "ok must be boolean")
     _timestamp(payload["ts"])
@@ -149,17 +187,28 @@ def validate_receipt_v2(payload: dict) -> dict:
     return payload
 
 
-def receipt_v2_from_v1(payload: dict, *, tenant_id: str = "local", policy_sha256: str | None = None) -> dict:
+def receipt_v2_from_v1(
+    payload: dict, *, tenant_id: str = "local", policy_sha256: str | None = None
+) -> dict:
     """Convert a readable v1 receipt into an explicitly tenant-bound v2 payload."""
-    if not isinstance(payload, dict) or not str(payload.get("schema", "")).startswith("factory.receipt."):
-        raise EnterpriseReceiptError("E_INVALID_RECEIPT", "input is not a factory receipt")
+    if not isinstance(payload, dict) or not str(payload.get("schema", "")).startswith(
+        "factory.receipt."
+    ):
+        raise EnterpriseReceiptError(
+            "E_INVALID_RECEIPT", "input is not a factory receipt"
+        )
     converted = dict(payload)
-    converted.update({
-        "schema": RECEIPT_V2_SCHEMA,
-        "tenant_id": tenant_id,
-        "run_id": str(payload.get("run_id") or hashlib.sha256(_canonical(payload)).hexdigest()[:32]),
-        "ts": str(payload.get("ts") or _now()),
-    })
+    converted.update(
+        {
+            "schema": RECEIPT_V2_SCHEMA,
+            "tenant_id": tenant_id,
+            "run_id": str(
+                payload.get("run_id")
+                or hashlib.sha256(_canonical(payload)).hexdigest()[:32]
+            ),
+            "ts": str(payload.get("ts") or _now()),
+        }
+    )
     if policy_sha256 is not None:
         converted["policy_sha256"] = policy_sha256
     return validate_receipt_v2(converted)
@@ -175,9 +224,13 @@ def _load_private_key(path: Path):
         key = serialization.load_pem_private_key(raw, password=None)
     except ValueError:
         try:
-            key = Ed25519PrivateKey.from_private_bytes(_b64d(raw.decode("ascii").strip(), "private_key"))
+            key = Ed25519PrivateKey.from_private_bytes(
+                _b64d(raw.decode("ascii").strip(), "private_key")
+            )
         except (ValueError, UnicodeDecodeError, EnterpriseReceiptError) as exc:
-            raise EnterpriseReceiptError("E_PRIVATE_KEY_INVALID", "expected Ed25519 PEM or base64 key") from exc
+            raise EnterpriseReceiptError(
+                "E_PRIVATE_KEY_INVALID", "expected Ed25519 PEM or base64 key"
+            ) from exc
     if not isinstance(key, Ed25519PrivateKey):
         raise EnterpriseReceiptError("E_PRIVATE_KEY_INVALID", "key is not Ed25519")
     return key
@@ -187,20 +240,44 @@ def _load_public_key(value: str):
     _require_crypto()
     raw = _b64d(value, "public_key")
     if len(raw) != 32:
-        raise EnterpriseReceiptError("E_TRUST_ROOT_INVALID", "Ed25519 public key must be 32 bytes")
+        raise EnterpriseReceiptError(
+            "E_TRUST_ROOT_INVALID", "Ed25519 public key must be 32 bytes"
+        )
     try:
         return Ed25519PublicKey.from_public_bytes(raw)
     except ValueError as exc:
-        raise EnterpriseReceiptError("E_TRUST_ROOT_INVALID", "invalid Ed25519 public key") from exc
+        raise EnterpriseReceiptError(
+            "E_TRUST_ROOT_INVALID", "invalid Ed25519 public key"
+        ) from exc
 
 
-def _signature_metadata(*, keyid: str, identity: str, issuer: str, signature: bytes) -> dict:
-    if not all(isinstance(value, str) and value.strip() for value in (keyid, identity, issuer)):
-        raise EnterpriseReceiptError("E_IDENTITY_REQUIRED", "key id, identity, and issuer are required")
-    return {"keyid": keyid, "algorithm": "ed25519", "identity": identity, "issuer": issuer, "sig": _b64e(signature)}
+def _signature_metadata(
+    *, keyid: str, identity: str, issuer: str, signature: bytes
+) -> dict:
+    if not all(
+        isinstance(value, str) and value.strip() for value in (keyid, identity, issuer)
+    ):
+        raise EnterpriseReceiptError(
+            "E_IDENTITY_REQUIRED", "key id, identity, and issuer are required"
+        )
+    return {
+        "keyid": keyid,
+        "algorithm": "ed25519",
+        "identity": identity,
+        "issuer": issuer,
+        "sig": _b64e(signature),
+    }
 
 
-def sign_payload(payload: dict, *, payload_type: str, private_key_path: Path, keyid: str, identity: str, issuer: str) -> dict:
+def sign_payload(
+    payload: dict,
+    *,
+    payload_type: str,
+    private_key_path: Path,
+    keyid: str,
+    identity: str,
+    issuer: str,
+) -> dict:
     """Create a DSSE envelope or raise EnterpriseReceiptError for invalid signing inputs."""
     _require_crypto()
     if not isinstance(payload, dict):
@@ -213,60 +290,117 @@ def sign_payload(payload: dict, *, payload_type: str, private_key_path: Path, ke
         "payloadType": payload_type,
         "payload": _b64e(payload_bytes),
         "payload_sha256": _sha256(payload_bytes),
-        "signatures": [_signature_metadata(keyid=keyid, identity=identity, issuer=issuer, signature=signature)],
+        "signatures": [
+            _signature_metadata(
+                keyid=keyid, identity=identity, issuer=issuer, signature=signature
+            )
+        ],
     }
 
 
-def seal_receipt_v2(payload: dict, private_key_path: Path, keyid: str, identity: str, issuer: str, out: Path) -> dict:
+def seal_receipt_v2(
+    payload: dict,
+    private_key_path: Path,
+    keyid: str,
+    identity: str,
+    issuer: str,
+    out: Path,
+) -> dict:
     """Validate, sign, and write Receipt v2 or raise EnterpriseReceiptError fail closed."""
     validate_receipt_v2(payload)
-    envelope = sign_payload(payload, payload_type=RECEIPT_PAYLOAD_TYPE, private_key_path=private_key_path, keyid=keyid, identity=identity, issuer=issuer)
+    envelope = sign_payload(
+        payload,
+        payload_type=RECEIPT_PAYLOAD_TYPE,
+        private_key_path=private_key_path,
+        keyid=keyid,
+        identity=identity,
+        issuer=issuer,
+    )
     _write_json(Path(out), envelope)
     return envelope
 
 
 def _validate_trust_root(root: dict) -> dict:
-    if root.get("schema") != TRUST_ROOT_SCHEMA or not isinstance(root.get("keys"), list):
-        raise EnterpriseReceiptError("E_TRUST_ROOT_INVALID", "invalid trust root schema")
+    if root.get("schema") != TRUST_ROOT_SCHEMA or not isinstance(
+        root.get("keys"), list
+    ):
+        raise EnterpriseReceiptError(
+            "E_TRUST_ROOT_INVALID", "invalid trust root schema"
+        )
     return root
 
 
-def _verify_envelope(envelope: dict, *, expected_payload_type: str, trust_root: dict) -> tuple[dict, dict, bytes]:
+def _verify_envelope(
+    envelope: dict, *, expected_payload_type: str, trust_root: dict
+) -> tuple[dict, dict, bytes]:
     if envelope.get("schema") != DSSE_SCHEMA:
-        raise EnterpriseReceiptError("E_INVALID_ENVELOPE", "unsupported DSSE envelope schema")
+        raise EnterpriseReceiptError(
+            "E_INVALID_ENVELOPE", "unsupported DSSE envelope schema"
+        )
     if envelope.get("payloadType") != expected_payload_type:
-        raise EnterpriseReceiptError("E_PAYLOAD_TYPE_MISMATCH", "unexpected DSSE payload type")
+        raise EnterpriseReceiptError(
+            "E_PAYLOAD_TYPE_MISMATCH", "unexpected DSSE payload type"
+        )
     payload_bytes = _b64d(envelope.get("payload"), "payload")
     if envelope.get("payload_sha256") != _sha256(payload_bytes):
-        raise EnterpriseReceiptError("E_PAYLOAD_DIGEST_MISMATCH", "payload digest does not match bytes")
+        raise EnterpriseReceiptError(
+            "E_PAYLOAD_DIGEST_MISMATCH", "payload digest does not match bytes"
+        )
     signatures = envelope.get("signatures")
     if not isinstance(signatures, list) or len(signatures) != 1:
-        raise EnterpriseReceiptError("E_UNSUPPORTED_SIGNATURE", "exactly one Ed25519 signature is required")
+        raise EnterpriseReceiptError(
+            "E_UNSUPPORTED_SIGNATURE", "exactly one Ed25519 signature is required"
+        )
     signature = signatures[0]
     if not isinstance(signature, dict) or signature.get("algorithm") != "ed25519":
-        raise EnterpriseReceiptError("E_UNSUPPORTED_SIGNATURE", "only Ed25519 signatures are supported")
+        raise EnterpriseReceiptError(
+            "E_UNSUPPORTED_SIGNATURE", "only Ed25519 signatures are supported"
+        )
     keyid = signature.get("keyid")
-    key = next((item for item in trust_root["keys"] if isinstance(item, dict) and item.get("keyid") == keyid), None)
+    key = next(
+        (
+            item
+            for item in trust_root["keys"]
+            if isinstance(item, dict) and item.get("keyid") == keyid
+        ),
+        None,
+    )
     if key is None:
         raise EnterpriseReceiptError("E_UNKNOWN_KEY", f"untrusted key id: {keyid}")
-    if signature.get("identity") != key.get("identity") or signature.get("issuer") != key.get("issuer"):
-        raise EnterpriseReceiptError("E_IDENTITY_MISMATCH", "signature identity or issuer differs from trust root")
+    if signature.get("identity") != key.get("identity") or signature.get(
+        "issuer"
+    ) != key.get("issuer"):
+        raise EnterpriseReceiptError(
+            "E_IDENTITY_MISMATCH",
+            "signature identity or issuer differs from trust root",
+        )
     public_key = _load_public_key(key.get("public_key"))
     try:
-        public_key.verify(_b64d(signature.get("sig"), "signature"), dsse_pae(expected_payload_type, payload_bytes))
+        public_key.verify(
+            _b64d(signature.get("sig"), "signature"),
+            dsse_pae(expected_payload_type, payload_bytes),
+        )
     except (InvalidSignature, ValueError):
-        raise EnterpriseReceiptError("E_SIGNATURE_INVALID", "DSSE signature verification failed")
+        raise EnterpriseReceiptError(
+            "E_SIGNATURE_INVALID", "DSSE signature verification failed"
+        )
     try:
         payload = json.loads(payload_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise EnterpriseReceiptError("E_INVALID_PAYLOAD", str(exc)) from exc
     if not isinstance(payload, dict):
-        raise EnterpriseReceiptError("E_INVALID_PAYLOAD", "DSSE payload must be an object")
+        raise EnterpriseReceiptError(
+            "E_INVALID_PAYLOAD", "DSSE payload must be an object"
+        )
     return payload, signature, payload_bytes
 
 
-def _verify_signed_document(path: Path, *, payload_type: str, schema: str, trust_root: dict) -> tuple[dict, dict]:
-    payload, signature, _ = _verify_envelope(_read_json(path), expected_payload_type=payload_type, trust_root=trust_root)
+def _verify_signed_document(
+    path: Path, *, payload_type: str, schema: str, trust_root: dict
+) -> tuple[dict, dict]:
+    payload, signature, _ = _verify_envelope(
+        _read_json(path), expected_payload_type=payload_type, trust_root=trust_root
+    )
     if payload.get("schema") != schema:
         raise EnterpriseReceiptError("E_INVALID_PAYLOAD", f"expected {schema}")
     return payload, signature
@@ -298,9 +432,13 @@ def verify_signed_document(
     }
 
 
-def _revoked(revocations: dict, *, keyid: str, identity: str, receipt_ts: datetime) -> bool:
+def _revoked(
+    revocations: dict, *, keyid: str, identity: str, receipt_ts: datetime
+) -> bool:
     for entry in revocations.get("entries", []):
-        if not isinstance(entry, dict) or (entry.get("keyid") != keyid and entry.get("identity") != identity):
+        if not isinstance(entry, dict) or (
+            entry.get("keyid") != keyid and entry.get("identity") != identity
+        ):
             continue
         revoked_at = entry.get("revoked_at")
         if isinstance(revoked_at, str) and _timestamp(revoked_at) <= receipt_ts:
@@ -311,54 +449,97 @@ def _revoked(revocations: dict, *, keyid: str, identity: str, receipt_ts: dateti
 def _revocation_timestamp(value: object, *, code: str, field: str) -> datetime:
     """Parse a revocation timestamp while requiring an explicit timezone."""
     if not isinstance(value, str):
-        raise EnterpriseReceiptError(code, f"{field} must be a timezone-aware timestamp")
+        raise EnterpriseReceiptError(
+            code, f"{field} must be a timezone-aware timestamp"
+        )
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise EnterpriseReceiptError(code, f"{field} must be a timezone-aware timestamp") from exc
+        raise EnterpriseReceiptError(
+            code, f"{field} must be a timezone-aware timestamp"
+        ) from exc
     if parsed.tzinfo is None:
-        raise EnterpriseReceiptError(code, f"{field} must be a timezone-aware timestamp")
+        raise EnterpriseReceiptError(
+            code, f"{field} must be a timezone-aware timestamp"
+        )
     return parsed.astimezone(timezone.utc)
 
 
 def _validate_revocations_payload(payload: dict) -> datetime:
     """Validate the signed revocation snapshot and return its generation time."""
     if payload.get("schema") != REVOCATIONS_SCHEMA:
-        raise EnterpriseReceiptError("E_INVALID_REVOCATIONS", f"expected {REVOCATIONS_SCHEMA}")
-    generated_at = _revocation_timestamp(payload.get("generated_at"), code="E_REVOCATION_FRESHNESS", field="generated_at")
+        raise EnterpriseReceiptError(
+            "E_INVALID_REVOCATIONS", f"expected {REVOCATIONS_SCHEMA}"
+        )
+    generated_at = _revocation_timestamp(
+        payload.get("generated_at"), code="E_REVOCATION_FRESHNESS", field="generated_at"
+    )
     entries = payload.get("entries")
     if not isinstance(entries, list) or len(entries) > MAX_REVOCATION_ENTRIES:
-        raise EnterpriseReceiptError("E_INVALID_REVOCATIONS", f"entries must contain 0 to {MAX_REVOCATION_ENTRIES} objects")
+        raise EnterpriseReceiptError(
+            "E_INVALID_REVOCATIONS",
+            f"entries must contain 0 to {MAX_REVOCATION_ENTRIES} objects",
+        )
     for index, entry in enumerate(entries):
-        if not isinstance(entry, dict) or not (isinstance(entry.get("keyid"), str) or isinstance(entry.get("identity"), str)):
-            raise EnterpriseReceiptError("E_INVALID_REVOCATIONS", f"entry {index} must identify a keyid or identity")
+        if not isinstance(entry, dict) or not (
+            isinstance(entry.get("keyid"), str)
+            or isinstance(entry.get("identity"), str)
+        ):
+            raise EnterpriseReceiptError(
+                "E_INVALID_REVOCATIONS",
+                f"entry {index} must identify a keyid or identity",
+            )
         if "revoked_at" in entry:
-            _revocation_timestamp(entry["revoked_at"], code="E_INVALID_REVOCATIONS", field=f"entry {index} revoked_at")
+            _revocation_timestamp(
+                entry["revoked_at"],
+                code="E_INVALID_REVOCATIONS",
+                field=f"entry {index} revoked_at",
+            )
     return generated_at
 
 
-def _revocation_freshness(generated_at: datetime, *, now: datetime | None, max_age_seconds: int) -> int:
-    if not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool) or not 1 <= max_age_seconds <= MAX_REVOCATION_AGE_SECONDS:
-        raise EnterpriseReceiptError("E_REVOCATION_FRESHNESS", f"max_revocation_age_seconds must be 1 through {MAX_REVOCATION_AGE_SECONDS}")
+def _revocation_freshness(
+    generated_at: datetime, *, now: datetime | None, max_age_seconds: int
+) -> int:
+    if (
+        not isinstance(max_age_seconds, int)
+        or isinstance(max_age_seconds, bool)
+        or not 1 <= max_age_seconds <= MAX_REVOCATION_AGE_SECONDS
+    ):
+        raise EnterpriseReceiptError(
+            "E_REVOCATION_FRESHNESS",
+            f"max_revocation_age_seconds must be 1 through {MAX_REVOCATION_AGE_SECONDS}",
+        )
     current = datetime.now(timezone.utc) if now is None else now
     if not isinstance(current, datetime) or current.tzinfo is None:
-        raise EnterpriseReceiptError("E_REVOCATION_FRESHNESS", "now must be a timezone-aware timestamp")
+        raise EnterpriseReceiptError(
+            "E_REVOCATION_FRESHNESS", "now must be a timezone-aware timestamp"
+        )
     current = current.astimezone(timezone.utc)
     age = int((current - generated_at).total_seconds())
     if age < 0:
-        raise EnterpriseReceiptError("E_REVOCATION_FRESHNESS", "revocation snapshot is issued in the future")
+        raise EnterpriseReceiptError(
+            "E_REVOCATION_FRESHNESS", "revocation snapshot is issued in the future"
+        )
     if age > max_age_seconds:
-        raise EnterpriseReceiptError("E_REVOCATION_FRESHNESS", "revocation snapshot is stale")
+        raise EnterpriseReceiptError(
+            "E_REVOCATION_FRESHNESS", "revocation snapshot is stale"
+        )
     return age
 
 
-def _verify_policy_status(payload: dict, *, trust_root: dict, policy_bundle_path: Path | None) -> str:
+def _verify_policy_status(
+    payload: dict, *, trust_root: dict, policy_bundle_path: Path | None
+) -> str:
     """Verify a declared policy bundle and return its evidence status."""
     policy_digest = payload.get("policy_sha256")
     if not policy_digest:
         return "NOT_DECLARED"
     if policy_bundle_path is None:
-        raise EnterpriseReceiptError("E_POLICY_REQUIRED", "receipt declares policy_sha256 but no bundle was supplied")
+        raise EnterpriseReceiptError(
+            "E_POLICY_REQUIRED",
+            "receipt declares policy_sha256 but no bundle was supplied",
+        )
     policy, _ = _verify_signed_document(
         Path(policy_bundle_path),
         payload_type=POLICY_PAYLOAD_TYPE,
@@ -366,7 +547,9 @@ def _verify_policy_status(payload: dict, *, trust_root: dict, policy_bundle_path
         trust_root=trust_root,
     )
     if policy.get("policy_sha256") != policy_digest:
-        raise EnterpriseReceiptError("E_POLICY_DIGEST_MISMATCH", "receipt and policy bundle digests differ")
+        raise EnterpriseReceiptError(
+            "E_POLICY_DIGEST_MISMATCH", "receipt and policy bundle digests differ"
+        )
     return "VERIFIED"
 
 
@@ -382,7 +565,10 @@ def _verify_revocation_status(
 ) -> tuple[str, str, int | None]:
     """Verify an optional or strict revocation snapshot and return its markers."""
     if require_revocations and revocations_path is None:
-        raise EnterpriseReceiptError("E_REVOCATION_REQUIRED", "strict verification requires a signed revocation snapshot")
+        raise EnterpriseReceiptError(
+            "E_REVOCATION_REQUIRED",
+            "strict verification requires a signed revocation snapshot",
+        )
     if revocations_path is None:
         return "NOT_CHECKED", "NOT_CHECKED", None
     revocations, _ = _verify_signed_document(
@@ -392,10 +578,23 @@ def _verify_revocation_status(
         trust_root=trust_root,
     )
     generated_at = _validate_revocations_payload(revocations)
-    age = _revocation_freshness(generated_at, now=now, max_age_seconds=max_revocation_age_seconds) if require_revocations else None
+    age = (
+        _revocation_freshness(
+            generated_at, now=now, max_age_seconds=max_revocation_age_seconds
+        )
+        if require_revocations
+        else None
+    )
     freshness = "CURRENT" if require_revocations else "NOT_ASSERTED"
-    if _revoked(revocations, keyid=signature["keyid"], identity=signature["identity"], receipt_ts=receipt_ts):
-        raise EnterpriseReceiptError("E_SIGNER_REVOKED", "signer was revoked at receipt timestamp")
+    if _revoked(
+        revocations,
+        keyid=signature["keyid"],
+        identity=signature["identity"],
+        receipt_ts=receipt_ts,
+    ):
+        raise EnterpriseReceiptError(
+            "E_SIGNER_REVOKED", "signer was revoked at receipt timestamp"
+        )
     status = "FRESH_CHECKED" if require_revocations else "CHECKED"
     return status, freshness, age
 
@@ -414,21 +613,33 @@ def verify_receipt_v2(
     envelope = _read_json(Path(path))
     if envelope.get("schema") != DSSE_SCHEMA:
         if str(envelope.get("schema", "")).startswith("factory.receipt.v1"):
-            return {"schema": RESULT_SCHEMA, "verdict": "LEGACY_UNVERIFIED", "path": str(Path(path).resolve())}
-        raise EnterpriseReceiptError("E_INVALID_ENVELOPE", "expected a DSSE Receipt v2 envelope")
+            return {
+                "schema": RESULT_SCHEMA,
+                "verdict": "LEGACY_UNVERIFIED",
+                "path": str(Path(path).resolve()),
+            }
+        raise EnterpriseReceiptError(
+            "E_INVALID_ENVELOPE", "expected a DSSE Receipt v2 envelope"
+        )
     trust_root = _validate_trust_root(_read_json(Path(trust_root_path)))
-    payload, signature, _ = _verify_envelope(envelope, expected_payload_type=RECEIPT_PAYLOAD_TYPE, trust_root=trust_root)
+    payload, signature, _ = _verify_envelope(
+        envelope, expected_payload_type=RECEIPT_PAYLOAD_TYPE, trust_root=trust_root
+    )
     validate_receipt_v2(payload)
     receipt_ts = _timestamp(payload["ts"])
-    policy_status = _verify_policy_status(payload, trust_root=trust_root, policy_bundle_path=policy_bundle_path)
-    revocation_status, revocation_freshness, revocation_age_seconds = _verify_revocation_status(
-        signature=signature,
-        receipt_ts=receipt_ts,
-        trust_root=trust_root,
-        revocations_path=revocations_path,
-        require_revocations=require_revocations,
-        max_revocation_age_seconds=max_revocation_age_seconds,
-        now=now,
+    policy_status = _verify_policy_status(
+        payload, trust_root=trust_root, policy_bundle_path=policy_bundle_path
+    )
+    revocation_status, revocation_freshness, revocation_age_seconds = (
+        _verify_revocation_status(
+            signature=signature,
+            receipt_ts=receipt_ts,
+            trust_root=trust_root,
+            revocations_path=revocations_path,
+            require_revocations=require_revocations,
+            max_revocation_age_seconds=max_revocation_age_seconds,
+            now=now,
+        )
     )
     return {
         "schema": RESULT_SCHEMA,
@@ -447,40 +658,115 @@ def verify_receipt_v2(
     }
 
 
-def sign_policy_bundle(policy: dict, private_key_path: Path, keyid: str, identity: str, issuer: str, out: Path) -> dict:
+def sign_policy_bundle(
+    policy: dict,
+    private_key_path: Path,
+    keyid: str,
+    identity: str,
+    issuer: str,
+    out: Path,
+) -> dict:
     """Sign and persist a policy bundle or raise EnterpriseReceiptError on invalid input."""
     if not isinstance(policy, dict):
         raise EnterpriseReceiptError("E_INVALID_POLICY", "policy must be an object")
     policy_bytes = _canonical(policy)
-    payload = {"schema": POLICY_BUNDLE_SCHEMA, "policy_sha256": _sha256(policy_bytes), "policy": policy, "created_at": _now()}
-    envelope = sign_payload(payload, payload_type=POLICY_PAYLOAD_TYPE, private_key_path=private_key_path, keyid=keyid, identity=identity, issuer=issuer)
+    payload = {
+        "schema": POLICY_BUNDLE_SCHEMA,
+        "policy_sha256": _sha256(policy_bytes),
+        "policy": policy,
+        "created_at": _now(),
+    }
+    envelope = sign_payload(
+        payload,
+        payload_type=POLICY_PAYLOAD_TYPE,
+        private_key_path=private_key_path,
+        keyid=keyid,
+        identity=identity,
+        issuer=issuer,
+    )
     _write_json(Path(out), envelope)
     return envelope
 
 
-def sign_revocations(entries: list[dict], private_key_path: Path, keyid: str, identity: str, issuer: str, out: Path) -> dict:
+def sign_revocations(
+    entries: list[dict],
+    private_key_path: Path,
+    keyid: str,
+    identity: str,
+    issuer: str,
+    out: Path,
+) -> dict:
     """Sign a revocation list or raise EnterpriseReceiptError on malformed entries."""
-    if not isinstance(entries, list) or any(not isinstance(item, dict) for item in entries):
-        raise EnterpriseReceiptError("E_INVALID_REVOCATIONS", "entries must be a list of objects")
+    if not isinstance(entries, list) or any(
+        not isinstance(item, dict) for item in entries
+    ):
+        raise EnterpriseReceiptError(
+            "E_INVALID_REVOCATIONS", "entries must be a list of objects"
+        )
     payload = {"schema": REVOCATIONS_SCHEMA, "generated_at": _now(), "entries": entries}
-    envelope = sign_payload(payload, payload_type=REVOCATIONS_PAYLOAD_TYPE, private_key_path=private_key_path, keyid=keyid, identity=identity, issuer=issuer)
+    envelope = sign_payload(
+        payload,
+        payload_type=REVOCATIONS_PAYLOAD_TYPE,
+        private_key_path=private_key_path,
+        keyid=keyid,
+        identity=identity,
+        issuer=issuer,
+    )
     _write_json(Path(out), envelope)
     return envelope
 
 
-def generate_key_material(*, out_dir: Path, keyid: str, identity: str, issuer: str) -> dict:
+def generate_key_material(
+    *, out_dir: Path, keyid: str, identity: str, issuer: str
+) -> dict:
     """Generate local Ed25519 material or raise EnterpriseReceiptError fail closed."""
     _require_crypto()
-    if not all(isinstance(value, str) and value.strip() for value in (keyid, identity, issuer)):
-        raise EnterpriseReceiptError("E_IDENTITY_REQUIRED", "key id, identity, and issuer are required")
+    if not all(
+        isinstance(value, str) and value.strip() for value in (keyid, identity, issuer)
+    ):
+        raise EnterpriseReceiptError(
+            "E_IDENTITY_REQUIRED", "key id, identity, and issuer are required"
+        )
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     private_key = Ed25519PrivateKey.generate()
     private_path = out_dir / f"{keyid}.private.pem"
     public_path = out_dir / f"{keyid}.public.b64"
     trust_path = out_dir / "trust-root.json"
-    private_path.write_bytes(private_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
-    public_b64 = _b64e(private_key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw))
+    private_path.write_bytes(
+        private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    public_b64 = _b64e(
+        private_key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+    )
     public_path.write_text(public_b64 + "\n", encoding="ascii")
-    _write_json(trust_path, {"schema": TRUST_ROOT_SCHEMA, "version": 1, "keys": [{"keyid": keyid, "algorithm": "ed25519", "public_key": public_b64, "identity": identity, "issuer": issuer}]})
-    return {"private_key": str(private_path), "public_key": str(public_path), "trust_root": str(trust_path), "keyid": keyid, "identity": identity, "issuer": issuer}
+    _write_json(
+        trust_path,
+        {
+            "schema": TRUST_ROOT_SCHEMA,
+            "version": 1,
+            "keys": [
+                {
+                    "keyid": keyid,
+                    "algorithm": "ed25519",
+                    "public_key": public_b64,
+                    "identity": identity,
+                    "issuer": issuer,
+                }
+            ],
+        },
+    )
+    return {
+        "private_key": str(private_path),
+        "public_key": str(public_path),
+        "trust_root": str(trust_path),
+        "keyid": keyid,
+        "identity": identity,
+        "issuer": issuer,
+    }

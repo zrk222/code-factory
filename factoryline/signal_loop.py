@@ -3,6 +3,7 @@
 External channel payloads are stored as untrusted data. This module has no
 network client, scheduler, model provider, deployment, or messaging authority.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -47,7 +48,9 @@ def _now() -> str:
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:
@@ -83,7 +86,9 @@ def _atomic_text(path: Path, text: str, *, replace: bool = False) -> Path:
 
 
 def _atomic_json(path: Path, value: object, *, replace: bool = False) -> Path:
-    return _atomic_text(path, json.dumps(value, indent=2, sort_keys=True) + "\n", replace=replace)
+    return _atomic_text(
+        path, json.dumps(value, indent=2, sort_keys=True) + "\n", replace=replace
+    )
 
 
 def _load(path: Path, schema: str, hash_field: str) -> dict[str, Any]:
@@ -93,7 +98,11 @@ def _load(path: Path, schema: str, hash_field: str) -> dict[str, Any]:
         raise SignalLoopError("ARTIFACT_INVALID", f"cannot read {path}") from exc
     if value.get("schema") != schema:
         raise SignalLoopError("SCHEMA_INVALID", f"expected {schema}: {path}")
-    core = {key: item for key, item in value.items() if key not in {hash_field, "generated_at", "path", "idempotent"}}
+    core = {
+        key: item
+        for key, item in value.items()
+        if key not in {hash_field, "generated_at", "path", "idempotent"}
+    }
     if _sha(core) != value.get(hash_field):
         raise SignalLoopError("HASH_INVALID", f"content hash mismatch: {path}")
     return value
@@ -109,7 +118,15 @@ def _default_rules() -> list[dict[str, Any]]:
             "id": "external-effects-need-review",
             "kind": "architecture_guardrail",
             "statement": "Merge, deploy, publish, production writes, credentials, connectors, and external messages require human approval.",
-            "match_any": ["merge", "deploy", "publish", "production", "credential", "connector", "external message"],
+            "match_any": [
+                "merge",
+                "deploy",
+                "publish",
+                "production",
+                "credential",
+                "connector",
+                "external message",
+            ],
             "weight": 40,
             "action": "review",
             "active": True,
@@ -119,7 +136,13 @@ def _default_rules() -> list[dict[str, Any]]:
             "id": "security-work-needs-independent-proof",
             "kind": "domain_expertise",
             "statement": "Authentication, authorization, privacy, and secret handling require independent high-reasoning verification.",
-            "match_any": ["authentication", "authorization", "privacy", "secret", "security"],
+            "match_any": [
+                "authentication",
+                "authorization",
+                "privacy",
+                "secret",
+                "security",
+            ],
             "weight": 30,
             "action": "review",
             "active": True,
@@ -131,7 +154,9 @@ def _default_rules() -> list[dict[str, Any]]:
 def init_opinion_dock(root: Path, owner: str, *, force: bool = False) -> dict[str, Any]:
     """Create a compact owner-controlled cognitive anchor with no product guesses."""
     if not owner.strip() or len(owner) > 120:
-        raise SignalLoopError("OWNER_INVALID", "owner is required and must be at most 120 characters")
+        raise SignalLoopError(
+            "OWNER_INVALID", "owner is required and must be at most 120 characters"
+        )
     core = {
         "schema": OPINION_DOCK_SCHEMA,
         "version": 1,
@@ -139,12 +164,25 @@ def init_opinion_dock(root: Path, owner: str, *, force: bool = False) -> dict[st
         "line_budget": MAX_DOCK_LINES,
         "rules": _default_rules(),
         "routing_profiles": {
-            "economy": {"creator": "fast_generation", "verifier": "independent_standard_reasoning"},
-            "balanced": {"creator": "balanced_generation", "verifier": "independent_high_reasoning"},
-            "critical": {"creator": "high_reasoning", "verifier": "independent_high_reasoning"},
+            "economy": {
+                "creator": "fast_generation",
+                "verifier": "independent_standard_reasoning",
+            },
+            "balanced": {
+                "creator": "balanced_generation",
+                "verifier": "independent_high_reasoning",
+            },
+            "critical": {
+                "creator": "high_reasoning",
+                "verifier": "independent_high_reasoning",
+            },
         },
         "corrections": [],
-        "authority": {"triage": "advisory", "promotion": "product_owner", "external_effects": False},
+        "authority": {
+            "triage": "advisory",
+            "promotion": "product_owner",
+            "external_effects": False,
+        },
         "markers": ["OPINION_DOCK_BOUND", "MODEL_ROUTING_ADVISORY_ONLY"],
     }
     dock = _sealed(core, "dock_sha256")
@@ -172,22 +210,37 @@ def verify_opinion_dock(path: Path) -> dict[str, Any]:
         "errors": errors,
     }
     if errors:
-        result["failure"] = explain_failure("OPINION_DOCK_LINE_BUDGET", "; ".join(errors), errors=errors)
+        result["failure"] = explain_failure(
+            "OPINION_DOCK_LINE_BUDGET", "; ".join(errors), errors=errors
+        )
     return result
 
 
 def _validated_rule(rule: dict[str, Any]) -> dict[str, Any]:
     required = {"id", "kind", "statement", "match_any", "weight", "action"}
     if required - set(rule):
-        raise SignalLoopError("RULE_INVALID", f"missing fields: {', '.join(sorted(required - set(rule)))}")
+        raise SignalLoopError(
+            "RULE_INVALID", f"missing fields: {', '.join(sorted(required - set(rule)))}"
+        )
     if not rule["id"] or len(str(rule["statement"])) > 1000:
-        raise SignalLoopError("RULE_INVALID", "rule id is required and statement is limited to 1000 characters")
+        raise SignalLoopError(
+            "RULE_INVALID",
+            "rule id is required and statement is limited to 1000 characters",
+        )
     if rule["action"] not in {"consider", "review", "block"}:
-        raise SignalLoopError("RULE_INVALID", "rule action must be consider, review, or block")
-    if not isinstance(rule["match_any"], list) or not all(isinstance(item, str) and item.strip() for item in rule["match_any"]):
-        raise SignalLoopError("RULE_INVALID", "match_any must contain non-empty strings")
+        raise SignalLoopError(
+            "RULE_INVALID", "rule action must be consider, review, or block"
+        )
+    if not isinstance(rule["match_any"], list) or not all(
+        isinstance(item, str) and item.strip() for item in rule["match_any"]
+    ):
+        raise SignalLoopError(
+            "RULE_INVALID", "match_any must contain non-empty strings"
+        )
     if not isinstance(rule["weight"], int) or not 0 <= rule["weight"] <= 100:
-        raise SignalLoopError("RULE_INVALID", "rule weight must be an integer from 0 through 100")
+        raise SignalLoopError(
+            "RULE_INVALID", "rule weight must be an integer from 0 through 100"
+        )
     return {
         "id": _slug(str(rule["id"]), "rule"),
         "kind": str(rule["kind"]),
@@ -199,18 +252,29 @@ def _validated_rule(rule: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def correct_opinion_dock(path: Path, owner: str, rule: dict[str, Any], rationale: str) -> dict[str, Any]:
+def correct_opinion_dock(
+    path: Path, owner: str, rule: dict[str, Any], rationale: str
+) -> dict[str, Any]:
     """Upsert one rule while preserving a hash-linked corrective history."""
     dock = _load(path, OPINION_DOCK_SCHEMA, "dock_sha256")
     if owner.strip() != dock["owner"]:
-        raise SignalLoopError("OWNER_MISMATCH", "only the Opinion Dock owner may record a correction")
+        raise SignalLoopError(
+            "OWNER_MISMATCH", "only the Opinion Dock owner may record a correction"
+        )
     if not rationale.strip() or len(rationale) > 2000:
-        raise SignalLoopError("RATIONALE_INVALID", "correction rationale is required and limited to 2000 characters")
+        raise SignalLoopError(
+            "RATIONALE_INVALID",
+            "correction rationale is required and limited to 2000 characters",
+        )
     candidate = _validated_rule(rule)
-    previous = next((item for item in dock["rules"] if item["id"] == candidate["id"]), None)
+    previous = next(
+        (item for item in dock["rules"] if item["id"] == candidate["id"]), None
+    )
     candidate["version"] = (previous or {}).get("version", 0) + 1
     previous_hash = _sha(previous) if previous else None
-    rules = [item for item in dock["rules"] if item["id"] != candidate["id"]] + [candidate]
+    rules = [item for item in dock["rules"] if item["id"] != candidate["id"]] + [
+        candidate
+    ]
     rules.sort(key=lambda item: item["id"])
     correction_core = {
         "rule_id": candidate["id"],
@@ -219,21 +283,50 @@ def correct_opinion_dock(path: Path, owner: str, rule: dict[str, Any], rationale
         "new_rule_sha256": _sha(candidate),
         "rationale": rationale.strip(),
         "owner": owner.strip(),
-        "previous_correction_sha256": dock["corrections"][-1]["correction_sha256"] if dock["corrections"] else None,
+        "previous_correction_sha256": dock["corrections"][-1]["correction_sha256"]
+        if dock["corrections"]
+        else None,
     }
-    correction = {**correction_core, "correction_sha256": _sha(correction_core), "recorded_at": _now()}
-    core = {key: value for key, value in dock.items() if key not in {"dock_sha256", "generated_at"}}
-    core.update({"version": dock["version"] + 1, "rules": rules, "corrections": [*dock["corrections"], correction]})
+    correction = {
+        **correction_core,
+        "correction_sha256": _sha(correction_core),
+        "recorded_at": _now(),
+    }
+    core = {
+        key: value
+        for key, value in dock.items()
+        if key not in {"dock_sha256", "generated_at"}
+    }
+    core.update(
+        {
+            "version": dock["version"] + 1,
+            "rules": rules,
+            "corrections": [*dock["corrections"], correction],
+        }
+    )
     updated = _sealed(core, "dock_sha256")
     rendered = json.dumps(updated, indent=2, sort_keys=True) + "\n"
     if len(rendered.splitlines()) > MAX_DOCK_LINES:
-        raise SignalLoopError("OPINION_DOCK_LINE_BUDGET", f"correction would exceed {MAX_DOCK_LINES} lines")
+        raise SignalLoopError(
+            "OPINION_DOCK_LINE_BUDGET",
+            f"correction would exceed {MAX_DOCK_LINES} lines",
+        )
     _atomic_text(path, rendered, replace=True)
-    return {**updated, "path": str(Path(path).resolve()), "marker": "OPINION_CORRECTION_APPEND_ONLY"}
+    return {
+        **updated,
+        "path": str(Path(path).resolve()),
+        "marker": "OPINION_CORRECTION_APPEND_ONLY",
+    }
 
 
 def _instruction_like(text: str) -> bool:
-    patterns = ("ignore previous", "system prompt", "developer message", "run this command", "override your instructions")
+    patterns = (
+        "ignore previous",
+        "system prompt",
+        "developer message",
+        "run this command",
+        "override your instructions",
+    )
     lowered = text.lower()
     return any(pattern in lowered for pattern in patterns)
 
@@ -243,28 +336,53 @@ def _signal_queue(root: Path) -> tuple[Path, dict[str, Any]]:
     if not path.exists():
         return path, {"schema": SIGNAL_QUEUE_SCHEMA, "signals": []}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if value.get("schema") != SIGNAL_QUEUE_SCHEMA or not isinstance(value.get("signals"), list):
+    if value.get("schema") != SIGNAL_QUEUE_SCHEMA or not isinstance(
+        value.get("signals"), list
+    ):
         raise SignalLoopError("SIGNAL_QUEUE_INVALID", f"invalid signal queue: {path}")
     return path, value
 
 
-def capture_signal(root: Path, *, source: str, title: str, body: str, authorization: str,
-                   severity: int = 3, external_id: str | None = None, url: str | None = None,
-                   observed_at: str | None = None, hypotheses: Iterable[str] = (),
-                   requirements: Iterable[str] = (), outcomes: Iterable[str] = (),
-                   acceptance: Iterable[str] = ()) -> dict[str, Any]:
+def capture_signal(
+    root: Path,
+    *,
+    source: str,
+    title: str,
+    body: str,
+    authorization: str,
+    severity: int = 3,
+    external_id: str | None = None,
+    url: str | None = None,
+    observed_at: str | None = None,
+    hypotheses: Iterable[str] = (),
+    requirements: Iterable[str] = (),
+    outcomes: Iterable[str] = (),
+    acceptance: Iterable[str] = (),
+) -> dict[str, Any]:
     """Capture supplied channel content without polling or treating it as instructions."""
     if source not in SOURCES:
-        raise SignalLoopError("SOURCE_INVALID", f"source must be one of {', '.join(sorted(SOURCES))}")
+        raise SignalLoopError(
+            "SOURCE_INVALID", f"source must be one of {', '.join(sorted(SOURCES))}"
+        )
     if authorization not in AUTHORIZATIONS:
-        raise SignalLoopError("AUTHORIZATION_INVALID", f"authorization must be one of {', '.join(sorted(AUTHORIZATIONS))}")
+        raise SignalLoopError(
+            "AUTHORIZATION_INVALID",
+            f"authorization must be one of {', '.join(sorted(AUTHORIZATIONS))}",
+        )
     if not title.strip() or len(title) > 240:
-        raise SignalLoopError("TITLE_INVALID", "title is required and limited to 240 characters")
+        raise SignalLoopError(
+            "TITLE_INVALID", "title is required and limited to 240 characters"
+        )
     body_bytes = body.encode("utf-8")
     if not body.strip() or len(body_bytes) > MAX_BODY_BYTES:
-        raise SignalLoopError("BODY_INVALID", f"body is required and limited to {MAX_BODY_BYTES} UTF-8 bytes")
+        raise SignalLoopError(
+            "BODY_INVALID",
+            f"body is required and limited to {MAX_BODY_BYTES} UTF-8 bytes",
+        )
     if not isinstance(severity, int) or not 1 <= severity <= 5:
-        raise SignalLoopError("SEVERITY_INVALID", "severity must be an integer from 1 through 5")
+        raise SignalLoopError(
+            "SEVERITY_INVALID", "severity must be an integer from 1 through 5"
+        )
     content = {
         "source": source,
         "external_id": external_id,
@@ -289,9 +407,17 @@ def capture_signal(root: Path, *, source: str, title: str, body: str, authorizat
             "url": url,
             "content_sha256": content_sha,
         },
-        "trust": {"classification": "untrusted_data", "execute_as_instructions": False, "instruction_like": _instruction_like(f"{title}\n{body}")},
+        "trust": {
+            "classification": "untrusted_data",
+            "execute_as_instructions": False,
+            "instruction_like": _instruction_like(f"{title}\n{body}"),
+        },
         "authority": {"network": False, "external_message": False, "promotion": False},
-        "markers": ["SIGNAL_NORMALIZED_LOCAL_ONLY", "SIGNAL_PROVENANCE_BOUND", "SIGNAL_DEDUP_HASHED"],
+        "markers": [
+            "SIGNAL_NORMALIZED_LOCAL_ONLY",
+            "SIGNAL_PROVENANCE_BOUND",
+            "SIGNAL_DEDUP_HASHED",
+        ],
     }
     signal = _sealed(core, "signal_sha256")
     directory = Path(root).resolve() / ".factory" / "signals"
@@ -301,25 +427,41 @@ def capture_signal(root: Path, *, source: str, title: str, body: str, authorizat
         return {**existing, "path": str(path), "idempotent": True}
     queue_path, queue = _signal_queue(root)
     _atomic_json(path, signal)
-    queue["signals"] = [*queue["signals"], {"id": signal_id, "path": str(path), "signal_sha256": signal["signal_sha256"]}]
+    queue["signals"] = [
+        *queue["signals"],
+        {"id": signal_id, "path": str(path), "signal_sha256": signal["signal_sha256"]},
+    ]
     queue["updated_at"] = _now()
     _atomic_json(queue_path, queue, replace=queue_path.exists())
     return {**signal, "path": str(path), "idempotent": False}
 
 
-def capture_outcome_feedback(root: Path, *, mission_id: str, metric: str,
-                             observed: float, target: float, evidence_path: Path) -> dict[str, Any]:
+def capture_outcome_feedback(
+    root: Path,
+    *,
+    mission_id: str,
+    metric: str,
+    observed: float,
+    target: float,
+    evidence_path: Path,
+) -> dict[str, Any]:
     """Close the local loop by turning measured outcome evidence into a signal."""
     root = Path(root).resolve()
     evidence = Path(evidence_path).resolve()
     try:
         evidence.relative_to(root)
     except ValueError as exc:
-        raise SignalLoopError("EVIDENCE_OUTSIDE_ROOT", f"feedback evidence must be beneath {root}") from exc
+        raise SignalLoopError(
+            "EVIDENCE_OUTSIDE_ROOT", f"feedback evidence must be beneath {root}"
+        ) from exc
     if not evidence.is_file():
-        raise SignalLoopError("EVIDENCE_MISSING", f"feedback evidence not found: {evidence}")
+        raise SignalLoopError(
+            "EVIDENCE_MISSING", f"feedback evidence not found: {evidence}"
+        )
     if not mission_id.strip() or not metric.strip():
-        raise SignalLoopError("FEEDBACK_INPUT_INVALID", "mission id and metric are required")
+        raise SignalLoopError(
+            "FEEDBACK_INPUT_INVALID", "mission id and metric are required"
+        )
     evidence_sha = _sha_path(evidence)
     signal = capture_signal(
         root,
@@ -332,7 +474,9 @@ def capture_outcome_feedback(root: Path, *, mission_id: str, metric: str,
         authorization="owner_supplied",
         severity=4 if observed < target else 2,
         external_id=f"outcome:{mission_id.strip()}:{metric.strip()}:{evidence_sha[:12]}",
-        hypotheses=[f"A follow-up change can move {metric.strip()} from {observed} toward {target}."],
+        hypotheses=[
+            f"A follow-up change can move {metric.strip()} from {observed} toward {target}."
+        ],
         outcomes=[f"Meet or exceed {target} for {metric.strip()}."],
     )
     core = {
@@ -342,12 +486,25 @@ def capture_outcome_feedback(root: Path, *, mission_id: str, metric: str,
         "observed": observed,
         "target": target,
         "source_evidence": {"path": str(evidence), "sha256": evidence_sha},
-        "signal": {"path": signal["path"], "signal_id": signal["id"], "signal_sha256": signal["signal_sha256"]},
-        "markers": ["OUTCOME_FEEDBACK_SIGNAL_BOUND", "SIGNAL_LOOP_REENTERED_LOCAL_ONLY"],
+        "signal": {
+            "path": signal["path"],
+            "signal_id": signal["id"],
+            "signal_sha256": signal["signal_sha256"],
+        },
+        "markers": [
+            "OUTCOME_FEEDBACK_SIGNAL_BOUND",
+            "SIGNAL_LOOP_REENTERED_LOCAL_ONLY",
+        ],
         "authority": "local feedback capture only; no polling, triage approval, execution, or deployment authority",
     }
     receipt = _sealed(core, "feedback_sha256")
-    path = root / ".factory" / "signals" / "feedback" / f"{_slug(mission_id)}-{_slug(metric)}.json"
+    path = (
+        root
+        / ".factory"
+        / "signals"
+        / "feedback"
+        / f"{_slug(mission_id)}-{_slug(metric)}.json"
+    )
     _atomic_json(path, receipt)
     return {**receipt, "path": str(path)}
 
@@ -364,33 +521,69 @@ def _routing_profile(score: int, blocked: bool, severity: int) -> str:
     return "economy"
 
 
-def triage_signal(signal_path: Path, dock_path: Path, root: Path, *, force: bool = False) -> dict[str, Any]:
+def triage_signal(
+    signal_path: Path, dock_path: Path, root: Path, *, force: bool = False
+) -> dict[str, Any]:
     """Score one signal against explicit rules and preserve every contribution."""
     signal = _load(signal_path, SIGNAL_SCHEMA, "signal_sha256")
     dock_check = verify_opinion_dock(dock_path)
     if not dock_check["valid"]:
-        raise SignalLoopError("OPINION_DOCK_LINE_BUDGET", "; ".join(dock_check["errors"]))
+        raise SignalLoopError(
+            "OPINION_DOCK_LINE_BUDGET", "; ".join(dock_check["errors"])
+        )
     dock = _load(dock_path, OPINION_DOCK_SCHEMA, "dock_sha256")
-    text = "\n".join([signal["content"]["title"], signal["content"]["body"], *signal["content"]["requirements"]]).lower()
+    text = "\n".join(
+        [
+            signal["content"]["title"],
+            signal["content"]["body"],
+            *signal["content"]["requirements"],
+        ]
+    ).lower()
     contributions = []
     for rule in dock["rules"]:
         matches = _rule_matches(rule, text) if rule.get("active", True) else []
         if matches:
-            contributions.append({"rule_id": rule["id"], "rule_version": rule["version"], "matches": matches, "points": rule["weight"], "action": rule["action"]})
+            contributions.append(
+                {
+                    "rule_id": rule["id"],
+                    "rule_version": rule["version"],
+                    "matches": matches,
+                    "points": rule["weight"],
+                    "action": rule["action"],
+                }
+            )
     blocked = any(item["action"] == "block" for item in contributions)
-    score = min(100, signal["severity"] * 10 + sum(item["points"] for item in contributions))
+    score = min(
+        100, signal["severity"] * 10 + sum(item["points"] for item in contributions)
+    )
     profile = _routing_profile(score, blocked, signal["severity"])
     core = {
         "schema": TRIAGE_SCHEMA,
         "id": f"triage-{signal['id']}",
-        "signal": {"path": str(Path(signal_path).resolve()), "sha256": signal["signal_sha256"]},
-        "opinion_dock": {"path": str(Path(dock_path).resolve()), "sha256": dock["dock_sha256"], "version": dock["version"]},
+        "signal": {
+            "path": str(Path(signal_path).resolve()),
+            "sha256": signal["signal_sha256"],
+        },
+        "opinion_dock": {
+            "path": str(Path(dock_path).resolve()),
+            "sha256": dock["dock_sha256"],
+            "version": dock["version"],
+        },
         "score": score,
         "contributions": contributions,
         "recommended_decision": "blocked" if blocked else "consider",
-        "routing": {"profile": profile, **dock["routing_profiles"][profile], "provider_invoked": False},
+        "routing": {
+            "profile": profile,
+            **dock["routing_profiles"][profile],
+            "provider_invoked": False,
+        },
         "owner_decision": "required",
-        "markers": ["TRIAGE_EXPLAINABLE", "OWNER_DECISION_REQUIRED", "MODEL_ROUTING_ADVISORY_ONLY", *(["HANDS_OFF_RULE_ENFORCED"] if blocked else [])],
+        "markers": [
+            "TRIAGE_EXPLAINABLE",
+            "OWNER_DECISION_REQUIRED",
+            "MODEL_ROUTING_ADVISORY_ONLY",
+            *(["HANDS_OFF_RULE_ENFORCED"] if blocked else []),
+        ],
     }
     triage = _sealed(core, "triage_sha256")
     path = Path(root).resolve() / ".factory" / "triage" / f"{signal['id']}.json"
@@ -398,30 +591,63 @@ def triage_signal(signal_path: Path, dock_path: Path, root: Path, *, force: bool
     return {**triage, "path": str(path)}
 
 
-def decide_triage(triage_path: Path, root: Path, *, owner: str, decision: str,
-                  rationale: str, override_block: bool = False, force: bool = False) -> dict[str, Any]:
+def decide_triage(
+    triage_path: Path,
+    root: Path,
+    *,
+    owner: str,
+    decision: str,
+    rationale: str,
+    override_block: bool = False,
+    force: bool = False,
+) -> dict[str, Any]:
     """Record a human-owned triage outcome, rejecting invalid or replayed decisions."""
     triage = _load(triage_path, TRIAGE_SCHEMA, "triage_sha256")
-    dock = _load(Path(triage["opinion_dock"]["path"]), OPINION_DOCK_SCHEMA, "dock_sha256")
+    dock = _load(
+        Path(triage["opinion_dock"]["path"]), OPINION_DOCK_SCHEMA, "dock_sha256"
+    )
     if owner.strip() != dock["owner"]:
-        raise SignalLoopError("OWNER_MISMATCH", "decision owner must match the Opinion Dock owner")
+        raise SignalLoopError(
+            "OWNER_MISMATCH", "decision owner must match the Opinion Dock owner"
+        )
     if decision not in DECISIONS:
-        raise SignalLoopError("DECISION_INVALID", f"decision must be one of {', '.join(sorted(DECISIONS))}")
+        raise SignalLoopError(
+            "DECISION_INVALID",
+            f"decision must be one of {', '.join(sorted(DECISIONS))}",
+        )
     if not rationale.strip() or len(rationale) > 2000:
-        raise SignalLoopError("RATIONALE_INVALID", "decision rationale is required and limited to 2000 characters")
-    if decision == "approved" and triage["recommended_decision"] == "blocked" and not override_block:
-        raise SignalLoopError("HANDS_OFF_RULE_ENFORCED", "blocked triage requires an explicit owner override")
+        raise SignalLoopError(
+            "RATIONALE_INVALID",
+            "decision rationale is required and limited to 2000 characters",
+        )
+    if (
+        decision == "approved"
+        and triage["recommended_decision"] == "blocked"
+        and not override_block
+    ):
+        raise SignalLoopError(
+            "HANDS_OFF_RULE_ENFORCED",
+            "blocked triage requires an explicit owner override",
+        )
     core = {
         "schema": OWNER_DECISION_SCHEMA,
         "id": f"decision-{triage['id']}",
-        "triage": {"path": str(Path(triage_path).resolve()), "sha256": triage["triage_sha256"]},
+        "triage": {
+            "path": str(Path(triage_path).resolve()),
+            "sha256": triage["triage_sha256"],
+        },
         "signal": triage["signal"],
         "opinion_dock": triage["opinion_dock"],
         "owner": owner.strip(),
         "decision": decision,
         "rationale": rationale.strip(),
         "blocked_rule_override": bool(override_block),
-        "authority": {"promote_to_product_graph": decision == "approved", "execute": False, "merge": False, "deploy": False},
+        "authority": {
+            "promote_to_product_graph": decision == "approved",
+            "execute": False,
+            "merge": False,
+            "deploy": False,
+        },
         "markers": ["OWNER_DECISION_BOUND"],
     }
     result = _sealed(core, "decision_sha256")
@@ -432,11 +658,23 @@ def decide_triage(triage_path: Path, root: Path, *, owner: str, decision: str,
 
 def _signal_prd(signal: dict[str, Any], decision: dict[str, Any]) -> str:
     content = signal["content"]
-    outcomes = "\n".join(f"- {item}" for item in content["outcomes"]) or "- Product Owner must define a measurable outcome."
-    requirements = "\n".join(f"- {item}" for item in content["requirements"]) or "- Product Owner must define testable requirements."
-    acceptance = "\n\n".join(content["acceptance"]) or "Product Owner must supply at least one Gherkin scenario."
-    hypotheses = "\n".join(f"- {item}" for item in content["hypotheses"]) or "- Validate whether this signal represents a repeatable user need."
-    return f"""# {content['title']}
+    outcomes = (
+        "\n".join(f"- {item}" for item in content["outcomes"])
+        or "- Product Owner must define a measurable outcome."
+    )
+    requirements = (
+        "\n".join(f"- {item}" for item in content["requirements"])
+        or "- Product Owner must define testable requirements."
+    )
+    acceptance = (
+        "\n\n".join(content["acceptance"])
+        or "Product Owner must supply at least one Gherkin scenario."
+    )
+    hypotheses = (
+        "\n".join(f"- {item}" for item in content["hypotheses"])
+        or "- Validate whether this signal represents a repeatable user need."
+    )
+    return f"""# {content["title"]}
 
 ## Actors
 - Product Owner: approved this signal for product specification.
@@ -454,31 +692,47 @@ def _signal_prd(signal: dict[str, Any], decision: dict[str, Any]) -> str:
 {acceptance}
 
 ## Signal provenance
-- Signal ID: {signal['id']}
-- Signal SHA-256: {signal['signal_sha256']}
-- Owner decision SHA-256: {decision['decision_sha256']}
+- Signal ID: {signal["id"]}
+- Signal SHA-256: {signal["signal_sha256"]}
+- Owner decision SHA-256: {decision["decision_sha256"]}
 
 This draft grants no execution, merge, deployment, publication, connector, or external-message authority.
 """
 
 
-def promote_signal(decision_path: Path, root: Path, *, project: str | None = None, force: bool = False) -> dict[str, Any]:
+def promote_signal(
+    decision_path: Path, root: Path, *, project: str | None = None, force: bool = False
+) -> dict[str, Any]:
     """Promote only owner-approved supplied facts; expose missing product facts."""
     decision = _load(decision_path, OWNER_DECISION_SCHEMA, "decision_sha256")
     if decision["decision"] != "approved":
-        raise SignalLoopError("OWNER_DECISION_REQUIRED", "only an approved signal may be promoted")
+        raise SignalLoopError(
+            "OWNER_DECISION_REQUIRED", "only an approved signal may be promoted"
+        )
     signal = _load(Path(decision["signal"]["path"]), SIGNAL_SCHEMA, "signal_sha256")
     prd = _signal_prd(signal, decision)
-    draft_path = Path(root).resolve() / ".factory" / "signals" / "prd-drafts" / f"{signal['id']}.md"
+    draft_path = (
+        Path(root).resolve()
+        / ".factory"
+        / "signals"
+        / "prd-drafts"
+        / f"{signal['id']}.md"
+    )
     _atomic_text(draft_path, prd, replace=force)
-    complete = bool(signal["content"]["requirements"] and signal["content"]["acceptance"])
+    complete = bool(
+        signal["content"]["requirements"] and signal["content"]["acceptance"]
+    )
     if not complete:
         return {
             "schema": "factory.signal.promotion.v1",
             "status": "needs_input",
             "marker": "SIGNAL_SPEC_GAPS_EXPOSED",
             "prd_draft": str(draft_path),
-            "missing": [name for name in ("requirements", "acceptance") if not signal["content"][name]],
+            "missing": [
+                name
+                for name in ("requirements", "acceptance")
+                if not signal["content"][name]
+            ],
             "authority": "draft only; no mission or external effect created",
         }
     graph = compile_product_text(
@@ -487,7 +741,10 @@ def promote_signal(decision_path: Path, root: Path, *, project: str | None = Non
         source_name=draft_path.name,
         project=project or _slug(signal["content"]["title"]),
         force=force,
-        bindings={"signal_sha256": signal["signal_sha256"], "owner_decision_sha256": decision["decision_sha256"]},
+        bindings={
+            "signal_sha256": signal["signal_sha256"],
+            "owner_decision_sha256": decision["decision_sha256"],
+        },
     )
     return {
         "schema": "factory.signal.promotion.v1",

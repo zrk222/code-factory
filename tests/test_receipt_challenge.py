@@ -25,7 +25,9 @@ def test_receipt_mutation_gate_rejects_every_declared_mutant(tmp_path: Path) -> 
     assert result["offline_marker"] == "RECEIPT_CHALLENGE_OFFLINE"
     assert result["control"]["verdict"] == "VERIFIED"
     assert result["attempted"] == result["rejected"] == 4
-    assert {item["name"]: item["observed_code"] for item in result["mutations"]} == EXPECTED_CODES
+    assert {
+        item["name"]: item["observed_code"] for item in result["mutations"]
+    } == EXPECTED_CODES
     assert all(item["rejected"] for item in result["mutations"])
     assert not any(result["authority"].values())
     assert result["ephemeral_private_keys_preserved"] is False
@@ -79,4 +81,7 @@ def test_unclassified_mutation_failure_cannot_be_reported_as_a_pass(
     assert result["passed"] is False
     assert result["marker"] == "RECEIPT_MUTATION_SURVIVED"
     assert result["rejected"] == 0
-    assert all(item["observed_code"] == "UNCLASSIFIED:RuntimeError" for item in result["mutations"])
+    assert all(
+        item["observed_code"] == "UNCLASSIFIED:RuntimeError"
+        for item in result["mutations"]
+    )

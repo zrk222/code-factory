@@ -1,8 +1,16 @@
 """Compatibility checks for shared Factoryline protocol enumerations."""
+
 from __future__ import annotations
 
 from factoryline.agent_license import AUTONOMY_RANK
-from factoryline.agent_proof_bridge import _AUTONOMY, _CAPABILITIES, _ISOLATION, _NODE_KINDS, _PROVIDERS, _STATUS
+from factoryline.agent_proof_bridge import (
+    _AUTONOMY,
+    _CAPABILITIES,
+    _ISOLATION,
+    _NODE_KINDS,
+    _PROVIDERS,
+    _STATUS,
+)
 from factoryline.atomic_proof_adapter import _AUTONOMY as ATOMIC_AUTONOMY
 from factoryline.atomic_proof_adapter import _CAPABILITIES as ATOMIC_CAPABILITIES
 from factoryline.atomic_proof_adapter import _ISOLATION as ATOMIC_ISOLATION

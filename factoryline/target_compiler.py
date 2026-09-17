@@ -1,4 +1,5 @@
 """Compile one intent into a governed, reviewable software starter target."""
+
 from __future__ import annotations
 
 from hashlib import sha256
@@ -6,11 +7,15 @@ from pathlib import Path
 from typing import Any
 import json
 import os
-import re
 import shutil
 import tempfile
 
-from .app_builder import app_from_prd, app_from_prompt, _extract_name, _purpose_from_text
+from .app_builder import (
+    app_from_prd,
+    app_from_prompt,
+    _extract_name,
+    _purpose_from_text,
+)
 from .capability_packs import target_inventory
 from .output_map import write_output_map
 
@@ -29,6 +34,7 @@ class TargetCompileError(ValueError):
         self.code = code
         self.message = message
         from .failure_guidance import explain_failure
+
         self.guidance = explain_failure(code, message)
 
 
@@ -58,13 +64,22 @@ def _deployment_profile(target: str, selected: str | None) -> dict[str, Any]:
     )
 
 
-def _validate_request(text: str, target: str, trigger: str, deployment_profile: str | None) -> None:
+def _validate_request(
+    text: str, target: str, trigger: str, deployment_profile: str | None
+) -> None:
     if not text.strip():
-        raise TargetCompileError("SOURCE_REQUIRED", "prompt or PRD content must be non-empty")
+        raise TargetCompileError(
+            "SOURCE_REQUIRED", "prompt or PRD content must be non-empty"
+        )
     if target not in TARGETS:
-        raise TargetCompileError("TARGET_UNSUPPORTED", f"target must be one of {', '.join(TARGETS)}")
+        raise TargetCompileError(
+            "TARGET_UNSUPPORTED", f"target must be one of {', '.join(TARGETS)}"
+        )
     if trigger not in SUPPORTED_TRIGGERS:
-        raise TargetCompileError("TRIGGER_UNSUPPORTED", f"trigger must be one of {', '.join(SUPPORTED_TRIGGERS)}")
+        raise TargetCompileError(
+            "TRIGGER_UNSUPPORTED",
+            f"trigger must be one of {', '.join(SUPPORTED_TRIGGERS)}",
+        )
     _deployment_profile(target, deployment_profile)
 
 
@@ -73,19 +88,50 @@ def _prepare_destination(out_dir: Path) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         if not target.is_dir() or any(target.iterdir()):
-            raise TargetCompileError("OUTPUT_EXISTS", f"refusing non-empty output: {target}")
+            raise TargetCompileError(
+                "OUTPUT_EXISTS", f"refusing non-empty output: {target}"
+            )
     return target
 
 
-def _manifest(name: str, target: str, purpose: str, trigger: str, source_kind: str,
-              source_sha256: str, deployment_profile: str | None) -> dict[str, Any]:
+def _promote_staging(staging: Path, destination: Path) -> None:
+    """Promote a completed staging tree without Windows directory replacement errors.
+
+    ``os.replace`` is atomic for files, but Windows rejects replacing a directory
+    even when the destination is empty (``WinError 5``).  The destination is
+    removed by ``_compile`` immediately before this helper, so ``os.rename`` is
+    the equivalent atomic directory move on Windows.  POSIX keeps the stronger
+    replace primitive.
+    """
+    try:
+        os.replace(staging, destination)
+    except PermissionError:
+        if os.name != "nt":
+            raise
+        # Windows rejects directory replacement with WinError 5; the
+        # destination was removed immediately before this call.
+        os.rename(staging, destination)
+
+
+def _manifest(
+    name: str,
+    target: str,
+    purpose: str,
+    trigger: str,
+    source_kind: str,
+    source_sha256: str,
+    deployment_profile: str | None,
+) -> dict[str, Any]:
     runtime = TARGETS[target]["runtime_mode"]
     profile = _deployment_profile(target, deployment_profile)
     return {
         "schema": TARGET_SCHEMA,
         "name": name,
         "target_kind": target,
-        "capability_pack": {"id": TARGETS[target]["pack_id"], "version": TARGETS[target]["pack_version"]},
+        "capability_pack": {
+            "id": TARGETS[target]["pack_id"],
+            "version": TARGETS[target]["pack_version"],
+        },
         "runtime": {
             "mode": runtime,
             "model_calls": "disabled_by_default",
@@ -96,7 +142,10 @@ def _manifest(name: str, target: str, purpose: str, trigger: str, source_kind: s
             "source_sha256": source_sha256,
             "purpose": purpose,
         },
-        "trigger": {"kind": trigger, "configuration": "review_required" if trigger != "manual" else "local"},
+        "trigger": {
+            "kind": trigger,
+            "configuration": "review_required" if trigger != "manual" else "local",
+        },
         "deployment": {
             "selected_profile_id": profile["id"],
             "profile": profile,
@@ -112,7 +161,14 @@ def _manifest(name: str, target: str, purpose: str, trigger: str, source_kind: s
             "max_runtime_cost_usd": 0,
         },
         "approvals": {
-            "required_for": ["deploy", "publish", "sign", "destructive_action", "external_message", "connector_grant"],
+            "required_for": [
+                "deploy",
+                "publish",
+                "sign",
+                "destructive_action",
+                "external_message",
+                "connector_grant",
+            ],
         },
         "privacy": {
             "source_boundary": "local_workspace",
@@ -127,9 +183,13 @@ def _manifest(name: str, target: str, purpose: str, trigger: str, source_kind: s
 
 
 def _architecture_mermaid(target: str) -> str:
-    runtime = "Deterministic runtime" if target == "worker" else "Governed application runtime"
+    runtime = (
+        "Deterministic runtime"
+        if target == "worker"
+        else "Governed application runtime"
+    )
     return f'''flowchart LR
-    I["Intent"] --> T["{TARGETS[target]['label']}"]
+    I["Intent"] --> T["{TARGETS[target]["label"]}"]
     T --> R["{runtime}"]
     T --> G["Spec, architecture, smoke, design gates"]
     G --> C["Hash-bound compile receipt"]
@@ -151,7 +211,12 @@ def _forge_state(name: str) -> dict[str, Any]:
         "feature": name,
         "state": "blocked",
         "attempts": {},
-        "history": [{"state": "blocked", "note": "target compiled; product-specific proof has not run"}],
+        "history": [
+            {
+                "state": "blocked",
+                "note": "target compiled; product-specific proof has not run",
+            }
+        ],
     }
 
 
@@ -179,7 +244,7 @@ factory optimize-pr --changed target_manifest.json --feature {name}
 
 ## Selected deployment route
 
-**{profile['label']}** (`{profile['id']}`)
+**{profile["label"]}** (`{profile["id"]}`)
 
 Prerequisites:
 
@@ -187,11 +252,11 @@ Prerequisites:
 
 | Phase | Command or action |
 | --- | --- |
-| Build | `{profile['build']}` |
-| Verify | `{profile['verify']}` |
-| Release | `{profile['release']}` |
+| Build | `{profile["build"]}` |
+| Verify | `{profile["verify"]}` |
+| Release | `{profile["release"]}` |
 
-Approval boundary: **{profile['approval']}**. This route is guidance only;
+Approval boundary: **{profile["approval"]}**. This route is guidance only;
 `external_effects_authorized` remains `false` until a separate human approval
 grants the exact credentials, spend, and external actions required by the route.
 """
@@ -254,15 +319,20 @@ def latest_receipt():
 
 
 def _backend_test(agent_ui: bool = False) -> str:
-    extra = '''
+    extra = (
+        """
 
 def test_task_preview_never_executes_without_approval():
     response = TestClient(app).post("/tasks/preview", json={"instruction": "prepare a release"})
     assert response.status_code == 200
     assert response.json()["approval_required"] is True
     assert response.json()["executed"] is False
-''' if agent_ui else ""
-    return '''from fastapi.testclient import TestClient
+"""
+        if agent_ui
+        else ""
+    )
+    return (
+        """from fastapi.testclient import TestClient
 from backend.main import app
 
 
@@ -270,10 +340,14 @@ def test_healthz():
     response = TestClient(app).get("/healthz")
     assert response.status_code == 200
     assert response.json()["ok"] is True
-''' + extra
+"""
+        + extra
+    )
 
 
-def _write_backend(root: Path, name: str, purpose: str, *, agent_ui: bool = False) -> None:
+def _write_backend(
+    root: Path, name: str, purpose: str, *, agent_ui: bool = False
+) -> None:
     _write(root / "backend" / "__init__.py", "")
     _write(root / "backend" / "main.py", _backend(name, purpose, agent_ui=agent_ui))
     _write(root / "backend" / "requirements.txt", "fastapi\nuvicorn\npytest\nhttpx\n")
@@ -283,7 +357,9 @@ def _write_backend(root: Path, name: str, purpose: str, *, agent_ui: bool = Fals
 def _scaffold_worker(root: Path, name: str, purpose: str, text: str) -> list[str]:
     _write(root / "PRD.md", text)
     _write(root / "worker" / "__init__.py", "")
-    _write(root / "worker" / "main.py", '''"""Deterministic headless worker starter."""
+    _write(
+        root / "worker" / "main.py",
+        '''"""Deterministic headless worker starter."""
 from __future__ import annotations
 import json
 import sys
@@ -304,8 +380,11 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-''')
-    _write(root / "tests" / "test_worker.py", '''import pytest
+''',
+    )
+    _write(
+        root / "tests" / "test_worker.py",
+        """import pytest
 from worker.main import run_task
 
 
@@ -318,8 +397,11 @@ def test_worker_is_deterministic():
 def test_worker_rejects_empty_input():
     with pytest.raises(ValueError, match="message is required"):
         run_task({})
-''')
-    _write(root / f"{name}.ssat.yaml", f'''name: {name}
+""",
+    )
+    _write(
+        root / f"{name}.ssat.yaml",
+        f"""name: {name}
 modules:
   - name: worker
     path: worker/main.py
@@ -335,19 +417,41 @@ invariants:
     forbid_pattern: "\\b(eval|exec)\\s*\\("
   - name: no_network_clients
     forbid_pattern: "\\b(requests|urllib3|httpx)\\b"
-''')
-    _write_json(root / "smoke" / f"{name}.json", {"checks": [{
-        "name": "worker_determinism",
-        "kind": "python",
-        "run": "from worker.main import run_task\np={'message':'review receipt'}\nassert run_task(p) == run_task(p)\n",
-        "covers": ["WORKER_DETERMINISM"],
-        "must_fail_on_stub": True,
-    }]})
-    _write_json(root / "coverage" / "requirements.json", _coverage(name, [
-        ("WORKER_DETERMINISM", "Identical payloads return identical worker results."),
-        ("PRODUCT_WORKFLOW", "The product-specific worker workflow is implemented."),
-    ]))
-    _write(root / "README.md", f"""# {name.replace('-', ' ').title()}
+""",
+    )
+    _write_json(
+        root / "smoke" / f"{name}.json",
+        {
+            "checks": [
+                {
+                    "name": "worker_determinism",
+                    "kind": "python",
+                    "run": "from worker.main import run_task\np={'message':'review receipt'}\nassert run_task(p) == run_task(p)\n",
+                    "covers": ["WORKER_DETERMINISM"],
+                    "must_fail_on_stub": True,
+                }
+            ]
+        },
+    )
+    _write_json(
+        root / "coverage" / "requirements.json",
+        _coverage(
+            name,
+            [
+                (
+                    "WORKER_DETERMINISM",
+                    "Identical payloads return identical worker results.",
+                ),
+                (
+                    "PRODUCT_WORKFLOW",
+                    "The product-specific worker workflow is implemented.",
+                ),
+            ],
+        ),
+    )
+    _write(
+        root / "README.md",
+        f"""# {name.replace("-", " ").title()}
 
 Generated as a deterministic worker target for `{purpose}`.
 
@@ -359,14 +463,17 @@ factory coverage --root .
 
 The worker has no network, credential, or external-message grant. Add those
 only through a reviewed Loop Passport and connector adapter.
-""")
+""",
+    )
     return ["WORKER_EMITTED"]
 
 
 def _scaffold_cli(root: Path, name: str, purpose: str, text: str) -> list[str]:
     _write(root / "PRD.md", text)
     _write(root / "cli_app" / "__init__.py", "")
-    _write(root / "cli_app" / "main.py", '''"""Deterministic command-line application starter."""
+    _write(
+        root / "cli_app" / "main.py",
+        '''"""Deterministic command-line application starter."""
 from __future__ import annotations
 import argparse
 import json
@@ -390,8 +497,11 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-''')
-    _write(root / "tests" / "test_cli.py", '''import pytest
+''',
+    )
+    _write(
+        root / "tests" / "test_cli.py",
+        """import pytest
 from cli_app.main import render
 
 
@@ -403,8 +513,11 @@ def test_cli_result_is_deterministic():
 def test_cli_rejects_empty_input():
     with pytest.raises(ValueError, match="message is required"):
         render("  ")
-''')
-    _write(root / f"{name}.ssat.yaml", f'''name: {name}
+""",
+    )
+    _write(
+        root / f"{name}.ssat.yaml",
+        f"""name: {name}
 modules:
   - name: cli_app
     path: cli_app/main.py
@@ -420,17 +533,41 @@ invariants:
     forbid_pattern: "\\b(eval|exec)\\s*\\("
   - name: no_network_clients
     forbid_pattern: "\\b(requests|urllib3|httpx)\\b"
-''')
-    _write_json(root / "smoke" / f"{name}.json", {"checks": [{
-        "name": "cli_determinism", "kind": "python",
-        "run": "from cli_app.main import render\nassert render('hello') == render('hello')\n",
-        "covers": ["CLI_DETERMINISM"], "must_fail_on_stub": True,
-    }]})
-    _write_json(root / "coverage" / "requirements.json", _coverage(name, [
-        ("CLI_DETERMINISM", "Identical arguments return identical structured output."),
-        ("PRODUCT_WORKFLOW", "The product-specific CLI workflow is implemented."),
-    ]))
-    _write(root / "README.md", f"""# {name.replace('-', ' ').title()}
+""",
+    )
+    _write_json(
+        root / "smoke" / f"{name}.json",
+        {
+            "checks": [
+                {
+                    "name": "cli_determinism",
+                    "kind": "python",
+                    "run": "from cli_app.main import render\nassert render('hello') == render('hello')\n",
+                    "covers": ["CLI_DETERMINISM"],
+                    "must_fail_on_stub": True,
+                }
+            ]
+        },
+    )
+    _write_json(
+        root / "coverage" / "requirements.json",
+        _coverage(
+            name,
+            [
+                (
+                    "CLI_DETERMINISM",
+                    "Identical arguments return identical structured output.",
+                ),
+                (
+                    "PRODUCT_WORKFLOW",
+                    "The product-specific CLI workflow is implemented.",
+                ),
+            ],
+        ),
+    )
+    _write(
+        root / "README.md",
+        f"""# {name.replace("-", " ").title()}
 
 Generated as a deterministic CLI target for `{purpose}`.
 
@@ -441,14 +578,17 @@ factory coverage --root .
 ```
 
 The command has no network, credential, deployment, or external-message grant.
-""")
+""",
+    )
     return ["CLI_EMITTED"]
 
 
 def _scaffold_api(root: Path, name: str, purpose: str, text: str) -> list[str]:
     _write(root / "PRD.md", text)
     _write(root / "backend" / "__init__.py", "")
-    _write(root / "backend" / "main.py", f'''"""FastAPI boundary generated by Code Factory."""
+    _write(
+        root / "backend" / "main.py",
+        f'''"""FastAPI boundary generated by Code Factory."""
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
@@ -467,9 +607,12 @@ def healthz():
 @app.post("/v1/echo")
 def echo(request: EchoRequest):
     return {{"message": request.message, "characters": len(request.message)}}
-''')
+''',
+    )
     _write(root / "backend" / "requirements.txt", "fastapi\nuvicorn\npytest\nhttpx\n")
-    _write(root / "tests" / "test_api.py", '''from fastapi.testclient import TestClient
+    _write(
+        root / "tests" / "test_api.py",
+        """from fastapi.testclient import TestClient
 from backend.main import app
 
 client = TestClient(app)
@@ -485,8 +628,11 @@ def test_health_and_echo_contracts():
 
 def test_api_rejects_empty_message():
     assert client.post("/v1/echo", json={"message": ""}).status_code == 422
-''')
-    _write(root / f"{name}.ssat.yaml", f'''name: {name}
+""",
+    )
+    _write(
+        root / f"{name}.ssat.yaml",
+        f"""name: {name}
 modules:
   - name: api
     path: backend/main.py
@@ -504,17 +650,41 @@ dependencies: []
 invariants:
   - name: no_dynamic_execution
     forbid_pattern: "\\b(eval|exec)\\s*\\("
-''')
-    _write_json(root / "smoke" / f"{name}.json", {"checks": [{
-        "name": "api_contract", "kind": "python",
-        "run": "from fastapi.testclient import TestClient\nfrom backend.main import app\nc=TestClient(app)\nassert c.get('/healthz').json()['ok'] is True\nassert c.post('/v1/echo',json={'message':'hello'}).json()['characters'] == 5\n",
-        "covers": ["API_CONTRACT"], "must_fail_on_stub": True,
-    }]})
-    _write_json(root / "coverage" / "requirements.json", _coverage(name, [
-        ("API_CONTRACT", "The validated API health and echo contracts execute."),
-        ("PRODUCT_WORKFLOW", "The product-specific API workflow is implemented."),
-    ]))
-    _write(root / "README.md", f"""# {name.replace('-', ' ').title()}
+""",
+    )
+    _write_json(
+        root / "smoke" / f"{name}.json",
+        {
+            "checks": [
+                {
+                    "name": "api_contract",
+                    "kind": "python",
+                    "run": "from fastapi.testclient import TestClient\nfrom backend.main import app\nc=TestClient(app)\nassert c.get('/healthz').json()['ok'] is True\nassert c.post('/v1/echo',json={'message':'hello'}).json()['characters'] == 5\n",
+                    "covers": ["API_CONTRACT"],
+                    "must_fail_on_stub": True,
+                }
+            ]
+        },
+    )
+    _write_json(
+        root / "coverage" / "requirements.json",
+        _coverage(
+            name,
+            [
+                (
+                    "API_CONTRACT",
+                    "The validated API health and echo contracts execute.",
+                ),
+                (
+                    "PRODUCT_WORKFLOW",
+                    "The product-specific API workflow is implemented.",
+                ),
+            ],
+        ),
+    )
+    _write(
+        root / "README.md",
+        f"""# {name.replace("-", " ").title()}
 
 Generated as a local-first FastAPI target for `{purpose}`.
 
@@ -525,14 +695,17 @@ python -m pytest -q
 ```
 
 Network egress, credentials, deployment, and publication remain ungranted.
-""")
+""",
+    )
     return ["API_EMITTED"]
 
 
 def _scaffold_mcp(root: Path, name: str, purpose: str, text: str) -> list[str]:
     _write(root / "PRD.md", text)
     _write(root / "mcp_server" / "__init__.py", "")
-    _write(root / "mcp_server" / "main.py", '''"""Minimal local JSON-RPC MCP server with one deterministic tool."""
+    _write(
+        root / "mcp_server" / "main.py",
+        '''"""Minimal local JSON-RPC MCP server with one deterministic tool."""
 from __future__ import annotations
 import json
 import sys
@@ -564,8 +737,11 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-''')
-    _write(root / "tests" / "test_mcp.py", '''from mcp_server.main import dispatch
+''',
+    )
+    _write(
+        root / "tests" / "test_mcp.py",
+        """from mcp_server.main import dispatch
 
 
 def test_mcp_tool_discovery_and_call_are_deterministic():
@@ -579,8 +755,11 @@ def test_mcp_tool_discovery_and_call_are_deterministic():
 def test_mcp_rejects_unknown_method():
     response = dispatch({"jsonrpc": "2.0", "id": 3, "method": "missing"})
     assert response["error"]["code"] == -32601
-''')
-    _write(root / f"{name}.ssat.yaml", f'''name: {name}
+""",
+    )
+    _write(
+        root / f"{name}.ssat.yaml",
+        f"""name: {name}
 modules:
   - name: mcp_server
     path: mcp_server/main.py
@@ -596,17 +775,41 @@ invariants:
     forbid_pattern: "\\b(socket|requests|urllib3|httpx)\\b"
   - name: no_dynamic_execution
     forbid_pattern: "\\b(eval|exec)\\s*\\("
-''')
-    _write_json(root / "smoke" / f"{name}.json", {"checks": [{
-        "name": "mcp_dispatch", "kind": "python",
-        "run": "from mcp_server.main import dispatch\nr={'jsonrpc':'2.0','id':1,'method':'tools/list'}\nassert dispatch(r)['result']['tools'][0]['name'] == 'echo'\n",
-        "covers": ["MCP_PROTOCOL"], "must_fail_on_stub": True,
-    }]})
-    _write_json(root / "coverage" / "requirements.json", _coverage(name, [
-        ("MCP_PROTOCOL", "The local MCP server discovers and dispatches a deterministic tool."),
-        ("PRODUCT_WORKFLOW", "The product-specific MCP workflow is implemented."),
-    ]))
-    _write(root / "README.md", f"""# {name.replace('-', ' ').title()}
+""",
+    )
+    _write_json(
+        root / "smoke" / f"{name}.json",
+        {
+            "checks": [
+                {
+                    "name": "mcp_dispatch",
+                    "kind": "python",
+                    "run": "from mcp_server.main import dispatch\nr={'jsonrpc':'2.0','id':1,'method':'tools/list'}\nassert dispatch(r)['result']['tools'][0]['name'] == 'echo'\n",
+                    "covers": ["MCP_PROTOCOL"],
+                    "must_fail_on_stub": True,
+                }
+            ]
+        },
+    )
+    _write_json(
+        root / "coverage" / "requirements.json",
+        _coverage(
+            name,
+            [
+                (
+                    "MCP_PROTOCOL",
+                    "The local MCP server discovers and dispatches a deterministic tool.",
+                ),
+                (
+                    "PRODUCT_WORKFLOW",
+                    "The product-specific MCP workflow is implemented.",
+                ),
+            ],
+        ),
+    )
+    _write(
+        root / "README.md",
+        f"""# {name.replace("-", " ").title()}
 
 Generated as a local stdio MCP target for `{purpose}`.
 
@@ -617,13 +820,14 @@ factory coverage --root .
 ```
 
 The starter exposes no network, credentials, external messages, or promotion authority.
-""")
+""",
+    )
     return ["MCP_EMITTED"]
 
 
 def _mobile_app(name: str, purpose: str) -> str:
     title = name.replace("-", " ").title()
-    return f'''import {{ StatusBar }} from "expo-status-bar";
+    return f"""import {{ StatusBar }} from "expo-status-bar";
 import {{ SafeAreaView, StyleSheet, Text, View }} from "react-native";
 
 export default function App() {{
@@ -653,51 +857,62 @@ const styles = StyleSheet.create({{
   statusLabel: {{ color: "#64748b", fontSize: 11, fontWeight: "700" }},
   statusValue: {{ color: "#9a3412", fontSize: 16, fontWeight: "600", marginTop: 6 }},
 }});
-'''
+"""
 
 
 def _scaffold_mobile(root: Path, name: str, purpose: str, text: str) -> list[str]:
     _write(root / "PRD.md", text)
     _write(root / "mobile" / "App.tsx", _mobile_app(name, purpose))
-    _write_json(root / "mobile" / "package.json", {
-        "name": name,
-        "version": "0.1.0",
-        "private": True,
-        "main": "node_modules/expo/AppEntry.js",
-        "scripts": {
-            "start": "expo start",
-            "android": "expo start --android",
-            "ios": "expo start --ios",
-            "web": "expo start --web",
-            "typecheck": "tsc --noEmit",
-            "doctor": "expo-doctor",
-        },
-        "dependencies": {
-            "expo": "~57.0.0",
-            "expo-status-bar": "~57.0.1",
-            "react": "19.2.3",
-            "react-native": "0.86.0",
-        },
-        "devDependencies": {
-            "@types/react": "~19.2.2",
-            "expo-doctor": "1.20.1",
-            "typescript": "~6.0.3",
-        },
-        "overrides": {"uuid": "11.1.1"},
-    })
-    _write_json(root / "mobile" / "app.json", {
-        "expo": {
-            "name": name.replace("-", " ").title(),
-            "slug": name,
+    _write_json(
+        root / "mobile" / "package.json",
+        {
+            "name": name,
             "version": "0.1.0",
-            "orientation": "portrait",
-            "userInterfaceStyle": "automatic",
-        }
-    })
-    _write(root / "mobile" / "tsconfig.json", '{"extends":"expo/tsconfig.base","compilerOptions":{"strict":true}}')
+            "private": True,
+            "main": "node_modules/expo/AppEntry.js",
+            "scripts": {
+                "start": "expo start",
+                "android": "expo start --android",
+                "ios": "expo start --ios",
+                "web": "expo start --web",
+                "typecheck": "tsc --noEmit",
+                "doctor": "expo-doctor",
+            },
+            "dependencies": {
+                "expo": "~57.0.0",
+                "expo-status-bar": "~57.0.1",
+                "react": "19.2.3",
+                "react-native": "0.86.0",
+            },
+            "devDependencies": {
+                "@types/react": "~19.2.2",
+                "expo-doctor": "1.20.1",
+                "typescript": "~6.0.3",
+            },
+            "overrides": {"uuid": "11.1.1"},
+        },
+    )
+    _write_json(
+        root / "mobile" / "app.json",
+        {
+            "expo": {
+                "name": name.replace("-", " ").title(),
+                "slug": name,
+                "version": "0.1.0",
+                "orientation": "portrait",
+                "userInterfaceStyle": "automatic",
+            }
+        },
+    )
+    _write(
+        root / "mobile" / "tsconfig.json",
+        '{"extends":"expo/tsconfig.base","compilerOptions":{"strict":true}}',
+    )
     _write(root / "mobile" / ".gitignore", "node_modules\n.expo\ndist\nandroid\nios\n")
     _write_backend(root, name, purpose)
-    _write(root / f"{name}.ssat.yaml", f'''name: {name}
+    _write(
+        root / f"{name}.ssat.yaml",
+        f"""name: {name}
 modules:
   - name: backend
     path: backend/main.py
@@ -719,17 +934,46 @@ dependencies: []
 invariants:
   - name: no_dynamic_execution
     forbid_pattern: "\\b(eval|exec)\\s*\\("
-''')
-    _write_json(root / "smoke" / f"{name}.json", {"checks": [
-        {"name": "backend_health", "kind": "python", "run": "from fastapi.testclient import TestClient\nfrom backend.main import app\nassert TestClient(app).get('/healthz').json()['ok'] is True\n", "covers": ["RUNTIME_HEALTH"], "must_fail_on_stub": True},
-        {"name": "mobile_entry", "kind": "python", "run": "from pathlib import Path\nt=Path('mobile/App.tsx').read_text()\nassert 'export default function App' in t and 'Blocked pending product proof' in t\n", "covers": ["MOBILE_ENTRY"], "must_fail_on_stub": True},
-    ]})
-    _write_json(root / "coverage" / "requirements.json", _coverage(name, [
-        ("RUNTIME_HEALTH", "The local API exposes a passing health endpoint."),
-        ("MOBILE_ENTRY", "The Expo entry renders the blocked proof state."),
-        ("PRODUCT_WORKFLOW", "The product-specific mobile workflow is implemented."),
-    ]))
-    _write(root / "README.md", f"""# {name.replace('-', ' ').title()}
+""",
+    )
+    _write_json(
+        root / "smoke" / f"{name}.json",
+        {
+            "checks": [
+                {
+                    "name": "backend_health",
+                    "kind": "python",
+                    "run": "from fastapi.testclient import TestClient\nfrom backend.main import app\nassert TestClient(app).get('/healthz').json()['ok'] is True\n",
+                    "covers": ["RUNTIME_HEALTH"],
+                    "must_fail_on_stub": True,
+                },
+                {
+                    "name": "mobile_entry",
+                    "kind": "python",
+                    "run": "from pathlib import Path\nt=Path('mobile/App.tsx').read_text()\nassert 'export default function App' in t and 'Blocked pending product proof' in t\n",
+                    "covers": ["MOBILE_ENTRY"],
+                    "must_fail_on_stub": True,
+                },
+            ]
+        },
+    )
+    _write_json(
+        root / "coverage" / "requirements.json",
+        _coverage(
+            name,
+            [
+                ("RUNTIME_HEALTH", "The local API exposes a passing health endpoint."),
+                ("MOBILE_ENTRY", "The Expo entry renders the blocked proof state."),
+                (
+                    "PRODUCT_WORKFLOW",
+                    "The product-specific mobile workflow is implemented.",
+                ),
+            ],
+        ),
+    )
+    _write(
+        root / "README.md",
+        f"""# {name.replace("-", " ").title()}
 
 Generated as an Expo SDK 57 CNG target for `{purpose}`. The New Architecture
 is the SDK default and is not redundantly declared in app config.
@@ -744,13 +988,14 @@ npm --prefix mobile start
 Native Android and iOS directories are intentionally not generated. Expo CNG
 creates them on demand. Store submission and release approval remain external
 to this starter.
-""")
+""",
+    )
     return ["MOBILE_EMITTED"]
 
 
 def _agent_page(name: str) -> str:
     title = name.replace("-", " ").title()
-    return f'''"use client";
+    return f""""use client";
 
 import {{ FormEvent, useState }} from "react";
 
@@ -782,11 +1027,11 @@ export default function Home() {{
     </main>
   );
 }}
-'''
+"""
 
 
 def _agent_css() -> str:
-    return ''':root { color-scheme: light; color: #15202b; background: #f5f7fa; }
+    return """:root { color-scheme: light; color: #15202b; background: #f5f7fa; }
 * { box-sizing: border-box; }
 body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
 .workspace { min-height: 100vh; }
@@ -807,11 +1052,24 @@ button { margin-top: 14px; border: 0; border-radius: 6px; padding: 12px 16px; ba
 dl { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border-top: 1px solid #e2e8f0; padding-top: 18px; }
 dt { color: #64748b; } dd { margin: 0; font-weight: 700; text-align: right; }
 @media (max-width: 760px) { .commandBand, .grid { grid-template-columns: 1fr; } h1 { font-size: 34px; } }
-'''
+"""
 
 
-def _scaffold_app_target(root: Path, name: str, purpose: str, text: str, source_kind: str, source_ref: Path | None, target: str) -> list[str]:
-    kwargs = {"out_dir": root, "name": name, "purpose": purpose, "stack": "nextjs-fastapi-postgres"}
+def _scaffold_app_target(
+    root: Path,
+    name: str,
+    purpose: str,
+    text: str,
+    source_kind: str,
+    source_ref: Path | None,
+    target: str,
+) -> list[str]:
+    kwargs = {
+        "out_dir": root,
+        "name": name,
+        "purpose": purpose,
+        "stack": "nextjs-fastapi-postgres",
+    }
     if source_kind == "prd":
         assert source_ref is not None
         app_from_prd(source_ref, **kwargs)
@@ -823,29 +1081,41 @@ def _scaffold_app_target(root: Path, name: str, purpose: str, text: str, source_
         _write_backend(root, name, purpose, agent_ui=True)
         smoke_path = root / "smoke" / f"{name}.json"
         smoke = json.loads(smoke_path.read_text(encoding="utf-8"))
-        smoke["checks"].append({
-            "name": "approval_boundary",
-            "kind": "python",
-            "run": "from fastapi.testclient import TestClient\nfrom backend.main import app\nr=TestClient(app).post('/tasks/preview',json={'instruction':'prepare release'}).json()\nassert r['approval_required'] is True and r['executed'] is False\n",
-            "covers": ["AGENT_APPROVAL"],
-            "must_fail_on_stub": True,
-        })
+        smoke["checks"].append(
+            {
+                "name": "approval_boundary",
+                "kind": "python",
+                "run": "from fastapi.testclient import TestClient\nfrom backend.main import app\nr=TestClient(app).post('/tasks/preview',json={'instruction':'prepare release'}).json()\nassert r['approval_required'] is True and r['executed'] is False\n",
+                "covers": ["AGENT_APPROVAL"],
+                "must_fail_on_stub": True,
+            }
+        )
         _write_json(smoke_path, smoke)
         coverage_path = root / "coverage" / "requirements.json"
         coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
-        coverage["requirements"].append({"id": "AGENT_APPROVAL", "summary": "Tasks are previewed but never executed before approval.", "source": "target_compiler"})
+        coverage["requirements"].append(
+            {
+                "id": "AGENT_APPROVAL",
+                "summary": "Tasks are previewed but never executed before approval.",
+                "source": "target_compiler",
+            }
+        )
         _write_json(coverage_path, coverage)
         return ["AGENT_UI_EMITTED"]
     return ["WEB_EMITTED"]
 
 
-def _write_proof_contract(root: Path, name: str, target: str, manifest: dict[str, Any],
-                          source_sha256: str) -> tuple[dict[str, Any], list[str]]:
+def _write_proof_contract(
+    root: Path, name: str, target: str, manifest: dict[str, Any], source_sha256: str
+) -> tuple[dict[str, Any], list[str]]:
     if not (root / "pyproject.toml").exists():
-        _write(root / "pyproject.toml", '''[tool.pytest.ini_options]
+        _write(
+            root / "pyproject.toml",
+            """[tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-''')
+""",
+        )
     _write_json(root / "target_manifest.json", manifest)
     _write(root / ".factory" / "target-architecture.mmd", _architecture_mermaid(target))
     _write_json(root / ".forge" / name / "state.json", _forge_state(name))
@@ -857,9 +1127,14 @@ testpaths = ["tests"]
         status="compiled_blocked",
         expected_paths=[".factory/target-compile-receipt.json"],
     )
-    markers = ["TARGET_MANIFEST_WRITTEN", "MERMAID_PROOF_WRITTEN", "OUTPUT_MERMAID_MAP_WRITTEN"]
+    markers = [
+        "TARGET_MANIFEST_WRITTEN",
+        "MERMAID_PROOF_WRITTEN",
+        "OUTPUT_MERMAID_MAP_WRITTEN",
+    ]
     files = sorted(
-        path for path in root.rglob("*")
+        path
+        for path in root.rglob("*")
         if path.is_file() and path.name != "target-compile-receipt.json"
     )
     relative_hashes = {
@@ -886,39 +1161,83 @@ testpaths = ["tests"]
     return receipt, markers
 
 
-def _generate_worker(root: Path, name: str, purpose: str, text: str,
-                     source_kind: str, source_ref: Path | None, target: str) -> list[str]:
+def _generate_worker(
+    root: Path,
+    name: str,
+    purpose: str,
+    text: str,
+    source_kind: str,
+    source_ref: Path | None,
+    target: str,
+) -> list[str]:
     del source_kind, source_ref, target
     return _scaffold_worker(root, name, purpose, text)
 
 
-def _generate_cli(root: Path, name: str, purpose: str, text: str,
-                  source_kind: str, source_ref: Path | None, target: str) -> list[str]:
+def _generate_cli(
+    root: Path,
+    name: str,
+    purpose: str,
+    text: str,
+    source_kind: str,
+    source_ref: Path | None,
+    target: str,
+) -> list[str]:
     del source_kind, source_ref, target
     return _scaffold_cli(root, name, purpose, text)
 
 
-def _generate_api(root: Path, name: str, purpose: str, text: str,
-                  source_kind: str, source_ref: Path | None, target: str) -> list[str]:
+def _generate_api(
+    root: Path,
+    name: str,
+    purpose: str,
+    text: str,
+    source_kind: str,
+    source_ref: Path | None,
+    target: str,
+) -> list[str]:
     del source_kind, source_ref, target
     return _scaffold_api(root, name, purpose, text)
 
 
-def _generate_mcp(root: Path, name: str, purpose: str, text: str,
-                  source_kind: str, source_ref: Path | None, target: str) -> list[str]:
+def _generate_mcp(
+    root: Path,
+    name: str,
+    purpose: str,
+    text: str,
+    source_kind: str,
+    source_ref: Path | None,
+    target: str,
+) -> list[str]:
     del source_kind, source_ref, target
     return _scaffold_mcp(root, name, purpose, text)
 
 
-def _generate_mobile(root: Path, name: str, purpose: str, text: str,
-                     source_kind: str, source_ref: Path | None, target: str) -> list[str]:
+def _generate_mobile(
+    root: Path,
+    name: str,
+    purpose: str,
+    text: str,
+    source_kind: str,
+    source_ref: Path | None,
+    target: str,
+) -> list[str]:
     del source_kind, source_ref, target
     return _scaffold_mobile(root, name, purpose, text)
 
 
-def _generate_application(root: Path, name: str, purpose: str, text: str,
-                          source_kind: str, source_ref: Path | None, target: str) -> list[str]:
-    return _scaffold_app_target(root, name, purpose, text, source_kind, source_ref, target)
+def _generate_application(
+    root: Path,
+    name: str,
+    purpose: str,
+    text: str,
+    source_kind: str,
+    source_ref: Path | None,
+    target: str,
+) -> list[str]:
+    return _scaffold_app_target(
+        root, name, purpose, text, source_kind, source_ref, target
+    )
 
 
 GENERATOR_ADAPTERS = {
@@ -932,8 +1251,15 @@ GENERATOR_ADAPTERS = {
 }
 
 
-def _generate_from_pack(root: Path, name: str, purpose: str, text: str,
-                        source_kind: str, source_ref: Path | None, target: str) -> list[str]:
+def _generate_from_pack(
+    root: Path,
+    name: str,
+    purpose: str,
+    text: str,
+    source_kind: str,
+    source_ref: Path | None,
+    target: str,
+) -> list[str]:
     adapter_id = str(TARGETS[target]["generator_adapter"])
     adapter = GENERATOR_ADAPTERS.get(adapter_id)
     if adapter is None:
@@ -944,36 +1270,71 @@ def _generate_from_pack(root: Path, name: str, purpose: str, text: str,
     return adapter(root, name, purpose, text, source_kind, source_ref, target)
 
 
-def _compile(text: str, *, source_kind: str, source_ref: Path | None, target: str, out_dir: Path,
-             name: str | None, purpose: str, trigger: str, source_sha256: str,
-             deployment_profile: str | None) -> dict[str, Any]:
+def _compile(
+    text: str,
+    *,
+    source_kind: str,
+    source_ref: Path | None,
+    target: str,
+    out_dir: Path,
+    name: str | None,
+    purpose: str,
+    trigger: str,
+    source_sha256: str,
+    deployment_profile: str | None,
+) -> dict[str, Any]:
     _validate_request(text, target, trigger, deployment_profile)
     destination = _prepare_destination(out_dir)
     resolved_name = _extract_name(text, name)
     resolved_purpose = _purpose_from_text(text, purpose)
-    staging = Path(tempfile.mkdtemp(prefix=f".{resolved_name}.factory-", dir=str(destination.parent)))
+    staging = Path(
+        tempfile.mkdtemp(
+            prefix=f".{resolved_name}.factory-", dir=str(destination.parent)
+        )
+    )
     markers = [
-        "TARGET_KIND_SET", "SOURCE_EXACTLY_ONE", "TARGET_PACK_BOUND",
+        "TARGET_KIND_SET",
+        "SOURCE_EXACTLY_ONE",
+        "TARGET_PACK_BOUND",
         "TARGET_DEPLOYMENT_PROFILE_BOUND",
     ]
     try:
-        markers.extend(_generate_from_pack(
-            staging, resolved_name, resolved_purpose, text, source_kind, source_ref, target,
-        ))
+        markers.extend(
+            _generate_from_pack(
+                staging,
+                resolved_name,
+                resolved_purpose,
+                text,
+                source_kind,
+                source_ref,
+                target,
+            )
+        )
         markers.append("TARGET_PACK_GENERATOR_DISPATCHED")
         manifest = _manifest(
-            resolved_name, target, resolved_purpose, trigger, source_kind,
-            source_sha256, deployment_profile,
+            resolved_name,
+            target,
+            resolved_purpose,
+            trigger,
+            source_kind,
+            source_sha256,
+            deployment_profile,
         )
-        receipt, proof_markers = _write_proof_contract(staging, resolved_name, target, manifest, source_sha256)
+        receipt, proof_markers = _write_proof_contract(
+            staging, resolved_name, target, manifest, source_sha256
+        )
         markers.extend(proof_markers)
         if destination.exists():
             destination.rmdir()
-        os.replace(staging, destination)
+        _promote_staging(staging, destination)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    files = sorted(str(path.relative_to(destination)).replace("\\", "/") for path in destination.rglob("*") if path.is_file())
+    files = sorted(
+        str(path.relative_to(destination)).replace("\\", "/")
+        for path in destination.rglob("*")
+        if path.is_file()
+    )
     return {
         "schema": "factory.target_compile_result.v1",
         "status": "compiled_blocked",
@@ -982,7 +1343,9 @@ def _compile(text: str, *, source_kind: str, source_ref: Path | None, target: st
         "out_dir": str(destination),
         "files": files,
         "receipt": str(destination / ".factory" / "target-compile-receipt.json"),
-        "receipt_sha256": _file_sha(destination / ".factory" / "target-compile-receipt.json"),
+        "receipt_sha256": _file_sha(
+            destination / ".factory" / "target-compile-receipt.json"
+        ),
         "output_map": str(destination / str(receipt["output_map"]["path"])),
         "output_map_sha256": receipt["output_map"]["sha256"],
         "markers": markers,
@@ -996,26 +1359,57 @@ def _compile(text: str, *, source_kind: str, source_ref: Path | None, target: st
     }
 
 
-def create_target_from_prompt(prompt: str, target: str, out_dir: Path, name: str | None = None,
-                              purpose: str = "auto", trigger: str = "manual", *,
-                              deployment_profile: str | None = None) -> dict[str, Any]:
+def create_target_from_prompt(
+    prompt: str,
+    target: str,
+    out_dir: Path,
+    name: str | None = None,
+    purpose: str = "auto",
+    trigger: str = "manual",
+    *,
+    deployment_profile: str | None = None,
+) -> dict[str, Any]:
     """Compile one prompt into a governed target without replacing existing work."""
     source_sha256 = sha256(prompt.encode("utf-8")).hexdigest()
-    return _compile(prompt, source_kind="prompt", source_ref=None, target=target, out_dir=Path(out_dir),
-                    name=name, purpose=purpose, trigger=trigger, source_sha256=source_sha256,
-                    deployment_profile=deployment_profile)
+    return _compile(
+        prompt,
+        source_kind="prompt",
+        source_ref=None,
+        target=target,
+        out_dir=Path(out_dir),
+        name=name,
+        purpose=purpose,
+        trigger=trigger,
+        source_sha256=source_sha256,
+        deployment_profile=deployment_profile,
+    )
 
 
-def create_target_from_prd(prd_path: Path, target: str, out_dir: Path, name: str | None = None,
-                           purpose: str = "auto", trigger: str = "manual", *,
-                           deployment_profile: str | None = None) -> dict[str, Any]:
+def create_target_from_prd(
+    prd_path: Path,
+    target: str,
+    out_dir: Path,
+    name: str | None = None,
+    purpose: str = "auto",
+    trigger: str = "manual",
+    *,
+    deployment_profile: str | None = None,
+) -> dict[str, Any]:
     """Compile one exact UTF-8 PRD into a governed target."""
     path = Path(prd_path)
     if not path.is_file():
         raise TargetCompileError("PRD_NOT_FOUND", f"PRD file does not exist: {path}")
     source_bytes = path.read_bytes()
     text = source_bytes.decode("utf-8")
-    return _compile(text, source_kind="prd", source_ref=path, target=target, out_dir=Path(out_dir),
-                    name=name, purpose=purpose, trigger=trigger,
-                    source_sha256=sha256(source_bytes).hexdigest(),
-                    deployment_profile=deployment_profile)
+    return _compile(
+        text,
+        source_kind="prd",
+        source_ref=path,
+        target=target,
+        out_dir=Path(out_dir),
+        name=name,
+        purpose=purpose,
+        trigger=trigger,
+        source_sha256=sha256(source_bytes).hexdigest(),
+        deployment_profile=deployment_profile,
+    )

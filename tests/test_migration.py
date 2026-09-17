@@ -25,10 +25,16 @@ def _manifest(root: Path, *, complete: bool = True) -> Path:
         "project": "legacy-modernization",
         "checks": [
             {
-                "id": f"check-{category}", "category": category,
-                "command": ["tool", "verify", category], "passed": True,
+                "id": f"check-{category}",
+                "category": category,
+                "command": ["tool", "verify", category],
+                "passed": True,
                 "evidence": [str(evidence)],
-                **({"reproducibility_runs": {"passed": 2, "total": 2}} if category == "environment" else {}),
+                **(
+                    {"reproducibility_runs": {"passed": 2, "total": 2}}
+                    if category == "environment"
+                    else {}
+                ),
             }
             for category in categories
         ],
@@ -38,7 +44,9 @@ def _manifest(root: Path, *, complete: bool = True) -> Path:
     return path
 
 
-def test_migration_readiness_separates_registration_from_executable_proof(tmp_path: Path):
+def test_migration_readiness_separates_registration_from_executable_proof(
+    tmp_path: Path,
+):
     partial = assess_migration_readiness(_manifest(tmp_path, complete=False), tmp_path)
     assert partial["ready"] is False
     assert partial["lane_registration_pct"] < 100
@@ -54,13 +62,24 @@ def test_migration_readiness_separates_registration_from_executable_proof(tmp_pa
 
 def test_autowiki_and_lore_are_bound_to_tracked_facts(tmp_path: Path):
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "tests@example.com"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Tests"], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "tests@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.name", "Tests"], check=True
+    )
     (tmp_path / "adr").mkdir()
-    (tmp_path / "adr" / "0001-choice.md").write_text("# Keep migrations reversible\n", encoding="utf-8")
+    (tmp_path / "adr" / "0001-choice.md").write_text(
+        "# Keep migrations reversible\n", encoding="utf-8"
+    )
     (tmp_path / "app.py").write_text("print('ok')\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "record reversible migration"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "commit", "-m", "record reversible migration"],
+        check=True,
+        capture_output=True,
+    )
     receipt = build_repository_context(tmp_path)
     assert receipt["tracked_files"] == 2
     assert verify_repository_context(Path(receipt["path"]))["valid"] is True
@@ -81,7 +100,9 @@ def test_readiness_rejects_invalid_argv_and_implicit_replacement(tmp_path: Path)
 
     manifest = _manifest(tmp_path)
     payload = json.loads(manifest.read_text(encoding="utf-8"))
-    environment = next(check for check in payload["checks"] if check["category"] == "environment")
+    environment = next(
+        check for check in payload["checks"] if check["category"] == "environment"
+    )
     environment["reproducibility_runs"] = {"passed": 1, "total": 1}
     manifest.write_text(json.dumps(payload), encoding="utf-8")
     insufficient = assess_migration_readiness(manifest, tmp_path)
@@ -114,11 +135,20 @@ def test_migration_verifiers_fail_closed_on_malformed_records(tmp_path: Path):
     repository = tmp_path / "repository"
     repository.mkdir()
     subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(repository), "config", "user.email", "tests@example.com"], check=True)
-    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Tests"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "tests@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.name", "Tests"], check=True
+    )
     (repository / "app.py").write_text("print('ok')\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
-    subprocess.run(["git", "-C", str(repository), "commit", "-m", "initial"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "commit", "-m", "initial"],
+        check=True,
+        capture_output=True,
+    )
     context = build_repository_context(repository)
     context_path = Path(context["path"])
     context_payload = json.loads(context_path.read_text(encoding="utf-8"))

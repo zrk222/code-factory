@@ -27,7 +27,9 @@ def test_builtin_target_packs_are_signed_and_mutation_tested():
     packs = builtin_packs()
     assert len(packs) == 29
     assert {item["kind"] for item in packs} == EXPECTED_KINDS
-    assert {item["target_kind"] for item in packs if item["kind"] == "target"} == EXPECTED_TARGETS
+    assert {
+        item["target_kind"] for item in packs if item["kind"] == "target"
+    } == EXPECTED_TARGETS
     for item in packs:
         result = validate_pack(Path(item["path"]))
         assert result["valid"] is True
@@ -43,7 +45,9 @@ def test_target_inventory_is_derived_from_packs():
     assert inventory["worker"]["entrypoint"] == "python -m worker.main"
 
 
-def test_builtin_discovery_ignores_python_cache_directories(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_builtin_discovery_ignores_python_cache_directories(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     root = tmp_path / "builtin_packs"
     shutil.copytree(BUILTIN_ROOT / "target-worker", root / "target-worker")
     (root / "__pycache__").mkdir()
@@ -65,7 +69,10 @@ def test_tampered_pack_fails_closed(tmp_path: Path):
     result = validate_pack(tampered)
 
     assert result["valid"] is False
-    assert any("signed pack payload does not match current files" in item for item in result["errors"])
+    assert any(
+        "signed pack payload does not match current files" in item
+        for item in result["errors"]
+    )
     assert result["failure"]["causal_code"] == "PACK_VALIDATION_FAILED"
 
 
@@ -81,7 +88,12 @@ def test_pack_signatures_are_portable_across_text_line_endings(tmp_path: Path):
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             continue
-        path.write_bytes(text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n").encode("utf-8"))
+        path.write_bytes(
+            text.replace("\r\n", "\n")
+            .replace("\r", "\n")
+            .replace("\n", "\r\n")
+            .encode("utf-8")
+        )
 
     result = validate_pack(copied)
 
@@ -94,7 +106,9 @@ def test_hollow_canary_manifest_is_rejected_before_install(tmp_path: Path):
     broken = tmp_path / "target-web"
     shutil.copytree(source, broken)
     canaries = broken / "canaries" / "manifest.json"
-    canaries.write_text('{"schema":"factory.pack.canaries.v1","canaries":[]}', encoding="utf-8")
+    canaries.write_text(
+        '{"schema":"factory.pack.canaries.v1","canaries":[]}', encoding="utf-8"
+    )
 
     result = validate_pack(broken)
 
@@ -114,21 +128,29 @@ def test_install_is_verified_and_refuses_implicit_replacement(tmp_path: Path):
         install_pack(source, tmp_path)
 
 
-def test_install_rejects_pack_id_path_escape(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    monkeypatch.setattr(capability_packs, "validate_pack", lambda *args, **kwargs: {
-        "valid": True,
-        "pack_id": "../escape",
-        "version": "1.0.0",
-        "signature": {"verified": True},
-        "mutations": {"attempted": 5, "rejected": 5},
-        "errors": [],
-    })
+def test_install_rejects_pack_id_path_escape(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setattr(
+        capability_packs,
+        "validate_pack",
+        lambda *args, **kwargs: {
+            "valid": True,
+            "pack_id": "../escape",
+            "version": "1.0.0",
+            "signature": {"verified": True},
+            "mutations": {"attempted": 5, "rejected": 5},
+            "errors": [],
+        },
+    )
     with pytest.raises(CapabilityPackError, match="PACK_PATH_INVALID"):
         install_pack(BUILTIN_ROOT / "target-worker", tmp_path)
     assert not (tmp_path / ".factory" / "escape").exists()
 
 
-def test_force_install_restores_previous_pack_when_swap_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_force_install_restores_previous_pack_when_swap_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     source = BUILTIN_ROOT / "target-worker"
     install_pack(source, tmp_path)
     destination = tmp_path / ".factory" / "packs" / "target-worker"
@@ -156,38 +178,56 @@ def test_cli_lists_verified_packs(capsys: pytest.CaptureFixture[str]):
     assert main(["pack", "list"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert len(payload["packs"]) == 29
-    assert all(item["valid"] and item["signature"]["verified"] for item in payload["packs"])
+    assert all(
+        item["valid"] and item["signature"]["verified"] for item in payload["packs"]
+    )
 
 
 def test_pack_composition_is_hash_bound_and_has_no_execution_authority(tmp_path: Path):
-    result = compose_packs([
-        BUILTIN_ROOT / "target-web",
-        BUILTIN_ROOT / "surface-nextjs",
-        BUILTIN_ROOT / "language-typescript",
-        BUILTIN_ROOT / "capability-auth",
-    ], tmp_path, name="review-portal")
+    result = compose_packs(
+        [
+            BUILTIN_ROOT / "target-web",
+            BUILTIN_ROOT / "surface-nextjs",
+            BUILTIN_ROOT / "language-typescript",
+            BUILTIN_ROOT / "capability-auth",
+        ],
+        tmp_path,
+        name="review-portal",
+    )
 
     assert result["marker"] == "PACK_COMPOSITION_VERIFIED"
     assert result["pack_count"] == 4
     assert result["target_kind"] == "web"
-    assert result["authority"] == {"generate": False, "execute": False, "deploy": False, "publish": False}
+    assert result["authority"] == {
+        "generate": False,
+        "execute": False,
+        "deploy": False,
+        "publish": False,
+    }
     assert len(result["composition_sha256"]) == 64
     assert Path(result["path"]).is_file()
     assert {item["id"] for item in result["packs"]} == {
-        "target-web", "surface-nextjs", "language-typescript", "capability-auth",
+        "target-web",
+        "surface-nextjs",
+        "language-typescript",
+        "capability-auth",
     }
 
 
 def test_pack_composition_rejects_incompatible_target(tmp_path: Path):
     with pytest.raises(CapabilityPackError, match="PACK_COMPOSITION_INCOMPATIBLE"):
-        compose_packs([
-            BUILTIN_ROOT / "target-worker",
-            BUILTIN_ROOT / "surface-expo",
-        ], tmp_path)
+        compose_packs(
+            [
+                BUILTIN_ROOT / "target-worker",
+                BUILTIN_ROOT / "surface-expo",
+            ],
+            tmp_path,
+        )
 
 
 def test_pack_composition_preserves_existing_file_when_atomic_swap_fails(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ):
     composition_root = tmp_path / ".factory" / "pack-compositions"
     composition_root.mkdir(parents=True)
@@ -199,10 +239,15 @@ def test_pack_composition_preserves_existing_file_when_atomic_swap_fails(
 
     monkeypatch.setattr(capability_packs.os, "replace", fail_swap)
     with pytest.raises(CapabilityPackError) as caught:
-        compose_packs([
-            BUILTIN_ROOT / "target-api",
-            BUILTIN_ROOT / "language-python",
-        ], tmp_path, name="api-stack", force=True)
+        compose_packs(
+            [
+                BUILTIN_ROOT / "target-api",
+                BUILTIN_ROOT / "language-python",
+            ],
+            tmp_path,
+            name="api-stack",
+            force=True,
+        )
 
     assert caught.value.code == "PACK_COMPOSITION_WRITE_FAILED"
     assert "PACK_COMPOSITION_ROLLBACK_PRESERVED" in caught.value.markers
@@ -210,14 +255,25 @@ def test_pack_composition_preserves_existing_file_when_atomic_swap_fails(
     assert not list(composition_root.glob(".api-stack.json.*.tmp"))
 
 
-def test_pack_compose_cli_writes_review_plan(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
-    assert main([
-        "pack", "compose",
-        str(BUILTIN_ROOT / "target-api"),
-        str(BUILTIN_ROOT / "language-python"),
-        str(BUILTIN_ROOT / "capability-auth"),
-        "--root", str(tmp_path), "--name", "api-stack",
-    ]) == 0
+def test_pack_compose_cli_writes_review_plan(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    assert (
+        main(
+            [
+                "pack",
+                "compose",
+                str(BUILTIN_ROOT / "target-api"),
+                str(BUILTIN_ROOT / "language-python"),
+                str(BUILTIN_ROOT / "capability-auth"),
+                "--root",
+                str(tmp_path),
+                "--name",
+                "api-stack",
+            ]
+        )
+        == 0
+    )
     payload = json.loads(capsys.readouterr().out)
     assert payload["target_kind"] == "api"
     assert "PACK_COMPOSITION_NO_EXECUTION_AUTHORITY" in payload["markers"]

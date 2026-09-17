@@ -5,6 +5,7 @@ It hard-depends on none of them. A missing module is simply a stud with nothing
 plugged in — the chain reports it and continues with what's present. This is what
 makes the factory portable: any IDE/agent/OS that can run a subprocess can drive it.
 """
+
 from __future__ import annotations
 import shutil
 import json
@@ -13,11 +14,11 @@ import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
-from .contract import MODULES, STAGES, Meter, ensure_layout, Receipt
+from .contract import MODULES, Meter, ensure_layout, Receipt
 from .meter import MeterLog, StageTiming, stopwatch
-from .attribution import Attribution, FailureClass
+from .attribution import Attribution
 from .agent_contract import AgentContractError, validate_agent_contract
 from .live_activity import LiveActivity
 from .assembly_process import run_cli
@@ -35,14 +36,20 @@ def detect() -> list[ModuleStatus]:
     """Which Lego pieces are plugged in on this machine."""
     out = []
     for name, meta in MODULES.items():
-        out.append(ModuleStatus(
-            name=name, cli=meta["cli"],
-            installed=shutil.which(meta["cli"]) is not None,
-            role=meta["role"]))
+        out.append(
+            ModuleStatus(
+                name=name,
+                cli=meta["cli"],
+                installed=shutil.which(meta["cli"]) is not None,
+                role=meta["role"],
+            )
+        )
     return out
 
 
-def _run_cli(cli: str, args: list[str], cwd: Path, *, heartbeat: Callable[[], bool] | None = None) -> tuple[bool, str]:
+def _run_cli(
+    cli: str, args: list[str], cwd: Path, *, heartbeat: Callable[[], bool] | None = None
+) -> tuple[bool, str]:
     return run_cli(cli, args, cwd, heartbeat=heartbeat)
 
 
@@ -125,7 +132,8 @@ def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
             payloads.append(payload)
     forge_result = next(
         (
-            payload for payload in reversed(payloads)
+            payload
+            for payload in reversed(payloads)
             if isinstance(payload.get("shipped"), bool)
             and isinstance(payload.get("intent_traceable"), bool)
         ),
@@ -167,15 +175,25 @@ def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
 
     intent_hash = forge_receipt.get("intent_hash")
     if not isinstance(intent_hash, str):
-        intent_hash = forge_result.get("intent_hash") if isinstance(forge_result.get("intent_hash"), str) else None
+        intent_hash = (
+            forge_result.get("intent_hash")
+            if isinstance(forge_result.get("intent_hash"), str)
+            else None
+        )
     obligations = forge_receipt.get("obligations")
     if not isinstance(obligations, str):
         obligations = forge_result.get("obligations_met")
         if not isinstance(obligations, str):
-            obligations = forge_result.get("obligations") if isinstance(forge_result.get("obligations"), str) else None
+            obligations = (
+                forge_result.get("obligations")
+                if isinstance(forge_result.get("obligations"), str)
+                else None
+            )
     timestamp = forge_receipt.get("ts")
     if not isinstance(timestamp, str):
-        timestamp = forge_result.get("ts") if isinstance(forge_result.get("ts"), str) else None
+        timestamp = (
+            forge_result.get("ts") if isinstance(forge_result.get("ts"), str) else None
+        )
     return {
         "schema": "factoryline.intent-trace.v1",
         "source": "forgeline-cli",
@@ -202,18 +220,18 @@ def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
 # The default pipeline: (module, cli-args-template). {f} = feature.
 # Only stages whose module is installed run; UI stage runs only if smoke/<f>.ui exists.
 DEFAULT_CHAIN = [
-    ("specline",  ["strict", "{f}", "--json"]),
-    ("specline",  ["verify-validators", "{f}", "--json"]),
-    ("specline",  ["gate", "spec", "{f}"]),
-    ("specline",  ["tasks", "{f}"]),
-    ("specline",  ["gate", "plan", "{f}"]),
+    ("specline", ["strict", "{f}", "--json"]),
+    ("specline", ["verify-validators", "{f}", "--json"]),
+    ("specline", ["gate", "spec", "{f}"]),
+    ("specline", ["tasks", "{f}"]),
+    ("specline", ["gate", "plan", "{f}"]),
     ("forgeline", ["architect", "{f}", "{f}.ssat.yaml"]),
     ("forgeline", ["review", "{f}", "{f}.ssat.yaml"]),
     ("forgeline", ["arch-gate", "{f}", "{f}.ssat.yaml"]),
     ("forgeline", ["verify-tests", "{f}", "{f}.ssat.yaml"]),
     ("forgeline", ["smoke", "{f}"]),
-    ("prestige",   ["score", "smoke/{f}.ui", "--json", "--strict"]),
-    ("hsf",       ["compile", "specs/{f}.yaml"]),
+    ("prestige", ["score", "smoke/{f}.ui", "--json", "--strict"]),
+    ("hsf", ["compile", "specs/{f}.yaml"]),
     ("forgeline", ["ship", "{f}"]),
 ]
 
@@ -261,7 +279,9 @@ MAX_RECEIPT_BYTES = 1_048_576
 MAX_RECEIPT_FILES = 1_000
 
 
-def _release_contract_requires(root: Path, feature: str, stage: str, path: Path | None = None) -> bool:
+def _release_contract_requires(
+    root: Path, feature: str, stage: str, path: Path | None = None
+) -> bool:
     """Detect a declared required stage without granting the file authority.
 
     ``factory verify --strict-release`` later validates the exact Oracle-bound
@@ -279,7 +299,9 @@ def _release_contract_requires(root: Path, feature: str, stage: str, path: Path 
     return isinstance(required, list) and stage in required
 
 
-def _release_contract_binding(root: Path, feature: str, path: Path | None) -> dict[str, str]:
+def _release_contract_binding(
+    root: Path, feature: str, path: Path | None
+) -> dict[str, str]:
     """Carry exact Oracle/policy digests into newly written stage receipts."""
     source = path or root / ".factory" / "release-contracts" / f"{feature}.json"
     try:
@@ -297,16 +319,28 @@ def _release_contract_binding(root: Path, feature: str, path: Path | None) -> di
     return {"oracle_contract_sha256": oracle, "release_contract_policy_digest": policy}
 
 
-def assemble(root: Path, feature: str, chain=None, dry_run: bool = False,
-             release_contract_path: Path | None = None) -> dict:
+def assemble(
+    root: Path,
+    feature: str,
+    chain=None,
+    dry_run: bool = False,
+    release_contract_path: Path | None = None,
+) -> dict:
     """Run the assembly line for a feature. Returns a per-stage report.
     Missing modules are skipped with a clear note (Lego stud left open)."""
-    root = Path(root); ensure_layout(root)
+    root = Path(root)
+    ensure_layout(root)
     chain = chain or DEFAULT_CHAIN
     installed = {m.name: m for m in detect()}
     meterlog = MeterLog(root)
     run_id = uuid.uuid4().hex
-    report = {"feature": feature, "root": str(root), "run_id": run_id, "stages": [], "dry_run": dry_run}
+    report = {
+        "feature": feature,
+        "root": str(root),
+        "run_id": run_id,
+        "stages": [],
+        "dry_run": dry_run,
+    }
     if release_contract_path is not None:
         report["release_contract_path"] = str(Path(release_contract_path))
     release_binding = _release_contract_binding(root, feature, release_contract_path)
@@ -314,39 +348,88 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False,
     activity.start()
 
     def finish_activity() -> None:
-        terminal = "halted" if report.get("halted_at") else "waiting_for_human" if report.get("paused_at") else "completed"
-        activity.finish(terminal, halted_at=report.get("halted_at"), paused_at=report.get("paused_at"))
+        terminal = (
+            "halted"
+            if report.get("halted_at")
+            else "waiting_for_human"
+            if report.get("paused_at")
+            else "completed"
+        )
+        activity.finish(
+            terminal,
+            halted_at=report.get("halted_at"),
+            paused_at=report.get("paused_at"),
+        )
 
     contract_path = root / ".factory" / "agent-contract.json"
     if contract_path.is_file():
         try:
             contract = validate_agent_contract(contract_path)
         except AgentContractError as exc:
-            report["stages"].append({"module": "factoryline", "stage": "agent-contract", "status": "failed", "code": exc.code, "message": exc.message})
+            report["stages"].append(
+                {
+                    "module": "factoryline",
+                    "stage": "agent-contract",
+                    "status": "failed",
+                    "code": exc.code,
+                    "message": exc.message,
+                }
+            )
             activity.stage_finished("factoryline", "agent-contract", "failed")
             report["halted_at"] = "factoryline:agent-contract"
             finish_activity()
             return report
-        report["agent_contract"] = {"path": str(contract_path), "digest": contract["contract_digest"], "marker": "AGENT_CONTRACT_BOUND"}
-        report["stages"].append({"module": "factoryline", "stage": "agent-contract", "status": "ok", "marker": "AGENT_CONTRACT_BOUND"})
+        report["agent_contract"] = {
+            "path": str(contract_path),
+            "digest": contract["contract_digest"],
+            "marker": "AGENT_CONTRACT_BOUND",
+        }
+        report["stages"].append(
+            {
+                "module": "factoryline",
+                "stage": "agent-contract",
+                "status": "ok",
+                "marker": "AGENT_CONTRACT_BOUND",
+            }
+        )
         activity.stage_finished("factoryline", "agent-contract", "ok")
 
     spec_path = root / "specs" / f"{feature}.md"
     if not dry_run and not spec_path.exists() and installed["specline"].installed:
         activity.stage_started("specline", "new")
         with stopwatch() as sw:
-            ok, out = _run_cli(MODULES["specline"]["cli"], ["new", feature], root, heartbeat=activity.heartbeat)
-        Receipt(module="specline", stage="new", feature=feature, ok=ok,
-                inputs=dict(release_binding),
-                outputs={"log_tail": out[-2000:]}).write(root)
-        report["stages"].append({"module": "specline", "stage": "new",
-                                 "status": "ok" if ok else "failed", "wall_ms": sw.wall_ms})
-        activity.stage_finished("specline", "new", "ok" if ok else "failed", wall_ms=sw.wall_ms)
+            ok, out = _run_cli(
+                MODULES["specline"]["cli"],
+                ["new", feature],
+                root,
+                heartbeat=activity.heartbeat,
+            )
+        Receipt(
+            module="specline",
+            stage="new",
+            feature=feature,
+            ok=ok,
+            inputs=dict(release_binding),
+            outputs={"log_tail": out[-2000:]},
+        ).write(root)
+        report["stages"].append(
+            {
+                "module": "specline",
+                "stage": "new",
+                "status": "ok" if ok else "failed",
+                "wall_ms": sw.wall_ms,
+            }
+        )
+        activity.stage_finished(
+            "specline", "new", "ok" if ok else "failed", wall_ms=sw.wall_ms
+        )
         if not ok:
             report["halted_at"] = "specline:new"
         else:
             report["paused_at"] = "author_spec"
-            report["next_command"] = f"edit specs/{feature}.md and plans/{feature}.md, then rerun factory assemble {feature}"
+            report["next_command"] = (
+                f"edit specs/{feature}.md and plans/{feature}.md, then rerun factory assemble {feature}"
+            )
         report["rollup"] = rollup_attributions(report["stages"])
         finish_activity()
         return report
@@ -363,7 +446,9 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False,
         cdte_outcome = _cdte_gate(root, feature)
         if cdte_outcome is not None:
             report["stages"].append(cdte_outcome["stage"])
-            activity.stage_finished("factoryline", "cdte", "failed" if cdte_outcome["blocking"] else "ok")
+            activity.stage_finished(
+                "factoryline", "cdte", "failed" if cdte_outcome["blocking"] else "ok"
+            )
             if cdte_outcome["blocking"]:
                 report["cdte"] = cdte_outcome["summary"]
                 report["paused_at"] = "nfr_conflict"
@@ -373,7 +458,9 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False,
                         f"<conflict-id> --decision ... --approved-by ..."
                     )
                 else:
-                    report["next_command"] = f"repair specs/{feature}.nfr.json, then rerun factory assemble {feature}"
+                    report["next_command"] = (
+                        f"repair specs/{feature}.nfr.json, then rerun factory assemble {feature}"
+                    )
                 report["rollup"] = rollup_attributions(report["stages"])
                 finish_activity()
                 return report
@@ -383,46 +470,90 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False,
         cli = MODULES[module]["cli"]
         present = installed[module].installed
         args = [a.replace("{f}", feature) for a in args_tmpl]
-        if module == "forgeline" and len(args) > 2 and args[2] == f"{feature}.ssat.yaml":
+        if (
+            module == "forgeline"
+            and len(args) > 2
+            and args[2] == f"{feature}.ssat.yaml"
+        ):
             args[2] = str(_ssat_contract(root, feature).relative_to(root))
         stage_name = _receipt_stage(module, args)
         stage_id = f"{module}:{stage_name}"
-        required_by_contract = _release_contract_requires(root, feature, stage_id, release_contract_path)
+        required_by_contract = _release_contract_requires(
+            root, feature, stage_id, release_contract_path
+        )
         # Contract-declared scope is a hard requirement.  Check it before the
         # generic availability skip so a missing producer or source can never
         # masquerade as an optional gate.
-        if module == "prestige" and required_by_contract and not (root / "smoke" / f"{feature}.ui").is_file():
-            report["stages"].append({"module": module, "stage": stage_name,
-                                     "status": "failed", "reason": "declared_ui_scope_missing",
-                                     "marker": "UI_SCOPE_REQUIRED_EVIDENCE_MISSING"})
+        if (
+            module == "prestige"
+            and required_by_contract
+            and not (root / "smoke" / f"{feature}.ui").is_file()
+        ):
+            report["stages"].append(
+                {
+                    "module": module,
+                    "stage": stage_name,
+                    "status": "failed",
+                    "reason": "declared_ui_scope_missing",
+                    "marker": "UI_SCOPE_REQUIRED_EVIDENCE_MISSING",
+                }
+            )
             activity.stage_finished(module, stage_name, "failed")
             report["halted_at"] = stage_id
             break
-        if module == "hsf" and required_by_contract and not (root / f"specs/{feature}.yaml").exists():
-            report["stages"].append({"module": module, "stage": stage_name,
-                                     "status": "failed", "reason": "declared_decision_spec_missing",
-                                     "marker": "DECISION_SPEC_REQUIRED_EVIDENCE_MISSING"})
+        if (
+            module == "hsf"
+            and required_by_contract
+            and not (root / f"specs/{feature}.yaml").exists()
+        ):
+            report["stages"].append(
+                {
+                    "module": module,
+                    "stage": stage_name,
+                    "status": "failed",
+                    "reason": "declared_decision_spec_missing",
+                    "marker": "DECISION_SPEC_REQUIRED_EVIDENCE_MISSING",
+                }
+            )
             activity.stage_finished(module, stage_name, "failed")
             report["halted_at"] = stage_id
             break
         if not present:
             if required_by_contract:
-                report["stages"].append({"module": module, "stage": stage_name,
-                                         "status": "failed", "reason": f"{cli} not installed",
-                                         "marker": "REQUIRED_GATE_UNAVAILABLE"})
+                report["stages"].append(
+                    {
+                        "module": module,
+                        "stage": stage_name,
+                        "status": "failed",
+                        "reason": f"{cli} not installed",
+                        "marker": "REQUIRED_GATE_UNAVAILABLE",
+                    }
+                )
                 activity.stage_finished(module, stage_name, "failed")
                 report["halted_at"] = stage_id
                 break
-            report["stages"].append({"module": module, "stage": stage_name,
-                                     "status": "skipped", "reason": f"{cli} not installed"})
+            report["stages"].append(
+                {
+                    "module": module,
+                    "stage": stage_name,
+                    "status": "skipped",
+                    "reason": f"{cli} not installed",
+                }
+            )
             activity.stage_finished(module, stage_name, "skipped")
             continue
         if module == "prestige":
             ui_path = root / "smoke" / f"{feature}.ui"
             if not ui_path.is_file():
-                report["stages"].append({"module": module, "stage": stage_name,
-                                         "status": "skipped", "reason": "ui_scope_not_declared",
-                                         "marker": "UI_PRESTIGE_GATE_NOT_APPLICABLE"})
+                report["stages"].append(
+                    {
+                        "module": module,
+                        "stage": stage_name,
+                        "status": "skipped",
+                        "reason": "ui_scope_not_declared",
+                        "marker": "UI_PRESTIGE_GATE_NOT_APPLICABLE",
+                    }
+                )
                 activity.stage_finished(module, stage_name, "skipped")
                 continue
         if not dry_run and module == "forgeline" and stage_name == "architect":
@@ -431,21 +562,38 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False,
             state = None
             if state_path.exists():
                 try:
-                    state = json.loads(state_path.read_text(encoding="utf-8")).get("state")
+                    state = json.loads(state_path.read_text(encoding="utf-8")).get(
+                        "state"
+                    )
                 except (OSError, ValueError):
                     state = None
             if not ssat.exists():
                 report["paused_at"] = "architecture_contract"
-                report["next_command"] = f"write specs/{feature}.ssat.yaml, then run forge expand {feature}"
+                report["next_command"] = (
+                    f"write specs/{feature}.ssat.yaml, then run forge expand {feature}"
+                )
                 activity.stage_finished(module, stage_name, "skipped")
                 break
             if state in {None, "intent"}:
                 activity.stage_started(module, "expand")
-                ok, out = _run_cli(cli, ["expand", feature], root, heartbeat=activity.heartbeat)
-                Receipt(module=module, stage="expand", feature=feature, ok=ok,
-                        inputs=dict(release_binding),
-                        outputs={"log_tail": out[-2000:]}).write(root)
-                report["stages"].append({"module": module, "stage": "expand", "status": "ok" if ok else "failed"})
+                ok, out = _run_cli(
+                    cli, ["expand", feature], root, heartbeat=activity.heartbeat
+                )
+                Receipt(
+                    module=module,
+                    stage="expand",
+                    feature=feature,
+                    ok=ok,
+                    inputs=dict(release_binding),
+                    outputs={"log_tail": out[-2000:]},
+                ).write(root)
+                report["stages"].append(
+                    {
+                        "module": module,
+                        "stage": "expand",
+                        "status": "ok" if ok else "failed",
+                    }
+                )
                 activity.stage_finished(module, "expand", "ok" if ok else "failed")
                 report["paused_at"] = "architecture_approval"
                 report["next_command"] = f"forge gate architected {feature}"
@@ -459,34 +607,73 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False,
             state_path = root / ".forge" / feature / "state.json"
             if state_path.exists():
                 try:
-                    state = json.loads(state_path.read_text(encoding="utf-8")).get("state")
-                except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError, TypeError):
-                    report["stages"].append({"module": module, "stage": stage_name,
-                                             "status": "failed", "reason": "forge state is malformed",
-                                             "marker": "FORGE_STATE_INVALID"})
+                    state = json.loads(state_path.read_text(encoding="utf-8")).get(
+                        "state"
+                    )
+                except (
+                    OSError,
+                    UnicodeDecodeError,
+                    json.JSONDecodeError,
+                    AttributeError,
+                    TypeError,
+                ):
+                    report["stages"].append(
+                        {
+                            "module": module,
+                            "stage": stage_name,
+                            "status": "failed",
+                            "reason": "forge state is malformed",
+                            "marker": "FORGE_STATE_INVALID",
+                        }
+                    )
                     activity.stage_finished(module, stage_name, "failed")
                     report["halted_at"] = stage_id
                     break
                 if state == "scaffolded":
                     report["paused_at"] = "implementation_fill"
-                    report["next_command"] = f"implement the scaffold, then run forge fill {feature} {feature}.ssat.yaml"
+                    report["next_command"] = (
+                        f"implement the scaffold, then run forge fill {feature} {feature}.ssat.yaml"
+                    )
                     activity.stage_finished(module, stage_name, "skipped")
                     break
-        if not dry_run and module == "hsf" and stage_name == "compile" and not (root / f"specs/{feature}.yaml").exists():
+        if (
+            not dry_run
+            and module == "hsf"
+            and stage_name == "compile"
+            and not (root / f"specs/{feature}.yaml").exists()
+        ):
             if required_by_contract:
-                report["stages"].append({"module": module, "stage": stage_name,
-                                         "status": "failed", "reason": "declared_decision_spec_missing",
-                                         "marker": "DECISION_SPEC_REQUIRED_EVIDENCE_MISSING"})
+                report["stages"].append(
+                    {
+                        "module": module,
+                        "stage": stage_name,
+                        "status": "failed",
+                        "reason": "declared_decision_spec_missing",
+                        "marker": "DECISION_SPEC_REQUIRED_EVIDENCE_MISSING",
+                    }
+                )
                 activity.stage_finished(module, stage_name, "failed")
                 report["halted_at"] = f"{module}:{stage_name}"
                 break
-            report["stages"].append({"module": module, "stage": stage_name,
-                                     "status": "skipped", "reason": "no deterministic decision spec"})
+            report["stages"].append(
+                {
+                    "module": module,
+                    "stage": stage_name,
+                    "status": "skipped",
+                    "reason": "no deterministic decision spec",
+                }
+            )
             activity.stage_finished(module, stage_name, "skipped")
             continue
         if dry_run:
-            report["stages"].append({"module": module, "stage": stage_name,
-                                     "status": "would-run", "cmd": f"{cli} {' '.join(args)}"})
+            report["stages"].append(
+                {
+                    "module": module,
+                    "stage": stage_name,
+                    "status": "would-run",
+                    "cmd": f"{cli} {' '.join(args)}",
+                }
+            )
             activity.stage_finished(module, stage_name, "would-run")
             continue
         activity.stage_started(module, stage_name)
@@ -500,28 +687,47 @@ def assemble(root: Path, feature: str, chain=None, dry_run: bool = False,
             tokens_in=module_meter.tokens_in,
             tokens_out=module_meter.tokens_out,
         )
-        meterlog.record(StageTiming(
-            module, stage_name, sw.wall_ms, module_meter.model_calls,
-            module_meter.tokens_in, module_meter.tokens_out, ok,
-            usage_reported=usage_reported,
-            feature=feature,
-            run_id=run_id,
-        ))
+        meterlog.record(
+            StageTiming(
+                module,
+                stage_name,
+                sw.wall_ms,
+                module_meter.model_calls,
+                module_meter.tokens_in,
+                module_meter.tokens_out,
+                ok,
+                usage_reported=usage_reported,
+                feature=feature,
+                run_id=run_id,
+            )
+        )
         outputs = {"log_tail": out[-2000:]}
         if module == "forgeline" and stage_name == "ship":
             intent_trace = _forge_intent_trace(root, feature, out)
             if intent_trace is not None:
                 outputs["intent_trace"] = intent_trace
-        Receipt(module=module, stage=stage_name, feature=feature, ok=ok,
-                inputs=dict(release_binding),
-                meter=stage_meter,
-                outputs=outputs,
-                attribution=attribution_block).write(root)
-        report["stages"].append({"module": module, "stage": stage_name,
-                                 "status": "ok" if ok else "failed",
-                                 "wall_ms": sw.wall_ms,
-                                 "attribution": attribution_block})
-        activity.stage_finished(module, stage_name, "ok" if ok else "failed", wall_ms=sw.wall_ms)
+        Receipt(
+            module=module,
+            stage=stage_name,
+            feature=feature,
+            ok=ok,
+            inputs=dict(release_binding),
+            meter=stage_meter,
+            outputs=outputs,
+            attribution=attribution_block,
+        ).write(root)
+        report["stages"].append(
+            {
+                "module": module,
+                "stage": stage_name,
+                "status": "ok" if ok else "failed",
+                "wall_ms": sw.wall_ms,
+                "attribution": attribution_block,
+            }
+        )
+        activity.stage_finished(
+            module, stage_name, "ok" if ok else "failed", wall_ms=sw.wall_ms
+        )
         if not ok:
             report["halted_at"] = f"{module}:{stage_name}"
             break
@@ -546,7 +752,12 @@ def rollup_receipts(root: Path, feature: str) -> dict:
     if truncated:
         # We may still show a bounded diagnostic, but a readiness decision must
         # remain blocked because the complete evidence set was not observed.
-        invalid.append({"path": "receipts/", "reason": f"receipt scan exceeded {MAX_RECEIPT_FILES} files"})
+        invalid.append(
+            {
+                "path": "receipts/",
+                "reason": f"receipt scan exceeded {MAX_RECEIPT_FILES} files",
+            }
+        )
         paths = paths[-MAX_RECEIPT_FILES:]
     for path in paths:
         try:
@@ -556,12 +767,21 @@ def rollup_receipts(root: Path, feature: str) -> dict:
             raw = path.read_bytes()
             payload = __import__("json").loads(raw.decode("utf-8-sig"))
             after = path.stat()
-            if (before.st_mtime_ns, before.st_size) != (after.st_mtime_ns, after.st_size):
+            if (before.st_mtime_ns, before.st_size) != (
+                after.st_mtime_ns,
+                after.st_size,
+            ):
                 raise ValueError("receipt changed while being read")
             receipt = Receipt.from_dict(payload)
             if receipt.feature != feature:
                 raise ValueError("receipt feature does not match requested feature")
-        except (ValueError, TypeError, OSError, UnicodeDecodeError, __import__("json").JSONDecodeError) as exc:
+        except (
+            ValueError,
+            TypeError,
+            OSError,
+            UnicodeDecodeError,
+            __import__("json").JSONDecodeError,
+        ) as exc:
             invalid.append({"path": path.name, "reason": str(exc)[:240]})
             continue
         # Receipt producers historically used both ``verify_tests`` and
@@ -571,21 +791,27 @@ def rollup_receipts(root: Path, feature: str) -> dict:
         key = (receipt.module, stage)
         rank = (after.st_mtime_ns, path.name)
         row = {
-                "module": receipt.module,
-                "stage": stage,
-                "status": "ok" if receipt.ok else "failed",
-                "attribution": receipt.attribution,
-                "inputs": receipt.inputs,
-                "outputs": receipt.outputs,
-                "receipt_path": path.name,
-                "receipt_mtime_ns": after.st_mtime_ns,
-                "run_id": receipt.run_id,
-                "producer_version": receipt.producer_version,
-                "receipt_sha256": hashlib.sha256(raw).hexdigest(),
-            }
+            "module": receipt.module,
+            "stage": stage,
+            "status": "ok" if receipt.ok else "failed",
+            "attribution": receipt.attribution,
+            "inputs": receipt.inputs,
+            "outputs": receipt.outputs,
+            "receipt_path": path.name,
+            "receipt_mtime_ns": after.st_mtime_ns,
+            "run_id": receipt.run_id,
+            "producer_version": receipt.producer_version,
+            "receipt_sha256": hashlib.sha256(raw).hexdigest(),
+        }
         if key not in latest or rank > latest[key][0]:
             latest[key] = (rank, row)
-    stages = [item[1] for item in sorted(latest.values(), key=lambda item: (item[1]["receipt_mtime_ns"], item[1]["receipt_path"]))]
+    stages = [
+        item[1]
+        for item in sorted(
+            latest.values(),
+            key=lambda item: (item[1]["receipt_mtime_ns"], item[1]["receipt_path"]),
+        )
+    ]
     return rollup_attributions(stages) | {
         "receipt_snapshot": {
             "schema": "factory.receipt-snapshot.v1",
@@ -609,26 +835,32 @@ def rollup_attributions(stages: list[dict]) -> dict:
     for stage in stages:
         raw = stage.get("attribution")
         if not raw:
-            rows.append({
-                **stage,
-                "order": _stage_order(stage["module"], stage["stage"])[0],
-                "rate": None,
-                "dominant_failure_class": None,
-            })
+            rows.append(
+                {
+                    **stage,
+                    "order": _stage_order(stage["module"], stage["stage"])[0],
+                    "rate": None,
+                    "dominant_failure_class": None,
+                }
+            )
             continue
         attr = Attribution.from_dict(raw)
         dominant = attr.dominant_failure_class()
-        rows.append({
-            **stage,
-            "order": _stage_order(stage["module"], stage["stage"])[0],
-            "rate": attr.rate,
-            "n_checked": attr.n_checked,
-            "n_passed": attr.n_passed,
-            "dominant_failure_class": dominant.value if dominant else None,
-        })
+        rows.append(
+            {
+                **stage,
+                "order": _stage_order(stage["module"], stage["stage"])[0],
+                "rate": attr.rate,
+                "n_checked": attr.n_checked,
+                "n_passed": attr.n_passed,
+                "dominant_failure_class": dominant.value if dominant else None,
+            }
+        )
     failures = [
-        row for row in rows
-        if row.get("status") == "failed" or (row["rate"] is not None and row["rate"] < 1.0)
+        row
+        for row in rows
+        if row.get("status") == "failed"
+        or (row["rate"] is not None and row["rate"] < 1.0)
     ]
     first = min(
         failures,
@@ -641,8 +873,11 @@ def rollup_attributions(stages: list[dict]) -> dict:
             f"{first['module']}:{first['stage']}" if first else None
         ),
         "recommended_edit_class": (
-            "structural" if first and first["dominant_failure_class"] else
-            "inspect_stage_output" if first else None
+            "structural"
+            if first and first["dominant_failure_class"]
+            else "inspect_stage_output"
+            if first
+            else None
         ),
     }
 
@@ -667,8 +902,13 @@ def _cdte_gate(root: Path, feature: str) -> dict[str, Any] | None:
         return {
             "blocking": True,
             "summary": {"error": f"unreadable constraints: {exc}"},
-            "stage": {"module": "factoryline", "stage": "cdte", "status": "blocked",
-                      "marker": "CDTE_INPUT_INVALID", "reason": f"unreadable constraints file: {exc}"},
+            "stage": {
+                "module": "factoryline",
+                "stage": "cdte",
+                "status": "blocked",
+                "marker": "CDTE_INPUT_INVALID",
+                "reason": f"unreadable constraints file: {exc}",
+            },
         }
 
     run_id = re.sub(r"[^a-z0-9._-]", "-", feature.lower()) or "run"
@@ -678,15 +918,24 @@ def _cdte_gate(root: Path, feature: str) -> dict[str, Any] | None:
         return {
             "blocking": True,
             "summary": {"error": exc.code},
-            "stage": {"module": "factoryline", "stage": "cdte", "status": "blocked",
-                      "marker": "CDTE_INPUT_INVALID", "reason": f"{exc.code}: {exc}"},
+            "stage": {
+                "module": "factoryline",
+                "stage": "cdte",
+                "status": "blocked",
+                "marker": "CDTE_INPUT_INVALID",
+                "reason": f"{exc.code}: {exc}",
+            },
         }
 
     blocking = bool(scan["fail_closed"])
     summary = {
         "run_id": scan["run_id"],
         "conflicts": [
-            {"conflict_id": c["conflict_id"], "pair_id": c["pair_id"], "severity": c["severity"]}
+            {
+                "conflict_id": c["conflict_id"],
+                "pair_id": c["pair_id"],
+                "severity": c["severity"],
+            }
             for c in scan["conflicts"]
         ],
         "requires_hitl_escalation": scan["requires_hitl_escalation"],

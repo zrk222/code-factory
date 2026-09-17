@@ -4,6 +4,7 @@ Telemetry is intentionally an inventory, not an outcome claim.  It joins the
 receipt, run, trace, and meter ledgers by stable run ids, preserves unknowns,
 and marks conflicting observations instead of silently choosing one.
 """
+
 from __future__ import annotations
 
 from collections import Counter
@@ -12,14 +13,16 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
-from .run_metrics import RUN_SCHEMA, load_run_receipts
+from .run_metrics import RUN_SCHEMA
 
 
 TELEMETRY_SCHEMA = "factory.telemetry-inventory.v1"
 
 
 def _digest(payload: Any) -> str:
-    data = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    data = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
     return sha256(data).hexdigest()
 
 
@@ -39,7 +42,9 @@ def _meter_rows(root: Path) -> Iterable[tuple[str, dict[str, Any]]]:
     path = root / ".factory" / "meter.jsonl"
     if not path.exists():
         return
-    for line_no, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+    for line_no, line in enumerate(
+        path.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+    ):
         if not line.strip():
             continue
         try:
@@ -62,8 +67,15 @@ def telemetry_inventory(root: Path) -> dict[str, Any]:
     def add(source: str, source_id: str, value: dict[str, Any]) -> None:
         digest = _digest(value)
         run_id = value.get("run_id") if isinstance(value.get("run_id"), str) else None
-        observations.append({"source": source, "source_id": source_id, "run_id": run_id,
-                             "digest": digest, "status": value.get("status", value.get("terminal", "unknown"))})
+        observations.append(
+            {
+                "source": source,
+                "source_id": source_id,
+                "run_id": run_id,
+                "digest": digest,
+                "status": value.get("status", value.get("terminal", "unknown")),
+            }
+        )
         source_counts[source] += 1
         status_counts[str(value.get("status", value.get("terminal", "unknown")))] += 1
         # A run receipt is the identity-bearing ledger.  Stage receipts and
@@ -87,20 +99,33 @@ def telemetry_inventory(root: Path) -> dict[str, Any]:
             if value.get(field) is None:
                 unknown_fields[field] += 1
 
-    conflicts = sorted(run_id for run_id, digests in run_payloads.items() if len(set(digests)) > 1)
+    conflicts = sorted(
+        run_id for run_id, digests in run_payloads.items() if len(set(digests)) > 1
+    )
     run_ids = sorted(run_payloads)
     exact_runs = sum(1 for run_id in run_ids if len(set(run_payloads[run_id])) == 1)
     return {
         "schema": TELEMETRY_SCHEMA,
-        "markers": ["TELEMETRY_INVENTORY_RECONCILED", "TELEMETRY_PUBLIC_AGGREGATE_SAFE"],
+        "markers": [
+            "TELEMETRY_INVENTORY_RECONCILED",
+            "TELEMETRY_PUBLIC_AGGREGATE_SAFE",
+        ],
         "root_bound": True,
         "sources": dict(sorted(source_counts.items())),
         "observations": len(observations),
-        "runs": {"distinct": len(run_ids), "exact": exact_runs, "conflicted": len(conflicts)},
+        "runs": {
+            "distinct": len(run_ids),
+            "exact": exact_runs,
+            "conflicted": len(conflicts),
+        },
         "statuses": dict(sorted(status_counts.items())),
         "unknown_fields": dict(sorted(unknown_fields.items())),
         "conflicts": conflicts,
-        "quality": "conflicted" if conflicts else "exact" if observations else "unknown",
+        "quality": "conflicted"
+        if conflicts
+        else "exact"
+        if observations
+        else "unknown",
     }
 
 

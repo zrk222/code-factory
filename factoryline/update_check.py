@@ -23,6 +23,7 @@ identifiers, no usage data, no telemetry, and no query parameters. The result is
 cached so repeated runs stay offline. Failure is silent: a version check must
 never break a build, and an air-gapped install must not be nagged.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -100,11 +101,21 @@ def check_for_update(root: Path = Path("."), *, force: bool = False) -> dict:
     }
 
     try:
-        request = urllib.request.Request(PYPI_JSON, headers={"Accept": "application/json"})
+        request = urllib.request.Request(
+            PYPI_JSON, headers={"Accept": "application/json"}
+        )
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
             latest = json.loads(response.read().decode())["info"]["version"]
-    except (urllib.error.URLError, TimeoutError, KeyError, json.JSONDecodeError, OSError):
-        result["note"] = "Version index unreachable; skipping quietly. This is not an error."
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        KeyError,
+        json.JSONDecodeError,
+        OSError,
+    ):
+        result["note"] = (
+            "Version index unreachable; skipping quietly. This is not an error."
+        )
         return result
 
     result["latest"] = latest

@@ -23,20 +23,41 @@ HEAD_SHA = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
 def _stale_proof_workspace(root: Path) -> None:
     (root / "input.txt").write_text("before", encoding="utf-8")
     (root / "output.txt").write_text("green", encoding="utf-8")
-    record_proof(root, {
-        "name": "unit", "command": ["python", "-m", "pytest"], "read_only": True,
-        "inputs": ["input.txt"], "outputs": ["output.txt"],
-    }, elapsed_ms=50)
+    record_proof(
+        root,
+        {
+            "name": "unit",
+            "command": ["python", "-m", "pytest"],
+            "read_only": True,
+            "inputs": ["input.txt"],
+            "outputs": ["output.txt"],
+        },
+        elapsed_ms=50,
+    )
     (root / "input.txt").write_text("after", encoding="utf-8")
 
 
 def _files(root: Path) -> dict[str, bytes]:
-    return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
 
 
-def test_github_proof_review_preserves_exact_facts_without_writing_workspace(tmp_path: Path) -> None:
+def test_github_proof_review_preserves_exact_facts_without_writing_workspace(
+    tmp_path: Path,
+) -> None:
     _stale_proof_workspace(tmp_path)
-    review = review_change(tmp_path, changed=["input.txt", "docs/guide.md", "factoryline/tool.py", "scripts/release.py"])
+    review = review_change(
+        tmp_path,
+        changed=[
+            "input.txt",
+            "docs/guide.md",
+            "factoryline/tool.py",
+            "scripts/release.py",
+        ],
+    )
     before = _files(tmp_path)
 
     payload = render_github_proof_review(review, HEAD_SHA)
@@ -49,36 +70,61 @@ def test_github_proof_review_preserves_exact_facts_without_writing_workspace(tmp
     assert payload["findings"] == review["findings"]
     assert payload["next_action"] == review["next_action"]
     assert payload["unproven_claims"] == review["unproven_claims"]
-    assert [cohort["id"] for cohort in payload["path_cohorts"]] == ["docs", "implementation", "other"]
-    assert {path for cohort in payload["path_cohorts"] for path in cohort["paths"]} == set(review["changed_paths"])
+    assert [cohort["id"] for cohort in payload["path_cohorts"]] == [
+        "docs",
+        "implementation",
+        "other",
+    ]
+    assert {
+        path for cohort in payload["path_cohorts"] for path in cohort["paths"]
+    } == set(review["changed_paths"])
     assert payload["check"]["name"] == "FactoryLine / Proof Review"
     assert payload["check"]["conclusion"] == "neutral"
     assert payload["authority"] == {
-        "execution": False, "approval": False, "publication": False, "deployment": False,
-        "signing": False, "messaging": False, "credential": False, "connector": False,
-        "source_write": False, "test_execution": False, "repair": False,
+        "execution": False,
+        "approval": False,
+        "publication": False,
+        "deployment": False,
+        "signing": False,
+        "messaging": False,
+        "credential": False,
+        "connector": False,
+        "source_write": False,
+        "test_execution": False,
+        "repair": False,
     }
     assert "<!-- factoryline-proof-review -->" in payload["github_comment"]
     assert HEAD_SHA in payload["github_comment"]
     assert review["mermaid"] in payload["github_comment"]
     assert _files(tmp_path) == before
-    assert render_github_proof_review(review, HEAD_SHA)["payload_sha256"] == payload["payload_sha256"]
+    assert (
+        render_github_proof_review(review, HEAD_SHA)["payload_sha256"]
+        == payload["payload_sha256"]
+    )
 
 
-def test_compile_github_proof_review_uses_explicit_paths_without_git_or_network(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_compile_github_proof_review_uses_explicit_paths_without_git_or_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def fail_if_git_is_collected(*_args, **_kwargs):
         raise AssertionError("explicit paths must not invoke Git collection")
 
-    monkeypatch.setattr("factoryline.change_review.git_changed_paths", fail_if_git_is_collected)
+    monkeypatch.setattr(
+        "factoryline.change_review.git_changed_paths", fail_if_git_is_collected
+    )
 
-    payload = compile_github_proof_review(tmp_path, base="origin/main", changed=["src/only.py"], head_sha=HEAD_SHA)
+    payload = compile_github_proof_review(
+        tmp_path, base="origin/main", changed=["src/only.py"], head_sha=HEAD_SHA
+    )
 
     assert payload["head_sha"] == HEAD_SHA
     assert payload["changed_paths"] == ["src/only.py"]
     assert payload["next_action"]["action"] == "bind_changed_path_to_proof"
 
 
-def test_github_proof_review_rejects_tampered_source_before_writing_artifacts(tmp_path: Path) -> None:
+def test_github_proof_review_rejects_tampered_source_before_writing_artifacts(
+    tmp_path: Path,
+) -> None:
     review = review_change(tmp_path, changed=["app/service.py"])
     review["findings"][0]["message"] = "tampered"
     out_dir = tmp_path.parent / "github-proof-review-artifacts"
@@ -90,11 +136,15 @@ def test_github_proof_review_rejects_tampered_source_before_writing_artifacts(tm
     assert not out_dir.exists()
 
 
-def test_github_proof_review_writes_only_explicit_json_and_markdown_artifacts(tmp_path: Path) -> None:
+def test_github_proof_review_writes_only_explicit_json_and_markdown_artifacts(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "workspace"
     out_dir = tmp_path / "payload"
     workspace.mkdir()
-    review = review_change(workspace, changed=["specs/feature.md", "tests/test_feature.py"])
+    review = review_change(
+        workspace, changed=["specs/feature.md", "tests/test_feature.py"]
+    )
     payload = render_github_proof_review(review, HEAD_SHA)
     before = _files(workspace)
 
@@ -107,17 +157,24 @@ def test_github_proof_review_writes_only_explicit_json_and_markdown_artifacts(tm
     assert _files(workspace) == before
     packet = json.loads(Path(artifacts["paths"]["json"]).read_text(encoding="utf-8"))
     assert packet["payload_sha256"] == payload["payload_sha256"]
-    assert Path(artifacts["paths"]["markdown"]).read_text(encoding="utf-8") == payload["github_comment"]
+    assert (
+        Path(artifacts["paths"]["markdown"]).read_text(encoding="utf-8")
+        == payload["github_comment"]
+    )
 
 
-def test_github_proof_review_rejects_forged_source_shapes_and_tampered_delivery_before_write(tmp_path: Path) -> None:
+def test_github_proof_review_rejects_forged_source_shapes_and_tampered_delivery_before_write(
+    tmp_path: Path,
+) -> None:
     source = review_change(tmp_path, changed=["src/only.py"])
     source["changed_paths"] = [42]
     with pytest.raises(GitHubProofReviewError) as source_error:
         render_github_proof_review(source, HEAD_SHA)
     assert source_error.value.code == "GITHUB_PROOF_REVIEW_INPUT_INVALID"
 
-    payload = render_github_proof_review(review_change(tmp_path, changed=["src/only.py"]), HEAD_SHA)
+    payload = render_github_proof_review(
+        review_change(tmp_path, changed=["src/only.py"]), HEAD_SHA
+    )
     payload["github_comment"] = "tampered"
     out_dir = tmp_path / "forged-artifact"
     with pytest.raises(GitHubProofReviewError) as delivery_error:
@@ -126,13 +183,29 @@ def test_github_proof_review_rejects_forged_source_shapes_and_tampered_delivery_
     assert not out_dir.exists()
 
 
-def test_github_proof_review_cli_is_machine_readable_and_local_only(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_github_proof_review_cli_is_machine_readable_and_local_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     out_dir = tmp_path.parent / "packet"
 
-    assert main([
-        "github", "proof-review", "--root", str(tmp_path), "--changed", "src/only.py",
-        "--head-sha", HEAD_SHA, "--out-dir", str(out_dir), "--json",
-    ]) == 0
+    assert (
+        main(
+            [
+                "github",
+                "proof-review",
+                "--root",
+                str(tmp_path),
+                "--changed",
+                "src/only.py",
+                "--head-sha",
+                HEAD_SHA,
+                "--out-dir",
+                str(out_dir),
+                "--json",
+            ]
+        )
+        == 0
+    )
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["head_sha"] == HEAD_SHA
@@ -141,19 +214,40 @@ def test_github_proof_review_cli_is_machine_readable_and_local_only(tmp_path: Pa
     assert Path(payload["artifacts"]["paths"]["json"]).is_file()
 
 
-def test_github_proof_review_cli_rejects_noncanonical_head_sha(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main([
-        "github", "proof-review", "--root", str(tmp_path), "--changed", "src/only.py",
-        "--head-sha", "ABC", "--json",
-    ]) == 2
+def test_github_proof_review_cli_rejects_noncanonical_head_sha(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        main(
+            [
+                "github",
+                "proof-review",
+                "--root",
+                str(tmp_path),
+                "--changed",
+                "src/only.py",
+                "--head-sha",
+                "ABC",
+                "--json",
+            ]
+        )
+        == 2
+    )
 
     error = json.loads(capsys.readouterr().err)
     assert error["schema"] == "factory.github_proof_review.error.v1"
     assert error["code"] == "GITHUB_PROOF_REVIEW_HEAD_SHA_INVALID"
 
 
-def test_opt_in_workflow_is_advisory_scoped_and_never_uses_a_privileged_pr_trigger() -> None:
-    workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "factory-pr-proof-review.yml").read_text(encoding="utf-8")
+def test_opt_in_workflow_is_advisory_scoped_and_never_uses_a_privileged_pr_trigger() -> (
+    None
+):
+    workflow = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "factory-pr-proof-review.yml"
+    ).read_text(encoding="utf-8")
 
     assert "pull_request:" in workflow
     assert "pull_request_target" not in workflow
@@ -169,7 +263,9 @@ def test_opt_in_workflow_is_advisory_scoped_and_never_uses_a_privileged_pr_trigg
     assert "merge" not in workflow.lower()
 
 
-def test_coderabbit_positioning_is_complementary_and_never_claims_vendor_access() -> None:
+def test_coderabbit_positioning_is_complementary_and_never_claims_vendor_access() -> (
+    None
+):
     root = Path(__file__).parents[1]
     guide = (root / "docs" / "GITHUB_PROOF_REVIEW.md").read_text(encoding="utf-8")
     readme = (root / "README.md").read_text(encoding="utf-8")
@@ -186,8 +282,18 @@ def test_code_audit_lane_rejects_minimal_self_hashed_receipt() -> None:
     core = {
         "schema": "factory.code-review-audits.v1",
         "state": "no_structural_findings",
-        "authority": {"execution": False, "approval": False, "publication": False, "deployment": False},
+        "authority": {
+            "execution": False,
+            "approval": False,
+            "publication": False,
+            "deployment": False,
+        },
     }
-    forged = {**core, "audit_sha256": __import__("hashlib").sha256(json.dumps(core, sort_keys=True).encode()).hexdigest()}
+    forged = {
+        **core,
+        "audit_sha256": __import__("hashlib")
+        .sha256(json.dumps(core, sort_keys=True).encode())
+        .hexdigest(),
+    }
     with pytest.raises(GitHubProofReviewError):
         _valid_code_audits(forged)

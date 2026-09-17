@@ -38,7 +38,11 @@ def test_loop_passport_validates_and_binds_a_conservative_contract(tmp_path):
     assert validation["valid"] is True
     passport = build_loop_passport(tmp_path, manifest)
     assert passport["verdict"] == "VERIFIED"
-    assert Path(passport["paths"]["mermaid"]).read_text(encoding="utf-8").startswith("flowchart LR")
+    assert (
+        Path(passport["paths"]["mermaid"])
+        .read_text(encoding="utf-8")
+        .startswith("flowchart LR")
+    )
     assert verify_loop_passport(Path(passport["paths"]["json"]))["valid"] is True
 
 
@@ -71,14 +75,22 @@ def test_loop_passport_rejects_unapproved_destructive_capability_and_secret(tmp_
 def test_loop_budget_receipt_is_fail_closed_and_receipted(tmp_path):
     manifest = _manifest(tmp_path)
     within = tmp_path / "within.json"
-    within.write_bytes(b"\xef\xbb\xbf" + json.dumps({"iterations": 1, "wall_seconds": 10, "tokens": 0, "cost_usd": 0}).encode("utf-8"))
+    within.write_bytes(
+        b"\xef\xbb\xbf"
+        + json.dumps(
+            {"iterations": 1, "wall_seconds": 10, "tokens": 0, "cost_usd": 0}
+        ).encode("utf-8")
+    )
     result = evaluate_budget(tmp_path, manifest, within)
     assert result["ok"] is True
     assert result["verdict"] == "WITHIN_BUDGET"
     assert Path(result["path"]).exists()
 
     exceeded = tmp_path / "exceeded.json"
-    exceeded.write_text(json.dumps({"iterations": 2, "wall_seconds": 10, "tokens": 0, "cost_usd": 0}), encoding="utf-8")
+    exceeded.write_text(
+        json.dumps({"iterations": 2, "wall_seconds": 10, "tokens": 0, "cost_usd": 0}),
+        encoding="utf-8",
+    )
     result = evaluate_budget(tmp_path, manifest, exceeded)
     assert result["ok"] is False
     assert result["verdict"] == "BUDGET_EXCEEDED"
@@ -91,7 +103,10 @@ def test_loop_budget_receipt_reports_invalid_manifest_without_a_traceback(tmp_pa
     del manifest["budgets"]
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     usage = tmp_path / "usage.json"
-    usage.write_text(json.dumps({"iterations": 0, "wall_seconds": 0, "tokens": 0, "cost_usd": 0}), encoding="utf-8")
+    usage.write_text(
+        json.dumps({"iterations": 0, "wall_seconds": 0, "tokens": 0, "cost_usd": 0}),
+        encoding="utf-8",
+    )
     result = evaluate_budget(tmp_path, manifest_path, usage)
     assert result["ok"] is False
     assert result["verdict"] == "MANIFEST_INVALID"
@@ -107,8 +122,24 @@ def test_loop_passport_verification_detects_manifest_tampering(tmp_path):
     assert "loop manifest hash mismatch" in result["errors"]
 
 
-def test_loop_cli_outputs_json_and_returns_nonzero_for_budget_exceeded(tmp_path, capsys):
-    assert main(["loop", "init", "ci-audit", "--owner", "platform-team", "--root", str(tmp_path), "--json"]) == 0
+def test_loop_cli_outputs_json_and_returns_nonzero_for_budget_exceeded(
+    tmp_path, capsys
+):
+    assert (
+        main(
+            [
+                "loop",
+                "init",
+                "ci-audit",
+                "--owner",
+                "platform-team",
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
     initialized = json.loads(capsys.readouterr().out)
     manifest = initialized["path"]
     assert main(["loop", "validate", manifest, "--json"]) == 0
@@ -118,6 +149,14 @@ def test_loop_cli_outputs_json_and_returns_nonzero_for_budget_exceeded(tmp_path,
     assert main(["loop", "verify", passport["paths"]["json"], "--json"]) == 0
     capsys.readouterr()
     usage = tmp_path / "usage.json"
-    usage.write_text(json.dumps({"iterations": 2, "wall_seconds": 1, "tokens": 0, "cost_usd": 0}), encoding="utf-8")
-    assert main(["loop", "budget", manifest, str(usage), "--root", str(tmp_path), "--json"]) == 1
+    usage.write_text(
+        json.dumps({"iterations": 2, "wall_seconds": 1, "tokens": 0, "cost_usd": 0}),
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            ["loop", "budget", manifest, str(usage), "--root", str(tmp_path), "--json"]
+        )
+        == 1
+    )
     assert json.loads(capsys.readouterr().out)["verdict"] == "BUDGET_EXCEEDED"

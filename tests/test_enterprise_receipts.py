@@ -23,7 +23,9 @@ from factoryline.enterprise_receipts import (  # noqa: E402
 )
 
 
-IDENTITY = "https://github.com/example/factory/.github/workflows/proof.yml@refs/heads/main"
+IDENTITY = (
+    "https://github.com/example/factory/.github/workflows/proof.yml@refs/heads/main"
+)
 ISSUER = "https://token.actions.githubusercontent.com"
 
 
@@ -53,7 +55,9 @@ def _receipt(*, policy_sha256: str | None = None) -> dict:
     return value
 
 
-def _seal(tmp_path: Path, payload: dict | None = None, keys: dict | None = None) -> tuple[Path, dict]:
+def _seal(
+    tmp_path: Path, payload: dict | None = None, keys: dict | None = None
+) -> tuple[Path, dict]:
     keys = keys or _keys(tmp_path)
     path = tmp_path / "receipt.v2.dsse.json"
     seal_receipt_v2(
@@ -67,7 +71,12 @@ def _seal(tmp_path: Path, payload: dict | None = None, keys: dict | None = None)
     return path, keys
 
 
-def _revocations_at(tmp_path: Path, keys: dict, generated_at: datetime, entries: list[dict] | None = None) -> Path:
+def _revocations_at(
+    tmp_path: Path,
+    keys: dict,
+    generated_at: datetime,
+    entries: list[dict] | None = None,
+) -> Path:
     payload = {
         "schema": REVOCATIONS_SCHEMA,
         "generated_at": generated_at.isoformat(),
@@ -91,9 +100,12 @@ def test_canonical_json_and_dsse_envelope_are_stable(tmp_path):
     envelope = json.loads(path.read_text(encoding="utf-8"))
     assert envelope["schema"] == DSSE_SCHEMA
     assert envelope["payloadType"] == "application/vnd.factory.receipt.v2+json"
-    assert envelope["payload_sha256"] == hashlib.sha256(
-        base64.urlsafe_b64decode(envelope["payload"] + "==")
-    ).hexdigest()
+    assert (
+        envelope["payload_sha256"]
+        == hashlib.sha256(
+            base64.urlsafe_b64decode(envelope["payload"] + "==")
+        ).hexdigest()
+    )
     assert canonical_json({"b": 2, "a": 1}) == b'{"a":1,"b":2}'
 
 
@@ -147,11 +159,19 @@ def test_policy_digest_is_bound_to_receipt(tmp_path):
         out=policy_path,
     )
     receipt_path, _ = _seal(tmp_path, _receipt(policy_sha256=policy_sha), keys)
-    result = verify_receipt_v2(receipt_path, trust_root_path=Path(keys["trust_root"]), policy_bundle_path=policy_path)
+    result = verify_receipt_v2(
+        receipt_path,
+        trust_root_path=Path(keys["trust_root"]),
+        policy_bundle_path=policy_path,
+    )
     assert result["policy_status"] == "VERIFIED"
     bad_receipt, _ = _seal(tmp_path, _receipt(policy_sha256="0" * 64), keys)
     with pytest.raises(EnterpriseReceiptError, match="E_POLICY_DIGEST_MISMATCH"):
-        verify_receipt_v2(bad_receipt, trust_root_path=Path(keys["trust_root"]), policy_bundle_path=policy_path)
+        verify_receipt_v2(
+            bad_receipt,
+            trust_root_path=Path(keys["trust_root"]),
+            policy_bundle_path=policy_path,
+        )
 
 
 def test_revocation_list_rejects_signer_at_receipt_time(tmp_path):
@@ -159,7 +179,13 @@ def test_revocation_list_rejects_signer_at_receipt_time(tmp_path):
     receipt_path, _ = _seal(tmp_path, _receipt(), keys)
     revocations_path = tmp_path / "revocations.dsse.json"
     sign_revocations(
-        [{"keyid": keys["keyid"], "revoked_at": "2026-07-11T00:00:00+00:00", "reason": "key rotation"}],
+        [
+            {
+                "keyid": keys["keyid"],
+                "revoked_at": "2026-07-11T00:00:00+00:00",
+                "reason": "key rotation",
+            }
+        ],
         private_key_path=Path(keys["private_key"]),
         keyid=keys["keyid"],
         identity=keys["identity"],
@@ -167,13 +193,21 @@ def test_revocation_list_rejects_signer_at_receipt_time(tmp_path):
         out=revocations_path,
     )
     with pytest.raises(EnterpriseReceiptError, match="E_SIGNER_REVOKED"):
-        verify_receipt_v2(receipt_path, trust_root_path=Path(keys["trust_root"]), revocations_path=revocations_path)
+        verify_receipt_v2(
+            receipt_path,
+            trust_root_path=Path(keys["trust_root"]),
+            revocations_path=revocations_path,
+        )
 
 
 def test_strict_verification_requires_a_revocation_snapshot(tmp_path):
     receipt_path, keys = _seal(tmp_path)
     with pytest.raises(EnterpriseReceiptError, match="E_REVOCATION_REQUIRED"):
-        verify_receipt_v2(receipt_path, trust_root_path=Path(keys["trust_root"]), require_revocations=True)
+        verify_receipt_v2(
+            receipt_path,
+            trust_root_path=Path(keys["trust_root"]),
+            require_revocations=True,
+        )
 
 
 def test_strict_verification_reports_current_revocation_freshness(tmp_path):
@@ -202,7 +236,9 @@ def test_strict_verification_reports_current_revocation_freshness(tmp_path):
         (datetime(2026, 7, 12, 0, 1, tzinfo=timezone.utc), "future"),
     ],
 )
-def test_strict_verification_rejects_stale_or_future_revocation_snapshot(tmp_path, generated_at, expected):
+def test_strict_verification_rejects_stale_or_future_revocation_snapshot(
+    tmp_path, generated_at, expected
+):
     keys = _keys(tmp_path)
     receipt_path, _ = _seal(tmp_path, keys=keys)
     revocations_path = _revocations_at(tmp_path, keys, generated_at)
@@ -218,10 +254,14 @@ def test_strict_verification_rejects_stale_or_future_revocation_snapshot(tmp_pat
     assert expected in str(error.value)
 
 
-def test_optional_revocations_are_checked_historically_but_not_claimed_current(tmp_path):
+def test_optional_revocations_are_checked_historically_but_not_claimed_current(
+    tmp_path,
+):
     keys = _keys(tmp_path)
     receipt_path, _ = _seal(tmp_path, keys=keys)
-    revocations_path = _revocations_at(tmp_path, keys, datetime(2026, 1, 1, tzinfo=timezone.utc))
+    revocations_path = _revocations_at(
+        tmp_path, keys, datetime(2026, 1, 1, tzinfo=timezone.utc)
+    )
     result = verify_receipt_v2(
         receipt_path,
         trust_root_path=Path(keys["trust_root"]),
@@ -255,8 +295,17 @@ def test_malformed_revocation_entries_fail_closed(tmp_path):
 @pytest.mark.parametrize(
     "payload, expected",
     [
-        ({"generated_at": "2026-07-12T00:00:00", "entries": []}, "E_REVOCATION_FRESHNESS"),
-        ({"generated_at": "2026-07-12T00:00:00+00:00", "entries": [{"keyid": "ci-main", "revoked_at": "2026-07-11T00:00:00"}]}, "E_INVALID_REVOCATIONS"),
+        (
+            {"generated_at": "2026-07-12T00:00:00", "entries": []},
+            "E_REVOCATION_FRESHNESS",
+        ),
+        (
+            {
+                "generated_at": "2026-07-12T00:00:00+00:00",
+                "entries": [{"keyid": "ci-main", "revoked_at": "2026-07-11T00:00:00"}],
+            },
+            "E_INVALID_REVOCATIONS",
+        ),
     ],
 )
 def test_revocation_timestamps_require_explicit_timezone(tmp_path, payload, expected):
@@ -285,21 +334,40 @@ def test_revocation_timestamps_require_explicit_timezone(tmp_path, payload, expe
 
 def test_v1_is_readable_but_not_enterprise_verified(tmp_path):
     path = tmp_path / "legacy.json"
-    path.write_text(json.dumps({"schema": "factory.receipt.v1", "module": "hsf", "ok": True}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"schema": "factory.receipt.v1", "module": "hsf", "ok": True}),
+        encoding="utf-8",
+    )
     keys = _keys(tmp_path)
     result = verify_receipt_v2(path, trust_root_path=Path(keys["trust_root"]))
     assert result["verdict"] == "LEGACY_UNVERIFIED"
 
 
 def test_v1_conversion_binds_tenant(tmp_path):
-    value = receipt_v2_from_v1({"schema": "factory.receipt.v1", "module": "hsf", "stage": "compile", "feature": "f", "ok": True}, tenant_id="tenant-a")
+    value = receipt_v2_from_v1(
+        {
+            "schema": "factory.receipt.v1",
+            "module": "hsf",
+            "stage": "compile",
+            "feature": "f",
+            "ok": True,
+        },
+        tenant_id="tenant-a",
+    )
     assert value["schema"] == "factory.receipt.v2"
     assert value["tenant_id"] == "tenant-a"
 
 
 def test_missing_private_key_is_closed(tmp_path):
     with pytest.raises(EnterpriseReceiptError, match="E_PRIVATE_KEY_UNAVAILABLE"):
-        seal_receipt_v2(_receipt(), private_key_path=tmp_path / "missing.pem", keyid="k", identity=IDENTITY, issuer=ISSUER, out=tmp_path / "out.json")
+        seal_receipt_v2(
+            _receipt(),
+            private_key_path=tmp_path / "missing.pem",
+            keyid="k",
+            identity=IDENTITY,
+            issuer=ISSUER,
+            out=tmp_path / "out.json",
+        )
 
 
 def test_cli_keygen_seal_and_verify(tmp_path, capsys):
@@ -308,25 +376,62 @@ def test_cli_keygen_seal_and_verify(tmp_path, capsys):
     payload_path = tmp_path / "payload.json"
     payload_path.write_bytes(canonical_json(_receipt()) + b"\n")
     out = tmp_path / "envelope.json"
-    assert main([
-        "enterprise", "keygen", "--out-dir", str(tmp_path / "cli-keys"),
-        "--keyid", "cli-key", "--identity", IDENTITY, "--issuer", ISSUER,
-    ]) == 0
-    assert main([
-        "enterprise", "receipt-seal", str(payload_path),
-        "--private-key", str(tmp_path / "cli-keys" / "cli-key.private.pem"),
-        "--keyid", "cli-key", "--identity", IDENTITY, "--issuer", ISSUER,
-        "--out", str(out),
-    ]) == 0
-    assert main([
-        "enterprise", "verify", str(out),
-        "--trust-root", str(tmp_path / "cli-keys" / "trust-root.json"),
-    ]) == 0
+    assert (
+        main(
+            [
+                "enterprise",
+                "keygen",
+                "--out-dir",
+                str(tmp_path / "cli-keys"),
+                "--keyid",
+                "cli-key",
+                "--identity",
+                IDENTITY,
+                "--issuer",
+                ISSUER,
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "enterprise",
+                "receipt-seal",
+                str(payload_path),
+                "--private-key",
+                str(tmp_path / "cli-keys" / "cli-key.private.pem"),
+                "--keyid",
+                "cli-key",
+                "--identity",
+                IDENTITY,
+                "--issuer",
+                ISSUER,
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "enterprise",
+                "verify",
+                str(out),
+                "--trust-root",
+                str(tmp_path / "cli-keys" / "trust-root.json"),
+            ]
+        )
+        == 0
+    )
     assert '"verdict": "VERIFIED"' in capsys.readouterr().out
 
 
 def test_enterprise_workflow_uses_optional_extra_and_no_network_service():
-    workflow = Path(".github/workflows/enterprise-receipts.yml").read_text(encoding="utf-8")
-    assert '.[dev,enterprise]' in workflow
+    workflow = Path(".github/workflows/enterprise-receipts.yml").read_text(
+        encoding="utf-8"
+    )
+    assert ".[dev,enterprise]" in workflow
     assert "offline-foundation" in workflow
     assert "tests/test_enterprise_receipts.py" in workflow

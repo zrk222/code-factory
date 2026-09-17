@@ -33,7 +33,9 @@ def test_ssat_resolution_prefers_specs_and_never_fuzzy_matches(tmp_path):
     assert resolve_ssat(tmp_path, "missing") is None
 
 
-def test_continue_writes_unknown_usage_receipt_and_safe_aggregate(tmp_path, monkeypatch):
+def test_continue_writes_unknown_usage_receipt_and_safe_aggregate(
+    tmp_path, monkeypatch
+):
     (tmp_path / "specs").mkdir()
     (tmp_path / "specs" / "feature.md").write_text("# feature", encoding="utf-8")
     monkeypatch.setattr(
@@ -51,7 +53,9 @@ def test_continue_writes_unknown_usage_receipt_and_safe_aggregate(tmp_path, monk
     result = continue_assembly(tmp_path, "feature")
     assert result["status"] == "waiting_for_human"
     assert result["next_action"]["command"] == "forge gate architected feature"
-    receipt = json.loads((tmp_path / ".factory" / "runs" / "run-1.json").read_text(encoding="utf-8"))
+    receipt = json.loads(
+        (tmp_path / ".factory" / "runs" / "run-1.json").read_text(encoding="utf-8")
+    )
     assert receipt["usage"]["quality"] == "unknown"
     assert receipt["usage"]["tokens_in"] is None
     aggregate = public_metrics(tmp_path)
@@ -67,8 +71,12 @@ def test_dry_run_does_not_write_receipt(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "factoryline.continuation.assemble",
         lambda root, feature, dry_run=False: {
-            "feature": feature, "root": str(root), "run_id": "dry",
-            "stages": [], "rollup": {}, "dry_run": dry_run,
+            "feature": feature,
+            "root": str(root),
+            "run_id": "dry",
+            "stages": [],
+            "rollup": {},
+            "dry_run": dry_run,
         },
     )
     result = continue_assembly(tmp_path, "feature", dry_run=True)

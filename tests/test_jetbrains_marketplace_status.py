@@ -23,7 +23,9 @@ def _updates():
 
 
 def test_pending_metadata_is_not_hidden_by_an_approved_version():
-    result = status.classify_status(_plugin(approve=False, hasUnapprovedUpdate=True), _updates())
+    result = status.classify_status(
+        _plugin(approve=False, hasUnapprovedUpdate=True), _updates()
+    )
 
     assert result["clear"] is False
     assert result["marker"] == "MARKETPLACE_UPDATE_PENDING"
@@ -32,7 +34,9 @@ def test_pending_metadata_is_not_hidden_by_an_approved_version():
 
 
 def test_metadata_review_does_not_impersonate_a_queued_binary_update():
-    result = status.classify_status(_plugin(approve=False, hasUnapprovedUpdate=False), _updates())
+    result = status.classify_status(
+        _plugin(approve=False, hasUnapprovedUpdate=False), _updates()
+    )
 
     assert result["clear"] is False
     assert result["marker"] == "MARKETPLACE_UPDATE_PENDING"
@@ -42,7 +46,9 @@ def test_metadata_review_does_not_impersonate_a_queued_binary_update():
 def test_expected_version_must_be_present_approved_and_listed():
     missing = status.classify_status(_plugin(), _updates(), expected_version="2027.1.0")
     pending = status.classify_status(
-        _plugin(), [{"version": "2027.1.0", "approve": False, "listed": False}], expected_version="2027.1.0"
+        _plugin(),
+        [{"version": "2027.1.0", "approve": False, "listed": False}],
+        expected_version="2027.1.0",
     )
     clear = status.classify_status(_plugin(), _updates(), expected_version="0.7.2")
 
@@ -77,7 +83,12 @@ def test_cli_rejects_a_queued_binary_update(monkeypatch, capsys):
 
 
 def test_cli_reports_unavailable_without_claiming_clear(monkeypatch, capsys):
-    monkeypatch.setattr(status, "fetch_json", lambda _url: (_ for _ in ()).throw(OSError("offline")))
+    monkeypatch.setattr(
+        status, "fetch_json", lambda _url: (_ for _ in ()).throw(OSError("offline"))
+    )
 
     assert status.main(["--require-clear", "--json"]) == 2
-    assert json.loads(capsys.readouterr().out)["marker"] == "MARKETPLACE_STATUS_UNAVAILABLE"
+    assert (
+        json.loads(capsys.readouterr().out)["marker"]
+        == "MARKETPLACE_STATUS_UNAVAILABLE"
+    )

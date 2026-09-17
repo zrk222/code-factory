@@ -21,7 +21,9 @@ def test_deepseek_harness_overlay_is_opt_in_local_mcp_only() -> None:
     assert "token" not in overlay.lower()
 
 
-def test_deepseek_harness_docs_keep_identity_and_execution_boundaries_explicit() -> None:
+def test_deepseek_harness_docs_keep_identity_and_execution_boundaries_explicit() -> (
+    None
+):
     readme = (PLUGIN / "README.md").read_text(encoding="utf-8")
 
     assert "dsh web --patch" in readme

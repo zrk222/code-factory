@@ -63,8 +63,12 @@ def test_current_product_visuals_are_real_capture_shapes() -> None:
     assert "not a simulated green result" in visuals
 
 
-def test_public_storefronts_use_current_product_media_and_exclude_retired_visuals() -> None:
-    public_copy = "\n".join(path.read_text(encoding="utf-8") for path in PUBLIC_VISUAL_SURFACES)
+def test_public_storefronts_use_current_product_media_and_exclude_retired_visuals() -> (
+    None
+):
+    public_copy = "\n".join(
+        path.read_text(encoding="utf-8") for path in PUBLIC_VISUAL_SURFACES
+    )
 
     assert "docs/PRODUCT_VISUALS.md" in public_copy
     assert "factory-studio-mvp-1280x800.png" in public_copy
@@ -98,12 +102,17 @@ def test_product_hunt_gallery_is_copy_ready_and_platform_accurate() -> None:
 
 def test_zenodo_and_release_metadata_only_package_current_public_visuals() -> None:
     metadata = json.loads((ROOT / ".zenodo.json").read_text(encoding="utf-8"))
-    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
+        encoding="utf-8"
+    )
 
     assert metadata["version"] == "0.46.5"
     assert metadata["publication_date"] == "2026-09-09"
     assert "Graph Ops mission-control storyboard" in metadata["description"]
-    assert "designed to reduce avoidable App Review rework and waiting time" in metadata["description"]
+    assert (
+        "designed to reduce avoidable App Review rework and waiting time"
+        in metadata["description"]
+    )
     assert "does not guarantee approval" in metadata["description"]
     assert "conceptual visual walkthrough" not in metadata["description"]
     assert "product-captures" in metadata["keywords"]

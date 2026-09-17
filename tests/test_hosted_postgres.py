@@ -32,11 +32,16 @@ def test_postgres_control_plane_binds_tenant_identity_state_audit_and_redacted_o
     control = PostgresControlStore(assurance)
     control.initialize()
     platform = Principal("platform-owner", "*", ("platform_admin",))
-    tenant = control.create_tenant(platform, "integration-control", "Integration Control")
+    tenant = control.create_tenant(
+        platform, "integration-control", "Integration Control"
+    )
     assert tenant.get("tenant_id") == "integration-control"
     control.configure_identity(
-        platform, "integration-control", issuer="https://id.integration.test",
-        audience="factory", jwks_url="https://id.integration.test/jwks",
+        platform,
+        "integration-control",
+        issuer="https://id.integration.test",
+        audience="factory",
+        jwks_url="https://id.integration.test/jwks",
     )
     with assurance._transaction("different-tenant") as (_db, cursor):
         cursor.execute(
@@ -50,9 +55,14 @@ def test_postgres_control_plane_binds_tenant_identity_state_audit_and_redacted_o
             ("integration-control",),
         )
         assert cursor.fetchone() is None
-    control.replace_roles(platform, "integration-control", {"release": "approver", "owners": "admin"})
+    control.replace_roles(
+        platform, "integration-control", {"release": "approver", "owners": "admin"}
+    )
     control.set_secret_reference(
-        platform, "integration-control", "github_webhook", "env://FACTORY_INTEGRATION_WEBHOOK"
+        platform,
+        "integration-control",
+        "github_webhook",
+        "env://FACTORY_INTEGRATION_WEBHOOK",
     )
     issued = control.issue_state(platform, "integration-control")
     bound = control.bind_installation(issued["state"], 99002)
@@ -73,7 +83,10 @@ def test_postgres_control_plane_binds_tenant_identity_state_audit_and_redacted_o
     tenant_admin = Principal("tenant-admin", "integration-control", ("admin",))
     with pytest.raises(PRAssuranceError) as boundary:
         control.configure_identity(
-            tenant_admin, "integration-other", issuer="https://id.other.test",
-            audience="factory", jwks_url="https://id.other.test/jwks",
+            tenant_admin,
+            "integration-other",
+            issuer="https://id.other.test",
+            audience="factory",
+            jwks_url="https://id.other.test/jwks",
         )
     assert boundary.value.code == "E_TENANT_BOUNDARY"

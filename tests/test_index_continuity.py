@@ -31,7 +31,10 @@ def test_baseline_is_explicit_local_and_never_stores_source_contents(tmp_path: P
     assert baseline["marker"] == INDEX_CONTINUITY_MARKER
     assert all(value is False for value in baseline["authority"].values())
     assert "demo-secret" not in json.dumps(baseline)
-    assert write_continuity_baseline(baseline, tmp_path, output) == ".factory/index-continuity/baseline.json"
+    assert (
+        write_continuity_baseline(baseline, tmp_path, output)
+        == ".factory/index-continuity/baseline.json"
+    )
     with pytest.raises(IndexContinuityError, match="workspace root"):
         write_continuity_baseline(baseline, tmp_path, tmp_path.parent / "outside.json")
 
@@ -55,7 +58,9 @@ def test_changed_manifest_requires_broad_reanalysis_with_exact_path(tmp_path: Pa
     result = compare_continuity(tmp_path, baseline)
 
     assert result["review_scope"] == "broad_reanalysis"
-    file_change = next(item for item in result["changes"] if item["kind"] == "structural_files")
+    file_change = next(
+        item for item in result["changes"] if item["kind"] == "structural_files"
+    )
     assert file_change["files"] == [{"path": "package.json", "change": "changed"}]
 
 
@@ -73,7 +78,9 @@ def test_managed_directory_drift_is_targeted_not_a_corruption_claim(tmp_path: Pa
 
 
 def test_tampered_or_invalid_baseline_fails_closed(tmp_path: Path):
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='demo'\n", encoding="utf-8"
+    )
     baseline = _baseline(tmp_path)
     payload = json.loads(baseline.read_text(encoding="utf-8"))
     payload["source_roots"] = ["unexpected"]
@@ -83,15 +90,45 @@ def test_tampered_or_invalid_baseline_fails_closed(tmp_path: Path):
         compare_continuity(tmp_path, baseline)
 
 
-def test_cli_end_to_end_baseline_then_compare(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+def test_cli_end_to_end_baseline_then_compare(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
     manifest = tmp_path / "Cargo.toml"
     manifest.write_text("[package]\nname='demo'\n", encoding="utf-8")
     baseline = tmp_path / ".factory" / "index-continuity" / "baseline.json"
 
-    assert main(["workspace", "continuity", "baseline", "--root", str(tmp_path), "--out", str(baseline), "--json"]) == 0
+    assert (
+        main(
+            [
+                "workspace",
+                "continuity",
+                "baseline",
+                "--root",
+                str(tmp_path),
+                "--out",
+                str(baseline),
+                "--json",
+            ]
+        )
+        == 0
+    )
     captured = json.loads(capsys.readouterr().out)
     assert captured["baseline_path"] == ".factory/index-continuity/baseline.json"
     manifest.write_text("[package]\nname='changed'\n", encoding="utf-8")
-    assert main(["workspace", "continuity", "compare", "--root", str(tmp_path), "--baseline", str(baseline), "--json"]) == 0
+    assert (
+        main(
+            [
+                "workspace",
+                "continuity",
+                "compare",
+                "--root",
+                str(tmp_path),
+                "--baseline",
+                str(baseline),
+                "--json",
+            ]
+        )
+        == 0
+    )
     compared = json.loads(capsys.readouterr().out)
     assert compared["review_scope"] == "broad_reanalysis"

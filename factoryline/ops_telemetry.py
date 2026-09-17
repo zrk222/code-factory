@@ -4,6 +4,7 @@ The recorder is deliberately local and aggregate-friendly.  It captures command
 family, lifecycle status, timing, exit code, and immutable package provenance,
 but never prompts, paths, arguments, source, or logs.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -27,7 +28,9 @@ LIFECYCLE_DIR = Path(".factory") / "ops" / "lifecycle"
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    handle, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             json.dump(payload, stream, indent=2, sort_keys=True)
@@ -55,7 +58,9 @@ def _command_family(argv: Iterable[str]) -> str:
 
 
 def _digest(payload: dict[str, Any]) -> str:
-    body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    body = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     return hashlib.sha256(body).hexdigest()
 
 
@@ -63,7 +68,9 @@ def _root_from_argv(argv: list[str], fallback: Path) -> Path:
     for index, value in enumerate(argv[:-1]):
         if value == "--root":
             candidate = Path(argv[index + 1])
-            return (candidate if candidate.is_absolute() else fallback / candidate).resolve()
+            return (
+                candidate if candidate.is_absolute() else fallback / candidate
+            ).resolve()
     return Path(fallback).resolve()
 
 
@@ -156,8 +163,12 @@ def lifecycle_inventory(root: Path) -> dict[str, Any]:
     statuses: dict[str, int] = {}
     commands: dict[str, int] = {}
     for row in rows:
-        statuses[str(row.get("status", "unknown"))] = statuses.get(str(row.get("status", "unknown")), 0) + 1
-        commands[str(row.get("command_family", "unknown"))] = commands.get(str(row.get("command_family", "unknown")), 0) + 1
+        statuses[str(row.get("status", "unknown"))] = (
+            statuses.get(str(row.get("status", "unknown")), 0) + 1
+        )
+        commands[str(row.get("command_family", "unknown"))] = (
+            commands.get(str(row.get("command_family", "unknown")), 0) + 1
+        )
     elapsed = sum(int(row.get("elapsed_ms", 0)) for row in rows)
     return {
         "schema": LIFECYCLE_SCHEMA,
@@ -167,6 +178,8 @@ def lifecycle_inventory(root: Path) -> dict[str, Any]:
         "commands": dict(sorted(commands.items())),
         "total_elapsed_ms": elapsed,
         "average_elapsed_ms": round(elapsed / len(rows), 1) if rows else None,
-        "provenance_complete": sum(bool(row.get("provenance", {}).get("identity_complete")) for row in rows),
+        "provenance_complete": sum(
+            bool(row.get("provenance", {}).get("identity_complete")) for row in rows
+        ),
         "claim_boundary": "Local lifecycle observations only; no provider, token, cost, or productivity claim.",
     }

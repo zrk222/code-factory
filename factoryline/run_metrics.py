@@ -1,4 +1,5 @@
 """Privacy-safe run receipts and aggregates for Assembly continuation."""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -23,7 +24,9 @@ def _runs_dir(root: Path, *, create: bool = True) -> Path:
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    handle, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             json.dump(payload, stream, indent=2, sort_keys=True)
@@ -76,7 +79,9 @@ def write_run_receipt(root: Path, payload: dict[str, Any]) -> Path:
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError(f"usage.{key} must be a non-negative integer")
         cost = usage.get("cost_usd")
-        if cost is not None and (not isinstance(cost, (int, float)) or isinstance(cost, bool) or cost < 0):
+        if cost is not None and (
+            not isinstance(cost, (int, float)) or isinstance(cost, bool) or cost < 0
+        ):
             raise ValueError("usage.cost_usd must be a non-negative number or null")
     receipt = {
         "schema": RUN_SCHEMA,
@@ -97,7 +102,11 @@ def public_metrics(root: Path) -> dict[str, Any]:
     """Aggregate receipts without exposing features, paths, prompts, or logs."""
     rows = load_run_receipts(root)
     terminals = Counter(str(row.get("terminal", "unknown")) for row in rows)
-    exact = [row["usage"] for row in rows if isinstance(row.get("usage"), dict) and row["usage"].get("quality") == "exact"]
+    exact = [
+        row["usage"]
+        for row in rows
+        if isinstance(row.get("usage"), dict) and row["usage"].get("quality") == "exact"
+    ]
     all_exact = bool(rows) and len(exact) == len(rows)
     completed = terminals.get("completed", 0)
     from .telemetry import public_inventory_summary
@@ -118,11 +127,21 @@ def public_metrics(root: Path) -> dict[str, Any]:
         "usage": {
             "quality": "exact" if all_exact else "unknown",
             "observed_runs": len(exact),
-            "model_calls": sum(item["model_calls"] for item in exact) if all_exact else None,
-            "tokens_in": sum(item["tokens_in"] for item in exact) if all_exact else None,
-            "tokens_out": sum(item["tokens_out"] for item in exact) if all_exact else None,
+            "model_calls": sum(item["model_calls"] for item in exact)
+            if all_exact
+            else None,
+            "tokens_in": sum(item["tokens_in"] for item in exact)
+            if all_exact
+            else None,
+            "tokens_out": sum(item["tokens_out"] for item in exact)
+            if all_exact
+            else None,
             "cost_usd": (
-                sum(float(item["cost_usd"]) for item in exact if item.get("cost_usd") is not None)
+                sum(
+                    float(item["cost_usd"])
+                    for item in exact
+                    if item.get("cost_usd") is not None
+                )
                 if all_exact and all(item.get("cost_usd") is not None for item in exact)
                 else None
             ),

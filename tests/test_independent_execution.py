@@ -5,7 +5,13 @@ import json
 import pytest
 
 from factoryline.enterprise_receipts import generate_key_material, sign_payload
-from factoryline.independent_execution import ExecutionAttestationError, PAYLOAD_TYPE, SCHEMA, validate_execution_attestation, verify_signed_execution_attestation
+from factoryline.independent_execution import (
+    ExecutionAttestationError,
+    PAYLOAD_TYPE,
+    SCHEMA,
+    validate_execution_attestation,
+    verify_signed_execution_attestation,
+)
 
 
 def _digest(seed: str) -> str:
@@ -23,8 +29,22 @@ def _payload(**overrides):
         "issued_at": now.isoformat(),
         "expires_at": (now + timedelta(hours=1)).isoformat(),
         "assurance_level": "isolated_worker",
-        "runner": {"id": "runner-1", "version": "1.0.0", "platform": "linux", "backend": "isolated_worker", "executable_sha256": _digest("c")},
-        "observations": {"target_artifact_sha256": _digest("d"), "known_bad_artifact_sha256": _digest("e"), "target_stdout_sha256": _digest("f"), "target_stderr_sha256": None, "cleanup_confirmed": True, "memory_peak_bytes": 128, "latency_ms": 7},
+        "runner": {
+            "id": "runner-1",
+            "version": "1.0.0",
+            "platform": "linux",
+            "backend": "isolated_worker",
+            "executable_sha256": _digest("c"),
+        },
+        "observations": {
+            "target_artifact_sha256": _digest("d"),
+            "known_bad_artifact_sha256": _digest("e"),
+            "target_stdout_sha256": _digest("f"),
+            "target_stderr_sha256": None,
+            "cleanup_confirmed": True,
+            "memory_peak_bytes": 128,
+            "latency_ms": 7,
+        },
         "authority": "none",
     }
     value.update(overrides)
@@ -67,15 +87,35 @@ def test_binding_cleanup_expiry_replay_and_unknown_fields_fail_closed():
 
 
 def test_signed_attestation_verifies_against_local_trust_root(tmp_path):
-    keys = generate_key_material(out_dir=tmp_path / "keys", keyid="runner-key", identity="runner@example", issuer="local")
+    keys = generate_key_material(
+        out_dir=tmp_path / "keys",
+        keyid="runner-key",
+        identity="runner@example",
+        issuer="local",
+    )
     payload = _payload()
-    envelope = sign_payload(payload, payload_type=PAYLOAD_TYPE, private_key_path=keys["private_key"], keyid=keys["keyid"], identity=keys["identity"], issuer=keys["issuer"])
+    envelope = sign_payload(
+        payload,
+        payload_type=PAYLOAD_TYPE,
+        private_key_path=keys["private_key"],
+        keyid=keys["keyid"],
+        identity=keys["identity"],
+        issuer=keys["issuer"],
+    )
     receipt = tmp_path / "attestation.json"
     receipt.write_text(json.dumps(envelope), encoding="utf-8")
-    result = verify_signed_execution_attestation(receipt, keys["trust_root"], candidate_sha256=payload["candidate_sha256"], plan_sha256=payload["plan_sha256"])
+    result = verify_signed_execution_attestation(
+        receipt,
+        keys["trust_root"],
+        candidate_sha256=payload["candidate_sha256"],
+        plan_sha256=payload["plan_sha256"],
+    )
     assert result["state"] == "VERIFIED"
     assert result["release_approval"] is False
     other_root = tmp_path / "other-trust-root.json"
-    other_root.write_text(json.dumps({"schema": "factory.trust.root.v1", "version": 1, "keys": []}), encoding="utf-8")
+    other_root.write_text(
+        json.dumps({"schema": "factory.trust.root.v1", "version": 1, "keys": []}),
+        encoding="utf-8",
+    )
     with pytest.raises(ExecutionAttestationError, match="E_UNKNOWN_KEY"):
         verify_signed_execution_attestation(receipt, other_root)

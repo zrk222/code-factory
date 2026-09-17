@@ -38,6 +38,7 @@ is exactly why ``blind_spot_sample`` exists and why it is designed to run before
 the blocking intervention rather than after: the metric needs an external
 correction term before anything is allowed to block a merge on it.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -131,29 +132,48 @@ def normalize_review(event: dict[str, Any]) -> dict[str, Any]:
         or len(review_id) > MAX_REVIEW_ID_LENGTH
         or not REVIEW_ID.fullmatch(review_id)
     ):
-        raise HabituationError("REVIEW_ID_INVALID", "review_id must match [a-z0-9][a-z0-9._/-]{0,119}")
+        raise HabituationError(
+            "REVIEW_ID_INVALID", "review_id must match [a-z0-9][a-z0-9._/-]{0,119}"
+        )
 
     reviewer = event.get("reviewer")
     if not isinstance(reviewer, str) or not reviewer.strip():
-        raise HabituationError("REVIEWER_REQUIRED", "review event needs a reviewer identity")
+        raise HabituationError(
+            "REVIEWER_REQUIRED", "review event needs a reviewer identity"
+        )
 
     author_kind = event.get("author_kind")
     if author_kind not in AUTHOR_KINDS:
         raise HabituationError(
-            "AUTHOR_KIND_INVALID", f"author_kind must be one of {', '.join(AUTHOR_KINDS)}"
+            "AUTHOR_KIND_INVALID",
+            f"author_kind must be one of {', '.join(AUTHOR_KINDS)}",
         )
 
     changed_lines = event.get("changed_lines")
-    if not isinstance(changed_lines, int) or isinstance(changed_lines, bool) or changed_lines <= 0:
-        raise HabituationError("CHANGED_LINES_INVALID", "changed_lines must be a positive integer")
+    if (
+        not isinstance(changed_lines, int)
+        or isinstance(changed_lines, bool)
+        or changed_lines <= 0
+    ):
+        raise HabituationError(
+            "CHANGED_LINES_INVALID", "changed_lines must be a positive integer"
+        )
 
     seconds = event.get("review_seconds")
-    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
-        raise HabituationError("REVIEW_SECONDS_INVALID", "review_seconds must be a positive number")
+    if (
+        isinstance(seconds, bool)
+        or not isinstance(seconds, (int, float))
+        or seconds <= 0
+    ):
+        raise HabituationError(
+            "REVIEW_SECONDS_INVALID", "review_seconds must be a positive number"
+        )
 
     comments = event.get("inline_comments", 0)
     if not isinstance(comments, int) or isinstance(comments, bool) or comments < 0:
-        raise HabituationError("COMMENTS_INVALID", "inline_comments must be a non-negative integer")
+        raise HabituationError(
+            "COMMENTS_INVALID", "inline_comments must be a non-negative integer"
+        )
 
     approved = event.get("approved")
     if not isinstance(approved, bool):
@@ -168,8 +188,11 @@ def normalize_review(event: dict[str, Any]) -> dict[str, Any]:
         "inline_comments": comments,
         "approved": approved,
         "scrutiny_ratio": _plain(_exact(seconds) / _exact(changed_lines) * _exact(100)),
-        "comment_density": _plain(_exact(comments) / _exact(changed_lines) * _exact(100)),
-        "observed_at": event.get("observed_at") or datetime.now(timezone.utc).isoformat(),
+        "comment_density": _plain(
+            _exact(comments) / _exact(changed_lines) * _exact(100)
+        ),
+        "observed_at": event.get("observed_at")
+        or datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -180,7 +203,9 @@ def _habituation_dir(root: Path, *, create: bool = True) -> Path:
     return directory
 
 
-def record_review(root: Path, event: dict[str, Any], *, replace: bool = False) -> dict[str, Any]:
+def record_review(
+    root: Path, event: dict[str, Any], *, replace: bool = False
+) -> dict[str, Any]:
     """Record one review event atomically, raising HabituationError if invalid.
 
     Refuses to overwrite an existing event without an explicit replace: a review
@@ -191,7 +216,10 @@ def record_review(root: Path, event: dict[str, Any], *, replace: bool = False) -
     safe = re.sub(r"[^a-z0-9._-]", "-", normalized["review_id"])
     destination = _habituation_dir(root) / f"review.{safe}.json"
     if destination.exists() and not replace:
-        raise HabituationError("REVIEW_OVERWRITE_REFUSED", "review already recorded; pass replace explicitly")
+        raise HabituationError(
+            "REVIEW_OVERWRITE_REFUSED",
+            "review already recorded; pass replace explicitly",
+        )
     receipt = {"schema": REVIEW_SCHEMA, "marker": "REVIEW_OBSERVED", **normalized}
     _atomic_json(destination, receipt)
     receipt["receipt"] = str(destination)
@@ -204,7 +232,9 @@ def load_reviews(root: Path) -> list[dict[str, Any]]:
     A single corrupt file must not block calibration over all the others.
     """
     rows: list[dict[str, Any]] = []
-    for path in sorted(_habituation_dir(root, create=False).glob("review.*.json"))[:MAX_REVIEWS]:
+    for path in sorted(_habituation_dir(root, create=False).glob("review.*.json"))[
+        :MAX_REVIEWS
+    ]:
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -220,7 +250,9 @@ def load_reviews(root: Path) -> list[dict[str, Any]]:
 def _mean(values: list[Any]) -> Any:
     if not values:
         return None
-    return _plain(sum((_exact(v) for v in values), start=_exact(0)) / _exact(len(values)))
+    return _plain(
+        sum((_exact(v) for v in values), start=_exact(0)) / _exact(len(values))
+    )
 
 
 def calibrate_reviewer(reviews: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -255,12 +287,19 @@ def calibrate_reviewer(reviews: Iterable[dict[str, Any]]) -> dict[str, Any]:
     if withheld_reason is None and baseline_scrutiny:
         # Positive drift == less time spent per line on agent code than on human code.
         drift = _plain(
-            (_exact(baseline_scrutiny) - _exact(agent_scrutiny)) / _exact(baseline_scrutiny)
+            (_exact(baseline_scrutiny) - _exact(agent_scrutiny))
+            / _exact(baseline_scrutiny)
         )
 
     band = "unknown"
     if drift is not None:
-        band = "block" if drift >= BLOCK_DRIFT else "warn" if drift >= WARN_DRIFT else "nominal"
+        band = (
+            "block"
+            if drift >= BLOCK_DRIFT
+            else "warn"
+            if drift >= WARN_DRIFT
+            else "nominal"
+        )
 
     return {
         "reviewer_key": rows[0]["reviewer_key"] if rows else None,
@@ -270,8 +309,12 @@ def calibrate_reviewer(reviews: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "baseline_scrutiny_ratio": baseline_scrutiny,
         "agent_comment_density": _mean([r["comment_density"] for r in agent]),
         "baseline_comment_density": _mean([r["comment_density"] for r in human]),
-        "agent_approval_rate": _ratio(sum(1 for r in agent if r["approved"]), len(agent)),
-        "baseline_approval_rate": _ratio(sum(1 for r in human if r["approved"]), len(human)),
+        "agent_approval_rate": _ratio(
+            sum(1 for r in agent if r["approved"]), len(agent)
+        ),
+        "baseline_approval_rate": _ratio(
+            sum(1 for r in human if r["approved"]), len(human)
+        ),
         "scrutiny_drift": drift,
         "drift_band": band,
         "measurement": "measured",
@@ -288,7 +331,9 @@ def record_calibration(root: Path, *, replace: bool = True) -> dict[str, Any]:
     """
     rows = load_reviews(root)
     if not rows:
-        raise HabituationError("NO_REVIEWS", "no review events recorded; nothing to calibrate")
+        raise HabituationError(
+            "NO_REVIEWS", "no review events recorded; nothing to calibrate"
+        )
 
     by_reviewer: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -319,7 +364,10 @@ def record_calibration(root: Path, *, replace: bool = True) -> dict[str, Any]:
     }
     destination = _habituation_dir(root) / "calibration.json"
     if destination.exists() and not replace:
-        raise HabituationError("CALIBRATION_OVERWRITE_REFUSED", "calibration exists; pass replace explicitly")
+        raise HabituationError(
+            "CALIBRATION_OVERWRITE_REFUSED",
+            "calibration exists; pass replace explicitly",
+        )
     _atomic_json(destination, receipt)
     receipt["receipt"] = str(destination)
     return receipt
@@ -345,25 +393,36 @@ def blind_spot_sample(
     self-confirming proxy is not a gate, it is a superstition.
     """
     if not isinstance(rate, int) or isinstance(rate, bool) or not 1 <= rate <= 100:
-        raise HabituationError("SAMPLE_RATE_INVALID", "rate must be an integer between 1 and 100")
+        raise HabituationError(
+            "SAMPLE_RATE_INVALID", "rate must be an integer between 1 and 100"
+        )
 
-    rows = [r for r in load_reviews(root) if r["author_kind"] == "agent" and r["approved"]]
+    rows = [
+        r for r in load_reviews(root) if r["author_kind"] == "agent" and r["approved"]
+    ]
     if not rows:
-        raise HabituationError("NO_APPROVED_AGENT_REVIEWS", "nothing approved to re-review")
+        raise HabituationError(
+            "NO_APPROVED_AGENT_REVIEWS", "nothing approved to re-review"
+        )
 
     ordered = sorted(rows, key=lambda r: r["scrutiny_ratio"])
     cutoff = max(1, len(ordered) * 50 // 100)
     low_scrutiny = ordered[:cutoff]
 
     selected = [
-        r for r in low_scrutiny
-        if int(hashlib.sha256(r["review_id"].encode("utf-8")).hexdigest()[:8], 16) % 100 < rate
+        r
+        for r in low_scrutiny
+        if int(hashlib.sha256(r["review_id"].encode("utf-8")).hexdigest()[:8], 16) % 100
+        < rate
     ]
 
     receipt = {
         "schema": SAMPLE_SCHEMA,
         "marker": "BLIND_SPOT_SAMPLE_RECEIPTED",
-        "markers": ["DETERMINISTIC_SELECTION", "REPRODUCIBLE_WITHOUT_TRUSTING_THIS_PROCESS"],
+        "markers": [
+            "DETERMINISTIC_SELECTION",
+            "REPRODUCIBLE_WITHOUT_TRUSTING_THIS_PROCESS",
+        ],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "rate_pct": rate,
         "eligible_low_scrutiny": len(low_scrutiny),
@@ -377,7 +436,9 @@ def blind_spot_sample(
     }
     destination = _habituation_dir(root) / "blind-sample.json"
     if destination.exists() and not replace:
-        raise HabituationError("SAMPLE_OVERWRITE_REFUSED", "sample exists; pass replace explicitly")
+        raise HabituationError(
+            "SAMPLE_OVERWRITE_REFUSED", "sample exists; pass replace explicitly"
+        )
     _atomic_json(destination, receipt)
     receipt["receipt"] = str(destination)
     return receipt
@@ -402,7 +463,9 @@ def record_resample_outcome(
     if original is None:
         raise HabituationError("REVIEW_UNKNOWN", f"no recorded review {review_id}")
     if not reviewer.strip():
-        raise HabituationError("REVIEWER_REQUIRED", "a re-review needs a named reviewer")
+        raise HabituationError(
+            "REVIEWER_REQUIRED", "a re-review needs a named reviewer"
+        )
     if _identity_key(reviewer) == original["reviewer_key"]:
         raise HabituationError(
             "RESAMPLE_IDENTITY_CONFLICT",
@@ -432,7 +495,10 @@ def load_resamples(root: Path) -> list[dict[str, Any]]:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if isinstance(value, dict) and value.get("schema") == "factory.habituation.resample.v1":
+        if (
+            isinstance(value, dict)
+            and value.get("schema") == "factory.habituation.resample.v1"
+        ):
             rows.append(value)
     return rows
 
@@ -515,8 +581,6 @@ def evaluate_gate(root: Path, *, allow_block: bool = False) -> dict[str, Any]:
     """
     calibration = record_calibration(root)
     resamples = load_resamples(root)
-    bands = [c["drift_band"] for c in calibration["calibrations"]]
-
     breached = [c for c in calibration["calibrations"] if c["drift_band"] == "block"]
     warned = [c for c in calibration["calibrations"] if c["drift_band"] == "warn"]
 
@@ -571,7 +635,9 @@ def evaluate_gate(root: Path, *, allow_block: bool = False) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Aggregate-safe public report
 # ---------------------------------------------------------------------------
-def public_habituation_report(root: Path, *, enable_defect_linkage: bool = False) -> dict[str, Any]:
+def public_habituation_report(
+    root: Path, *, enable_defect_linkage: bool = False
+) -> dict[str, Any]:
     """Aggregate calibration without exporting identities, keys, or review ids.
 
     Deliberately carries no per-reviewer row, not even pseudonymous. Habituation
@@ -591,7 +657,9 @@ def public_habituation_report(root: Path, *, enable_defect_linkage: bool = False
             by_reviewer.setdefault(row["reviewer_key"], []).append(row)
         for _, group in sorted(by_reviewer.items()):
             calibration = calibrate_reviewer(group)
-            bands[calibration["drift_band"]] = bands.get(calibration["drift_band"], 0) + 1
+            bands[calibration["drift_band"]] = (
+                bands.get(calibration["drift_band"], 0) + 1
+            )
             if calibration["scrutiny_drift"] is not None:
                 drifts.append(calibration["scrutiny_drift"])
 
@@ -611,19 +679,26 @@ def public_habituation_report(root: Path, *, enable_defect_linkage: bool = False
         "reviewers_observed": len({r["reviewer_key"] for r in rows}),
         "mean_agent_scrutiny_ratio": _mean([r["scrutiny_ratio"] for r in agent]),
         "mean_baseline_scrutiny_ratio": _mean([r["scrutiny_ratio"] for r in human]),
-        "agent_approval_rate": _ratio(sum(1 for r in agent if r["approved"]), len(agent)),
-        "baseline_approval_rate": _ratio(sum(1 for r in human if r["approved"]), len(human)),
-        "reviewers_by_drift_band": dict(sorted(bands.items())),
-        "median_scrutiny_drift": (
-            sorted(drifts)[len(drifts) // 2] if drifts else None
+        "agent_approval_rate": _ratio(
+            sum(1 for r in agent if r["approved"]), len(agent)
         ),
+        "baseline_approval_rate": _ratio(
+            sum(1 for r in human if r["approved"]), len(human)
+        ),
+        "reviewers_by_drift_band": dict(sorted(bands.items())),
+        "median_scrutiny_drift": (sorted(drifts)[len(drifts) // 2] if drifts else None),
         "drift_measurement": "measured",
         "defect_linkage": defect_linkage(root, enable=enable_defect_linkage),
     }
 
 
-def export_public_habituation_report(root: Path, destination: Path, *, enable_defect_linkage: bool = False) -> Path:
+def export_public_habituation_report(
+    root: Path, destination: Path, *, enable_defect_linkage: bool = False
+) -> Path:
     """Write the aggregate-safe public report to disk for publication."""
     target = Path(destination)
-    _atomic_json(target, public_habituation_report(root, enable_defect_linkage=enable_defect_linkage))
+    _atomic_json(
+        target,
+        public_habituation_report(root, enable_defect_linkage=enable_defect_linkage),
+    )
     return target

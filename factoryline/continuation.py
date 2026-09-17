@@ -1,4 +1,5 @@
 """State-aware continuation of the Code Factory assembly line."""
+
 from __future__ import annotations
 
 import json
@@ -25,8 +26,16 @@ class ContinuationError(ValueError):
 def discover_features(root: Path) -> list[str]:
     """Return exact feature identifiers found in specs or Forge state directories."""
     root = Path(root).resolve()
-    names = {path.stem for path in (root / "specs").glob("*.md") if FEATURE_PATTERN.fullmatch(path.stem)}
-    names.update(path.name for path in (root / ".forge").glob("*") if path.is_dir() and FEATURE_PATTERN.fullmatch(path.name))
+    names = {
+        path.stem
+        for path in (root / "specs").glob("*.md")
+        if FEATURE_PATTERN.fullmatch(path.stem)
+    }
+    names.update(
+        path.name
+        for path in (root / ".forge").glob("*")
+        if path.is_dir() and FEATURE_PATTERN.fullmatch(path.name)
+    )
     return sorted(names)
 
 
@@ -34,7 +43,10 @@ def resolve_feature(root: Path, feature: str | None) -> tuple[str, bool]:
     """Validate an explicit feature or infer one only from a single exact candidate."""
     if feature:
         if not FEATURE_PATTERN.fullmatch(feature):
-            raise ContinuationError("FEATURE_INVALID", "feature must use letters, digits, hyphens, or underscores")
+            raise ContinuationError(
+                "FEATURE_INVALID",
+                "feature must use letters, digits, hyphens, or underscores",
+            )
         return feature, False
     candidates = discover_features(root)
     if len(candidates) != 1:
@@ -62,9 +74,21 @@ def resolve_ssat(root: Path, feature: str) -> Path | None:
 def _next_action(paused_at: str, feature: str) -> dict[str, Any]:
     actions = {
         "author_spec": ("human", "Complete the feature spec and plan", None),
-        "architecture_contract": ("human", "Complete the SSAT architecture contract", None),
-        "architecture_approval": ("command", "Approve the architecture gate", f"forge gate architected {feature}"),
-        "implementation_fill": ("human", "Implement the scaffold and record the fill gate", None),
+        "architecture_contract": (
+            "human",
+            "Complete the SSAT architecture contract",
+            None,
+        ),
+        "architecture_approval": (
+            "command",
+            "Approve the architecture gate",
+            f"forge gate architected {feature}",
+        ),
+        "implementation_fill": (
+            "human",
+            "Implement the scaffold and record the fill gate",
+            None,
+        ),
         "scrutiny_floor": (
             "command",
             "Scrutiny drift breached the floor; obtain a second independent approver",
@@ -76,7 +100,9 @@ def _next_action(paused_at: str, feature: str) -> dict[str, Any]:
             f"factory cdte resolve {feature} <conflict-id> --decision ... --approved-by ...",
         ),
     }
-    kind, label, command = actions.get(paused_at, ("human", "Review the assembly boundary", None))
+    kind, label, command = actions.get(
+        paused_at, ("human", "Review the assembly boundary", None)
+    )
     return {"kind": kind, "label": label, "command": command, "requires_human": True}
 
 
@@ -115,7 +141,11 @@ def continue_assembly(
             "ASSEMBLY_CONTINUE_COMMAND",
             *([] if not inferred else ["FEATURE_AUTO_SELECTED"]),
             "SAFE_STAGE_EXECUTED",
-            "HUMAN_BOUNDARY_EXPLICIT" if terminal == "waiting_for_human" else "ASSEMBLY_HALTED_EXACT" if terminal == "halted" else "ASSEMBLY_COMPLETED",
+            "HUMAN_BOUNDARY_EXPLICIT"
+            if terminal == "waiting_for_human"
+            else "ASSEMBLY_HALTED_EXACT"
+            if terminal == "halted"
+            else "ASSEMBLY_COMPLETED",
         ],
         "status": terminal,
         "next_action": next_action,
@@ -123,17 +153,23 @@ def continue_assembly(
     }
     encoded = json.dumps(result, sort_keys=True).encode("utf-8")
     if not dry_run:
-        receipt = write_run_receipt(resolved_root, {
-            "run_id": report["run_id"],
-            "feature": selected,
-            "terminal": terminal,
-            "elapsed_ms": elapsed_ms,
-            "command_count": sum(stage.get("status") in {"ok", "failed"} for stage in report["stages"]),
-            "stage_count": len(report["stages"]),
-            "retry_count": retry_count(resolved_root, selected),
-            "result_bytes": len(encoded),
-            "usage": usage,
-        })
+        receipt = write_run_receipt(
+            resolved_root,
+            {
+                "run_id": report["run_id"],
+                "feature": selected,
+                "terminal": terminal,
+                "elapsed_ms": elapsed_ms,
+                "command_count": sum(
+                    stage.get("status") in {"ok", "failed"}
+                    for stage in report["stages"]
+                ),
+                "stage_count": len(report["stages"]),
+                "retry_count": retry_count(resolved_root, selected),
+                "result_bytes": len(encoded),
+                "usage": usage,
+            },
+        )
         result["receipt"] = str(receipt)
         result["markers"].append("ASSEMBLY_RUN_RECEIPTED")
     return result

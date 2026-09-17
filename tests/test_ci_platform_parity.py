@@ -20,16 +20,22 @@ def test_ci_runs_native_python_matrix_on_all_supported_host_families() -> None:
     assert "--junitxml=native-process-parity.junit.xml" in workflow
 
 
-@pytest.mark.skipif(os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI")
+@pytest.mark.skipif(
+    os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI"
+)
 def test_native_timeout_returns_closed_receipt(tmp_path) -> None:
-    result = run_cli_detailed(sys.executable, ["-c", "import time; time.sleep(30)"], tmp_path, timeout=1)
+    result = run_cli_detailed(
+        sys.executable, ["-c", "import time; time.sleep(30)"], tmp_path, timeout=1
+    )
     assert result["ok"] is False
     assert result["reason"] == "stage timed out"
     assert result["cleanup_confirmed"] is True
     assert result["streams_closed"] is True
 
 
-@pytest.mark.skipif(os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI")
+@pytest.mark.skipif(
+    os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI"
+)
 def test_native_output_limit_returns_closed_receipt(tmp_path) -> None:
     code = f"import sys; sys.stdout.buffer.write(b'x' * {MAX_STREAM_BYTES + 1})"
     result = run_cli_detailed(sys.executable, ["-c", code], tmp_path, timeout=10)
@@ -39,17 +45,26 @@ def test_native_output_limit_returns_closed_receipt(tmp_path) -> None:
     assert result["streams_closed"] is True
 
 
-@pytest.mark.skipif(os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI")
+@pytest.mark.skipif(
+    os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI"
+)
 def test_native_cancellation_returns_closed_receipt(tmp_path) -> None:
-    result = run_cli_detailed(sys.executable, ["-c", "import time; time.sleep(30)"], tmp_path,
-                              timeout=10, heartbeat=lambda: False)
+    result = run_cli_detailed(
+        sys.executable,
+        ["-c", "import time; time.sleep(30)"],
+        tmp_path,
+        timeout=10,
+        heartbeat=lambda: False,
+    )
     assert result["ok"] is False
     assert result["reason"] == "stop requested through the local Studio"
     assert result["cleanup_confirmed"] is True
     assert result["streams_closed"] is True
 
 
-@pytest.mark.skipif(os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI")
+@pytest.mark.skipif(
+    os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI"
+)
 def test_native_surviving_child_is_unconfirmed(tmp_path) -> None:
     """A child that starts a new session is known but outside our cleanup unit."""
     pid_file = tmp_path / "escaped-child.pid"
@@ -62,7 +77,9 @@ def test_native_surviving_child_is_unconfirmed(tmp_path) -> None:
         "subprocess.Popen([sys.executable, '-c', sys.argv[2], sys.argv[1]], "
         "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(30)"
     )
-    result = run_cli_detailed(sys.executable, ["-c", parent, str(pid_file), child], tmp_path, timeout=1)
+    result = run_cli_detailed(
+        sys.executable, ["-c", parent, str(pid_file), child], tmp_path, timeout=1
+    )
     assert result["ok"] is False
     assert result["reason"] == "stage timed out"
     assert result["cleanup_confirmed"] is False
