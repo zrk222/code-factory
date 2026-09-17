@@ -88,3 +88,30 @@ def test_architecture_health_cli_emits_machine_readable_receipt(capsys, tmp_path
     output = json.loads(capsys.readouterr().out)
     assert output["schema"] == "factory.architecture-health.v1"
     assert output["decision"] == "HEALTHY"
+
+
+def test_expiring_exact_acceptance_can_clear_intentional_measured_growth(tmp_path: Path) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "cli.py").write_text("\n".join(["pass"] * 6), encoding="utf-8")
+    (tmp_path / "factoryline" / "one.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# readme\n", encoding="utf-8")
+    (tmp_path / "architecture-boundaries.json").write_text(json.dumps({
+        "schema": "factory.module-boundaries.v1", "defaultDomain": "core", "domains": {}
+    }), encoding="utf-8")
+    policy = _policy(tmp_path / "policy.json", cli=5, core=0)
+    value = json.loads(policy.read_text(encoding="utf-8"))
+    value["review_thresholds"]["cli_lines"] = 5
+    value["accepted_debt"] = {
+        "decision_id": "ARCH-TEST-1",
+        "owner": "reviewer",
+        "expires_at": "2099-01-01T00:00:00+00:00",
+        "reason": "Temporary acceptance while the bounded extraction slice lands.",
+        "codes": ["E_ARCH_CLI_LINES_GROWTH", "E_ARCH_CORE_MODULES_GROWTH", "ARCH_CLI_MONOLITH"],
+        "metrics": {"cli_lines": 6, "core_modules": 2},
+    }
+    policy.write_text(json.dumps(value), encoding="utf-8")
+    result = evaluate_architecture_health(tmp_path, policy)
+    assert result["decision"] == "HEALTHY"
+    assert not result["regressions"]
+    assert {item["code"] for item in result["accepted_regressions"]} == {"E_ARCH_CLI_LINES_GROWTH", "E_ARCH_CORE_MODULES_GROWTH"}
+    assert {item["code"] for item in result["accepted_baseline_debt"]} == {"ARCH_CLI_MONOLITH"}

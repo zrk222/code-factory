@@ -24,6 +24,29 @@
     "cli_lines": 5000,
     "core_modules": 150
   },
+  "accepted_debt": {
+    "decision_id": "ARCH-BASELINE-2026-09-17",
+    "owner": "human-release-authority",
+    "expires_at": "2026-12-31T23:59:59+00:00",
+    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, and governed-agent slices while the bounded decomposition plan remains active; re-review is required at expiry.",
+    "codes": [
+      "E_ARCH_CLI_LINES_GROWTH",
+      "E_ARCH_CLI_COMMAND_DECLARATIONS_GROWTH",
+      "E_ARCH_CORE_MODULES_GROWTH",
+      "ARCH_CLI_MONOLITH",
+      "ARCH_CLI_COMMAND_SURFACE",
+      "ARCH_CORE_SURFACE",
+      "ARCH_DOC_CODE_RATIO",
+      "ARCH_RELEASE_CHURN"
+    ],
+    "metrics": {
+      "cli_lines": 6586,
+      "cli_command_declarations": 490,
+      "core_modules": 199,
+      "markdown_python_ratio": 1.6093,
+      "release_recent_count": 23
+    }
+  },
   "release": {
     "max_releases_30d": 4,
     "minimum_days_between_releases": 7,

@@ -160,6 +160,60 @@ def _finding(code: str, severity: str, message: str, action: str, *, blocking: b
     }
 
 
+_ACCEPTED_METRIC_FOR_CODE = {
+    "E_ARCH_MARKDOWN_FILES_GROWTH": "markdown_files",
+    "E_ARCH_PYTHON_FILES_GROWTH": "python_files",
+    "E_ARCH_CLI_LINES_GROWTH": "cli_lines",
+    "E_ARCH_CLI_COMMAND_DECLARATIONS_GROWTH": "cli_command_declarations",
+    "E_ARCH_CORE_MODULES_GROWTH": "core_modules",
+    "E_ARCH_DOC_CODE_RATIO_GROWTH": "markdown_python_ratio",
+    "ARCH_CLI_MONOLITH": "cli_lines",
+    "ARCH_CLI_COMMAND_SURFACE": "cli_command_declarations",
+    "ARCH_CORE_SURFACE": "core_modules",
+    "ARCH_DOC_CODE_RATIO": "markdown_python_ratio",
+    "ARCH_RELEASE_CHURN": "release_recent_count",
+}
+
+
+def _accepted_debt(policy: dict[str, Any], metrics: dict[str, Any], cadence: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """Validate an explicit, expiring acceptance of measured architecture debt."""
+    value = policy.get("accepted_debt")
+    if value is None:
+        return None, None
+    if not isinstance(value, dict):
+        return None, "accepted_debt must be an object"
+    required = {"decision_id", "owner", "expires_at", "reason", "codes", "metrics"}
+    if set(value) != required:
+        return None, "accepted_debt must contain decision_id, owner, expires_at, reason, codes, and metrics"
+    if not all(isinstance(value.get(key), str) and value[key].strip() for key in ("decision_id", "owner", "reason")):
+        return None, "accepted_debt decision_id, owner, and reason must be non-empty strings"
+    try:
+        expires = datetime.fromisoformat(str(value["expires_at"]).replace("Z", "+00:00"))
+        if expires.tzinfo is None or expires <= datetime.now(timezone.utc):
+            return None, "accepted_debt expires_at must be a future timezone-aware timestamp"
+    except ValueError:
+        return None, "accepted_debt expires_at must be an ISO-8601 timestamp"
+    codes = value.get("codes")
+    if not isinstance(codes, list) or not codes or len(codes) != len(set(codes)) or not all(isinstance(code, str) and code in _ACCEPTED_METRIC_FOR_CODE for code in codes):
+        return None, "accepted_debt codes must be a unique non-empty list of known debt codes"
+    accepted_metrics = value.get("metrics")
+    if not isinstance(accepted_metrics, dict):
+        return None, "accepted_debt metrics must be an object"
+    observed = {**metrics, "release_recent_count": cadence.get("recent_count")}
+    for code in codes:
+        metric = _ACCEPTED_METRIC_FOR_CODE[code]
+        if metric not in accepted_metrics or accepted_metrics[metric] != observed.get(metric):
+            return None, f"accepted_debt metric {metric} must exactly match the measured value"
+    return {
+        "decision_id": value["decision_id"],
+        "owner": value["owner"],
+        "expires_at": value["expires_at"],
+        "reason": value["reason"],
+        "codes": list(codes),
+        "metrics": dict(accepted_metrics),
+    }, None
+
+
 def evaluate_architecture_health(
     root: Path, policy_path: Path | None = None, *, strict: bool = False
 ) -> dict[str, Any]:
@@ -260,6 +314,19 @@ def evaluate_architecture_health(
                 "Use a release train and changelog entry; reserve patch releases for externally observable fixes.",
             ))
 
+    accepted, acceptance_error = _accepted_debt(policy, metrics, cadence)
+    if acceptance_error:
+        regressions.append(_finding(
+            "E_ARCH_ACCEPTANCE_INVALID", "BLOCKER", acceptance_error,
+            "Remove the acceptance or renew it with a named owner, future expiry, and exact measured values.",
+            blocking=True,
+        ))
+    accepted_codes = set(accepted["codes"]) if accepted else set()
+    accepted_baseline_debt = [item for item in debt if item["code"] in accepted_codes]
+    debt = [item for item in debt if item["code"] not in accepted_codes]
+    accepted_regressions = [item for item in regressions if item["code"] in accepted_codes]
+    regressions = [item for item in regressions if item["code"] not in accepted_codes]
+
     decision = "BLOCKED" if regressions or (strict and debt) else ("REVIEW_REQUIRED" if debt else "HEALTHY")
     return {
         **snapshot,
@@ -270,6 +337,9 @@ def evaluate_architecture_health(
             "sha256": "sha256:" + hashlib.sha256(policy_bytes).hexdigest(),
         },
         "baseline_debt": debt,
+        "accepted_baseline_debt": accepted_baseline_debt,
+        "accepted_regressions": accepted_regressions,
+        "accepted_debt": accepted,
         "regressions": regressions,
         "decision": decision,
         "next_action": (
