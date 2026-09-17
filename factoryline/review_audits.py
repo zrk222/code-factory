@@ -15,6 +15,7 @@ from typing import Any
 
 SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
+SECURITY_SCHEMA = "factory.security-audit.v1"
 MAX_BYTES = 1_000_000
 MAX_RULES = 128
 MAX_PATHS = 64
@@ -426,3 +427,117 @@ def audit_fingerprint(
         raise
     except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
         raise ReviewAuditError(str(exc)) from exc
+
+
+_SECRET_ASSIGNMENT = re.compile(r"(?i)(?:api[_-]?key|access[_-]?token|password|private[_-]?key|secret)")
+_PLACEHOLDER_SECRET = re.compile(r"(?i)^(?:$|changeme|replace[-_ ]?me|example|placeholder|your[-_ ]|<[^>]+>|\$\{[^}]+\})$")
+
+
+def _call_name(node: ast.Call) -> str:
+    return _name(node.func)
+
+
+def _security_finding(code: str, path: str, node: ast.AST, message: str, severity: str, **facts: Any) -> dict[str, Any]:
+    return {"code": code, "severity": severity, "path": path, "line": int(getattr(node, "lineno", 0)), "column": int(getattr(node, "col_offset", 0)), "message": message, "facts": facts}
+
+
+def _security_source_files(root: Path) -> list[Path]:
+    ignored = {".git", ".factory", ".venv", "venv", "build", "dist", "tmp", "vendor", "site-packages", "__pycache__", "node_modules"}
+    files = [path for path in root.rglob("*.py") if path.is_file() and not ignored.intersection(path.parts)]
+    return sorted(files, key=lambda path: path.relative_to(root).as_posix())[:512]
+
+
+def _security_scan_tree(root: Path, path: Path, tree: ast.AST) -> list[dict[str, Any]]:
+    relative = path.relative_to(root).as_posix()
+    findings: list[dict[str, Any]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            call = _call_name(node)
+            if call in {"eval", "exec", "builtins.eval", "builtins.exec"}:
+                findings.append(_security_finding("SECURITY_DYNAMIC_EXECUTION", relative, node, "Dynamic code execution is reachable from source.", "HIGH", call=call))
+            elif call == "os.system":
+                findings.append(_security_finding("SECURITY_OS_COMMAND", relative, node, "os.system invokes a shell and should be replaced with an argv-based process boundary.", "HIGH"))
+            elif call in {"subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_call", "subprocess.check_output"}:
+                shell = next((keyword.value for keyword in node.keywords if keyword.arg == "shell"), None)
+                if isinstance(shell, ast.Constant) and shell.value is True:
+                    findings.append(_security_finding("SECURITY_SHELL_COMMAND", relative, node, "subprocess shell execution is enabled; shell metacharacters can cross the command boundary.", "HIGH", call=call))
+            elif call in {"pickle.load", "pickle.loads", "dill.load", "dill.loads"}:
+                findings.append(_security_finding("SECURITY_UNSAFE_DESERIALIZATION", relative, node, "Pickle-like deserialization can execute attacker-controlled code.", "HIGH", call=call))
+            elif call in {"yaml.load", "yaml.unsafe_load", "yaml.full_load"}:
+                loader = next((keyword.value for keyword in node.keywords if keyword.arg == "Loader"), None)
+                if loader is None:
+                    findings.append(_security_finding("SECURITY_UNSAFE_YAML", relative, node, "YAML is loaded without an explicit reviewed Loader.", "HIGH", call=call))
+            elif call in {"requests.get", "requests.post", "httpx.get", "httpx.post"}:
+                verify = next((keyword.value for keyword in node.keywords if keyword.arg == "verify"), None)
+                if isinstance(verify, ast.Constant) and verify.value is False:
+                    findings.append(_security_finding("SECURITY_TLS_VERIFY_DISABLED", relative, node, "TLS certificate verification is disabled for an outbound request.", "HIGH", call=call))
+        elif isinstance(node, ast.ExceptHandler) and node.type is None:
+            findings.append(_security_finding("QUALITY_BARE_EXCEPT", relative, node, "Bare except hides every failure type and weakens deterministic recovery.", "MEDIUM"))
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            value = node.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str) and len(value.value) >= 8 and not _PLACEHOLDER_SECRET.match(value.value.strip()):
+                for target in targets:
+                    if isinstance(target, ast.Name) and _SECRET_ASSIGNMENT.search(target.id):
+                        # Test fixtures may intentionally carry a non-secret sentinel to prove
+                        # redaction. They are reported only when the literal is not recognizable
+                        # as a fixture value, keeping the production gate strict without noise.
+                        if not (relative.startswith("tests/") and re.search(r"(?i)(?:do[-_ ]not|fake|dummy|fixture|not[-_ ]real|test)", value.value)):
+                            findings.append(_security_finding("SECURITY_HARDCODED_SECRET", relative, node, "Credential-like material is assigned as a source literal.", "CRITICAL", name=target.id))
+    return findings
+
+
+def security_scan(root: Path) -> dict[str, Any]:
+    """Run a bounded AST security and code-quality scan without importing or executing source."""
+    workspace = Path(root).resolve()
+    files = _security_source_files(workspace)
+    findings: list[dict[str, Any]] = []
+    bindings: list[dict[str, Any]] = []
+    parse_errors = 0
+    for path in files:
+        try:
+            data = path.read_bytes()
+            if len(data) > MAX_BYTES:
+                findings.append(_security_finding("SECURITY_SOURCE_TOO_LARGE", path.relative_to(workspace).as_posix(), ast.Module(body=[], type_ignores=[]), f"Source exceeds the {MAX_BYTES}-byte scan limit.", "HIGH", bytes=len(data)))
+                continue
+            bindings.append({"path": path.relative_to(workspace).as_posix(), "sha256": sha256(data).hexdigest(), "bytes": len(data)})
+            tree = ast.parse(data, filename=str(path))
+        except SyntaxError as exc:
+            parse_errors += 1
+            findings.append(_security_finding("QUALITY_SYNTAX_ERROR", path.relative_to(workspace).as_posix(), exc, "Python source cannot be parsed deterministically.", "HIGH", detail=str(exc)))
+            continue
+        except (OSError, UnicodeError) as exc:
+            parse_errors += 1
+            findings.append(_security_finding("SECURITY_SOURCE_UNREADABLE", path.relative_to(workspace).as_posix(), ast.Module(body=[], type_ignores=[]), "Source could not be read for security analysis.", "HIGH", detail=type(exc).__name__))
+            continue
+        findings.extend(_security_scan_tree(workspace, path, tree))
+    # A concurrent edit must never be mistaken for a clean, hash-bound scan.
+    for binding in bindings:
+        current = workspace / binding["path"]
+        try:
+            data = current.read_bytes()
+        except (OSError, UnicodeError) as exc:
+            raise ReviewAuditError(f"Evidence changed during security scan: {binding['path']}") from exc
+        if len(data) != binding["bytes"] or sha256(data).hexdigest() != binding["sha256"]:
+            raise ReviewAuditError(f"Evidence changed during security scan: {binding['path']}")
+    findings.sort(key=lambda item: (item["path"], item["line"], item["code"], item["column"]))
+    counts: dict[str, int] = {}
+    for finding in findings:
+        counts[finding["code"]] = counts.get(finding["code"], 0) + 1
+    state = "BLOCKED" if any(item["severity"] in {"CRITICAL", "HIGH"} for item in findings) else "FINDINGS" if findings else "CLEAN"
+    core: dict[str, Any] = {
+        "schema": SECURITY_SCHEMA,
+        "marker": "SECURITY_AUDIT_COMPLETE",
+        "state": state,
+        "files_scanned": len(bindings),
+        "parse_errors": parse_errors,
+        "sources": bindings,
+        "findings": findings,
+        "finding_counts": dict(sorted(counts.items())),
+        "governance": "human_controlled",
+        "authority": {"execution": False, "approval": False, "publication": False, "deployment": False},
+        "claim_boundary": "Bounded Python AST pattern scan only; not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
+    }
+    core["audit_sha256"] = sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    core["action_summary"] = "No high-risk static security or quality patterns found." if state == "CLEAN" else "Resolve each listed finding and rerun this deterministic scan before release review."
+    return core

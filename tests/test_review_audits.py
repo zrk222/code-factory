@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from factoryline.review_audits import ReviewAuditError, audit_code, audit_fingerprint
+from factoryline.review_audits import ReviewAuditError, audit_code, audit_fingerprint, security_scan
 from factoryline.change_review import ChangeReviewError, review_change
 from factoryline.cli import main
 
@@ -215,6 +215,51 @@ def test_audit_fingerprint_cli_emits_actionable_json(tmp_path, capsys):
     result = json.loads(capsys.readouterr().out)
     assert result["marker"] == "AUDIT_FINGERPRINT_READY"
     assert result["authority"]["approval"] is False
+
+
+def test_security_scan_blocks_dynamic_execution_and_shell(tmp_path):
+    (tmp_path / "unsafe.py").write_text(
+        "import os\nimport subprocess\ndef run(value):\n    eval(value)\n    os.system(value)\n    subprocess.run(value, shell=True)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["state"] == "BLOCKED"
+    assert {item["code"] for item in result["findings"]} == {"SECURITY_DYNAMIC_EXECUTION", "SECURITY_OS_COMMAND", "SECURITY_SHELL_COMMAND"}
+    assert all(item["path"] == "unsafe.py" for item in result["findings"])
+    assert result["authority"] == {"execution": False, "approval": False, "publication": False, "deployment": False}
+
+
+def test_security_scan_accepts_reviewed_loaders_and_argv_bound_processes(tmp_path):
+    (tmp_path / "safe.py").write_text(
+        "import subprocess\nimport yaml\ndef run(value):\n    yaml.load(value, Loader=yaml.SafeLoader)\n    subprocess.run([\"tool\", value], shell=False, check=True)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["state"] == "CLEAN"
+    assert result["parse_errors"] == 0
+
+
+def test_security_scan_reports_parse_errors_fail_closed(tmp_path):
+    (tmp_path / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+    result = security_scan(tmp_path)
+    assert result["state"] == "BLOCKED"
+    assert result["finding_counts"] == {"QUALITY_SYNTAX_ERROR": 1}
+
+
+def test_security_scan_rejects_concurrent_source_mutation(tmp_path, monkeypatch):
+    source = tmp_path / "app.py"
+    source.write_text("def ok():\n    return 1\n", encoding="utf-8")
+    import factoryline.review_audits as module
+    original = module._security_scan_tree
+
+    def mutate(*args):
+        result = original(*args)
+        source.write_text("def ok():\n    return 2\n", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(module, "_security_scan_tree", mutate)
+    with pytest.raises(ReviewAuditError, match="Evidence changed during security scan"):
+        security_scan(tmp_path)
 
 
 def test_no_policy_is_not_a_pass_and_invalid_policy_fails_closed(tmp_path, capsys):
