@@ -109,7 +109,7 @@ from .proofsearch import ProofSearchError, create_proofsearch_plan, evaluate_pro
 from .evidence_frontier import EvidenceFrontierError, plan_evidence_frontier, verify_evidence_frontier
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
-from .review_audits import ReviewAuditError, audit_code, audit_fingerprint, security_scan
+from .review_audits import ReviewAuditError, audit_code, audit_fingerprint, security_scan, security_evals
 from .continuous_proof import (
     ContinuousProofError,
     assess_continuous_proof,
@@ -762,7 +762,7 @@ def _dispatch(argv=None) -> int:
     quality_spec_verify.add_argument("--json", action="store_true")
 
     code_audit = sub.add_parser("audit", help="inspect peer-pattern irregularities and guard-bypass paths without executing code")
-    code_audit.add_argument("tool", choices=["patterns", "guard-paths", "all", "fingerprint", "security"])
+    code_audit.add_argument("tool", choices=["patterns", "guard-paths", "all", "fingerprint", "security", "evals"])
     code_audit.add_argument("--policy", default=".factory/review-audits.json")
     code_audit.add_argument("--root", default=".")
     code_audit.add_argument("--baseline", help="previous fingerprint receipt for deterministic drift comparison")
@@ -3962,6 +3962,14 @@ def _dispatch(argv=None) -> int:
         return 0
     if a.cmd == "audit":
         try:
+            if a.tool == "evals":
+                result = security_evals()
+                if a.json:
+                    print(json.dumps(result, indent=2, sort_keys=True))
+                else:
+                    print(f"Security evals: {result['state']} ({result['mutation_coverage']['caught']}/{result['mutation_coverage']['attempted']} adversarial rules caught)")
+                    print(result["action_summary"])
+                return 0 if result["state"] == "PASS" else 2
             if a.tool == "security":
                 result = security_scan(Path(a.root))
                 if a.json:

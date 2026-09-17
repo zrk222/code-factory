@@ -541,3 +541,43 @@ def security_scan(root: Path) -> dict[str, Any]:
     core["audit_sha256"] = sha256(json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     core["action_summary"] = "No high-risk static security or quality patterns found." if state == "CLEAN" else "Resolve each listed finding and rerun this deterministic scan before release review."
     return core
+
+
+def security_evals() -> dict[str, Any]:
+    """Evaluate security rules against fixed adversarial and safe-control fixtures."""
+    fixtures = (
+        ("dynamic-execution", "eval(value)", {"SECURITY_DYNAMIC_EXECUTION"}),
+        ("shell-command", "import subprocess\nsubprocess.run(value, shell=True)", {"SECURITY_SHELL_COMMAND"}),
+        ("os-command", "import os\nos.system(value)", {"SECURITY_OS_COMMAND"}),
+        ("unsafe-deserialization", "import pickle\npickle.loads(value)", {"SECURITY_UNSAFE_DESERIALIZATION"}),
+        ("unsafe-yaml", "import yaml\nyaml.load(value)", {"SECURITY_UNSAFE_YAML"}),
+        ("tls-disabled", "import requests\nrequests.get(url, verify=False)", {"SECURITY_TLS_VERIFY_DISABLED"}),
+        ("literal-secret", "api_key = 'live-secret-material'", {"SECURITY_HARDCODED_SECRET"}),
+        ("bare-except", "try:\n    work()\nexcept:\n    pass", {"QUALITY_BARE_EXCEPT"}),
+        ("safe-controls", "import subprocess\nimport yaml\nyaml.load(value, Loader=yaml.SafeLoader)\nsubprocess.run(['tool', value], shell=False, check=True)", set()),
+    )
+    rows: list[dict[str, Any]] = []
+    for name, source, expected in fixtures:
+        tree = ast.parse(source, filename=f"{name}.py")
+        findings = _security_scan_tree(Path("."), Path(f"{name}.py"), tree)
+        actual = {item["code"] for item in findings}
+        passed = actual == expected
+        rows.append({"id": name, "expected": sorted(expected), "observed": sorted(actual), "passed": passed})
+    attempted = sum(bool(expected) for _, _, expected in fixtures)
+    caught = sum(row["passed"] for row, (_, _, expected) in zip(rows, fixtures) if expected)
+    controls = sum(not expected for _, _, expected in fixtures)
+    controls_passed = sum(row["passed"] for row, (_, _, expected) in zip(rows, fixtures) if not expected)
+    state = "PASS" if all(row["passed"] for row in rows) else "BLOCKED"
+    result: dict[str, Any] = {
+        "schema": "factory.security-evals.v1",
+        "marker": "SECURITY_EVALS_COMPLETE",
+        "state": state,
+        "fixtures": rows,
+        "mutation_coverage": {"attempted": attempted, "caught": caught, "rate": round(caught / attempted, 4) if attempted else 1.0},
+        "safe_controls": {"attempted": controls, "passed": controls_passed},
+        "authority": {"execution": False, "approval": False, "publication": False, "deployment": False},
+        "claim_boundary": "Fixed local AST evaluation of scanner rules only; not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
+    }
+    result["audit_sha256"] = sha256(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    result["action_summary"] = "All adversarial fixtures were caught and safe controls remained clean." if state == "PASS" else "A scanner rule failed an adversarial fixture or contaminated a safe control; block promotion and repair the evaluator."
+    return result

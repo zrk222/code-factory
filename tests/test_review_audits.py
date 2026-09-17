@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from factoryline.review_audits import ReviewAuditError, audit_code, audit_fingerprint, security_scan
+from factoryline.review_audits import ReviewAuditError, audit_code, audit_fingerprint, security_evals, security_scan
 from factoryline.change_review import ChangeReviewError, review_change
 from factoryline.cli import main
 
@@ -260,6 +260,22 @@ def test_security_scan_rejects_concurrent_source_mutation(tmp_path, monkeypatch)
     monkeypatch.setattr(module, "_security_scan_tree", mutate)
     with pytest.raises(ReviewAuditError, match="Evidence changed during security scan"):
         security_scan(tmp_path)
+
+
+def test_security_evals_kill_all_adversarial_fixtures_and_keep_safe_control_clean():
+    result = security_evals()
+    assert result["marker"] == "SECURITY_EVALS_COMPLETE"
+    assert result["state"] == "PASS"
+    assert result["mutation_coverage"] == {"attempted": 8, "caught": 8, "rate": 1.0}
+    assert result["safe_controls"] == {"attempted": 1, "passed": 1}
+    assert result["authority"]["approval"] is False
+
+
+def test_security_evals_cli_reports_fail_closed_contract(tmp_path, capsys):
+    assert main(["audit", "evals", "--root", str(tmp_path), "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["state"] == "PASS"
+    assert result["claim_boundary"].startswith("Fixed local AST evaluation")
 
 
 def test_no_policy_is_not_a_pass_and_invalid_policy_fails_closed(tmp_path, capsys):

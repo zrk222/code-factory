@@ -25,10 +25,10 @@
     "core_modules": 150
   },
   "accepted_debt": {
-    "decision_id": "ARCH-BASELINE-2026-09-17-SECURITY-AUDIT",
+    "decision_id": "ARCH-BASELINE-2026-09-17-SECURITY-EVALS",
     "owner": "human-release-authority",
     "expires_at": "2026-12-31T23:59:59+00:00",
-    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, and deterministic security-quality scan slices while the bounded decomposition plan remains active; re-review is required at expiry.",
+    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, and adversarial security-evaluation slices while the bounded decomposition plan remains active; re-review is required at expiry.",
     "codes": [
       "E_ARCH_CLI_LINES_GROWTH",
       "E_ARCH_CLI_COMMAND_DECLARATIONS_GROWTH",
@@ -40,7 +40,7 @@
       "ARCH_RELEASE_CHURN"
     ],
     "metrics": {
-      "cli_lines": 6610,
+      "cli_lines": 6618,
       "cli_command_declarations": 490,
       "core_modules": 200,
       "markdown_python_ratio": 1.6015,
