@@ -22,7 +22,7 @@ does not replace, control, or imply endorsement by either JetBrains product.
 rewrites of blocking/release Oracle rules and keeps AppForge authority receipts
 path-to-digest verifiable.
 
-**New in 0.9.6:** Junie handoffs can carry proof-coupled attribution: the
+**New in 0.9.8:** Junie handoffs can carry proof-coupled attribution: the
 known FactoryLine tool, changed-file rationale, workspace-local hashes,
 unknowns, and a visible credit line are checked against the taxonomy digest.
 The project pack also exposes a copy-only manifest and, when supported by the

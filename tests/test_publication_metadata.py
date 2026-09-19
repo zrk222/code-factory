@@ -492,7 +492,7 @@ def test_hosted_release_and_editor_versions_are_declared():
     assert project["version"] == "0.46.6"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.9.8"
-    assert 'version = "0.9.6"' in gradle
+    assert 'version = "0.9.8"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 
