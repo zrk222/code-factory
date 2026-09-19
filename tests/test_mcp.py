@@ -119,7 +119,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-            "serverInfo": {"name": "code-factory", "version": "0.46.6"},
+            "serverInfo": {"name": "code-factory", "version": "0.46.7"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }

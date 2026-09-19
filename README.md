@@ -261,7 +261,7 @@ checks under one signed plan. Every failed lane returns the consequence,
 evidence digest, exact replay, and next repair. A six-lane pass means ready for
 human review—not approved for release.
 
-### Senior engineering controls in 0.46.6
+### Senior engineering controls in 0.46.7
 
 When a team needs stronger evidence than a self-reported green build, use the
 [senior-engineering integration](docs/SENIOR_ENGINEERING_INTEGRATION.md):
@@ -673,7 +673,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [0.46.6 core release notes](docs/RELEASE_NOTES_0.46.6.md), the
+- See the [0.46.7 core release notes](docs/RELEASE_NOTES_0.46.7.md), the
   [grilling ladder](docs/GRILLING_LADDER.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.

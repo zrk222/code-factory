@@ -106,7 +106,7 @@ def test_zenodo_and_release_metadata_only_package_current_public_visuals() -> No
         encoding="utf-8"
     )
 
-    assert metadata["version"] == "0.46.6"
+    assert metadata["version"] == "0.46.7"
     assert metadata["publication_date"] == "2026-09-09"
     assert "Graph Ops mission-control storyboard" in metadata["description"]
     assert (
