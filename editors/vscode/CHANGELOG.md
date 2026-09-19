@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.9 - 2026-09-19
+
+- Align the VS Code adapter with the current Marketplace upload target while
+  preserving the local, human-owned proof boundary.
+
 ## 0.9.7 - 2026-09-13
 
 - Align the VS Code and Open VSX adapter version with the next protected
