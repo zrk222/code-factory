@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.46.7 - 2026-09-19
+
+- Fix the security scanner's workspace-relative ignore handling on Linux. A
+  checkout rooted under `/tmp` is now scanned instead of being mistaken for a
+  generated temporary tree, preserving fail-closed detection of dynamic code,
+  parse errors, and concurrent source mutation.
+- Publish the measured 0.46.6 control-plane release with the corrected
+  cross-platform audit behavior and the VS Code adapter 0.9.9 metadata.
+
 ## 0.46.6 - 2026-09-19
 
 - Add a deterministic agentic-control drift detector that compares a sealed

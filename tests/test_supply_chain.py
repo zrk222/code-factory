@@ -54,7 +54,7 @@ def _manifest(root: Path) -> tuple[dict, datetime]:
     (root / "src" / "app.py").write_text("print('candidate')\n", encoding="utf-8")
     (root / "requirements.lock").write_text("factoryline==0.46.4\n", encoding="utf-8")
     _write_zip(root, "dist/factoryline-0.46.4.whl")
-    sbom = build_cyclonedx_sbom([{"name": "factoryline", "version": "0.46.6"}])
+    sbom = build_cyclonedx_sbom([{"name": "factoryline", "version": "0.46.7"}])
     (root / "sbom.json").write_text(json.dumps(sbom, sort_keys=True), encoding="utf-8")
     vex = build_vex(
         [

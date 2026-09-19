@@ -489,7 +489,7 @@ def test_hosted_release_and_editor_versions_are_declared():
         encoding="utf-8"
     )
 
-    assert project["version"] == "0.46.6"
+    assert project["version"] == "0.46.7"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "0.9.9"
     assert 'version = "0.9.8"' in gradle
@@ -783,7 +783,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
         metadata["related_identifiers"][0]["identifier"]
         == "https://github.com/zrk222/code-factory"
     )
-    assert metadata["version"] == "0.46.6"
+    assert metadata["version"] == "0.46.7"
     assert metadata["publication_date"] == "2026-09-09"
     assert "read-only Agent Proof Bridge" in metadata["description"]
     assert "Proof Worklog" in metadata["description"]
