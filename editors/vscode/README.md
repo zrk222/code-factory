@@ -37,7 +37,7 @@ hollow negative control caught in a disposable sandbox, then open
 extension never calls a starter production-ready by itself.
 
 **Current in 0.9.8:** the adapter metadata and installable artifact are aligned
-with the Code Factory 0.46.5 release candidate. The proof-coupled Junie handoff
+with the Code Factory 0.46.6 release candidate. The proof-coupled Junie handoff
 story is visible beside the existing First Proof, AppForge, and evidence-boundary
 controls. Marketplace publication remains a protected provider action; this
 repository does not claim a live listing until a provider read-back confirms it.

@@ -553,7 +553,9 @@ from .agentic_control import (
     AgenticControlError,
     agentic_control_projection,
     build_extended_assurance_receipt,
+    compare_agentic_control_drift,
     verify_extended_assurance_receipt,
+    verify_agentic_control_drift,
 )
 
 # Keep parser construction independent from the optional app-builder module.
@@ -4491,6 +4493,18 @@ def _dispatch(argv=None) -> int:
     )
     agent_control.add_argument("--root", default=".")
     agent_control.add_argument("--json", action="store_true")
+    agent_drift = agent_sub.add_parser(
+        "drift",
+        help="compare a prior control projection with the current one",
+    )
+    agent_drift.add_argument("baseline", nargs="?")
+    agent_drift.add_argument(
+        "--current", help="current projection JSON; defaults to the live projection"
+    )
+    agent_drift.add_argument("--root", default=".")
+    agent_drift.add_argument("--out", help="write the hash-bound drift receipt")
+    agent_drift.add_argument("--verify", help="verify an existing drift receipt")
+    agent_drift.add_argument("--json", action="store_true")
     agent_extended = agent_sub.add_parser(
         "extended",
         help="validate optional lanes 7-8 from supplied evidence into Receipt v2",
@@ -5820,6 +5834,31 @@ def _dispatch(argv=None) -> int:
                 )
             elif a.cmd == "agent" and a.agent_cmd == "control":
                 result = agentic_control_projection(Path(a.root))
+            elif a.cmd == "agent" and a.agent_cmd == "drift":
+                if a.verify:
+                    result = verify_agentic_control_drift(
+                        json.loads(Path(a.verify).read_text(encoding="utf-8"))
+                    )
+                elif not a.baseline:
+                    raise AgenticControlError(
+                        "E_AGENTIC_DRIFT_INPUT",
+                        "baseline projection is required unless --verify is used",
+                    )
+                else:
+                    baseline = json.loads(Path(a.baseline).read_text(encoding="utf-8"))
+                    current = (
+                        json.loads(Path(a.current).read_text(encoding="utf-8"))
+                        if a.current
+                        else agentic_control_projection(Path(a.root))
+                    )
+                    result = compare_agentic_control_drift(baseline, current)
+                    if a.out:
+                        destination = Path(a.out)
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        destination.write_text(
+                            json.dumps(result, indent=2, sort_keys=True) + "\n",
+                            encoding="utf-8",
+                        )
             elif a.cmd == "agent" and a.agent_cmd == "extended":
                 if a.verify:
                     result = verify_extended_assurance_receipt(

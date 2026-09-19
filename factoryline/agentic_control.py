@@ -26,6 +26,7 @@ SANDBOX_SCHEMA = "factory.sandbox-boundary.v1"
 ROUTE_TRACE_SCHEMA = "factory.route-trace.v1"
 EXTENDED_RECEIPT_SCHEMA = "factory.receipt.v2"
 EXTENDED_ASSURANCE_SCHEMA = "factory.extended-assurance.v1"
+DRIFT_SCHEMA = "factory.agentic-control-drift.v1"
 _ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40,64}$")
@@ -739,6 +740,197 @@ def agentic_control_projection(root: Path) -> dict[str, Any]:
         "authority": dict(_AUTHORITY),
         "claim_boundary": "Control-plane metadata only; no model, source, branch, merge, approval, credential, or network action ran.",
         "marker": "AGENTIC_CONTROL_PROJECTION_READY",
+    }
+
+
+def _projection_core(projection: dict[str, Any]) -> dict[str, Any]:
+    """Return the stable projection fields used for reproducible drift hashes."""
+    core = dict(projection)
+    core.pop("marker", None)
+    return core
+
+
+def _validate_projection(projection: object, label: str) -> dict[str, Any]:
+    """Validate a control projection before comparing its nested policy state."""
+    if not isinstance(projection, dict) or projection.get("schema") != SCHEMA:
+        raise AgenticControlError(
+            "E_AGENTIC_DRIFT_SCHEMA", f"{label} must use {SCHEMA}"
+        )
+    features = projection.get("features")
+    extended = projection.get("extended_assurance")
+    authority = projection.get("authority")
+    if not isinstance(features, dict) or not features:
+        raise AgenticControlError(
+            "E_AGENTIC_DRIFT_SCHEMA", f"{label}.features must be a non-empty object"
+        )
+    if not isinstance(extended, dict) or not isinstance(authority, dict):
+        raise AgenticControlError(
+            "E_AGENTIC_DRIFT_SCHEMA",
+            f"{label} must include extended assurance and authority",
+        )
+    if any(value is not False for value in authority.values()):
+        raise AgenticControlError(
+            "E_AGENTIC_DRIFT_AUTHORITY", f"{label} contains an authority escalation"
+        )
+    if projection.get("root_bound") is not True:
+        raise AgenticControlError(
+            "E_AGENTIC_DRIFT_SCHEMA", f"{label}.root_bound must remain true"
+        )
+    return projection
+
+
+def _deep_diffs(before: object, after: object, path: str = "") -> list[dict[str, Any]]:
+    """Produce bounded, deterministic leaf diffs for nested JSON-compatible values."""
+    if isinstance(before, dict) and isinstance(after, dict):
+        diffs: list[dict[str, Any]] = []
+        for key in sorted(set(before) | set(after)):
+            child = f"{path}.{key}" if path else str(key)
+            if key not in before:
+                diffs.append(
+                    {
+                        "path": child,
+                        "kind": "added",
+                        "before": None,
+                        "after": after[key],
+                    }
+                )
+            elif key not in after:
+                diffs.append(
+                    {
+                        "path": child,
+                        "kind": "removed",
+                        "before": before[key],
+                        "after": None,
+                    }
+                )
+            else:
+                diffs.extend(_deep_diffs(before[key], after[key], child))
+        return diffs
+    if before != after:
+        return [
+            {"path": path or "$", "kind": "changed", "before": before, "after": after}
+        ]
+    return []
+
+
+def _drift_finding(diff: dict[str, Any]) -> dict[str, Any]:
+    """Classify one projection diff using release-sensitive control-plane rules."""
+    path = str(diff["path"])
+    kind = str(diff["kind"])
+    code = "AGENTIC_CONTROL_DRIFT"
+    severity = "REVIEW_REQUIRED"
+    if path.startswith("authority."):
+        code, severity = "AGENTIC_AUTHORITY_ESCALATION", "BLOCKED"
+    elif path == "schema" or path.endswith(".schema"):
+        code, severity = "AGENTIC_SCHEMA_CHANGED", "BLOCKED"
+    elif path.startswith("features.") and kind == "removed":
+        code, severity = "AGENTIC_FEATURE_REMOVED", "BLOCKED"
+    elif path == "extended_assurance.blocking_policy" and diff["after"] != (
+        "only explicitly required lanes can block release"
+    ):
+        code, severity = "AGENTIC_BLOCKING_POLICY_WEAKENED", "BLOCKED"
+    elif path == "extended_assurance.status" and diff["after"] == "disabled":
+        code, severity = "AGENTIC_ASSURANCE_DISABLED", "BLOCKED"
+    elif path == "extended_assurance.lanes" and kind == "changed":
+        before = (
+            set(diff["before"] or []) if isinstance(diff["before"], list) else set()
+        )
+        after = set(diff["after"] or []) if isinstance(diff["after"], list) else set()
+        if before - after:
+            code, severity = "AGENTIC_ASSURANCE_LANE_REMOVED", "BLOCKED"
+        else:
+            code, severity = "AGENTIC_ASSURANCE_LANES_CHANGED", "REVIEW_REQUIRED"
+    return {**diff, "code": code, "severity": severity}
+
+
+def compare_agentic_control_drift(
+    baseline: dict[str, Any], current: dict[str, Any]
+) -> dict[str, Any]:
+    """Compare two control projections and emit a tamper-evident drift receipt."""
+    baseline = _validate_projection(baseline, "baseline")
+    current = _validate_projection(current, "current")
+    baseline_core = _projection_core(baseline)
+    current_core = _projection_core(current)
+    diffs = _deep_diffs(baseline_core, current_core)
+    findings = [_drift_finding(item) for item in diffs[:128]]
+    blocked = [item for item in findings if item["severity"] == "BLOCKED"]
+    verdict = "BLOCKED" if blocked else ("REVIEW_REQUIRED" if findings else "CLEAR")
+    core = {
+        "schema": DRIFT_SCHEMA,
+        "baseline_sha256": _sha(baseline_core),
+        "current_sha256": _sha(current_core),
+        "findings": findings,
+        "verdict": verdict,
+        "authority": dict(_AUTHORITY),
+    }
+    return {
+        **core,
+        "drift_sha256": _sha(core),
+        "marker": f"AGENTIC_CONTROL_DRIFT_{verdict}",
+        "summary": {
+            "changed": len(findings),
+            "blocked": len(blocked),
+            "review_required": sum(
+                item["severity"] == "REVIEW_REQUIRED" for item in findings
+            ),
+        },
+        "claim_boundary": "Deterministic comparison of supplied control-plane projections only; it does not prove runtime behavior, identity, deployment, publication, or release approval.",
+    }
+
+
+def verify_agentic_control_drift(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Verify a control-plane drift receipt hash, verdict, and authority boundary."""
+    if not isinstance(receipt, dict) or receipt.get("schema") != DRIFT_SCHEMA:
+        raise AgenticControlError(
+            "E_AGENTIC_DRIFT_SCHEMA", f"receipt must use {DRIFT_SCHEMA}"
+        )
+    core_keys = (
+        "schema",
+        "baseline_sha256",
+        "current_sha256",
+        "findings",
+        "verdict",
+        "authority",
+    )
+    core = {key: receipt.get(key) for key in core_keys}
+    for key in ("baseline_sha256", "current_sha256"):
+        _digest(core[key], key)
+    if not isinstance(core["findings"], list) or core["verdict"] not in {
+        "CLEAR",
+        "REVIEW_REQUIRED",
+        "BLOCKED",
+    }:
+        raise AgenticControlError(
+            "E_AGENTIC_DRIFT_SCHEMA", "receipt findings or verdict are invalid"
+        )
+    if not isinstance(core["authority"], dict) or any(
+        value is not False for value in core["authority"].values()
+    ):
+        raise AgenticControlError(
+            "E_AGENTIC_DRIFT_AUTHORITY", "drift receipt cannot grant authority"
+        )
+    if receipt.get("drift_sha256") != _sha(core):
+        raise AgenticControlError(
+            "E_AGENTIC_DRIFT_TAMPERED", "drift receipt digest does not match contents"
+        )
+    expected = (
+        "BLOCKED"
+        if any(item.get("severity") == "BLOCKED" for item in core["findings"])
+        else ("REVIEW_REQUIRED" if core["findings"] else "CLEAR")
+    )
+    if (
+        core["verdict"] != expected
+        or receipt.get("marker") != f"AGENTIC_CONTROL_DRIFT_{expected}"
+    ):
+        raise AgenticControlError(
+            "E_AGENTIC_DRIFT_TAMPERED", "drift verdict does not match findings"
+        )
+    return {
+        "schema": DRIFT_SCHEMA,
+        "verdict": expected,
+        "drift_sha256": receipt["drift_sha256"],
+        "marker": "AGENTIC_CONTROL_DRIFT_VERIFIED",
+        "claim_boundary": receipt.get("claim_boundary"),
     }
 
 

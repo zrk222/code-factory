@@ -9,6 +9,7 @@ from factoryline.agentic_control import (
     AgenticControlError,
     agentic_control_projection,
     build_extended_assurance_receipt,
+    compare_agentic_control_drift,
     compile_reusable_workflow,
     create_route_trace,
     create_sandbox_boundary,
@@ -22,6 +23,7 @@ from factoryline.agentic_control import (
     verify_swimlane,
     verify_typed_handoff,
     verify_extended_assurance_receipt,
+    verify_agentic_control_drift,
 )
 
 
@@ -85,6 +87,34 @@ def test_route_trace_binds_route_workflow_handoff_and_swimlanes() -> None:
     tampered["event_count"] = 2
     with pytest.raises(AgenticControlError, match="digest"):
         verify_route_trace(tampered)
+
+
+def test_control_drift_receipt_blocks_removed_feature_and_detects_tampering(
+    tmp_path,
+) -> None:
+    baseline = agentic_control_projection(tmp_path)
+    current = agentic_control_projection(tmp_path)
+    current["features"].pop("route_tracing")
+    receipt = compare_agentic_control_drift(baseline, current)
+    assert receipt["verdict"] == "BLOCKED"
+    assert any(
+        item["code"] == "AGENTIC_FEATURE_REMOVED" for item in receipt["findings"]
+    )
+    assert verify_agentic_control_drift(receipt)["verdict"] == "BLOCKED"
+
+    tampered = dict(receipt)
+    tampered["verdict"] = "CLEAR"
+    with pytest.raises(AgenticControlError, match="digest"):
+        verify_agentic_control_drift(tampered)
+
+
+def test_control_drift_requires_review_for_added_feature(tmp_path) -> None:
+    baseline = agentic_control_projection(tmp_path)
+    current = agentic_control_projection(tmp_path)
+    current["features"]["new_feature"] = {"status": "available"}
+    receipt = compare_agentic_control_drift(baseline, current)
+    assert receipt["verdict"] == "REVIEW_REQUIRED"
+    assert receipt["summary"]["review_required"] == 1
 
 
 def test_swimlane_chain_detects_order_and_tampering() -> None:

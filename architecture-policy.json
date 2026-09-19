@@ -25,10 +25,10 @@
     "core_modules": 150
   },
   "accepted_debt": {
-    "decision_id": "ARCH-BASELINE-2026-09-17-EXTENDED-ASSURANCE",
+    "decision_id": "ARCH-BASELINE-2026-09-19-AGENTIC-DRIFT",
     "owner": "human-release-authority",
     "expires_at": "2026-12-31T23:59:59+00:00",
-    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, and opt-in extended-assurance lanes while the decomposition plan remains active; re-review is required at expiry.",
+    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, opt-in extended-assurance lanes, and the deterministic agentic-control drift detector while the decomposition plan remains active; re-review is required at expiry.",
     "codes": [
       "E_ARCH_CLI_LINES_GROWTH",
       "E_ARCH_CLI_COMMAND_DECLARATIONS_GROWTH",
@@ -40,11 +40,11 @@
       "ARCH_RELEASE_CHURN"
     ],
     "metrics": {
-      "cli_lines": 11682,
-      "cli_command_declarations": 492,
-      "core_modules": 200,
-      "markdown_python_ratio": 1.6015,
-      "release_recent_count": 23
+      "cli_lines": 11721,
+      "cli_command_declarations": 493,
+      "core_modules": 201,
+      "markdown_python_ratio": 1.5937,
+      "release_recent_count": 20
     }
   },
   "release": {
