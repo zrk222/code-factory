@@ -1,16 +1,15 @@
 """Operations-plane evidence: telemetry, promotion, rollback, and response."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import hashlib
-import json
 import time
 import uuid
 from contextlib import contextmanager
 from typing import Any, Iterable
 
-from .control_plane import ControlPlaneError, canonical_json, sha256
+from .control_plane import canonical_json, sha256
 
 
 OPERATIONS_SCHEMA = "factory.operations.v1"
@@ -40,7 +39,14 @@ class TelemetryRecorder:
     trace_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     spans: list[dict[str, Any]] = field(default_factory=list)
 
-    def span(self, name: str, *, attributes: dict[str, Any] | None = None, status: str = "OK", duration_ms: int = 0) -> dict[str, Any]:
+    def span(
+        self,
+        name: str,
+        *,
+        attributes: dict[str, Any] | None = None,
+        status: str = "OK",
+        duration_ms: int = 0,
+    ) -> dict[str, Any]:
         """Record a bounded telemetry span after validating its status and duration."""
         span = {
             "schema": TELEMETRY_SCHEMA,
@@ -60,16 +66,27 @@ class TelemetryRecorder:
 
 
 @contextmanager
-def measured_span(recorder: TelemetryRecorder, name: str, *, attributes: dict[str, Any] | None = None):
+def measured_span(
+    recorder: TelemetryRecorder, name: str, *, attributes: dict[str, Any] | None = None
+):
     """Context manager-like generator for a measured local span."""
     started = time.perf_counter()
     try:
         yield
     except Exception:
-        recorder.span(name, attributes=attributes, status="ERROR", duration_ms=round((time.perf_counter() - started) * 1000))
+        recorder.span(
+            name,
+            attributes=attributes,
+            status="ERROR",
+            duration_ms=round((time.perf_counter() - started) * 1000),
+        )
         raise
     else:
-        recorder.span(name, attributes=attributes, duration_ms=round((time.perf_counter() - started) * 1000))
+        recorder.span(
+            name,
+            attributes=attributes,
+            duration_ms=round((time.perf_counter() - started) * 1000),
+        )
 
 
 @dataclass(frozen=True)
@@ -106,18 +123,31 @@ def evaluate_canary(
         "artifact_digest": _required(artifact_digest, "artifact_digest"),
         "previous_digest": previous_digest,
         "strategy": "canary",
-        "metrics": {"requests": requests, "error_rate": error_rate, "latency_p95_ms": latency},
-        "policy": {"max_error_rate": policy.max_error_rate, "max_latency_p95_ms": policy.max_latency_p95_ms, "min_requests": policy.min_requests},
+        "metrics": {
+            "requests": requests,
+            "error_rate": error_rate,
+            "latency_p95_ms": latency,
+        },
+        "policy": {
+            "max_error_rate": policy.max_error_rate,
+            "max_latency_p95_ms": policy.max_latency_p95_ms,
+            "min_requests": policy.min_requests,
+        },
         "decision": "PROMOTE" if promoted else "ROLLBACK",
         "reasons": reasons,
         "ts": datetime.now(timezone.utc).isoformat(),
     }
 
 
-def rollback_receipt(deployment: dict[str, Any], *, actor: str, reason: str) -> dict[str, Any]:
+def rollback_receipt(
+    deployment: dict[str, Any], *, actor: str, reason: str
+) -> dict[str, Any]:
     """Build an auditable rollback receipt bound to the original deployment digest."""
     if deployment.get("decision") != "ROLLBACK":
-        raise OperationsError("E_ROLLBACK_NOT_REQUIRED", "rollback receipt requires a failed deployment decision")
+        raise OperationsError(
+            "E_ROLLBACK_NOT_REQUIRED",
+            "rollback receipt requires a failed deployment decision",
+        )
     previous = _required(deployment.get("previous_digest"), "previous_digest")
     receipt = {
         "schema": DEPLOYMENT_SCHEMA,
@@ -145,7 +175,10 @@ def vulnerability_response(
     """Create a severity-aware vulnerability response with deterministic next actions."""
     severity = _required(severity, "severity").upper()
     if severity not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
-        raise OperationsError("E_VULNERABILITY_SEVERITY", "severity must be LOW, MEDIUM, HIGH, or CRITICAL")
+        raise OperationsError(
+            "E_VULNERABILITY_SEVERITY",
+            "severity must be LOW, MEDIUM, HIGH, or CRITICAL",
+        )
     response = {
         "schema": VULNERABILITY_SCHEMA,
         "vulnerability": _required(vulnerability, "vulnerability"),
@@ -159,7 +192,14 @@ def vulnerability_response(
     return response
 
 
-def connector_event(*, target: str, event_type: str, tenant_id: str, subject_digest: str, attributes: dict[str, Any] | None = None) -> dict[str, Any]:
+def connector_event(
+    *,
+    target: str,
+    event_type: str,
+    tenant_id: str,
+    subject_digest: str,
+    attributes: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Normalize a tenant connector event while rejecting missing authority fields."""
     target = _required(target, "target").lower()
     if target not in {"siem", "ticketing"}:

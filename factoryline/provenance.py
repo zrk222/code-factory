@@ -1,4 +1,5 @@
 """Shared machine-readable provenance envelope for FactoryLine itself."""
+
 from __future__ import annotations
 
 import hashlib
@@ -20,7 +21,13 @@ def _source_commit(module_dir: Path) -> str | None:
     if 'name = "factoryline-code-factory"' not in manifest.read_text(encoding="utf-8"):
         return None
     try:
-        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source_root, capture_output=True, text=True, timeout=3)
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=source_root,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
         dirty = subprocess.run(
             ["git", "status", "--porcelain", "--untracked-files=no"],
             cwd=source_root,
@@ -69,7 +76,10 @@ def provenance() -> dict:
         "install_origin": origin,
         "direct_url": direct_url,
         "python": sys.version.split()[0],
-        "runtime": {"python": sys.version.split()[0], "implementation": sys.implementation.name},
+        "runtime": {
+            "python": sys.version.split()[0],
+            "implementation": sys.implementation.name,
+        },
         "receipt_schema": "factory.receipt.v2",
         "identity_complete": bool(commit and build_hash),
     }

@@ -1,4 +1,5 @@
 """PR/PRD optimization helpers for the factory control plane."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -8,14 +9,24 @@ import subprocess
 
 from .contract import LAYOUT, ensure_layout
 from .meter import summarize
-from .proof import git_changed_paths, public_evidence, public_evidence_text, risk_for_paths
+from .proof import (
+    git_changed_paths,
+    public_evidence,
+    public_evidence_text,
+    risk_for_paths,
+)
 
 
 DEFAULT_POLICY = {
     "schema": "factory.policy.v1",
     "risk": {
         "default": "supervised",
-        "require_human_approval_for": ["security", "auth", "billing", "production-deploy"],
+        "require_human_approval_for": [
+            "security",
+            "auth",
+            "billing",
+            "production-deploy",
+        ],
     },
     "quality": {
         "require_hollow_tests": True,
@@ -62,7 +73,9 @@ def _git_current_branch(root: Path) -> str | None:
     return proc.stdout.strip() or None
 
 
-def _changed_paths(root: Path, base: str, explicit: list[str] | None = None) -> list[str]:
+def _changed_paths(
+    root: Path, base: str, explicit: list[str] | None = None
+) -> list[str]:
     if explicit:
         return explicit
     try:
@@ -80,7 +93,9 @@ def _changed_paths(root: Path, base: str, explicit: list[str] | None = None) -> 
         return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 
-def pr_pack(root: Path, feature: str, *, trace_path: Path | None = None, out: Path | None = None) -> dict:
+def pr_pack(
+    root: Path, feature: str, *, trace_path: Path | None = None, out: Path | None = None
+) -> dict:
     """Write a reviewer packet with public-safe proof and meter nuance."""
     root = Path(root)
     ensure_layout(root)
@@ -121,13 +136,26 @@ def pr_pack(root: Path, feature: str, *, trace_path: Path | None = None, out: Pa
     return packet
 
 
-def optimize_pr(root: Path, *, base: str = "main", changed: list[str] | None = None, feature: str | None = None) -> dict:
+def optimize_pr(
+    root: Path,
+    *,
+    base: str = "main",
+    changed: list[str] | None = None,
+    feature: str | None = None,
+) -> dict:
     """Create a bounded PR hardening plan from the current diff."""
     root = Path(root)
     paths = _changed_paths(root, base, changed)
     risk = risk_for_paths(paths)
-    needs_design = any(path.endswith((".html", ".css", ".tsx", ".jsx", ".vue", ".svelte")) for path in paths)
-    needs_release = any(Path(path).name in {"pyproject.toml", "package.json", "uv.lock", "requirements.txt"} for path in paths)
+    needs_design = any(
+        path.endswith((".html", ".css", ".tsx", ".jsx", ".vue", ".svelte"))
+        for path in paths
+    )
+    needs_release = any(
+        Path(path).name
+        in {"pyproject.toml", "package.json", "uv.lock", "requirements.txt"}
+        for path in paths
+    )
     stages = [f"{item['module']}:{item['stage']}" for item in risk["rerun_stages"]]
     if needs_design and "prestige:audit" not in stages:
         stages.append("prestige:audit")

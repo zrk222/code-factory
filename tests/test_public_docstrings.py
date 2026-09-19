@@ -17,7 +17,9 @@ def _public_callables() -> list[tuple[Path, ast.FunctionDef | ast.AsyncFunctionD
             if isinstance(owner, ast.ClassDef):
                 nodes.extend(owner.body)
         for node in nodes:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_"):
+            if isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ) and not node.name.startswith("_"):
                 result.append((path, node))
     return result
 
@@ -29,7 +31,9 @@ def test_every_public_function_and_method_has_a_meaningful_docstring() -> None:
         if docstring is None or len(" ".join(docstring.split())) < 20:
             missing.append(f"{path.relative_to(ROOT)}:{node.lineno}:{node.name}")
 
-    assert missing == [], "PUBLIC_API_DOCSTRINGS_COMPLETE missing:\n" + "\n".join(missing)
+    assert missing == [], "PUBLIC_API_DOCSTRINGS_COMPLETE missing:\n" + "\n".join(
+        missing
+    )
 
 
 def test_fail_closed_public_surfaces_document_refusal_semantics() -> None:

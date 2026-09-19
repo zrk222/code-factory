@@ -5,6 +5,7 @@ finish bespoke product logic. It turns a PRD or prompt into a full-stack starter
 repo with a blueprint, handoff plan, smoke hooks, and docs that downstream agents
 can harden through the existing factory gates.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -123,7 +124,10 @@ def _purpose_from_text(text: str, explicit: str) -> str:
     if explicit != "auto":
         return explicit
     low = text.lower()
-    if any(term in low for term in ("clinical", "patient", "hipaa", "prior-auth", "prior auth")):
+    if any(
+        term in low
+        for term in ("clinical", "patient", "hipaa", "prior-auth", "prior auth")
+    ):
         return "healthcare"
     if any(term in low for term in ("payment", "invoice", "bank", "risk", "fintech")):
         return "fintech"
@@ -225,7 +229,7 @@ def healthz():
 
 
 def _pytest_health() -> str:
-    return '''from fastapi.testclient import TestClient
+    return """from fastapi.testclient import TestClient
 from backend.main import app
 
 
@@ -233,7 +237,7 @@ def test_healthz():
     response = TestClient(app).get("/healthz")
     assert response.status_code == 200
     assert response.json()["ok"] is True
-'''
+"""
 
 
 def _schema_sql(blueprint: AppBlueprint) -> str:
@@ -381,42 +385,56 @@ invariants:
 
 
 def _coverage_manifest(blueprint: AppBlueprint) -> str:
-    requirements = [{
-        "id": "RUNTIME_HEALTH",
-        "summary": "The backend exposes a health endpoint that returns ok=true.",
-        "source": "generated",
-    }]
+    requirements = [
+        {
+            "id": "RUNTIME_HEALTH",
+            "summary": "The backend exposes a health endpoint that returns ok=true.",
+            "source": "generated",
+        }
+    ]
     for workflow in blueprint.workflows:
-        requirements.append({
-            "id": f"WORKFLOW_{workflow.upper()}",
-            "summary": f"The app supports the {workflow.replace('_', ' ')} workflow.",
-            "source": "blueprint.workflow",
-        })
+        requirements.append(
+            {
+                "id": f"WORKFLOW_{workflow.upper()}",
+                "summary": f"The app supports the {workflow.replace('_', ' ')} workflow.",
+                "source": "blueprint.workflow",
+            }
+        )
     for rule in blueprint.deterministic_logic:
-        requirements.append({
-            "id": f"LOGIC_{rule.upper()}",
-            "summary": f"The deterministic rule {rule.replace('_', ' ')} is enforced.",
-            "source": "blueprint.deterministic_logic",
-        })
-    return json.dumps({
-        "schema": "factory.requirement_coverage.v1",
-        "app": blueprint.name,
-        "requirements": requirements,
-    }, indent=2)
+        requirements.append(
+            {
+                "id": f"LOGIC_{rule.upper()}",
+                "summary": f"The deterministic rule {rule.replace('_', ' ')} is enforced.",
+                "source": "blueprint.deterministic_logic",
+            }
+        )
+    return json.dumps(
+        {
+            "schema": "factory.requirement_coverage.v1",
+            "app": blueprint.name,
+            "requirements": requirements,
+        },
+        indent=2,
+    )
 
 
 def _forge_state(blueprint: AppBlueprint) -> str:
-    return json.dumps({
-        "feature": blueprint.name,
-        "state": "blocked",
-        "created": blueprint.generated_at,
-        "attempts": {},
-        "history": [{
-            "ts": blueprint.generated_at,
+    return json.dumps(
+        {
+            "feature": blueprint.name,
             "state": "blocked",
-            "note": "factory app starter generated; run forge verify-tests before smoke",
-        }],
-    }, indent=2)
+            "created": blueprint.generated_at,
+            "attempts": {},
+            "history": [
+                {
+                    "ts": blueprint.generated_at,
+                    "state": "blocked",
+                    "note": "factory app starter generated; run forge verify-tests before smoke",
+                }
+            ],
+        },
+        indent=2,
+    )
 
 
 def scaffold_app(blueprint: AppBlueprint, *, out_dir: Path, prd_text: str) -> dict:
@@ -432,112 +450,191 @@ def scaffold_app(blueprint: AppBlueprint, *, out_dir: Path, prd_text: str) -> di
     _write(out_dir / ".forge" / blueprint.name / "state.json", _forge_state(blueprint))
     if STACKS[blueprint.stack]["frontend"] == "Next.js":
         _write(out_dir / "frontend" / "app" / "page.tsx", _frontend_page(blueprint))
-        _write(out_dir / "frontend" / "app" / "layout.tsx", '''import "./globals.css";
+        _write(
+            out_dir / "frontend" / "app" / "layout.tsx",
+            """import "./globals.css";
 import type { ReactNode } from "react";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return <html lang="en"><body>{children}</body></html>;
 }
-''')
-        _write(out_dir / "frontend" / "tsconfig.json", json.dumps({
-            "compilerOptions": {
-                "target": "ES2022",
-                "lib": ["dom", "dom.iterable", "esnext"],
-                "allowJs": False,
-                "skipLibCheck": True,
-                "strict": True,
-                "noEmit": True,
-                "esModuleInterop": True,
-                "module": "esnext",
-                "moduleResolution": "bundler",
-                "resolveJsonModule": True,
-                "isolatedModules": True,
-                "jsx": "react-jsx",
-                "incremental": True,
-                "plugins": [{"name": "next"}],
-            },
-            "include": ["next-env.d.ts", ".next/types/**/*.ts", ".next/dev/types/**/*.ts", "**/*.ts", "**/*.tsx"],
-            "exclude": ["node_modules"],
-        }, indent=2))
-        _write(out_dir / "frontend" / "next-env.d.ts", '/// <reference types="next" />\n/// <reference types="next/image-types/global" />')
-        _write(out_dir / "frontend" / "next.config.ts", '''import type { NextConfig } from "next";
+""",
+        )
+        _write(
+            out_dir / "frontend" / "tsconfig.json",
+            json.dumps(
+                {
+                    "compilerOptions": {
+                        "target": "ES2022",
+                        "lib": ["dom", "dom.iterable", "esnext"],
+                        "allowJs": False,
+                        "skipLibCheck": True,
+                        "strict": True,
+                        "noEmit": True,
+                        "esModuleInterop": True,
+                        "module": "esnext",
+                        "moduleResolution": "bundler",
+                        "resolveJsonModule": True,
+                        "isolatedModules": True,
+                        "jsx": "react-jsx",
+                        "incremental": True,
+                        "plugins": [{"name": "next"}],
+                    },
+                    "include": [
+                        "next-env.d.ts",
+                        ".next/types/**/*.ts",
+                        ".next/dev/types/**/*.ts",
+                        "**/*.ts",
+                        "**/*.tsx",
+                    ],
+                    "exclude": ["node_modules"],
+                },
+                indent=2,
+            ),
+        )
+        _write(
+            out_dir / "frontend" / "next-env.d.ts",
+            '/// <reference types="next" />\n/// <reference types="next/image-types/global" />',
+        )
+        _write(
+            out_dir / "frontend" / "next.config.ts",
+            """import type { NextConfig } from "next";
 
 const config: NextConfig = {
   turbopack: { root: process.cwd() },
 };
 
 export default config;
-''')
+""",
+        )
         frontend_package = {
-            "scripts": {"dev": "next dev", "build": "next build", "typecheck": "tsc --noEmit"},
-            "dependencies": {"next": "16.2.10", "react": "19.2.7", "react-dom": "19.2.7"},
-            "devDependencies": {"@types/node": "^24.0.0", "@types/react": "^19.2.0", "@types/react-dom": "^19.2.0", "typescript": "^5.9.0"},
+            "scripts": {
+                "dev": "next dev",
+                "build": "next build",
+                "typecheck": "tsc --noEmit",
+            },
+            "dependencies": {
+                "next": "16.2.10",
+                "react": "19.2.7",
+                "react-dom": "19.2.7",
+            },
+            "devDependencies": {
+                "@types/node": "^24.0.0",
+                "@types/react": "^19.2.0",
+                "@types/react-dom": "^19.2.0",
+                "typescript": "^5.9.0",
+            },
             "overrides": {"postcss": "8.5.19"},
         }
     else:
         _write(out_dir / "frontend" / "src" / "App.tsx", _frontend_page(blueprint))
-        _write(out_dir / "frontend" / "src" / "main.tsx", """import React from 'react';
+        _write(
+            out_dir / "frontend" / "src" / "main.tsx",
+            """import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './globals.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
-""")
-        _write(out_dir / "frontend" / "index.html", '<!doctype html><html><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>')
-        _write(out_dir / "frontend" / "vite.config.ts", '''import { defineConfig } from "vite";
+""",
+        )
+        _write(
+            out_dir / "frontend" / "index.html",
+            '<!doctype html><html><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
+        )
+        _write(
+            out_dir / "frontend" / "vite.config.ts",
+            """import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({ plugins: [react()] });
-''')
-        _write(out_dir / "frontend" / "tsconfig.json", json.dumps({
-            "compilerOptions": {
-                "target": "ES2022",
-                "useDefineForClassFields": True,
-                "lib": ["ES2022", "DOM", "DOM.Iterable"],
-                "allowJs": False,
-                "skipLibCheck": True,
-                "esModuleInterop": True,
-                "allowSyntheticDefaultImports": True,
-                "strict": True,
-                "forceConsistentCasingInFileNames": True,
-                "module": "ESNext",
-                "moduleResolution": "Bundler",
-                "resolveJsonModule": True,
-                "isolatedModules": True,
-                "noEmit": True,
-                "jsx": "react-jsx",
-            },
-            "include": ["src", "vite.config.ts"],
-        }, indent=2))
+""",
+        )
+        _write(
+            out_dir / "frontend" / "tsconfig.json",
+            json.dumps(
+                {
+                    "compilerOptions": {
+                        "target": "ES2022",
+                        "useDefineForClassFields": True,
+                        "lib": ["ES2022", "DOM", "DOM.Iterable"],
+                        "allowJs": False,
+                        "skipLibCheck": True,
+                        "esModuleInterop": True,
+                        "allowSyntheticDefaultImports": True,
+                        "strict": True,
+                        "forceConsistentCasingInFileNames": True,
+                        "module": "ESNext",
+                        "moduleResolution": "Bundler",
+                        "resolveJsonModule": True,
+                        "isolatedModules": True,
+                        "noEmit": True,
+                        "jsx": "react-jsx",
+                    },
+                    "include": ["src", "vite.config.ts"],
+                },
+                indent=2,
+            ),
+        )
         frontend_package = {
-            "scripts": {"dev": "vite", "build": "tsc && vite build", "typecheck": "tsc --noEmit"},
+            "scripts": {
+                "dev": "vite",
+                "build": "tsc && vite build",
+                "typecheck": "tsc --noEmit",
+            },
             "dependencies": {"react": "19.2.7", "react-dom": "19.2.7"},
-            "devDependencies": {"@types/react": "^19.2.0", "@types/react-dom": "^19.2.0", "@vitejs/plugin-react": "^6.0.0", "typescript": "^5.9.0", "vite": "^8.0.0"},
+            "devDependencies": {
+                "@types/react": "^19.2.0",
+                "@types/react-dom": "^19.2.0",
+                "@vitejs/plugin-react": "^6.0.0",
+                "typescript": "^5.9.0",
+                "vite": "^8.0.0",
+            },
         }
-    css_path = "app/globals.css" if STACKS[blueprint.stack]["frontend"] == "Next.js" else "src/globals.css"
+    css_path = (
+        "app/globals.css"
+        if STACKS[blueprint.stack]["frontend"] == "Next.js"
+        else "src/globals.css"
+    )
     _write(out_dir / "frontend" / css_path, _frontend_css())
-    _write(out_dir / "frontend" / "package.json", json.dumps(frontend_package, indent=2))
+    _write(
+        out_dir / "frontend" / "package.json", json.dumps(frontend_package, indent=2)
+    )
     _write(out_dir / "backend" / "__init__.py", "")
     _write(out_dir / "backend" / "main.py", _backend_main(blueprint))
-    _write(out_dir / "backend" / "requirements.txt", "fastapi\nuvicorn\npytest\nhttpx\n")
+    _write(
+        out_dir / "backend" / "requirements.txt", "fastapi\nuvicorn\npytest\nhttpx\n"
+    )
     _write(out_dir / "tests" / "test_health.py", _pytest_health())
     _write(out_dir / "db" / "schema.sql", _schema_sql(blueprint))
-    _write(out_dir / "smoke" / f"{blueprint.name}.json", json.dumps({
-        "checks": [{
-            "name": "backend_health",
-            "kind": "python",
-            "run": "from fastapi.testclient import TestClient\nfrom backend.main import app\nassert TestClient(app).get('/healthz').json()['ok'] is True\n",
-            "covers": ["RUNTIME_HEALTH"],
-            "must_fail_on_stub": True,
-        }]
-    }, indent=2))
+    _write(
+        out_dir / "smoke" / f"{blueprint.name}.json",
+        json.dumps(
+            {
+                "checks": [
+                    {
+                        "name": "backend_health",
+                        "kind": "python",
+                        "run": "from fastapi.testclient import TestClient\nfrom backend.main import app\nassert TestClient(app).get('/healthz').json()['ok'] is True\n",
+                        "covers": ["RUNTIME_HEALTH"],
+                        "must_fail_on_stub": True,
+                    }
+                ]
+            },
+            indent=2,
+        ),
+    )
     output_map = write_output_map(
         out_dir,
         name=blueprint.name,
         source_sha256=sha256(prd_text.encode("utf-8")).hexdigest(),
         status="compiled_blocked",
     )
-    paths = sorted(str(path.relative_to(out_dir)).replace("\\", "/") for path in out_dir.rglob("*") if path.is_file())
+    paths = sorted(
+        str(path.relative_to(out_dir)).replace("\\", "/")
+        for path in out_dir.rglob("*")
+        if path.is_file()
+    )
     return {
         "schema": "factory.app_scaffold.v1",
         "app": blueprint.name,
@@ -556,20 +653,38 @@ export default defineConfig({ plugins: [react()] });
     }
 
 
-def app_from_prd(prd_path: Path, *, out_dir: Path | None = None, name: str | None = None,
-                 stack: str = "nextjs-fastapi-postgres", purpose: str = "auto") -> dict:
+def app_from_prd(
+    prd_path: Path,
+    *,
+    out_dir: Path | None = None,
+    name: str | None = None,
+    stack: str = "nextjs-fastapi-postgres",
+    purpose: str = "auto",
+) -> dict:
     """Build and scaffold an application from a readable PRD file."""
     prd_path = Path(prd_path)
     text = prd_path.read_text(encoding="utf-8")
-    blueprint = build_blueprint(text, source=str(prd_path), name=name, stack=stack, purpose=purpose)
+    blueprint = build_blueprint(
+        text, source=str(prd_path), name=name, stack=stack, purpose=purpose
+    )
     target = Path(out_dir) if out_dir else Path.cwd() / blueprint.name
     return scaffold_app(blueprint, out_dir=target, prd_text=text)
 
 
-def app_from_prompt(prompt: str, *, out_dir: Path | None = None, name: str | None = None,
-                    stack: str = "nextjs-fastapi-postgres", purpose: str = "auto") -> dict:
+def app_from_prompt(
+    prompt: str,
+    *,
+    out_dir: Path | None = None,
+    name: str | None = None,
+    stack: str = "nextjs-fastapi-postgres",
+    purpose: str = "auto",
+) -> dict:
     """Build and scaffold an application from a product prompt."""
-    prd_text = f"# {_extract_name(prompt, name).replace('-', ' ').title()}\n\n{prompt}\n"
-    blueprint = build_blueprint(prd_text, source="prompt", name=name, stack=stack, purpose=purpose)
+    prd_text = (
+        f"# {_extract_name(prompt, name).replace('-', ' ').title()}\n\n{prompt}\n"
+    )
+    blueprint = build_blueprint(
+        prd_text, source="prompt", name=name, stack=stack, purpose=purpose
+    )
     target = Path(out_dir) if out_dir else Path.cwd() / blueprint.name
     return scaffold_app(blueprint, out_dir=target, prd_text=prd_text)

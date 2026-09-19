@@ -1,4 +1,5 @@
 """Loopback-only local browser surface for the Factoryline target compiler."""
+
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,7 +28,11 @@ from .continuation import ContinuationError, continue_assembly, discover_feature
 from .run_metrics import public_metrics
 from .savings import SavingsError, public_savings_report, record_savings_pair
 from .graph_ops import graph_ops_html, graph_ops_snapshot
-from .graph_authorization import GraphAuthorizationError, create_graph_authorization, run_authorized_reality_check
+from .graph_authorization import (
+    GraphAuthorizationError,
+    create_graph_authorization,
+    run_authorized_reality_check,
+)
 from .developer_memory import developer_memory_brief
 from .live_activity import activity_snapshot, request_stop
 
@@ -37,7 +42,14 @@ MAX_BODY_BYTES = 64 * 1024
 UNAUTHORIZED_DRAIN_TIMEOUT_SECONDS = 0.25
 LOOPBACK_HOST = "127.0.0.1"
 NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}")
-FORBIDDEN_ACTIONS = {"deploy", "publish", "sign", "external-message", "credential", "connector-grant"}
+FORBIDDEN_ACTIONS = {
+    "deploy",
+    "publish",
+    "sign",
+    "external-message",
+    "credential",
+    "connector-grant",
+}
 RESOLUTION_MODES = {"human_approval", "auto_resolve_safe"}
 DEVELOPER_MEMORY_REFRESH_INTERVAL_MS = 5_000
 _developer_memory_cache_lock = threading.Lock()
@@ -60,7 +72,10 @@ def developer_memory_snapshot(root: Path) -> dict[str, Any]:
     now = monotonic()
     with _developer_memory_cache_lock:
         cached = _developer_memory_cache.get(key)
-        if cached is not None and (now - cached[0]) * 1000 < DEVELOPER_MEMORY_REFRESH_INTERVAL_MS:
+        if (
+            cached is not None
+            and (now - cached[0]) * 1000 < DEVELOPER_MEMORY_REFRESH_INTERVAL_MS
+        ):
             brief = cached[1]
             cache_state = "reused"
             age_ms = int((now - cached[0]) * 1000)
@@ -91,7 +106,11 @@ def studio_status(root: Path, port: int) -> dict[str, Any]:
         "root": str(resolved),
         "listener": {"host": LOOPBACK_HOST, "port": port, "production": False},
         "targets": TARGETS,
-        "limits": {"max_body_bytes": MAX_BODY_BYTES, "output_scope": "beneath_root", "overwrite": False},
+        "limits": {
+            "max_body_bytes": MAX_BODY_BYTES,
+            "output_scope": "beneath_root",
+            "overwrite": False,
+        },
         "authority": {
             "can_create_starters": True,
             "can_compile_product_missions": True,
@@ -121,27 +140,39 @@ def _json_or_none(path: Path) -> dict[str, Any] | None:
 
 def _mission_rows(root: Path) -> list[dict[str, Any]]:
     rows = []
-    for path in sorted((Path(root).resolve() / ".factory" / "missions").glob("*/mission.json")):
+    for path in sorted(
+        (Path(root).resolve() / ".factory" / "missions").glob("*/mission.json")
+    ):
         mission = _json_or_none(path)
         if mission is None:
             continue
         decision = _json_or_none(path.parent / "execution_decision.json")
         completion = _json_or_none(path.parent / "completion.json")
-        rows.append({
-            "id": mission.get("id"), "owner": mission.get("owner"),
-            "slice_id": mission.get("slice_id"), "risk": mission.get("slice", {}).get("risk"),
-            "score": mission.get("slice", {}).get("score", {}).get("priority"),
-            "worktree": mission.get("workspace_contract", {}).get("path"),
-            "branch": mission.get("workspace_contract", {}).get("branch"),
-            "criteria": len(mission.get("completion_contract", {}).get("criteria", [])),
-            "decision": decision.get("decision") if decision else "awaiting_owner",
-            "completion": (
-                ("verified_receipt_present" if completion else "pending")
-                + " | readiness "
-                + ("bound" if mission.get("inputs", {}).get("migration_readiness") else "not bound")
-            ),
-            "path": str(path),
-        })
+        rows.append(
+            {
+                "id": mission.get("id"),
+                "owner": mission.get("owner"),
+                "slice_id": mission.get("slice_id"),
+                "risk": mission.get("slice", {}).get("risk"),
+                "score": mission.get("slice", {}).get("score", {}).get("priority"),
+                "worktree": mission.get("workspace_contract", {}).get("path"),
+                "branch": mission.get("workspace_contract", {}).get("branch"),
+                "criteria": len(
+                    mission.get("completion_contract", {}).get("criteria", [])
+                ),
+                "decision": decision.get("decision") if decision else "awaiting_owner",
+                "completion": (
+                    ("verified_receipt_present" if completion else "pending")
+                    + " | readiness "
+                    + (
+                        "bound"
+                        if mission.get("inputs", {}).get("migration_readiness")
+                        else "not bound"
+                    )
+                ),
+                "path": str(path),
+            }
+        )
     return rows
 
 
@@ -159,8 +190,12 @@ def _product_rows(root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]
             "status": graph.get("status"),
             "requirements": len(graph.get("requirements", [])),
             "journeys": graph.get("journeys", []),
-            "blocking_gaps": sum(item.get("severity") == "blocking" for item in graph.get("gaps", [])),
-            "advisory_gaps": sum(item.get("severity") == "advisory" for item in graph.get("gaps", [])),
+            "blocking_gaps": sum(
+                item.get("severity") == "blocking" for item in graph.get("gaps", [])
+            ),
+            "advisory_gaps": sum(
+                item.get("severity") == "advisory" for item in graph.get("gaps", [])
+            ),
             "graph_path": str(path),
             "graph_mermaid": str(path.parent / "product_graph.mmd"),
             "slice_count": len(slices.get("slices", [])) if slices else 0,
@@ -168,13 +203,24 @@ def _product_rows(root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]
         products.append(product)
         if slices:
             for item in slices.get("slices", []):
-                queue.append({
-                    "project": graph.get("project"), "id": item.get("id"),
-                    "theme": item.get("theme"), "priority": item.get("score", {}).get("priority"),
-                    "risk": item.get("risk"), "requirements": item.get("requirement_ids", []),
-                    "depends_on": item.get("depends_on", []), "path": str(path.parent / "value_slices.json"),
-                })
-    queue.sort(key=lambda item: (-(item["priority"] if isinstance(item["priority"], int) else -1), str(item["id"])))
+                queue.append(
+                    {
+                        "project": graph.get("project"),
+                        "id": item.get("id"),
+                        "theme": item.get("theme"),
+                        "priority": item.get("score", {}).get("priority"),
+                        "risk": item.get("risk"),
+                        "requirements": item.get("requirement_ids", []),
+                        "depends_on": item.get("depends_on", []),
+                        "path": str(path.parent / "value_slices.json"),
+                    }
+                )
+    queue.sort(
+        key=lambda item: (
+            -(item["priority"] if isinstance(item["priority"], int) else -1),
+            str(item["id"]),
+        )
+    )
     return products, queue
 
 
@@ -186,16 +232,26 @@ def _proof_timeline(missions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for requirement_id in mission.get("slice", {}).get("requirement_ids", []):
             evidence = []
             if completion:
-                evidence = [item.get("path") for item in completion.get("evidence", []) if item.get("path")]
-            timeline.append({
-                "requirement_id": requirement_id,
-                "slice_id": row["slice_id"],
-                "mission_id": row["id"],
-                "code_state": "candidate_workspace_bound" if row.get("worktree") else "not_bound",
-                "test_state": row["completion"],
-                "receipt": str(Path(row["path"]).parent / "completion.json") if completion else None,
-                "evidence": evidence,
-            })
+                evidence = [
+                    item.get("path")
+                    for item in completion.get("evidence", [])
+                    if item.get("path")
+                ]
+            timeline.append(
+                {
+                    "requirement_id": requirement_id,
+                    "slice_id": row["slice_id"],
+                    "mission_id": row["id"],
+                    "code_state": "candidate_workspace_bound"
+                    if row.get("worktree")
+                    else "not_bound",
+                    "test_state": row["completion"],
+                    "receipt": str(Path(row["path"]).parent / "completion.json")
+                    if completion
+                    else None,
+                    "evidence": evidence,
+                }
+            )
     return timeline
 
 
@@ -206,7 +262,13 @@ def _receipt_comparison(root: Path) -> dict[str, Any]:
             groups.setdefault(stage.run_id, []).append(stage)
     run_ids = list(groups)[-2:]
     if len(run_ids) < 2:
-        return {"schema": "factory.receipt_comparison.v1", "status": "insufficient_runs", "current": None, "previous": None, "delta": None}
+        return {
+            "schema": "factory.receipt_comparison.v1",
+            "status": "insufficient_runs",
+            "current": None,
+            "previous": None,
+            "delta": None,
+        }
 
     def summary(run_id: str) -> dict[str, Any]:
         stages = groups[run_id]
@@ -216,13 +278,17 @@ def _receipt_comparison(root: Path) -> dict[str, Any]:
             "model_calls": sum(item.model_calls for item in stages),
             "tokens": sum(item.tokens_in + item.tokens_out for item in stages),
             "failed_stages": sum(not item.ok for item in stages),
-            "token_quality": sorted({item.token_quality or item.usage_quality for item in stages}),
+            "token_quality": sorted(
+                {item.token_quality or item.usage_quality for item in stages}
+            ),
         }
 
     previous, current = (summary(run_id) for run_id in run_ids)
     return {
-        "schema": "factory.receipt_comparison.v1", "status": "compared",
-        "current": current, "previous": previous,
+        "schema": "factory.receipt_comparison.v1",
+        "status": "compared",
+        "current": current,
+        "previous": previous,
         "delta": {
             "wall_ms": current["wall_ms"] - previous["wall_ms"],
             "model_calls": current["model_calls"] - previous["model_calls"],
@@ -247,13 +313,19 @@ def _recent_run_stats(root: Path, *, limit: int = 8) -> list[dict[str, Any]]:
     def summary(run_id: str, stages: list[Any]) -> dict[str, Any]:
         ordered = sorted(stages, key=lambda item: item.recorded_at or "")
         latest = ordered[-1]
-        token_qualities = sorted({item.token_quality or item.usage_quality for item in ordered})
+        token_qualities = sorted(
+            {item.token_quality or item.usage_quality for item in ordered}
+        )
         cost_qualities = sorted({item.cost_quality for item in ordered})
-        observed_outcomes = [item.outcome_status for item in ordered if item.outcome_status]
+        observed_outcomes = [
+            item.outcome_status for item in ordered if item.outcome_status
+        ]
         failed_stages = sum(not item.ok for item in ordered)
         return {
             "run_id": run_id,
-            "feature": next((item.feature for item in reversed(ordered) if item.feature), None),
+            "feature": next(
+                (item.feature for item in reversed(ordered) if item.feature), None
+            ),
             "first_recorded_at": ordered[0].recorded_at or None,
             "last_recorded_at": latest.recorded_at or None,
             "stages_recorded": len(ordered),
@@ -262,12 +334,19 @@ def _recent_run_stats(root: Path, *, limit: int = 8) -> list[dict[str, Any]]:
             "model_calls": sum(item.model_calls for item in ordered),
             "tokens": sum(item.tokens_in + item.tokens_out for item in ordered),
             "token_quality": token_qualities,
-            "cost_usd": (sum(item.cost_usd or 0 for item in ordered)
-                         if all(item.cost_usd is not None for item in ordered) else None),
+            "cost_usd": (
+                sum(item.cost_usd or 0 for item in ordered)
+                if all(item.cost_usd is not None for item in ordered)
+                else None
+            ),
             "cost_quality": cost_qualities,
-            "outcome": (observed_outcomes[-1] if observed_outcomes
-                        else "failed_stage_observed" if failed_stages
-                        else "stages_recorded"),
+            "outcome": (
+                observed_outcomes[-1]
+                if observed_outcomes
+                else "failed_stage_observed"
+                if failed_stages
+                else "stages_recorded"
+            ),
         }
 
     rows = [summary(run_id, stages) for run_id, stages in groups.items()]
@@ -281,14 +360,18 @@ def studio_dashboard(root: Path) -> dict[str, Any]:
     packs = []
     for item in builtin_packs():
         validation = validate_pack(Path(item["path"]))
-        packs.append({
-            "id": item["id"], "target_kind": item.get("target_kind"),
-            "version": item["version"], "valid": validation["valid"],
-            "signature_verified": validation["signature"]["verified"],
-            "mutations_rejected": validation["mutations"]["rejected"],
-            "mutations_attempted": validation["mutations"]["attempted"],
-            "deployment_profiles": item.get("deployment_profiles", []),
-        })
+        packs.append(
+            {
+                "id": item["id"],
+                "target_kind": item.get("target_kind"),
+                "version": item["version"],
+                "valid": validation["valid"],
+                "signature_verified": validation["signature"]["verified"],
+                "mutations_rejected": validation["mutations"]["rejected"],
+                "mutations_attempted": validation["mutations"]["attempted"],
+                "deployment_profiles": item.get("deployment_profiles", []),
+            }
+        )
     missions = _mission_rows(Path(root))
     products, slice_queue = _product_rows(Path(root))
     developer_memory = developer_memory_snapshot(Path(root))
@@ -305,8 +388,12 @@ def studio_dashboard(root: Path) -> dict[str, Any]:
         "recent_runs": _recent_run_stats(Path(root)),
         "developer_memory": developer_memory,
         "approvals": {
-            "awaiting_owner": sum(item["decision"] == "awaiting_owner" for item in missions),
-            "approved_execution": sum(item["decision"] == "approved_execution" for item in missions),
+            "awaiting_owner": sum(
+                item["decision"] == "awaiting_owner" for item in missions
+            ),
+            "approved_execution": sum(
+                item["decision"] == "approved_execution" for item in missions
+            ),
             "deferred": sum(item["decision"] == "deferred" for item in missions),
             "rejected": sum(item["decision"] == "rejected" for item in missions),
             "auto_resolve_mode": "safe_local_gaps_only",
@@ -319,10 +406,15 @@ def studio_dashboard(root: Path) -> dict[str, Any]:
         },
         "savings": public_savings_report(Path(root)),
         "markers": [
-            "STUDIO_LIVE_TELEMETRY", "STUDIO_APPROVAL_QUEUE", "STUDIO_PACK_TRUST_VISIBLE",
-            "STUDIO_PRODUCT_GRAPH_VISIBLE", "STUDIO_SLICE_QUEUE_VISIBLE",
-            "STUDIO_PROOF_TIMELINE_VISIBLE", "STUDIO_RECEIPT_COMPARISON_VISIBLE",
-            "STUDIO_PRIOR_RUNS_VISIBLE", "STUDIO_DEVELOPER_MEMORY_VISIBLE",
+            "STUDIO_LIVE_TELEMETRY",
+            "STUDIO_APPROVAL_QUEUE",
+            "STUDIO_PACK_TRUST_VISIBLE",
+            "STUDIO_PRODUCT_GRAPH_VISIBLE",
+            "STUDIO_SLICE_QUEUE_VISIBLE",
+            "STUDIO_PROOF_TIMELINE_VISIBLE",
+            "STUDIO_RECEIPT_COMPARISON_VISIBLE",
+            "STUDIO_PRIOR_RUNS_VISIBLE",
+            "STUDIO_DEVELOPER_MEMORY_VISIBLE",
         ],
     }
 
@@ -330,12 +422,16 @@ def studio_dashboard(root: Path) -> dict[str, Any]:
 def continue_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     """Continue one local assembly through the same engine used by the CLI."""
     if str(payload.get("action", "")) != "continue":
-        raise StudioRequestError("ACTION_UNSUPPORTED", "assembly endpoint requires continue")
+        raise StudioRequestError(
+            "ACTION_UNSUPPORTED", "assembly endpoint requires continue"
+        )
     feature = payload.get("feature")
     if feature is not None and not isinstance(feature, str):
         raise StudioRequestError("FEATURE_INVALID", "feature must be a string")
     try:
-        result = continue_assembly(Path(root), feature.strip() or None if isinstance(feature, str) else None)
+        result = continue_assembly(
+            Path(root), feature.strip() or None if isinstance(feature, str) else None
+        )
     except ContinuationError as exc:
         raise StudioRequestError(exc.code, exc.message, 409) from exc
     return {**result, "studio_marker": "STUDIO_ASSEMBLY_CONTAINED"}
@@ -344,12 +440,20 @@ def continue_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
 def savings_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     """Record one contained exact pair through the same engine used by the CLI."""
     if str(payload.get("action", "")) != "savings-record":
-        raise StudioRequestError("ACTION_UNSUPPORTED", "savings endpoint requires savings-record")
+        raise StudioRequestError(
+            "ACTION_UNSUPPORTED", "savings endpoint requires savings-record"
+        )
     resolved_root = Path(root).resolve()
     evidence = payload.get("evidence")
-    evidence_path = (resolved_root / evidence).resolve() if isinstance(evidence, str) and evidence else None
+    evidence_path = (
+        (resolved_root / evidence).resolve()
+        if isinstance(evidence, str) and evidence
+        else None
+    )
     if evidence_path is not None and not evidence_path.is_relative_to(resolved_root):
-        raise StudioRequestError("PATH_REJECTED", "evidence must stay beneath Studio root")
+        raise StudioRequestError(
+            "PATH_REJECTED", "evidence must stay beneath Studio root"
+        )
     baseline = {
         "elapsed_ms": payload.get("baseline_elapsed_ms"),
         "tokens": payload.get("baseline_tokens"),
@@ -362,30 +466,42 @@ def savings_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     }
     try:
         result = record_savings_pair(
-            resolved_root, payload.get("pair_id"), baseline, factory_observation,
+            resolved_root,
+            payload.get("pair_id"),
+            baseline,
+            factory_observation,
             equivalent_outcome=payload.get("equivalent_outcome") is True,
             evidence=evidence_path,
             replace=payload.get("replace") is True,
         )
     except SavingsError as exc:
-        raise StudioRequestError(exc.code, str(exc), 409 if exc.code == "PAIR_OVERWRITE_REFUSED" else 400) from exc
+        raise StudioRequestError(
+            exc.code, str(exc), 409 if exc.code == "PAIR_OVERWRITE_REFUSED" else 400
+        ) from exc
     return {**result, "studio_marker": "SAVINGS_STUDIO_CONTAINED"}
 
 
 def _contained_output(root: Path, name: str) -> Path:
     if not NAME_PATTERN.fullmatch(name):
-        raise StudioRequestError("PATH_REJECTED", "name must use 1-48 letters, digits, hyphens, or underscores")
+        raise StudioRequestError(
+            "PATH_REJECTED",
+            "name must use 1-48 letters, digits, hyphens, or underscores",
+        )
     resolved_root = Path(root).resolve()
     output = (resolved_root / name).resolve()
     if output.parent != resolved_root:
-        raise StudioRequestError("PATH_REJECTED", "output must be a direct child of Studio root")
+        raise StudioRequestError(
+            "PATH_REJECTED", "output must be a direct child of Studio root"
+        )
     return output
 
 
 def _validate_action(payload: dict[str, Any]) -> None:
     action = str(payload.get("action", "create"))
     if action in FORBIDDEN_ACTIONS:
-        raise StudioRequestError("ACTION_FORBIDDEN", f"Studio cannot perform {action}", 403)
+        raise StudioRequestError(
+            "ACTION_FORBIDDEN", f"Studio cannot perform {action}", 403
+        )
     if action != "create":
         raise StudioRequestError("ACTION_UNSUPPORTED", "only create is available")
 
@@ -393,7 +509,9 @@ def _validate_action(payload: dict[str, Any]) -> None:
 def _target_and_prompt(payload: dict[str, Any]) -> tuple[str, str]:
     target = str(payload.get("target", ""))
     if target not in TARGETS:
-        raise StudioRequestError("TARGET_UNSUPPORTED", f"target must be one of {', '.join(TARGETS)}")
+        raise StudioRequestError(
+            "TARGET_UNSUPPORTED", f"target must be one of {', '.join(TARGETS)}"
+        )
     prompt = payload.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():
         raise StudioRequestError("SOURCE_REQUIRED", "prompt must be a non-empty string")
@@ -404,8 +522,15 @@ def _output_name(payload: dict[str, Any], prompt: str) -> str:
     requested_name = payload.get("name")
     if requested_name is not None and not isinstance(requested_name, str):
         raise StudioRequestError("NAME_INVALID", "name must be a string")
-    default_name = re.sub(r"[^a-zA-Z0-9]+", "-", prompt.strip().lower()).strip("-")[:48] or "factory-target"
-    return requested_name.strip() if isinstance(requested_name, str) and requested_name.strip() else default_name
+    default_name = (
+        re.sub(r"[^a-zA-Z0-9]+", "-", prompt.strip().lower()).strip("-")[:48]
+        or "factory-target"
+    )
+    return (
+        requested_name.strip()
+        if isinstance(requested_name, str) and requested_name.strip()
+        else default_name
+    )
 
 
 def create_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -422,7 +547,8 @@ def create_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
             name=output_name,
             purpose=str(payload.get("purpose", "auto")),
             trigger=str(payload.get("trigger", "manual")),
-            deployment_profile=str(payload.get("deployment_profile", "")).strip() or None,
+            deployment_profile=str(payload.get("deployment_profile", "")).strip()
+            or None,
         )
     except TargetCompileError as exc:
         status = 409 if exc.code == "OUTPUT_EXISTS" else 400
@@ -430,37 +556,53 @@ def create_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     return {**result, "studio_marker": "STUDIO_CONTAINED"}
 
 
-def _validated_product_mission_request(root: Path, payload: dict[str, Any]) -> tuple[str, str, str, str, str]:
+def _validated_product_mission_request(
+    root: Path, payload: dict[str, Any]
+) -> tuple[str, str, str, str, str]:
     """Validate the user-controlled values used to compile a product mission."""
     action = str(payload.get("action", ""))
     if action in FORBIDDEN_ACTIONS:
-        raise StudioRequestError("ACTION_FORBIDDEN", f"Studio cannot perform {action}", 403)
+        raise StudioRequestError(
+            "ACTION_FORBIDDEN", f"Studio cannot perform {action}", 403
+        )
     if action != "product-mission":
-        raise StudioRequestError("ACTION_UNSUPPORTED", "product endpoint requires product-mission")
+        raise StudioRequestError(
+            "ACTION_UNSUPPORTED", "product endpoint requires product-mission"
+        )
     prompt = payload.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():
         raise StudioRequestError("SOURCE_REQUIRED", "PRD must be a non-empty string")
     name = _output_name(payload, prompt)
     _contained_output(root, name)  # Validate the user-controlled project slug.
-    owner = str(payload.get("owner", "local-studio-user")).strip() or "local-studio-user"
+    owner = (
+        str(payload.get("owner", "local-studio-user")).strip() or "local-studio-user"
+    )
     executor = str(payload.get("executor", "manual"))
     resolution_mode = str(payload.get("resolution_mode", "human_approval"))
     if resolution_mode not in RESOLUTION_MODES:
-        raise StudioRequestError("RESOLUTION_MODE_INVALID", f"resolution mode must be one of {', '.join(sorted(RESOLUTION_MODES))}")
+        raise StudioRequestError(
+            "RESOLUTION_MODE_INVALID",
+            f"resolution mode must be one of {', '.join(sorted(RESOLUTION_MODES))}",
+        )
     return prompt, name, owner, executor, resolution_mode
 
 
-def _product_gap_response(graph: dict[str, Any], resolution_mode: str) -> dict[str, Any]:
+def _product_gap_response(
+    graph: dict[str, Any], resolution_mode: str
+) -> dict[str, Any]:
     """Return actionable, human-owned feedback for an incomplete PRD."""
-    items = [{
-        "id": f"resolve-{gap['code'].lower().replace('_', '-')}",
-        "code": gap["code"],
-        "severity": gap["severity"],
-        "why": gap["message"],
-        "next_action": gap["message"],
-        "auto_resolvable": False,
-        "approval_required": True,
-    } for gap in graph["gaps"]]
+    items = [
+        {
+            "id": f"resolve-{gap['code'].lower().replace('_', '-')}",
+            "code": gap["code"],
+            "severity": gap["severity"],
+            "why": gap["message"],
+            "next_action": gap["message"],
+            "auto_resolvable": False,
+            "approval_required": True,
+        }
+        for gap in graph["gaps"]
+    ]
     return {
         "schema": "factory.studio.product_mission.v1",
         "status": "needs_input",
@@ -478,13 +620,19 @@ def _product_gap_response(graph: dict[str, Any], resolution_mode: str) -> dict[s
     }
 
 
-def _first_product_mission(root: Path, graph: dict[str, Any], owner: str, executor: str) -> tuple[dict[str, Any], dict[str, Any]]:
+def _first_product_mission(
+    root: Path, graph: dict[str, Any], owner: str, executor: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Plan the product graph and return its first dependency-ready mission."""
     slices = plan_value_slices(Path(graph["path"]), root)
     ready = [item for item in slices["slices"] if not item["depends_on"]]
     if not ready:
-        raise ProductMissionError("MISSION_DEPENDENCY_CYCLE", "no dependency-ready value slice is available")
-    mission = create_mission(Path(slices["path"]), ready[0]["id"], root, owner, executor)
+        raise ProductMissionError(
+            "MISSION_DEPENDENCY_CYCLE", "no dependency-ready value slice is available"
+        )
+    mission = create_mission(
+        Path(slices["path"]), ready[0]["id"], root, owner, executor
+    )
     return slices, mission
 
 
@@ -531,11 +679,17 @@ def _planned_product_mission_response(
     }
 
 
-def create_product_mission_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+def create_product_mission_from_studio(
+    root: Path, payload: dict[str, Any]
+) -> dict[str, Any]:
     """Compile a PRD to the first dependency-ready supervised mission."""
-    prompt, name, owner, executor, resolution_mode = _validated_product_mission_request(root, payload)
+    prompt, name, owner, executor, resolution_mode = _validated_product_mission_request(
+        root, payload
+    )
     try:
-        graph = compile_product_text(prompt, root=Path(root), source_name="studio-prd.md", project=name)
+        graph = compile_product_text(
+            prompt, root=Path(root), source_name="studio-prd.md", project=name
+        )
         if graph["status"] != "ready":
             return _product_gap_response(graph, resolution_mode)
         slices, mission = _first_product_mission(Path(root), graph, owner, executor)
@@ -545,10 +699,14 @@ def create_product_mission_from_studio(root: Path, payload: dict[str, Any]) -> d
     return _planned_product_mission_response(graph, slices, mission, resolution_mode)
 
 
-def decide_product_mission_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+def decide_product_mission_from_studio(
+    root: Path, payload: dict[str, Any]
+) -> dict[str, Any]:
     """Record an actionable human decision for one contained mission."""
     if str(payload.get("action", "")) != "mission-decision":
-        raise StudioRequestError("ACTION_UNSUPPORTED", "mission decision endpoint requires mission-decision")
+        raise StudioRequestError(
+            "ACTION_UNSUPPORTED", "mission decision endpoint requires mission-decision"
+        )
     mission_value = payload.get("mission")
     if not isinstance(mission_value, str) or not mission_value.strip():
         raise StudioRequestError("MISSION_REQUIRED", "mission path is required")
@@ -557,7 +715,9 @@ def decide_product_mission_from_studio(root: Path, payload: dict[str, Any]) -> d
     try:
         mission.relative_to(root)
     except ValueError as exc:
-        raise StudioRequestError("PATH_REJECTED", "mission must be beneath the Studio root", 403) from exc
+        raise StudioRequestError(
+            "PATH_REJECTED", "mission must be beneath the Studio root", 403
+        ) from exc
     try:
         return decide_mission(
             mission,
@@ -570,32 +730,53 @@ def decide_product_mission_from_studio(root: Path, payload: dict[str, Any]) -> d
         raise StudioRequestError(exc.code, exc.message, 400) from exc
 
 
-def authorize_graph_ops_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+def authorize_graph_ops_from_studio(
+    root: Path, payload: dict[str, Any]
+) -> dict[str, Any]:
     """Record a named human authorization that stays bounded to one graph node."""
     try:
         return create_graph_authorization(root, payload)
     except GraphAuthorizationError as exc:
-        raise StudioRequestError(exc.code, str(exc), 409 if exc.code.endswith(("REPLAY", "STALE", "EXPIRED")) else 400) from exc
+        raise StudioRequestError(
+            exc.code,
+            str(exc),
+            409 if exc.code.endswith(("REPLAY", "STALE", "EXPIRED")) else 400,
+        ) from exc
 
 
-def run_graph_ops_reality_check_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+def run_graph_ops_reality_check_from_studio(
+    root: Path, payload: dict[str, Any]
+) -> dict[str, Any]:
     """Consume one local authorization to re-run one sealed Reality Check."""
-    if set(payload) != {"authorization"} or not isinstance(payload.get("authorization"), str):
-        raise StudioRequestError("GRAPH_AUTHORIZATION_INVALID", "execution request must contain exactly authorization")
+    if set(payload) != {"authorization"} or not isinstance(
+        payload.get("authorization"), str
+    ):
+        raise StudioRequestError(
+            "GRAPH_AUTHORIZATION_INVALID",
+            "execution request must contain exactly authorization",
+        )
     try:
         return run_authorized_reality_check(root, Path(payload["authorization"]))
     except GraphAuthorizationError as exc:
-        raise StudioRequestError(exc.code, str(exc), 409 if exc.code.endswith(("REPLAY", "STALE", "EXPIRED", "EXECUTABLE", "IN_PROGRESS")) else 400) from exc
+        raise StudioRequestError(
+            exc.code,
+            str(exc),
+            409
+            if exc.code.endswith(
+                ("REPLAY", "STALE", "EXPIRED", "EXECUTABLE", "IN_PROGRESS")
+            )
+            else 400,
+        ) from exc
 
 
 def _studio_html(token: str) -> str:
     target_buttons = "".join(
-        f'''<label class="target"><input type="radio" name="target" value="{key}" {'checked' if key == 'web' else ''}>
-<span><strong>{value['label']}</strong><small>{value['summary']}</small></span></label>'''
+        f'''<label class="target"><input type="radio" name="target" value="{key}" {"checked" if key == "web" else ""}>
+<span><strong>{value["label"]}</strong><small>{value["summary"]}</small></span></label>'''
         for key, value in TARGETS.items()
     )
     target_inventory_json = json.dumps(TARGETS, separators=(",", ":"))
-    return f'''<!doctype html>
+    return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Factory Studio</title><link rel="icon" href="/favicon.ico">
 <style>
@@ -683,7 +864,7 @@ form.addEventListener('submit',async(event)=>{{event.preventDefault();button.dis
 const target=new FormData(form).get('target'); const body=mode==='mission'?{{action:'product-mission',prompt:document.getElementById('prompt').value,name:document.getElementById('name').value,executor:document.getElementById('executor').value,owner:document.getElementById('owner').value,resolution_mode:document.getElementById('resolution-mode').value}}:{{action:'create',target,prompt:document.getElementById('prompt').value,name:document.getElementById('name').value,purpose:document.getElementById('purpose').value,trigger:document.getElementById('trigger').value,deployment_profile:document.getElementById('deployment-profile').value}};
 try{{const response=await fetch(mode==='mission'?'/api/product':'/api/create',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify(body)}});const payload=await response.json();if(!response.ok){{renderFailure(payload);return;}}if(mode==='mission')renderMission(payload);else result.textContent=`Compiled ${{payload.target_kind}}\n${{payload.out_dir}}\nDeployment: ${{payload.deployment.profile.label}}\nApproval: ${{payload.deployment.profile.approval}}\nExternal effects authorized: ${{payload.deployment.external_effects_authorized}}\nReceipt: ${{payload.receipt}}\nState: ${{payload.status}}`;}}
 catch(error){{renderFailure({{code:'NETWORK_ERROR',message:String(error)}});}}finally{{button.disabled=false;}}}});
-</script></body></html>'''
+</script></body></html>"""
 
 
 class _StudioHandler(BaseHTTPRequestHandler):
@@ -697,7 +878,10 @@ class _StudioHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(content_length))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+        )
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -711,15 +895,20 @@ class _StudioHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _error(self, status: int, code: str, message: str) -> None:
-        self._json(status, {
-            "schema": "factory.studio.error.v1",
-            "code": code,
-            "message": message,
-            "failure": explain_failure(code, message),
-        })
+        self._json(
+            status,
+            {
+                "schema": "factory.studio.error.v1",
+                "code": code,
+                "message": message,
+                "failure": explain_failure(code, message),
+            },
+        )
 
     def _has_valid_token(self) -> bool:
-        return secrets.compare_digest(self.headers.get("X-Factory-Studio-Token", ""), self.studio_token)
+        return secrets.compare_digest(
+            self.headers.get("X-Factory-Studio-Token", ""), self.studio_token
+        )
 
     def _serve_favicon(self) -> None:
         self._headers(204, "image/x-icon")
@@ -747,7 +936,10 @@ class _StudioHandler(BaseHTTPRequestHandler):
             "meter": live_snapshot(root),
             "recent_runs": _recent_run_stats(root, limit=3),
             "refresh_interval_ms": 1000,
-            "scope_limits": ["Live telemetry is local and aggregate-safe.", "Unknown usage, cost, queue, and productivity values remain unavailable."],
+            "scope_limits": [
+                "Live telemetry is local and aggregate-safe.",
+                "Unknown usage, cost, queue, and productivity values remain unavailable.",
+            ],
         }
         return payload
 
@@ -762,7 +954,9 @@ class _StudioHandler(BaseHTTPRequestHandler):
             "/api/status": self._serve_status,
             "/api/dashboard": lambda: self._serve_token_json(studio_dashboard),
             "/api/savings": lambda: self._serve_token_json(public_savings_report),
-            "/api/developer-memory": lambda: self._serve_token_json(developer_memory_snapshot),
+            "/api/developer-memory": lambda: self._serve_token_json(
+                developer_memory_snapshot
+            ),
             "/api/graph-ops": lambda: self._serve_token_json(self._graph_ops_payload),
         }
         return api_routes.get(self.path)
@@ -784,8 +978,14 @@ class _StudioHandler(BaseHTTPRequestHandler):
 
     def _is_post_route(self) -> bool:
         return self.path in {
-            "/api/create", "/api/product", "/api/mission-decision", "/api/continue",
-            "/api/savings", "/api/graph-ops-authorize", "/api/graph-ops-run", "/api/activity/stop",
+            "/api/create",
+            "/api/product",
+            "/api/mission-decision",
+            "/api/continue",
+            "/api/savings",
+            "/api/graph-ops-authorize",
+            "/api/graph-ops-run",
+            "/api/activity/stop",
         }
 
     def _drain_rejected_body(self, content_length: int) -> None:
@@ -815,12 +1015,16 @@ class _StudioHandler(BaseHTTPRequestHandler):
             return None
         payload = json.loads(self.rfile.read(length).decode("utf-8"))
         if not isinstance(payload, dict):
-            raise StudioRequestError("JSON_OBJECT_REQUIRED", "request must be a JSON object")
+            raise StudioRequestError(
+                "JSON_OBJECT_REQUIRED", "request must be a JSON object"
+            )
         return payload
 
     def _stop_activity_from_studio(self, payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get("action") != "request-stop":
-            raise StudioRequestError("ACTION_UNSUPPORTED", "activity stop endpoint requires request-stop")
+            raise StudioRequestError(
+                "ACTION_UNSUPPORTED", "activity stop endpoint requires request-stop"
+            )
         try:
             return request_stop(self.studio_root)
         except ValueError as exc:
@@ -858,18 +1062,25 @@ class _StudioHandler(BaseHTTPRequestHandler):
                 return
             result = self._dispatch_post_payload(payload)
         except StudioRequestError as exc:
-            self._json(exc.status, {
-                "schema": "factory.studio.error.v1",
-                "code": exc.code,
-                "message": exc.message,
-                "failure": exc.guidance,
-            })
+            self._json(
+                exc.status,
+                {
+                    "schema": "factory.studio.error.v1",
+                    "code": exc.code,
+                    "message": exc.message,
+                    "failure": exc.guidance,
+                },
+            )
             return
         except (UnicodeDecodeError, json.JSONDecodeError):
             self._error(400, "JSON_INVALID", "request body must be valid UTF-8 JSON")
             return
         except Exception as exc:
-            self._error(500, "INTERNAL_ERROR", f"{type(exc).__name__}: request failed before an artifact was committed")
+            self._error(
+                500,
+                "INTERNAL_ERROR",
+                f"{type(exc).__name__}: request failed before an artifact was committed",
+            )
             return
         self._json(201, result)
 
@@ -880,11 +1091,15 @@ class _StudioHandler(BaseHTTPRequestHandler):
 
 def make_handler(root: Path, token: str) -> type[BaseHTTPRequestHandler]:
     """Bind immutable root and session data to a request handler class."""
-    return type("StudioHandler", (_StudioHandler,), {
-        "studio_root": root,
-        "studio_token": token,
-        "status_payload": studio_status(root, 0),
-    })
+    return type(
+        "StudioHandler",
+        (_StudioHandler,),
+        {
+            "studio_root": root,
+            "studio_token": token,
+            "status_payload": studio_status(root, 0),
+        },
+    )
 
 
 def create_server(root: Path, port: int = 0) -> tuple[ThreadingHTTPServer, str]:
@@ -899,13 +1114,20 @@ def create_server(root: Path, port: int = 0) -> tuple[ThreadingHTTPServer, str]:
     return server, token
 
 
-def serve_studio(root: Path, port: int = 0, open_browser: bool = True,
-                 on_started: Callable[[str], None] | None = None) -> None:
+def serve_studio(
+    root: Path,
+    port: int = 0,
+    open_browser: bool = True,
+    on_started: Callable[[str], None] | None = None,
+) -> None:
     """Run Factory Studio until interrupted and always close its listener."""
     server, _token = create_server(root, port)
     url = f"http://{LOOPBACK_HOST}:{server.server_port}/"
     print(f"Factory Studio: {url}", flush=True)
-    print("Boundary: loopback development server; no deploy, publish, sign, credential, connector, or external-message authority.", flush=True)
+    print(
+        "Boundary: loopback development server; no deploy, publish, sign, credential, connector, or external-message authority.",
+        flush=True,
+    )
     if on_started:
         on_started(url)
     if open_browser:

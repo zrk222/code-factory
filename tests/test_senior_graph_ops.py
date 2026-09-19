@@ -15,7 +15,9 @@ def _manifest():
         "assurance_level": "isolated_worker",
         "changed_paths": ["src/app.py"],
         "dependency_closure": {"lint": ["src/app.py"]},
-        "gates": [{"id": "lint", "depends_on": [], "side_effects": False, "proof": None}],
+        "gates": [
+            {"id": "lint", "depends_on": [], "side_effects": False, "proof": None}
+        ],
     }
 
 
@@ -34,7 +36,9 @@ def test_graph_ops_projects_valid_plan_and_fails_closed_on_tamper(tmp_path: Path
     assert snapshot["facts"]["senior_engineering_receipt_count"] == 1
     assert snapshot["facts"]["senior_engineering_invalid_count"] == 0
     assert "GRAPH_OPS_SENIOR_ENGINEERING_READ_ONLY" in snapshot["markers"]
-    assert any(node["kind"] == "senior_engineering_evidence" for node in snapshot["nodes"])
+    assert any(
+        node["kind"] == "senior_engineering_evidence" for node in snapshot["nodes"]
+    )
 
     payload = json.loads(output.read_text(encoding="utf-8"))
     payload["counts"]["RUN"] = 99
@@ -49,7 +53,13 @@ def test_projection_rejects_receipts_that_claim_authority(tmp_path: Path):
     directory = tmp_path / ".factory" / "senior"
     directory.mkdir(parents=True)
     (directory / "authority.json").write_text(
-        json.dumps({"schema": "factory.incremental-shadow.v1", "authority": "publication", "shadow_equivalent": True}),
+        json.dumps(
+            {
+                "schema": "factory.incremental-shadow.v1",
+                "authority": "publication",
+                "shadow_equivalent": True,
+            }
+        ),
         encoding="utf-8",
     )
     result = senior_engineering_projection(tmp_path)
@@ -60,8 +70,26 @@ def test_projection_rejects_receipts_that_claim_authority(tmp_path: Path):
 def test_projection_reads_failure_brief_as_review_only_evidence(tmp_path: Path):
     directory = tmp_path / ".factory" / "senior"
     directory.mkdir(parents=True)
-    brief = {"schema": "factory.failure-brief.v1", "marker": "FAILURE_BRIEF_EVIDENCE_LINKED", "state": "ACTION_REQUIRED", "what_broke": [{"id": "x", "summary": "broken", "evidence": "a"}], "affected": ["src"], "reproduce": {"argv": ["python", "run.py"]}, "next_fix": "repair", "uncertainty": ["owner unknown"], "evidence": [{"receipt_sha256": "a"}], "authority": "none", "release_approval": False}
-    brief["brief_sha256"] = hashlib.sha256(json.dumps({key: value for key, value in brief.items() if key != "brief_sha256"}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    brief = {
+        "schema": "factory.failure-brief.v1",
+        "marker": "FAILURE_BRIEF_EVIDENCE_LINKED",
+        "state": "ACTION_REQUIRED",
+        "what_broke": [{"id": "x", "summary": "broken", "evidence": "a"}],
+        "affected": ["src"],
+        "reproduce": {"argv": ["python", "run.py"]},
+        "next_fix": "repair",
+        "uncertainty": ["owner unknown"],
+        "evidence": [{"receipt_sha256": "a"}],
+        "authority": "none",
+        "release_approval": False,
+    }
+    brief["brief_sha256"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in brief.items() if key != "brief_sha256"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
     (directory / "brief.json").write_text(json.dumps(brief), encoding="utf-8")
     result = senior_engineering_projection(tmp_path)
     assert result["receipt_count"] == 1
@@ -69,7 +97,9 @@ def test_projection_reads_failure_brief_as_review_only_evidence(tmp_path: Path):
     assert result["receipts"][0]["schema"] == "factory.failure-brief.v1"
 
 
-def test_projection_surfaces_runtime_boundary_attestation_and_detects_tamper(tmp_path: Path):
+def test_projection_surfaces_runtime_boundary_attestation_and_detects_tamper(
+    tmp_path: Path,
+):
     directory = tmp_path / ".factory" / "senior"
     directory.mkdir(parents=True)
     attestation = capture_supervised_attestation(
@@ -83,7 +113,9 @@ def test_projection_surfaces_runtime_boundary_attestation_and_detects_tamper(tmp
     result = senior_engineering_projection(tmp_path)
     assert result["invalid_count"] == 0
     assert result["receipts"][0]["status"] == "SUPERVISED_ONLY"
-    assert result["receipts"][0]["attestation_sha256"] == attestation["attestation_sha256"]
+    assert (
+        result["receipts"][0]["attestation_sha256"] == attestation["attestation_sha256"]
+    )
 
     tampered = json.loads(path.read_text(encoding="utf-8"))
     tampered["observations"]["platform"] = "tampered"

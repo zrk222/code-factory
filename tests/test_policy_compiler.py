@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from factoryline.cli import main
-from factoryline.policy_compiler import PolicyCompileError, compile_policy, write_compiled_policy
+from factoryline.policy_compiler import (
+    PolicyCompileError,
+    compile_policy,
+    write_compiled_policy,
+)
 
 
 def _policy() -> dict:
@@ -24,7 +28,11 @@ def _policy() -> dict:
         },
         "tokens": {"require_meter": True, "max_estimated_cost_usd": 5.0},
         "design": {"purpose_profile": "developer", "require_prestige_audit": True},
-        "release": {"require_clean_install": True, "require_license": True, "require_ci": True},
+        "release": {
+            "require_clean_install": True,
+            "require_license": True,
+            "require_ci": True,
+        },
     }
 
 
@@ -48,9 +56,19 @@ def test_compiler_is_key_order_invariant_and_hash_bound(tmp_path: Path):
     assert left["status"] == "COMPILED"
     assert left["policy_sha256"] == right["policy_sha256"]
     assert left["manifest_sha256"] == right["manifest_sha256"]
-    assert [item["id"] for item in left["checks"]] == sorted(item["id"] for item in left["checks"])
-    assert {item["action_class"] for item in left["human_gates"] if "action_class" in item} == {"production-deploy", "security"}
-    assert left["authority"] == {"execute": False, "merge": False, "deploy": False, "release": False, "billing": False}
+    assert [item["id"] for item in left["checks"]] == sorted(
+        item["id"] for item in left["checks"]
+    )
+    assert {
+        item["action_class"] for item in left["human_gates"] if "action_class" in item
+    } == {"production-deploy", "security"}
+    assert left["authority"] == {
+        "execute": False,
+        "merge": False,
+        "deploy": False,
+        "release": False,
+        "billing": False,
+    }
 
 
 def test_unknown_rules_are_visible_and_fail_closed(tmp_path: Path):
@@ -62,12 +80,18 @@ def test_unknown_rules_are_visible_and_fail_closed(tmp_path: Path):
     result = compile_policy(tmp_path, path)
 
     assert result["status"] == "REVIEW_REQUIRED"
-    assert {item["path"] for item in result["review_required"]} == {"quality.require_magic"}
+    assert {item["path"] for item in result["review_required"]} == {
+        "quality.require_magic"
+    }
 
 
 @pytest.mark.parametrize(
     ("path", "value"),
-    [("quality", {"require_hollow_tests": "yes"}), ("risk", {"default": "magic"}), ("tokens", {"max_estimated_cost_usd": -1})],
+    [
+        ("quality", {"require_hollow_tests": "yes"}),
+        ("risk", {"default": "magic"}),
+        ("tokens", {"max_estimated_cost_usd": -1}),
+    ],
 )
 def test_malformed_rules_are_visible(tmp_path: Path, path: str, value: dict):
     policy = {"schema": "factory.policy.v1", path: value}
@@ -100,7 +124,12 @@ def test_write_and_cli_emit_the_same_manifest(tmp_path: Path, capsys):
     assert written["manifest_sha256"] == expected["manifest_sha256"]
     assert written["marker"] == "POLICY_CLI_WRITTEN"
 
-    assert main(["ops", "policy", "factory.policy.json", "--root", str(tmp_path), "--json"]) == 0
+    assert (
+        main(
+            ["ops", "policy", "factory.policy.json", "--root", str(tmp_path), "--json"]
+        )
+        == 0
+    )
     emitted = json.loads(capsys.readouterr().out)
     assert emitted["status"] == "COMPILED"
     assert emitted["policy_sha256"] == expected["policy_sha256"]

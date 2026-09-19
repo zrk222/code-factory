@@ -4,6 +4,7 @@ The hints are client-facing metadata only.  They do not create a replay
 ledger, deduplicate requests on the server, or change the read-only MCP
 authority boundary.
 """
+
 from __future__ import annotations
 
 from hashlib import sha256
@@ -62,7 +63,9 @@ def build_stateless_replay_hints(
     and notification responses are not cacheable.  Fresh requests remain the
     only freshness mechanism because this adapter stores no replay state.
     """
-    if not isinstance(request_sha256, str) or not _REQUEST_DIGEST.fullmatch(request_sha256):
+    if not isinstance(request_sha256, str) or not _REQUEST_DIGEST.fullmatch(
+        request_sha256
+    ):
         raise McpReplayHintsError("request_sha256 must be a lowercase SHA-256 digest")
     if type(ttl_seconds) is not int or not 0 <= ttl_seconds <= MAX_CACHE_TTL_SECONDS:
         raise McpReplayHintsError(

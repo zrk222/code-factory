@@ -7,6 +7,7 @@ claim the receipt exists to make.
 The existing suite cannot catch this: its two cost assertions use 2.0 and None,
 both of which are float-exact by coincidence.
 """
+
 import tempfile
 import pathlib
 
@@ -16,12 +17,17 @@ from factoryline.savings import record_savings_pair
 
 def _rec(baseline_cost, factory_cost, **kw):
     root = pathlib.Path(tempfile.mkdtemp())
-    ev = root / "e.txt"; ev.write_text("identical outcome")
+    ev = root / "e.txt"
+    ev.write_text("identical outcome")
     return record_savings_pair(
-        root, "pair-x",
+        root,
+        "pair-x",
         {"elapsed_ms": 1000, "tokens": 500, "cost_usd": baseline_cost},
         {"elapsed_ms": 400, "tokens": 200, "cost_usd": factory_cost},
-        equivalent_outcome=True, evidence=ev, **kw)["savings"]
+        equivalent_outcome=True,
+        evidence=ev,
+        **kw,
+    )["savings"]
 
 
 def test_cost_saved_has_no_float_artifact():

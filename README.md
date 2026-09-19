@@ -86,6 +86,22 @@ same bounded status through WebMCP. All three surfaces report the same
 integrity state and next action without executing a journey or granting release
 authority.
 
+## Start with the smallest useful path
+
+Six audit lanes turn a plausible change into a reviewable engineering decision
+before the first proof command is run.
+
+1. Run `factory first-proof --root .` to see a deliberately hollow check
+   caught by the local auditor.
+2. Run `factory first-lap status --root .` to inspect the human-observed,
+   evidence-bound activation path.
+3. Run `factory architecture health --root . --json` to check repository
+   complexity budgets before adding another command, module, or document.
+
+Only then move to the six-lane audit, Graph Ops, or specialist packs. Each
+step keeps the same evidence and authority boundaries; advanced controls add
+coverage, not permission to approve or release.
+
 Mission Control and IDE clients can also request `factory.agui_review_events`
 or run `factory agui review-events --json` to render the same state as a small,
 hash-bound controlled event stream (`RUN_STARTED → STATE_SNAPSHOT →
@@ -245,7 +261,7 @@ checks under one signed plan. Every failed lane returns the consequence,
 evidence digest, exact replay, and next repair. A six-lane pass means ready for
 human review—not approved for release.
 
-### Senior engineering controls in 0.46.5
+### Senior engineering controls in 0.46.6
 
 When a team needs stronger evidence than a self-reported green build, use the
 [senior-engineering integration](docs/SENIOR_ENGINEERING_INTEGRATION.md):
@@ -657,7 +673,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [0.46.5 core release notes](docs/RELEASE_NOTES_0.46.5.md), the
+- See the [0.46.6 core release notes](docs/RELEASE_NOTES_0.46.6.md), the
   [grilling ladder](docs/GRILLING_LADDER.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.

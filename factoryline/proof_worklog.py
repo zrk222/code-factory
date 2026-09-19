@@ -6,6 +6,7 @@ an explicit CLI request, and never posts to GitHub, Jira, Linear, Slack, or any
 other service.  A draft is a concise handoff aid, not evidence of a completed
 release or an external delivery.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -45,9 +46,17 @@ class ProofWorklogError(ValueError):
 
 def _canonical(value: object) -> bytes:
     try:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
     except (TypeError, ValueError) as exc:
-        raise ProofWorklogError("E_PROOF_WORKLOG_SCHEMA", "worklog must be canonical JSON") from exc
+        raise ProofWorklogError(
+            "E_PROOF_WORKLOG_SCHEMA", "worklog must be canonical JSON"
+        ) from exc
 
 
 def _sha(value: object) -> str:
@@ -55,7 +64,12 @@ def _sha(value: object) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _relative(root: Path, value: Path, field: str, *, exists: bool) -> Path:
@@ -66,33 +80,64 @@ def _relative(root: Path, value: Path, field: str, *, exists: bool) -> Path:
     try:
         target.relative_to(root)
     except ValueError as exc:
-        raise ProofWorklogError("E_PROOF_WORKLOG_SCOPE", f"{field} must remain beneath the workspace") from exc
+        raise ProofWorklogError(
+            "E_PROOF_WORKLOG_SCOPE", f"{field} must remain beneath the workspace"
+        ) from exc
     if exists and not target.is_file():
-        raise ProofWorklogError("E_PROOF_WORKLOG_EVIDENCE", f"{field} must name an existing workspace file")
+        raise ProofWorklogError(
+            "E_PROOF_WORKLOG_EVIDENCE", f"{field} must name an existing workspace file"
+        )
     return target
 
 
 def _write(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     encoded = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False, prefix=".proof-worklog-", suffix=".tmp") as handle:
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=path.parent,
+        delete=False,
+        prefix=".proof-worklog-",
+        suffix=".tmp",
+    ) as handle:
         handle.write(encoded)
         temporary = Path(handle.name)
     temporary.replace(path)
 
 
 def _text(item: object, fallback: str) -> str:
-    if isinstance(item, dict) and isinstance(item.get("statement"), str) and item["statement"].strip():
+    if (
+        isinstance(item, dict)
+        and isinstance(item.get("statement"), str)
+        and item["statement"].strip()
+    ):
         return item["statement"].strip()[:240]
     return fallback
 
 
-def _draft_text(contract: dict[str, Any], agent: dict[str, Any], atomic: dict[str, Any]) -> tuple[str, list[str]]:
+def _draft_text(
+    contract: dict[str, Any], agent: dict[str, Any], atomic: dict[str, Any]
+) -> tuple[str, list[str]]:
     contract_id = str(contract.get("id", "sealed-contract"))
     scope = ", ".join(contract.get("scope_paths", [])) or "no declared scope"
     rules = contract.get("rules", {})
-    requirements = [_text(item, "Approved obligation") for item in rules.get("requirements", [])[:3]] if isinstance(rules, dict) else []
-    forbidden = [_text(item, "Forbidden behavior") for item in rules.get("forbidden_behaviors", [])[:2]] if isinstance(rules, dict) else []
+    requirements = (
+        [
+            _text(item, "Approved obligation")
+            for item in rules.get("requirements", [])[:3]
+        ]
+        if isinstance(rules, dict)
+        else []
+    )
+    forbidden = (
+        [
+            _text(item, "Forbidden behavior")
+            for item in rules.get("forbidden_behaviors", [])[:2]
+        ]
+        if isinstance(rules, dict)
+        else []
+    )
     lines = [
         f"# Proof review: {contract_id}",
         "",
@@ -115,7 +160,9 @@ def _draft_text(contract: dict[str, Any], agent: dict[str, Any], atomic: dict[st
     return "\n".join(lines) + "\n", requirements + forbidden
 
 
-def create_proof_worklog(root: Path, contract_path: Path, out: Path | None = None) -> dict[str, Any]:
+def create_proof_worklog(
+    root: Path, contract_path: Path, out: Path | None = None
+) -> dict[str, Any]:
     """Write one immutable local, review-required worklog draft."""
     workspace = Path(root).resolve()
     contract_file = _relative(workspace, contract_path, "contract", exists=True)
@@ -123,11 +170,24 @@ def create_proof_worklog(root: Path, contract_path: Path, out: Path | None = Non
         raise ProofWorklogError("E_PROOF_WORKLOG_EVIDENCE", "contract exceeds 1 MiB")
     checked = verify_oracle_contract(workspace, contract_file.relative_to(workspace))
     if not checked.get("ok"):
-        raise ProofWorklogError("E_PROOF_WORKLOG_UNBOUND_INTENT", "worklog requires one current sealed Oracle Contract")
+        raise ProofWorklogError(
+            "E_PROOF_WORKLOG_UNBOUND_INTENT",
+            "worklog requires one current sealed Oracle Contract",
+        )
     contract = checked.get("contract")
-    if not isinstance(contract, dict) or not isinstance(contract.get("id"), str) or not contract["id"].strip() or not isinstance(contract.get("contract_sha256"), str):
-        raise ProofWorklogError("E_PROOF_WORKLOG_UNBOUND_INTENT", "sealed Oracle Contract is incomplete")
-    agent, atomic = agent_proof_projection(workspace), atomic_proof_projection(workspace)
+    if (
+        not isinstance(contract, dict)
+        or not isinstance(contract.get("id"), str)
+        or not contract["id"].strip()
+        or not isinstance(contract.get("contract_sha256"), str)
+    ):
+        raise ProofWorklogError(
+            "E_PROOF_WORKLOG_UNBOUND_INTENT", "sealed Oracle Contract is incomplete"
+        )
+    agent, atomic = (
+        agent_proof_projection(workspace),
+        atomic_proof_projection(workspace),
+    )
     markdown, obligations = _draft_text(contract, agent, atomic)
     core: dict[str, Any] = {
         "schema": SCHEMA,
@@ -141,8 +201,20 @@ def create_proof_worklog(root: Path, contract_path: Path, out: Path | None = Non
         },
         "obligation_summary": obligations,
         "evidence": {
-            "agent_bridge": {"bound_count": agent["bound_count"], "invalid_count": agent["invalid_count"], "receipt_sha256s": [item["receipt_sha256"] for item in agent["receipts"]]},
-            "atomic": {"bound_count": atomic["bound_count"], "invalid_count": atomic["invalid_count"], "receipt_sha256s": [item["receipt_sha256"] for item in atomic.get("receipts", [])]},
+            "agent_bridge": {
+                "bound_count": agent["bound_count"],
+                "invalid_count": agent["invalid_count"],
+                "receipt_sha256s": [
+                    item["receipt_sha256"] for item in agent["receipts"]
+                ],
+            },
+            "atomic": {
+                "bound_count": atomic["bound_count"],
+                "invalid_count": atomic["invalid_count"],
+                "receipt_sha256s": [
+                    item["receipt_sha256"] for item in atomic.get("receipts", [])
+                ],
+            },
         },
         "markdown": markdown,
         "review_required": True,
@@ -150,10 +222,18 @@ def create_proof_worklog(root: Path, contract_path: Path, out: Path | None = Non
         "claim_boundary": "A local review draft from verified receipt summaries. It does not prove an external delivery, ticket update, production result, team acknowledgement, release, or approval and never posts to a third-party service.",
     }
     receipt = {**core, "draft_sha256": _sha(core)}
-    destination = out or Path(".factory") / "worklogs" / f"{contract['id']}-{receipt['draft_sha256'][:12]}.json"
+    destination = (
+        out
+        or Path(".factory")
+        / "worklogs"
+        / f"{contract['id']}-{receipt['draft_sha256'][:12]}.json"
+    )
     target = _relative(workspace, destination, "out", exists=False)
     if target.exists():
-        raise ProofWorklogError("E_PROOF_WORKLOG_EVIDENCE", "output draft already exists; use a new immutable path")
+        raise ProofWorklogError(
+            "E_PROOF_WORKLOG_EVIDENCE",
+            "output draft already exists; use a new immutable path",
+        )
     _write(target, receipt)
     return {**receipt, "path": target.relative_to(workspace).as_posix()}
 
@@ -167,19 +247,49 @@ def verify_proof_worklog(root: Path, draft_path: Path) -> dict[str, Any]:
             raise ProofWorklogError("E_PROOF_WORKLOG_EVIDENCE", "draft exceeds 1 MiB")
         value = json.loads(target.read_text(encoding="utf-8-sig"))
         if not isinstance(value, dict) or value.get("schema") != SCHEMA:
-            raise ProofWorklogError("E_PROOF_WORKLOG_SCHEMA", "draft schema is unsupported")
+            raise ProofWorklogError(
+                "E_PROOF_WORKLOG_SCHEMA", "draft schema is unsupported"
+            )
         core = {key: item for key, item in value.items() if key != "draft_sha256"}
         if value.get("draft_sha256") != _sha(core):
-            raise ProofWorklogError("E_PROOF_WORKLOG_EVIDENCE", "draft digest does not match its canonical body")
+            raise ProofWorklogError(
+                "E_PROOF_WORKLOG_EVIDENCE",
+                "draft digest does not match its canonical body",
+            )
         contract = value.get("contract")
         if not isinstance(contract, dict) or not isinstance(contract.get("path"), str):
-            raise ProofWorklogError("E_PROOF_WORKLOG_UNBOUND_INTENT", "draft has no sealed contract binding")
+            raise ProofWorklogError(
+                "E_PROOF_WORKLOG_UNBOUND_INTENT", "draft has no sealed contract binding"
+            )
         checked = verify_oracle_contract(workspace, Path(contract["path"]))
-        if not checked.get("ok") or checked.get("contract", {}).get("contract_sha256") != contract.get("contract_sha256"):
-            return {"ok": False, "marker": "PROOF_WORKLOG_DRAFT_INVALID", "reason": "oracle_binding_stale", "authority": dict(AUTHORITY)}
-        return {"ok": True, "marker": "PROOF_WORKLOG_DRAFT_VALID", "draft": value, "path": target.relative_to(workspace).as_posix(), "authority": dict(AUTHORITY)}
-    except (ProofWorklogError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        return {"ok": False, "marker": "PROOF_WORKLOG_DRAFT_INVALID", "reason": getattr(exc, "code", "E_PROOF_WORKLOG_SCHEMA"), "authority": dict(AUTHORITY)}
+        if not checked.get("ok") or checked.get("contract", {}).get(
+            "contract_sha256"
+        ) != contract.get("contract_sha256"):
+            return {
+                "ok": False,
+                "marker": "PROOF_WORKLOG_DRAFT_INVALID",
+                "reason": "oracle_binding_stale",
+                "authority": dict(AUTHORITY),
+            }
+        return {
+            "ok": True,
+            "marker": "PROOF_WORKLOG_DRAFT_VALID",
+            "draft": value,
+            "path": target.relative_to(workspace).as_posix(),
+            "authority": dict(AUTHORITY),
+        }
+    except (
+        ProofWorklogError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as exc:
+        return {
+            "ok": False,
+            "marker": "PROOF_WORKLOG_DRAFT_INVALID",
+            "reason": getattr(exc, "code", "E_PROOF_WORKLOG_SCHEMA"),
+            "authority": dict(AUTHORITY),
+        }
 
 
 def proof_worklog_projection(root: Path) -> dict[str, Any]:
@@ -192,5 +302,23 @@ def proof_worklog_projection(root: Path) -> dict[str, Any]:
             invalid.append(path.relative_to(workspace).as_posix())
             continue
         draft = checked["draft"]
-        drafts.append({"path": checked["path"], "contract_id": draft["contract"].get("id"), "contract_sha256": draft["contract"].get("contract_sha256"), "draft_sha256": draft["draft_sha256"], "review_required": True})
-    return {"schema": "factory.proof-worklog-projection.v1", "marker": MARKER, "draft_count": len(drafts), "invalid_count": len(invalid), "latest": drafts[-1] if drafts else None, "drafts": drafts[-20:], "invalid": invalid[:100], "authority": dict(AUTHORITY), "claim_boundary": "Read-only local worklog draft facts. Nothing was sent, posted, approved, or released."}
+        drafts.append(
+            {
+                "path": checked["path"],
+                "contract_id": draft["contract"].get("id"),
+                "contract_sha256": draft["contract"].get("contract_sha256"),
+                "draft_sha256": draft["draft_sha256"],
+                "review_required": True,
+            }
+        )
+    return {
+        "schema": "factory.proof-worklog-projection.v1",
+        "marker": MARKER,
+        "draft_count": len(drafts),
+        "invalid_count": len(invalid),
+        "latest": drafts[-1] if drafts else None,
+        "drafts": drafts[-20:],
+        "invalid": invalid[:100],
+        "authority": dict(AUTHORITY),
+        "claim_boundary": "Read-only local worklog draft facts. Nothing was sent, posted, approved, or released.",
+    }

@@ -1,4 +1,5 @@
 """Deterministic PRD-to-PR value compiler with governed mission handoffs."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -40,8 +41,14 @@ EXECUTORS = frozenset({"manual", "codex", "copilot", "claude", "custom"})
 EVIDENCE_CLASSES = frozenset({"measured", "observed", "modeled", "unknown"})
 MISSION_DECISIONS = frozenset({"approved_execution", "deferred", "rejected"})
 UX_STATES = (
-    "loading", "empty", "error", "success", "recovery", "permission",
-    "offline", "accessibility",
+    "loading",
+    "empty",
+    "error",
+    "success",
+    "recovery",
+    "permission",
+    "offline",
+    "accessibility",
 )
 MISSION_MAXIMA = {
     "max_iterations": 5,
@@ -66,7 +73,9 @@ def _now() -> str:
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _sha_bytes(value: bytes) -> str:
@@ -86,9 +95,13 @@ def _load_json(path: Path, schema: str | None = None) -> dict[str, Any]:
     try:
         value = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ProductMissionError("ARTIFACT_INVALID", f"cannot read JSON artifact {path}: {exc}") from exc
+        raise ProductMissionError(
+            "ARTIFACT_INVALID", f"cannot read JSON artifact {path}: {exc}"
+        ) from exc
     if not isinstance(value, dict):
-        raise ProductMissionError("ARTIFACT_INVALID", f"artifact must be a JSON object: {path}")
+        raise ProductMissionError(
+            "ARTIFACT_INVALID", f"artifact must be a JSON object: {path}"
+        )
     if schema and value.get("schema") != schema:
         raise ProductMissionError("SCHEMA_UNSUPPORTED", f"expected {schema}: {path}")
     return value
@@ -101,9 +114,13 @@ def _atomic_text(path: Path, text: str, *, force: bool = False) -> Path:
         if path.read_bytes() == data:
             return path
         if not force:
-            raise ProductMissionError("ARTIFACT_EXISTS", f"refusing to replace {path}; use --force")
+            raise ProductMissionError(
+                "ARTIFACT_EXISTS", f"refusing to replace {path}; use --force"
+            )
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    handle, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
     try:
         with os.fdopen(handle, "wb") as stream:
             stream.write(data)
@@ -117,7 +134,9 @@ def _atomic_text(path: Path, text: str, *, force: bool = False) -> Path:
 
 
 def _atomic_json(path: Path, value: dict[str, Any], *, force: bool = False) -> Path:
-    return _atomic_text(path, json.dumps(value, indent=2, sort_keys=True) + "\n", force=force)
+    return _atomic_text(
+        path, json.dumps(value, indent=2, sort_keys=True) + "\n", force=force
+    )
 
 
 def _headings(text: str) -> dict[int, str]:
@@ -143,7 +162,9 @@ def _clean_bullet(line: str) -> str | None:
 
 
 def _stable_requirement_id(statement: str) -> str:
-    explicit = re.match(r"^((?:REQ|FR|NFR)-[A-Za-z0-9_.-]+)\s*[:.-]?\s+", statement, re.I)
+    explicit = re.match(
+        r"^((?:REQ|FR|NFR)-[A-Za-z0-9_.-]+)\s*[:.-]?\s+", statement, re.I
+    )
     if explicit:
         return explicit.group(1).upper()
     normalized = " ".join(statement.lower().split())
@@ -152,21 +173,48 @@ def _stable_requirement_id(statement: str) -> str:
 
 def _is_requirement(statement: str, section: str) -> bool:
     section_words = section.lower()
-    if any(word in section_words for word in ("requirement", "feature", "user stor", "must")):
+    if any(
+        word in section_words
+        for word in ("requirement", "feature", "user stor", "must")
+    ):
         return True
-    return bool(re.search(r"\b(?:shall|must|as an?\s+.+?\s+i want|when\s+.+?\s+then)\b", statement, re.I))
+    return bool(
+        re.search(
+            r"\b(?:shall|must|as an?\s+.+?\s+i want|when\s+.+?\s+then)\b",
+            statement,
+            re.I,
+        )
+    )
 
 
 def _requirement_kind(statement: str, section: str) -> str:
     value = f"{section} {statement}".lower()
-    if any(word in value for word in ("security", "privacy", "permission", "encrypt", "auth")):
+    if any(
+        word in value
+        for word in ("security", "privacy", "permission", "encrypt", "auth")
+    ):
         return "trust"
-    if any(word in value for word in ("latency", "performance", "availability", "reliability")):
+    if any(
+        word in value
+        for word in ("latency", "performance", "availability", "reliability")
+    ):
         return "nonfunctional"
-    if any(word in value for word in (
-        "screen", "page", "button", "form", "user", "operator", "customer",
-        "dashboard", "login", "mobile", "web",
-    )):
+    if any(
+        word in value
+        for word in (
+            "screen",
+            "page",
+            "button",
+            "form",
+            "user",
+            "operator",
+            "customer",
+            "dashboard",
+            "login",
+            "mobile",
+            "web",
+        )
+    ):
         return "experience"
     return "functional"
 
@@ -193,21 +241,28 @@ def _extract_requirements(text: str) -> list[dict[str, Any]]:
         seen.add(requirement_id)
         dependencies = {
             item.upper()
-            for item in re.findall(r"\b(?:REQ|FR|NFR)-[A-Za-z0-9_.-]+\b", normalized, re.I)
+            for item in re.findall(
+                r"\b(?:REQ|FR|NFR)-[A-Za-z0-9_.-]+\b", normalized, re.I
+            )
         }
         dependencies.discard(requirement_id)
         kind = _requirement_kind(normalized, section)
-        requirements.append({
-            "id": requirement_id,
-            "statement": normalized,
-            "section": section,
-            "source_line": number,
-            "kind": kind,
-            "user_facing": kind == "experience",
-            "depends_on_requirements": sorted(dependencies),
-        })
+        requirements.append(
+            {
+                "id": requirement_id,
+                "statement": normalized,
+                "section": section,
+                "source_line": number,
+                "kind": kind,
+                "user_facing": kind == "experience",
+                "depends_on_requirements": sorted(dependencies),
+            }
+        )
     if len(requirements) > MAX_REQUIREMENTS:
-        raise ProductMissionError("REQUIREMENT_LIMIT", f"PRD contains more than {MAX_REQUIREMENTS} requirement atoms")
+        raise ProductMissionError(
+            "REQUIREMENT_LIMIT",
+            f"PRD contains more than {MAX_REQUIREMENTS} requirement atoms",
+        )
     return requirements
 
 
@@ -242,14 +297,36 @@ def _extract_product_facts(text: str) -> dict[str, list[str]]:
     return {
         "jobs": _bullets_in_sections(text, ("job", "task", "responsibilit")),
         "pains": _bullets_in_sections(text, ("pain", "problem", "friction")),
-        "desired_outcomes": _bullets_in_sections(text, ("desired outcome", "outcome", "goal")),
+        "desired_outcomes": _bullets_in_sections(
+            text, ("desired outcome", "outcome", "goal")
+        ),
         "journeys": _bullets_in_sections(text, ("journey", "workflow", "user flow")),
-        "business_rules": _bullets_in_sections(text, ("business rule", "policy", "decision rule")),
-        "data_ownership": _bullets_in_sections(text, ("data ownership", "data owner", "retention", "export", "deletion")),
-        "trust_boundaries": _bullets_in_sections(text, ("trust boundary", "trust", "security boundary", "privacy boundary")),
-        "external_effects": _bullets_in_sections(text, ("external effect", "side effect", "message", "deploy", "publish", "payment")),
-        "approval_requirements": _bullets_in_sections(text, ("approval", "human review", "authorization")),
-        "success_events": _bullets_in_sections(text, ("success event", "outcome event", "metric event", "telemetry")),
+        "business_rules": _bullets_in_sections(
+            text, ("business rule", "policy", "decision rule")
+        ),
+        "data_ownership": _bullets_in_sections(
+            text, ("data ownership", "data owner", "retention", "export", "deletion")
+        ),
+        "trust_boundaries": _bullets_in_sections(
+            text, ("trust boundary", "trust", "security boundary", "privacy boundary")
+        ),
+        "external_effects": _bullets_in_sections(
+            text,
+            (
+                "external effect",
+                "side effect",
+                "message",
+                "deploy",
+                "publish",
+                "payment",
+            ),
+        ),
+        "approval_requirements": _bullets_in_sections(
+            text, ("approval", "human review", "authorization")
+        ),
+        "success_events": _bullets_in_sections(
+            text, ("success event", "outcome event", "metric event", "telemetry")
+        ),
     }
 
 
@@ -259,7 +336,12 @@ def _extract_acceptance(text: str) -> list[dict[str, Any]]:
     for number, line in enumerate(text.splitlines(), 1):
         match = re.match(r"^\s*Scenario(?: Outline)?:\s*(.+?)\s*$", line, re.I)
         if match:
-            current = {"id": f"AC-{len(scenarios) + 1:03d}", "title": match.group(1), "source_line": number, "steps": []}
+            current = {
+                "id": f"AC-{len(scenarios) + 1:03d}",
+                "title": match.group(1),
+                "source_line": number,
+                "steps": [],
+            }
             scenarios.append(current)
             continue
         if current and re.match(r"^\s*(?:Given|When|Then|And|But)\b", line):
@@ -275,7 +357,11 @@ def _ux_audit(text: str, requirements: list[dict[str, Any]]) -> dict[str, str]:
         if not user_facing:
             result[state] = "not_applicable"
         else:
-            result[state] = "declared" if re.search(rf"\b{re.escape(state)}\b", lowered) else "missing"
+            result[state] = (
+                "declared"
+                if re.search(rf"\b{re.escape(state)}\b", lowered)
+                else "missing"
+            )
     return result
 
 
@@ -284,7 +370,13 @@ def _graph_mermaid(graph: dict[str, Any]) -> str:
     for index, requirement in enumerate(graph["requirements"], 1):
         label = requirement["id"].replace('"', "'")
         lines.append(f'    G --> R{index}["{label}"]')
-    lines.extend(['    G --> X["Gap inventory"]', '    G --> U["UX state audit"]', '    G --> O["Outcome contract"]'])
+    lines.extend(
+        [
+            '    G --> X["Gap inventory"]',
+            '    G --> U["UX state audit"]',
+            '    G --> O["Outcome contract"]',
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -293,43 +385,106 @@ def _project_name(text: str, fallback: str) -> str:
     return _slug(title.group(1) if title else fallback)
 
 
-def _product_gaps(requirements: list[dict[str, Any]], acceptance: list[dict[str, Any]],
-                  actors: list[str], outcomes: list[str], ux_states: dict[str, str],
-                  facts: dict[str, list[str]]) -> list[dict[str, str]]:
+def _product_gaps(
+    requirements: list[dict[str, Any]],
+    acceptance: list[dict[str, Any]],
+    actors: list[str],
+    outcomes: list[str],
+    ux_states: dict[str, str],
+    facts: dict[str, list[str]],
+) -> list[dict[str, str]]:
     gaps: list[dict[str, str]] = []
     checks = (
-        (not requirements, "REQUIREMENTS_MISSING", "blocking", "Add at least one testable requirement."),
-        (not acceptance, "ACCEPTANCE_MISSING", "blocking", "Add at least one Gherkin Scenario."),
+        (
+            not requirements,
+            "REQUIREMENTS_MISSING",
+            "blocking",
+            "Add at least one testable requirement.",
+        ),
+        (
+            not acceptance,
+            "ACCEPTANCE_MISSING",
+            "blocking",
+            "Add at least one Gherkin Scenario.",
+        ),
         (not actors, "ACTORS_MISSING", "advisory", "Name the user or operator roles."),
-        (not outcomes, "OUTCOMES_MISSING", "advisory", "Declare a measurable product outcome."),
-        (not facts["journeys"], "JOURNEYS_MISSING", "advisory", "Declare at least one end-to-end user journey."),
-        (not facts["data_ownership"], "DATA_OWNERSHIP_MISSING", "advisory", "Declare who owns, exports, retains, and deletes product data."),
-        (not facts["trust_boundaries"], "TRUST_BOUNDARIES_MISSING", "advisory", "Declare the product trust boundaries."),
-        (not facts["approval_requirements"], "APPROVAL_REQUIREMENTS_MISSING", "advisory", "Declare which external or irreversible effects require approval."),
-        (not facts["success_events"], "SUCCESS_EVENTS_MISSING", "advisory", "Declare measurable events that prove the product outcome."),
+        (
+            not outcomes,
+            "OUTCOMES_MISSING",
+            "advisory",
+            "Declare a measurable product outcome.",
+        ),
+        (
+            not facts["journeys"],
+            "JOURNEYS_MISSING",
+            "advisory",
+            "Declare at least one end-to-end user journey.",
+        ),
+        (
+            not facts["data_ownership"],
+            "DATA_OWNERSHIP_MISSING",
+            "advisory",
+            "Declare who owns, exports, retains, and deletes product data.",
+        ),
+        (
+            not facts["trust_boundaries"],
+            "TRUST_BOUNDARIES_MISSING",
+            "advisory",
+            "Declare the product trust boundaries.",
+        ),
+        (
+            not facts["approval_requirements"],
+            "APPROVAL_REQUIREMENTS_MISSING",
+            "advisory",
+            "Declare which external or irreversible effects require approval.",
+        ),
+        (
+            not facts["success_events"],
+            "SUCCESS_EVENTS_MISSING",
+            "advisory",
+            "Declare measurable events that prove the product outcome.",
+        ),
     )
-    gaps.extend({"code": code, "severity": severity, "message": message} for missing, code, severity, message in checks if missing)
-    gaps.extend({
-        "code": f"UX_{state.upper()}_MISSING",
-        "severity": "advisory",
-        "message": f"Declare the {state} experience state.",
-    } for state, status in ux_states.items() if status == "missing")
+    gaps.extend(
+        {"code": code, "severity": severity, "message": message}
+        for missing, code, severity, message in checks
+        if missing
+    )
+    gaps.extend(
+        {
+            "code": f"UX_{state.upper()}_MISSING",
+            "severity": "advisory",
+            "message": f"Declare the {state} experience state.",
+        }
+        for state, status in ux_states.items()
+        if status == "missing"
+    )
     return gaps
 
 
-def analyze_product_text(text: str, source_name: str, project: str | None = None,
-                         bindings: dict[str, str] | None = None) -> dict[str, Any]:
+def analyze_product_text(
+    text: str,
+    source_name: str,
+    project: str | None = None,
+    bindings: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Return deterministic Product Graph facts without writing product artifacts."""
     source_bytes = text.encode("utf-8")
     if not source_bytes or len(source_bytes) > MAX_PRD_BYTES:
-        raise ProductMissionError("PRD_SIZE_INVALID", f"PRD must be 1-{MAX_PRD_BYTES} UTF-8 bytes")
-    project_id = _slug(project) if project else _project_name(text, Path(source_name).stem)
+        raise ProductMissionError(
+            "PRD_SIZE_INVALID", f"PRD must be 1-{MAX_PRD_BYTES} UTF-8 bytes"
+        )
+    project_id = (
+        _slug(project) if project else _project_name(text, Path(source_name).stem)
+    )
     requirements = _extract_requirements(text)
     acceptance = _extract_acceptance(text)
     actors = _extract_actors(text)
     facts = _extract_product_facts(text)
     outcomes = _bullets_in_sections(text, ("outcome", "success", "goal", "metric"))
-    constraints = _bullets_in_sections(text, ("constraint", "non-functional", "guardrail", "security", "privacy"))
+    constraints = _bullets_in_sections(
+        text, ("constraint", "non-functional", "guardrail", "security", "privacy")
+    )
     assumptions = _bullets_in_sections(text, ("assumption",))
     unknowns = _bullets_in_sections(text, ("unknown", "question", "open issue"))
     ux_states = _ux_audit(text, requirements)
@@ -338,7 +493,11 @@ def analyze_product_text(text: str, source_name: str, project: str | None = None
     core = {
         "schema": PRODUCT_GRAPH_SCHEMA,
         "project": project_id,
-        "source": {"name": Path(source_name).name, "sha256": source_sha, "bytes": len(source_bytes)},
+        "source": {
+            "name": Path(source_name).name,
+            "sha256": source_sha,
+            "bytes": len(source_bytes),
+        },
         "actors": actors,
         **facts,
         "requirements": requirements,
@@ -350,40 +509,76 @@ def analyze_product_text(text: str, source_name: str, project: str | None = None
         "bindings": dict(sorted((bindings or {}).items())),
         "ux_states": ux_states,
         "gaps": gaps,
-        "status": "needs_input" if any(item["severity"] == "blocking" for item in gaps) else "ready",
+        "status": "needs_input"
+        if any(item["severity"] == "blocking" for item in gaps)
+        else "ready",
         "markers": [
-            "PRODUCT_GRAPH_BOUND", "REQUIREMENT_ATOMS_STABLE", "PRODUCT_GAPS_EXPOSED",
-            "UX_STATES_AUDITED", "PRODUCT_TRUST_MODEL_BOUND", "PRODUCT_OUTCOME_EVENTS_BOUND",
+            "PRODUCT_GRAPH_BOUND",
+            "REQUIREMENT_ATOMS_STABLE",
+            "PRODUCT_GAPS_EXPOSED",
+            "UX_STATES_AUDITED",
+            "PRODUCT_TRUST_MODEL_BOUND",
+            "PRODUCT_OUTCOME_EVENTS_BOUND",
         ],
     }
     return core
 
 
-def compile_product_text(text: str, *, root: Path, source_name: str, project: str | None = None,
-                         force: bool = False, bindings: dict[str, str] | None = None,
-                         intake_binding: dict[str, Any] | None = None) -> dict[str, Any]:
+def compile_product_text(
+    text: str,
+    *,
+    root: Path,
+    source_name: str,
+    project: str | None = None,
+    force: bool = False,
+    bindings: dict[str, str] | None = None,
+    intake_binding: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Compile UTF-8 PRD text into a local Product Graph and gap inventory."""
-    core = analyze_product_text(text, source_name=source_name, project=project, bindings=bindings)
+    core = analyze_product_text(
+        text, source_name=source_name, project=project, bindings=bindings
+    )
     if intake_binding is not None:
         core["intake"] = intake_binding
         core["markers"] = [*core["markers"], "PRODUCT_INTAKE_CONFIRMATION_BOUND"]
     project_id = core["project"]
-    graph = {**core, "graph_sha256": _sha_bytes(_canonical(core)), "generated_at": _now()}
+    graph = {
+        **core,
+        "graph_sha256": _sha_bytes(_canonical(core)),
+        "generated_at": _now(),
+    }
     directory = Path(root).resolve() / ".factory" / "products" / project_id
     graph_path = directory / "product_graph.json"
     if graph_path.exists() and not force:
         existing = _load_json(graph_path, PRODUCT_GRAPH_SCHEMA)
         if existing.get("graph_sha256") == graph["graph_sha256"]:
-            return {**existing, "path": str(graph_path), "mermaid": str(directory / "product_graph.mmd"), "idempotent": True}
-        raise ProductMissionError("PRODUCT_GRAPH_EXISTS", f"product graph changed: {graph_path}; use --force")
+            return {
+                **existing,
+                "path": str(graph_path),
+                "mermaid": str(directory / "product_graph.mmd"),
+                "idempotent": True,
+            }
+        raise ProductMissionError(
+            "PRODUCT_GRAPH_EXISTS", f"product graph changed: {graph_path}; use --force"
+        )
     _atomic_text(directory / "source.md", text, force=force)
     _atomic_json(graph_path, graph, force=force)
     _atomic_text(directory / "product_graph.mmd", _graph_mermaid(graph), force=force)
-    return {**graph, "path": str(graph_path), "mermaid": str(directory / "product_graph.mmd"), "idempotent": False}
+    return {
+        **graph,
+        "path": str(graph_path),
+        "mermaid": str(directory / "product_graph.mmd"),
+        "idempotent": False,
+    }
 
 
-def compile_product_prd(prd_path: Path, root: Path, project: str | None = None, force: bool = False,
-                        intake_path: Path | None = None) -> dict:
+def compile_product_prd(
+    prd_path: Path,
+    root: Path,
+    project: str | None = None,
+    force: bool = False,
+    intake_path: Path | None = None,
+) -> dict:
     """Compile one UTF-8 PRD file into a traceable Product Graph."""
     path = Path(prd_path)
     try:
@@ -391,11 +586,15 @@ def compile_product_prd(prd_path: Path, root: Path, project: str | None = None, 
     except OSError as exc:
         raise ProductMissionError("PRD_NOT_FOUND", f"cannot read PRD: {path}") from exc
     if len(data) > MAX_PRD_BYTES:
-        raise ProductMissionError("PRD_SIZE_INVALID", f"PRD must be at most {MAX_PRD_BYTES} UTF-8 bytes")
+        raise ProductMissionError(
+            "PRD_SIZE_INVALID", f"PRD must be at most {MAX_PRD_BYTES} UTF-8 bytes"
+        )
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise ProductMissionError("PRD_ENCODING_INVALID", "PRD must be valid UTF-8") from exc
+        raise ProductMissionError(
+            "PRD_ENCODING_INVALID", "PRD must be valid UTF-8"
+        ) from exc
     intake_binding: dict[str, Any] | None = None
     if intake_path is not None:
         # Keep the intake subsystem optional for legacy graphs, but fail closed
@@ -404,14 +603,26 @@ def compile_product_prd(prd_path: Path, root: Path, project: str | None = None, 
 
         workspace = Path(root).resolve()
         confirmation_path = Path(intake_path)
-        confirmation_path = confirmation_path.resolve() if confirmation_path.is_absolute() else (workspace / confirmation_path).resolve()
+        confirmation_path = (
+            confirmation_path.resolve()
+            if confirmation_path.is_absolute()
+            else (workspace / confirmation_path).resolve()
+        )
         confirmation = verify_intake_confirmation(workspace, confirmation_path)
-        if not confirmation["valid"] or not isinstance(confirmation.get("confirmation"), dict):
-            raise ProductMissionError("INTAKE_CONFIRMATION_INVALID", "; ".join(confirmation["errors"]) or "intake confirmation is invalid")
+        if not confirmation["valid"] or not isinstance(
+            confirmation.get("confirmation"), dict
+        ):
+            raise ProductMissionError(
+                "INTAKE_CONFIRMATION_INVALID",
+                "; ".join(confirmation["errors"]) or "intake confirmation is invalid",
+            )
         value = confirmation["confirmation"]
         source_sha = _sha_bytes(data)
         if value.get("source", {}).get("sha256") != source_sha:
-            raise ProductMissionError("INTAKE_SOURCE_MISMATCH", "intake confirmation is bound to different PRD bytes")
+            raise ProductMissionError(
+                "INTAKE_SOURCE_MISMATCH",
+                "intake confirmation is bound to different PRD bytes",
+            )
         decision = value["decision"]
         intake_binding = {
             "path": str(confirmation_path),
@@ -424,7 +635,11 @@ def compile_product_prd(prd_path: Path, root: Path, project: str | None = None, 
             "external_effects": decision["external_effects"],
         }
     return compile_product_text(
-        text, root=root, source_name=str(path), project=project, force=force,
+        text,
+        root=root,
+        source_name=str(path),
+        project=project,
+        force=force,
         intake_binding=intake_binding,
     )
 
@@ -432,7 +647,11 @@ def compile_product_prd(prd_path: Path, root: Path, project: str | None = None, 
 def verify_product_graph(graph_path: Path) -> dict[str, Any]:
     """Verify a Product Graph's own hash and its captured PRD source binding."""
     graph = _load_json(graph_path, PRODUCT_GRAPH_SCHEMA)
-    core = {key: value for key, value in graph.items() if key not in {"graph_sha256", "generated_at"}}
+    core = {
+        key: value
+        for key, value in graph.items()
+        if key not in {"graph_sha256", "generated_at"}
+    }
     errors: list[str] = []
     if _sha_bytes(_canonical(core)) != graph.get("graph_sha256"):
         errors.append("product graph hash mismatch")
@@ -474,9 +693,13 @@ def _slice_gates(requirements: list[dict[str, Any]]) -> list[str]:
     gates = ["unit", "requirement-mutation", "receipt-trace"]
     if any(item["user_facing"] for item in requirements):
         gates.extend(["accessibility", "responsive-visual"])
-    if any(word in text for word in ("auth", "permission", "security", "privacy", "secret")):
+    if any(
+        word in text for word in ("auth", "permission", "security", "privacy", "secret")
+    ):
         gates.append("security")
-    if any(word in text for word in ("api", "webhook", "connector", "external", "sync")):
+    if any(
+        word in text for word in ("api", "webhook", "connector", "external", "sync")
+    ):
         gates.append("integration")
     return gates
 
@@ -490,7 +713,9 @@ def _slice_risk(requirements: list[dict[str, Any]]) -> str:
     return "low"
 
 
-def _slice_score(requirements: list[dict[str, Any]], graph: dict[str, Any]) -> dict[str, int]:
+def _slice_score(
+    requirements: list[dict[str, Any]], graph: dict[str, Any]
+) -> dict[str, int]:
     """Score a slice with fixed, inspectable factors; higher priority ships first."""
     owned_ids = {item["id"] for item in requirements}
     dependent_count = sum(
@@ -501,11 +726,20 @@ def _slice_score(requirements: list[dict[str, Any]], graph: dict[str, Any]) -> d
     risk = {"low": 1, "medium": 3, "high": 5}[_slice_risk(requirements)]
     gates = _slice_gates(requirements)
     factors = {
-        "user_value": min(5, 1 + sum(item["user_facing"] for item in requirements) + bool(graph.get("outcomes"))),
-        "uncertainty_retired": min(5, 1 + len(graph.get("unknowns", [])) + len(graph.get("assumptions", []))),
+        "user_value": min(
+            5,
+            1
+            + sum(item["user_facing"] for item in requirements)
+            + bool(graph.get("outcomes")),
+        ),
+        "uncertainty_retired": min(
+            5, 1 + len(graph.get("unknowns", [])) + len(graph.get("assumptions", []))
+        ),
         "dependency_unlock": min(5, dependent_count),
         "security_change_risk": risk,
-        "implementation_review_cost": min(5, len(requirements) + max(0, len(gates) - 3) // 2),
+        "implementation_review_cost": min(
+            5, len(requirements) + max(0, len(gates) - 3) // 2
+        ),
     }
     priority = (
         50
@@ -530,7 +764,9 @@ def _slices_mermaid(plan: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _requirement_groups(requirements: list[dict[str, Any]], maximum: int) -> list[tuple[str, list[dict[str, Any]]]]:
+def _requirement_groups(
+    requirements: list[dict[str, Any]], maximum: int
+) -> list[tuple[str, list[dict[str, Any]]]]:
     groups: list[tuple[str, list[dict[str, Any]]]] = []
     for requirement in requirements:
         name = _theme(requirement)
@@ -540,7 +776,9 @@ def _requirement_groups(requirements: list[dict[str, Any]], maximum: int) -> lis
     return groups
 
 
-def _value_slice(name: str, requirements: list[dict[str, Any]], graph: dict[str, Any]) -> dict[str, Any]:
+def _value_slice(
+    name: str, requirements: list[dict[str, Any]], graph: dict[str, Any]
+) -> dict[str, Any]:
     digest = _sha_bytes(_canonical([item["id"] for item in requirements]))[:8]
     return {
         "id": f"slice-{name}-{digest}",
@@ -551,7 +789,9 @@ def _value_slice(name: str, requirements: list[dict[str, Any]], graph: dict[str,
         "score": _slice_score(requirements, graph),
         "gates": _slice_gates(requirements),
         "vertical_contract": {
-            "ui": "implement declared UX states" if any(item["user_facing"] for item in requirements) else "not_applicable",
+            "ui": "implement declared UX states"
+            if any(item["user_facing"] for item in requirements)
+            else "not_applicable",
             "behavior": "implement every bound requirement",
             "api_data": "preserve declared data ownership and trust boundaries",
             "tests": ["unit", "acceptance", "requirement-mutation"],
@@ -559,44 +799,81 @@ def _value_slice(name: str, requirements: list[dict[str, Any]], graph: dict[str,
             "rollback": "revert the slice commit and invalidate receipts derived from it",
         },
         "experience_contract": {
-            "required_states": [state for state, status in graph["ux_states"].items() if status != "not_applicable"],
-            "missing_states": [state for state, status in graph["ux_states"].items() if status == "missing"],
+            "required_states": [
+                state
+                for state, status in graph["ux_states"].items()
+                if status != "not_applicable"
+            ],
+            "missing_states": [
+                state
+                for state, status in graph["ux_states"].items()
+                if status == "missing"
+            ],
         },
         "acceptance_refs": [item["id"] for item in graph["acceptance"]],
         "depends_on": [],
     }
 
 
-def _bind_slice_dependencies(slices: list[dict[str, Any]], requirements: list[dict[str, Any]]) -> None:
-    owners = {requirement_id: item["id"] for item in slices for requirement_id in item["requirement_ids"]}
+def _bind_slice_dependencies(
+    slices: list[dict[str, Any]], requirements: list[dict[str, Any]]
+) -> None:
+    owners = {
+        requirement_id: item["id"]
+        for item in slices
+        for requirement_id in item["requirement_ids"]
+    }
     requirements_by_id = {item["id"]: item for item in requirements}
     for item in slices:
         dependencies = {
             owners[dependency]
             for requirement_id in item["requirement_ids"]
-            for dependency in requirements_by_id[requirement_id]["depends_on_requirements"]
+            for dependency in requirements_by_id[requirement_id][
+                "depends_on_requirements"
+            ]
             if dependency in owners and owners[dependency] != item["id"]
         }
         item["depends_on"] = sorted(dependencies)
 
 
-def _validate_slice_coverage(slices: list[dict[str, Any]], requirements: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
-    assigned = [requirement for item in slices for requirement in item["requirement_ids"]]
+def _validate_slice_coverage(
+    slices: list[dict[str, Any]], requirements: list[dict[str, Any]]
+) -> tuple[list[str], list[str]]:
+    assigned = [
+        requirement for item in slices for requirement in item["requirement_ids"]
+    ]
     expected = [item["id"] for item in requirements]
     if len(assigned) != len(set(assigned)) or sorted(assigned) != sorted(expected):
-        raise ProductMissionError("SLICE_COVERAGE_INVALID", "every requirement must be assigned exactly once")
+        raise ProductMissionError(
+            "SLICE_COVERAGE_INVALID", "every requirement must be assigned exactly once"
+        )
     return assigned, expected
 
 
-def plan_value_slices(graph_path: Path, root: Path, max_requirements: int = 3, force: bool = False) -> dict:
+def plan_value_slices(
+    graph_path: Path, root: Path, max_requirements: int = 3, force: bool = False
+) -> dict:
     """Assign every requirement exactly once to a deterministic vertical slice."""
     if max_requirements < 1 or max_requirements > MAX_SLICE_REQUIREMENTS:
-        raise ProductMissionError("SLICE_BOUND_INVALID", f"max requirements must be 1-{MAX_SLICE_REQUIREMENTS}")
+        raise ProductMissionError(
+            "SLICE_BOUND_INVALID",
+            f"max requirements must be 1-{MAX_SLICE_REQUIREMENTS}",
+        )
     graph = _load_json(graph_path, PRODUCT_GRAPH_SCHEMA)
-    blocking = [item for item in graph.get("gaps", []) if item.get("severity") == "blocking"]
+    blocking = [
+        item for item in graph.get("gaps", []) if item.get("severity") == "blocking"
+    ]
     if blocking:
-        raise ProductMissionError("MISSION_BLOCKED_BY_PRODUCT_GAPS", ", ".join(item["code"] for item in blocking))
-    slices = [_value_slice(name, requirements, graph) for name, requirements in _requirement_groups(graph["requirements"], max_requirements)]
+        raise ProductMissionError(
+            "MISSION_BLOCKED_BY_PRODUCT_GAPS",
+            ", ".join(item["code"] for item in blocking),
+        )
+    slices = [
+        _value_slice(name, requirements, graph)
+        for name, requirements in _requirement_groups(
+            graph["requirements"], max_requirements
+        )
+    ]
     _bind_slice_dependencies(slices, graph["requirements"])
     slices.sort(key=lambda item: (-item["score"]["priority"], item["id"]))
     assigned, expected = _validate_slice_coverage(slices, graph["requirements"])
@@ -607,77 +884,121 @@ def plan_value_slices(graph_path: Path, root: Path, max_requirements: int = 3, f
         "graph_sha256": graph["graph_sha256"],
         "slices": slices,
         "coverage": {
-            "requirements": len(expected), "assigned": len(assigned),
-            "deferred": [], "rejected": [], "unresolved": [], "complete": True,
+            "requirements": len(expected),
+            "assigned": len(assigned),
+            "deferred": [],
+            "rejected": [],
+            "unresolved": [],
+            "complete": True,
         },
         "status": "ready",
         "markers": [
-            "VALUE_SLICES_COVERAGE_COMPLETE", "DEPENDENCY_ORDER_DETERMINISTIC",
-            "VALUE_SLICE_SCORE_DETERMINISTIC", "VERTICAL_SLICE_CONTRACT_BOUND",
+            "VALUE_SLICES_COVERAGE_COMPLETE",
+            "DEPENDENCY_ORDER_DETERMINISTIC",
+            "VALUE_SLICE_SCORE_DETERMINISTIC",
+            "VERTICAL_SLICE_CONTRACT_BOUND",
         ],
     }
-    plan = {**core, "slices_sha256": _sha_bytes(_canonical(core)), "generated_at": _now()}
+    plan = {
+        **core,
+        "slices_sha256": _sha_bytes(_canonical(core)),
+        "generated_at": _now(),
+    }
     directory = Path(root).resolve() / ".factory" / "products" / graph["project"]
     path = directory / "value_slices.json"
     if path.exists() and not force:
         existing = _load_json(path, VALUE_SLICES_SCHEMA)
         if existing.get("slices_sha256") == plan["slices_sha256"]:
-            return {**existing, "path": str(path), "mermaid": str(directory / "value_slices.mmd"), "idempotent": True}
-        raise ProductMissionError("VALUE_SLICES_EXISTS", f"slice plan changed: {path}; use --force")
+            return {
+                **existing,
+                "path": str(path),
+                "mermaid": str(directory / "value_slices.mmd"),
+                "idempotent": True,
+            }
+        raise ProductMissionError(
+            "VALUE_SLICES_EXISTS", f"slice plan changed: {path}; use --force"
+        )
     _atomic_json(path, plan, force=force)
     _atomic_text(directory / "value_slices.mmd", _slices_mermaid(plan), force=force)
-    return {**plan, "path": str(path), "mermaid": str(directory / "value_slices.mmd"), "idempotent": False}
+    return {
+        **plan,
+        "path": str(path),
+        "mermaid": str(directory / "value_slices.mmd"),
+        "idempotent": False,
+    }
 
 
 def _bounded_budget(name: str, value: float | int | None) -> float | int:
     maximum = MISSION_MAXIMA[name]
     selected = maximum if value is None else value
-    if isinstance(selected, bool) or not isinstance(selected, (int, float)) or selected < 0 or selected > maximum:
-        raise ProductMissionError("MISSION_BUDGET_INVALID", f"{name} must be between 0 and {maximum}")
+    if (
+        isinstance(selected, bool)
+        or not isinstance(selected, (int, float))
+        or selected < 0
+        or selected > maximum
+    ):
+        raise ProductMissionError(
+            "MISSION_BUDGET_INVALID", f"{name} must be between 0 and {maximum}"
+        )
     if name in {"max_iterations", "max_wall_seconds"} and selected < 1:
-        raise ProductMissionError("MISSION_BUDGET_INVALID", f"{name} must be at least 1")
+        raise ProductMissionError(
+            "MISSION_BUDGET_INVALID", f"{name} must be at least 1"
+        )
     return selected
 
 
 def _completion_criteria(selected: dict[str, Any]) -> list[dict[str, Any]]:
     criteria = [
         {
-            "id": f"requirement:{item}", "kind": "requirement",
-            "description": f"Prove {item}.", "verification_kind": "deterministic_test",
+            "id": f"requirement:{item}",
+            "kind": "requirement",
+            "description": f"Prove {item}.",
+            "verification_kind": "deterministic_test",
             "evidence_contract": {"local_hash_bound": True},
         }
         for item in selected["requirement_ids"]
     ]
     criteria.extend(
         {
-            "id": f"acceptance:{item}", "kind": "acceptance",
-            "description": f"Pass {item}.", "verification_kind": "deterministic_test",
+            "id": f"acceptance:{item}",
+            "kind": "acceptance",
+            "description": f"Pass {item}.",
+            "verification_kind": "deterministic_test",
             "evidence_contract": {"local_hash_bound": True},
         }
         for item in selected["acceptance_refs"]
     )
     criteria.extend(
         {
-            "id": f"gate:{_slug(item)}", "kind": "gate",
-            "description": f"Pass the {item} gate.", "verification_kind": "deterministic_tool",
+            "id": f"gate:{_slug(item)}",
+            "kind": "gate",
+            "description": f"Pass the {item} gate.",
+            "verification_kind": "deterministic_tool",
             "evidence_contract": {"local_hash_bound": True},
         }
         for item in selected["gates"]
     )
     if selected["vertical_contract"]["ui"] != "not_applicable":
-        criteria.append({
-            "id": f"browser-flow:{selected['id']}",
-            "kind": "browser_control",
-            "description": f"Complete the primary user outcome for {selected['id']} in fewer than four interactions.",
-            "verification_kind": "browser_control",
-            "evidence_contract": {
-                "schema": "factory.browser-flow.evidence.v1", "max_clicks": 3,
-                "exact_url_match": True, "all_assertions_required": True,
-                "screenshot_hashes_required": True,
-            },
-        })
+        criteria.append(
+            {
+                "id": f"browser-flow:{selected['id']}",
+                "kind": "browser_control",
+                "description": f"Complete the primary user outcome for {selected['id']} in fewer than four interactions.",
+                "verification_kind": "browser_control",
+                "evidence_contract": {
+                    "schema": "factory.browser-flow.evidence.v1",
+                    "max_clicks": 3,
+                    "exact_url_match": True,
+                    "all_assertions_required": True,
+                    "screenshot_hashes_required": True,
+                },
+            }
+        )
     if not criteria or len(criteria) > MAX_COMPLETION_CRITERIA:
-        raise ProductMissionError("NO_FINISH_CONTRACT", f"mission must define 1-{MAX_COMPLETION_CRITERIA} criteria")
+        raise ProductMissionError(
+            "NO_FINISH_CONTRACT",
+            f"mission must define 1-{MAX_COMPLETION_CRITERIA} criteria",
+        )
     return criteria
 
 
@@ -707,8 +1028,17 @@ def _routing_policy(risk: str) -> dict[str, Any]:
         "provider_binding": "external_adapter_required",
         "quality_cost_override": "mission_owner_approval_required",
         "compaction": {
-            "allowed": ["MISSION.md", "candidate_diff", "evidence_manifest", "hash_bound_attempt_summary"],
-            "forbidden": ["creator_hidden_reasoning", "creator_transcript", "failed_attempt_history"],
+            "allowed": [
+                "MISSION.md",
+                "candidate_diff",
+                "evidence_manifest",
+                "hash_bound_attempt_summary",
+            ],
+            "forbidden": [
+                "creator_hidden_reasoning",
+                "creator_transcript",
+                "failed_attempt_history",
+            ],
         },
     }
 
@@ -716,13 +1046,13 @@ def _routing_policy(risk: str) -> dict[str, Any]:
 def _mission_context(mission: dict[str, Any], selected: dict[str, Any]) -> str:
     requirements = "\n".join(f"- {item}" for item in selected["requirement_ids"])
     gates = "\n".join(f"- {item}" for item in selected["gates"])
-    return f"""# Mission: {mission['id']}
+    return f"""# Mission: {mission["id"]}
 
 Status: planned. Human approval is required before execution and promotion.
 
 ## User outcome
 
-{selected['user_outcome']}
+{selected["user_outcome"]}
 
 ## Requirement IDs
 
@@ -734,14 +1064,14 @@ Status: planned. Human approval is required before execution and promotion.
 
 ## Bound inputs
 
-- Product Graph: `{mission['inputs']['graph_sha256']}`
-- Value slices: `{mission['inputs']['slices_sha256']}`
-- Loop Passport: `{mission['loop']['passport_sha256']}`
+- Product Graph: `{mission["inputs"]["graph_sha256"]}`
+- Value slices: `{mission["inputs"]["slices_sha256"]}`
+- Loop Passport: `{mission["loop"]["passport_sha256"]}`
 
 ## Workspace and roles
 
-- Worktree: `{mission['workspace_contract']['path']}`
-- Branch: `{mission['workspace_contract']['branch']}`
+- Worktree: `{mission["workspace_contract"]["path"]}`
+- Branch: `{mission["workspace_contract"]["branch"]}`
 - Builder writes only inside the approved workspace.
 - Checker receives the candidate diff and evidence, not creator-private reasoning.
 - UX reviewer may attach browser evidence but may not modify or promote the candidate.
@@ -753,20 +1083,35 @@ connector, or production-write authority.
 
 def _validated_slices(path: Path) -> dict[str, Any]:
     slices = _load_json(path, VALUE_SLICES_SCHEMA)
-    core = {key: value for key, value in slices.items() if key not in {"slices_sha256", "generated_at"}}
+    core = {
+        key: value
+        for key, value in slices.items()
+        if key not in {"slices_sha256", "generated_at"}
+    }
     if _sha_bytes(_canonical(core)) != slices.get("slices_sha256"):
-        raise ProductMissionError("MISSION_INPUT_DRIFT", "Value slice content hash is invalid")
+        raise ProductMissionError(
+            "MISSION_INPUT_DRIFT", "Value slice content hash is invalid"
+        )
     return slices
 
 
 def _validated_graph(slices: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     graph_path = Path(slices["graph_path"])
     graph = _load_json(graph_path, PRODUCT_GRAPH_SCHEMA)
-    core = {key: value for key, value in graph.items() if key not in {"graph_sha256", "generated_at"}}
+    core = {
+        key: value
+        for key, value in graph.items()
+        if key not in {"graph_sha256", "generated_at"}
+    }
     if _sha_bytes(_canonical(core)) != graph["graph_sha256"]:
-        raise ProductMissionError("MISSION_INPUT_DRIFT", "Product Graph content hash is invalid")
+        raise ProductMissionError(
+            "MISSION_INPUT_DRIFT", "Product Graph content hash is invalid"
+        )
     if slices.get("graph_sha256") != graph.get("graph_sha256"):
-        raise ProductMissionError("MISSION_INPUT_DRIFT", "Value slices were compiled from a different Product Graph")
+        raise ProductMissionError(
+            "MISSION_INPUT_DRIFT",
+            "Value slices were compiled from a different Product Graph",
+        )
     return graph_path, graph
 
 
@@ -784,68 +1129,129 @@ def _existing_mission(path: Path, force: bool) -> dict[str, Any] | None:
     verification = verify_mission(path)
     if verification["valid"]:
         return {**existing, "path": str(path), "idempotent": True}
-    raise ProductMissionError("MISSION_EXISTS", f"mission exists but is invalid: {path}; use --force")
+    raise ProductMissionError(
+        "MISSION_EXISTS", f"mission exists but is invalid: {path}; use --force"
+    )
 
 
-def _optional_mission_inputs(root: Path, readiness_path: Path | None, graph: dict[str, Any],
-                             require_intake: bool) -> tuple[dict[str, Any], list[str]]:
+def _optional_mission_inputs(
+    root: Path, readiness_path: Path | None, graph: dict[str, Any], require_intake: bool
+) -> tuple[dict[str, Any], list[str]]:
     inputs: dict[str, Any] = {}
     markers: list[str] = []
     if readiness_path is not None:
         readiness = verify_migration_readiness(Path(readiness_path))
         if not readiness["valid"] or not readiness["ready"]:
-            raise ProductMissionError("MIGRATION_AGENT_NOT_READY", "; ".join(readiness["errors"]) or "every readiness category requires executable proof")
-        inputs["migration_readiness"] = {"path": str(Path(readiness_path).resolve()), "sha256": _sha_path(Path(readiness_path))}
+            raise ProductMissionError(
+                "MIGRATION_AGENT_NOT_READY",
+                "; ".join(readiness["errors"])
+                or "every readiness category requires executable proof",
+            )
+        inputs["migration_readiness"] = {
+            "path": str(Path(readiness_path).resolve()),
+            "sha256": _sha_path(Path(readiness_path)),
+        }
         markers.append("MIGRATION_AGENT_READY_BOUND")
     context = root.resolve() / ".factory" / "context" / "context-receipt.json"
     if context.is_file() and verify_repository_context(context)["valid"]:
-        inputs["repository_context"] = {"path": str(context), "sha256": _sha_path(context)}
+        inputs["repository_context"] = {
+            "path": str(context),
+            "sha256": _sha_path(context),
+        }
         markers.append("REPOSITORY_CONTEXT_BOUND")
     intake = graph.get("intake")
     if intake is None:
         if require_intake:
-            raise ProductMissionError("INTAKE_CONFIRMATION_REQUIRED", "compile the Product Graph with a verified intake confirmation before creating this mission")
+            raise ProductMissionError(
+                "INTAKE_CONFIRMATION_REQUIRED",
+                "compile the Product Graph with a verified intake confirmation before creating this mission",
+            )
         return inputs, markers
     if not isinstance(intake, dict) or set(intake) != {
-        "path", "file_sha256", "confirmation_sha256", "source_sha256", "framework",
-        "intent_sha256", "acceptance_sha256", "external_effects",
+        "path",
+        "file_sha256",
+        "confirmation_sha256",
+        "source_sha256",
+        "framework",
+        "intent_sha256",
+        "acceptance_sha256",
+        "external_effects",
     }:
-        raise ProductMissionError("INTAKE_CONFIRMATION_INVALID", "Product Graph intake binding is malformed")
+        raise ProductMissionError(
+            "INTAKE_CONFIRMATION_INVALID", "Product Graph intake binding is malformed"
+        )
     from .intake_grill import verify_intake_confirmation
 
     confirmation = verify_intake_confirmation(root, Path(intake["path"]))
-    if not confirmation["valid"] or not isinstance(confirmation.get("confirmation"), dict):
-        raise ProductMissionError("INTAKE_CONFIRMATION_INVALID", "; ".join(confirmation["errors"]) or "intake confirmation is invalid")
+    if not confirmation["valid"] or not isinstance(
+        confirmation.get("confirmation"), dict
+    ):
+        raise ProductMissionError(
+            "INTAKE_CONFIRMATION_INVALID",
+            "; ".join(confirmation["errors"]) or "intake confirmation is invalid",
+        )
     value = confirmation["confirmation"]
-    if _sha_path(Path(intake["path"])) != intake["file_sha256"] or value.get("confirmation_sha256") != intake["confirmation_sha256"]:
-        raise ProductMissionError("INTAKE_CONFIRMATION_DRIFT", "intake confirmation file or hash changed")
-    if value.get("source", {}).get("sha256") != graph.get("source", {}).get("sha256") or intake["source_sha256"] != graph.get("source", {}).get("sha256"):
-        raise ProductMissionError("INTAKE_SOURCE_MISMATCH", "Product Graph and intake confirmation are bound to different PRD bytes")
-    inputs["intake_confirmation"] = {"path": intake["path"], "sha256": intake["file_sha256"]}
+    if (
+        _sha_path(Path(intake["path"])) != intake["file_sha256"]
+        or value.get("confirmation_sha256") != intake["confirmation_sha256"]
+    ):
+        raise ProductMissionError(
+            "INTAKE_CONFIRMATION_DRIFT", "intake confirmation file or hash changed"
+        )
+    if value.get("source", {}).get("sha256") != graph.get("source", {}).get(
+        "sha256"
+    ) or intake["source_sha256"] != graph.get("source", {}).get("sha256"):
+        raise ProductMissionError(
+            "INTAKE_SOURCE_MISMATCH",
+            "Product Graph and intake confirmation are bound to different PRD bytes",
+        )
+    inputs["intake_confirmation"] = {
+        "path": intake["path"],
+        "sha256": intake["file_sha256"],
+    }
     markers.append("INTAKE_CONFIRMATION_BOUND")
     return inputs, markers
 
 
 def _mission_markers(criteria: list[dict[str, Any]], extra: list[str]) -> list[str]:
     markers = [
-        "MISSION_PASSPORT_BOUND", "MISSION_BUDGET_HARD", "EXTERNAL_EFFECTS_APPROVAL_REQUIRED",
-        "CREATOR_VERIFIER_CONTEXT_WALL", "NO_FINISH_CONTRACT", "MISSION_SINGLE_WORKTREE_BOUND",
-        "MISSION_ROLE_PERMISSIONS_SEPARATE", "MISSION_CONTEXT_MINIMIZED", "MISSION_HYPOTHESES_BOUND",
-        "MISSION_FRESH_CONTEXT_ATTEMPTS", "MISSION_MODEL_ROUTING_BOUNDED",
+        "MISSION_PASSPORT_BOUND",
+        "MISSION_BUDGET_HARD",
+        "EXTERNAL_EFFECTS_APPROVAL_REQUIRED",
+        "CREATOR_VERIFIER_CONTEXT_WALL",
+        "NO_FINISH_CONTRACT",
+        "MISSION_SINGLE_WORKTREE_BOUND",
+        "MISSION_ROLE_PERMISSIONS_SEPARATE",
+        "MISSION_CONTEXT_MINIMIZED",
+        "MISSION_HYPOTHESES_BOUND",
+        "MISSION_FRESH_CONTEXT_ATTEMPTS",
+        "MISSION_MODEL_ROUTING_BOUNDED",
     ]
     if any(item["verification_kind"] == "browser_control" for item in criteria):
         markers.append("BROWSER_CONTROL_CRITERION_BOUND")
     return markers + extra
 
 
-def create_mission(slices_path: Path, slice_id: str, root: Path, owner: str, executor: str = "manual",
-                   force: bool = False, max_iterations: int | None = None,
-                   max_wall_seconds: int | None = None, max_tokens: int | None = None,
-                   max_cost_usd: float | None = None, readiness_path: Path | None = None,
-                   require_intake: bool = False) -> dict:
+def create_mission(
+    slices_path: Path,
+    slice_id: str,
+    root: Path,
+    owner: str,
+    executor: str = "manual",
+    force: bool = False,
+    max_iterations: int | None = None,
+    max_wall_seconds: int | None = None,
+    max_tokens: int | None = None,
+    max_cost_usd: float | None = None,
+    readiness_path: Path | None = None,
+    require_intake: bool = False,
+) -> dict:
     """Bind one approved slice into a supervised, budgeted mission contract."""
     if executor not in EXECUTORS:
-        raise ProductMissionError("EXECUTOR_UNSUPPORTED", f"executor must be one of {', '.join(sorted(EXECUTORS))}")
+        raise ProductMissionError(
+            "EXECUTOR_UNSUPPORTED",
+            f"executor must be one of {', '.join(sorted(EXECUTORS))}",
+        )
     if not owner.strip():
         raise ProductMissionError("OWNER_REQUIRED", "mission owner is required")
     slices = _validated_slices(slices_path)
@@ -869,22 +1275,35 @@ def create_mission(slices_path: Path, slice_id: str, root: Path, owner: str, exe
         }.items()
     }
     loop_manifest = default_manifest(mission_id, owner)
-    loop_manifest.update({
-        "autonomy": "supervised",
-        "workspace": {"mode": "isolated", "allowed_paths": ["."], "network": "deny"},
-        "capabilities": {"skills": [f"executor:{executor}"], "connectors": [], "actions": ["read_repository", "write_workspace", "execute_tests"]},
-        "budgets": budget,
-        "validators": {
-            "pre": ["product_graph_complete", "slice_coverage_complete"],
-            "post": ["tests", "requirement_coverage", "receipt_trace"],
-            "invariant": ["no_unapproved_promotion", "hash_bound_sources"],
-        },
-        "approvals": {
-            "required_for": sorted(DESTRUCTIVE_ACTIONS | {"external_message", "credential", "connector_grant"}),
-            "distinct_approver": True,
-            "expires_minutes": 60,
-        },
-    })
+    loop_manifest.update(
+        {
+            "autonomy": "supervised",
+            "workspace": {
+                "mode": "isolated",
+                "allowed_paths": ["."],
+                "network": "deny",
+            },
+            "capabilities": {
+                "skills": [f"executor:{executor}"],
+                "connectors": [],
+                "actions": ["read_repository", "write_workspace", "execute_tests"],
+            },
+            "budgets": budget,
+            "validators": {
+                "pre": ["product_graph_complete", "slice_coverage_complete"],
+                "post": ["tests", "requirement_coverage", "receipt_trace"],
+                "invariant": ["no_unapproved_promotion", "hash_bound_sources"],
+            },
+            "approvals": {
+                "required_for": sorted(
+                    DESTRUCTIVE_ACTIONS
+                    | {"external_message", "credential", "connector_grant"}
+                ),
+                "distinct_approver": True,
+                "expires_minutes": 60,
+            },
+        }
+    )
     loop_path = directory / "loop.manifest.json"
     _atomic_json(loop_path, loop_manifest, force=force)
     passport = build_loop_passport(Path(root), loop_path)
@@ -904,7 +1323,9 @@ def create_mission(slices_path: Path, slice_id: str, root: Path, owner: str, exe
         "slices_file_sha256": _sha_path(slices_path),
         "slices_sha256": slices["slices_sha256"],
     }
-    optional_inputs, optional_markers = _optional_mission_inputs(Path(root), readiness_path, graph, require_intake)
+    optional_inputs, optional_markers = _optional_mission_inputs(
+        Path(root), readiness_path, graph, require_intake
+    )
     inputs.update(optional_inputs)
     markers = _mission_markers(criteria, optional_markers)
     core = {
@@ -934,31 +1355,64 @@ def create_mission(slices_path: Path, slice_id: str, root: Path, owner: str, exe
             ],
             "acceptance_refs": selected["acceptance_refs"],
             "allowed_paths": ["."],
-            "excluded_context": ["unrelated_prd_sections", "creator_private_reasoning", "unrelated_repository_history"],
+            "excluded_context": [
+                "unrelated_prd_sections",
+                "creator_private_reasoning",
+                "unrelated_repository_history",
+            ],
         },
         "loop": loop,
         "budgets": budget,
         "role_permissions": {
             "builder": {
                 "can": ["read_context_packet", "write_workspace", "run_approved_tools"],
-                "cannot": ["approve_own_work", "merge", "deploy", "publish", "external_message"],
+                "cannot": [
+                    "approve_own_work",
+                    "merge",
+                    "deploy",
+                    "publish",
+                    "external_message",
+                ],
             },
             "checker": {
                 "can": ["read_candidate_diff", "run_validators", "attach_evidence"],
-                "cannot": ["read_creator_private_reasoning", "modify_candidate", "merge", "deploy", "publish"],
+                "cannot": [
+                    "read_creator_private_reasoning",
+                    "modify_candidate",
+                    "merge",
+                    "deploy",
+                    "publish",
+                ],
             },
             "ux_reviewer": {
-                "can": ["read_declared_ux_states", "run_browser_checks", "attach_screenshots"],
+                "can": [
+                    "read_declared_ux_states",
+                    "run_browser_checks",
+                    "attach_screenshots",
+                ],
                 "cannot": ["modify_candidate", "approve_release", "deploy", "publish"],
             },
         },
         "orchestration": {
             "pattern": "creator_verifier",
-            "creator": {"executor": executor, "reasoning_profile": "balanced_generation", "inputs": ["MISSION.md", "repository", "approved_tools"]},
-            "verifier": {"executor": "independent", "reasoning_profile": "independent_high_reasoning", "inputs": ["mission.json", "candidate_diff", "evidence_manifest"]},
+            "creator": {
+                "executor": executor,
+                "reasoning_profile": "balanced_generation",
+                "inputs": ["MISSION.md", "repository", "approved_tools"],
+            },
+            "verifier": {
+                "executor": "independent",
+                "reasoning_profile": "independent_high_reasoning",
+                "inputs": ["mission.json", "candidate_diff", "evidence_manifest"],
+            },
             "context_wall": {
                 "required": True,
-                "verifier_forbidden_inputs": ["creator_scratchpad", "creator_transcript", "creator_hidden_reasoning", "failed_attempt_history"],
+                "verifier_forbidden_inputs": [
+                    "creator_scratchpad",
+                    "creator_transcript",
+                    "creator_hidden_reasoning",
+                    "failed_attempt_history",
+                ],
                 "same_identity_allowed": False,
             },
             "attempt_policy": {
@@ -979,14 +1433,29 @@ def create_mission(slices_path: Path, slice_id: str, root: Path, owner: str, exe
             "evidence_required_per_criterion": True,
             "completion_receipt_required": True,
         },
-        "authority": {"execute": "human_approval", "merge": False, "publish": False, "deploy": False, "external_message": False},
+        "authority": {
+            "execute": "human_approval",
+            "merge": False,
+            "publish": False,
+            "deploy": False,
+            "external_message": False,
+        },
         "markers": markers,
     }
-    mission = {**core, "mission_sha256": _sha_bytes(_canonical(core)), "generated_at": _now()}
+    mission = {
+        **core,
+        "mission_sha256": _sha_bytes(_canonical(core)),
+        "generated_at": _now(),
+    }
     _atomic_json(mission_path, mission, force=force)
     context_path = directory / "MISSION.md"
     _atomic_text(context_path, _mission_context(mission, selected), force=force)
-    return {**mission, "path": str(mission_path), "context": str(context_path), "idempotent": False}
+    return {
+        **mission,
+        "path": str(mission_path),
+        "context": str(context_path),
+        "idempotent": False,
+    }
 
 
 def _verify_primary_input(mission: dict[str, Any], name: str) -> list[str]:
@@ -1007,14 +1476,23 @@ def _verify_optional_input(mission: dict[str, Any], name: str) -> list[str]:
         return [f"{name} input drift"]
     if name == "migration_readiness":
         check = verify_migration_readiness(path)
-        return [] if check["valid"] and check["ready"] else ["migration readiness is no longer verified and ready"]
+        return (
+            []
+            if check["valid"] and check["ready"]
+            else ["migration readiness is no longer verified and ready"]
+        )
     if name == "intake_confirmation":
         from .intake_grill import verify_intake_confirmation
+
         graph_path = Path(mission["inputs"]["graph_path"]).resolve()
         workspace = graph_path.parents[3]
         check = verify_intake_confirmation(workspace, path)
         return [] if check["valid"] else ["intake confirmation is no longer verified"]
-    return [] if verify_repository_context(path)["valid"] else ["repository context is no longer verified"]
+    return (
+        []
+        if verify_repository_context(path)["valid"]
+        else ["repository context is no longer verified"]
+    )
 
 
 def _verify_mission_passport(mission: dict[str, Any]) -> list[str]:
@@ -1022,7 +1500,10 @@ def _verify_mission_passport(mission: dict[str, Any]) -> list[str]:
     if not path.exists():
         return ["missing Loop Passport"]
     result = verify_loop_passport(path)
-    if not result["valid"] or result["passport_sha256"] != mission["loop"]["passport_sha256"]:
+    if (
+        not result["valid"]
+        or result["passport_sha256"] != mission["loop"]["passport_sha256"]
+    ):
         return ["Loop Passport invalid or changed"]
     return []
 
@@ -1030,8 +1511,17 @@ def _verify_mission_passport(mission: dict[str, Any]) -> list[str]:
 def verify_mission(mission_path: Path) -> dict:
     """Verify mission identity, source artifacts, and Loop Passport without execution."""
     mission = _load_json(mission_path, MISSION_SCHEMA)
-    core = {key: value for key, value in mission.items() if key not in {"mission_sha256", "generated_at", "path", "context", "idempotent"}}
-    errors = [] if _sha_bytes(_canonical(core)) == mission.get("mission_sha256") else ["mission hash mismatch"]
+    core = {
+        key: value
+        for key, value in mission.items()
+        if key
+        not in {"mission_sha256", "generated_at", "path", "context", "idempotent"}
+    }
+    errors = (
+        []
+        if _sha_bytes(_canonical(core)) == mission.get("mission_sha256")
+        else ["mission hash mismatch"]
+    )
     for name in ("graph", "slices"):
         errors.extend(_verify_primary_input(mission, name))
     for name in ("migration_readiness", "repository_context", "intake_confirmation"):
@@ -1048,19 +1538,37 @@ def verify_mission(mission_path: Path) -> dict:
     }
 
 
-def decide_mission(mission_path: Path, root: Path, *, owner: str, decision: str,
-                   rationale: str, force: bool = False) -> dict[str, Any]:
+def decide_mission(
+    mission_path: Path,
+    root: Path,
+    *,
+    owner: str,
+    decision: str,
+    rationale: str,
+    force: bool = False,
+) -> dict[str, Any]:
     """Record one owner decision without granting downstream release authority."""
     verification = verify_mission(mission_path)
     if not verification["valid"]:
-        raise ProductMissionError("MISSION_INPUT_DRIFT", "; ".join(verification["errors"]))
+        raise ProductMissionError(
+            "MISSION_INPUT_DRIFT", "; ".join(verification["errors"])
+        )
     mission = _load_json(mission_path, MISSION_SCHEMA)
     if owner.strip() != mission["owner"]:
-        raise ProductMissionError("MISSION_DECISION_OWNER_MISMATCH", "decision owner must match the mission owner")
+        raise ProductMissionError(
+            "MISSION_DECISION_OWNER_MISMATCH",
+            "decision owner must match the mission owner",
+        )
     if decision not in MISSION_DECISIONS:
-        raise ProductMissionError("DECISION_INVALID", f"decision must be one of {', '.join(sorted(MISSION_DECISIONS))}")
+        raise ProductMissionError(
+            "DECISION_INVALID",
+            f"decision must be one of {', '.join(sorted(MISSION_DECISIONS))}",
+        )
     if not rationale.strip() or len(rationale) > MAX_NOTES:
-        raise ProductMissionError("RATIONALE_INVALID", f"rationale is required and limited to {MAX_NOTES} characters")
+        raise ProductMissionError(
+            "RATIONALE_INVALID",
+            f"rationale is required and limited to {MAX_NOTES} characters",
+        )
     core = {
         "schema": MISSION_DECISION_SCHEMA,
         "mission": {
@@ -1082,10 +1590,23 @@ def decide_mission(mission_path: Path, root: Path, *, owner: str, decision: str,
             "connector_grant": False,
             "credential_access": False,
         },
-        "markers": ["MISSION_EXECUTION_APPROVAL_BOUND", "EXTERNAL_EFFECTS_APPROVAL_REQUIRED"],
+        "markers": [
+            "MISSION_EXECUTION_APPROVAL_BOUND",
+            "EXTERNAL_EFFECTS_APPROVAL_REQUIRED",
+        ],
     }
-    receipt = {**core, "decision_sha256": _sha_bytes(_canonical(core)), "generated_at": _now()}
-    path = Path(root).resolve() / ".factory" / "missions" / mission["id"] / "execution_decision.json"
+    receipt = {
+        **core,
+        "decision_sha256": _sha_bytes(_canonical(core)),
+        "generated_at": _now(),
+    }
+    path = (
+        Path(root).resolve()
+        / ".factory"
+        / "missions"
+        / mission["id"]
+        / "execution_decision.json"
+    )
     _atomic_json(path, receipt, force=force)
     return {**receipt, "path": str(path)}
 
@@ -1098,18 +1619,37 @@ def _evidence(root: Path, paths: list[Path]) -> list[dict[str, Any]]:
         try:
             path.relative_to(root)
         except ValueError as exc:
-            raise ProductMissionError("EVIDENCE_OUTSIDE_ROOT", f"evidence must be beneath {root}: {path}") from exc
+            raise ProductMissionError(
+                "EVIDENCE_OUTSIDE_ROOT", f"evidence must be beneath {root}: {path}"
+            ) from exc
         if not path.is_file():
-            raise ProductMissionError("EVIDENCE_MISSING", f"evidence file not found: {path}")
-        result.append({"path": str(path), "sha256": _sha_path(path), "bytes": path.stat().st_size})
+            raise ProductMissionError(
+                "EVIDENCE_MISSING", f"evidence file not found: {path}"
+            )
+        result.append(
+            {"path": str(path), "sha256": _sha_path(path), "bytes": path.stat().st_size}
+        )
     return result
 
 
 def _review_evidence(evidence: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    categories = {name: [] for name in ("screenshots", "responsive", "accessibility", "tests", "mutations", "gates", "traces")}
+    categories = {
+        name: []
+        for name in (
+            "screenshots",
+            "responsive",
+            "accessibility",
+            "tests",
+            "mutations",
+            "gates",
+            "traces",
+        )
+    }
     for item in evidence:
         name = Path(item["path"]).name.lower()
-        if any(word in name for word in ("screenshot", ".png", ".jpg", ".jpeg", ".webp")):
+        if any(
+            word in name for word in ("screenshot", ".png", ".jpg", ".jpeg", ".webp")
+        ):
             categories["screenshots"].append(item)
         if any(word in name for word in ("responsive", "mobile", "viewport")):
             categories["responsive"].append(item)
@@ -1131,21 +1671,35 @@ def _validation_manifest(path: Path, root: Path) -> tuple[dict[str, Any], Path]:
     try:
         resolved.relative_to(Path(root).resolve())
     except ValueError as exc:
-        raise ProductMissionError("VALIDATION_OUTSIDE_ROOT", f"validation manifest must be beneath {Path(root).resolve()}") from exc
+        raise ProductMissionError(
+            "VALIDATION_OUTSIDE_ROOT",
+            f"validation manifest must be beneath {Path(root).resolve()}",
+        ) from exc
     value = _load_json(resolved, MISSION_VALIDATION_INPUT_SCHEMA)
     for field in ("creator_id", "verifier_id"):
-        if not isinstance(value.get(field), str) or not value[field].strip() or len(value[field]) > 120:
-            raise ProductMissionError("NO_FINISH_CONTRACT", f"{field} is required and limited to 120 characters")
+        if (
+            not isinstance(value.get(field), str)
+            or not value[field].strip()
+            or len(value[field]) > 120
+        ):
+            raise ProductMissionError(
+                "NO_FINISH_CONTRACT",
+                f"{field} is required and limited to 120 characters",
+            )
     return value, resolved
 
 
 def _validate_context_wall(mission: dict[str, Any], manifest: dict[str, Any]) -> None:
     if manifest["creator_id"].strip() == manifest["verifier_id"].strip():
-        raise ProductMissionError("VERIFIER_IDENTITY_DISTINCT", "creator and verifier identities must differ")
+        raise ProductMissionError(
+            "VERIFIER_IDENTITY_DISTINCT", "creator and verifier identities must differ"
+        )
     contexts = manifest.get("verifier_context")
     required = {"mission.json", "candidate_diff", "evidence_manifest"}
     allowed = required | {"test_output", "browser_artifact", "architecture_receipt"}
-    forbidden = set(mission["orchestration"]["context_wall"]["verifier_forbidden_inputs"])
+    forbidden = set(
+        mission["orchestration"]["context_wall"]["verifier_forbidden_inputs"]
+    )
     if (
         not isinstance(contexts, list)
         or not all(isinstance(item, str) for item in contexts)
@@ -1153,28 +1707,47 @@ def _validate_context_wall(mission: dict[str, Any], manifest: dict[str, Any]) ->
         or not set(contexts).issubset(allowed)
         or forbidden.intersection(contexts)
     ):
-        raise ProductMissionError("CREATOR_VERIFIER_CONTEXT_WALL", "verifier context must contain only review inputs and exclude creator-private context")
-    if mission["orchestration"]["attempt_policy"].get("adapter_attestation_required") is True:
+        raise ProductMissionError(
+            "CREATOR_VERIFIER_CONTEXT_WALL",
+            "verifier context must contain only review inputs and exclude creator-private context",
+        )
+    if (
+        mission["orchestration"]["attempt_policy"].get("adapter_attestation_required")
+        is True
+    ):
         raw = manifest.get("adapter_attestation")
         if not isinstance(raw, dict):
-            raise ProductMissionError("VERIFIER_ADAPTER_ATTESTATION_REQUIRED", "fresh adapter attestation is required before mission completion")
+            raise ProductMissionError(
+                "VERIFIER_ADAPTER_ATTESTATION_REQUIRED",
+                "fresh adapter attestation is required before mission completion",
+            )
         try:
             validate_verifier_attestation(raw, mission_digest=mission["mission_sha256"])
         except AgentContractError as exc:
             raise ProductMissionError(exc.code, exc.message) from exc
 
 
-def _browser_flow_artifacts(mission: dict[str, Any], criterion: dict[str, Any], evidence_path: Path,
-                            verifier_id: str, root: Path) -> tuple[list[Path], dict[str, Any]]:
+def _browser_flow_artifacts(
+    mission: dict[str, Any],
+    criterion: dict[str, Any],
+    evidence_path: Path,
+    verifier_id: str,
+    root: Path,
+) -> tuple[list[Path], dict[str, Any]]:
     evidence_path = evidence_path.resolve()
     try:
         evidence_path.relative_to(Path(root).resolve())
     except ValueError as exc:
-        raise ProductMissionError("BROWSER_FLOW_INVALID", "browser evidence must be beneath the mission root") from exc
+        raise ProductMissionError(
+            "BROWSER_FLOW_INVALID", "browser evidence must be beneath the mission root"
+        ) from exc
     evidence = _load_json(evidence_path, "factory.browser-flow.evidence.v1")
     contract = criterion["evidence_contract"]
     errors = []
-    if evidence.get("mission_id") != mission["id"] or evidence.get("criterion_id") != criterion["id"]:
+    if (
+        evidence.get("mission_id") != mission["id"]
+        or evidence.get("criterion_id") != criterion["id"]
+    ):
         errors.append("mission or criterion id mismatch")
     if evidence.get("verifier_id") != verifier_id:
         errors.append("browser verifier must match the independent validation manifest")
@@ -1184,12 +1757,32 @@ def _browser_flow_artifacts(mission: dict[str, Any], criterion: dict[str, Any], 
         errors.append("observed URL does not exactly match the declared expected URL")
     clicks = evidence.get("clicks")
     steps = evidence.get("steps")
-    if isinstance(clicks, bool) or not isinstance(clicks, int) or clicks < 0 or clicks > contract["max_clicks"]:
+    if (
+        isinstance(clicks, bool)
+        or not isinstance(clicks, int)
+        or clicks < 0
+        or clicks > contract["max_clicks"]
+    ):
         errors.append(f"click count must be between 0 and {contract['max_clicks']}")
-    if not isinstance(steps, list) or not isinstance(clicks, int) or len(steps) != clicks or any(not isinstance(item, dict) or item.get("passed") is not True for item in steps):
+    if (
+        not isinstance(steps, list)
+        or not isinstance(clicks, int)
+        or len(steps) != clicks
+        or any(
+            not isinstance(item, dict) or item.get("passed") is not True
+            for item in steps
+        )
+    ):
         errors.append("every counted browser interaction must have one passing step")
     assertions = evidence.get("assertions")
-    if not isinstance(assertions, list) or not assertions or any(not isinstance(item, dict) or item.get("passed") is not True for item in assertions):
+    if (
+        not isinstance(assertions, list)
+        or not assertions
+        or any(
+            not isinstance(item, dict) or item.get("passed") is not True
+            for item in assertions
+        )
+    ):
         errors.append("every declared browser assertion must pass")
     artifacts = evidence.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
@@ -1200,7 +1793,9 @@ def _browser_flow_artifacts(mission: dict[str, Any], criterion: dict[str, Any], 
         if not isinstance(value, str) or not value.strip():
             errors.append("browser artifact paths must be non-empty strings")
             continue
-        path = Path(value) if Path(value).is_absolute() else Path(root).resolve() / value
+        path = (
+            Path(value) if Path(value).is_absolute() else Path(root).resolve() / value
+        )
         try:
             path.resolve().relative_to(Path(root).resolve())
         except ValueError:
@@ -1213,20 +1808,40 @@ def _browser_flow_artifacts(mission: dict[str, Any], criterion: dict[str, Any], 
     if errors:
         raise ProductMissionError("BROWSER_FLOW_INVALID", "; ".join(errors))
     return resolved, {
-        "expected_url": expected, "observed_url": observed, "clicks": clicks,
-        "max_clicks": contract["max_clicks"], "assertions": len(assertions),
+        "expected_url": expected,
+        "observed_url": observed,
+        "clicks": clicks,
+        "max_clicks": contract["max_clicks"],
+        "assertions": len(assertions),
     }
 
 
-def _validated_completion_results(mission: dict[str, Any], manifest: dict[str, Any], root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    criteria_by_id = {item["id"]: item for item in mission["completion_contract"]["criteria"]}
+def _validated_completion_results(
+    mission: dict[str, Any], manifest: dict[str, Any], root: Path
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    criteria_by_id = {
+        item["id"]: item for item in mission["completion_contract"]["criteria"]
+    }
     expected = list(criteria_by_id)
     results = manifest.get("criteria")
-    if not isinstance(results, list) or not 1 <= len(results) <= MAX_COMPLETION_CRITERIA:
-        raise ProductMissionError("NO_FINISH_CONTRACT", f"validation must contain 1-{MAX_COMPLETION_CRITERIA} criteria")
+    if (
+        not isinstance(results, list)
+        or not 1 <= len(results) <= MAX_COMPLETION_CRITERIA
+    ):
+        raise ProductMissionError(
+            "NO_FINISH_CONTRACT",
+            f"validation must contain 1-{MAX_COMPLETION_CRITERIA} criteria",
+        )
     ids = [item.get("id") for item in results if isinstance(item, dict)]
-    if len(ids) != len(results) or len(ids) != len(set(ids)) or sorted(ids) != sorted(expected):
-        raise ProductMissionError("NO_FINISH_CONTRACT", "validation must cover every completion criterion exactly once")
+    if (
+        len(ids) != len(results)
+        or len(ids) != len(set(ids))
+        or sorted(ids) != sorted(expected)
+    ):
+        raise ProductMissionError(
+            "NO_FINISH_CONTRACT",
+            "validation must cover every completion criterion exactly once",
+        )
     evidence_paths: list[Path] = []
     normalized = []
     for item in results:
@@ -1237,40 +1852,71 @@ def _validated_completion_results(mission: dict[str, Any], manifest: dict[str, A
             or not paths
             or not all(isinstance(value, str) and value.strip() for value in paths)
         ):
-            raise ProductMissionError("NO_FINISH_CONTRACT", f"criterion {item.get('id')} must pass with evidence")
-        resolved = [Path(value) if Path(value).is_absolute() else Path(root).resolve() / value for value in paths]
+            raise ProductMissionError(
+                "NO_FINISH_CONTRACT",
+                f"criterion {item.get('id')} must pass with evidence",
+            )
+        resolved = [
+            Path(value) if Path(value).is_absolute() else Path(root).resolve() / value
+            for value in paths
+        ]
         browser_summary = None
         if criteria_by_id[item["id"]].get("verification_kind") == "browser_control":
             if len(resolved) != 1:
-                raise ProductMissionError("BROWSER_FLOW_INVALID", "browser-control criteria require exactly one structured evidence receipt")
+                raise ProductMissionError(
+                    "BROWSER_FLOW_INVALID",
+                    "browser-control criteria require exactly one structured evidence receipt",
+                )
             artifacts, browser_summary = _browser_flow_artifacts(
-                mission, criteria_by_id[item["id"]], resolved[0], manifest["verifier_id"].strip(), root,
+                mission,
+                criteria_by_id[item["id"]],
+                resolved[0],
+                manifest["verifier_id"].strip(),
+                root,
             )
             evidence_paths.extend(artifacts)
         evidence_paths.extend(resolved)
-        normalized_item = {"id": item["id"], "passed": True, "evidence": [str(path.resolve()) for path in resolved]}
+        normalized_item = {
+            "id": item["id"],
+            "passed": True,
+            "evidence": [str(path.resolve()) for path in resolved],
+        }
         if browser_summary is not None:
             normalized_item["browser_flow"] = browser_summary
         normalized.append(normalized_item)
     unique = list(dict.fromkeys(path.resolve() for path in evidence_paths))
     if len(unique) > MAX_COMPLETION_EVIDENCE:
-        raise ProductMissionError("NO_FINISH_CONTRACT", f"completion evidence is limited to {MAX_COMPLETION_EVIDENCE} files")
+        raise ProductMissionError(
+            "NO_FINISH_CONTRACT",
+            f"completion evidence is limited to {MAX_COMPLETION_EVIDENCE} files",
+        )
     return normalized, _evidence(Path(root), unique)
 
 
-def close_mission(mission_path: Path, validation_path: Path, root: Path, *, force: bool = False) -> dict[str, Any]:
+def close_mission(
+    mission_path: Path, validation_path: Path, root: Path, *, force: bool = False
+) -> dict[str, Any]:
     """Write completion only after fresh-context, exact-coverage verification."""
     mission_check = verify_mission(mission_path)
     if not mission_check["valid"]:
-        raise ProductMissionError("MISSION_INPUT_DRIFT", "; ".join(mission_check["errors"]))
+        raise ProductMissionError(
+            "MISSION_INPUT_DRIFT", "; ".join(mission_check["errors"])
+        )
     mission = _load_json(mission_path, MISSION_SCHEMA)
     manifest, resolved_validation = _validation_manifest(validation_path, root)
     _validate_context_wall(mission, manifest)
     results, evidence = _validated_completion_results(mission, manifest, root)
     core = {
         "schema": MISSION_COMPLETION_SCHEMA,
-        "mission": {"path": str(Path(mission_path).resolve()), "sha256": _sha_path(mission_path), "mission_sha256": mission["mission_sha256"]},
-        "validation": {"path": str(resolved_validation), "sha256": _sha_path(resolved_validation)},
+        "mission": {
+            "path": str(Path(mission_path).resolve()),
+            "sha256": _sha_path(mission_path),
+            "mission_sha256": mission["mission_sha256"],
+        },
+        "validation": {
+            "path": str(resolved_validation),
+            "sha256": _sha_path(resolved_validation),
+        },
         "creator_id": manifest["creator_id"].strip(),
         "verifier_id": manifest["verifier_id"].strip(),
         "verifier_context": manifest["verifier_context"],
@@ -1279,9 +1925,19 @@ def close_mission(mission_path: Path, validation_path: Path, root: Path, *, forc
         "evidence": evidence,
         "status": "completed",
         "authority": {"merge": False, "publish": False, "deploy": False},
-        "markers": ["CREATOR_VERIFIER_CONTEXT_WALL", "VERIFIER_IDENTITY_DISTINCT", "VERIFIER_ADAPTER_ATTESTED", "NO_FINISH_CONTRACT", "VALIDATION_EVIDENCE_BOUND"],
+        "markers": [
+            "CREATOR_VERIFIER_CONTEXT_WALL",
+            "VERIFIER_IDENTITY_DISTINCT",
+            "VERIFIER_ADAPTER_ATTESTED",
+            "NO_FINISH_CONTRACT",
+            "VALIDATION_EVIDENCE_BOUND",
+        ],
     }
-    receipt = {**core, "completion_sha256": _sha_bytes(_canonical(core)), "generated_at": _now()}
+    receipt = {
+        **core,
+        "completion_sha256": _sha_bytes(_canonical(core)),
+        "generated_at": _now(),
+    }
     path = Path(mission_path).resolve().parent / "completion.json"
     _atomic_json(path, receipt, force=force)
     return {**receipt, "path": str(path)}
@@ -1290,12 +1946,18 @@ def close_mission(mission_path: Path, validation_path: Path, root: Path, *, forc
 def _bound_file_error(item: dict[str, Any], label: str) -> str | None:
     path = Path(item["path"])
     if not path.exists() or _sha_path(path) != item["sha256"]:
-        return f"{label} drift: {path}" if label == "evidence" else f"{label} input drift"
+        return (
+            f"{label} drift: {path}" if label == "evidence" else f"{label} input drift"
+        )
     return None
 
 
 def _completion_errors(receipt: dict[str, Any]) -> list[str]:
-    core = {key: value for key, value in receipt.items() if key not in {"completion_sha256", "generated_at", "path"}}
+    core = {
+        key: value
+        for key, value in receipt.items()
+        if key not in {"completion_sha256", "generated_at", "path"}
+    }
     errors = []
     if _sha_bytes(_canonical(core)) != receipt.get("completion_sha256"):
         errors.append("completion receipt hash mismatch")
@@ -1323,33 +1985,46 @@ def verify_mission_completion(completion_path: Path) -> dict[str, Any]:
         "schema": "factory.mission.completion.verification.v1",
         "valid": not errors,
         "status": "verified" if not errors else "invalid",
-        "marker": "MISSION_COMPLETION_VERIFIED" if not errors else "MISSION_COMPLETION_DRIFT",
+        "marker": "MISSION_COMPLETION_VERIFIED"
+        if not errors
+        else "MISSION_COMPLETION_DRIFT",
         "errors": errors,
         "authority": "completion verification only; no merge or deployment authority",
     }
     if errors:
-        result["failure"] = explain_failure("MISSION_COMPLETION_DRIFT", "; ".join(errors), errors=errors)
+        result["failure"] = explain_failure(
+            "MISSION_COMPLETION_DRIFT", "; ".join(errors), errors=errors
+        )
     return result
 
 
 def _pr_markdown(draft: dict[str, Any]) -> str:
     requirements = "\n".join(f"- [ ] `{item}`" for item in draft["requirements"])
-    evidence = "\n".join(f"- `{item['path']}` sha256 `{item['sha256']}`" for item in draft["evidence"]) or "- No evidence attached yet."
+    evidence = (
+        "\n".join(
+            f"- `{item['path']}` sha256 `{item['sha256']}`"
+            for item in draft["evidence"]
+        )
+        or "- No evidence attached yet."
+    )
     risks = "\n".join(f"- {item}" for item in draft["risks"])
     unknowns = "\n".join(f"- {item}" for item in draft["unproven_claims"])
-    changes = "\n".join(f"- {item}" for item in draft["architecture_changes"] + draft["data_contract_changes"])
+    changes = "\n".join(
+        f"- {item}"
+        for item in draft["architecture_changes"] + draft["data_contract_changes"]
+    )
     proof = "\n".join(
         f"- {name}: {len(items)} attached"
         for name, items in draft["review_evidence"].items()
     )
-    return f"""# {draft['title']}
+    return f"""# {draft["title"]}
 
 ## User value
 
-{draft['user_outcome']}
+{draft["user_outcome"]}
 
-- Before: {draft['before_after']['before']}
-- After: {draft['before_after']['after']}
+- Before: {draft["before_after"]["before"]}
+- After: {draft["before_after"]["after"]}
 
 ## Requirement coverage
 
@@ -1369,8 +2044,8 @@ def _pr_markdown(draft: dict[str, Any]) -> str:
 
 ## Budget and trace
 
-- Budget: {draft['budget_consumption']['status']}
-- Trace links: {len(draft['trace_links'])}
+- Budget: {draft["budget_consumption"]["status"]}
+- Trace links: {len(draft["trace_links"])}
 
 ## Risk and rollback
 
@@ -1391,11 +2066,18 @@ Draft only. This package does not approve merge, release, publish, or deploy.
 """
 
 
-def draft_pr(mission_path: Path, root: Path, evidence_paths: list[Path] | None = None, force: bool = False) -> dict:
+def draft_pr(
+    mission_path: Path,
+    root: Path,
+    evidence_paths: list[Path] | None = None,
+    force: bool = False,
+) -> dict:
     """Create a reviewer-ready, evidence-linked draft without remote side effects."""
     verification = verify_mission(mission_path)
     if not verification["valid"]:
-        raise ProductMissionError("MISSION_INPUT_DRIFT", "; ".join(verification["errors"]))
+        raise ProductMissionError(
+            "MISSION_INPUT_DRIFT", "; ".join(verification["errors"])
+        )
     mission = _load_json(mission_path, MISSION_SCHEMA)
     graph = _load_json(Path(mission["inputs"]["graph_path"]), PRODUCT_GRAPH_SCHEMA)
     evidence = _evidence(root, evidence_paths or [])
@@ -1414,7 +2096,10 @@ def draft_pr(mission_path: Path, root: Path, evidence_paths: list[Path] | None =
         "requirements": mission["slice"]["requirement_ids"],
         "requirement_coverage": {
             "added": mission["slice"]["requirement_ids"],
-            "changed": [], "deferred": [], "rejected": [], "invalidated": [],
+            "changed": [],
+            "deferred": [],
+            "rejected": [],
+            "invalidated": [],
         },
         "acceptance_refs": mission["slice"]["acceptance_refs"],
         "evidence": evidence,
@@ -1429,7 +2114,9 @@ def draft_pr(mission_path: Path, root: Path, evidence_paths: list[Path] | None =
             f"External effects remain approval-bound: {len(graph.get('external_effects', []))} declared.",
         ],
         "budget_consumption": {
-            "status": "unreported" if not evidence else "evidence_attached_usage_not_inferred",
+            "status": "unreported"
+            if not evidence
+            else "evidence_attached_usage_not_inferred",
             "limits": mission["budgets"],
             "measured": None,
         },
@@ -1441,51 +2128,94 @@ def draft_pr(mission_path: Path, root: Path, evidence_paths: list[Path] | None =
         ],
         "rollout": "Use the selected deployment profile only after independent release approval and canary evidence.",
         "rollback": "Revert the slice PR and invalidate mission receipts derived from its commit.",
-        "outcome_events": graph.get("success_events") or ["prd_declared_metric_missing"],
+        "outcome_events": graph.get("success_events")
+        or ["prd_declared_metric_missing"],
         "unproven_claims": (
             [f"UX state not declared in PRD: {state}" for state in missing_states]
             + (["No implementation evidence attached."] if not evidence else [])
-            + [f"No {name} evidence attached." for name, items in review_evidence.items() if not items]
+            + [
+                f"No {name} evidence attached."
+                for name, items in review_evidence.items()
+                if not items
+            ]
         ),
-        "authority": {"draft_only": True, "merge": False, "release": False, "publish": False, "deploy": False},
+        "authority": {
+            "draft_only": True,
+            "merge": False,
+            "release": False,
+            "publish": False,
+            "deploy": False,
+        },
         "markers": [
-            "PR_EVIDENCE_LINKED", "PR_DRAFT_NO_MERGE_AUTHORITY",
-            "PR_REVIEW_PACKAGE_COMPLETE", "PR_UNPROVEN_CLAIMS_EXPLICIT",
+            "PR_EVIDENCE_LINKED",
+            "PR_DRAFT_NO_MERGE_AUTHORITY",
+            "PR_REVIEW_PACKAGE_COMPLETE",
+            "PR_UNPROVEN_CLAIMS_EXPLICIT",
         ],
     }
-    draft = {**core, "draft_sha256": _sha_bytes(_canonical(core)), "generated_at": _now()}
+    draft = {
+        **core,
+        "draft_sha256": _sha_bytes(_canonical(core)),
+        "generated_at": _now(),
+    }
     directory = Path(root).resolve() / ".factory" / "missions" / mission["id"]
     json_path = directory / "pr_draft.json"
     md_path = directory / "PR_DRAFT.md"
     markdown = _pr_markdown(draft)
     if not force:
-        for path, content in ((json_path, json.dumps(draft, indent=2, sort_keys=True) + "\n"), (md_path, markdown)):
+        for path, content in (
+            (json_path, json.dumps(draft, indent=2, sort_keys=True) + "\n"),
+            (md_path, markdown),
+        ):
             if path.exists() and path.read_text(encoding="utf-8") != content:
-                raise ProductMissionError("OUTPUT_EXISTS", f"refusing to replace existing output: {path}")
+                raise ProductMissionError(
+                    "OUTPUT_EXISTS", f"refusing to replace existing output: {path}"
+                )
     _atomic_json(json_path, draft, force=force)
     _atomic_text(md_path, markdown, force=force)
     return {**draft, "path": str(json_path), "markdown": str(md_path)}
 
 
-def _validate_outcome(metric: str, value: float | None, target: float | None,
-                      evidence_class: str, source: str | None, notes: str) -> None:
+def _validate_outcome(
+    metric: str,
+    value: float | None,
+    target: float | None,
+    evidence_class: str,
+    source: str | None,
+    notes: str,
+) -> None:
     if evidence_class not in EVIDENCE_CLASSES:
-        raise ProductMissionError("EVIDENCE_CLASS_INVALID", f"evidence class must be one of {', '.join(sorted(EVIDENCE_CLASSES))}")
+        raise ProductMissionError(
+            "EVIDENCE_CLASS_INVALID",
+            f"evidence class must be one of {', '.join(sorted(EVIDENCE_CLASSES))}",
+        )
     if not metric.strip() or len(metric) > 120:
         raise ProductMissionError("METRIC_INVALID", "metric must be 1-120 characters")
     if len(notes) > MAX_NOTES:
-        raise ProductMissionError("OUTCOME_NOTES_LIMIT", f"notes must be at most {MAX_NOTES} characters")
+        raise ProductMissionError(
+            "OUTCOME_NOTES_LIMIT", f"notes must be at most {MAX_NOTES} characters"
+        )
     if evidence_class == "measured" and not (source and source.strip()):
-        raise ProductMissionError("MEASURED_SOURCE_REQUIRED", "measured outcomes require a source")
+        raise ProductMissionError(
+            "MEASURED_SOURCE_REQUIRED", "measured outcomes require a source"
+        )
     for name, selected in (("VALUE", value), ("TARGET", target)):
-        if selected is not None and (isinstance(selected, bool) or not isinstance(selected, (int, float)) or not math.isfinite(selected)):
-            raise ProductMissionError(f"OUTCOME_{name}_INVALID", f"{name.lower()} must be numeric or null")
+        if selected is not None and (
+            isinstance(selected, bool)
+            or not isinstance(selected, (int, float))
+            or not math.isfinite(selected)
+        ):
+            raise ProductMissionError(
+                f"OUTCOME_{name}_INVALID", f"{name.lower()} must be numeric or null"
+            )
 
 
 def _last_outcome_sha(path: Path) -> str | None:
     if not path.exists():
         return None
-    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    lines = [
+        line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     return json.loads(lines[-1]).get("record_sha256") if lines else None
 
 
@@ -1495,12 +2225,22 @@ def _outcome_verdict(value: float | None, target: float | None) -> str:
     return "achieved" if value >= target else "not_achieved"
 
 
-def record_outcome(mission_path: Path, root: Path, metric: str, value: float | None, target: float | None,
-                   evidence_class: str, source: str | None = None, notes: str = "") -> dict:
+def record_outcome(
+    mission_path: Path,
+    root: Path,
+    metric: str,
+    value: float | None,
+    target: float | None,
+    evidence_class: str,
+    source: str | None = None,
+    notes: str = "",
+) -> dict:
     """Append a hash-linked outcome while preserving evidence-quality boundaries."""
     verification = verify_mission(mission_path)
     if not verification["valid"]:
-        raise ProductMissionError("MISSION_INPUT_DRIFT", "; ".join(verification["errors"]))
+        raise ProductMissionError(
+            "MISSION_INPUT_DRIFT", "; ".join(verification["errors"])
+        )
     _validate_outcome(metric, value, target, evidence_class, source, notes)
     mission = _load_json(mission_path, MISSION_SCHEMA)
     path = Path(root).resolve() / ".factory" / "outcomes" / f"{mission['id']}.jsonl"
@@ -1533,29 +2273,50 @@ def record_outcome(mission_path: Path, root: Path, metric: str, value: float | N
 def outcome_summary(root: Path, mission_id: str | None = None) -> dict[str, Any]:
     """Summarize local outcome evidence without upgrading modeled data to measured."""
     directory = Path(root).resolve() / ".factory" / "outcomes"
-    paths = [directory / f"{mission_id}.jsonl"] if mission_id else sorted(directory.glob("*.jsonl")) if directory.exists() else []
+    paths = (
+        [directory / f"{mission_id}.jsonl"]
+        if mission_id
+        else sorted(directory.glob("*.jsonl"))
+        if directory.exists()
+        else []
+    )
     records = []
     chain_errors = []
     for path in paths:
         previous = None
         if not path.exists():
             continue
-        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), 1
+        ):
             if not line.strip():
                 continue
             record = json.loads(line)
-            core = {key: value for key, value in record.items() if key != "record_sha256"}
-            if record.get("previous_sha256") != previous or record.get("record_sha256") != _sha_bytes(_canonical(core)):
+            core = {
+                key: value for key, value in record.items() if key != "record_sha256"
+            }
+            if record.get("previous_sha256") != previous or record.get(
+                "record_sha256"
+            ) != _sha_bytes(_canonical(core)):
                 chain_errors.append(f"{path.name}:{line_number}")
             previous = record.get("record_sha256")
             records.append(record)
-    classes = {name: sum(item.get("evidence_class") == name for item in records) for name in sorted(EVIDENCE_CLASSES)}
+    classes = {
+        name: sum(item.get("evidence_class") == name for item in records)
+        for name in sorted(EVIDENCE_CLASSES)
+    }
     return {
         "schema": "factory.outcome.summary.v1",
         "records": len(records),
         "evidence_classes": classes,
-        "verdicts": {name: sum(item.get("verdict") == name for item in records) for name in ("achieved", "not_achieved", "inconclusive")},
+        "verdicts": {
+            name: sum(item.get("verdict") == name for item in records)
+            for name in ("achieved", "not_achieved", "inconclusive")
+        },
         "chain_valid": not chain_errors,
         "chain_errors": chain_errors,
-        "scope_limits": ["Outcome evidence is local and caller-supplied.", "Only measured records with a named source support measured product claims."],
+        "scope_limits": [
+            "Outcome evidence is local and caller-supplied.",
+            "Only measured records with a named source support measured product claims.",
+        ],
     }

@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from factoryline.cli import main
-from factoryline.product_missions import ProductMissionError, analyze_product_text, compile_product_text
+from factoryline.product_missions import (
+    ProductMissionError,
+    analyze_product_text,
+    compile_product_text,
+)
 from factoryline.prd_grill import grill_prd, verify_prd_grill
 
 
@@ -56,7 +60,9 @@ Scenario: Review the most important signal
 """
 
 
-def test_prd_grill_writes_a_bounded_frontier_without_mutating_source(tmp_path: Path) -> None:
+def test_prd_grill_writes_a_bounded_frontier_without_mutating_source(
+    tmp_path: Path,
+) -> None:
     prd = tmp_path / "PRD.md"
     prd.write_text(THIN_PRD, encoding="utf-8")
 
@@ -65,13 +71,22 @@ def test_prd_grill_writes_a_bounded_frontier_without_mutating_source(tmp_path: P
     assert prd.read_text(encoding="utf-8") == THIN_PRD
     assert result["status"] == "needs_input"
     assert len(result["questions"]) == 3
-    assert [question["id"] for question in result["questions"]] == ["Q-REQUIREMENTS", "Q-ACTORS", "Q-OUTCOMES"]
+    assert [question["id"] for question in result["questions"]] == [
+        "Q-REQUIREMENTS",
+        "Q-ACTORS",
+        "Q-OUTCOMES",
+    ]
     deferred = {question["id"]: question for question in result["deferred_questions"]}
     assert deferred["Q-ACCEPTANCE"]["deferred_by"] == ["Q-REQUIREMENTS"]
     assert deferred["Q-JOURNEY"]["deferred_by"] == ["Q-ACTORS"]
     assert deferred["Q-SUCCESS-EVENT"]["deferred_by"] == ["Q-OUTCOMES"]
-    assert result["authority"] == {"implementation": "not_authorized", "external_effects": "not_authorized"}
-    assert Path(result["markdown"]).read_text(encoding="utf-8").count("**Answer:**") == 3
+    assert result["authority"] == {
+        "implementation": "not_authorized",
+        "external_effects": "not_authorized",
+    }
+    assert (
+        Path(result["markdown"]).read_text(encoding="utf-8").count("**Answer:**") == 3
+    )
     assert verify_prd_grill(Path(result["path"]))["valid"] is True
 
     replay = grill_prd(prd, tmp_path, mode="quick")
@@ -94,7 +109,9 @@ def test_prd_grill_confirms_only_a_complete_reviewed_contract(tmp_path: Path) ->
     assert "PRD_GRILL_SHARED_UNDERSTANDING_CONFIRMED" in result["markers"]
 
 
-def test_compile_product_text_still_writes_the_reviewable_product_graph(tmp_path: Path) -> None:
+def test_compile_product_text_still_writes_the_reviewable_product_graph(
+    tmp_path: Path,
+) -> None:
     graph = compile_product_text(COMPLETE_PRD, root=tmp_path, source_name="PRD.md")
 
     assert graph["schema"] == "factory.product_graph.v1"
@@ -110,7 +127,9 @@ def test_prd_grill_refuses_confirmation_while_decisions_remain(tmp_path: Path) -
     assert not (tmp_path / ".factory" / "prd-grills").exists()
 
 
-def test_prd_grill_cli_is_machine_readable_and_verifiable(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_prd_grill_cli_is_machine_readable_and_verifiable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     prd = tmp_path / "PRD.md"
     prd.write_text(THIN_PRD, encoding="utf-8")
 

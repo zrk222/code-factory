@@ -1,4 +1,5 @@
 """Canonical read-only WebMCP contract for the local Graph Ops page."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -134,7 +135,11 @@ def webmcp_manifest() -> dict[str, Any]:
         "tools": [
             {
                 **tool,
-                "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
                 "annotations": {"readOnlyHint": True, "untrustedContentHint": True},
             }
             for tool in WEBMCP_TOOLS

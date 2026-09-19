@@ -4,6 +4,7 @@ The transport remains stateless and authority-free. The input-required leg
 describes what a human must decide; the completed leg returns only a local,
 hash-bound acknowledgement and never performs provider release work.
 """
+
 from __future__ import annotations
 
 from hashlib import sha256
@@ -12,7 +13,9 @@ from typing import Any
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:
@@ -22,7 +25,9 @@ def _sha(value: object) -> str:
 class McpMrtError(ValueError):
     """Fail-closed validation error for the stateless MRT boundary."""
 
-    def __init__(self, message: str, marker: str = "MCP2_RELEASE_GATE_INPUT_REJECTED") -> None:
+    def __init__(
+        self, message: str, marker: str = "MCP2_RELEASE_GATE_INPUT_REJECTED"
+    ) -> None:
         super().__init__(message)
         self.marker = marker
 
@@ -50,17 +55,27 @@ def _mcp2_failed_lanes(blockers: list[dict[str, Any]]) -> list[dict[str, str]]:
         lane = blocker.get("lane")
         if not isinstance(lane, str) or not lane.strip():
             continue
-        rejection = blocker.get("rejectionCondition", blocker.get("rule_id", blocker.get("code", "UNKNOWN_RULE")))
+        rejection = blocker.get(
+            "rejectionCondition",
+            blocker.get("rule_id", blocker.get("code", "UNKNOWN_RULE")),
+        )
         digest = blocker.get("evidenceDigest", blocker.get("evidence_digest", ""))
-        severity = str(blocker.get("riskSeverity", blocker.get("risk_severity", blocker.get("severity", "HIGH")))).upper()
+        severity = str(
+            blocker.get(
+                "riskSeverity",
+                blocker.get("risk_severity", blocker.get("severity", "HIGH")),
+            )
+        ).upper()
         if severity not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
             severity = "HIGH"
-        findings.append({
-            "lane": lane,
-            "rejectionCondition": str(rejection),
-            "evidenceDigest": str(digest),
-            "riskSeverity": severity,
-        })
+        findings.append(
+            {
+                "lane": lane,
+                "rejectionCondition": str(rejection),
+                "evidenceDigest": str(digest),
+                "riskSeverity": severity,
+            }
+        )
     return findings
 
 
@@ -85,11 +100,17 @@ def release_gate_completed(
     allowed = {"decision", "reviewerIdentity", "reviewerNotes", "acknowledgedProofDebt"}
     unknown = sorted(set(human_input) - allowed)
     if unknown:
-        raise McpMrtError(f"human_input contains unsupported fields: {', '.join(unknown)}")
+        raise McpMrtError(
+            f"human_input contains unsupported fields: {', '.join(unknown)}"
+        )
     decision = human_input.get("decision")
     if decision not in _MCP2_DECISIONS:
-        raise McpMrtError("decision must be APPROVE_RELEASE, REJECT_RELEASE, or REQUEST_REPAIR_RETRY")
-    reviewer = _require_mcp2_string(human_input.get("reviewerIdentity"), "reviewerIdentity", max_length=256)
+        raise McpMrtError(
+            "decision must be APPROVE_RELEASE, REJECT_RELEASE, or REQUEST_REPAIR_RETRY"
+        )
+    reviewer = _require_mcp2_string(
+        human_input.get("reviewerIdentity"), "reviewerIdentity", max_length=256
+    )
     notes_value = human_input.get("reviewerNotes", "")
     if notes_value is None:
         notes_value = ""
@@ -97,8 +118,13 @@ def release_gate_completed(
         raise McpMrtError("reviewerNotes must be a string of at most 4000 characters")
     acknowledged_value = human_input.get("acknowledgedProofDebt", [])
     if not isinstance(acknowledged_value, list) or len(acknowledged_value) > 50:
-        raise McpMrtError("acknowledgedProofDebt must be an array of at most 50 strings")
-    acknowledged = [_require_mcp2_string(item, "acknowledgedProofDebt item", max_length=256) for item in acknowledged_value]
+        raise McpMrtError(
+            "acknowledgedProofDebt must be an array of at most 50 strings"
+        )
+    acknowledged = [
+        _require_mcp2_string(item, "acknowledgedProofDebt item", max_length=256)
+        for item in acknowledged_value
+    ]
     if len(set(acknowledged)) != len(acknowledged):
         raise McpMrtError("acknowledgedProofDebt must not contain duplicates")
     # MRT is stateless: the second leg must carry both bindings from the
@@ -109,16 +135,23 @@ def release_gate_completed(
             "MCP2_RELEASE_GATE_BINDING_MISMATCH",
         )
     if tool_call_id != expected_tool_call_id:
-        raise McpMrtError("toolCallId does not match the proof-card challenge", "MCP2_RELEASE_GATE_BINDING_MISMATCH")
+        raise McpMrtError(
+            "toolCallId does not match the proof-card challenge",
+            "MCP2_RELEASE_GATE_BINDING_MISMATCH",
+        )
     if proof_card_hash != expected_proof_card_hash:
-        raise McpMrtError("proofCardHash does not match the proof-card contents", "MCP2_RELEASE_GATE_BINDING_MISMATCH")
+        raise McpMrtError(
+            "proofCardHash does not match the proof-card contents",
+            "MCP2_RELEASE_GATE_BINDING_MISMATCH",
+        )
     debt = challenge["context"].get("proofDebt", [])
     if not isinstance(debt, list):
         debt = []
     missing_debt = [str(item) for item in debt if str(item) not in acknowledged]
     if decision == "APPROVE_RELEASE" and missing_debt:
         raise McpMrtError(
-            "APPROVE_RELEASE requires acknowledgement of every unresolved proof-debt code: " + ", ".join(missing_debt),
+            "APPROVE_RELEASE requires acknowledgement of every unresolved proof-debt code: "
+            + ", ".join(missing_debt),
             "MCP2_RELEASE_DEBT_UNACKNOWLEDGED",
         )
     receipt_input = {
@@ -139,9 +172,19 @@ def release_gate_completed(
             f"Human decision {decision} permanently sealed by {reviewer} for local review; "
             "external release remains unobserved."
         ),
-        "authority": {key: False for key in (
-            "execution", "approval", "publication", "deployment", "signing", "messaging", "credential", "connector"
-        )},
+        "authority": {
+            key: False
+            for key in (
+                "execution",
+                "approval",
+                "publication",
+                "deployment",
+                "signing",
+                "messaging",
+                "credential",
+                "connector",
+            )
+        },
         "claim_boundary": (
             "Completed local human-decision receipt only; this digest does not approve, merge, publish, deploy, "
             "sign, or authorize a provider action, and no server-side session or receipt file was retained."
@@ -182,7 +225,10 @@ def release_gate_input_required(card: dict[str, Any]) -> dict[str, Any]:
         "next_action": card.get("next_action", {}),
     }
     proof_card_hash = "sha256:" + _sha(proof_card)
-    tool_call_id = "release-gate:" + _sha({"feature": feature, "proof_card_hash": proof_card_hash})[:32]
+    tool_call_id = (
+        "release-gate:"
+        + _sha({"feature": feature, "proof_card_hash": proof_card_hash})[:32]
+    )
     return {
         "type": "input_required",
         "toolCallId": tool_call_id,
@@ -193,7 +239,14 @@ def release_gate_input_required(card: dict[str, Any]) -> dict[str, Any]:
         "inputSchema": {
             "type": "object",
             "properties": {
-                "decision": {"type": "string", "enum": ["APPROVE_RELEASE", "REJECT_RELEASE", "REQUEST_REPAIR_RETRY"]},
+                "decision": {
+                    "type": "string",
+                    "enum": [
+                        "APPROVE_RELEASE",
+                        "REJECT_RELEASE",
+                        "REQUEST_REPAIR_RETRY",
+                    ],
+                },
                 "reviewerIdentity": {"type": "string", "minLength": 1},
                 "reviewerNotes": {"type": "string"},
                 "acknowledgedProofDebt": {"type": "array", "items": {"type": "string"}},
@@ -206,7 +259,11 @@ def release_gate_input_required(card: dict[str, Any]) -> dict[str, Any]:
             "hasUnresolvedProofDebt": bool(debt),
             "failedLanes": _mcp2_failed_lanes(blockers),
             "proofDebt": debt,
-            "nextFactDerivedAction": str(card.get("next_action", {}).get("action", "review_local_release_evidence")),
+            "nextFactDerivedAction": str(
+                card.get("next_action", {}).get(
+                    "action", "review_local_release_evidence"
+                )
+            ),
             "state": str(card.get("state", "UNKNOWN")),
         },
         "authority": {

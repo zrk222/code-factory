@@ -1,4 +1,5 @@
 """Bounded local input primitives for non-authoritative deep analysis evidence."""
+
 from __future__ import annotations
 
 import json
@@ -6,7 +7,13 @@ import stat
 from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote
 
-from .runtime_audit_common import RuntimeAuditError, canonical_bytes, require_digest, require_str, sha256_bytes
+from .runtime_audit_common import (
+    RuntimeAuditError,
+    canonical_bytes,
+    require_digest,
+    require_str,
+    sha256_bytes,
+)
 
 LIMIT = 10_000_000
 
@@ -25,7 +32,10 @@ def relative_path(value: object) -> str:
         raise RuntimeAuditError("E_PATH_ESCAPE", "noncanonical path")
     if PureWindowsPath(text).drive or any(part in {"", ".", ".."} for part in parts):
         raise RuntimeAuditError("E_PATH_ESCAPE", "path must be workspace-relative")
-    if any(part.endswith((" ", ".")) or PureWindowsPath(part).is_reserved() for part in parts):
+    if any(
+        part.endswith((" ", ".")) or PureWindowsPath(part).is_reserved()
+        for part in parts
+    ):
         raise RuntimeAuditError("E_PATH_ESCAPE", "ambiguous Windows path")
     return text
 
@@ -39,7 +49,9 @@ def local_file(root: Path, value: object) -> Path:
         try:
             info = candidate.lstat()
         except OSError as exc:
-            raise RuntimeAuditError("E_SOURCE_MISSING", "regular file required") from exc
+            raise RuntimeAuditError(
+                "E_SOURCE_MISSING", "regular file required"
+            ) from exc
         if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
             raise RuntimeAuditError("E_PATH_ESCAPE", "linked evidence is not supported")
     candidate.resolve().relative_to(root)
@@ -58,7 +70,11 @@ def bound_bytes(root: Path, binding: dict) -> bytes:
         after = path.stat()
     if len(raw) > LIMIT:
         raise RuntimeAuditError("E_REPORT_SIZE", "evidence exceeds byte budget")
-    if (before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns):
+    if (before.st_ino, before.st_size, before.st_mtime_ns) != (
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    ):
         raise RuntimeAuditError("E_INPUT_CHANGED", "evidence changed during read")
     if sha256_bytes(raw) != expected:
         raise RuntimeAuditError("E_REPORT_DRIFT", "evidence hash mismatch")

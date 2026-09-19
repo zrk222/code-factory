@@ -1,13 +1,28 @@
 """Tests for the factoryline connector — Lego assembly + honest metering."""
+
 from hashlib import sha256
 import json
 from pathlib import Path
-from factoryline.contract import ensure_layout, LAYOUT, Receipt, Meter, MODULES, STAGES
+from factoryline.contract import ensure_layout, LAYOUT, Receipt, Meter, MODULES
 from factoryline.assembly import detect, assemble, DEFAULT_CHAIN
-from factoryline.meter import live_snapshot, live_summary_table, summarize, summary_table, MeterLog, StageTiming
+from factoryline.meter import (
+    live_snapshot,
+    live_summary_table,
+    summarize,
+    summary_table,
+    MeterLog,
+    StageTiming,
+)
 from factoryline.attribution import Attribution, FailureClass, UnitResult
-from factoryline.assembly import rollup_attributions, rollup_receipts, _attribution_from_output
-from factoryline.boundary import assert_no_attribution_in_artifact, assert_build_metadata_locations
+from factoryline.assembly import (
+    rollup_attributions,
+    rollup_receipts,
+    _attribution_from_output,
+)
+from factoryline.boundary import (
+    assert_no_attribution_in_artifact,
+    assert_build_metadata_locations,
+)
 from factoryline.proof import (
     build_trace,
     export_attestations,
@@ -18,19 +33,32 @@ from factoryline.proof import (
     verify_trace,
 )
 from factoryline.passport import build_passport, verify_passport
-from factoryline.protocol import CHALLENGE_SCHEMA, MINIMUM_VERSIONS, RECEIPT_SCHEMA, compatibility
+from factoryline.protocol import (
+    CHALLENGE_SCHEMA,
+    MINIMUM_VERSIONS,
+    RECEIPT_SCHEMA,
+    compatibility,
+)
 
 
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.46.5"
+    assert factoryline.__version__ == "0.46.6"
 
 
 def test_cli_mvp_builds_one_contained_web_starter_with_a_proof_path(tmp_path, capsys):
     from factoryline.cli import main
 
-    code = main(["mvp", "Build an approval tracker for a small team.", "--root", str(tmp_path), "--json"])
+    code = main(
+        [
+            "mvp",
+            "Build an approval tracker for a small team.",
+            "--root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
 
     payload = json.loads(capsys.readouterr().out)
     assert code == 0
@@ -39,7 +67,10 @@ def test_cli_mvp_builds_one_contained_web_starter_with_a_proof_path(tmp_path, ca
     assert payload["target_kind"] == "web"
     assert Path(payload["out_dir"]) == tmp_path / "my-mvp"
     assert (tmp_path / "my-mvp" / "app_blueprint.json").is_file()
-    assert Path(payload["output_map"]) == tmp_path / "my-mvp" / "docs" / "CODE_FACTORY_OUTPUT_MAP.md"
+    assert (
+        Path(payload["output_map"])
+        == tmp_path / "my-mvp" / "docs" / "CODE_FACTORY_OUTPUT_MAP.md"
+    )
     assert Path(payload["output_map"]).is_file()
     assert payload["next_proof_commands"]
     assert all(value is False for value in payload["authority"].values())
@@ -49,7 +80,10 @@ def test_cli_mvp_refuses_to_overwrite_an_existing_starter(tmp_path, capsys):
     from factoryline.cli import main
 
     assert main(["mvp", "Build a tracker.", "--root", str(tmp_path)]) == 0
-    assert main(["mvp", "Build a different tracker.", "--root", str(tmp_path), "--json"]) == 1
+    assert (
+        main(["mvp", "Build a different tracker.", "--root", str(tmp_path), "--json"])
+        == 1
+    )
     payload = json.loads(capsys.readouterr().err)
     assert payload["marker"] == "MVP_STARTER_FAILED"
     assert payload["code"] == "OUTPUT_EXISTS"
@@ -66,7 +100,9 @@ def test_detect_returns_all_four_modules():
     assert names == {"specline", "forgeline", "hsf", "prestige"}
 
 
-def test_compatibility_uses_cli_reported_version_when_distribution_is_external(monkeypatch):
+def test_compatibility_uses_cli_reported_version_when_distribution_is_external(
+    monkeypatch,
+):
     import factoryline.protocol as protocol
 
     monkeypatch.setattr(protocol, "package_version", lambda _package: None)
@@ -94,13 +130,18 @@ def test_receipt_rejects_truthy_string_result():
     import pytest
 
     with pytest.raises(ValueError, match="ok must be a boolean"):
-        Receipt.from_dict({"module": "specline", "stage": "strict", "feature": "f", "ok": "false"})
+        Receipt.from_dict(
+            {"module": "specline", "stage": "strict", "feature": "f", "ok": "false"}
+        )
 
 
-def test_rollup_keeps_newer_failure_when_glob_order_is_adversarial(tmp_path, monkeypatch):
+def test_rollup_keeps_newer_failure_when_glob_order_is_adversarial(
+    tmp_path, monkeypatch
+):
     old = Receipt("specline", "strict", "f", True).write(tmp_path)
     new = Receipt("specline", "strict", "f", False).write(tmp_path)
     import os
+
     os.utime(old, ns=(1_000_000_000, 1_000_000_000))
     os.utime(new, ns=(2_000_000_000, 2_000_000_000))
     monkeypatch.setattr(Path, "glob", lambda _self, _pattern: iter([new, old]))
@@ -112,6 +153,7 @@ def test_rollup_normalizes_legacy_stage_spellings_before_supersession(tmp_path):
     old = Receipt("forgeline", "verify_tests", "f", True).write(tmp_path)
     new = Receipt("forgeline", "verify-tests", "f", False).write(tmp_path)
     import os
+
     os.utime(old, ns=(1_000_000_000, 1_000_000_000))
     os.utime(new, ns=(2_000_000_000, 2_000_000_000))
 
@@ -120,14 +162,19 @@ def test_rollup_normalizes_legacy_stage_spellings_before_supersession(tmp_path):
     assert result["earliest_failing_stage"] == "forgeline:verify-tests"
 
 
-def test_factory_verify_rejects_scaffold_and_architecture_without_required_gates(tmp_path):
+def test_factory_verify_rejects_scaffold_and_architecture_without_required_gates(
+    tmp_path,
+):
     Receipt("specline", "strict", "f", True).write(tmp_path)
     Receipt("forgeline", "architect", "f", True).write(tmp_path)
     from factoryline.verification import verify_feature
 
     result = verify_feature(tmp_path, "f")
     assert result["shippable"] is False
-    assert any(item["detail"] == "forgeline:verify-tests receipt is missing or non-passing" for item in result["blockers"])
+    assert any(
+        item["detail"] == "forgeline:verify-tests receipt is missing or non-passing"
+        for item in result["blockers"]
+    )
 
 
 def test_factory_verify_accepts_only_a_complete_traceable_local_pipeline(tmp_path):
@@ -135,7 +182,13 @@ def test_factory_verify_accepts_only_a_complete_traceable_local_pipeline(tmp_pat
         Receipt("specline", stage, "f", True).write(tmp_path)
     for stage in ("architect", "review", "arch-gate", "verify-tests", "smoke"):
         Receipt("forgeline", stage, "f", True).write(tmp_path)
-    Receipt("forgeline", "ship", "f", True, outputs={"intent_trace": {"intent_traceable": True, "shipped": True}}).write(tmp_path)
+    Receipt(
+        "forgeline",
+        "ship",
+        "f",
+        True,
+        outputs={"intent_trace": {"intent_traceable": True, "shipped": True}},
+    ).write(tmp_path)
     from factoryline.verification import verify_feature
 
     assert verify_feature(tmp_path, "f")["shippable"] is True
@@ -146,7 +199,13 @@ def test_factory_verify_strict_release_requires_oracle_bound_release_contract(tm
         Receipt("specline", stage, "f", True).write(tmp_path)
     for stage in ("architect", "review", "arch-gate", "verify-tests", "smoke"):
         Receipt("forgeline", stage, "f", True).write(tmp_path)
-    Receipt("forgeline", "ship", "f", True, outputs={"intent_trace": {"intent_traceable": True, "shipped": True}}).write(tmp_path)
+    Receipt(
+        "forgeline",
+        "ship",
+        "f",
+        True,
+        outputs={"intent_trace": {"intent_traceable": True, "shipped": True}},
+    ).write(tmp_path)
     from factoryline.verification import verify_feature
 
     result = verify_feature(tmp_path, "f", strict_release=True)
@@ -160,47 +219,138 @@ def test_factory_verify_strict_release_does_not_skip_a_declared_design_gate(tmp_
         Receipt("specline", stage, "f", True).write(tmp_path)
     for stage in ("architect", "review", "arch-gate", "verify-tests", "smoke"):
         Receipt("forgeline", stage, "f", True).write(tmp_path)
-    Receipt("forgeline", "ship", "f", True, outputs={"intent_trace": {"intent_traceable": True, "shipped": True}}).write(tmp_path)
+    Receipt(
+        "forgeline",
+        "ship",
+        "f",
+        True,
+        outputs={"intent_trace": {"intent_traceable": True, "shipped": True}},
+    ).write(tmp_path)
     contract = tmp_path / ".factory/release-contracts/f.json"
     contract.parent.mkdir(parents=True)
-    contract.write_text(json.dumps({"required_stages": ["prestige:score"]}), encoding="utf-8")
+    contract.write_text(
+        json.dumps({"required_stages": ["prestige:score"]}), encoding="utf-8"
+    )
     from factoryline.verification import verify_feature
 
     result = verify_feature(tmp_path, "f", strict_release=True)
 
-    assert any(item["detail"] == "prestige:score receipt is missing or non-passing" for item in result["blockers"])
+    assert any(
+        item["detail"] == "prestige:score receipt is missing or non-passing"
+        for item in result["blockers"]
+    )
 
 
-def test_factory_verify_strict_release_accepts_a_current_oracle_bound_contract(tmp_path):
+def test_factory_verify_strict_release_accepts_a_current_oracle_bound_contract(
+    tmp_path,
+):
     for stage in ("strict", "verify-validators", "gate-spec", "tasks", "gate-plan"):
         Receipt("specline", stage, "f", True).write(tmp_path)
     for stage in ("architect", "review", "arch-gate", "verify-tests", "smoke"):
         Receipt("forgeline", stage, "f", True).write(tmp_path)
-    Receipt("forgeline", "ship", "f", True, outputs={"intent_trace": {"intent_traceable": True, "shipped": True}}).write(tmp_path)
+    Receipt(
+        "forgeline",
+        "ship",
+        "f",
+        True,
+        outputs={"intent_trace": {"intent_traceable": True, "shipped": True}},
+    ).write(tmp_path)
     from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
     from factoryline.release_contract import _sha
-    agent = {"schema": "factory.agent-identity.v1", "subject": "release-owner", "provider": "local", "model": "reviewer"}
+
+    agent = {
+        "schema": "factory.agent-identity.v1",
+        "subject": "release-owner",
+        "provider": "local",
+        "model": "reviewer",
+    }
     brief = tmp_path / "brief.md"
     brief.write_text("The release must keep evidence traceable.", encoding="utf-8")
-    handoff = capture_intent_handoff(tmp_path, brief, agent, "release", Path(".factory/oracles/handoffs/f.json"))
-    rule = lambda identifier, statement, **extra: {"id": identifier, "statement": statement, "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True, **extra}
+    handoff = capture_intent_handoff(
+        tmp_path, brief, agent, "release", Path(".factory/oracles/handoffs/f.json")
+    )
+
+    def rule(identifier, statement, **extra):
+        return {
+            "id": identifier,
+            "statement": statement,
+            "origin": "human_confirmed",
+            "effect": "blocking",
+            "source_id": "original-intent",
+            "critical": True,
+            **extra,
+        }
+
     oracle_input = {
-        "schema": "factory.oracle-contract-input.v1", "id": "release-f", "version": 1,
-        "approved_by": "Release Owner", "approval_rationale": "A human reviewed the release boundary.", "scope_paths": ["."], "handoff": handoff["path"], "sources": [],
+        "schema": "factory.oracle-contract-input.v1",
+        "id": "release-f",
+        "version": 1,
+        "approved_by": "Release Owner",
+        "approval_rationale": "A human reviewed the release boundary.",
+        "scope_paths": ["."],
+        "handoff": handoff["path"],
+        "sources": [],
         "requirements": [rule("intent", "Preserve the approved intent.")],
         "forbidden_behaviors": [rule("weaken", "Do not weaken a required gate.")],
-        "gates": [rule("proof", "A proof receipt is required.", comparison="present", value=True)],
-        "exceptions": [{"id": "note", "statement": "A future policy note remains advisory.", "origin": "human_confirmed", "effect": "advisory", "source_id": "original-intent", "critical": False}], "negative_cases": [rule("negative", "A missing receipt cannot pass.")],
+        "gates": [
+            rule(
+                "proof",
+                "A proof receipt is required.",
+                comparison="present",
+                value=True,
+            )
+        ],
+        "exceptions": [
+            {
+                "id": "note",
+                "statement": "A future policy note remains advisory.",
+                "origin": "human_confirmed",
+                "effect": "advisory",
+                "source_id": "original-intent",
+                "critical": False,
+            }
+        ],
+        "negative_cases": [rule("negative", "A missing receipt cannot pass.")],
         "invariants": [rule("bound", "Evidence stays bound to this feature.")],
-        "tests": [rule("test", "The required proof test must run.", path="tests/test_release.py")],
+        "tests": [
+            rule(
+                "test",
+                "The required proof test must run.",
+                path="tests/test_release.py",
+            )
+        ],
     }
     source = tmp_path / "oracle-input.json"
     source.write_text(json.dumps(oracle_input), encoding="utf-8")
-    oracle_path = Path(seal_oracle_contract(tmp_path, source, Path(".factory/oracles/contracts/f.json"))["path"])
+    oracle_path = Path(
+        seal_oracle_contract(
+            tmp_path, source, Path(".factory/oracles/contracts/f.json")
+        )["path"]
+    )
     oracle = json.loads((tmp_path / oracle_path).read_text(encoding="utf-8"))
-    stages = [f"specline:{stage}" for stage in ("strict", "verify-validators", "gate-spec", "tasks", "gate-plan")]
-    stages += [f"forgeline:{stage}" for stage in ("architect", "review", "arch-gate", "verify-tests", "smoke", "ship")]
-    core = {"schema": "factory.release-contract.v1", "feature": "f", "oracle_contract": oracle_path.as_posix(), "oracle_contract_sha256": oracle["contract_sha256"], "required_stages": stages, "approved_by": "Release Owner"}
+    stages = [
+        f"specline:{stage}"
+        for stage in ("strict", "verify-validators", "gate-spec", "tasks", "gate-plan")
+    ]
+    stages += [
+        f"forgeline:{stage}"
+        for stage in (
+            "architect",
+            "review",
+            "arch-gate",
+            "verify-tests",
+            "smoke",
+            "ship",
+        )
+    ]
+    core = {
+        "schema": "factory.release-contract.v1",
+        "feature": "f",
+        "oracle_contract": oracle_path.as_posix(),
+        "oracle_contract_sha256": oracle["contract_sha256"],
+        "required_stages": stages,
+        "approved_by": "Release Owner",
+    }
     release = {**core, "policy_digest": _sha(core)}
     destination = tmp_path / ".factory/release-contracts/f.json"
     destination.parent.mkdir(parents=True)
@@ -231,8 +381,9 @@ def test_protocol_requires_design_md_compatible_prestige():
 
 def test_receipt_roundtrip(tmp_path):
     ensure_layout(tmp_path)
-    r = Receipt(module="specline", stage="strict", feature="f", ok=True,
-                meter=Meter(wall_ms=12))
+    r = Receipt(
+        module="specline", stage="strict", feature="f", ok=True, meter=Meter(wall_ms=12)
+    )
     p = r.write(tmp_path)
     data = json.loads(p.read_text())
     assert data["module"] == "specline" and data["ok"] is True
@@ -245,23 +396,38 @@ def test_receipt_roundtrip(tmp_path):
 def test_trace_refuses_empty_receipt_set(tmp_path):
     ensure_layout(tmp_path)
     import pytest
+
     with pytest.raises(ValueError, match="no receipts"):
         build_trace(tmp_path, "empty")
 
 
 def test_long_cli_output_keeps_structured_attribution():
-    attr = Attribution("strict_lint", 1, 0, [
-        UnitResult("R1", "strict_lint", False, "ambiguous", FailureClass.AMBIGUOUS_REQUIREMENT)
-    ]).to_dict()
+    attr = Attribution(
+        "strict_lint",
+        1,
+        0,
+        [
+            UnitResult(
+                "R1",
+                "strict_lint",
+                False,
+                "ambiguous",
+                FailureClass.AMBIGUOUS_REQUIREMENT,
+            )
+        ],
+    ).to_dict()
     output = json.dumps({"passed": False, "attribution": attr}) + ("x" * 5000)
-    assert _attribution_from_output(output)["dominant_failure_class"] == "ambiguous_requirement"
+    assert (
+        _attribution_from_output(output)["dominant_failure_class"]
+        == "ambiguous_requirement"
+    )
 
 
 def test_meter_refuses_percentage_with_no_runs(tmp_path):
     ensure_layout(tmp_path)
     summ = summarize(tmp_path)
     assert summ["stages_measured"] == 0
-    assert "pct_tokens_saved" not in summ           # honesty guard: no fake %
+    assert "pct_tokens_saved" not in summ  # honesty guard: no fake %
     assert "no measured runs" in summ["status"]
 
 
@@ -272,17 +438,19 @@ def test_meter_labels_modeled_vs_measured(tmp_path):
     log.record(StageTiming("hsf", "compile", 100, 0, 0, 0, True))
     summ = summarize(tmp_path, baseline_tokens_per_run=3500, runs_projected=1000)
     assert summ["stages_measured"] == 2
-    assert summ["build_wall_ms"] == 140                  # wall time is real
-    assert summ["tokens_reported_by_modules"] is False   # honest: no tokens seen
+    assert summ["build_wall_ms"] == 140  # wall time is real
+    assert summ["tokens_reported_by_modules"] is False  # honest: no tokens seen
     table = summary_table(summ)
-    assert "(model)" in table                            # savings labeled as modeled
+    assert "(model)" in table  # savings labeled as modeled
     assert "Nothing here is fabricated" in table
     assert "→" not in table
 
 
 def test_meter_marks_explicit_zero_token_usage_as_measured(tmp_path):
     ensure_layout(tmp_path)
-    MeterLog(tmp_path).record(StageTiming("hsf", "compile", 20, 0, 0, 0, True, usage_reported=True))
+    MeterLog(tmp_path).record(
+        StageTiming("hsf", "compile", 20, 0, 0, 0, True, usage_reported=True)
+    )
     summary = summarize(tmp_path)
     assert summary["tokens_reported_by_modules"] is True
     assert summary["build_tokens"] == 0
@@ -290,10 +458,19 @@ def test_meter_marks_explicit_zero_token_usage_as_measured(tmp_path):
 
 def test_live_meter_snapshot_exposes_local_freshness(tmp_path):
     ensure_layout(tmp_path)
-    MeterLog(tmp_path).record(StageTiming(
-        "hsf", "compile", 20, 0, 0, 0, True,
-        feature="live-meter", run_id="run-1",
-    ))
+    MeterLog(tmp_path).record(
+        StageTiming(
+            "hsf",
+            "compile",
+            20,
+            0,
+            0,
+            0,
+            True,
+            feature="live-meter",
+            run_id="run-1",
+        )
+    )
     snapshot = live_snapshot(tmp_path)
     assert snapshot["schema"] == "factory.meter.live.v2"
     assert snapshot["summary"]["stages_measured"] == 1
@@ -307,11 +484,27 @@ def test_meter_capture_records_a_real_local_command(tmp_path, capsys):
     from factoryline.cli import main
     import sys
 
-    assert main([
-        "meter", "--root", str(tmp_path), "--json",
-        "--feature", "codex-observation", "--module", "codex", "--stage", "python-version",
-        "--capture", "--", sys.executable, "--version",
-    ]) == 0
+    assert (
+        main(
+            [
+                "meter",
+                "--root",
+                str(tmp_path),
+                "--json",
+                "--feature",
+                "codex-observation",
+                "--module",
+                "codex",
+                "--stage",
+                "python-version",
+                "--capture",
+                "--",
+                sys.executable,
+                "--version",
+            ]
+        )
+        == 0
+    )
     snapshot = json.loads(capsys.readouterr().out)
     latest = snapshot["activity"]["latest_stage"]
     assert latest["module"] == "codex"
@@ -334,7 +527,13 @@ def test_overhead_reports_measured_gate_times(tmp_path):
 def test_override_is_append_only_owned_receipt(tmp_path):
     from factoryline.overrides import record_override
 
-    payload = record_override(tmp_path, "forgeline:verify-tests", reason="Vendor test harness unavailable", approved_by="platform-team", expires="2026-12-01")
+    payload = record_override(
+        tmp_path,
+        "forgeline:verify-tests",
+        reason="Vendor test harness unavailable",
+        approved_by="platform-team",
+        expires="2026-12-01",
+    )
     assert Path(payload["path"]).exists()
     assert Path(payload["receipt_path"]).exists()
     assert payload["approved_by"] == "platform-team"
@@ -362,13 +561,16 @@ def test_missing_module_is_skipped_not_fatal(tmp_path, monkeypatch):
     ensure_layout(tmp_path)
     # force one module to look uninstalled
     import factoryline.assembly as asm
+
     real_detect = asm.detect
+
     def fake_detect():
         mods = real_detect()
         for m in mods:
             if m.name == "hsf":
                 m.installed = False
         return mods
+
     monkeypatch.setattr(asm, "detect", fake_detect)
     report = assemble(tmp_path, "feat", dry_run=True)
     hsf_stages = [s for s in report["stages"] if s["module"] == "hsf"]
@@ -379,7 +581,9 @@ def test_attribution_validation_and_deterministic_tie():
     empty = Attribution("smoke", 0, 0, [])
     assert empty.rate == 0.0
     units = [
-        UnitResult("a", "smoke", False, "timeout after 1s", FailureClass.RUNTIME_TIMEOUT),
+        UnitResult(
+            "a", "smoke", False, "timeout after 1s", FailureClass.RUNTIME_TIMEOUT
+        ),
         UnitResult("b", "smoke", False, "exit 1", FailureClass.RUNTIME_CRASH),
     ]
     attr = Attribution("smoke", 2, 0, units)
@@ -390,6 +594,7 @@ def test_attribution_validation_and_deterministic_tie():
 
 def test_failed_unit_requires_class_and_evidence():
     import pytest
+
     with pytest.raises(ValueError):
         UnitResult("a", "smoke", False, "", None)
 
@@ -402,43 +607,81 @@ def test_receipt_without_attribution_is_backward_compatible(tmp_path):
 
 
 def test_rollup_recommends_earliest_failure_not_worst_rate():
-    early = Attribution("strict", 10, 9, [
-        *[UnitResult(f"r{i}", "strict", True, "typed") for i in range(9)],
-        UnitResult("r9", "strict", False, "vague", FailureClass.AMBIGUOUS_REQUIREMENT),
-    ]).to_dict()
-    late = Attribution("smoke", 2, 0, [
-        UnitResult("a", "smoke", False, "exit 1", FailureClass.RUNTIME_CRASH),
-        UnitResult("b", "smoke", False, "exit 1", FailureClass.RUNTIME_CRASH),
-    ]).to_dict()
-    result = rollup_attributions([
-        {"module": "specline", "stage": "strict", "attribution": early},
-        {"module": "forgeline", "stage": "smoke", "attribution": late},
-    ])
+    early = Attribution(
+        "strict",
+        10,
+        9,
+        [
+            *[UnitResult(f"r{i}", "strict", True, "typed") for i in range(9)],
+            UnitResult(
+                "r9", "strict", False, "vague", FailureClass.AMBIGUOUS_REQUIREMENT
+            ),
+        ],
+    ).to_dict()
+    late = Attribution(
+        "smoke",
+        2,
+        0,
+        [
+            UnitResult("a", "smoke", False, "exit 1", FailureClass.RUNTIME_CRASH),
+            UnitResult("b", "smoke", False, "exit 1", FailureClass.RUNTIME_CRASH),
+        ],
+    ).to_dict()
+    result = rollup_attributions(
+        [
+            {"module": "specline", "stage": "strict", "attribution": early},
+            {"module": "forgeline", "stage": "smoke", "attribution": late},
+        ]
+    )
     assert result["earliest_failing_stage"] == "specline:strict"
 
 
 def test_rollup_prioritizes_verify_tests_before_smoke_even_if_displayed_later():
-    smoke = Attribution("smoke", 4, 2, [
-        UnitResult("runtime", "smoke", False, "timeout after 300s", FailureClass.RUNTIME_TIMEOUT),
-        UnitResult("output", "smoke", False, "wrong output", FailureClass.WRONG_OUTPUT),
-        UnitResult("boot", "smoke", True, "started"),
-        UnitResult("route", "smoke", True, "served"),
-    ]).to_dict()
-    verify_tests = Attribution("verify_tests", 3, 2, [
-        UnitResult("real_behavior", "verify_tests", True, "failed on stub"),
-        UnitResult("imports", "verify_tests", True, "exempt structural check"),
-        UnitResult(
-            "assert_true",
-            "verify_tests",
-            False,
-            "check passed against generated empty SSAT scaffold",
-            FailureClass.HOLLOW_TEST,
-        ),
-    ]).to_dict()
-    result = rollup_attributions([
-        {"module": "forgeline", "stage": "smoke", "attribution": smoke},
-        {"module": "forgeline", "stage": "verify_tests", "attribution": verify_tests},
-    ])
+    smoke = Attribution(
+        "smoke",
+        4,
+        2,
+        [
+            UnitResult(
+                "runtime",
+                "smoke",
+                False,
+                "timeout after 300s",
+                FailureClass.RUNTIME_TIMEOUT,
+            ),
+            UnitResult(
+                "output", "smoke", False, "wrong output", FailureClass.WRONG_OUTPUT
+            ),
+            UnitResult("boot", "smoke", True, "started"),
+            UnitResult("route", "smoke", True, "served"),
+        ],
+    ).to_dict()
+    verify_tests = Attribution(
+        "verify_tests",
+        3,
+        2,
+        [
+            UnitResult("real_behavior", "verify_tests", True, "failed on stub"),
+            UnitResult("imports", "verify_tests", True, "exempt structural check"),
+            UnitResult(
+                "assert_true",
+                "verify_tests",
+                False,
+                "check passed against generated empty SSAT scaffold",
+                FailureClass.HOLLOW_TEST,
+            ),
+        ],
+    ).to_dict()
+    result = rollup_attributions(
+        [
+            {"module": "forgeline", "stage": "smoke", "attribution": smoke},
+            {
+                "module": "forgeline",
+                "stage": "verify_tests",
+                "attribution": verify_tests,
+            },
+        ]
+    )
     assert result["earliest_failing_stage"] == "forgeline:verify_tests"
     assert result["recommended_edit_class"] == "structural"
 
@@ -449,15 +692,25 @@ def test_h0_boundary_rejects_learning_symbols(tmp_path):
     assert_no_attribution_in_artifact(artifact)
     artifact.write_text("attribution = {}\n")
     import pytest
+
     with pytest.raises(ValueError):
         assert_no_attribution_in_artifact(artifact)
 
 
 def test_output_ingestion_and_receipt_rollup(tmp_path):
-    attr = Attribution("strict", 1, 0, [
-        UnitResult("R1", "strict", False, "vague", FailureClass.AMBIGUOUS_REQUIREMENT)
-    ]).to_dict()
-    assert _attribution_from_output("note\n" + json.dumps({"attribution": attr})) == attr
+    attr = Attribution(
+        "strict",
+        1,
+        0,
+        [
+            UnitResult(
+                "R1", "strict", False, "vague", FailureClass.AMBIGUOUS_REQUIREMENT
+            )
+        ],
+    ).to_dict()
+    assert (
+        _attribution_from_output("note\n" + json.dumps({"attribution": attr})) == attr
+    )
     Receipt("specline", "strict", "f", False, attribution=attr).write(tmp_path)
     result = rollup_receipts(tmp_path, "f")
     assert result["earliest_failing_stage"] == "specline:strict"
@@ -465,6 +718,7 @@ def test_output_ingestion_and_receipt_rollup(tmp_path):
 
 def test_factory_refine_plateau_and_rejection_rates(tmp_path):
     from factoryline.refinement import refine
+
     state = {"rates": {"specline:strict": 0.5}, "tree": b"before"}
     result = refine(
         lambda: dict(state["rates"]),
@@ -474,8 +728,12 @@ def test_factory_refine_plateau_and_rejection_rates(tmp_path):
         tmp_path,
     )
     assert result == {"converged": False, "reason": "plateau", "iters": 2}
-    entries = [json.loads(line) for line in
-               (tmp_path / ".factory" / "rejection_ledger.jsonl").read_text().splitlines()]
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / ".factory" / "rejection_ledger.jsonl")
+        .read_text()
+        .splitlines()
+    ]
     assert entries[0]["before_rates"] == entries[0]["after_rates"]
     assert entries[0]["edit"]["edit_class"] == "structural"
 
@@ -483,49 +741,87 @@ def test_factory_refine_plateau_and_rejection_rates(tmp_path):
 def test_hollow_test_attribution_round_trips_and_selects_structural_edit():
     from factoryline.refinement import select_edit
 
-    payload = Attribution("forgeline:verify_tests", 1, 0, [
-        UnitResult(
-            "verify_tests:assert_true",
-            "forgeline:verify_tests",
-            False,
-            "passed against an empty stub",
-            FailureClass.HOLLOW_TEST,
-        )
-    ]).to_dict()
+    payload = Attribution(
+        "forgeline:verify_tests",
+        1,
+        0,
+        [
+            UnitResult(
+                "verify_tests:assert_true",
+                "forgeline:verify_tests",
+                False,
+                "passed against an empty stub",
+                FailureClass.HOLLOW_TEST,
+            )
+        ],
+    ).to_dict()
     attr = Attribution.from_dict(payload)
     assert attr.dominant_failure_class() is FailureClass.HOLLOW_TEST
-    assert select_edit("forgeline:verify_tests", FailureClass.HOLLOW_TEST).edit_class == "structural"
+    assert (
+        select_edit("forgeline:verify_tests", FailureClass.HOLLOW_TEST).edit_class
+        == "structural"
+    )
 
 
 def test_hollow_validator_attribution_round_trips_and_selects_structural_edit():
     from factoryline.refinement import select_edit
 
-    payload = Attribution("validator_mutation", 1, 0, [
-        UnitResult(
-            "R4",
-            "validator_mutation",
-            False,
-            "deletion mutant survived strict",
-            FailureClass.HOLLOW_VALIDATOR,
-        )
-    ]).to_dict()
+    payload = Attribution(
+        "validator_mutation",
+        1,
+        0,
+        [
+            UnitResult(
+                "R4",
+                "validator_mutation",
+                False,
+                "deletion mutant survived strict",
+                FailureClass.HOLLOW_VALIDATOR,
+            )
+        ],
+    ).to_dict()
     attr = Attribution.from_dict(payload)
     assert attr.dominant_failure_class() is FailureClass.HOLLOW_VALIDATOR
-    assert select_edit("specline:verify-validators", FailureClass.HOLLOW_VALIDATOR).edit_class == "structural"
+    assert (
+        select_edit(
+            "specline:verify-validators", FailureClass.HOLLOW_VALIDATOR
+        ).edit_class
+        == "structural"
+    )
 
 
 def test_rollup_prioritizes_verify_validators_before_spec_gate():
-    hollow = Attribution("validator_mutation", 2, 1, [
-        UnitResult("R1", "validator_mutation", True, "mutant killed"),
-        UnitResult("R2", "validator_mutation", False, "mutant survived", FailureClass.HOLLOW_VALIDATOR),
-    ]).to_dict()
-    smoke = Attribution("smoke", 1, 0, [
-        UnitResult("runtime", "smoke", False, "timeout", FailureClass.RUNTIME_TIMEOUT),
-    ]).to_dict()
-    result = rollup_attributions([
-        {"module": "forgeline", "stage": "smoke", "attribution": smoke},
-        {"module": "specline", "stage": "verify-validators", "attribution": hollow},
-    ])
+    hollow = Attribution(
+        "validator_mutation",
+        2,
+        1,
+        [
+            UnitResult("R1", "validator_mutation", True, "mutant killed"),
+            UnitResult(
+                "R2",
+                "validator_mutation",
+                False,
+                "mutant survived",
+                FailureClass.HOLLOW_VALIDATOR,
+            ),
+        ],
+    ).to_dict()
+    smoke = Attribution(
+        "smoke",
+        1,
+        0,
+        [
+            UnitResult(
+                "runtime", "smoke", False, "timeout", FailureClass.RUNTIME_TIMEOUT
+            ),
+        ],
+    ).to_dict()
+    result = rollup_attributions(
+        [
+            {"module": "forgeline", "stage": "smoke", "attribution": smoke},
+            {"module": "specline", "stage": "verify-validators", "attribution": hollow},
+        ]
+    )
     assert result["earliest_failing_stage"] == "specline:verify-validators"
     assert result["recommended_edit_class"] == "structural"
 
@@ -537,17 +833,25 @@ def test_build_metadata_never_lives_in_registry(tmp_path):
     assert_build_metadata_locations(tmp_path)
     (registry / "rejection_ledger.json").write_text("{}")
     import pytest
+
     with pytest.raises(ValueError):
         assert_build_metadata_locations(tmp_path)
 
 
 def test_meter_identical_with_attribution_receipts(tmp_path):
     from factoryline.meter import summarize, MeterLog, StageTiming
+
     MeterLog(tmp_path).record(StageTiming("hsf", "compile", 10, 0, 0, 0, True))
     before = summarize(tmp_path)
-    Receipt("hsf", "compile", "f", True, attribution=Attribution(
-        "compile", 1, 1, [UnitResult("compile", "compile", True, "green")]
-    ).to_dict()).write(tmp_path)
+    Receipt(
+        "hsf",
+        "compile",
+        "f",
+        True,
+        attribution=Attribution(
+            "compile", 1, 1, [UnitResult("compile", "compile", True, "green")]
+        ).to_dict(),
+    ).write(tmp_path)
     after = summarize(tmp_path)
     assert before["build_tokens"] == after["build_tokens"]
     assert before["build_model_calls"] == after["build_model_calls"]
@@ -557,7 +861,9 @@ def _write_proof_fixture(root: Path) -> dict:
     ensure_layout(root)
     artifact = root / "registry" / "f-output.py"
     artifact.write_text("def run():\n    return 'ok'\n")
-    MeterLog(root).record(StageTiming("forgeline", "verify-tests", 12, 1, 100, 20, True))
+    MeterLog(root).record(
+        StageTiming("forgeline", "verify-tests", 12, 1, 100, 20, True)
+    )
     Receipt(
         "forgeline",
         "verify-tests",
@@ -598,15 +904,19 @@ def test_proof_trace_hash_chain_verifies_receipts_and_artifacts(tmp_path):
 def test_factory_passport_emits_verified_mermaid_and_detects_tampering(tmp_path):
     trace = _write_proof_fixture(tmp_path)
     challenge = tmp_path / "specline.challenge.json"
-    challenge.write_text(json.dumps({
-        "schema": CHALLENGE_SCHEMA,
-        "brick": "specline",
-        "feature": "f",
-        "stage": "validator_mutation",
-        "passed": True,
-        "mutants_total": 3,
-        "mutants_killed": 3,
-    }))
+    challenge.write_text(
+        json.dumps(
+            {
+                "schema": CHALLENGE_SCHEMA,
+                "brick": "specline",
+                "feature": "f",
+                "stage": "validator_mutation",
+                "passed": True,
+                "mutants_total": 3,
+                "mutants_killed": 3,
+            }
+        )
+    )
     passport = build_passport(
         tmp_path,
         "f",
@@ -625,10 +935,19 @@ def test_factory_passport_accepts_distinct_challenge_stages_from_one_brick(tmp_p
     receipts = []
     for stage in ("design_counterfactual", "design_tokens"):
         receipt = tmp_path / f"prestige-{stage}.json"
-        receipt.write_text(json.dumps({
-            "schema": CHALLENGE_SCHEMA, "brick": "prestige", "feature": "f",
-            "stage": stage, "passed": True, "mutants_total": 1, "mutants_killed": 1,
-        }))
+        receipt.write_text(
+            json.dumps(
+                {
+                    "schema": CHALLENGE_SCHEMA,
+                    "brick": "prestige",
+                    "feature": "f",
+                    "stage": stage,
+                    "passed": True,
+                    "mutants_total": 1,
+                    "mutants_killed": 1,
+                }
+            )
+        )
         receipts.append(receipt)
     passport = build_passport(tmp_path, "f", tmp_path / trace["trace_path"], receipts)
     assert passport["verified"] is True
@@ -637,6 +956,7 @@ def test_factory_passport_accepts_distinct_challenge_stages_from_one_brick(tmp_p
 
 def test_factoryline_challenge_kills_trace_integrity_mutants(tmp_path):
     from factoryline.challenge import challenge_trace
+
     trace = _write_proof_fixture(tmp_path)
     payload = challenge_trace(tmp_path / trace["trace_path"], root=tmp_path)
     assert payload["passed"] is True
@@ -647,7 +967,9 @@ def test_proof_trace_detects_receipt_tampering(tmp_path):
     trace = _write_proof_fixture(tmp_path)
     receipt_path = tmp_path / trace["nodes"][0]["receipt_path"]
     receipt_path.write_text(receipt_path.read_text() + "\n")
-    result = verify_trace(tmp_path / ".factory" / "traces" / "f.trace.json", root=tmp_path)
+    result = verify_trace(
+        tmp_path / ".factory" / "traces" / "f.trace.json", root=tmp_path
+    )
     assert result["valid"] is False
     assert any("receipt hash mismatch" in error for error in result["errors"])
 
@@ -714,7 +1036,17 @@ def test_cli_replay_execute_refuses_tampered_trace(tmp_path, capsys):
     payload = json.loads(trace_path.read_text())
     payload["chain_head"] = "bad"
     trace_path.write_text(json.dumps(payload))
-    code = main(["replay", str(trace_path), "--root", str(tmp_path), "--changed", "smoke/f.json", "--execute"])
+    code = main(
+        [
+            "replay",
+            str(trace_path),
+            "--root",
+            str(tmp_path),
+            "--changed",
+            "smoke/f.json",
+            "--execute",
+        ]
+    )
     assert code == 1
     assert "trace verification failed" in capsys.readouterr().out
 
@@ -748,7 +1080,15 @@ def test_cli_version_has_machine_readable_provenance(capsys):
 
     assert main(["version", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert {"package", "version", "build_hash", "install_origin", "runtime", "receipt_schema", "identity_complete"} <= payload.keys()
+    assert {
+        "package",
+        "version",
+        "build_hash",
+        "install_origin",
+        "runtime",
+        "receipt_schema",
+        "identity_complete",
+    } <= payload.keys()
     assert payload["package"] == "factoryline-code-factory"
     assert payload["build_hash"]
 
@@ -756,18 +1096,40 @@ def test_cli_version_has_machine_readable_provenance(capsys):
 def test_doctor_separates_installation_from_workflow_status(capsys, monkeypatch):
     import factoryline.cli as cli
 
-    monkeypatch.setattr(cli, "_workflow_canary", lambda module: {"ok": module.name != "forgeline", "provenance_ok": True, "reason": "mjs feature canary failed"})
+    monkeypatch.setattr(
+        cli,
+        "_workflow_canary",
+        lambda module: {
+            "ok": module.name != "forgeline",
+            "provenance_ok": True,
+            "reason": "mjs feature canary failed",
+        },
+    )
     assert cli.main(["doctor", "--strict", "--json"]) == 1
     payload = json.loads(capsys.readouterr().out)
-    assert "installation_ok" in payload and "workflow_ok" in payload and "provenance_ok" in payload
+    assert (
+        "installation_ok" in payload
+        and "workflow_ok" in payload
+        and "provenance_ok" in payload
+    )
     forge = next(item for item in payload["modules"] if item["module"] == "forgeline")
     assert forge["workflow"]["ok"] is False
 
 
-def test_doctor_strict_rejects_incomplete_provenance_without_masking_workflow(capsys, monkeypatch):
+def test_doctor_strict_rejects_incomplete_provenance_without_masking_workflow(
+    capsys, monkeypatch
+):
     import factoryline.cli as cli
 
-    monkeypatch.setattr(cli, "_workflow_canary", lambda module: {"ok": True, "provenance_ok": False, "provenance": {"source_commit": None}})
+    monkeypatch.setattr(
+        cli,
+        "_workflow_canary",
+        lambda module: {
+            "ok": True,
+            "provenance_ok": False,
+            "provenance": {"source_commit": None},
+        },
+    )
     assert cli.main(["doctor", "--strict", "--json"]) == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["workflow_ok"] is True
@@ -775,7 +1137,9 @@ def test_doctor_strict_rejects_incomplete_provenance_without_masking_workflow(ca
     assert payload["ok"] is False
 
 
-def test_cli_no_args_returns_agent_home_with_definitive_empty_states(tmp_path, capsys, monkeypatch):
+def test_cli_no_args_returns_agent_home_with_definitive_empty_states(
+    tmp_path, capsys, monkeypatch
+):
     from factoryline.cli import main
 
     monkeypatch.chdir(tmp_path)
@@ -801,7 +1165,9 @@ def test_policy_writes_hollow_gate_defaults(tmp_path):
 def test_optimize_pr_adds_design_and_release_stages(tmp_path):
     from factoryline.optimizer import optimize_pr
 
-    plan = optimize_pr(tmp_path, changed=["app/page.tsx", "pyproject.toml"], feature="f")
+    plan = optimize_pr(
+        tmp_path, changed=["app/page.tsx", "pyproject.toml"], feature="f"
+    )
     assert "prestige:audit" in plan["recommended_stages"]
     assert "factoryline:release-readiness" in plan["recommended_stages"]
     assert plan["loop"]["max_iterations"] == 5
@@ -842,12 +1208,29 @@ def test_app_builder_scaffolds_full_stack_repo(tmp_path):
     blueprint = json.loads((tmp_path / "prior-auth" / "app_blueprint.json").read_text())
     assert blueprint["app"]["purpose"] == "healthcare"
     assert "hollow_tests" in blueprint["app"]["required_gates"]
-    smoke = json.loads((tmp_path / "prior-auth" / "smoke" / "clinical-prior-auth-portal-patient.json").read_text())
+    smoke = json.loads(
+        (
+            tmp_path
+            / "prior-auth"
+            / "smoke"
+            / "clinical-prior-auth-portal-patient.json"
+        ).read_text()
+    )
     assert smoke["checks"][0]["must_fail_on_stub"] is True
     assert smoke["checks"][0]["covers"] == ["RUNTIME_HEALTH"]
-    state = json.loads((tmp_path / "prior-auth" / ".forge" / "clinical-prior-auth-portal-patient" / "state.json").read_text())
+    state = json.loads(
+        (
+            tmp_path
+            / "prior-auth"
+            / ".forge"
+            / "clinical-prior-auth-portal-patient"
+            / "state.json"
+        ).read_text()
+    )
     assert state["state"] == "blocked"
-    package = json.loads((tmp_path / "prior-auth" / "frontend" / "package.json").read_text())
+    package = json.loads(
+        (tmp_path / "prior-auth" / "frontend" / "package.json").read_text()
+    )
     assert package["dependencies"]["next"] == "16.2.10"
     assert package["scripts"]["typecheck"] == "tsc --noEmit"
     assert package["overrides"]["postcss"] == "8.5.19"
@@ -856,7 +1239,8 @@ def test_app_builder_scaffolds_full_stack_repo(tmp_path):
     assert result["output_map_sha256"] == sha256(output_map.read_bytes()).hexdigest()
     assert "APP_OUTPUT_MAP_WRITTEN" in result["markers"]
     mapped = {
-        line[3:-1] for line in output_map.read_text(encoding="utf-8").splitlines()
+        line[3:-1]
+        for line in output_map.read_text(encoding="utf-8").splitlines()
         if line.startswith("- `") and line.endswith("`")
     }
     assert mapped == set(result["files"])
@@ -882,7 +1266,9 @@ def test_app_builder_stacks_generate_truthful_frontend_and_database(tmp_path):
     from factoryline.app_builder import app_from_prompt
 
     react_pg = tmp_path / "react-pg"
-    app_from_prompt("Build an expense app.", out_dir=react_pg, stack="react-fastapi-postgres")
+    app_from_prompt(
+        "Build an expense app.", out_dir=react_pg, stack="react-fastapi-postgres"
+    )
     assert (react_pg / "frontend" / "src" / "App.tsx").exists()
     assert (react_pg / "frontend" / "src" / "globals.css").exists()
     assert (react_pg / "frontend" / "vite.config.ts").exists()
@@ -890,7 +1276,9 @@ def test_app_builder_stacks_generate_truthful_frontend_and_database(tmp_path):
     assert "bigserial" in (react_pg / "db" / "schema.sql").read_text()
 
     react_sqlite = tmp_path / "react-sqlite"
-    app_from_prompt("Build an expense app.", out_dir=react_sqlite, stack="react-fastapi-sqlite")
+    app_from_prompt(
+        "Build an expense app.", out_dir=react_sqlite, stack="react-fastapi-sqlite"
+    )
     assert (react_sqlite / "frontend" / "src" / "App.tsx").exists()
     schema = (react_sqlite / "db" / "schema.sql").read_text()
     assert "autoincrement" in schema and "jsonb" not in schema
@@ -899,38 +1287,44 @@ def test_app_builder_stacks_generate_truthful_frontend_and_database(tmp_path):
 def test_cli_app_from_prompt_outputs_json(tmp_path, capsys):
     from factoryline.cli import main
 
-    code = main([
-        "app",
-        "from-prompt",
-        "Build a developer API dashboard with GitHub receipts.",
-        "--out",
-        str(tmp_path / "api-dash"),
-        "--json",
-    ])
+    code = main(
+        [
+            "app",
+            "from-prompt",
+            "Build a developer API dashboard with GitHub receipts.",
+            "--out",
+            str(tmp_path / "api-dash"),
+            "--json",
+        ]
+    )
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["app"] == "developer-api-dashboard-github-receipts"
     assert (tmp_path / "api-dash" / "docs" / "WORKFLOW.md").exists()
-    assert (tmp_path / "api-dash" / "developer-api-dashboard-github-receipts.ssat.yaml").exists()
+    assert (
+        tmp_path / "api-dash" / "developer-api-dashboard-github-receipts.ssat.yaml"
+    ).exists()
 
 
 def test_cli_target_create_and_studio_check_are_machine_readable(tmp_path, capsys):
     from factoryline.cli import main
 
     output = tmp_path / "receipt-worker"
-    code = main([
-        "create",
-        "Build a deterministic receipt worker.",
-        "--target",
-        "worker",
-        "--out",
-        str(output),
-        "--name",
-        "receipt-worker",
-        "--deployment-profile",
-        "container-host",
-        "--json",
-    ])
+    code = main(
+        [
+            "create",
+            "Build a deterministic receipt worker.",
+            "--target",
+            "worker",
+            "--out",
+            str(output),
+            "--name",
+            "receipt-worker",
+            "--deployment-profile",
+            "container-host",
+            "--json",
+        ]
+    )
     assert code == 0
     result = json.loads(capsys.readouterr().out)
     assert result["target_kind"] == "worker"
@@ -948,8 +1342,18 @@ def test_cli_target_create_and_studio_check_are_machine_readable(tmp_path, capsy
     assert code == 0
     inventory = json.loads(capsys.readouterr().out)
     assert inventory["schema"] == "factory.targets.v1"
-    assert sorted(inventory["targets"]) == ["agent-ui", "api", "cli", "mcp", "mobile", "web", "worker"]
-    assert inventory["targets"]["mobile"]["deployment_profiles"][0]["id"] == "expo-preview"
+    assert sorted(inventory["targets"]) == [
+        "agent-ui",
+        "api",
+        "cli",
+        "mcp",
+        "mobile",
+        "web",
+        "worker",
+    ]
+    assert (
+        inventory["targets"]["mobile"]["deployment_profiles"][0]["id"] == "expo-preview"
+    )
 
     code = main(["targets"])
     assert code == 0
@@ -970,16 +1374,18 @@ def test_cli_target_create_rejects_zero_or_two_sources(tmp_path, capsys):
 
     prd = tmp_path / "PRD.md"
     prd.write_text("# Worker\n", encoding="utf-8")
-    code = main([
-        "create",
-        "Build a worker.",
-        "--prd",
-        str(prd),
-        "--target",
-        "worker",
-        "--out",
-        str(tmp_path / "two"),
-    ])
+    code = main(
+        [
+            "create",
+            "Build a worker.",
+            "--prd",
+            str(prd),
+            "--target",
+            "worker",
+            "--out",
+            str(tmp_path / "two"),
+        ]
+    )
     assert code == 2
     two = json.loads(capsys.readouterr().err)
     assert two["code"] == "SOURCE_EXACTLY_ONE"
@@ -989,7 +1395,9 @@ def test_cli_coverage_outputs_json_and_fails_closed(tmp_path, capsys):
     from factoryline.app_builder import app_from_prompt
     from factoryline.cli import main
 
-    app_from_prompt("Build an expense app with approval rules.", out_dir=tmp_path / "expense")
+    app_from_prompt(
+        "Build an expense app with approval rules.", out_dir=tmp_path / "expense"
+    )
     code = main(["coverage", "--root", str(tmp_path / "expense"), "--json"])
     assert code == 1
     payload = json.loads(capsys.readouterr().out)

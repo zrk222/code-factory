@@ -1,4 +1,5 @@
 """Requirement coverage checks for factory-generated app starters."""
+
 from __future__ import annotations
 
 import json
@@ -54,19 +55,23 @@ def requirement_coverage(root: Path) -> dict:
         passed = req_id in covered_ids
         if not passed:
             uncovered.append(req_id)
-        units.append(UnitResult(
-            unit=f"coverage:{req_id}",
-            stage="coverage",
-            passed=passed,
-            evidence=(
-                "covered by a non-hollow smoke check"
-                if passed
-                else "no non-hollow smoke check declares this requirement in covers[]"
-            ),
-            failure_class=None if passed else FailureClass.HOLLOW_COVERAGE,
-        ))
+        units.append(
+            UnitResult(
+                unit=f"coverage:{req_id}",
+                stage="coverage",
+                passed=passed,
+                evidence=(
+                    "covered by a non-hollow smoke check"
+                    if passed
+                    else "no non-hollow smoke check declares this requirement in covers[]"
+                ),
+                failure_class=None if passed else FailureClass.HOLLOW_COVERAGE,
+            )
+        )
 
-    attr = Attribution("coverage", len(units), sum(unit.passed for unit in units), units)
+    attr = Attribution(
+        "coverage", len(units), sum(unit.passed for unit in units), units
+    )
     return {
         "ok": attr.n_checked > 0 and attr.rate == 1.0,
         "manifest": str(manifest),

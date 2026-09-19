@@ -1,4 +1,5 @@
 """Static contract checks for the Official MCP Registry release path."""
+
 from __future__ import annotations
 
 import json
@@ -27,7 +28,10 @@ def test_registry_descriptor_is_bound_to_the_released_local_stdio_package() -> N
     server = _server()
     package = server["packages"][0]
 
-    assert server["$schema"] == "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
+    assert (
+        server["$schema"]
+        == "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
+    )
     assert server["name"] == SERVER_NAME
     assert len(server["description"]) <= 100
     assert server["version"] == __version__
@@ -49,24 +53,38 @@ def test_registry_descriptor_is_bound_to_the_released_local_stdio_package() -> N
             "value": f"factoryline-code-factory=={__version__}",
         }
     ]
-    assert [argument["value"] for argument in package["packageArguments"]] == ["factory", "mcp", "serve"]
+    assert [argument["value"] for argument in package["packageArguments"]] == [
+        "factory",
+        "mcp",
+        "serve",
+    ]
     assert "environmentVariables" not in package
 
 
-def test_pypi_long_description_source_and_registry_guide_carry_the_exact_marker() -> None:
+def test_pypi_long_description_source_and_registry_guide_carry_the_exact_marker() -> (
+    None
+):
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     guide = (ROOT / "docs" / "MCP_REGISTRY.md").read_text(encoding="utf-8")
 
     assert MARKER in readme
     assert MARKER in guide
-    assert f"uvx --from factoryline-code-factory=={__version__} factory mcp serve" in guide
-    for prohibited_claim in ("does not create a hosted", "add write authority", "access credentials"):
+    assert (
+        f"uvx --from factoryline-code-factory=={__version__} factory mcp serve" in guide
+    )
+    for prohibited_claim in (
+        "does not create a hosted",
+        "add write authority",
+        "access credentials",
+    ):
         assert prohibited_claim in guide
 
 
 def test_registry_descriptor_is_shipped_with_the_source_distribution() -> None:
     manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
 
     assert "include mcp/server.json" in manifest
     assert project["version"] == __version__
@@ -88,4 +106,4 @@ def test_registry_publication_is_post_pypi_oidc_and_fails_closed_on_drift() -> N
     assert "mcp-publisher publish mcp/server.json" in workflow
     assert "mcp-publisher_linux_amd64.tar.gz" in workflow
     assert "sha256sum --check --strict --status" in workflow
-    assert "secrets." not in workflow[workflow.index("publish_mcp_registry:"):]
+    assert "secrets." not in workflow[workflow.index("publish_mcp_registry:") :]

@@ -5,7 +5,11 @@ import pytest
 
 from test_deep_audit_contract import fixture
 from test_deep_audit_sarif import report
-from factoryline.deep_audit import execute_deep_audit, evaluate_deep_audit, deep_audit_status
+from factoryline.deep_audit import (
+    execute_deep_audit,
+    evaluate_deep_audit,
+    deep_audit_status,
+)
 from factoryline.deep_audit_contract import verify_deep_audit_plan
 from factoryline.deep_audit_sarif import normalize_sarif
 from factoryline.deep_audit_io import digest
@@ -23,18 +27,31 @@ def inputs(tmp_path, *, clean=False, canary_kind="fail", canary_suppressed=False
             if key == "canary_report":
                 result["kind"] = canary_kind
                 if canary_suppressed:
-                    result["suppressions"] = [{"kind": "external", "status": "accepted"}]
+                    result["suppressions"] = [
+                        {"kind": "external", "status": "accepted"}
+                    ]
             elif clean:
                 payload["runs"][0]["results"] = []
             raw = json.dumps(payload).encode()
-            (tmp_path/name).write_bytes(raw)
+            (tmp_path / name).write_bytes(raw)
             plan["analyzers"][0][key]["sha256"] = sha256_bytes(raw)
-        plan["canaries"][0]["fingerprint_sha256"] = digest({"partialFingerprints:primary/v1": "canary_report"})
+        plan["canaries"][0]["fingerprint_sha256"] = digest(
+            {"partialFingerprints:primary/v1": "canary_report"}
+        )
+
     args = fixture(tmp_path, bind)
     checked = verify_deep_audit_plan(*args)
     analyzer = checked["plan"]["analyzers"][0]
-    targets = [normalize_sarif(tmp_path, analyzer["report"], analyzer, checked["source_hashes"])]
-    canaries = [normalize_sarif(tmp_path, analyzer["canary_report"], analyzer, checked["source_hashes"])]
+    targets = [
+        normalize_sarif(
+            tmp_path, analyzer["report"], analyzer, checked["source_hashes"]
+        )
+    ]
+    canaries = [
+        normalize_sarif(
+            tmp_path, analyzer["canary_report"], analyzer, checked["source_hashes"]
+        )
+    ]
     return args, checked["plan"], targets, canaries
 
 
@@ -65,10 +82,15 @@ def test_clean_with_detected_canary_requires_human_review(tmp_path):
     assert receipt["decision"] == "READY_FOR_HUMAN_REVIEW"
     assert receipt["repair_queue"] == []
     assert receipt["authority"] == "none"
-    assert deep_audit_status(tmp_path)["verification"] == "self_hash_only_not_signature_or_freshness"
+    assert (
+        deep_audit_status(tmp_path)["verification"]
+        == "self_hash_only_not_signature_or_freshness"
+    )
 
 
-@pytest.mark.parametrize("kind", ["pass", "notApplicable", "review", "open", "informational"])
+@pytest.mark.parametrize(
+    "kind", ["pass", "notApplicable", "review", "open", "informational"]
+)
 def test_nonfailure_canary_cannot_validate_analyzer(tmp_path, kind):
     args, _, _, _ = inputs(tmp_path, clean=True, canary_kind=kind)
     assert "HOLLOW_DEEP_AUDIT" in codes(execute_deep_audit(*args)["receipt"])
@@ -108,7 +130,7 @@ def test_missing_duplicate_and_changed_reports_rejected(tmp_path):
     with pytest.raises(RuntimeAuditError, match="E_ANALYZER_INCOMPLETE"):
         evaluate_deep_audit(plan, [], canaries)
     with pytest.raises(RuntimeAuditError, match="E_DEEP_REPORT"):
-        evaluate_deep_audit(plan, targets*2, canaries)
+        evaluate_deep_audit(plan, targets * 2, canaries)
     targets[0]["findings"] = []
     with pytest.raises(RuntimeAuditError, match="E_DEEP_REPORT"):
         evaluate_deep_audit(plan, targets, canaries)
@@ -118,6 +140,7 @@ def test_tampered_receipt_never_falls_back_to_green(tmp_path):
     args, _, _, _ = inputs(tmp_path, clean=True)
     result = execute_deep_audit(*args)
     from pathlib import Path
+
     Path(result["receipt_path"]).write_text("{}")
     assert deep_audit_status(tmp_path)["state"] == "INCOMPLETE"
     with pytest.raises(RuntimeAuditError, match="E_RECEIPT_COLLISION"):
@@ -133,9 +156,15 @@ def test_absent_and_pass_labels_do_not_hide_signed_threshold_findings(tmp_path):
 
 def test_cluster_signals_do_not_claim_causation(tmp_path):
     from factoryline.deep_audit import _clusters
+
     _, _, targets, _ = inputs(tmp_path)
     first = {**targets[0]["findings"][0], "obligation_id": "o", "category": "memory"}
-    second = {**deepcopy(first), "analyzer_id": "second", "finding_id": "b"*64, "category": "security"}
+    second = {
+        **deepcopy(first),
+        "analyzer_id": "second",
+        "finding_id": "b" * 64,
+        "category": "security",
+    }
     clusters = _clusters([first, second])
     assert {item["kind"] for item in clusters} == {"corroboration", "compound_risk"}
     assert all(item["claim"] == "routing_signal_not_causation" for item in clusters)

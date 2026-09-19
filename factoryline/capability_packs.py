@@ -1,4 +1,5 @@
 """Signed, mutation-tested capability packs for target diversity."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -29,7 +30,16 @@ PACK_REQUIRED_PATHS = (
     "pack.trust.json",
     "pack.signature.json",
 )
-REQUIRED_UX_STATES = {"loading", "empty", "error", "success", "permission", "offline", "recovery", "accessibility"}
+REQUIRED_UX_STATES = {
+    "loading",
+    "empty",
+    "error",
+    "success",
+    "permission",
+    "offline",
+    "recovery",
+    "accessibility",
+}
 PACK_KINDS = {"target", "language", "capability", "surface", "data", "ops"}
 BUILTIN_ROOT = Path(__file__).resolve().parent / "builtin_packs"
 
@@ -44,16 +54,22 @@ class CapabilityPackError(ValueError):
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
 
 
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise CapabilityPackError("PACK_JSON_INVALID", f"cannot read structured pack file {path}: {exc}") from exc
+        raise CapabilityPackError(
+            "PACK_JSON_INVALID", f"cannot read structured pack file {path}: {exc}"
+        ) from exc
     if not isinstance(value, dict):
-        raise CapabilityPackError("PACK_JSON_INVALID", f"top-level value must be an object: {path}")
+        raise CapabilityPackError(
+            "PACK_JSON_INVALID", f"top-level value must be an object: {path}"
+        )
     return value
 
 
@@ -68,7 +84,9 @@ def _files(pack_root: Path) -> dict[str, str]:
             except UnicodeDecodeError:
                 canonical = data
             else:
-                canonical = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+                canonical = (
+                    text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+                )
             result[relative] = sha256(canonical).hexdigest()
     return result
 
@@ -84,7 +102,9 @@ def pack_payload(pack_root: Path) -> dict[str, Any]:
     }
 
 
-def sign_pack(pack_root: Path, private_key: Path, *, keyid: str, identity: str, issuer: str) -> dict[str, Any]:
+def sign_pack(
+    pack_root: Path, private_key: Path, *, keyid: str, identity: str, issuer: str
+) -> dict[str, Any]:
     """Seal a reviewed pack with a DSSE Ed25519 envelope."""
     payload = pack_payload(pack_root)
     envelope = sign_payload(
@@ -96,15 +116,28 @@ def sign_pack(pack_root: Path, private_key: Path, *, keyid: str, identity: str, 
         issuer=issuer,
     )
     path = Path(pack_root) / "pack.signature.json"
-    path.write_text(json.dumps(envelope, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return {"path": str(path.resolve()), "payload_sha256": sha256(_canonical(payload)).hexdigest()}
+    path.write_text(
+        json.dumps(envelope, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return {
+        "path": str(path.resolve()),
+        "payload_sha256": sha256(_canonical(payload)).hexdigest(),
+    }
 
 
 def _manifest_errors(manifest: dict[str, Any], root: Path) -> list[str]:
     errors: list[str] = []
     required = {
-        "schema", "id", "version", "kind", "label", "summary",
-        "generator_adapter", "runtime_mode", "entrypoint", "compatibility",
+        "schema",
+        "id",
+        "version",
+        "kind",
+        "label",
+        "summary",
+        "generator_adapter",
+        "runtime_mode",
+        "entrypoint",
+        "compatibility",
     }
     missing = sorted(required - set(manifest))
     if missing:
@@ -136,9 +169,16 @@ def _manifest_errors(manifest: dict[str, Any], root: Path) -> list[str]:
         errors.append("canary manifest must be non-empty")
     states = set(ux.get("states", []))
     if not REQUIRED_UX_STATES.issubset(states):
-        errors.append(f"UX states missing: {', '.join(sorted(REQUIRED_UX_STATES - states))}")
-    if migration.get("breaking_changes") != "deny" or migration.get("human_review_required") is not True:
-        errors.append("migration policy must deny breaking changes and require human review")
+        errors.append(
+            f"UX states missing: {', '.join(sorted(REQUIRED_UX_STATES - states))}"
+        )
+    if (
+        migration.get("breaking_changes") != "deny"
+        or migration.get("human_review_required") is not True
+    ):
+        errors.append(
+            "migration policy must deny breaking changes and require human review"
+        )
     errors.extend(_compatibility_errors(manifest.get("compatibility")))
     errors.extend(_deployment_errors(manifest.get("deployment_profiles")))
     return errors
@@ -149,7 +189,9 @@ def _compatibility_errors(value: object) -> list[str]:
         return ["compatibility must be an object"]
     required = ("compatible_targets", "requires_kinds", "conflicts_with", "provides")
     if any(not isinstance(value.get(field), list) for field in required):
-        return ["compatibility must define compatible_targets, requires_kinds, conflicts_with, and provides arrays"]
+        return [
+            "compatibility must define compatible_targets, requires_kinds, conflicts_with, and provides arrays"
+        ]
     if not value["compatible_targets"]:
         return ["compatible_targets must be non-empty"]
     if not value["provides"]:
@@ -159,7 +201,9 @@ def _compatibility_errors(value: object) -> list[str]:
         return ["compatibility entries must be non-empty strings"]
     unknown_kinds = set(value["requires_kinds"]) - PACK_KINDS
     if unknown_kinds:
-        return [f"requires_kinds contains unsupported kinds: {', '.join(sorted(unknown_kinds))}"]
+        return [
+            f"requires_kinds contains unsupported kinds: {', '.join(sorted(unknown_kinds))}"
+        ]
     return []
 
 
@@ -167,8 +211,13 @@ def _deployment_errors(profiles: object) -> list[str]:
     if not isinstance(profiles, list) or not profiles:
         return ["deployment profiles must be non-empty"]
     fields = ("id", "label", "prerequisites", "build", "verify", "release", "approval")
-    if any(not isinstance(profile, dict) or not all(profile.get(field) for field in fields) for profile in profiles):
-        return ["each deployment profile must include id, label, prerequisites, build, verify, release, and approval"]
+    if any(
+        not isinstance(profile, dict) or not all(profile.get(field) for field in fields)
+        for profile in profiles
+    ):
+        return [
+            "each deployment profile must include id, label, prerequisites, build, verify, release, and approval"
+        ]
     identifiers = [profile["id"] for profile in profiles]
     if len(identifiers) != len(set(identifiers)):
         return ["deployment profile ids must be unique"]
@@ -197,7 +246,10 @@ def _mutation_results(manifest: dict[str, Any], root: Path) -> list[dict[str, An
     mutants.append(("remove-goldens", deepcopy(manifest), "goldens"))
     mutants.append(("relax-migration-policy", deepcopy(manifest), "migration"))
     no_provides = deepcopy(manifest)
-    no_provides["compatibility"] = {**no_provides.get("compatibility", {}), "provides": []}
+    no_provides["compatibility"] = {
+        **no_provides.get("compatibility", {}),
+        "provides": [],
+    }
     mutants.append(("remove-provided-capabilities", no_provides, None))
     for name, mutant, external_mutation in mutants:
         if external_mutation is None:
@@ -212,11 +264,20 @@ def _mutation_results(manifest: dict[str, Any], root: Path) -> list[dict[str, An
             rejected = not bool({**value, external_mutation: []}.get(external_mutation))
         elif external_mutation == "accessibility":
             value = _load_json(root / "ux-states" / "manifest.json")
-            rejected = not REQUIRED_UX_STATES.issubset(set(value.get("states", [])) - {"accessibility"})
+            rejected = not REQUIRED_UX_STATES.issubset(
+                set(value.get("states", [])) - {"accessibility"}
+            )
         else:
             migration = _load_json(root / "migration-policy.json")
-            mutated = {**migration, "breaking_changes": "allow", "human_review_required": False}
-            rejected = mutated.get("breaking_changes") != "deny" or mutated.get("human_review_required") is not True
+            mutated = {
+                **migration,
+                "breaking_changes": "allow",
+                "human_review_required": False,
+            }
+            rejected = (
+                mutated.get("breaking_changes") != "deny"
+                or mutated.get("human_review_required") is not True
+            )
         cases.append({"mutation": name, "rejected": rejected})
     return cases
 
@@ -230,11 +291,20 @@ def _verified_signature(root: Path) -> dict[str, Any]:
         trust_root=trust_root,
     )
     if signed != pack_payload(root):
-        raise CapabilityPackError("PACK_SIGNATURE_INVALID", "signed pack payload does not match current files")
-    return {"required": True, "verified": True, "identity": metadata["identity"], "keyid": metadata["keyid"]}
+        raise CapabilityPackError(
+            "PACK_SIGNATURE_INVALID", "signed pack payload does not match current files"
+        )
+    return {
+        "required": True,
+        "verified": True,
+        "identity": metadata["identity"],
+        "keyid": metadata["keyid"],
+    }
 
 
-def validate_pack(pack_root: Path, *, verify_signature: bool = True, mutate: bool = True) -> dict[str, Any]:
+def validate_pack(
+    pack_root: Path, *, verify_signature: bool = True, mutate: bool = True
+) -> dict[str, Any]:
     """Validate a pack's manifest, files, signature, and optional mutation checks."""
     root = Path(pack_root).resolve()
     manifest = _load_json(root / "pack.yaml")
@@ -247,7 +317,9 @@ def validate_pack(pack_root: Path, *, verify_signature: bool = True, mutate: boo
             errors.append(f"signature verification failed: {exc}")
     mutations = _mutation_results(manifest, root) if mutate and not errors else []
     if mutations and not all(item["rejected"] for item in mutations):
-        errors.append("HOLLOW_PACK_VALIDATOR: at least one meaningful pack mutation survived")
+        errors.append(
+            "HOLLOW_PACK_VALIDATOR: at least one meaningful pack mutation survived"
+        )
     result = {
         "schema": PACK_VALIDATION_SCHEMA,
         "pack_id": manifest.get("id"),
@@ -262,14 +334,21 @@ def validate_pack(pack_root: Path, *, verify_signature: bool = True, mutate: boo
         "files": _files(root),
         "errors": errors,
         "markers": [
-            "PACK_STRUCTURE_VALIDATED", "PACK_SIGNATURE_VERIFIED",
-            "PACK_VALIDATOR_MUTATIONS_REJECTED", "PACK_UX_STATES_COMPLETE",
-            "PACK_MIGRATION_POLICY_BOUND", "PACK_DEPLOYMENT_GUIDANCE_COMPLETE",
+            "PACK_STRUCTURE_VALIDATED",
+            "PACK_SIGNATURE_VERIFIED",
+            "PACK_VALIDATOR_MUTATIONS_REJECTED",
+            "PACK_UX_STATES_COMPLETE",
+            "PACK_MIGRATION_POLICY_BOUND",
+            "PACK_DEPLOYMENT_GUIDANCE_COMPLETE",
             "PACK_SIGNATURE_BYPASS_DENIED",
-        ] if not errors else ["PACK_VALIDATION_FAILED"],
+        ]
+        if not errors
+        else ["PACK_VALIDATION_FAILED"],
     }
     if errors:
-        result["failure"] = explain_failure("PACK_VALIDATION_FAILED", "; ".join(errors), errors=errors)
+        result["failure"] = explain_failure(
+            "PACK_VALIDATION_FAILED", "; ".join(errors), errors=errors
+        )
     return result
 
 
@@ -277,14 +356,20 @@ def builtin_packs() -> list[dict[str, Any]]:
     """Return validated metadata for every capability pack shipped with Code Factory."""
     result = []
     if not BUILTIN_ROOT.is_dir():
-        raise CapabilityPackError("PACK_BUILTINS_MISSING", f"built-in pack directory is missing: {BUILTIN_ROOT}")
+        raise CapabilityPackError(
+            "PACK_BUILTINS_MISSING",
+            f"built-in pack directory is missing: {BUILTIN_ROOT}",
+        )
     roots = sorted(
         path
         for path in BUILTIN_ROOT.iterdir()
         if path.is_dir() and (path / "pack.yaml").is_file()
     )
     if not roots:
-        raise CapabilityPackError("PACK_BUILTINS_MISSING", f"no built-in pack manifests exist below: {BUILTIN_ROOT}")
+        raise CapabilityPackError(
+            "PACK_BUILTINS_MISSING",
+            f"no built-in pack manifests exist below: {BUILTIN_ROOT}",
+        )
     for root in roots:
         manifest = _load_json(root / "pack.yaml")
         result.append({**manifest, "path": str(root)})
@@ -314,7 +399,10 @@ def _destination(workspace: Path, pack_id: str) -> tuple[Path, Path]:
     packs_root = Path(workspace).resolve() / ".factory" / "packs"
     destination = (packs_root / pack_id).resolve()
     if destination.parent != packs_root.resolve():
-        raise CapabilityPackError("PACK_PATH_INVALID", "pack id must resolve to one direct child of .factory/packs")
+        raise CapabilityPackError(
+            "PACK_PATH_INVALID",
+            "pack id must resolve to one direct child of .factory/packs",
+        )
     return packs_root, destination
 
 
@@ -327,39 +415,70 @@ def _copy_pack(source: Path, staging: Path) -> None:
             shutil.copy2(item, target)
 
 
+def _atomic_dir_move(source: Path, destination: Path) -> None:
+    """Move a directory atomically across platforms.
+
+    Windows does not support ``os.replace`` for directory targets and raises
+    ``WinError 5`` even when the destination is absent.  ``os.rename`` has the
+    same atomic move semantics once the caller has removed the destination.
+    """
+    try:
+        os.replace(source, destination)
+    except PermissionError:
+        if os.name != "nt":
+            raise
+        # Windows rejects directory replacement with WinError 5; at this point
+        # the destination is absent, so rename provides the atomic move.
+        os.rename(source, destination)
+
+
 def _atomic_swap(staging: Path, destination: Path, backup: Path) -> None:
     previous_moved = False
     try:
         if destination.exists():
-            os.replace(destination, backup)
+            _atomic_dir_move(destination, backup)
             previous_moved = True
-        os.replace(staging, destination)
+        _atomic_dir_move(staging, destination)
     except BaseException as exc:
         if previous_moved and backup.exists() and not destination.exists():
-            os.replace(backup, destination)
+            _atomic_dir_move(backup, destination)
             raise CapabilityPackError(
-                "PACK_INSTALL_FAILED", f"atomic installation failed: {exc}",
+                "PACK_INSTALL_FAILED",
+                f"atomic installation failed: {exc}",
                 markers=["PACK_ROLLBACK_RESTORED"],
             ) from exc
-        raise CapabilityPackError("PACK_INSTALL_FAILED", f"atomic installation failed: {exc}") from exc
+        raise CapabilityPackError(
+            "PACK_INSTALL_FAILED", f"atomic installation failed: {exc}"
+        ) from exc
     if backup.exists():
         shutil.rmtree(backup, ignore_errors=True)
 
 
-def install_pack(pack_root: Path, workspace: Path, *, force: bool = False) -> dict[str, Any]:
+def install_pack(
+    pack_root: Path, workspace: Path, *, force: bool = False
+) -> dict[str, Any]:
     """Atomically install a verified capability pack, refusing replacement by default."""
     validation = validate_pack(pack_root, verify_signature=True, mutate=True)
     if not validation["valid"]:
-        raise CapabilityPackError("PACK_VALIDATION_FAILED", "; ".join(validation["errors"]))
+        raise CapabilityPackError(
+            "PACK_VALIDATION_FAILED", "; ".join(validation["errors"])
+        )
     source = Path(pack_root).resolve()
     packs_root, destination = _destination(Path(workspace), str(validation["pack_id"]))
     packs_root.mkdir(parents=True, exist_ok=True)
     if destination.exists() and not force:
-        raise CapabilityPackError("PACK_EXISTS", f"pack already installed: {destination}")
-    staging = Path(tempfile.mkdtemp(prefix=f".{validation['pack_id']}.", dir=str(packs_root)))
+        raise CapabilityPackError(
+            "PACK_EXISTS", f"pack already installed: {destination}"
+        )
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{validation['pack_id']}.", dir=str(packs_root))
+    )
     backup = packs_root / f".{validation['pack_id']}.backup"
     if backup.exists():
-        raise CapabilityPackError("PACK_BACKUP_EXISTS", f"manual recovery required for existing backup: {backup}")
+        raise CapabilityPackError(
+            "PACK_BACKUP_EXISTS",
+            f"manual recovery required for existing backup: {backup}",
+        )
     try:
         _copy_pack(source, staging)
         _atomic_swap(staging, destination, backup)
@@ -374,31 +493,61 @@ def install_pack(pack_root: Path, workspace: Path, *, force: bool = False) -> di
         "path": str(destination),
         "signature": validation["signature"],
         "mutations": validation["mutations"],
-        "authority": {"generator_available": True, "execute": False, "network": False, "publish": False},
+        "authority": {
+            "generator_available": True,
+            "execute": False,
+            "network": False,
+            "publish": False,
+        },
         "marker": "PACK_INSTALLED_VERIFIED",
-        "markers": ["PACK_INSTALLED_VERIFIED", "PACK_PATH_CONTAINED", "PACK_SIGNATURE_BYPASS_DENIED"],
+        "markers": [
+            "PACK_INSTALLED_VERIFIED",
+            "PACK_PATH_CONTAINED",
+            "PACK_SIGNATURE_BYPASS_DENIED",
+        ],
     }
 
 
-def compose_packs(pack_roots: list[Path], workspace: Path, *, name: str = "default", force: bool = False) -> dict[str, Any]:
+def compose_packs(
+    pack_roots: list[Path],
+    workspace: Path,
+    *,
+    name: str = "default",
+    force: bool = False,
+) -> dict[str, Any]:
     """Write a hash-bound, non-executing plan for one compatible pack set."""
     if not pack_roots:
-        raise CapabilityPackError("PACK_COMPOSITION_EMPTY", "at least one pack is required")
-    if not name or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for char in name):
-        raise CapabilityPackError("PACK_COMPOSITION_NAME_INVALID", "composition name must use letters, digits, dash, or underscore")
+        raise CapabilityPackError(
+            "PACK_COMPOSITION_EMPTY", "at least one pack is required"
+        )
+    if not name or any(
+        char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+        for char in name
+    ):
+        raise CapabilityPackError(
+            "PACK_COMPOSITION_NAME_INVALID",
+            "composition name must use letters, digits, dash, or underscore",
+        )
     selected: list[tuple[dict[str, Any], dict[str, Any], Path]] = []
     for pack_root in pack_roots:
         validation = validate_pack(Path(pack_root), verify_signature=True, mutate=True)
         if not validation["valid"]:
-            raise CapabilityPackError("PACK_VALIDATION_FAILED", "; ".join(validation["errors"]))
+            raise CapabilityPackError(
+                "PACK_VALIDATION_FAILED", "; ".join(validation["errors"])
+            )
         resolved = Path(pack_root).resolve()
         selected.append((_load_json(resolved / "pack.yaml"), validation, resolved))
     ids = [item[0]["id"] for item in selected]
     if len(ids) != len(set(ids)):
-        raise CapabilityPackError("PACK_COMPOSITION_DUPLICATE", "pack ids must be unique")
+        raise CapabilityPackError(
+            "PACK_COMPOSITION_DUPLICATE", "pack ids must be unique"
+        )
     targets = [item[0] for item in selected if item[0]["kind"] == "target"]
     if len(targets) > 1:
-        raise CapabilityPackError("PACK_COMPOSITION_TARGET_CONFLICT", "a composition may contain only one target pack")
+        raise CapabilityPackError(
+            "PACK_COMPOSITION_TARGET_CONFLICT",
+            "a composition may contain only one target pack",
+        )
     kinds = {item[0]["kind"] for item in selected}
     selected_ids = set(ids)
     target_kind = str(targets[0].get("target_kind")) if targets else None
@@ -407,13 +556,19 @@ def compose_packs(pack_roots: list[Path], workspace: Path, *, name: str = "defau
         compatibility = manifest["compatibility"]
         missing_kinds = set(compatibility["requires_kinds"]) - kinds
         if missing_kinds:
-            errors.append(f"{manifest['id']} requires kinds: {', '.join(sorted(missing_kinds))}")
+            errors.append(
+                f"{manifest['id']} requires kinds: {', '.join(sorted(missing_kinds))}"
+            )
         conflicts = selected_ids.intersection(compatibility["conflicts_with"])
         if conflicts:
-            errors.append(f"{manifest['id']} conflicts with: {', '.join(sorted(conflicts))}")
+            errors.append(
+                f"{manifest['id']} conflicts with: {', '.join(sorted(conflicts))}"
+            )
         allowed = compatibility["compatible_targets"]
         if target_kind and "*" not in allowed and target_kind not in allowed:
-            errors.append(f"{manifest['id']} is not compatible with target {target_kind}")
+            errors.append(
+                f"{manifest['id']} is not compatible with target {target_kind}"
+            )
     if errors:
         raise CapabilityPackError("PACK_COMPOSITION_INCOMPATIBLE", "; ".join(errors))
     core = {
@@ -423,23 +578,38 @@ def compose_packs(pack_roots: list[Path], workspace: Path, *, name: str = "defau
         "pack_count": len(selected),
         "packs": [
             {
-                "id": manifest["id"], "version": manifest["version"], "kind": manifest["kind"],
-                "payload_sha256": sha256(_canonical(pack_payload(pack_root))).hexdigest(),
+                "id": manifest["id"],
+                "version": manifest["version"],
+                "kind": manifest["kind"],
+                "payload_sha256": sha256(
+                    _canonical(pack_payload(pack_root))
+                ).hexdigest(),
                 "provides": manifest["compatibility"]["provides"],
             }
             for manifest, _validation, pack_root in selected
         ],
-        "authority": {"generate": False, "execute": False, "deploy": False, "publish": False},
+        "authority": {
+            "generate": False,
+            "execute": False,
+            "deploy": False,
+            "publish": False,
+        },
         "next_action": "Bind this reviewed composition to a Product Graph value slice before generation.",
     }
     payload = {**core, "composition_sha256": sha256(_canonical(core)).hexdigest()}
-    destination = Path(workspace).resolve() / ".factory" / "pack-compositions" / f"{name}.json"
+    destination = (
+        Path(workspace).resolve() / ".factory" / "pack-compositions" / f"{name}.json"
+    )
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists() and not force:
-        raise CapabilityPackError("PACK_COMPOSITION_EXISTS", f"refusing existing composition: {destination}")
+        raise CapabilityPackError(
+            "PACK_COMPOSITION_EXISTS", f"refusing existing composition: {destination}"
+        )
     staging = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
     try:
-        staging.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        staging.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         os.replace(staging, destination)
     except BaseException as exc:
         staging.unlink(missing_ok=True)
@@ -452,5 +622,10 @@ def compose_packs(pack_roots: list[Path], workspace: Path, *, name: str = "defau
         **payload,
         "path": str(destination),
         "marker": "PACK_COMPOSITION_VERIFIED",
-        "markers": ["PACK_COMPOSITION_VERIFIED", "PACK_COMPOSITION_HASH_BOUND", "PACK_COMPOSITION_COMPATIBLE", "PACK_COMPOSITION_NO_EXECUTION_AUTHORITY"],
+        "markers": [
+            "PACK_COMPOSITION_VERIFIED",
+            "PACK_COMPOSITION_HASH_BOUND",
+            "PACK_COMPOSITION_COMPATIBLE",
+            "PACK_COMPOSITION_NO_EXECUTION_AUTHORITY",
+        ],
     }

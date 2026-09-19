@@ -53,4 +53,6 @@ def test_request_digest_is_strictly_bound(request_sha256: str) -> None:
 @pytest.mark.parametrize("ttl_seconds", [-1, MAX_CACHE_TTL_SECONDS + 1, True, 1.5])
 def test_ttl_is_bounded_and_integer_only(ttl_seconds: object) -> None:
     with pytest.raises(McpReplayHintsError):
-        build_stateless_replay_hints(REQUEST_DIGEST, {"result": {}}, ttl_seconds=ttl_seconds)  # type: ignore[arg-type]
+        build_stateless_replay_hints(
+            REQUEST_DIGEST, {"result": {}}, ttl_seconds=ttl_seconds
+        )  # type: ignore[arg-type]

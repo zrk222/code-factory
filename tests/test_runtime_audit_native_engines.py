@@ -1,12 +1,21 @@
 """Small native-engine controls; these prove adapters can be fed by real executions."""
+
 from hypothesis import settings
-from hypothesis.stateful import RuleBasedStateMachine, invariant, precondition, rule, run_state_machine_as_test
+from hypothesis.stateful import (
+    RuleBasedStateMachine,
+    invariant,
+    precondition,
+    rule,
+    run_state_machine_as_test,
+)
 import pytest
 
 
 class SafePayments(RuleBasedStateMachine):
     def __init__(self):
-        super().__init__(); self.captured = 0; self.refunded = 0
+        super().__init__()
+        self.captured = 0
+        self.refunded = 0
 
     @rule()
     def capture(self):
@@ -30,7 +39,9 @@ class BrokenPayments(SafePayments):
 
 
 def test_native_hypothesis_control_accepts_safe_and_kills_known_bad_machine():
-    profile = settings(max_examples=30, stateful_step_count=12, derandomize=True, deadline=None)
+    profile = settings(
+        max_examples=30, stateful_step_count=12, derandomize=True, deadline=None
+    )
     run_state_machine_as_test(SafePayments, settings=profile)
     with pytest.raises(AssertionError):
         run_state_machine_as_test(BrokenPayments, settings=profile)

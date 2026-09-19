@@ -1,5 +1,10 @@
 # FactoryLine for IntelliJ Changelog
 
+## 0.9.8 - 2026-09-19
+
+- Align the JetBrains adapter with the current cross-platform release bundle and
+  preserve the read-only, human-owned proof boundary for Junie handoffs.
+
 ## 0.9.6 - 2026-09-13
 
 - Add a read-only First Lap status surface so JetBrains users and Junie can

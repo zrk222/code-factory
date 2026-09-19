@@ -14,12 +14,24 @@ from factoryline.ide_playbook import ide_playbook
 @pytest.mark.parametrize("clean", [False, True])
 def test_cli_evaluates_signed_inputs_and_status(tmp_path, capsys, clean):
     args, _, _, _ = inputs(tmp_path, clean=clean)
-    argv = ["deep-audit", "evaluate", "--plan", str(args[0]), "--trust-root", str(args[1]),
-            "--trust-root-sha256", args[2], "--root", str(tmp_path)]
+    argv = [
+        "deep-audit",
+        "evaluate",
+        "--plan",
+        str(args[0]),
+        "--trust-root",
+        str(args[1]),
+        "--trust-root-sha256",
+        args[2],
+        "--root",
+        str(tmp_path),
+    ]
     assert main(argv) == (0 if clean else 1)
     output = json.loads(capsys.readouterr().out)
     assert output["authority"] == "none"
-    assert main(["deep-audit", "status", "--root", str(tmp_path)]) == (0 if clean else 1)
+    assert main(["deep-audit", "status", "--root", str(tmp_path)]) == (
+        0 if clean else 1
+    )
     assert json.loads(capsys.readouterr().out)["state"] == output["receipt"]["decision"]
 
 
@@ -55,8 +67,15 @@ def test_playbook_discovers_read_only_tool():
 
 
 def test_mcp_dispatch_routes_to_read_only_status(tmp_path):
-    response = dispatch({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                         "params": {"name": "factory.deep_audit_status", "arguments": {}}}, tmp_path)
+    response = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "factory.deep_audit_status", "arguments": {}},
+        },
+        tmp_path,
+    )
     body = json.loads(response["result"]["content"][0]["text"])
     assert body["marker"] == "DEEP_AUDIT_MCP_READ_ONLY"
     assert body["status"]["state"] == "NOT_RUN"

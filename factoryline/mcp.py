@@ -5,6 +5,7 @@ stateless request helper is available for CI and HTTP bridges that cannot keep
 an MCP session: every request carries its own JSON-RPC method and parameters,
 and no server-side session or cursor is accepted or retained.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -21,14 +22,23 @@ from .intent_ledger import IntentLedgerError, inspect_intent_ledger
 from .judgment import JudgmentError, judgment_status, safety_case
 from .graph_ops import graph_ops_impact, graph_ops_snapshot
 from .journey_proof import journey_proof_status
-from .langgraph_assurance import MCP_MARKER, LangGraphAssuranceError, verify_langgraph_resume_parity
+from .langgraph_assurance import (
+    MCP_MARKER,
+    LangGraphAssuranceError,
+    verify_langgraph_resume_parity,
+)
 from .proof_delta import proof_delta_status
 from .proof_reuse import verify_proof_receipt
 from .prd_grill import verify_prd_grill
 from .intake_grill import intake_status
 from .intake_parameters import intake_parameters_status
 from .gauntlet import gauntlet_status
-from .agent_license import AgentLicenseError, derive_license, license_projection, normalize_agent_identity
+from .agent_license import (
+    AgentLicenseError,
+    derive_license,
+    license_projection,
+    normalize_agent_identity,
+)
 from .combine import combine_projection
 from .workspace_advisor import inspect_workspace
 from .ide_playbook import ide_playbook
@@ -51,7 +61,11 @@ from .proof_continuity_ledger import proof_continuity_projection
 from .semantic_authority import semantic_authority_projection
 from .enterprise_enforcement import enterprise_enforcement_projection
 from .atomic_proof_adapter import atomic_proof_projection
-from .agent_proof_bridge import AgentProofBridgeError, agent_handoff_brief, agent_proof_projection
+from .agent_proof_bridge import (
+    AgentProofBridgeError,
+    agent_handoff_brief,
+    agent_proof_projection,
+)
 from .proof_worklog import proof_worklog_projection
 from .operations_control import operations_control_projection
 from .lifecycle_ledger import lifecycle_projection
@@ -62,8 +76,17 @@ from .runtime_audit import runtime_audit_status
 from .deep_audit import deep_audit_status
 from .codex_metadata import MetadataAuditError, audit_metadata
 from .saas_proof import saas_proof_projection
-from .junie_taxonomy import JunieTaxonomyError, junie_taxonomy, validate_junie_contribution
-from .jetbrains_handshake import JetBrainsHandshakeError, build_agent_proof_mission, evaluate_jetbrains_handshake, jetbrains_handshake_projection
+from .junie_taxonomy import (
+    JunieTaxonomyError,
+    junie_taxonomy,
+    validate_junie_contribution,
+)
+from .jetbrains_handshake import (
+    JetBrainsHandshakeError,
+    build_agent_proof_mission,
+    evaluate_jetbrains_handshake,
+    jetbrains_handshake_projection,
+)
 from .audit_rule_search import AuditRuleSearchError, search_audit_rules
 from .first_lap import FirstLapError, first_lap_status
 from .agui import AguiError, build_review_events
@@ -168,7 +191,13 @@ def _tool_definitions() -> list[dict[str, object]]:
             "description": "Return deterministic local Graph Ops facts. summary is a compact next-action view; neither format executes work.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"format": {"type": "string", "enum": ["json", "summary"], "default": "json"}},
+                "properties": {
+                    "format": {
+                        "type": "string",
+                        "enum": ["json", "summary"],
+                        "default": "json",
+                    }
+                },
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -247,9 +276,22 @@ def _tool_definitions() -> list[dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "changed_paths": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
-                    "proof_receipts": {"type": "array", "maxItems": 50, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
-                    "change_profile": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "changed_paths": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                    },
+                    "proof_receipts": {
+                        "type": "array",
+                        "maxItems": 50,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                    },
+                    "change_profile": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512,
+                    },
                 },
                 "required": ["changed_paths"],
                 "additionalProperties": False,
@@ -282,7 +324,12 @@ def _tool_definitions() -> list[dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50,
+                        "default": 10,
+                    },
                     "feature": {"type": "string", "minLength": 1, "maxLength": 80},
                 },
                 "additionalProperties": False,
@@ -323,7 +370,9 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "properties": {
                     "gate": {"type": "string", "minLength": 1, "maxLength": 120},
                     "changed_paths": {
-                        "type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 512}, "maxItems": 50,
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                        "maxItems": 50,
                     },
                 },
                 "required": ["gate"],
@@ -336,7 +385,9 @@ def _tool_definitions() -> list[dict[str, object]]:
             "description": "Read the newest local Proof-Delta retry-admission receipt. It never starts an agent, applies a repair, or admits a retry.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"mission": {"type": "string", "minLength": 1, "maxLength": 64}},
+                "properties": {
+                    "mission": {"type": "string", "minLength": 1, "maxLength": 64}
+                },
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -346,7 +397,9 @@ def _tool_definitions() -> list[dict[str, object]]:
             "description": "Read the latest existing deterministic CDTE scan for an optional feature. It never synthesizes constraints or writes a scan receipt.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"feature": {"type": "string", "minLength": 1, "maxLength": 80}},
+                "properties": {
+                    "feature": {"type": "string", "minLength": 1, "maxLength": 80}
+                },
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -356,7 +409,9 @@ def _tool_definitions() -> list[dict[str, object]]:
             "description": "Read the newest PRD Grill receipt bound to a root-relative PRD path. It never rewrites a PRD or authorizes implementation.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"prd_path": {"type": "string", "minLength": 1, "maxLength": 512}},
+                "properties": {
+                    "prd_path": {"type": "string", "minLength": 1, "maxLength": 512}
+                },
                 "required": ["prd_path"],
                 "additionalProperties": False,
             },
@@ -367,7 +422,12 @@ def _tool_definitions() -> list[dict[str, object]]:
             "description": "Read source-bound framework, intent, acceptance, and external-effects intake status. It never selects a framework, creates a mission, or authorizes implementation.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"prd_path": {"type": "string", "description": "Optional root-relative PRD path to scope the status."}},
+                "properties": {
+                    "prd_path": {
+                        "type": "string",
+                        "description": "Optional root-relative PRD path to scope the status.",
+                    }
+                },
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -377,7 +437,9 @@ def _tool_definitions() -> list[dict[str, object]]:
             "description": "Read local Survival Card facts, including whether only redacted verified continuity metadata was bound, for an optional Gauntlet source id. It never compiles a proposal, admits or runs a batch, signs a card, or promotes a result.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"source_id": {"type": "string", "minLength": 1, "maxLength": 96}},
+                "properties": {
+                    "source_id": {"type": "string", "minLength": 1, "maxLength": 96}
+                },
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -391,7 +453,10 @@ def _tool_definitions() -> list[dict[str, object]]:
                     "agent": {
                         "type": "object",
                         "properties": {
-                            "schema": {"type": "string", "const": "factory.agent-identity.v1"},
+                            "schema": {
+                                "type": "string",
+                                "const": "factory.agent-identity.v1",
+                            },
                             "subject": {"type": "string"},
                             "provider": {"type": "string"},
                             "model": {"type": "string"},
@@ -416,7 +481,12 @@ def _tool_definitions() -> list[dict[str, object]]:
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
-        {"name": "factory.ide_playbook", "description": "Read the plain-language Code Factory operating map for IDEs and coding agents. It never controls an IDE or runs an agent.", "inputSchema": no_args, "annotations": _READ_ONLY_ANNOTATIONS},
+        {
+            "name": "factory.ide_playbook",
+            "description": "Read the plain-language Code Factory operating map for IDEs and coding agents. It never controls an IDE or runs an agent.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
         {
             "name": "factory.revenue_status",
             "description": "Return hash-verified local RevenueForge build and evidence status. It never contacts Apple, changes pricing, replies to testers, or publishes.",
@@ -523,12 +593,24 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "minLength": 1, "maxLength": 200},
-                    "lane": {"type": "string", "enum": [
-                        "stateful_workflows", "authorization_tenant_isolation", "failure_recovery",
-                        "api_consumer_compatibility", "migration_data_integrity", "performance_resources",
-                    ]},
+                    "lane": {
+                        "type": "string",
+                        "enum": [
+                            "stateful_workflows",
+                            "authorization_tenant_isolation",
+                            "failure_recovery",
+                            "api_consumer_compatibility",
+                            "migration_data_integrity",
+                            "performance_resources",
+                        ],
+                    },
                     "includeCrossCutting": {"type": "boolean", "default": True},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "default": 5,
+                    },
                 },
                 "required": ["query"],
                 "additionalProperties": False,
@@ -546,7 +628,9 @@ def _tool_definitions() -> list[dict[str, object]]:
             "description": "Render one current sealed Oracle Contract for an agent and supervising human. It never starts an agent or changes intent.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"contract": {"type": "string", "minLength": 1, "maxLength": 512}},
+                "properties": {
+                    "contract": {"type": "string", "minLength": 1, "maxLength": 512}
+                },
                 "required": ["contract"],
                 "additionalProperties": False,
             },
@@ -564,7 +648,12 @@ def _tool_definitions() -> list[dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "paths": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                    "paths": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 8,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -618,27 +707,48 @@ def _tool_definitions() -> list[dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "feature": {"type": "string", "description": "1-64 lowercase letters, digits, dots, underscores, or hyphens"},
+                    "feature": {
+                        "type": "string",
+                        "description": "1-64 lowercase letters, digits, dots, underscores, or hyphens",
+                    },
                     "human_input": {
                         "type": "object",
                         "description": "Optional stateless second-leg human decision; returns a local receipt only.",
                         "properties": {
-                            "decision": {"type": "string", "enum": ["APPROVE_RELEASE", "REJECT_RELEASE", "REQUEST_REPAIR_RETRY"]},
+                            "decision": {
+                                "type": "string",
+                                "enum": [
+                                    "APPROVE_RELEASE",
+                                    "REJECT_RELEASE",
+                                    "REQUEST_REPAIR_RETRY",
+                                ],
+                            },
                             "reviewerIdentity": {"type": "string", "minLength": 1},
                             "reviewerNotes": {"type": "string"},
-                            "acknowledgedProofDebt": {"type": "array", "items": {"type": "string"}},
+                            "acknowledgedProofDebt": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
                         },
                         "required": ["decision", "reviewerIdentity"],
                         "additionalProperties": False,
                     },
-                    "tool_call_id": {"type": "string", "description": "Required with human_input: binding to the input_required toolCallId."},
-                    "proof_card_hash": {"type": "string", "description": "Required with human_input: binding to the input_required proofCardHash."},
+                    "tool_call_id": {
+                        "type": "string",
+                        "description": "Required with human_input: binding to the input_required toolCallId.",
+                    },
+                    "proof_card_hash": {
+                        "type": "string",
+                        "description": "Required with human_input: binding to the input_required proofCardHash.",
+                    },
                 },
                 "required": ["feature"],
-                "allOf": [{
-                    "if": {"required": ["human_input"]},
-                    "then": {"required": ["tool_call_id", "proof_card_hash"]},
-                }],
+                "allOf": [
+                    {
+                        "if": {"required": ["human_input"]},
+                        "then": {"required": ["tool_call_id", "proof_card_hash"]},
+                    }
+                ],
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -685,15 +795,56 @@ def _tool_definitions() -> list[dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "taxonomy_sha256": {"type": "string", "minLength": 64, "maxLength": 64},
-                    "tools_called": {"type": "array", "minItems": 1, "maxItems": 58, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
-                    "evidence_paths": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
-                    "changed_paths": {"type": "array", "maxItems": 200, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
-                    "change_rationales": {"type": "object", "maxProperties": 200, "additionalProperties": {"type": "string", "minLength": 12, "maxLength": 1000}},
-                    "contribution": {"type": "string", "minLength": 12, "maxLength": 1000},
-                    "unknowns": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                    "taxonomy_sha256": {
+                        "type": "string",
+                        "minLength": 64,
+                        "maxLength": 64,
+                    },
+                    "tools_called": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 58,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                    },
+                    "evidence_paths": {
+                        "type": "array",
+                        "maxItems": 32,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                    },
+                    "changed_paths": {
+                        "type": "array",
+                        "maxItems": 200,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                    },
+                    "change_rationales": {
+                        "type": "object",
+                        "maxProperties": 200,
+                        "additionalProperties": {
+                            "type": "string",
+                            "minLength": 12,
+                            "maxLength": 1000,
+                        },
+                    },
+                    "contribution": {
+                        "type": "string",
+                        "minLength": 12,
+                        "maxLength": 1000,
+                    },
+                    "unknowns": {
+                        "type": "array",
+                        "maxItems": 32,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                    },
                 },
-                "required": ["taxonomy_sha256", "tools_called", "evidence_paths", "changed_paths", "change_rationales", "contribution", "unknowns"],
+                "required": [
+                    "taxonomy_sha256",
+                    "tools_called",
+                    "evidence_paths",
+                    "changed_paths",
+                    "change_rationales",
+                    "contribution",
+                    "unknowns",
+                ],
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -705,7 +856,12 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "type": "object",
                 "properties": {
                     "scope": {"type": "string", "minLength": 1, "maxLength": 512},
-                    "changed_paths": {"type": "array", "minItems": 1, "maxItems": 200, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+                    "changed_paths": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 200,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                    },
                 },
                 "required": ["scope"],
                 "additionalProperties": False,
@@ -719,10 +875,28 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "type": "object",
                 "properties": {
                     "scope": {"type": "string", "minLength": 1, "maxLength": 512},
-                    "changed_paths": {"type": "array", "minItems": 1, "maxItems": 200, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
-                    "analysis_sarif": {"type": "string", "minLength": 1, "maxLength": 512},
-                    "analysis_provider": {"type": "string", "enum": ["auto", "qodana", "sonarqube"], "default": "auto"},
-                    "qodana_sarif": {"type": "string", "minLength": 1, "maxLength": 512, "description": "Compatibility alias for analysis_sarif with provider qodana."},
+                    "changed_paths": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 200,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                    },
+                    "analysis_sarif": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512,
+                    },
+                    "analysis_provider": {
+                        "type": "string",
+                        "enum": ["auto", "qodana", "sonarqube"],
+                        "default": "auto",
+                    },
+                    "qodana_sarif": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512,
+                        "description": "Compatibility alias for analysis_sarif with provider qodana.",
+                    },
                     "e2e_receipt": {"type": "string", "minLength": 1, "maxLength": 512},
                     "max_new_errors": {"type": "integer", "minimum": 0, "default": 0},
                     "max_new_warnings": {"type": "integer", "minimum": 0, "default": 0},
@@ -750,15 +924,26 @@ def mcp_status(root: Path | str) -> dict[str, object]:
         "markers": ["FACTORY_MCP_LOCAL_READ_ONLY", "MCP_STDLIB_ONLY"],
         "transport": "stdio",
         "workspace_root": str(workspace),
-        "server": {"name": MCP_SERVER_NAME, "version": __version__, "protocol_version": MCP_PROTOCOL_VERSION},
+        "server": {
+            "name": MCP_SERVER_NAME,
+            "version": __version__,
+            "protocol_version": MCP_PROTOCOL_VERSION,
+        },
         "authority": dict(_AUTHORITY),
         "tools": [tool["name"] for tool in _tool_definitions()],
         "resources": ["factory://status", "factory://graph"],
     }
 
 
-def _relative_path(root: Path, value: object, label: str, *, must_exist: bool = False) -> tuple[str, Path]:
-    if not isinstance(value, str) or not value or value.strip() != value or len(value) > 512:
+def _relative_path(
+    root: Path, value: object, label: str, *, must_exist: bool = False
+) -> tuple[str, Path]:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value.strip() != value
+        or len(value) > 512
+    ):
         raise McpError(f"{label} must be a non-empty root-relative path")
     supplied = Path(value)
     if supplied.is_absolute() or ".." in supplied.parts:
@@ -773,10 +958,18 @@ def _relative_path(root: Path, value: object, label: str, *, must_exist: bool = 
     return relative, candidate
 
 
-def _receipt_path(root: Path, value: object, *, must_exist: bool = False) -> tuple[str, Path]:
-    relative, candidate = _relative_path(root, value, "receipt path", must_exist=must_exist)
-    if candidate.suffix.lower() != ".json" or not any(candidate.is_relative_to(root / item) for item in _RECEIPT_ROOTS):
-        raise McpError("receipt path must be a JSON file beneath a local receipt directory")
+def _receipt_path(
+    root: Path, value: object, *, must_exist: bool = False
+) -> tuple[str, Path]:
+    relative, candidate = _relative_path(
+        root, value, "receipt path", must_exist=must_exist
+    )
+    if candidate.suffix.lower() != ".json" or not any(
+        candidate.is_relative_to(root / item) for item in _RECEIPT_ROOTS
+    ):
+        raise McpError(
+            "receipt path must be a JSON file beneath a local receipt directory"
+        )
     return relative, candidate
 
 
@@ -791,7 +984,9 @@ def _receipt_files(root: Path) -> list[Path]:
                 candidate = path.resolve()
                 if candidate.is_relative_to(root):
                     files.append(candidate)
-    return sorted(files, key=lambda path: (-path.stat().st_mtime_ns, path.as_posix()))[:_MAX_RECEIPTS]
+    return sorted(files, key=lambda path: (-path.stat().st_mtime_ns, path.as_posix()))[
+        :_MAX_RECEIPTS
+    ]
 
 
 def _load_small_json(path: Path) -> dict[str, Any] | None:
@@ -811,7 +1006,9 @@ def _receipt_metadata(root: Path, path: Path) -> dict[str, object]:
     timestamp = None
     schema = None
     if payload is not None:
-        schema = payload.get("schema") if isinstance(payload.get("schema"), str) else None
+        schema = (
+            payload.get("schema") if isinstance(payload.get("schema"), str) else None
+        )
         for field in ("recorded_at", "created_at", "generated_at"):
             if isinstance(payload.get(field), str):
                 timestamp = payload[field]
@@ -821,7 +1018,9 @@ def _receipt_metadata(root: Path, path: Path) -> dict[str, object]:
         "schema": schema,
         "timestamp": timestamp,
         "timestamp_source": "receipt" if timestamp else "filesystem_mtime",
-        "filesystem_mtime": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        "filesystem_mtime": datetime.fromtimestamp(
+            stat.st_mtime, timezone.utc
+        ).isoformat(),
         "size_bytes": stat.st_size,
         "assessment": "unassessed",
         "verification": "not_run",
@@ -829,16 +1028,25 @@ def _receipt_metadata(root: Path, path: Path) -> dict[str, object]:
 
 
 def _feature(value: object, label: str = "feature") -> str:
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", value):
-        raise McpError(f"{label} must use 1-80 letters, digits, dots, underscores, or hyphens")
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", value
+    ):
+        raise McpError(
+            f"{label} must use 1-80 letters, digits, dots, underscores, or hyphens"
+        )
     return value
 
 
 def _feature_matches(payload: dict[str, Any], feature: str) -> bool:
-    return any(payload.get(field) == feature for field in ("feature", "project", "mission_id", "run_id"))
+    return any(
+        payload.get(field) == feature
+        for field in ("feature", "project", "mission_id", "run_id")
+    )
 
 
-def _find_feature_receipt(root: Path, feature: str, *, schema: str | None = None) -> tuple[Path, dict[str, Any]] | None:
+def _find_feature_receipt(
+    root: Path, feature: str, *, schema: str | None = None
+) -> tuple[Path, dict[str, Any]] | None:
     for path in _receipt_files(root):
         payload = _load_small_json(path)
         if payload is None or (schema is not None and payload.get("schema") != schema):
@@ -858,7 +1066,9 @@ def _receipt_listing(root: Path, arguments: object) -> dict[str, object]:
     entries = []
     for path in _receipt_files(root):
         payload = _load_small_json(path)
-        if feature is not None and (payload is None or not _feature_matches(payload, feature)):
+        if feature is not None and (
+            payload is None or not _feature_matches(payload, feature)
+        ):
             continue
         entries.append(_receipt_metadata(root, path))
         if len(entries) == limit:
@@ -884,7 +1094,11 @@ def _get_receipt(root: Path, arguments: object) -> dict[str, object]:
         match = _find_feature_receipt(root, _feature(arguments["feature"]))
         path, payload = match if match is not None else (None, None)
     if path is None or payload is None:
-        return {"marker": "MCP_RECEIPT_NOT_FOUND", "found": False, "assessment": "unassessed"}
+        return {
+            "marker": "MCP_RECEIPT_NOT_FOUND",
+            "found": False,
+            "assessment": "unassessed",
+        }
     return {
         "marker": "MCP_RECEIPT_UNASSESSED",
         "found": True,
@@ -894,7 +1108,9 @@ def _get_receipt(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
-def _error(request_id: object, code: int, message: str, marker: str) -> dict[str, object]:
+def _error(
+    request_id: object, code: int, message: str, marker: str
+) -> dict[str, object]:
     return {
         "jsonrpc": "2.0",
         "id": request_id,
@@ -922,7 +1138,9 @@ def _changed_paths(arguments: object) -> list[str]:
             raise McpError("each changed path must contain 1 to 512 characters")
         candidate = Path(entry)
         if candidate.is_absolute() or ".." in candidate.parts or entry.strip() != entry:
-            raise McpError("each changed path must be root-relative without parent traversal")
+            raise McpError(
+                "each changed path must be root-relative without parent traversal"
+            )
         paths.append(candidate.as_posix())
     return paths
 
@@ -949,14 +1167,22 @@ def _graph_ops(root: Path, arguments: object) -> dict[str, object]:
         raise McpError("format must be json or summary")
     graph = graph_ops_snapshot(root)
     payload: dict[str, object] = {"marker": "MCP_GRAPH_OPS_PARITY"}
-    payload["graph" if output_format == "json" else "summary"] = graph if output_format == "json" else _graph_summary(graph)
+    payload["graph" if output_format == "json" else "summary"] = (
+        graph if output_format == "json" else _graph_summary(graph)
+    )
     return payload
 
 
 def _developer_memory(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) - {"changed_paths", "base"}:
-        raise McpError("factory.developer_memory accepts only optional changed_paths and base")
-    changed = _changed_paths({"changed_paths": arguments["changed_paths"]}) if "changed_paths" in arguments else None
+        raise McpError(
+            "factory.developer_memory accepts only optional changed_paths and base"
+        )
+    changed = (
+        _changed_paths({"changed_paths": arguments["changed_paths"]})
+        if "changed_paths" in arguments
+        else None
+    )
     base = arguments.get("base", "main")
     if not isinstance(base, str) or not base.strip() or len(base) > 120:
         raise McpError("base must be a non-empty string of at most 120 characters")
@@ -968,17 +1194,35 @@ def _developer_memory(root: Path, arguments: object) -> dict[str, object]:
 
 
 def _intent_ledger(root: Path, arguments: object) -> dict[str, object]:
-    if not isinstance(arguments, dict) or set(arguments) - {"change_list", "changed_paths", "base"} or "change_list" not in arguments:
-        raise McpError("factory.intent_ledger requires change_list and accepts only optional changed_paths and base")
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) - {"change_list", "changed_paths", "base"}
+        or "change_list" not in arguments
+    ):
+        raise McpError(
+            "factory.intent_ledger requires change_list and accepts only optional changed_paths and base"
+        )
     change_list = arguments["change_list"]
-    if not isinstance(change_list, str) or not change_list.strip() or len(change_list) > 160:
-        raise McpError("change_list must be a non-empty string of at most 160 characters")
-    changed = _changed_paths({"changed_paths": arguments["changed_paths"]}) if "changed_paths" in arguments else None
+    if (
+        not isinstance(change_list, str)
+        or not change_list.strip()
+        or len(change_list) > 160
+    ):
+        raise McpError(
+            "change_list must be a non-empty string of at most 160 characters"
+        )
+    changed = (
+        _changed_paths({"changed_paths": arguments["changed_paths"]})
+        if "changed_paths" in arguments
+        else None
+    )
     base = arguments.get("base", "main")
     if not isinstance(base, str) or not base.strip() or len(base) > 120:
         raise McpError("base must be a non-empty string of at most 120 characters")
     try:
-        ledger = inspect_intent_ledger(root, change_list=change_list, changed=changed, base=base)
+        ledger = inspect_intent_ledger(
+            root, change_list=change_list, changed=changed, base=base
+        )
     except IntentLedgerError as exc:
         raise McpError(str(exc), exc.code) from exc
     return {
@@ -999,20 +1243,32 @@ def _judgment_status(root: Path, arguments: object) -> dict[str, object]:
 
 
 def _judgment_safety_case(root: Path, arguments: object) -> dict[str, object]:
-    if not isinstance(arguments, dict) or set(arguments) - {"changed_paths", "proof_receipts", "change_profile"} or "changed_paths" not in arguments:
-        raise McpError("factory.judgment_safety_case requires changed_paths and accepts only optional proof_receipts and change_profile")
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) - {"changed_paths", "proof_receipts", "change_profile"}
+        or "changed_paths" not in arguments
+    ):
+        raise McpError(
+            "factory.judgment_safety_case requires changed_paths and accepts only optional proof_receipts and change_profile"
+        )
     changed = _changed_paths({"changed_paths": arguments["changed_paths"]})
     proof_values = arguments.get("proof_receipts", [])
-    receipt_paths = _changed_paths({"changed_paths": proof_values}) if proof_values else []
+    receipt_paths = (
+        _changed_paths({"changed_paths": proof_values}) if proof_values else []
+    )
     profile_value = arguments.get("change_profile")
-    if profile_value is not None and (not isinstance(profile_value, str) or not profile_value.strip()):
+    if profile_value is not None and (
+        not isinstance(profile_value, str) or not profile_value.strip()
+    ):
         raise McpError("change_profile must be a non-empty workspace-relative path")
     try:
         value = safety_case(
             root,
             changed=changed,
             proof_receipts=[Path(item) for item in receipt_paths],
-            change_profile=Path(profile_value) if isinstance(profile_value, str) else None,
+            change_profile=Path(profile_value)
+            if isinstance(profile_value, str)
+            else None,
         )
     except JudgmentError as exc:
         raise McpError(str(exc), exc.code) from exc
@@ -1025,8 +1281,12 @@ def _judgment_safety_case(root: Path, arguments: object) -> dict[str, object]:
 
 def _langgraph_assurance(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) != {"reference", "resumed"}:
-        raise McpError("factory.langgraph_assurance requires only reference and resumed")
-    reference, _ = _relative_path(root, arguments["reference"], "reference", must_exist=True)
+        raise McpError(
+            "factory.langgraph_assurance requires only reference and resumed"
+        )
+    reference, _ = _relative_path(
+        root, arguments["reference"], "reference", must_exist=True
+    )
     resumed, _ = _relative_path(root, arguments["resumed"], "resumed", must_exist=True)
     try:
         assurance = verify_langgraph_resume_parity(root, reference, resumed)
@@ -1039,33 +1299,60 @@ def _langgraph_assurance(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
-def _verifier_session_path(root: Path, arguments: object) -> tuple[Path, dict[str, Any]] | None:
+def _verifier_session_path(
+    root: Path, arguments: object
+) -> tuple[Path, dict[str, Any]] | None:
     if not isinstance(arguments, dict) or set(arguments) - {"session", "mission"}:
         raise McpError("factory.verifier_status accepts only session or mission")
     has_session, has_mission = "session" in arguments, "mission" in arguments
     if has_session == has_mission:
-        raise McpError("factory.verifier_status requires exactly one of session or mission")
+        raise McpError(
+            "factory.verifier_status requires exactly one of session or mission"
+        )
     if has_session:
         _, path = _receipt_path(root, arguments["session"], must_exist=True)
         payload = _load_small_json(path)
         return (path, payload) if payload is not None else None
-    return _find_feature_receipt(root, _feature(arguments["mission"], "mission"), schema="factory.verifier-session.v1")
+    return _find_feature_receipt(
+        root,
+        _feature(arguments["mission"], "mission"),
+        schema="factory.verifier-session.v1",
+    )
 
 
 def _verifier_status(root: Path, arguments: object) -> dict[str, object]:
     found = _verifier_session_path(root, arguments)
     if found is None:
-        return {"marker": "MCP_VERIFIER_SESSION_NOT_FOUND", "found": False, "assessment": "unassessed"}
+        return {
+            "marker": "MCP_VERIFIER_SESSION_NOT_FOUND",
+            "found": False,
+            "assessment": "unassessed",
+        }
     path, session = found
-    if session.get("schema") != "factory.verifier-session.v1" or not isinstance(session.get("budgets"), dict):
-        return {"marker": "MCP_VERIFIER_SESSION_INVALID", "found": True, "assessment": "unassessed", "path": path.relative_to(root).as_posix()}
+    if session.get("schema") != "factory.verifier-session.v1" or not isinstance(
+        session.get("budgets"), dict
+    ):
+        return {
+            "marker": "MCP_VERIFIER_SESSION_INVALID",
+            "found": True,
+            "assessment": "unassessed",
+            "path": path.relative_to(root).as_posix(),
+        }
     budgets = session["budgets"]
     return {
         "marker": "MCP_VERIFIER_SESSION_UNASSESSED",
         "found": True,
-        "session": {"path": path.relative_to(root).as_posix(), "mission_id": session.get("mission_id"), "session_sha256": session.get("session_sha256")},
+        "session": {
+            "path": path.relative_to(root).as_posix(),
+            "mission_id": session.get("mission_id"),
+            "session_sha256": session.get("session_sha256"),
+        },
         "worker": {"identity": "unobserved", "result": "not_supplied"},
-        "verifier": {"identity": "unobserved", "result": "not_supplied", "independence": "unassessed"},
+        "verifier": {
+            "identity": "unobserved",
+            "result": "not_supplied",
+            "independence": "unassessed",
+        },
         "budget": {"limits": budgets, "remaining": "unobserved"},
         "independent_evidence": "not_supplied",
         "assessment": "unassessed",
@@ -1074,17 +1361,33 @@ def _verifier_status(root: Path, arguments: object) -> dict[str, object]:
 
 
 def _proof_reuse(root: Path, arguments: object) -> dict[str, object]:
-    if not isinstance(arguments, dict) or set(arguments) - {"gate", "changed_paths"} or "gate" not in arguments:
-        raise McpError("factory.proof_reuse requires gate and accepts optional changed_paths")
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) - {"gate", "changed_paths"}
+        or "gate" not in arguments
+    ):
+        raise McpError(
+            "factory.proof_reuse requires gate and accepts optional changed_paths"
+        )
     gate = _feature(arguments["gate"], "gate")
-    changed = _changed_paths({"changed_paths": arguments["changed_paths"]}) if "changed_paths" in arguments else []
+    changed = (
+        _changed_paths({"changed_paths": arguments["changed_paths"]})
+        if "changed_paths" in arguments
+        else []
+    )
     matches: list[dict[str, object]] = []
     for path in _receipt_files(root):
         payload = _load_small_json(path)
-        if payload is None or payload.get("schema") != "factory.proof-receipt.v1" or payload.get("gate") != gate:
+        if (
+            payload is None
+            or payload.get("schema") != "factory.proof-receipt.v1"
+            or payload.get("gate") != gate
+        ):
             continue
         verification = verify_proof_receipt(root, path)
-        matches.append({"path": path.relative_to(root).as_posix(), "verification": verification})
+        matches.append(
+            {"path": path.relative_to(root).as_posix(), "verification": verification}
+        )
     return {
         "marker": "MCP_PROOF_REUSE_REQUEST_INCOMPLETE",
         "gate": gate,
@@ -1099,7 +1402,9 @@ def _proof_reuse(root: Path, arguments: object) -> dict[str, object]:
 def _proof_delta_status(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) - {"mission"}:
         raise McpError("factory.proof_delta_status accepts only optional mission")
-    mission = _feature(arguments["mission"], "mission") if "mission" in arguments else None
+    mission = (
+        _feature(arguments["mission"], "mission") if "mission" in arguments else None
+    )
     return {
         "marker": "MCP_PROOF_DELTA_READ_ONLY",
         "status": proof_delta_status(root, mission),
@@ -1126,7 +1431,9 @@ def _agui_review_events(root: Path, arguments: object) -> dict[str, object]:
         raise McpError("factory.agui_review_events accepts no arguments")
     try:
         status = first_lap_status(root)
-        events = build_review_events(status, run_id="local-review", surface="mission_control")
+        events = build_review_events(
+            status, run_id="local-review", surface="mission_control"
+        )
     except (FirstLapError, AguiError) as exc:
         raise McpError(str(exc), getattr(exc, "code", "MCP_AGUI_REJECTED")) from exc
     return {
@@ -1147,18 +1454,43 @@ def _cdte_status(root: Path, arguments: object) -> dict[str, object]:
         if not item.is_relative_to(directory):
             continue
         payload = _load_small_json(item)
-        if payload is not None and payload.get("schema") == "factory.cdte-scan.v1" and (feature is None or payload.get("run_id") == feature):
-            records.append({"metadata": _receipt_metadata(root, item), "fail_closed": payload.get("fail_closed"), "requires_hitl_escalation": payload.get("requires_hitl_escalation"), "conflicts": len(payload.get("conflicts", [])) if isinstance(payload.get("conflicts"), list) else None})
+        if (
+            payload is not None
+            and payload.get("schema") == "factory.cdte-scan.v1"
+            and (feature is None or payload.get("run_id") == feature)
+        ):
+            records.append(
+                {
+                    "metadata": _receipt_metadata(root, item),
+                    "fail_closed": payload.get("fail_closed"),
+                    "requires_hitl_escalation": payload.get("requires_hitl_escalation"),
+                    "conflicts": len(payload.get("conflicts", []))
+                    if isinstance(payload.get("conflicts"), list)
+                    else None,
+                }
+            )
             break
     if records:
-        return {"marker": "MCP_CDTE_SCAN_OBSERVED", "feature": feature, "scan": records[0], "assessment": "unassessed"}
-    return {"marker": "MCP_CDTE_SCAN_REQUIRED", "feature": feature, "assessment": "unassessed", "next_action": "Run factory cdte scan explicitly to create a deterministic, receipted gate result."}
+        return {
+            "marker": "MCP_CDTE_SCAN_OBSERVED",
+            "feature": feature,
+            "scan": records[0],
+            "assessment": "unassessed",
+        }
+    return {
+        "marker": "MCP_CDTE_SCAN_REQUIRED",
+        "feature": feature,
+        "assessment": "unassessed",
+        "next_action": "Run factory cdte scan explicitly to create a deterministic, receipted gate result.",
+    }
 
 
 def _prd_grill_status(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) != {"prd_path"}:
         raise McpError("factory.prd_grill_status requires only prd_path")
-    relative, source = _relative_path(root, arguments["prd_path"], "prd_path", must_exist=True)
+    relative, source = _relative_path(
+        root, arguments["prd_path"], "prd_path", must_exist=True
+    )
     if source.stat().st_size > _MAX_RECEIPT_BYTES:
         raise McpError("prd_path must be at most 262144 bytes")
     source_sha = sha256(source.read_bytes()).hexdigest()
@@ -1170,13 +1502,29 @@ def _prd_grill_status(root: Path, arguments: object) -> dict[str, object]:
                 continue
             payload = _load_small_json(path)
             source_record = payload.get("source") if isinstance(payload, dict) else None
-            if payload is not None and payload.get("schema") == "factory.prd_grill.v1" and isinstance(source_record, dict) and source_record.get("sha256") == source_sha:
+            if (
+                payload is not None
+                and payload.get("schema") == "factory.prd_grill.v1"
+                and isinstance(source_record, dict)
+                and source_record.get("sha256") == source_sha
+            ):
                 matches.append(path)
     if not matches:
-        return {"marker": "MCP_PRD_GRILL_REQUIRED", "prd_path": relative, "assessment": "unassessed", "next_action": "Run factory prd grill explicitly to create a source-bound clarification receipt."}
+        return {
+            "marker": "MCP_PRD_GRILL_REQUIRED",
+            "prd_path": relative,
+            "assessment": "unassessed",
+            "next_action": "Run factory prd grill explicitly to create a source-bound clarification receipt.",
+        }
     path = matches[0]
     verification = verify_prd_grill(path)
-    return {"marker": "MCP_PRD_GRILL_STATUS", "prd_path": relative, "metadata": _receipt_metadata(root, path), "verification": verification, "current_source_sha256": source_sha}
+    return {
+        "marker": "MCP_PRD_GRILL_STATUS",
+        "prd_path": relative,
+        "metadata": _receipt_metadata(root, path),
+        "verification": verification,
+        "current_source_sha256": source_sha,
+    }
 
 
 def _workspace_advisor(root: Path, arguments: object) -> dict[str, object]:
@@ -1195,7 +1543,9 @@ def _intake_status(root: Path, arguments: object) -> dict[str, object]:
         raise McpError("factory.intake_status accepts only optional prd_path")
     prd: Path | None = None
     if "prd_path" in arguments:
-        relative, source = _relative_path(root, arguments["prd_path"], "prd_path", must_exist=True)
+        relative, source = _relative_path(
+            root, arguments["prd_path"], "prd_path", must_exist=True
+        )
         if source.stat().st_size > _MAX_RECEIPT_BYTES:
             raise McpError("prd_path must be at most 262144 bytes")
         prd = Path(relative)
@@ -1209,7 +1559,11 @@ def _intake_status(root: Path, arguments: object) -> dict[str, object]:
 def _gauntlet_status(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) - {"source_id"}:
         raise McpError("factory.gauntlet_status accepts only optional source_id")
-    source_id = _feature(arguments["source_id"], "source_id") if "source_id" in arguments else None
+    source_id = (
+        _feature(arguments["source_id"], "source_id")
+        if "source_id" in arguments
+        else None
+    )
     return {
         "marker": "MCP_GAUNTLET_READ_ONLY",
         "status": gauntlet_status(root, source_id),
@@ -1244,6 +1598,7 @@ def _combine_status(root: Path, arguments: object) -> dict[str, object]:
         "scope": "Read-only local comparison of verified governed events; no agent command, score estimation, repair, approval, publication, deployment, or credential action ran.",
     }
 
+
 def _ide_playbook(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.ide_playbook accepts no arguments")
@@ -1262,8 +1617,14 @@ def _revenue_status(root: Path, arguments: object) -> dict[str, object]:
 
 
 def _revenue_memory(root: Path, arguments: object) -> dict[str, object]:
-    if not isinstance(arguments, dict) or set(arguments) - {"app_id", "journey", "at"} or not {"app_id", "journey"} <= set(arguments):
-        raise McpError("factory.revenue_memory requires app_id and journey and accepts optional at")
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) - {"app_id", "journey", "at"}
+        or not {"app_id", "journey"} <= set(arguments)
+    ):
+        raise McpError(
+            "factory.revenue_memory requires app_id and journey and accepts optional at"
+        )
     app_id = arguments["app_id"]
     journey = arguments["journey"]
     at = arguments.get("at")
@@ -1410,9 +1771,12 @@ def _deep_audit_status(root: Path, arguments: object) -> dict[str, object]:
     """Read local deep audit findings without execution or approval authority."""
     if arguments != {}:
         raise McpError("factory.deep_audit_status accepts no arguments")
-    return {"marker": "DEEP_AUDIT_MCP_READ_ONLY",
-            "action_summary": "Read deep-audit blockers, consequences and repair guidance; no action ran.",
-            "status": deep_audit_status(root), "authority": "none"}
+    return {
+        "marker": "DEEP_AUDIT_MCP_READ_ONLY",
+        "action_summary": "Read deep-audit blockers, consequences and repair guidance; no action ran.",
+        "status": deep_audit_status(root),
+        "authority": "none",
+    }
 
 
 def _runtime_audit_status(root: Path, arguments: object) -> dict[str, object]:
@@ -1438,13 +1802,25 @@ def _agent_bridge_status(root: Path, arguments: object) -> dict[str, object]:
 
 
 def _agent_handoff_brief(root: Path, arguments: object) -> dict[str, object]:
-    if not isinstance(arguments, dict) or set(arguments) != {"contract"} or not isinstance(arguments.get("contract"), str) or not arguments["contract"].strip() or len(arguments["contract"]) > 512:
-        raise McpError("factory.agent_handoff_brief requires one workspace-relative contract path")
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) != {"contract"}
+        or not isinstance(arguments.get("contract"), str)
+        or not arguments["contract"].strip()
+        or len(arguments["contract"]) > 512
+    ):
+        raise McpError(
+            "factory.agent_handoff_brief requires one workspace-relative contract path"
+        )
     try:
         brief = agent_handoff_brief(root, Path(arguments["contract"]))
     except AgentProofBridgeError as exc:
         raise McpError(str(exc), exc.code) from exc
-    return {"marker": "AGENT_HANDOFF_BRIEF_MCP_READ_ONLY", "action_summary": "Read the sealed original-intent contract shared by worker and reviewer without sending it to a provider or changing it.", "brief": brief}
+    return {
+        "marker": "AGENT_HANDOFF_BRIEF_MCP_READ_ONLY",
+        "action_summary": "Read the sealed original-intent contract shared by worker and reviewer without sending it to a provider or changing it.",
+        "brief": brief,
+    }
 
 
 def _proof_worklog_status(root: Path, arguments: object) -> dict[str, object]:
@@ -1462,10 +1838,19 @@ def _codex_metadata_audit(root: Path, arguments: object) -> dict[str, object]:
     if not isinstance(arguments, dict) or set(arguments) - {"paths"}:
         raise McpError("factory.codex_metadata_audit accepts optional paths only")
     supplied = arguments.get("paths")
-    if supplied is not None and (not isinstance(supplied, list) or not 1 <= len(supplied) <= 8 or not all(isinstance(item, str) and item.strip() and len(item) <= 512 for item in supplied)):
+    if supplied is not None and (
+        not isinstance(supplied, list)
+        or not 1 <= len(supplied) <= 8
+        or not all(
+            isinstance(item, str) and item.strip() and len(item) <= 512
+            for item in supplied
+        )
+    ):
         raise McpError("paths must contain 1-8 non-empty workspace-relative paths")
     try:
-        audit = audit_metadata(root, [Path(item) for item in supplied] if supplied is not None else None)
+        audit = audit_metadata(
+            root, [Path(item) for item in supplied] if supplied is not None else None
+        )
     except MetadataAuditError as exc:
         raise McpError(exc.message, exc.code) from exc
     return {
@@ -1498,7 +1883,9 @@ def _appforge_device_reality_status(root: Path, arguments: object) -> dict[str, 
     }
 
 
-def _appforge_release_rehearsal_status(root: Path, arguments: object) -> dict[str, object]:
+def _appforge_release_rehearsal_status(
+    root: Path, arguments: object
+) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.appforge_release_rehearsal_status accepts no arguments")
     return {
@@ -1531,7 +1918,9 @@ def _appforge_surface_matrix_status(root: Path, arguments: object) -> dict[str, 
     }
 
 
-def _appforge_mobile_evidence_status(root: Path, arguments: object) -> dict[str, object]:
+def _appforge_mobile_evidence_status(
+    root: Path, arguments: object
+) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.appforge_mobile_evidence_status accepts no arguments")
     return {
@@ -1555,8 +1944,15 @@ def _release_readiness_status(root: Path, arguments: object) -> dict[str, object
 
 def _release_decision_status(root: Path, arguments: object) -> dict[str, object]:
     allowed = {"feature", "human_input", "tool_call_id", "proof_card_hash"}
-    if not isinstance(arguments, dict) or "feature" not in arguments or set(arguments) - allowed:
-        raise McpError("factory.release_decision requires feature and only approved MRT fields", marker="RELEASE_DECISION_INPUT_REJECTED")
+    if (
+        not isinstance(arguments, dict)
+        or "feature" not in arguments
+        or set(arguments) - allowed
+    ):
+        raise McpError(
+            "factory.release_decision requires feature and only approved MRT fields",
+            marker="RELEASE_DECISION_INPUT_REJECTED",
+        )
     try:
         card = release_decision_card(root, arguments["feature"])
     except ValueError as exc:
@@ -1567,8 +1963,12 @@ def _release_decision_status(root: Path, arguments: object) -> dict[str, object]
             completed = release_gate_completed(
                 card,
                 human_input,
-                tool_call_id=arguments.get("tool_call_id") if "tool_call_id" in arguments else None,
-                proof_card_hash=arguments.get("proof_card_hash") if "proof_card_hash" in arguments else None,
+                tool_call_id=arguments.get("tool_call_id")
+                if "tool_call_id" in arguments
+                else None,
+                proof_card_hash=arguments.get("proof_card_hash")
+                if "proof_card_hash" in arguments
+                else None,
             )
         except McpMrtError as exc:
             raise McpError(str(exc), marker=exc.marker) from exc
@@ -1588,7 +1988,9 @@ def _release_decision_status(root: Path, arguments: object) -> dict[str, object]
     }
 
 
-def _appforge_storefront_story_status(root: Path, arguments: object) -> dict[str, object]:
+def _appforge_storefront_story_status(
+    root: Path, arguments: object
+) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.appforge_storefront_story_status accepts no arguments")
     return {
@@ -1599,7 +2001,9 @@ def _appforge_storefront_story_status(root: Path, arguments: object) -> dict[str
     }
 
 
-def _appforge_fastlane_capture_status(root: Path, arguments: object) -> dict[str, object]:
+def _appforge_fastlane_capture_status(
+    root: Path, arguments: object
+) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.appforge_fastlane_capture_status accepts no arguments")
     return {
@@ -1610,9 +2014,13 @@ def _appforge_fastlane_capture_status(root: Path, arguments: object) -> dict[str
     }
 
 
-def _appforge_submission_integrity_status(root: Path, arguments: object) -> dict[str, object]:
+def _appforge_submission_integrity_status(
+    root: Path, arguments: object
+) -> dict[str, object]:
     if arguments != {}:
-        raise McpError("factory.appforge_submission_integrity_status accepts no arguments")
+        raise McpError(
+            "factory.appforge_submission_integrity_status accepts no arguments"
+        )
     return {
         "marker": "MCP_APPFORGE_SUBMISSION_INTEGRITY_READ_ONLY",
         "action_summary": "Read hash-verified AppForge requirement coverage and deterministic repair instructions without creating captures, controlling a device, contacting Apple, or submitting a release.",
@@ -1670,41 +2078,84 @@ def _junie_contribution(root: Path, arguments: object) -> dict[str, object]:
 
 
 def _agent_proof_mission(root: Path, arguments: object) -> dict[str, object]:
-    if not isinstance(arguments, dict) or set(arguments) - {"scope", "changed_paths"} or "scope" not in arguments:
-        raise McpError("factory.agent_proof_mission requires scope and accepts optional changed_paths")
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) - {"scope", "changed_paths"}
+        or "scope" not in arguments
+    ):
+        raise McpError(
+            "factory.agent_proof_mission requires scope and accepts optional changed_paths"
+        )
     try:
-        mission = build_agent_proof_mission(root, Path(arguments["scope"]), arguments.get("changed_paths"))
+        mission = build_agent_proof_mission(
+            root, Path(arguments["scope"]), arguments.get("changed_paths")
+        )
     except (JetBrainsHandshakeError, TypeError) as exc:
-        raise McpError(str(exc), getattr(exc, "code", "MCP_INVALID_PARAMS_REJECTED")) from exc
-    return {"marker": "MCP_AGENT_PROOF_MISSION_READ_ONLY", "mission": mission, "scope": "No agent, Qodana, test, source write, approval, credential, or network action ran."}
+        raise McpError(
+            str(exc), getattr(exc, "code", "MCP_INVALID_PARAMS_REJECTED")
+        ) from exc
+    return {
+        "marker": "MCP_AGENT_PROOF_MISSION_READ_ONLY",
+        "mission": mission,
+        "scope": "No agent, Qodana, test, source write, approval, credential, or network action ran.",
+    }
 
 
 def _jetbrains_handshake(root: Path, arguments: object) -> dict[str, object]:
     required = {"scope", "changed_paths"}
-    allowed = required | {"analysis_sarif", "analysis_provider", "qodana_sarif", "e2e_receipt", "max_new_errors", "max_new_warnings"}
-    if not isinstance(arguments, dict) or set(arguments) - allowed or not required <= set(arguments):
-        raise McpError("factory.jetbrains_handshake requires scope and changed_paths plus one analysis SARIF path")
+    allowed = required | {
+        "analysis_sarif",
+        "analysis_provider",
+        "qodana_sarif",
+        "e2e_receipt",
+        "max_new_errors",
+        "max_new_warnings",
+    }
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) - allowed
+        or not required <= set(arguments)
+    ):
+        raise McpError(
+            "factory.jetbrains_handshake requires scope and changed_paths plus one analysis SARIF path"
+        )
     analysis_sarif = arguments.get("analysis_sarif")
     qodana_sarif = arguments.get("qodana_sarif")
     if bool(analysis_sarif) == bool(qodana_sarif):
-        raise McpError("factory.jetbrains_handshake requires exactly one of analysis_sarif or qodana_sarif")
+        raise McpError(
+            "factory.jetbrains_handshake requires exactly one of analysis_sarif or qodana_sarif"
+        )
     provider = "qodana" if qodana_sarif else arguments.get("analysis_provider", "auto")
     try:
         result = evaluate_jetbrains_handshake(
-            root, Path(arguments["scope"]), arguments["changed_paths"], Path(qodana_sarif or analysis_sarif),
+            root,
+            Path(arguments["scope"]),
+            arguments["changed_paths"],
+            Path(qodana_sarif or analysis_sarif),
             Path(arguments["e2e_receipt"]) if arguments.get("e2e_receipt") else None,
             analysis_provider=provider,
-            max_new_errors=arguments.get("max_new_errors", 0), max_new_warnings=arguments.get("max_new_warnings", 0),
+            max_new_errors=arguments.get("max_new_errors", 0),
+            max_new_warnings=arguments.get("max_new_warnings", 0),
         )
     except (JetBrainsHandshakeError, TypeError) as exc:
-        raise McpError(str(exc), getattr(exc, "code", "MCP_INVALID_PARAMS_REJECTED")) from exc
-    return {"marker": "MCP_JETBRAINS_HANDSHAKE_READ_ONLY", "handshake": result, "scope": "No agent, analyzer, test, receipt write, approval, credential, or network action ran."}
+        raise McpError(
+            str(exc), getattr(exc, "code", "MCP_INVALID_PARAMS_REJECTED")
+        ) from exc
+    return {
+        "marker": "MCP_JETBRAINS_HANDSHAKE_READ_ONLY",
+        "handshake": result,
+        "scope": "No agent, analyzer, test, receipt write, approval, credential, or network action ran.",
+    }
 
 
 def _jetbrains_handshake_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.jetbrains_handshake_status accepts no arguments")
-    return {"marker": "MCP_JETBRAINS_HANDSHAKE_STATUS_READ_ONLY", "status": jetbrains_handshake_projection(root), "scope": "Latest local receipt metadata only; no evidence was rerun or approved."}
+    return {
+        "marker": "MCP_JETBRAINS_HANDSHAKE_STATUS_READ_ONLY",
+        "status": jetbrains_handshake_projection(root),
+        "scope": "Latest local receipt metadata only; no evidence was rerun or approved.",
+    }
 
 
 def _tool_call(root: Path, params: object) -> dict[str, object]:
@@ -1725,10 +2176,12 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
             raise McpError("factory.journey_status accepts no arguments")
         return _content(journey_proof_status(root))
     if name == "factory.graph_impact":
-        return _content({
-            "marker": "MCP_GRAPH_IMPACT_PARITY",
-            "impact": graph_ops_impact(root, _changed_paths(arguments)),
-        })
+        return _content(
+            {
+                "marker": "MCP_GRAPH_IMPACT_PARITY",
+                "impact": graph_ops_impact(root, _changed_paths(arguments)),
+            }
+        )
     if name == "factory.developer_memory":
         return _content(_developer_memory(root, arguments))
     if name == "factory.intent_ledger":
@@ -1743,12 +2196,14 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         if arguments != {}:
             raise McpError("factory.next_action accepts no arguments")
         graph = graph_ops_snapshot(root)
-        return _content({
-            "marker": "MCP_GRAPH_OPS_PARITY",
-            "graph_sha256": graph["graph_sha256"],
-            "recommendation": graph["recommendation"],
-            "authority": graph["authority"],
-        })
+        return _content(
+            {
+                "marker": "MCP_GRAPH_OPS_PARITY",
+                "graph_sha256": graph["graph_sha256"],
+                "recommendation": graph["recommendation"],
+                "authority": graph["authority"],
+            }
+        )
     if name == "factory.list_receipts":
         return _content(_receipt_listing(root, arguments))
     if name == "factory.get_receipt":
@@ -1862,7 +2317,11 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
 
 
 def _resource_read(root: Path, params: object) -> dict[str, object]:
-    if not isinstance(params, dict) or set(params) != {"uri"} or not isinstance(params.get("uri"), str):
+    if (
+        not isinstance(params, dict)
+        or set(params) != {"uri"}
+        or not isinstance(params.get("uri"), str)
+    ):
         raise McpError("resources/read requires only a URI")
     uri = params["uri"]
     if uri == "factory://status":
@@ -1873,7 +2332,9 @@ def _resource_read(root: Path, params: object) -> dict[str, object]:
         raise McpError("unknown MCP resource")
     return {
         "marker": "MCP_RESOURCES_PARITY",
-        "contents": [{"uri": uri, "mimeType": "application/json", "text": _canonical(payload)}],
+        "contents": [
+            {"uri": uri, "mimeType": "application/json", "text": _canonical(payload)}
+        ],
     }
 
 
@@ -1907,8 +2368,16 @@ def _resources_list(_root: Path, params: object) -> dict[str, object]:
     return {
         "marker": "MCP_RESOURCES_PARITY",
         "resources": [
-            {"uri": "factory://status", "name": "Factory MCP status", "mimeType": "application/json"},
-            {"uri": "factory://graph", "name": "Factory Graph Ops", "mimeType": "application/json"},
+            {
+                "uri": "factory://status",
+                "name": "Factory MCP status",
+                "mimeType": "application/json",
+            },
+            {
+                "uri": "factory://graph",
+                "name": "Factory Graph Ops",
+                "mimeType": "application/json",
+            },
         ],
     }
 
@@ -1936,18 +2405,25 @@ def _request_context(request: object) -> tuple[object, bool, str, object] | None
         return None
     if request.get("jsonrpc") != "2.0" or not isinstance(request.get("method"), str):
         return None
-    return request.get("id"), "id" not in request, request["method"], request.get("params", {})
+    return (
+        request.get("id"),
+        "id" not in request,
+        request["method"],
+        request.get("params", {}),
+    )
 
 
-def _error_or_notification(is_notification: bool, request_id: object, code: int,
-                           message: str, marker: str) -> dict[str, object] | None:
+def _error_or_notification(
+    is_notification: bool, request_id: object, code: int, message: str, marker: str
+) -> dict[str, object] | None:
     if is_notification:
         return None
     return _error(request_id, code, message, marker)
 
 
-def _result_or_notification(is_notification: bool, request_id: object,
-                            result: dict[str, object]) -> dict[str, object] | None:
+def _result_or_notification(
+    is_notification: bool, request_id: object, result: dict[str, object]
+) -> dict[str, object] | None:
     if is_notification:
         return None
     return _result(request_id, result)
@@ -1958,16 +2434,29 @@ def dispatch(request: object, root: Path | str) -> dict[str, object] | None:
     context = _request_context(request)
     if context is None:
         request_id = request.get("id") if isinstance(request, dict) else None
-        return _error(request_id, -32602, "invalid JSON-RPC request", "MCP_INVALID_PARAMS_REJECTED")
+        return _error(
+            request_id,
+            -32602,
+            "invalid JSON-RPC request",
+            "MCP_INVALID_PARAMS_REJECTED",
+        )
     request_id, is_notification, method, params = context
     if method == "notifications/initialized":
         return None
     try:
         response = _method_result(_workspace_root(root), method, params)
     except LookupError:
-        return _error_or_notification(is_notification, request_id, -32601, "method not found", "MCP_UNKNOWN_METHOD_REJECTED")
+        return _error_or_notification(
+            is_notification,
+            request_id,
+            -32601,
+            "method not found",
+            "MCP_UNKNOWN_METHOD_REJECTED",
+        )
     except McpError as exc:
-        return _error_or_notification(is_notification, request_id, -32602, str(exc), exc.marker)
+        return _error_or_notification(
+            is_notification, request_id, -32602, str(exc), exc.marker
+        )
     return _result_or_notification(is_notification, request_id, response)
 
 
@@ -1983,16 +2472,25 @@ def dispatch_stateless(request: object, root: Path | str) -> dict[str, object]:
     try:
         encoded = _canonical(request).encode("utf-8")
     except (TypeError, ValueError, UnicodeEncodeError) as exc:
-        raise McpError("stateless request must be JSON-serializable", "MCP_STATELESS_REQUEST_INVALID") from exc
+        raise McpError(
+            "stateless request must be JSON-serializable",
+            "MCP_STATELESS_REQUEST_INVALID",
+        ) from exc
     if len(encoded) > _MAX_STATELESS_REQUEST_BYTES:
         raise McpError(
             f"stateless request must be at most {_MAX_STATELESS_REQUEST_BYTES} bytes",
             "MCP_STATELESS_REQUEST_TOO_LARGE",
         )
     if not isinstance(request, dict):
-        raise McpError("stateless request must be a JSON-RPC object", "MCP_STATELESS_REQUEST_INVALID")
+        raise McpError(
+            "stateless request must be a JSON-RPC object",
+            "MCP_STATELESS_REQUEST_INVALID",
+        )
     if not all(isinstance(key, str) for key in request):
-        raise McpError("stateless request object keys must be strings", "MCP_STATELESS_REQUEST_INVALID")
+        raise McpError(
+            "stateless request object keys must be strings",
+            "MCP_STATELESS_REQUEST_INVALID",
+        )
     allowed = {"jsonrpc", "id", "method", "params"}
     unknown = sorted(set(request) - allowed)
     if unknown:
@@ -2015,7 +2513,12 @@ def dispatch_stateless(request: object, root: Path | str) -> dict[str, object]:
     }
 
 
-def serve_stdio(root: Path | str, *, input_stream: TextIO | None = None, output_stream: TextIO | None = None) -> int:
+def serve_stdio(
+    root: Path | str,
+    *,
+    input_stream: TextIO | None = None,
+    output_stream: TextIO | None = None,
+) -> int:
     """Serve newline-delimited JSON-RPC requests over stdio and return 0 at EOF."""
     _workspace_root(root)
     input_stream = input_stream or sys.stdin
@@ -2024,7 +2527,9 @@ def serve_stdio(root: Path | str, *, input_stream: TextIO | None = None, output_
         try:
             request = json.loads(raw)
         except json.JSONDecodeError:
-            response = _error(None, -32602, "invalid JSON-RPC request", "MCP_INVALID_PARAMS_REJECTED")
+            response = _error(
+                None, -32602, "invalid JSON-RPC request", "MCP_INVALID_PARAMS_REJECTED"
+            )
         else:
             response = dispatch(request, root)
         if response is not None:

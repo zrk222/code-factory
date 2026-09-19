@@ -1,4 +1,5 @@
 """Exact pytest outcome collection for release-readiness smoke gates."""
+
 from __future__ import annotations
 
 import pytest

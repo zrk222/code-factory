@@ -4,6 +4,7 @@ The proof layer turns existing receipts into a hash-linked trace. It does not
 invent a new verdict: it makes the verdict replayable, tamper-evident, and easy
 to summarize for humans.
 """
+
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -74,11 +75,13 @@ def _artifact_hashes(root: Path, receipt: Receipt) -> list[dict]:
             if not path.is_absolute():
                 path = root / path
             if path.is_file():
-                artifacts.append({
-                    "kind": kind,
-                    "path": _rel(path, root),
-                    "sha256": _sha256_file(path),
-                })
+                artifacts.append(
+                    {
+                        "kind": kind,
+                        "path": _rel(path, root),
+                        "sha256": _sha256_file(path),
+                    }
+                )
     return sorted(artifacts, key=lambda item: (item["kind"], item["path"]))
 
 
@@ -98,13 +101,18 @@ def _load_latest_receipts(root: Path, feature: str) -> list[dict]:
 
     rows = []
     for _, path, receipt, payload in latest.values():
-        rows.append({
-            "path": path,
-            "receipt": receipt,
-            "payload": payload,
-            "order": _stage_order(receipt.module, receipt.stage)[0],
-        })
-    return sorted(rows, key=lambda row: (row["order"], row["receipt"].module, row["receipt"].stage))
+        rows.append(
+            {
+                "path": path,
+                "receipt": receipt,
+                "payload": payload,
+                "order": _stage_order(receipt.module, receipt.stage)[0],
+            }
+        )
+    return sorted(
+        rows,
+        key=lambda row: (row["order"], row["receipt"].module, row["receipt"].stage),
+    )
 
 
 def _stage_command(feature: str, module: str, stage: str) -> str | None:
@@ -146,21 +154,25 @@ def build_trace(root: Path, feature: str, *, out: Path | None = None) -> dict:
         }
         node_hash = _sha256_bytes(_canonical(node_core))
         previous_hash = node_hash
-        nodes.append({
-            **node_core,
-            "order": row["order"],
-            "ts": receipt.ts,
-            "meter": asdict(receipt.meter),
-            "attribution": receipt.attribution,
-            "command": _stage_command(feature, receipt.module, receipt.stage),
-            "node_sha256": node_hash,
-        })
-        stages_for_rollup.append({
-            "module": receipt.module,
-            "stage": receipt.stage,
-            "status": "ok" if receipt.ok else "failed",
-            "attribution": receipt.attribution,
-        })
+        nodes.append(
+            {
+                **node_core,
+                "order": row["order"],
+                "ts": receipt.ts,
+                "meter": asdict(receipt.meter),
+                "attribution": receipt.attribution,
+                "command": _stage_command(feature, receipt.module, receipt.stage),
+                "node_sha256": node_hash,
+            }
+        )
+        stages_for_rollup.append(
+            {
+                "module": receipt.module,
+                "stage": receipt.stage,
+                "status": "ok" if receipt.ok else "failed",
+                "attribution": receipt.attribution,
+            }
+        )
 
     rollup = rollup_attributions(stages_for_rollup)
     trace_core = {
@@ -253,8 +265,11 @@ def verify_trace(trace_path: Path, *, root: Path | None = None) -> dict:
     if previous_hash != trace.get("chain_head"):
         errors.append("chain head mismatch")
 
-    trace_core = {key: value for key, value in trace.items()
-                  if key not in {"trace_sha256", "trace_path"}}
+    trace_core = {
+        key: value
+        for key, value in trace.items()
+        if key not in {"trace_sha256", "trace_path"}
+    }
     if _sha256_bytes(_canonical(trace_core)) != trace.get("trace_sha256"):
         errors.append("trace hash mismatch")
 
@@ -284,58 +299,98 @@ def risk_for_paths(paths: Iterable[str]) -> dict:
         path = raw.replace("\\", "/").removeprefix("./")
         stages: list[tuple[str, str, str]] = []
         if path.startswith(("specs/", "plans/", "handoff/")):
-            stages.extend([
-                ("specline", "strict", "spec contract changed"),
-                ("specline", "verify-validators", "spec validator coverage changed"),
-                ("specline", "gate", "sealed spec evidence changed"),
-                ("forgeline", "architect", "architecture may need regeneration"),
-                ("forgeline", "review", "architecture review may be stale"),
-                ("forgeline", "arch-gate", "architecture gate may be stale"),
-                ("forgeline", "verify-tests", "test instrument must match new spec"),
-                ("forgeline", "smoke", "runtime evidence may be stale"),
-            ])
+            stages.extend(
+                [
+                    ("specline", "strict", "spec contract changed"),
+                    (
+                        "specline",
+                        "verify-validators",
+                        "spec validator coverage changed",
+                    ),
+                    ("specline", "gate", "sealed spec evidence changed"),
+                    ("forgeline", "architect", "architecture may need regeneration"),
+                    ("forgeline", "review", "architecture review may be stale"),
+                    ("forgeline", "arch-gate", "architecture gate may be stale"),
+                    (
+                        "forgeline",
+                        "verify-tests",
+                        "test instrument must match new spec",
+                    ),
+                    ("forgeline", "smoke", "runtime evidence may be stale"),
+                ]
+            )
         elif path.endswith(".ssat.yaml") or "ssat" in path:
-            stages.extend([
-                ("forgeline", "architect", "SSAT scaffold changed"),
-                ("forgeline", "review", "SSAT review may be stale"),
-                ("forgeline", "arch-gate", "SSAT gate may be stale"),
-                ("forgeline", "verify-tests", "stub identity and hollow-test proof changed"),
-                ("forgeline", "smoke", "runtime evidence may be stale"),
-            ])
+            stages.extend(
+                [
+                    ("forgeline", "architect", "SSAT scaffold changed"),
+                    ("forgeline", "review", "SSAT review may be stale"),
+                    ("forgeline", "arch-gate", "SSAT gate may be stale"),
+                    (
+                        "forgeline",
+                        "verify-tests",
+                        "stub identity and hollow-test proof changed",
+                    ),
+                    ("forgeline", "smoke", "runtime evidence may be stale"),
+                ]
+            )
         elif path.startswith("smoke/"):
-            stages.extend([
-                ("forgeline", "verify-tests", "smoke instrument changed"),
-                ("forgeline", "smoke", "runtime smoke evidence changed"),
-            ])
+            stages.extend(
+                [
+                    ("forgeline", "verify-tests", "smoke instrument changed"),
+                    ("forgeline", "smoke", "runtime smoke evidence changed"),
+                ]
+            )
         elif path.startswith("slices/"):
-            stages.extend([
-                ("forgeline", "smoke", "implementation behavior changed"),
-                ("forgeline", "ship", "shipping receipt must reflect new implementation"),
-            ])
+            stages.extend(
+                [
+                    ("forgeline", "smoke", "implementation behavior changed"),
+                    (
+                        "forgeline",
+                        "ship",
+                        "shipping receipt must reflect new implementation",
+                    ),
+                ]
+            )
         elif path.startswith(("registry/", "registry_store/")):
-            stages.extend([
-                ("hsf", "compile", "compiled artifact changed"),
-            ])
+            stages.extend(
+                [
+                    ("hsf", "compile", "compiled artifact changed"),
+                ]
+            )
         elif path.endswith((".md", ".rst", ".txt")):
-            stages.extend([
-                ("factoryline", "evidence", "public evidence/docs changed"),
-            ])
+            stages.extend(
+                [
+                    ("factoryline", "evidence", "public evidence/docs changed"),
+                ]
+            )
         else:
-            stages.extend([
-                ("specline", "strict", "unknown change; safest minimal entry is input contract"),
-                ("specline", "verify-validators", "unknown change may affect validator coverage"),
-                ("forgeline", "smoke", "unknown change may affect behavior"),
-            ])
+            stages.extend(
+                [
+                    (
+                        "specline",
+                        "strict",
+                        "unknown change; safest minimal entry is input contract",
+                    ),
+                    (
+                        "specline",
+                        "verify-validators",
+                        "unknown change may affect validator coverage",
+                    ),
+                    ("forgeline", "smoke", "unknown change may affect behavior"),
+                ]
+            )
 
         for module, stage, reason in stages:
             stage_reasons.setdefault((module, stage), set()).add(reason)
-        path_entries.append({
-            "path": path,
-            "invalidates": [
-                {"module": module, "stage": stage, "reason": reason}
-                for module, stage, reason in stages
-            ],
-        })
+        path_entries.append(
+            {
+                "path": path,
+                "invalidates": [
+                    {"module": module, "stage": stage, "reason": reason}
+                    for module, stage, reason in stages
+                ],
+            }
+        )
 
     ordered = [
         {
@@ -343,7 +398,9 @@ def risk_for_paths(paths: Iterable[str]) -> dict:
             "stage": stage,
             "reasons": sorted(reasons),
         }
-        for (module, stage), reasons in sorted(stage_reasons.items(), key=lambda item: _stage_order(*item[0]))
+        for (module, stage), reasons in sorted(
+            stage_reasons.items(), key=lambda item: _stage_order(*item[0])
+        )
     ]
     return {"paths": path_entries, "rerun_stages": ordered}
 
@@ -371,7 +428,9 @@ def execute_replay(plan: dict, *, root: Path) -> dict:
     for item in plan.get("commands", []):
         command = item.get("command")
         if not command:
-            results.append({**item, "status": "skipped", "reason": "no executable command"})
+            results.append(
+                {**item, "status": "skipped", "reason": "no executable command"}
+            )
             continue
         proc = subprocess.run(
             command.split(),
@@ -380,12 +439,14 @@ def execute_replay(plan: dict, *, root: Path) -> dict:
             text=True,
             timeout=300,
         )
-        results.append({
-            **item,
-            "status": "ok" if proc.returncode == 0 else "failed",
-            "returncode": proc.returncode,
-            "log_tail": (proc.stdout + proc.stderr)[-1200:],
-        })
+        results.append(
+            {
+                **item,
+                "status": "ok" if proc.returncode == 0 else "failed",
+                "returncode": proc.returncode,
+                "log_tail": (proc.stdout + proc.stderr)[-1200:],
+            }
+        )
         if proc.returncode != 0:
             break
     return {
@@ -410,10 +471,12 @@ def export_attestations(trace: dict, *, out_dir: Path) -> dict:
         for artifact in node.get("artifacts", [])
     ]
     if not subjects:
-        subjects = [{
-            "name": f"{trace['feature']}.trace.json",
-            "digest": {"sha256": trace["trace_sha256"]},
-        }]
+        subjects = [
+            {
+                "name": f"{trace['feature']}.trace.json",
+                "digest": {"sha256": trace["trace_sha256"]},
+            }
+        ]
 
     in_toto = {
         "_type": "https://in-toto.io/Statement/v1",
@@ -423,7 +486,9 @@ def export_attestations(trace: dict, *, out_dir: Path) -> dict:
             "feature": trace["feature"],
             "trace_sha256": trace["trace_sha256"],
             "chain_head": trace["chain_head"],
-            "earliest_failing_stage": trace.get("rollup", {}).get("earliest_failing_stage"),
+            "earliest_failing_stage": trace.get("rollup", {}).get(
+                "earliest_failing_stage"
+            ),
             "stage_count": len(trace.get("nodes", [])),
             "verified_by": "factory verify-trace",
         },
@@ -458,8 +523,12 @@ def export_attestations(trace: dict, *, out_dir: Path) -> dict:
         "in_toto": out_dir / f"{trace['feature']}.intoto.statement.json",
         "slsa": out_dir / f"{trace['feature']}.slsa.provenance.json",
     }
-    outputs["in_toto"].write_text(json.dumps(in_toto, indent=2, sort_keys=True), encoding="utf-8")
-    outputs["slsa"].write_text(json.dumps(slsa, indent=2, sort_keys=True), encoding="utf-8")
+    outputs["in_toto"].write_text(
+        json.dumps(in_toto, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    outputs["slsa"].write_text(
+        json.dumps(slsa, indent=2, sort_keys=True), encoding="utf-8"
+    )
     return {key: str(path) for key, path in outputs.items()}
 
 
@@ -492,7 +561,9 @@ def git_changed_paths(root: Path, base: str) -> list[str]:
     return sorted(paths)
 
 
-def public_evidence(root: Path, feature: str, *, trace_path: Path | None = None) -> dict:
+def public_evidence(
+    root: Path, feature: str, *, trace_path: Path | None = None
+) -> dict:
     """Create a public-safe proof summary from a trace."""
     root = Path(root)
     if trace_path is None:
@@ -502,13 +573,15 @@ def public_evidence(root: Path, feature: str, *, trace_path: Path | None = None)
     stages = []
     for node in trace.get("nodes", []):
         attr = node.get("attribution") or {}
-        stages.append({
-            "stage": f"{node['module']}:{node['stage']}",
-            "ok": node["ok"],
-            "receipt_sha256": node["receipt_sha256"],
-            "rate": attr.get("rate"),
-            "dominant_failure_class": attr.get("dominant_failure_class"),
-        })
+        stages.append(
+            {
+                "stage": f"{node['module']}:{node['stage']}",
+                "ok": node["ok"],
+                "receipt_sha256": node["receipt_sha256"],
+                "rate": attr.get("rate"),
+                "dominant_failure_class": attr.get("dominant_failure_class"),
+            }
+        )
     return {
         "feature": feature,
         "trace_sha256": trace.get("trace_sha256"),
@@ -549,15 +622,17 @@ def public_evidence_text(evidence: dict) -> str:
         lines.append(f"{stage['stage']:<28} {verdict:<7} rate={rate} class={failure}")
     meter = evidence.get("meter") or {}
     if meter:
-        lines.extend([
-            "",
-            "COST / TOKEN MODEL",
-            "-" * 52,
-            f"stages measured      : {meter.get('stages_measured')}",
-            f"build wall ms        : {meter.get('build_wall_ms')}",
-            f"tokens saved         : {meter.get('tokens_saved')}",
-            f"percent saved        : {meter.get('pct_tokens_saved')}%",
-        ])
+        lines.extend(
+            [
+                "",
+                "COST / TOKEN MODEL",
+                "-" * 52,
+                f"stages measured      : {meter.get('stages_measured')}",
+                f"build wall ms        : {meter.get('build_wall_ms')}",
+                f"tokens saved         : {meter.get('tokens_saved')}",
+                f"percent saved        : {meter.get('pct_tokens_saved')}%",
+            ]
+        )
     if evidence["verification_errors"]:
         lines.extend(["", "VERIFICATION ERRORS", "-" * 52])
         lines.extend(f"- {error}" for error in evidence["verification_errors"])

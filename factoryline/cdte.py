@@ -25,6 +25,7 @@ registry, never chosen at runtime, and a proof whose inputs are absent is
 withheld rather than estimated. This mirrors ``savings.py``, which withholds
 ``productivity_gain_rate`` rather than guessing it.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -93,13 +94,18 @@ def normalize_constraint(value: dict[str, Any], index: int) -> dict[str, Any]:
 
     constraint_id = value.get("constraintId") or f"c-{index:03d}"
     if not isinstance(constraint_id, str) or not constraint_id.strip():
-        raise CDTEError("CONSTRAINT_ID_INVALID", f"{label}.constraintId must be a non-empty string")
+        raise CDTEError(
+            "CONSTRAINT_ID_INVALID", f"{label}.constraintId must be a non-empty string"
+        )
 
     category = value.get("category")
     metric = value.get("metric")
     for field, raw in (("category", category), ("metric", metric)):
         if not isinstance(raw, str) or not raw.strip():
-            raise CDTEError("CONSTRAINT_FIELD_MISSING", f"{label}.{field} is required and must be a string")
+            raise CDTEError(
+                "CONSTRAINT_FIELD_MISSING",
+                f"{label}.{field} is required and must be a string",
+            )
 
     operator = value.get("operator")
     if operator is not None and operator not in VALID_OPERATORS:
@@ -134,12 +140,17 @@ def normalize_constraints(values: Iterable[dict[str, Any]]) -> list[dict[str, An
     """
     items = list(values)
     if len(items) > MAX_CONSTRAINTS:
-        raise CDTEError("CONSTRAINTS_TOO_MANY", f"at most {MAX_CONSTRAINTS} constraints per scan")
+        raise CDTEError(
+            "CONSTRAINTS_TOO_MANY", f"at most {MAX_CONSTRAINTS} constraints per scan"
+        )
     normalized = [normalize_constraint(item, i) for i, item in enumerate(items)]
     seen: set[str] = set()
     for item in normalized:
         if item["constraintId"] in seen:
-            raise CDTEError("CONSTRAINT_ID_DUPLICATE", f"duplicate constraintId {item['constraintId']}")
+            raise CDTEError(
+                "CONSTRAINT_ID_DUPLICATE",
+                f"duplicate constraintId {item['constraintId']}",
+            )
         seen.add(item["constraintId"])
     return normalized
 
@@ -156,14 +167,20 @@ def load_registry(path: Path | None = None) -> dict[str, Any]:
     """
     source = Path(path) if path else _REGISTRY_PATH
     if not source.is_file():
-        raise CDTEError("REGISTRY_MISSING", f"lethal pair registry not found at {source}")
+        raise CDTEError(
+            "REGISTRY_MISSING", f"lethal pair registry not found at {source}"
+        )
     try:
         data = json.loads(source.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise CDTEError("REGISTRY_UNPARSEABLE", f"registry is not valid JSON: {exc}") from exc
+        raise CDTEError(
+            "REGISTRY_UNPARSEABLE", f"registry is not valid JSON: {exc}"
+        ) from exc
 
     if not isinstance(data, dict) or data.get("schema") != REGISTRY_SCHEMA:
-        raise CDTEError("REGISTRY_SCHEMA_INVALID", f"registry schema must be {REGISTRY_SCHEMA}")
+        raise CDTEError(
+            "REGISTRY_SCHEMA_INVALID", f"registry schema must be {REGISTRY_SCHEMA}"
+        )
     pairs = data.get("pairs")
     if not isinstance(pairs, list) or not pairs:
         raise CDTEError("REGISTRY_EMPTY", "registry must declare at least one pair")
@@ -179,7 +196,9 @@ def _validate_side(side: Any, pair_id: str, which: str) -> None:
         raise CDTEError("PAIR_SIDE_INVALID", f"{pair_id}.{which} must be an object")
     for field in ("category", "metric"):
         if not isinstance(side.get(field), str):
-            raise CDTEError("PAIR_SIDE_INVALID", f"{pair_id}.{which}.{field} is required")
+            raise CDTEError(
+                "PAIR_SIDE_INVALID", f"{pair_id}.{which}.{field} is required"
+            )
     has_threshold = "operator" in side and "threshold" in side
     has_values = "value_in" in side
     if not has_threshold and not has_values:
@@ -188,9 +207,13 @@ def _validate_side(side: Any, pair_id: str, which: str) -> None:
             f"{pair_id}.{which} needs either operator+threshold or value_in",
         )
     if has_threshold and side["operator"] not in VALID_OPERATORS:
-        raise CDTEError("PAIR_SIDE_INVALID", f"{pair_id}.{which}.operator is not a valid operator")
+        raise CDTEError(
+            "PAIR_SIDE_INVALID", f"{pair_id}.{which}.operator is not a valid operator"
+        )
     if has_values and not isinstance(side["value_in"], list):
-        raise CDTEError("PAIR_SIDE_INVALID", f"{pair_id}.{which}.value_in must be a list")
+        raise CDTEError(
+            "PAIR_SIDE_INVALID", f"{pair_id}.{which}.value_in must be a list"
+        )
 
 
 def _validate_pair(pair: Any, seen: set[str]) -> None:
@@ -203,19 +226,29 @@ def _validate_pair(pair: Any, seen: set[str]) -> None:
         raise CDTEError("PAIR_ID_DUPLICATE", f"duplicate pair id {pair_id}")
     seen.add(pair_id)
     if pair.get("severity") not in VALID_SEVERITIES:
-        raise CDTEError("PAIR_SEVERITY_INVALID", f"{pair_id}.severity must be one of {VALID_SEVERITIES}")
+        raise CDTEError(
+            "PAIR_SEVERITY_INVALID",
+            f"{pair_id}.severity must be one of {VALID_SEVERITIES}",
+        )
     _validate_side(pair.get("left"), pair_id, "left")
     _validate_side(pair.get("right"), pair_id, "right")
 
     proof = pair.get("proof")
     if not isinstance(proof, dict) or proof.get("tier") not in VALID_TIERS:
-        raise CDTEError("PAIR_PROOF_TIER_INVALID", f"{pair_id}.proof.tier must be one of {VALID_TIERS}")
+        raise CDTEError(
+            "PAIR_PROOF_TIER_INVALID",
+            f"{pair_id}.proof.tier must be one of {VALID_TIERS}",
+        )
     tier = proof["tier"]
     if tier == "structural" and not isinstance(proof.get("statement"), str):
-        raise CDTEError("PAIR_PROOF_INVALID", f"{pair_id} structural proof requires a statement")
+        raise CDTEError(
+            "PAIR_PROOF_INVALID", f"{pair_id} structural proof requires a statement"
+        )
     if tier in ("modeled", "measured"):
         if not isinstance(proof.get("formula"), str):
-            raise CDTEError("PAIR_PROOF_INVALID", f"{pair_id} {tier} proof requires a formula")
+            raise CDTEError(
+                "PAIR_PROOF_INVALID", f"{pair_id} {tier} proof requires a formula"
+            )
         if not isinstance(proof.get("assumptions"), list) or not proof["assumptions"]:
             # A modeled number without printed assumptions is indistinguishable
             # from a measurement to the reader. That is the failure this whole
@@ -256,7 +289,9 @@ def _side_matches(constraint: dict[str, Any], side: dict[str, Any]) -> bool:
         raw = constraint.get("value")
         if raw is None:
             return False
-        return str(raw).strip().lower() in {str(v).strip().lower() for v in side["value_in"]}
+        return str(raw).strip().lower() in {
+            str(v).strip().lower() for v in side["value_in"]
+        }
     return _compare(constraint.get("value"), side["operator"], side["threshold"])
 
 
@@ -280,7 +315,9 @@ def detect_conflicts(
             continue
         # A single constraint satisfying both sides is a registry modelling
         # error, not a conflict; a requirement cannot contradict itself.
-        involved = {c["constraintId"] for c in left_hits} | {c["constraintId"] for c in right_hits}
+        involved = {c["constraintId"] for c in left_hits} | {
+            c["constraintId"] for c in right_hits
+        }
         if len(involved) < 2:
             continue
         findings.append(
@@ -295,7 +332,9 @@ def detect_conflicts(
                 "remediation": list(pair["proof"].get("remediation", [])),
             }
         )
-    return sorted(findings, key=lambda f: (VALID_SEVERITIES.index(f["severity"]), f["pair_id"]))
+    return sorted(
+        findings, key=lambda f: (VALID_SEVERITIES.index(f["severity"]), f["pair_id"])
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +372,9 @@ def _build_proof(
     # measured and modeled both require named numeric inputs from the constraints.
     inputs: dict[str, Any] = {}
     for constraint in left_hits + right_hits:
-        if isinstance(constraint.get("value"), (int, float)) and not isinstance(constraint.get("value"), bool):
+        if isinstance(constraint.get("value"), (int, float)) and not isinstance(
+            constraint.get("value"), bool
+        ):
             inputs[constraint["metric"]] = constraint["value"]
 
     missing = _formula_inputs(spec["formula"]) - set(inputs)
@@ -466,7 +507,9 @@ def record_scan(
     blocking = any(c["severity"] in BLOCKING_SEVERITIES for c in conflicts)
     destination = _cdte_dir(root) / f"{run_id}.json"
     if destination.exists() and not replace:
-        raise CDTEError("SCAN_OVERWRITE_REFUSED", "scan already exists; pass --replace explicitly")
+        raise CDTEError(
+            "SCAN_OVERWRITE_REFUSED", "scan already exists; pass --replace explicitly"
+        )
 
     receipt = {
         "schema": SCAN_SCHEMA,
@@ -562,15 +605,21 @@ def _render_analysis(analysis: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def draft_adr(root: Path, scan: dict[str, Any], conflict_id: str, *, number: int = 1) -> Path:
+def draft_adr(
+    root: Path, scan: dict[str, Any], conflict_id: str, *, number: int = 1
+) -> Path:
     """Write a draft ADR for one conflict, raising CDTEError if it is unknown.
 
     The decision itself stays human: the template records context, tier-labelled
     analysis, and options, and leaves the Decision section blank.
     """
-    conflict = next((c for c in scan["conflicts"] if c["conflict_id"] == conflict_id), None)
+    conflict = next(
+        (c for c in scan["conflicts"] if c["conflict_id"] == conflict_id), None
+    )
     if conflict is None:
-        raise CDTEError("CONFLICT_UNKNOWN", f"no conflict {conflict_id} in scan {scan['run_id']}")
+        raise CDTEError(
+            "CONFLICT_UNKNOWN", f"no conflict {conflict_id} in scan {scan['run_id']}"
+        )
 
     directory = Path(root).resolve() / "adr"
     directory.mkdir(parents=True, exist_ok=True)
@@ -586,7 +635,8 @@ def draft_adr(root: Path, scan: dict[str, Any], conflict_id: str, *, number: int
             severity=conflict["severity"],
             constraints=", ".join(f"`{c}`" for c in conflict["constraints"]),
             analysis=_render_analysis(conflict["incompatibility_analysis"]),
-            remediation="\n".join(f"- {r}" for r in conflict["remediation"]) or "- *(none recorded)*",
+            remediation="\n".join(f"- {r}" for r in conflict["remediation"])
+            or "- *(none recorded)*",
         ),
         encoding="utf-8",
     )
@@ -625,12 +675,17 @@ def resolve_conflict(
     if scan is None:
         raise CDTEError("SCAN_UNKNOWN", f"no scan receipt for run {run_id}")
     if not any(c["conflict_id"] == conflict_id for c in scan["conflicts"]):
-        raise CDTEError("CONFLICT_UNKNOWN", f"no conflict {conflict_id} in scan {run_id}")
+        raise CDTEError(
+            "CONFLICT_UNKNOWN", f"no conflict {conflict_id} in scan {run_id}"
+        )
 
     receipt = {
         "schema": RESOLUTION_SCHEMA,
         "marker": "CDTE_RESOLUTION_RECEIPTED",
-        "markers": ["OVERRIDE_RECORDED" if override else "ADR_RECORDED", "APPROVER_NAMED"],
+        "markers": [
+            "OVERRIDE_RECORDED" if override else "ADR_RECORDED",
+            "APPROVER_NAMED",
+        ],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "run_id": run_id,
         "conflict_id": conflict_id,
@@ -665,8 +720,12 @@ def public_cdte_report(root: Path) -> dict[str, Any]:
         if row.get("fail_closed"):
             blocked += 1
         for conflict in row.get("conflicts", []):
-            pair_counts[conflict["pair_id"]] = pair_counts.get(conflict["pair_id"], 0) + 1
-            severity_counts[conflict["severity"]] = severity_counts.get(conflict["severity"], 0) + 1
+            pair_counts[conflict["pair_id"]] = (
+                pair_counts.get(conflict["pair_id"], 0) + 1
+            )
+            severity_counts[conflict["severity"]] = (
+                severity_counts.get(conflict["severity"], 0) + 1
+            )
             analysis = conflict["incompatibility_analysis"]
             tier_counts[analysis["tier"]] = tier_counts.get(analysis["tier"], 0) + 1
             if analysis["withheld"]:
@@ -684,14 +743,18 @@ def public_cdte_report(root: Path) -> dict[str, Any]:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "scans": len(rows),
         "scans_fail_closed": blocked,
-        "fail_closed_rate": _plain(_exact(blocked) / _exact(len(rows))) if rows else None,
+        "fail_closed_rate": _plain(_exact(blocked) / _exact(len(rows)))
+        if rows
+        else None,
         "conflicts_total": total_conflicts,
         "conflicts_by_pair": dict(sorted(pair_counts.items())),
         "conflicts_by_severity": dict(sorted(severity_counts.items())),
         "analysis_by_tier": dict(sorted(tier_counts.items())),
         "quantification_withheld": withheld,
         "quantification_withheld_rate": (
-            _plain(_exact(withheld) / _exact(total_conflicts)) if total_conflicts else None
+            _plain(_exact(withheld) / _exact(total_conflicts))
+            if total_conflicts
+            else None
         ),
     }
 

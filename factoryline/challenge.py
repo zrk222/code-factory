@@ -1,4 +1,5 @@
 """Counterfactual integrity challenge for Factoryline proof verification."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -36,11 +37,15 @@ def challenge_trace(trace_path: Path, root: Path | None = None) -> dict:
             path = Path(temp) / f"{name}.json"
             path.write_text(json.dumps(variant, indent=2), encoding="utf-8")
             result = verify_trace(path, root=root)
-            mutations.append({
-                "unit": name,
-                "killed": not result["valid"],
-                "evidence": "; ".join(result["errors"]) if result["errors"] else "mutant incorrectly verified",
-            })
+            mutations.append(
+                {
+                    "unit": name,
+                    "killed": not result["valid"],
+                    "evidence": "; ".join(result["errors"])
+                    if result["errors"]
+                    else "mutant incorrectly verified",
+                }
+            )
     killed = sum(bool(item["killed"]) for item in mutations)
     return {
         "schema": "factory.challenge.v1",

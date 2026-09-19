@@ -6,6 +6,7 @@ recomputes their local integrity hashes.  It never executes a replay, reuses a
 proof, or grants release authority.  Graph Ops can therefore show the state of
 the new controls without turning the visual surface into another gate runner.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -59,7 +60,11 @@ def _integrity(value: dict[str, Any]) -> tuple[bool, str | None]:
         supplied = value.get("receipt_sha256")
         core = {key: item for key, item in value.items() if key != "receipt_sha256"}
         expected = _digest(core)
-    elif schema in {"factory.replay-receipt.v1", "factory.repair-comparison.v1", "factory.evidence-reuse.v1"}:
+    elif schema in {
+        "factory.replay-receipt.v1",
+        "factory.repair-comparison.v1",
+        "factory.evidence-reuse.v1",
+    }:
         supplied = value.get("receipt_sha256")
         core = {key: item for key, item in value.items() if key != "receipt_sha256"}
         expected = _digest(core)
@@ -73,7 +78,9 @@ def _integrity(value: dict[str, Any]) -> tuple[bool, str | None]:
         expected = _digest(core)
     elif schema == "factory.runtime-boundary-verification.v1":
         supplied = value.get("verification_sha256")
-        core = {key: item for key, item in value.items() if key != "verification_sha256"}
+        core = {
+            key: item for key, item in value.items() if key != "verification_sha256"
+        }
         expected = _digest(core)
     elif schema == "factory.supply-chain-receipt.v1":
         supplied = value.get("receipt_sha256")
@@ -81,7 +88,9 @@ def _integrity(value: dict[str, Any]) -> tuple[bool, str | None]:
         expected = _digest(core)
     elif schema == "factory.supply-chain-verification.v1":
         supplied = value.get("verification_sha256")
-        core = {key: item for key, item in value.items() if key != "verification_sha256"}
+        core = {
+            key: item for key, item in value.items() if key != "verification_sha256"
+        }
         expected = _digest(core)
     else:
         return True, None
@@ -99,7 +108,11 @@ def _status(value: dict[str, Any], schema: str, valid: bool) -> str:
         return str(value.get("state", "UNKNOWN"))
     if schema == "factory.runtime-boundary-attestation.v1":
         isolation = value.get("isolation")
-        return str(isolation.get("state", "UNKNOWN")) if isinstance(isolation, dict) else "UNKNOWN"
+        return (
+            str(isolation.get("state", "UNKNOWN"))
+            if isinstance(isolation, dict)
+            else "UNKNOWN"
+        )
     if schema == "factory.runtime-boundary-verification.v1":
         return str(value.get("state", "UNKNOWN"))
     if schema == "factory.supply-chain-receipt.v1":
@@ -110,7 +123,11 @@ def _status(value: dict[str, Any], schema: str, valid: bool) -> str:
         return str(value.get("decision", "UNKNOWN"))
     if schema == "factory.incremental-plan.v1":
         counts = value.get("counts")
-        return "BLOCKED" if isinstance(counts, dict) and counts.get("BLOCK", 0) else "PLANNED"
+        return (
+            "BLOCKED"
+            if isinstance(counts, dict) and counts.get("BLOCK", 0)
+            else "PLANNED"
+        )
     if schema == "factory.incremental-shadow.v1":
         return "EQUIVALENT" if value.get("shadow_equivalent") is True else "MISMATCH"
     if schema == "factory.replay-receipt.v1":
@@ -119,18 +136,41 @@ def _status(value: dict[str, Any], schema: str, valid: bool) -> str:
         return str(value.get("state", "UNKNOWN"))
     if schema == "factory.evidence-reuse.v1":
         counts = value.get("counts")
-        return "BLOCKED" if isinstance(counts, dict) and counts.get("BLOCK", 0) else "PLANNED"
+        return (
+            "BLOCKED"
+            if isinstance(counts, dict) and counts.get("BLOCK", 0)
+            else "PLANNED"
+        )
     if schema == "factory.failure-brief.v1":
         return str(value.get("state", "UNKNOWN"))
     return "PLANNED"
 
 
-def _summarize(path: Path, root: Path, value: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+def _summarize(
+    path: Path, root: Path, value: dict[str, Any]
+) -> tuple[dict[str, Any], bool]:
     schema = value.get("schema")
     if schema not in _SCHEMAS:
-        return ({"path": _relative(root, path), "schema": schema if isinstance(schema, str) else None, "status": "UNRECOGNIZED", "error": "SCHEMA_UNRECOGNIZED"}, False)
+        return (
+            {
+                "path": _relative(root, path),
+                "schema": schema if isinstance(schema, str) else None,
+                "status": "UNRECOGNIZED",
+                "error": "SCHEMA_UNRECOGNIZED",
+            },
+            False,
+        )
     if value.get("authority") != "none":
-        return ({"path": _relative(root, path), "schema": schema, "status": "INVALID", "error": "AUTHORITY_NOT_NONE", "authority": value.get("authority")}, False)
+        return (
+            {
+                "path": _relative(root, path),
+                "schema": schema,
+                "status": "INVALID",
+                "error": "AUTHORITY_NOT_NONE",
+                "authority": value.get("authority"),
+            },
+            False,
+        )
     integrity_ok, digest = _integrity(value)
     status = _status(value, schema, integrity_ok)
     valid = integrity_ok and status not in {"UNKNOWN", "INVALID"}
@@ -157,7 +197,9 @@ def _summarize(path: Path, root: Path, value: dict[str, Any]) -> tuple[dict[str,
             "factory.incremental-plan.v1": "plan_sha256",
         }
         supplied_field = hash_fields.get(schema, "receipt_sha256")
-        item["error"] = "SELF_HASH_MISMATCH" if value.get(supplied_field) else "SELF_HASH_MISSING"
+        item["error"] = (
+            "SELF_HASH_MISMATCH" if value.get(supplied_field) else "SELF_HASH_MISSING"
+        )
     if schema == "factory.execution-attestation.v1":
         item["attestation_id"] = value.get("attestation_id")
         item["assurance_level"] = value.get("assurance_level")
@@ -168,7 +210,9 @@ def _summarize(path: Path, root: Path, value: dict[str, Any]) -> tuple[dict[str,
         item["attestation_id"] = value.get("attestation_id")
         item["requested_isolation"] = value.get("requested_isolation")
         isolation = value.get("isolation")
-        item["observed_backend"] = isolation.get("backend") if isinstance(isolation, dict) else None
+        item["observed_backend"] = (
+            isolation.get("backend") if isinstance(isolation, dict) else None
+        )
     elif schema == "factory.runtime-boundary-verification.v1":
         item["attestation_id"] = value.get("attestation_id")
         item["requested_isolation"] = value.get("requested_isolation")
@@ -176,17 +220,32 @@ def _summarize(path: Path, root: Path, value: dict[str, Any]) -> tuple[dict[str,
     elif schema == "factory.supply-chain-receipt.v1":
         item["attestation_id"] = value.get("attestation_id")
         item["candidate_sha256"] = value.get("candidate_sha256")
-        item["artifact_count"] = (value.get("facts") or {}).get("artifact_count") if isinstance(value.get("facts"), dict) else None
-        item["unresolved_high"] = (value.get("facts") or {}).get("unresolved", {}).get("high") if isinstance(value.get("facts"), dict) and isinstance(value.get("facts", {}).get("unresolved"), dict) else None
+        item["artifact_count"] = (
+            (value.get("facts") or {}).get("artifact_count")
+            if isinstance(value.get("facts"), dict)
+            else None
+        )
+        item["unresolved_high"] = (
+            (value.get("facts") or {}).get("unresolved", {}).get("high")
+            if isinstance(value.get("facts"), dict)
+            and isinstance(value.get("facts", {}).get("unresolved"), dict)
+            else None
+        )
     elif schema == "factory.supply-chain-verification.v1":
         item["attestation_id"] = value.get("attestation_id")
         item["candidate_sha256"] = value.get("candidate_sha256")
         item["collector"] = value.get("collector")
     elif schema == "factory.defect-benchmark-receipt.v1":
-        item["benchmark_id"] = (value.get("benchmark") or {}).get("benchmark_id") if isinstance(value.get("benchmark"), dict) else None
+        item["benchmark_id"] = (
+            (value.get("benchmark") or {}).get("benchmark_id")
+            if isinstance(value.get("benchmark"), dict)
+            else None
+        )
     elif schema == "factory.incremental-plan.v1":
         item["plan_id"] = value.get("plan_id")
-        item["counts"] = value.get("counts") if isinstance(value.get("counts"), dict) else {}
+        item["counts"] = (
+            value.get("counts") if isinstance(value.get("counts"), dict) else {}
+        )
     elif schema == "factory.incremental-shadow.v1":
         item["shadow_equivalent"] = value.get("shadow_equivalent") is True
     elif schema == "factory.replay-receipt.v1":
@@ -197,10 +256,16 @@ def _summarize(path: Path, root: Path, value: dict[str, Any]) -> tuple[dict[str,
         item["executed"] = value.get("executed") is True
     elif schema == "factory.evidence-reuse.v1":
         item["request_id"] = value.get("request_id")
-        item["counts"] = value.get("counts") if isinstance(value.get("counts"), dict) else {}
+        item["counts"] = (
+            value.get("counts") if isinstance(value.get("counts"), dict) else {}
+        )
     elif schema == "factory.failure-brief.v1":
         item["state"] = value.get("state")
-        item["finding_count"] = len(value.get("what_broke", [])) if isinstance(value.get("what_broke"), list) else 0
+        item["finding_count"] = (
+            len(value.get("what_broke", []))
+            if isinstance(value.get("what_broke"), list)
+            else 0
+        )
     return item, valid
 
 
@@ -237,16 +302,48 @@ def senior_engineering_projection(root: Path) -> dict[str, Any]:
         item, valid = _summarize(path, workspace, value)
         receipts.append(item)
         if not valid:
-            errors.append({"path": relative, "code": item.get("error", "REVIEW_REQUIRED")})
+            errors.append(
+                {"path": relative, "code": item.get("error", "REVIEW_REQUIRED")}
+            )
 
     counts = {
         "receipt_count": len(receipts),
         "invalid_count": sum(not item.get("valid", False) for item in receipts),
-        "verified_count": sum(item.get("schema") in {"factory.execution-attestation-verification.v1", "factory.runtime-boundary-verification.v1", "factory.supply-chain-receipt.v1", "factory.supply-chain-verification.v1", "factory.defect-benchmark-receipt.v1", "factory.replay-receipt.v1", "factory.repair-comparison.v1", "factory.evidence-reuse.v1", "factory.failure-brief.v1"} and item.get("valid") is True for item in receipts),
-        "blocked_count": sum(item.get("status") in {"BLOCKED", "MISMATCH", "INVALID"} for item in receipts),
-        "run_count": sum(item.get("schema") == "factory.incremental-plan.v1" and item.get("counts", {}).get("RUN", 0) > 0 for item in receipts),
-        "reuse_count": sum(item.get("schema") == "factory.incremental-plan.v1" and item.get("counts", {}).get("REUSE", 0) > 0 for item in receipts),
-        "shadow_mismatch_count": sum(item.get("schema") == "factory.incremental-shadow.v1" and item.get("status") == "MISMATCH" for item in receipts),
+        "verified_count": sum(
+            item.get("schema")
+            in {
+                "factory.execution-attestation-verification.v1",
+                "factory.runtime-boundary-verification.v1",
+                "factory.supply-chain-receipt.v1",
+                "factory.supply-chain-verification.v1",
+                "factory.defect-benchmark-receipt.v1",
+                "factory.replay-receipt.v1",
+                "factory.repair-comparison.v1",
+                "factory.evidence-reuse.v1",
+                "factory.failure-brief.v1",
+            }
+            and item.get("valid") is True
+            for item in receipts
+        ),
+        "blocked_count": sum(
+            item.get("status") in {"BLOCKED", "MISMATCH", "INVALID"}
+            for item in receipts
+        ),
+        "run_count": sum(
+            item.get("schema") == "factory.incremental-plan.v1"
+            and item.get("counts", {}).get("RUN", 0) > 0
+            for item in receipts
+        ),
+        "reuse_count": sum(
+            item.get("schema") == "factory.incremental-plan.v1"
+            and item.get("counts", {}).get("REUSE", 0) > 0
+            for item in receipts
+        ),
+        "shadow_mismatch_count": sum(
+            item.get("schema") == "factory.incremental-shadow.v1"
+            and item.get("status") == "MISMATCH"
+            for item in receipts
+        ),
         "authority_false": True,
     }
     return {
@@ -254,7 +351,16 @@ def senior_engineering_projection(root: Path) -> dict[str, Any]:
         "marker": "SENIOR_ENGINEERING_READ_ONLY",
         **counts,
         "claim_boundary": "Projects supplied senior-engineering receipts; does not execute tests, verify external runners, or grant release authority.",
-        "authority": {"execution": False, "approval": False, "publication": False, "deployment": False, "signing": False, "messaging": False, "credential": False, "connector": False},
+        "authority": {
+            "execution": False,
+            "approval": False,
+            "publication": False,
+            "deployment": False,
+            "signing": False,
+            "messaging": False,
+            "credential": False,
+            "connector": False,
+        },
         "receipts": sorted(receipts, key=lambda item: item["path"]),
         "errors": sorted(errors, key=lambda item: (item["path"], item["code"])),
     }

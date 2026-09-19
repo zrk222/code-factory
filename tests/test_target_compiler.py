@@ -38,49 +38,76 @@ def test_each_target_has_governance_proof_and_hashes(tmp_path: Path, target: str
     assert manifest["schema"] == "factory.target.v1"
     assert manifest["promotion"]["state"] == "blocked"
     assert manifest["privacy"]["network_egress"] == "not_granted"
-    assert manifest["deployment"]["selected_profile_id"] == TARGETS[target]["deployment_profiles"][0]["id"]
+    assert (
+        manifest["deployment"]["selected_profile_id"]
+        == TARGETS[target]["deployment_profiles"][0]["id"]
+    )
     assert manifest["deployment"]["external_effects_authorized"] is False
     assert {"deploy", "publish", "sign", "external_message"}.issubset(
         manifest["approvals"]["required_for"]
     )
 
-    receipt = json.loads((output / ".factory" / "target-compile-receipt.json").read_text(encoding="utf-8"))
+    receipt = json.loads(
+        (output / ".factory" / "target-compile-receipt.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert receipt["schema"] == "factory.target_compile_receipt.v1"
-    assert receipt["manifest_sha256"] == sha256((output / "target_manifest.json").read_bytes()).hexdigest()
+    assert (
+        receipt["manifest_sha256"]
+        == sha256((output / "target_manifest.json").read_bytes()).hexdigest()
+    )
     for relative, expected in receipt["files"].items():
         assert sha256((output / relative).read_bytes()).hexdigest() == expected
     output_map = output / "docs" / "CODE_FACTORY_OUTPUT_MAP.md"
     map_text = output_map.read_text(encoding="utf-8")
     assert result["output_map"] == str(output_map)
     assert result["output_map_sha256"] == sha256(output_map.read_bytes()).hexdigest()
-    assert receipt["output_map"] == {"path": "docs/CODE_FACTORY_OUTPUT_MAP.md", "sha256": result["output_map_sha256"]}
+    assert receipt["output_map"] == {
+        "path": "docs/CODE_FACTORY_OUTPUT_MAP.md",
+        "sha256": result["output_map_sha256"],
+    }
     assert "CODE_FACTORY_OUTPUT_MAP_V1" in map_text
     assert "flowchart TD" in map_text
     assert "Promotion: **compiled_blocked**" in map_text
     assert "## Optional sharing" in map_text
     share_section = map_text.split("## Optional sharing", maxsplit=1)[1]
-    assert "[Built with Code Factory](https://github.com/zrk222/code-factory)" in share_section
+    assert (
+        "[Built with Code Factory](https://github.com/zrk222/code-factory)"
+        in share_section
+    )
     assert "does not post it, edit other files, or send output data" in share_section
     assert str(output) not in share_section
     assert "approval-tracker" not in share_section
-    mapped = {line[3:-1] for line in map_text.splitlines() if line.startswith("- `") and line.endswith("`")}
+    mapped = {
+        line[3:-1]
+        for line in map_text.splitlines()
+        if line.startswith("- `") and line.endswith("`")
+    }
     assert mapped == set(result["files"])
     assert ".factory/target-compile-receipt.json" in mapped
 
     assert (output / f"review-{target}.ssat.yaml").is_file()
     assert (output / "smoke" / f"review-{target}.json").is_file()
     assert (output / ".factory" / "target-architecture.mmd").is_file()
-    assert 'pythonpath = ["."]' in (output / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'pythonpath = ["."]' in (output / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
     workflow = (output / "docs" / "TARGET_WORKFLOW.md").read_text(encoding="utf-8")
     assert manifest["deployment"]["profile"]["verify"] in workflow
     assert manifest["deployment"]["profile"]["approval"] in workflow
 
 
-def test_selected_external_deployment_profile_is_bound_but_not_authorized(tmp_path: Path):
+def test_selected_external_deployment_profile_is_bound_but_not_authorized(
+    tmp_path: Path,
+):
     output = tmp_path / "web-external"
     result = create_target_from_prompt(
-        "Build a review dashboard.", target="web", out_dir=output,
-        name="review-dashboard", deployment_profile="split-hosting",
+        "Build a review dashboard.",
+        target="web",
+        out_dir=output,
+        name="review-dashboard",
+        deployment_profile="split-hosting",
     )
 
     assert result["deployment"]["selected_profile_id"] == "split-hosting"
@@ -92,13 +119,17 @@ def test_unknown_deployment_profile_fails_before_writing(tmp_path: Path):
     output = tmp_path / "invalid-route"
     with pytest.raises(TargetCompileError, match="DEPLOYMENT_PROFILE_UNSUPPORTED"):
         create_target_from_prompt(
-            "Build a worker.", target="worker", out_dir=output,
+            "Build a worker.",
+            target="worker",
+            out_dir=output,
             deployment_profile="mystery-cloud",
         )
     assert not output.exists()
 
 
-def test_missing_pack_generator_fails_closed_before_promotion(tmp_path: Path, monkeypatch):
+def test_missing_pack_generator_fails_closed_before_promotion(
+    tmp_path: Path, monkeypatch
+):
     monkeypatch.setitem(TARGETS["worker"], "generator_adapter", "missing-adapter")
     output = tmp_path / "missing-generator"
 
@@ -110,41 +141,66 @@ def test_missing_pack_generator_fails_closed_before_promotion(tmp_path: Path, mo
 
 def test_target_specific_runtime_shapes(tmp_path: Path):
     cli = tmp_path / "cli"
-    create_target_from_prompt("Build a receipt CLI.", target="cli", out_dir=cli, name="receipt-cli")
+    create_target_from_prompt(
+        "Build a receipt CLI.", target="cli", out_dir=cli, name="receipt-cli"
+    )
     assert "def render" in (cli / "cli_app" / "main.py").read_text(encoding="utf-8")
 
     api = tmp_path / "api"
-    create_target_from_prompt("Build a receipt API.", target="api", out_dir=api, name="receipt-api")
+    create_target_from_prompt(
+        "Build a receipt API.", target="api", out_dir=api, name="receipt-api"
+    )
     api_source = (api / "backend" / "main.py").read_text(encoding="utf-8")
     assert '@app.post("/v1/echo")' in api_source
     assert "class EchoRequest" in api_source
 
     mcp = tmp_path / "mcp"
-    create_target_from_prompt("Build a receipt MCP server.", target="mcp", out_dir=mcp, name="receipt-mcp")
+    create_target_from_prompt(
+        "Build a receipt MCP server.", target="mcp", out_dir=mcp, name="receipt-mcp"
+    )
     mcp_source = (mcp / "mcp_server" / "main.py").read_text(encoding="utf-8")
     assert 'method == "tools/list"' in mcp_source
     assert 'method == "tools/call"' in mcp_source
 
     worker = tmp_path / "worker"
-    create_target_from_prompt("Build a deterministic receipt worker.", target="worker", out_dir=worker, name="receipt-worker")
+    create_target_from_prompt(
+        "Build a deterministic receipt worker.",
+        target="worker",
+        out_dir=worker,
+        name="receipt-worker",
+    )
     assert "def run_task" in (worker / "worker" / "main.py").read_text(encoding="utf-8")
 
     mobile = tmp_path / "mobile"
-    create_target_from_prompt("Build a mobile receipt inbox.", target="mobile", out_dir=mobile, name="receipt-mobile")
-    package = json.loads((mobile / "mobile" / "package.json").read_text(encoding="utf-8"))
+    create_target_from_prompt(
+        "Build a mobile receipt inbox.",
+        target="mobile",
+        out_dir=mobile,
+        name="receipt-mobile",
+    )
+    package = json.loads(
+        (mobile / "mobile" / "package.json").read_text(encoding="utf-8")
+    )
     assert package["dependencies"]["expo"] == "~57.0.0"
     assert package["dependencies"]["expo-status-bar"] == "~57.0.1"
     assert package["dependencies"]["react-native"] == "0.86.0"
     assert package["overrides"]["uuid"] == "11.1.1"
     assert package["devDependencies"]["expo-doctor"] == "1.20.1"
     assert package["devDependencies"]["typescript"] == "~6.0.3"
-    app_config = json.loads((mobile / "mobile" / "app.json").read_text(encoding="utf-8"))
+    app_config = json.loads(
+        (mobile / "mobile" / "app.json").read_text(encoding="utf-8")
+    )
     assert "newArchEnabled" not in app_config["expo"]
     assert not (mobile / "mobile" / "android").exists()
     assert not (mobile / "mobile" / "ios").exists()
 
     operator = tmp_path / "operator"
-    create_target_from_prompt("Build a supervised release operator.", target="agent-ui", out_dir=operator, name="release-operator")
+    create_target_from_prompt(
+        "Build a supervised release operator.",
+        target="agent-ui",
+        out_dir=operator,
+        name="release-operator",
+    )
     backend = (operator / "backend" / "main.py").read_text(encoding="utf-8")
     assert '"approval_required": True' in backend
     assert '"executed": False' in backend
@@ -166,7 +222,9 @@ def test_non_empty_output_is_unchanged(tmp_path: Path):
 
 def test_prd_is_the_single_bound_source(tmp_path: Path):
     prd = tmp_path / "PRD.md"
-    prd.write_text("# Audit Mobile\n\nBuild a governed audit inbox.\n", encoding="utf-8")
+    prd.write_text(
+        "# Audit Mobile\n\nBuild a governed audit inbox.\n", encoding="utf-8"
+    )
     output = tmp_path / "audit-mobile"
     create_target_from_prd(prd, target="mobile", out_dir=output, name="audit-mobile")
 

@@ -1,0 +1,37 @@
+name: Architecture health guard
+
+on:
+  pull_request:
+    paths:
+      - "architecture-policy.json"
+      - "architecture-boundaries.json"
+      - "factoryline/**/*.py"
+      - "**.md"
+      - ".github/workflows/architecture-health.yml"
+  push:
+    branches: [main]
+    paths:
+      - "architecture-policy.json"
+      - "architecture-boundaries.json"
+      - "factoryline/**/*.py"
+      - "**.md"
+      - ".github/workflows/architecture-health.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  architecture-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Enforce architecture budgets
+        run: python -m factoryline.cli architecture health --root . --json

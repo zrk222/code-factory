@@ -14,9 +14,9 @@ def test_default_guide_has_exactly_three_journeys_and_one_primary_action():
     assert result["schema"] == "factory.adoption-guide.v1"
     assert result["marker"] == "ADOPTION_GUIDE_RENDERED"
     assert [item["id"] for item in result["journeys"]] == ["solo", "team", "enterprise"]
-    assert [item["first_command"] for item in result["journeys"] if item["primary"]] == [
-        "factory first-proof --root ."
-    ]
+    assert [
+        item["first_command"] for item in result["journeys"] if item["primary"]
+    ] == ["factory first-proof --root ."]
     assert result["recommended"] == "solo"
     assert result["actions_executed"] is False
     assert result["action_count"] == 0
@@ -26,11 +26,16 @@ def test_default_guide_has_exactly_three_journeys_and_one_primary_action():
         "controlled_pilot",
         "reference_pilot",
     ]
-    assert result["triggered_capabilities"][0]["maturity"] == "candidate_bound_preflight"
+    assert (
+        result["triggered_capabilities"][0]["maturity"] == "candidate_bound_preflight"
+    )
     for item in result["journeys"]:
         assert item["verification"]
         assert all(path.startswith("tests/") for path in item["verification"])
-        assert all((Path(__file__).parents[1] / path).is_file() for path in item["verification"])
+        assert all(
+            (Path(__file__).parents[1] / path).is_file()
+            for path in item["verification"]
+        )
     assert "No independent production-scale" in result["battle_testing"]
     assert all(value is False for value in result["authority"].values())
 
@@ -41,7 +46,12 @@ def test_team_guide_explains_intent_delta_independent_proof_and_human_control():
     assert result["marker"] == "TEAM_GUIDE_RENDERED"
     assert [item["id"] for item in result["journeys"]] == ["team"]
     text = " ".join(str(value) for value in result["journeys"][0].values()).lower()
-    for phrase in ("original intent", "file delta", "independent validation", "agents cannot approve"):
+    for phrase in (
+        "original intent",
+        "file delta",
+        "independent validation",
+        "agents cannot approve",
+    ):
         assert phrase in text
 
 
@@ -73,21 +83,39 @@ def test_cli_guide_json_and_stable_invalid_error(capsys):
 
 
 def test_public_evidence_map_withholds_unproven_maturity_claims():
-    text = (Path(__file__).parents[1] / "docs" / "CAPABILITY_EVIDENCE.md").read_text(encoding="utf-8")
+    text = (Path(__file__).parents[1] / "docs" / "CAPABILITY_EVIDENCE.md").read_text(
+        encoding="utf-8"
+    )
 
-    for maturity in ("Locally verified core", "Controlled pilot", "Reference pilot", "Candidate-bound preflight"):
+    for maturity in (
+        "Locally verified core",
+        "Controlled pilot",
+        "Reference pilot",
+        "Candidate-bound preflight",
+    ):
         assert maturity in text
-    for withheld in ("No hosted multi-tenant service", "No universal sandbox", "no upload", "or approval guarantee"):
+    for withheld in (
+        "No hosted multi-tenant service",
+        "No universal sandbox",
+        "no upload",
+        "or approval guarantee",
+    ):
         assert withheld.lower() in text.lower()
 
 
 def test_intent_envelope_is_bound_to_the_approved_spec_and_has_an_obligation():
     root = Path(__file__).parents[1]
     spec = root / "specs" / "adoption-simplification.md"
-    envelope = json.loads((root / "envelopes" / "adoption-simplification.json").read_text(encoding="utf-8"))
+    envelope = json.loads(
+        (root / "envelopes" / "adoption-simplification.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
     assert envelope["source"] == "specs/adoption-simplification.md"
-    canonical_spec = spec.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
+    canonical_spec = (
+        spec.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
+    )
     assert envelope["sealed_hash"] == hashlib.sha256(canonical_spec).hexdigest()
     assert envelope["coherence_score"] == 100
     assert envelope["assumptions"]

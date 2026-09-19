@@ -1,4 +1,5 @@
 """Deterministic, analysis-only change review over existing Factory evidence."""
+
 from __future__ import annotations
 
 from hashlib import sha256
@@ -39,7 +40,9 @@ class ChangeReviewError(ValueError):
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:
@@ -62,7 +65,9 @@ def _changed_path(value: str) -> str:
     return path.rstrip("/")
 
 
-def _resolve_changed_paths(root: Path, base: str, changed: list[str] | None) -> tuple[str, list[str]]:
+def _resolve_changed_paths(
+    root: Path, base: str, changed: list[str] | None
+) -> tuple[str, list[str]]:
     if changed:
         source = "explicit"
         raw_paths = changed
@@ -76,7 +81,10 @@ def _resolve_changed_paths(root: Path, base: str, changed: list[str] | None) -> 
     if not normalized:
         raise ChangeReviewError("NO_CHANGED_PATHS", "no changed paths were found")
     if len(normalized) > MAX_CHANGED_PATHS:
-        raise ChangeReviewError("CHANGED_PATH_LIMIT", f"at most {MAX_CHANGED_PATHS} changed paths are supported")
+        raise ChangeReviewError(
+            "CHANGED_PATH_LIMIT",
+            f"at most {MAX_CHANGED_PATHS} changed paths are supported",
+        )
     return source, normalized
 
 
@@ -84,7 +92,9 @@ def _finding(kind: str, severity: str, message: str, **facts: Any) -> dict[str, 
     return {"kind": kind, "severity": severity, "message": message, "facts": facts}
 
 
-def _findings(impact: dict[str, Any], coverage: dict[str, Any], risk: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _findings(
+    impact: dict[str, Any], coverage: dict[str, Any], risk: dict[str, Any]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     unmatched = list(impact["unmatched_changed_paths"])
     if unmatched:
@@ -96,19 +106,29 @@ def _findings(impact: dict[str, Any], coverage: dict[str, Any], risk: dict[str, 
             path=path,
         )
         findings.append(finding)
-        return findings, {"action": "bind_changed_path_to_proof", "reason": finding["message"], "path": path}
+        return findings, {
+            "action": "bind_changed_path_to_proof",
+            "reason": finding["message"],
+            "path": path,
+        }
 
     for proof in impact["rerun_proofs"]:
-        findings.append(_finding(
-            "stale_proof",
-            "required",
-            "A declared proof input changed after the proof was recorded.",
-            proof_id=proof["proof_id"],
-            gates=proof["gates"],
-        ))
+        findings.append(
+            _finding(
+                "stale_proof",
+                "required",
+                "A declared proof input changed after the proof was recorded.",
+                proof_id=proof["proof_id"],
+                gates=proof["gates"],
+            )
+        )
     if findings:
         first = findings[0]
-        return findings, {"action": "rerun_stale_proof", "reason": first["message"], "proof_id": first["facts"]["proof_id"]}
+        return findings, {
+            "action": "rerun_stale_proof",
+            "reason": first["message"],
+            "proof_id": first["facts"]["proof_id"],
+        }
 
     if not coverage["ok"]:
         uncovered = list(coverage["uncovered"])
@@ -119,7 +139,11 @@ def _findings(impact: dict[str, Any], coverage: dict[str, Any], risk: dict[str, 
             uncovered=uncovered,
         )
         findings.append(finding)
-        return findings, {"action": "complete_requirement_coverage", "reason": finding["message"], "requirements": uncovered}
+        return findings, {
+            "action": "complete_requirement_coverage",
+            "reason": finding["message"],
+            "requirements": uncovered,
+        }
 
     stages = list(risk["rerun_stages"])
     if stages:
@@ -130,9 +154,17 @@ def _findings(impact: dict[str, Any], coverage: dict[str, Any], risk: dict[str, 
             stages=stages,
         )
         findings.append(finding)
-        return findings, {"action": "review_rerun_plan", "reason": finding["message"], "stage": stages[0]}
+        return findings, {
+            "action": "review_rerun_plan",
+            "reason": finding["message"],
+            "stage": stages[0],
+        }
 
-    finding = _finding("ready_for_human_review", "info", "No declared proof, coverage, or policy gap was found.")
+    finding = _finding(
+        "ready_for_human_review",
+        "info",
+        "No declared proof, coverage, or policy gap was found.",
+    )
     findings.append(finding)
     return findings, {"action": "review_packet", "reason": finding["message"]}
 
@@ -147,8 +179,12 @@ def _unproven_claims(impact: dict[str, Any], coverage: dict[str, Any]) -> list[s
         for requirement in coverage["uncovered"]:
             claims.append(f"Requirement coverage is unproven for `{requirement}`.")
     for error in impact["source_errors"]:
-        claims.append(f"Graph source `{error['source']}` is unavailable: `{error['code']}`.")
-    return claims or ["No release, quality, or productivity outcome is claimed by this analysis-only review."]
+        claims.append(
+            f"Graph source `{error['source']}` is unavailable: `{error['code']}`."
+        )
+    return claims or [
+        "No release, quality, or productivity outcome is claimed by this analysis-only review."
+    ]
 
 
 def _mermaid_label(value: object) -> str:
@@ -156,7 +192,9 @@ def _mermaid_label(value: object) -> str:
     return (text or "unknown")[:96]
 
 
-def _review_mermaid(changed_paths: list[str], impact: dict[str, Any], findings: list[dict[str, Any]]) -> str:
+def _review_mermaid(
+    changed_paths: list[str], impact: dict[str, Any], findings: list[dict[str, Any]]
+) -> str:
     lines = ["flowchart LR", '  REVIEW["Diff-to-Proof Review"]']
     for index, path in enumerate(changed_paths, 1):
         node = f"C{index}"
@@ -179,43 +217,59 @@ def _review_mermaid(changed_paths: list[str], impact: dict[str, Any], findings: 
 
 def _review_markdown(review: dict[str, Any]) -> str:
     changed = "\n".join(f"- `{path}`" for path in review["changed_paths"])
-    findings = "\n".join(f"- **{item['severity']}** `{item['kind']}` — {item['message']}" for item in review["findings"])
+    findings = "\n".join(
+        f"- **{item['severity']}** `{item['kind']}` — {item['message']}"
+        for item in review["findings"]
+    )
     stages = review["risk"]["rerun_stages"]
-    stage_lines = "\n".join(f"- `{item['module']}:{item['stage']}` — {'; '.join(item['reasons'])}" for item in stages) or "- No policy rerun stage was selected."
+    stage_lines = (
+        "\n".join(
+            f"- `{item['module']}:{item['stage']}` — {'; '.join(item['reasons'])}"
+            for item in stages
+        )
+        or "- No policy rerun stage was selected."
+    )
     claims = "\n".join(f"- {claim}" for claim in review["unproven_claims"])
-    return "\n".join([
-        "# Diff-to-Proof Review",
-        "",
-        f"Review SHA-256: `{review['review_sha256']}`",
-        "",
-        "## Changed paths",
-        "",
-        changed,
-        "",
-        "## Fact-derived next action",
-        "",
-        f"- `{review['next_action']['action']}` — {review['next_action']['reason']}",
-        "",
-        "## Findings",
-        "",
-        findings,
-        "",
-        "## Plan-only rerun stages",
-        "",
-        stage_lines,
-        "",
-        "## Unproven claims",
-        "",
-        claims,
-        "",
-        "## Authority boundary",
-        "",
-        "Analysis only. No command was executed. This review cannot merge, publish, deploy, sign, send messages, access credentials, or grant connectors.",
-        "",
-    ])
+    return "\n".join(
+        [
+            "# Diff-to-Proof Review",
+            "",
+            f"Review SHA-256: `{review['review_sha256']}`",
+            "",
+            "## Changed paths",
+            "",
+            changed,
+            "",
+            "## Fact-derived next action",
+            "",
+            f"- `{review['next_action']['action']}` — {review['next_action']['reason']}",
+            "",
+            "## Findings",
+            "",
+            findings,
+            "",
+            "## Plan-only rerun stages",
+            "",
+            stage_lines,
+            "",
+            "## Unproven claims",
+            "",
+            claims,
+            "",
+            "## Authority boundary",
+            "",
+            "Analysis only. No command was executed. This review cannot merge, publish, deploy, sign, send messages, access credentials, or grant connectors.",
+            "",
+        ]
+    )
 
 
-def review_change(root: Path, base: str = "main", changed: list[str] | None = None, audit_policy: str | None = None) -> dict:
+def review_change(
+    root: Path,
+    base: str = "main",
+    changed: list[str] | None = None,
+    audit_policy: str | None = None,
+) -> dict:
     """Compile a deterministic change review without executing a gate or writing files."""
     workspace = Path(root).resolve()
     input_source, changed_paths = _resolve_changed_paths(workspace, base, changed)
@@ -224,19 +278,36 @@ def review_change(root: Path, base: str = "main", changed: list[str] | None = No
     risk = risk_for_paths(changed_paths)
     findings, next_action = _findings(impact, coverage, risk)
     policy_path = audit_policy or ".factory/review-audits.json"
-    code_audits: dict = {"state": "not_configured", "unconfigured_tools": ["patterns", "guard-paths"]}
+    code_audits: dict = {
+        "state": "not_configured",
+        "unconfigured_tools": ["patterns", "guard-paths"],
+    }
     if audit_policy is not None or (workspace / policy_path).exists():
         try:
             code_audits = audit_code(workspace, policy_path)
         except ReviewAuditError as exc:
             raise ChangeReviewError(exc.code, str(exc)) from exc
         for item in code_audits["findings"]:
-            findings.append(_finding(item["code"], "review", item["message"], audit=item))
+            findings.append(
+                _finding(item["code"], "review", item["message"], audit=item)
+            )
         if code_audits["state"] == "incomplete":
-            findings.append(_finding("code_audit_incomplete", "review", "Code audit coverage has unresolved analysis gaps."))
-        if code_audits["state"] != "no_structural_findings" and next_action["action"] == "review_packet":
+            findings.append(
+                _finding(
+                    "code_audit_incomplete",
+                    "review",
+                    "Code audit coverage has unresolved analysis gaps.",
+                )
+            )
+        if (
+            code_audits["state"] != "no_structural_findings"
+            and next_action["action"] == "review_packet"
+        ):
             findings = [f for f in findings if f["kind"] != "ready_for_human_review"]
-            next_action = {"action": "review_code_audit", "reason": "Resolve pattern, guard-path or analysis-gap findings."}
+            next_action = {
+                "action": "review_code_audit",
+                "reason": "Resolve pattern, guard-path or analysis-gap findings.",
+            }
     core = {
         "schema": CHANGE_REVIEW_SCHEMA,
         "markers": [
@@ -248,7 +319,12 @@ def review_change(root: Path, base: str = "main", changed: list[str] | None = No
             "DIFF_TO_PROOF_MERMAID_EXPORTED",
             "DIFF_TO_PROOF_ARTIFACTS_OPTIONAL",
             "DIFF_TO_PROOF_NO_EXECUTION",
-        ] + (["DIFF_TO_PROOF_UNMATCHED_PRIORITY"] if impact["unmatched_changed_paths"] else []),
+        ]
+        + (
+            ["DIFF_TO_PROOF_UNMATCHED_PRIORITY"]
+            if impact["unmatched_changed_paths"]
+            else []
+        ),
         "root": str(workspace),
         "base": base,
         "input_source": input_source,
@@ -259,7 +335,8 @@ def review_change(root: Path, base: str = "main", changed: list[str] | None = No
         "code_audits": code_audits,
         "findings": findings,
         "next_action": next_action,
-        "unproven_claims": _unproven_claims(impact, coverage) + [
+        "unproven_claims": _unproven_claims(impact, coverage)
+        + [
             f"Pattern and guard-path audit state: {code_audits['state']}; no runtime correctness or release approval is implied."
         ],
         "authority": AUTHORITY,
@@ -287,17 +364,26 @@ def _atomic_text(path: Path, content: str) -> str:
 def write_review_artifacts(review: dict, out_dir: Path) -> dict:
     """Write optional local review artifacts below an explicit caller-selected directory."""
     if review.get("schema") != CHANGE_REVIEW_SCHEMA or not review.get("review_sha256"):
-        raise ChangeReviewError("REVIEW_INVALID", "a valid change-review payload is required")
+        raise ChangeReviewError(
+            "REVIEW_INVALID", "a valid change-review payload is required"
+        )
     destination = Path(out_dir).resolve()
     destination.mkdir(parents=True, exist_ok=True)
     stem = f"change-review-{review['review_sha256'][:12]}"
-    payload = {key: value for key, value in review.items() if key not in {"review_markdown", "mermaid", "artifacts"}}
+    payload = {
+        key: value
+        for key, value in review.items()
+        if key not in {"review_markdown", "mermaid", "artifacts"}
+    }
     json_path = destination / f"{stem}.json"
     markdown_path = destination / f"{stem}.md"
     mermaid_path = destination / f"{stem}.mmd"
     paths = {"json": json_path, "markdown": markdown_path, "mermaid": mermaid_path}
     digests = {
-        "json": _atomic_text(json_path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"),
+        "json": _atomic_text(
+            json_path,
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        ),
         "markdown": _atomic_text(markdown_path, review["review_markdown"]),
         "mermaid": _atomic_text(mermaid_path, review["mermaid"]),
     }

@@ -1,4 +1,5 @@
 """Static, read-only preflight checks for protected release routes."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,7 +13,12 @@ def _check(check_id: str, passed: bool, evidence: str) -> dict[str, Any]:
 
 def _workflow(root: Path, name: str) -> str:
     try:
-        return (Path(root) / ".github" / "workflows" / name).read_bytes().decode().replace("\r\n", "\n")
+        return (
+            (Path(root) / ".github" / "workflows" / name)
+            .read_bytes()
+            .decode()
+            .replace("\r\n", "\n")
+        )
     except (OSError, UnicodeDecodeError):
         return ""
 
@@ -23,7 +29,7 @@ def _job(workflow: str, name: str) -> str:
         return ""
     start = match.end()
     next_job = re.search(r"(?m)^  [A-Za-z_][A-Za-z0-9_]*:\n", workflow[start:])
-    return workflow[start:start + next_job.start()] if next_job else workflow[start:]
+    return workflow[start : start + next_job.start()] if next_job else workflow[start:]
 
 
 def _vscode_marketplace_authorization_check(workflow: str) -> dict[str, Any]:
@@ -104,9 +110,19 @@ def _action_blocks(workflow: str, action: str) -> list[str]:
 
 
 def _jetbrains_jdk21_check(root: Path) -> dict[str, Any]:
-    workflows = (_workflow(root, "intellij-plugin.yml"), _workflow(root, "jetbrains-marketplace.yml"))
-    blocks = [block for workflow in workflows for block in _action_blocks(workflow, "actions/setup-java@v5")]
-    versions = [re.findall(r'(?m)^          java-version:\s*["\']?([^\s#"\']+)', block) for block in blocks]
+    workflows = (
+        _workflow(root, "intellij-plugin.yml"),
+        _workflow(root, "jetbrains-marketplace.yml"),
+    )
+    blocks = [
+        block
+        for workflow in workflows
+        for block in _action_blocks(workflow, "actions/setup-java@v5")
+    ]
+    versions = [
+        re.findall(r'(?m)^          java-version:\s*["\']?([^\s#"\']+)', block)
+        for block in blocks
+    ]
     passed = bool(blocks) and all(items == ["21"] for items in versions)
     return _check(
         "JETBRAINS_JDK21_EXACT",
@@ -130,7 +146,8 @@ def _huggingface_space_authorization_check(root: Path) -> dict[str, Any]:
         and token_check in workflow
         and "HF_TOKEN is required before Hugging Face Space candidate work." in workflow
         and all(marker in workflow for marker in candidate_markers)
-        and workflow.index(token_check) < min(workflow.index(marker) for marker in candidate_markers)
+        and workflow.index(token_check)
+        < min(workflow.index(marker) for marker in candidate_markers)
     )
     return _check(
         "HUGGINGFACE_AUTHORIZATION_EARLY",

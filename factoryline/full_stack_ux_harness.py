@@ -1,4 +1,5 @@
 """Evidence-bound full-stack engineering and ethical UX release review."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -14,7 +15,9 @@ MANIFEST_SCHEMA = "factory.full-stack-ux-harness.manifest.v1"
 RECEIPT_SCHEMA = "factory.full-stack-ux-harness.receipt.v1"
 MAX_MANIFEST_BYTES = 1_048_576
 MAX_EVIDENCE_BYTES = 10_000_000
-APPROVED_PROVENANCE = frozenset({"human_confirmed", "trusted_source", "observed_production"})
+APPROVED_PROVENANCE = frozenset(
+    {"human_confirmed", "trusted_source", "observed_production"}
+)
 
 CORE_CHECKS = (
     "architecture.separation_of_concerns",
@@ -72,11 +75,19 @@ def _require_exact_keys(value: dict[str, Any], expected: set[str], label: str) -
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:
-    return hashlib.sha256(value if isinstance(value, bytes) else _canonical(value)).hexdigest()
+    return hashlib.sha256(
+        value if isinstance(value, bytes) else _canonical(value)
+    ).hexdigest()
 
 
 def _now() -> str:
@@ -86,7 +97,9 @@ def _now() -> str:
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    handle, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
     try:
         with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(data)
@@ -105,7 +118,12 @@ def quality_harness_template(*, ui_in_scope: bool) -> dict[str, Any]:
         "schema": MANIFEST_SCHEMA,
         "ui_in_scope": ui_in_scope,
         "checks": [
-            {"id": check_id, "state": "unknown", "provenance": "agent_proposed", "evidence": []}
+            {
+                "id": check_id,
+                "state": "unknown",
+                "provenance": "agent_proposed",
+                "evidence": [],
+            }
             for check_id in check_ids
         ],
         "reviewer": {"name": "", "type": "unassigned"},
@@ -116,7 +134,9 @@ def quality_harness_template(*, ui_in_scope: bool) -> dict[str, Any]:
     }
 
 
-def write_quality_harness_template(root: Path, out: Path, *, ui_in_scope: bool) -> dict[str, Any]:
+def write_quality_harness_template(
+    root: Path, out: Path, *, ui_in_scope: bool
+) -> dict[str, Any]:
     """Write one template inside the workspace without overwriting existing work."""
     workspace = Path(root).resolve()
     destination = Path(out) if Path(out).is_absolute() else workspace / out
@@ -124,9 +144,13 @@ def write_quality_harness_template(root: Path, out: Path, *, ui_in_scope: bool) 
     try:
         destination.relative_to(workspace)
     except ValueError as exc:
-        raise FullStackUXHarnessError("E_UX_MANIFEST_PATH", "template must stay inside the workspace") from exc
+        raise FullStackUXHarnessError(
+            "E_UX_MANIFEST_PATH", "template must stay inside the workspace"
+        ) from exc
     if destination.exists():
-        raise FullStackUXHarnessError("E_UX_MANIFEST_EXISTS", f"refusing to replace {destination}")
+        raise FullStackUXHarnessError(
+            "E_UX_MANIFEST_EXISTS", f"refusing to replace {destination}"
+        )
     payload = quality_harness_template(ui_in_scope=ui_in_scope)
     _atomic_json(destination, payload)
     return {**payload, "path": str(destination)}
@@ -139,105 +163,211 @@ def _load_manifest(root: Path, path: Path) -> tuple[dict[str, Any], dict[str, An
     try:
         relative = source.relative_to(workspace)
     except ValueError as exc:
-        raise FullStackUXHarnessError("E_UX_MANIFEST_PATH", "manifest must stay inside the workspace") from exc
+        raise FullStackUXHarnessError(
+            "E_UX_MANIFEST_PATH", "manifest must stay inside the workspace"
+        ) from exc
     try:
         data = source.read_bytes()
     except OSError as exc:
-        raise FullStackUXHarnessError("E_UX_MANIFEST_MISSING", f"cannot read manifest: {relative.as_posix()}") from exc
+        raise FullStackUXHarnessError(
+            "E_UX_MANIFEST_MISSING", f"cannot read manifest: {relative.as_posix()}"
+        ) from exc
     if not data or len(data) > MAX_MANIFEST_BYTES:
-        raise FullStackUXHarnessError("E_UX_MANIFEST_SIZE", f"manifest must contain 1 to {MAX_MANIFEST_BYTES} bytes")
+        raise FullStackUXHarnessError(
+            "E_UX_MANIFEST_SIZE",
+            f"manifest must contain 1 to {MAX_MANIFEST_BYTES} bytes",
+        )
     try:
         value = json.loads(data.decode("utf-8-sig"))
     except (UnicodeError, json.JSONDecodeError) as exc:
-        raise FullStackUXHarnessError("E_UX_MANIFEST_JSON", "manifest must be valid UTF-8 JSON") from exc
+        raise FullStackUXHarnessError(
+            "E_UX_MANIFEST_JSON", "manifest must be valid UTF-8 JSON"
+        ) from exc
     if not isinstance(value, dict) or value.get("schema") != MANIFEST_SCHEMA:
-        raise FullStackUXHarnessError("E_UX_MANIFEST_SCHEMA", f"manifest must use {MANIFEST_SCHEMA}")
-    _require_exact_keys(value, {"schema", "ui_in_scope", "checks", "reviewer", "judgments"}, "manifest")
-    return value, {"path": relative.as_posix(), "sha256": _sha(data), "bytes": len(data)}
+        raise FullStackUXHarnessError(
+            "E_UX_MANIFEST_SCHEMA", f"manifest must use {MANIFEST_SCHEMA}"
+        )
+    _require_exact_keys(
+        value, {"schema", "ui_in_scope", "checks", "reviewer", "judgments"}, "manifest"
+    )
+    return value, {
+        "path": relative.as_posix(),
+        "sha256": _sha(data),
+        "bytes": len(data),
+    }
 
 
 def _evidence_binding(root: Path, value: object, check_id: str) -> dict[str, Any]:
     if not isinstance(value, str) or not value.strip():
-        raise FullStackUXHarnessError("E_UX_EVIDENCE_PATH", f"{check_id} evidence must be a relative path")
+        raise FullStackUXHarnessError(
+            "E_UX_EVIDENCE_PATH", f"{check_id} evidence must be a relative path"
+        )
     relative = Path(value)
     if relative.is_absolute() or PureWindowsPath(value).drive or ".." in relative.parts:
-        raise FullStackUXHarnessError("E_UX_EVIDENCE_PATH", f"{check_id} evidence must stay inside the workspace")
+        raise FullStackUXHarnessError(
+            "E_UX_EVIDENCE_PATH", f"{check_id} evidence must stay inside the workspace"
+        )
     path = (root / relative).resolve()
     try:
         path.relative_to(root)
     except ValueError as exc:
-        raise FullStackUXHarnessError("E_UX_EVIDENCE_PATH", f"{check_id} evidence escapes the workspace") from exc
+        raise FullStackUXHarnessError(
+            "E_UX_EVIDENCE_PATH", f"{check_id} evidence escapes the workspace"
+        ) from exc
     try:
         data = path.read_bytes()
     except OSError as exc:
-        raise FullStackUXHarnessError("E_UX_EVIDENCE_MISSING", f"{check_id} evidence is missing: {relative.as_posix()}") from exc
+        raise FullStackUXHarnessError(
+            "E_UX_EVIDENCE_MISSING",
+            f"{check_id} evidence is missing: {relative.as_posix()}",
+        ) from exc
     if not data or len(data) > MAX_EVIDENCE_BYTES:
-        raise FullStackUXHarnessError("E_UX_EVIDENCE_SIZE", f"{check_id} evidence must contain 1 to {MAX_EVIDENCE_BYTES} bytes")
+        raise FullStackUXHarnessError(
+            "E_UX_EVIDENCE_SIZE",
+            f"{check_id} evidence must contain 1 to {MAX_EVIDENCE_BYTES} bytes",
+        )
     return {"path": relative.as_posix(), "sha256": _sha(data), "bytes": len(data)}
 
 
-def _check_findings(root: Path, manifest: dict[str, Any]) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+def _check_findings(
+    root: Path, manifest: dict[str, Any]
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
     findings: list[dict[str, str]] = []
     checks = manifest.get("checks")
     ui_in_scope = manifest.get("ui_in_scope")
     if not isinstance(ui_in_scope, bool) or not isinstance(checks, list):
-        raise FullStackUXHarnessError("E_UX_MANIFEST_SCHEMA", "ui_in_scope must be boolean and checks must be an array")
+        raise FullStackUXHarnessError(
+            "E_UX_MANIFEST_SCHEMA",
+            "ui_in_scope must be boolean and checks must be an array",
+        )
     expected = set(CORE_CHECKS) | (set(UI_CHECKS) if ui_in_scope else set())
     ids = [item.get("id") for item in checks if isinstance(item, dict)]
-    if len(checks) != len(expected) or len(ids) != len(checks) or set(ids) != expected or len(set(ids)) != len(ids):
-        findings.append({"code": "E_UX_CHECK_SET_MISMATCH", "detail": f"expected exactly {len(expected)} closed check identifiers"})
+    if (
+        len(checks) != len(expected)
+        or len(ids) != len(checks)
+        or set(ids) != expected
+        or len(set(ids)) != len(ids)
+    ):
+        findings.append(
+            {
+                "code": "E_UX_CHECK_SET_MISMATCH",
+                "detail": f"expected exactly {len(expected)} closed check identifiers",
+            }
+        )
         return findings, []
     bound_checks: list[dict[str, Any]] = []
     for item in sorted(checks, key=lambda candidate: candidate["id"]):
-        _require_exact_keys(item, {"id", "state", "provenance", "evidence"}, f"check {item['id']}")
+        _require_exact_keys(
+            item, {"id", "state", "provenance", "evidence"}, f"check {item['id']}"
+        )
         check_id = item["id"]
-        state, provenance, evidence = item.get("state"), item.get("provenance"), item.get("evidence")
+        state, provenance, evidence = (
+            item.get("state"),
+            item.get("provenance"),
+            item.get("evidence"),
+        )
         if state != "passed":
             findings.append({"code": "E_UX_CHECK_NOT_PASSED", "detail": check_id})
         if provenance not in APPROVED_PROVENANCE:
             findings.append({"code": "E_UX_CHECK_PROVENANCE", "detail": check_id})
         if not isinstance(evidence, list) or not 1 <= len(evidence) <= 16:
-            findings.append({"code": "E_UX_CHECK_EVIDENCE_INCOMPLETE", "detail": check_id})
+            findings.append(
+                {"code": "E_UX_CHECK_EVIDENCE_INCOMPLETE", "detail": check_id}
+            )
             bindings = []
         else:
             string_evidence = [path for path in evidence if isinstance(path, str)]
             if len(set(string_evidence)) != len(string_evidence):
-                findings.append({"code": "E_UX_CHECK_EVIDENCE_DUPLICATE", "detail": check_id})
+                findings.append(
+                    {"code": "E_UX_CHECK_EVIDENCE_DUPLICATE", "detail": check_id}
+                )
             bindings = [_evidence_binding(root, path, check_id) for path in evidence]
-        bound_checks.append({"id": check_id, "state": state, "provenance": provenance, "evidence": bindings})
+        bound_checks.append(
+            {
+                "id": check_id,
+                "state": state,
+                "provenance": provenance,
+                "evidence": bindings,
+            }
+        )
     return findings, bound_checks
 
 
-def _judgment_findings(manifest: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any]]:
+def _judgment_findings(
+    manifest: dict[str, Any],
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
     findings: list[dict[str, str]] = []
     reviewer, judgments = manifest.get("reviewer"), manifest.get("judgments")
     if not isinstance(reviewer, dict) or not isinstance(judgments, list):
-        raise FullStackUXHarnessError("E_UX_MANIFEST_SCHEMA", "reviewer and judgments are required")
+        raise FullStackUXHarnessError(
+            "E_UX_MANIFEST_SCHEMA", "reviewer and judgments are required"
+        )
     _require_exact_keys(reviewer, {"name", "type"}, "reviewer")
     name = reviewer.get("name")
     reviewer_type = reviewer.get("type")
     ids = [item.get("id") for item in judgments if isinstance(item, dict)]
     if not isinstance(name, str) or not name.strip() or reviewer_type != "human":
-        findings.append({"code": "E_UX_HUMAN_REVIEW_REQUIRED", "detail": "one named human reviewer is required"})
-    if len(judgments) != len(JUDGMENTS) or len(ids) != len(judgments) or set(ids) != set(JUDGMENTS) or len(set(ids)) != len(ids):
-        findings.append({"code": "E_UX_JUDGMENT_SET_MISMATCH", "detail": "exactly six closed judgments are required"})
-        return findings, {"name": name if isinstance(name, str) else "", "type": reviewer_type, "judgments": []}
+        findings.append(
+            {
+                "code": "E_UX_HUMAN_REVIEW_REQUIRED",
+                "detail": "one named human reviewer is required",
+            }
+        )
+    if (
+        len(judgments) != len(JUDGMENTS)
+        or len(ids) != len(judgments)
+        or set(ids) != set(JUDGMENTS)
+        or len(set(ids)) != len(ids)
+    ):
+        findings.append(
+            {
+                "code": "E_UX_JUDGMENT_SET_MISMATCH",
+                "detail": "exactly six closed judgments are required",
+            }
+        )
+        return findings, {
+            "name": name if isinstance(name, str) else "",
+            "type": reviewer_type,
+            "judgments": [],
+        }
     normalized = []
     for item in sorted(judgments, key=lambda candidate: candidate["id"]):
-        _require_exact_keys(item, {"id", "approved", "rationale"}, f"judgment {item['id']}")
+        _require_exact_keys(
+            item, {"id", "approved", "rationale"}, f"judgment {item['id']}"
+        )
         rationale = item.get("rationale")
         approved = item.get("approved") is True
-        if not approved or not isinstance(rationale, str) or not 12 <= len(rationale.strip()) <= 1000:
-            findings.append({"code": "E_UX_HUMAN_REVIEW_REQUIRED", "detail": item["id"]})
-        normalized.append({"id": item["id"], "approved": approved, "rationale": rationale.strip() if isinstance(rationale, str) else ""})
-    return findings, {"name": name.strip() if isinstance(name, str) else "", "type": reviewer_type, "judgments": normalized}
+        if (
+            not approved
+            or not isinstance(rationale, str)
+            or not 12 <= len(rationale.strip()) <= 1000
+        ):
+            findings.append(
+                {"code": "E_UX_HUMAN_REVIEW_REQUIRED", "detail": item["id"]}
+            )
+        normalized.append(
+            {
+                "id": item["id"],
+                "approved": approved,
+                "rationale": rationale.strip() if isinstance(rationale, str) else "",
+            }
+        )
+    return findings, {
+        "name": name.strip() if isinstance(name, str) else "",
+        "type": reviewer_type,
+        "judgments": normalized,
+    }
 
 
-def verify_quality_harness(root: Path, manifest_path: Path, *, out: Path | None = None) -> dict[str, Any]:
+def verify_quality_harness(
+    root: Path, manifest_path: Path, *, out: Path | None = None
+) -> dict[str, Any]:
     """Verify declared evidence and human judgment; never execute checks or release work."""
     workspace = Path(root).resolve()
     manifest_input = Path(manifest_path)
-    manifest_source = (manifest_input if manifest_input.is_absolute() else workspace / manifest_input).resolve()
+    manifest_source = (
+        manifest_input if manifest_input.is_absolute() else workspace / manifest_input
+    ).resolve()
     manifest, source = _load_manifest(workspace, manifest_input)
     check_findings, checks = _check_findings(workspace, manifest)
     judgment_findings, review = _judgment_findings(manifest)
@@ -274,14 +404,23 @@ def verify_quality_harness(root: Path, manifest_path: Path, *, out: Path | None 
         "claim_boundary": "Local evidence binding plus declared human judgment is not authenticated identity, certification, or measured accessibility, security, conversion, or production-fitness proof. Run the named native tools and preserve release-owner approval.",
     }
     receipt = {**core, "receipt_sha256": _sha(core), "generated_at": _now()}
-    destination = Path(out) if out else workspace / ".factory" / "quality-harness" / f"{Path(manifest_path).stem}.receipt.json"
+    destination = (
+        Path(out)
+        if out
+        else workspace
+        / ".factory"
+        / "quality-harness"
+        / f"{Path(manifest_path).stem}.receipt.json"
+    )
     if not destination.is_absolute():
         destination = workspace / destination
     destination = destination.resolve()
     try:
         destination.relative_to(workspace)
     except ValueError as exc:
-        raise FullStackUXHarnessError("E_UX_RECEIPT_PATH", "receipt must stay inside the workspace") from exc
+        raise FullStackUXHarnessError(
+            "E_UX_RECEIPT_PATH", "receipt must stay inside the workspace"
+        ) from exc
     if destination == manifest_source:
         raise FullStackUXHarnessError(
             "E_UX_RECEIPT_PATH",

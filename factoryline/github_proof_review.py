@@ -4,6 +4,7 @@ This module deliberately has no network or subprocess dependency.  It turns an
 already-local Diff-to-Proof Review into a stable GitHub Check/comment payload;
 the opt-in workflow is the separate, supervised delivery adapter.
 """
+
 from __future__ import annotations
 
 from hashlib import sha256
@@ -18,12 +19,27 @@ from .change_review import CHANGE_REVIEW_SCHEMA, review_change
 
 GITHUB_PROOF_REVIEW_SCHEMA = "factory.github_proof_review.v1"
 _COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
-_REVIEW_CORE_KEYS = frozenset({
-    "schema", "markers", "root", "base", "input_source", "changed_paths", "impact",
-    "coverage", "risk", "findings", "next_action", "unproven_claims", "authority",
-    "scope_limits",
-})
-_REVIEW_RENDERED_KEYS = frozenset({"review_sha256", "mermaid", "review_markdown", "artifacts"})
+_REVIEW_CORE_KEYS = frozenset(
+    {
+        "schema",
+        "markers",
+        "root",
+        "base",
+        "input_source",
+        "changed_paths",
+        "impact",
+        "coverage",
+        "risk",
+        "findings",
+        "next_action",
+        "unproven_claims",
+        "authority",
+        "scope_limits",
+    }
+)
+_REVIEW_RENDERED_KEYS = frozenset(
+    {"review_sha256", "mermaid", "review_markdown", "artifacts"}
+)
 _REVIEW_OPTIONAL_CORE_KEYS = frozenset({"code_audits"})
 _PATH_PREFIXES = (
     ("specs/", "contracts"),
@@ -67,7 +83,9 @@ class GitHubProofReviewError(ValueError):
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:
@@ -81,23 +99,39 @@ def _reject(message: str) -> None:
 def _valid_review(review: object) -> dict[str, Any]:
     if not isinstance(review, dict) or review.get("schema") != CHANGE_REVIEW_SCHEMA:
         _reject("a factory.change_review.v1 payload is required")
-    if set(review) - (_REVIEW_CORE_KEYS | _REVIEW_RENDERED_KEYS | _REVIEW_OPTIONAL_CORE_KEYS):
+    if set(review) - (
+        _REVIEW_CORE_KEYS | _REVIEW_RENDERED_KEYS | _REVIEW_OPTIONAL_CORE_KEYS
+    ):
         _reject("the change-review payload contains unsupported fields")
-    if not _REVIEW_CORE_KEYS.issubset(review) or not _REVIEW_RENDERED_KEYS - {"artifacts"} <= set(review):
+    if not _REVIEW_CORE_KEYS.issubset(review) or not _REVIEW_RENDERED_KEYS - {
+        "artifacts"
+    } <= set(review):
         _reject("the change-review payload is incomplete")
     if (
         not isinstance(review["markers"], list)
         or not all(isinstance(marker, str) for marker in review["markers"])
         or "DIFF_TO_PROOF_REVIEW_V1" not in review["markers"]
-        or not all(isinstance(review[key], str) for key in ("root", "base", "input_source", "mermaid", "review_markdown"))
+        or not all(
+            isinstance(review[key], str)
+            for key in ("root", "base", "input_source", "mermaid", "review_markdown")
+        )
         or not isinstance(review["changed_paths"], list)
         or not all(isinstance(path, str) and path for path in review["changed_paths"])
-        or any(not isinstance(review[key], dict) for key in ("impact", "coverage", "risk", "next_action"))
-        or not all(isinstance(review["next_action"].get(key), str) for key in ("action", "reason"))
+        or any(
+            not isinstance(review[key], dict)
+            for key in ("impact", "coverage", "risk", "next_action")
+        )
+        or not all(
+            isinstance(review["next_action"].get(key), str)
+            for key in ("action", "reason")
+        )
         or not isinstance(review["findings"], list)
         or any(
             not isinstance(finding, dict)
-            or not all(isinstance(finding.get(key), str) for key in ("kind", "severity", "message"))
+            or not all(
+                isinstance(finding.get(key), str)
+                for key in ("kind", "severity", "message")
+            )
             for finding in review["findings"]
         )
         or not isinstance(review["unproven_claims"], list)
@@ -106,7 +140,9 @@ def _valid_review(review: object) -> dict[str, Any]:
         or not isinstance(review["scope_limits"], list)
         or not all(isinstance(limit, str) for limit in review["scope_limits"])
     ):
-        _reject("the change-review payload has an invalid field shape or authority boundary")
+        _reject(
+            "the change-review payload has an invalid field shape or authority boundary"
+        )
     core = {key: review[key] for key in _REVIEW_CORE_KEYS}
     if "code_audits" in review:
         _valid_code_audits(review["code_audits"])
@@ -118,36 +154,69 @@ def _valid_review(review: object) -> dict[str, Any]:
 
 
 def _valid_code_audits(value: object) -> None:
-    if value == {"state": "not_configured", "unconfigured_tools": ["patterns", "guard-paths"]}:
+    if value == {
+        "state": "not_configured",
+        "unconfigured_tools": ["patterns", "guard-paths"],
+    }:
         return
-    if not isinstance(value, dict) or value.get("schema") != "factory.code-review-audits.v1":
+    if (
+        not isinstance(value, dict)
+        or value.get("schema") != "factory.code-review-audits.v1"
+    ):
         _reject("the code-audit lane has an invalid schema")
     expected_keys = {
-        "schema", "tool", "state", "policy", "sources", "results", "findings",
-        "unconfigured_tools", "governance", "authority", "limits", "audit_sha256",
+        "schema",
+        "tool",
+        "state",
+        "policy",
+        "sources",
+        "results",
+        "findings",
+        "unconfigured_tools",
+        "governance",
+        "authority",
+        "limits",
+        "audit_sha256",
     }
     if set(value) != expected_keys:
         _reject("the code-audit lane is incomplete or contains unsupported fields")
-    if value.get("authority") != {"execution": False, "approval": False, "publication": False, "deployment": False}:
+    if value.get("authority") != {
+        "execution": False,
+        "approval": False,
+        "publication": False,
+        "deployment": False,
+    }:
         _reject("the code-audit lane cannot grant authority")
-    if value.get("tool") not in {"all", "patterns", "guard-paths"} or value.get("governance") != "human_controlled":
+    if (
+        value.get("tool") not in {"all", "patterns", "guard-paths"}
+        or value.get("governance") != "human_controlled"
+    ):
         _reject("the code-audit lane has an invalid tool or governance boundary")
     states = {"incomplete", "findings", "no_structural_findings"}
     if not isinstance(value.get("state"), str) or value["state"] not in states:
         _reject("the code-audit lane has an invalid state")
+
     def valid_binding(binding: object) -> bool:
         return (
             isinstance(binding, dict)
             and set(binding) == {"path", "sha256", "bytes"}
-            and isinstance(binding["path"], str) and bool(binding["path"])
-            and isinstance(binding["sha256"], str) and len(binding["sha256"]) == 64
+            and isinstance(binding["path"], str)
+            and bool(binding["path"])
+            and isinstance(binding["sha256"], str)
+            and len(binding["sha256"]) == 64
             and all(char in "0123456789abcdef" for char in binding["sha256"])
-            and isinstance(binding["bytes"], int) and 0 < binding["bytes"] <= 1_000_000
+            and isinstance(binding["bytes"], int)
+            and 0 < binding["bytes"] <= 1_000_000
         )
+
     if not valid_binding(value.get("policy")):
         _reject("the code-audit policy binding is invalid")
     sources = value.get("sources")
-    if not isinstance(sources, list) or not 1 <= len(sources) <= 64 or not all(valid_binding(item) for item in sources):
+    if (
+        not isinstance(sources, list)
+        or not 1 <= len(sources) <= 64
+        or not all(valid_binding(item) for item in sources)
+    ):
         _reject("the code-audit source bindings are invalid")
     if len({item["path"] for item in sources}) != len(sources):
         _reject("the code-audit source bindings must be unique")
@@ -157,29 +226,47 @@ def _valid_code_audits(value: object) -> None:
     for result in results:
         if (
             not isinstance(result, dict)
-            or not isinstance(result.get("rule_id"), str) or not result["rule_id"]
+            or not isinstance(result.get("rule_id"), str)
+            or not result["rule_id"]
             or result.get("tool") not in {"patterns", "guard-paths"}
             or result.get("state") not in states
             or not isinstance(result.get("findings"), list)
         ):
             _reject("the code-audit result shape is invalid")
     findings = value.get("findings")
-    if not isinstance(findings, list) or any(not isinstance(item, dict) for item in findings):
+    if not isinstance(findings, list) or any(
+        not isinstance(item, dict) for item in findings
+    ):
         _reject("the code-audit findings are invalid")
     flattened = [item for result in results for item in result["findings"]]
     if findings != flattened:
         _reject("the code-audit finding summary does not match inspected results")
     missing_tools = value.get("unconfigured_tools")
-    if not isinstance(missing_tools, list) or any(item not in {"patterns", "guard-paths"} for item in missing_tools):
+    if not isinstance(missing_tools, list) or any(
+        item not in {"patterns", "guard-paths"} for item in missing_tools
+    ):
         _reject("the code-audit unconfigured-tool summary is invalid")
     limits = value.get("limits")
-    if not isinstance(limits, list) or not limits or not all(isinstance(item, str) and item for item in limits):
+    if (
+        not isinstance(limits, list)
+        or not limits
+        or not all(isinstance(item, str) and item for item in limits)
+    ):
         _reject("the code-audit scope limits are invalid")
-    derived_state = "incomplete" if missing_tools or any(result["state"] == "incomplete" for result in results) else "findings" if findings else "no_structural_findings"
+    derived_state = (
+        "incomplete"
+        if missing_tools or any(result["state"] == "incomplete" for result in results)
+        else "findings"
+        if findings
+        else "no_structural_findings"
+    )
     if value["state"] != derived_state:
         _reject("the code-audit state contradicts its inspected evidence")
     core = {key: item for key, item in value.items() if key != "audit_sha256"}
-    if value.get("audit_sha256") != sha256(json.dumps(core, sort_keys=True).encode()).hexdigest():
+    if (
+        value.get("audit_sha256")
+        != sha256(json.dumps(core, sort_keys=True).encode()).hexdigest()
+    ):
         _reject("the code-audit SHA-256 does not match its facts")
 
 
@@ -205,7 +292,11 @@ def _path_cohorts(paths: list[str]) -> list[dict[str, Any]]:
     for path in paths:
         grouped.setdefault(_cohort_for(path), []).append(path)
     return [
-        {"id": cohort, "label": cohort.replace("_", " ").title(), "paths": sorted(items)}
+        {
+            "id": cohort,
+            "label": cohort.replace("_", " ").title(),
+            "paths": sorted(items),
+        }
         for cohort, items in sorted(grouped.items())
     ]
 
@@ -217,49 +308,54 @@ def _list_or_none(items: list[Any], render) -> str:
 def _walkthrough(core: dict[str, Any]) -> str:
     cohorts = _list_or_none(
         core["path_cohorts"],
-        lambda cohort: f"**{cohort['label']}** — " + ", ".join(f"`{path}`" for path in cohort["paths"]),
+        lambda cohort: f"**{cohort['label']}** — "
+        + ", ".join(f"`{path}`" for path in cohort["paths"]),
     )
     findings = _list_or_none(
         core["findings"],
         lambda finding: f"**{finding['severity']}** `{finding['kind']}` — {finding['message']}",
     )
     claims = _list_or_none(core["unproven_claims"], str)
-    disabled = ", ".join(key.replace("_", " ") for key, value in core["authority"].items() if not value)
-    return "\n".join([
-        "<!-- factoryline-proof-review -->",
-        "# FactoryLine Proof Review",
-        "",
-        f"Commit: `{core['head_sha']}`",
-        f"Diff-to-Proof Review SHA-256: `{core['review_sha256']}`",
-        f"Proof Review SHA-256: `{core['payload_sha256']}`",
-        "",
-        "## Changed-scope walkthrough",
-        "",
-        cohorts,
-        "",
-        "## Fact-derived next action",
-        "",
-        f"- `{core['next_action']['action']}` — {core['next_action']['reason']}",
-        "",
-        "## Findings",
-        "",
-        findings,
-        "",
-        "## Unproven claims",
-        "",
-        claims,
-        "",
-        "## Authority boundary",
-        "",
-        f"Advisory only. This payload has no {disabled} authority. It does not use CodeRabbit credentials, interpret AI comments as proof, approve, merge, or modify source.",
-        "",
-        "## Existing Diff-to-Proof map",
-        "",
-        "```mermaid",
-        core["mermaid"].rstrip(),
-        "```",
-        "",
-    ])
+    disabled = ", ".join(
+        key.replace("_", " ") for key, value in core["authority"].items() if not value
+    )
+    return "\n".join(
+        [
+            "<!-- factoryline-proof-review -->",
+            "# FactoryLine Proof Review",
+            "",
+            f"Commit: `{core['head_sha']}`",
+            f"Diff-to-Proof Review SHA-256: `{core['review_sha256']}`",
+            f"Proof Review SHA-256: `{core['payload_sha256']}`",
+            "",
+            "## Changed-scope walkthrough",
+            "",
+            cohorts,
+            "",
+            "## Fact-derived next action",
+            "",
+            f"- `{core['next_action']['action']}` — {core['next_action']['reason']}",
+            "",
+            "## Findings",
+            "",
+            findings,
+            "",
+            "## Unproven claims",
+            "",
+            claims,
+            "",
+            "## Authority boundary",
+            "",
+            f"Advisory only. This payload has no {disabled} authority. It does not use CodeRabbit credentials, interpret AI comments as proof, approve, merge, or modify source.",
+            "",
+            "## Existing Diff-to-Proof map",
+            "",
+            "```mermaid",
+            core["mermaid"].rstrip(),
+            "```",
+            "",
+        ]
+    )
 
 
 def _payload_core(payload: dict[str, Any]) -> dict[str, Any]:
@@ -268,21 +364,41 @@ def _payload_core(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _valid_payload(payload: object) -> dict[str, Any]:
-    if not isinstance(payload, dict) or payload.get("schema") != GITHUB_PROOF_REVIEW_SCHEMA:
-        raise GitHubProofReviewError("GITHUB_PROOF_REVIEW_INPUT_INVALID", "a valid GitHub Proof Review payload is required")
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != GITHUB_PROOF_REVIEW_SCHEMA
+    ):
+        raise GitHubProofReviewError(
+            "GITHUB_PROOF_REVIEW_INPUT_INVALID",
+            "a valid GitHub Proof Review payload is required",
+        )
     core = _payload_core(payload)
     if payload.get("payload_sha256") != _sha(core):
-        raise GitHubProofReviewError("GITHUB_PROOF_REVIEW_INPUT_INVALID", "the GitHub Proof Review SHA-256 does not match its canonical facts")
-    expected_walkthrough = _walkthrough({**core, "payload_sha256": payload["payload_sha256"]})
+        raise GitHubProofReviewError(
+            "GITHUB_PROOF_REVIEW_INPUT_INVALID",
+            "the GitHub Proof Review SHA-256 does not match its canonical facts",
+        )
+    expected_walkthrough = _walkthrough(
+        {**core, "payload_sha256": payload["payload_sha256"]}
+    )
     expected_check = {
         "name": "FactoryLine / Proof Review",
         "head_sha": core.get("head_sha"),
         "status": "completed",
         "conclusion": "neutral",
-        "output": {"title": "Evidence-bound proof walkthrough", "summary": expected_walkthrough},
+        "output": {
+            "title": "Evidence-bound proof walkthrough",
+            "summary": expected_walkthrough,
+        },
     }
-    if payload.get("github_comment") != expected_walkthrough or payload.get("check") != expected_check:
-        raise GitHubProofReviewError("GITHUB_PROOF_REVIEW_INPUT_INVALID", "the GitHub Proof Review delivery fields do not match its canonical facts")
+    if (
+        payload.get("github_comment") != expected_walkthrough
+        or payload.get("check") != expected_check
+    ):
+        raise GitHubProofReviewError(
+            "GITHUB_PROOF_REVIEW_INPUT_INVALID",
+            "the GitHub Proof Review delivery fields do not match its canonical facts",
+        )
     return payload
 
 
@@ -350,7 +466,9 @@ def compile_github_proof_review(
     head_sha: str = "",
 ) -> dict[str, Any]:
     """Compile the current local review then render its GitHub delivery payload."""
-    return render_github_proof_review(review_change(Path(root), base=base, changed=changed), head_sha)
+    return render_github_proof_review(
+        review_change(Path(root), base=base, changed=changed), head_sha
+    )
 
 
 def _atomic_text(path: Path, content: str) -> str:
@@ -361,7 +479,9 @@ def _atomic_text(path: Path, content: str) -> str:
     return sha256(encoded).hexdigest()
 
 
-def write_github_proof_review_artifacts(payload: dict[str, Any], out_dir: Path) -> dict[str, Any]:
+def write_github_proof_review_artifacts(
+    payload: dict[str, Any], out_dir: Path
+) -> dict[str, Any]:
     """Write optional JSON and Markdown payload artifacts below one explicit directory."""
     payload = _valid_payload(payload)
     destination = Path(out_dir).resolve()
@@ -372,7 +492,11 @@ def write_github_proof_review_artifacts(payload: dict[str, Any], out_dir: Path) 
     serializable = {key: value for key, value in payload.items() if key != "artifacts"}
     paths = {"json": json_path, "markdown": markdown_path}
     digests = {
-        "json": _atomic_text(json_path, json.dumps(serializable, ensure_ascii=False, indent=2, sort_keys=True) + "\n"),
+        "json": _atomic_text(
+            json_path,
+            json.dumps(serializable, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+        ),
         "markdown": _atomic_text(markdown_path, payload["github_comment"]),
     }
     return {

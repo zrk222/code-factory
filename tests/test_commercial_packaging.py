@@ -9,7 +9,9 @@ UTF8 = "utf_8"
 
 
 def _packaging() -> dict:
-    return json.loads((ROOT / "docs" / "COMMERCIAL_PACKAGING.json").read_text(encoding=UTF8))
+    return json.loads(
+        (ROOT / "docs" / "COMMERCIAL_PACKAGING.json").read_text(encoding=UTF8)
+    )
 
 
 def test_commercial_packaging_marks_only_free_core_as_available():
@@ -18,7 +20,10 @@ def test_commercial_packaging_marks_only_free_core_as_available():
     assert packaging["schema"] == "factory.commercial-packaging.v2"
     assert packaging["governance"] == {
         "classification": "human_controlled",
-        "commercial_activation_authority": ["product_owner", "chosen_billing_or_contracting_system"],
+        "commercial_activation_authority": [
+            "product_owner",
+            "chosen_billing_or_contracting_system",
+        ],
         "automation_may_activate": False,
     }
     assert packaging["claim_boundary"] == {
@@ -45,10 +50,16 @@ def test_commercial_packaging_marks_only_free_core_as_available():
         "minimum_active_contributors": 3,
     }
     assert tiers["enterprise_assurance"]["availability"] == "discovery_only"
-    assert tiers["enterprise_assurance"]["state_marker"] == "COMMERCIAL_ENTERPRISE_DISCOVERY_ONLY"
+    assert (
+        tiers["enterprise_assurance"]["state_marker"]
+        == "COMMERCIAL_ENTERPRISE_DISCOVERY_ONLY"
+    )
     assert tiers["enterprise_assurance"]["purchasable"] is False
     assert tiers["managed_proof_runner"]["availability"] == "not_offered"
-    assert tiers["managed_proof_runner"]["state_marker"] == "COMMERCIAL_MANAGED_RUNNER_NOT_OFFERED"
+    assert (
+        tiers["managed_proof_runner"]["state_marker"]
+        == "COMMERCIAL_MANAGED_RUNNER_NOT_OFFERED"
+    )
     assert tiers["managed_proof_runner"]["purchasable"] is False
     assert packaging["promotion_trigger"]["minimum_selected_design_partners"] == 3
     assert packaging["design_partner_intake"] == {
@@ -58,7 +69,10 @@ def test_commercial_packaging_marks_only_free_core_as_available():
         "source_collection_authority": False,
         "contact_authority": False,
     }
-    assert packaging["separate_marketplace_plan"] == "docs/JETBRAINS_MONETIZATION_2027.json"
+    assert (
+        packaging["separate_marketplace_plan"]
+        == "docs/JETBRAINS_MONETIZATION_2027.json"
+    )
     assert packaging["marketplace_reference"] == {
         "state_marker": "COMMERCIAL_MARKETPLACE_SEPARATE",
         "path": "docs/JETBRAINS_MONETIZATION_2027.json",
@@ -82,7 +96,9 @@ def test_commercial_packaging_marks_only_free_core_as_available():
 
 def test_design_partner_intake_has_no_sales_or_source_collection_authority():
     guide = (ROOT / "docs" / "COMMERCIAL_PACKAGING.md").read_text(encoding=UTF8)
-    intake = (ROOT / ".github" / "ISSUE_TEMPLATE" / "design-partner.yml").read_text(encoding=UTF8)
+    intake = (ROOT / ".github" / "ISSUE_TEMPLATE" / "design-partner.yml").read_text(
+        encoding=UTF8
+    )
 
     assert "not purchasable today" in guide
     assert "planning hypothesis" in guide
@@ -90,13 +106,18 @@ def test_design_partner_intake_has_no_sales_or_source_collection_authority():
     assert "human-controlled" in guide
     assert "There is no" in guide
     assert "customer support commitment" in guide
-    assert "does not accept a partner, create a contract, start a trial, or grant access" in intake
+    assert (
+        "does not accept a partner, create a contract, start a trial, or grant access"
+        in intake
+    )
     assert "Do not include source code, credentials, tokens, customer data" in intake
     assert "design-partner" in intake
 
 
 def test_github_per_seat_plan_is_scheduled_but_not_active_or_enforced():
-    plan = json.loads((ROOT / "docs" / "GITHUB_MONETIZATION_2026.json").read_text(encoding=UTF8))
+    plan = json.loads(
+        (ROOT / "docs" / "GITHUB_MONETIZATION_2026.json").read_text(encoding=UTF8)
+    )
     guide = (ROOT / "docs" / "GITHUB_MONETIZATION_2026.md").read_text(encoding=UTF8)
     readme = (ROOT / "README.md").read_text(encoding=UTF8)
 
@@ -114,7 +135,9 @@ def test_github_per_seat_plan_is_scheduled_but_not_active_or_enforced():
     assert plan["scope"]["source_license"] == "MIT OR Apache-2.0 remains unchanged"
     assert plan["scope"]["repository_access"] == "not_restricted_by_this_plan"
     assert plan["scope"]["automatic_license_enforcement"] is False
-    assert plan["value_contract"]["state_marker"] == "GITHUB_ASSURANCE_SEAT_VALUE_DEFINED"
+    assert (
+        plan["value_contract"]["state_marker"] == "GITHUB_ASSURANCE_SEAT_VALUE_DEFINED"
+    )
     assert plan["value_contract"]["included_when_activated"] == [
         "commit-bound GitHub Proof Review Check and walkthrough",
         "human-approved Plan-to-Proof scope envelope and visible Proof Debt",
@@ -136,7 +159,9 @@ def test_github_per_seat_plan_is_scheduled_but_not_active_or_enforced():
 
 
 def test_open_vsx_services_are_scheduled_without_paywalling_the_extension():
-    plan = json.loads((ROOT / "docs" / "OPEN_VSX_MONETIZATION_2026.json").read_text(encoding=UTF8))
+    plan = json.loads(
+        (ROOT / "docs" / "OPEN_VSX_MONETIZATION_2026.json").read_text(encoding=UTF8)
+    )
     guide = (ROOT / "docs" / "OPEN_VSX_MONETIZATION_2026.md").read_text(encoding=UTF8)
     adapter = (ROOT / "editors" / "vscode" / "README.md").read_text(encoding=UTF8)
 
@@ -155,9 +180,14 @@ def test_open_vsx_services_are_scheduled_without_paywalling_the_extension():
     assert plan["offers"]["proof_pro"]["price_usd_month"] == 9.0
     assert plan["offers"]["proof_pro"]["founding_price_usd_month"] == 5.95
     assert plan["offers"]["appforge_builder"]["price_usd_month"] == 24.0
-    assert plan["offers"]["team_assurance"]["monthly_price_usd_active_contributor"] == 24.0
+    assert (
+        plan["offers"]["team_assurance"]["monthly_price_usd_active_contributor"] == 24.0
+    )
     assert len(plan["activation_gates"]) == 6
-    assert all(gate["status"] == "pending_human" and gate["evidence"] is None for gate in plan["activation_gates"])
+    assert all(
+        gate["status"] == "pending_human" and gate["evidence"] is None
+        for gate in plan["activation_gates"]
+    )
     assert plan["authority"] == {
         "classification": "human_controlled",
         "automation_may_collect_payment": False,

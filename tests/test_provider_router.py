@@ -56,8 +56,13 @@ def _providers():
 
 def test_provider_policy_is_hash_bound_and_secret_free(tmp_path: Path, monkeypatch):
     policy = create_provider_policy(
-        tmp_path, "platform-owner", _providers(), ["cli", "studio", "vscode", "jetbrains"],
-        20.0, quality_floor="balanced", routing_bias=35,
+        tmp_path,
+        "platform-owner",
+        _providers(),
+        ["cli", "studio", "vscode", "jetbrains"],
+        20.0,
+        quality_floor="balanced",
+        routing_bias=35,
     )
     assert verify_provider_policy(Path(policy["path"]))["valid"] is True
     text = Path(policy["path"]).read_text(encoding="utf-8")
@@ -75,15 +80,23 @@ def test_provider_policy_is_hash_bound_and_secret_free(tmp_path: Path, monkeypat
     assert verify_provider_policy(Path(policy["path"]))["valid"] is False
 
 
-def test_router_enforces_ide_quality_provider_and_byok_rails(tmp_path: Path, monkeypatch):
+def test_router_enforces_ide_quality_provider_and_byok_rails(
+    tmp_path: Path, monkeypatch
+):
     mission = _pipeline(tmp_path)
     policy = create_provider_policy(
-        tmp_path, "platform-owner", _providers(), ["cli", "studio", "vscode", "jetbrains"],
-        20.0, quality_floor="balanced",
+        tmp_path,
+        "platform-owner",
+        _providers(),
+        ["cli", "studio", "vscode", "jetbrains"],
+        20.0,
+        quality_floor="balanced",
     )
     monkeypatch.setenv("PROVIDER_A_KEY", "a-value")
     monkeypatch.setenv("PROVIDER_B_KEY", "b-value")
-    result = route_provider(Path(policy["path"]), Path(mission["path"]), tmp_path, "jetbrains", "high")
+    result = route_provider(
+        Path(policy["path"]), Path(mission["path"]), tmp_path, "jetbrains", "high"
+    )
     assert result["selected"]["provider"] == "provider-b"
     assert result["selected"]["model"] == "frontier-b"
     assert result["provider_calls"] == 0
@@ -91,12 +104,23 @@ def test_router_enforces_ide_quality_provider_and_byok_rails(tmp_path: Path, mon
     assert "a-value" not in json.dumps(result)
     assert "b-value" not in json.dumps(result)
     with pytest.raises(ProviderRouterError, match="PROVIDER_ROUTE_RAILS_ENFORCED"):
-        route_provider(Path(policy["path"]), Path(mission["path"]), tmp_path, "cli", "high", preferred_provider="provider-b")
+        route_provider(
+            Path(policy["path"]),
+            Path(mission["path"]),
+            tmp_path,
+            "cli",
+            "high",
+            preferred_provider="provider-b",
+        )
     with pytest.raises(ProviderRouterError, match="PROVIDER_ROUTE_RAILS_ENFORCED"):
-        route_provider(Path(policy["path"]), Path(mission["path"]), tmp_path, "unknown-ide", "high")
+        route_provider(
+            Path(policy["path"]), Path(mission["path"]), tmp_path, "unknown-ide", "high"
+        )
 
 
-def test_router_preserves_equal_cost_cache_and_rejects_unsafe_policy(tmp_path: Path, monkeypatch):
+def test_router_preserves_equal_cost_cache_and_rejects_unsafe_policy(
+    tmp_path: Path, monkeypatch
+):
     mission = _pipeline(tmp_path)
     providers = _providers()
     for provider in providers:
@@ -104,56 +128,110 @@ def test_router_preserves_equal_cost_cache_and_rejects_unsafe_policy(tmp_path: P
     providers[0]["models"][1]["input_cost_per_million"] = 3.0
     providers[0]["models"][1]["output_cost_per_million"] = 6.0
     policy = create_provider_policy(
-        tmp_path, "platform-owner", providers, ["jetbrains"], 10.0, quality_floor="frontier",
+        tmp_path,
+        "platform-owner",
+        providers,
+        ["jetbrains"],
+        10.0,
+        quality_floor="frontier",
     )
     monkeypatch.setenv("PROVIDER_A_KEY", "a")
     monkeypatch.setenv("PROVIDER_B_KEY", "b")
     result = route_provider(
-        Path(policy["path"]), Path(mission["path"]), tmp_path, "jetbrains", "high",
-        cache_provider="provider-a", cache_model="frontier-a",
+        Path(policy["path"]),
+        Path(mission["path"]),
+        tmp_path,
+        "jetbrains",
+        "high",
+        cache_provider="provider-a",
+        cache_model="frontier-a",
     )
     assert result["selected"]["provider"] == "provider-a"
     assert result["cache_preserved"] is True
     unsafe = _providers()
     unsafe[0]["endpoint"] = "http://provider-a.example/v1"
-    with pytest.raises(ProviderRouterError, match="remote provider endpoints must use HTTPS"):
-        create_provider_policy(tmp_path / "unsafe", "owner", unsafe, ["cli", "studio", "vscode", "jetbrains"], 5.0)
+    with pytest.raises(
+        ProviderRouterError, match="remote provider endpoints must use HTTPS"
+    ):
+        create_provider_policy(
+            tmp_path / "unsafe",
+            "owner",
+            unsafe,
+            ["cli", "studio", "vscode", "jetbrains"],
+            5.0,
+        )
     unknown = _providers()
     unknown[0]["credential"] = "should-never-be-accepted"
     with pytest.raises(ProviderRouterError, match="unknown fields"):
-        create_provider_policy(tmp_path / "unknown", "owner", unknown, ["cli", "studio", "vscode", "jetbrains"], 5.0)
+        create_provider_policy(
+            tmp_path / "unknown",
+            "owner",
+            unknown,
+            ["cli", "studio", "vscode", "jetbrains"],
+            5.0,
+        )
 
 
-def test_router_enforces_execution_capability_privacy_latency_and_output_rails(tmp_path: Path, monkeypatch):
+def test_router_enforces_execution_capability_privacy_latency_and_output_rails(
+    tmp_path: Path, monkeypatch
+):
     providers = _providers()
-    providers[0]["models"][0].update({
-        "max_context_tokens": 8000,
-        "max_latency_ms": 1000,
-        "capabilities": ["json", "tools"],
-        "privacy_class": "restricted",
-        "output_contracts": ["json"],
-    })
-    providers[0]["models"][1].update({
-        "max_context_tokens": 12000,
-        "max_latency_ms": 4500,
-        "capabilities": ["json"],
-        "privacy_class": "standard",
-        "output_contracts": ["text"],
-    })
+    providers[0]["models"][0].update(
+        {
+            "max_context_tokens": 8000,
+            "max_latency_ms": 1000,
+            "capabilities": ["json", "tools"],
+            "privacy_class": "restricted",
+            "output_contracts": ["json"],
+        }
+    )
+    providers[0]["models"][1].update(
+        {
+            "max_context_tokens": 12000,
+            "max_latency_ms": 4500,
+            "capabilities": ["json"],
+            "privacy_class": "standard",
+            "output_contracts": ["text"],
+        }
+    )
     for provider in providers:
         provider["allowed_ides"] = ["jetbrains"]
-    policy = create_provider_policy(tmp_path, "owner", providers, ["jetbrains"], 10.0, quality_floor="balanced")
+    policy = create_provider_policy(
+        tmp_path, "owner", providers, ["jetbrains"], 10.0, quality_floor="balanced"
+    )
     mission = _pipeline(tmp_path)
     monkeypatch.setenv("PROVIDER_A_KEY", "a")
     monkeypatch.setenv("PROVIDER_B_KEY", "b")
     result = route_provider(
-        Path(policy["path"]), Path(mission["path"]), tmp_path, "jetbrains", "low",
-        projected_tokens=7000, latency_budget_ms=1500,
-        required_capabilities=["tools"], privacy_class="restricted", output_contract="json",
+        Path(policy["path"]),
+        Path(mission["path"]),
+        tmp_path,
+        "jetbrains",
+        "low",
+        projected_tokens=7000,
+        latency_budget_ms=1500,
+        required_capabilities=["tools"],
+        privacy_class="restricted",
+        output_contract="json",
     )
     assert result["selected"]["model"] == "balanced-a"
     assert result["execution_rails"]["projected_tokens"] == 7000
     with pytest.raises(ProviderRouterError, match="PROVIDER_ROUTE_RAILS_ENFORCED"):
-        route_provider(Path(policy["path"]), Path(mission["path"]), tmp_path, "jetbrains", "low", projected_tokens=9000, required_capabilities=["tools"])
+        route_provider(
+            Path(policy["path"]),
+            Path(mission["path"]),
+            tmp_path,
+            "jetbrains",
+            "low",
+            projected_tokens=9000,
+            required_capabilities=["tools"],
+        )
     with pytest.raises(ProviderRouterError, match="PROVIDER_ROUTE_RAILS_ENFORCED"):
-        route_provider(Path(policy["path"]), Path(mission["path"]), tmp_path, "jetbrains", "low", output_contract="jsonl")
+        route_provider(
+            Path(policy["path"]),
+            Path(mission["path"]),
+            tmp_path,
+            "jetbrains",
+            "low",
+            output_contract="jsonl",
+        )

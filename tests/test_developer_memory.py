@@ -15,21 +15,34 @@ from factoryline.proof_reuse import record_proof
 
 
 def _files(root: Path) -> dict[str, bytes]:
-    return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
 
 
 def _stale_proof_workspace(root: Path) -> None:
     (root / "input.txt").write_text("before", encoding="utf-8")
     (root / "output.txt").write_text("green", encoding="utf-8")
-    record_proof(root, {
-        "name": "unit", "command": ["python", "-m", "pytest"], "read_only": True,
-        "inputs": ["input.txt"], "outputs": ["output.txt"],
-    }, elapsed_ms=50)
+    record_proof(
+        root,
+        {
+            "name": "unit",
+            "command": ["python", "-m", "pytest"],
+            "read_only": True,
+            "inputs": ["input.txt"],
+            "outputs": ["output.txt"],
+        },
+        elapsed_ms=50,
+    )
     (root / "input.txt").write_text("after", encoding="utf-8")
 
 
 def _git(root: Path, *arguments: str) -> None:
-    subprocess.run(["git", *arguments], cwd=root, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", *arguments], cwd=root, check=True, capture_output=True, text=True
+    )
 
 
 def _continuity_record() -> dict[str, object]:
@@ -50,7 +63,9 @@ def _principal(subject: str, roles: tuple[str, ...]) -> ContinuityPrincipal:
     return ContinuityPrincipal(subject, "tenant-a", roles, ("delivery-review@1",))
 
 
-def test_developer_memory_brief_makes_stale_proof_visual_action_without_writing(tmp_path: Path) -> None:
+def test_developer_memory_brief_makes_stale_proof_visual_action_without_writing(
+    tmp_path: Path,
+) -> None:
     _stale_proof_workspace(tmp_path)
     before = _files(tmp_path)
 
@@ -63,18 +78,39 @@ def test_developer_memory_brief_makes_stale_proof_visual_action_without_writing(
     assert "DEVELOPER_MEMORY_VISUAL_EXPLAINED" in brief["markers"]
     assert brief["actions"][0]["kind"] == "rerun_stale_proof"
     assert brief["actions"][0]["evidence"]["proof_id"]
-    assert brief["actions"][0]["evidence"]["review_sha256"] == brief["change_review"]["review_sha256"]
-    assert brief["presentation"]["action_fields"] == ["what_changed", "why_it_matters", "do_this_next", "evidence"]
+    assert (
+        brief["actions"][0]["evidence"]["review_sha256"]
+        == brief["change_review"]["review_sha256"]
+    )
+    assert brief["presentation"]["action_fields"] == [
+        "what_changed",
+        "why_it_matters",
+        "do_this_next",
+        "evidence",
+    ]
     assert brief["authority"]["external_effects"] is False
     assert all(value is False for value in brief["authority"].values())
     assert _files(tmp_path) == before
-    assert developer_memory_brief(tmp_path, changed=["input.txt"])["brief_sha256"] == brief["brief_sha256"]
+    assert (
+        developer_memory_brief(tmp_path, changed=["input.txt"])["brief_sha256"]
+        == brief["brief_sha256"]
+    )
 
 
 def test_developer_memory_brief_withholds_continuity_bodies(tmp_path: Path) -> None:
     store = ContinuityStore(tmp_path / ".factory" / "continuity.sqlite3")
-    store.record(_principal("worker", ("writer",)), _continuity_record(), idempotency_key="memory", record_id="private-record")
-    store.promote(_principal("reviewer", ("promoter",)), "tenant-a", "private-record", reason="independent review")
+    store.record(
+        _principal("worker", ("writer",)),
+        _continuity_record(),
+        idempotency_key="memory",
+        record_id="private-record",
+    )
+    store.promote(
+        _principal("reviewer", ("promoter",)),
+        "tenant-a",
+        "private-record",
+        reason="independent review",
+    )
 
     brief = developer_memory_brief(tmp_path, changed=["app/service.py"])
     rendered = json.dumps(brief, sort_keys=True)
@@ -86,7 +122,9 @@ def test_developer_memory_brief_withholds_continuity_bodies(tmp_path: Path) -> N
     assert brief["actions"][0]["kind"] == "bind_changed_path_to_proof"
 
 
-def test_developer_memory_attributes_observed_local_git_contributors_without_claiming_seats(tmp_path: Path) -> None:
+def test_developer_memory_attributes_observed_local_git_contributors_without_claiming_seats(
+    tmp_path: Path,
+) -> None:
     _git(tmp_path, "init")
     _git(tmp_path, "config", "user.name", "Ada Lovelace")
     _git(tmp_path, "config", "user.email", "ada@example.test")
@@ -113,10 +151,15 @@ def test_developer_memory_attributes_observed_local_git_contributors_without_cla
     assert all("email" not in seat for seat in brief["team"]["seats"])
     assert brief["actions"][0]["contributor_seat_ids"]
     assert "billing" not in json.dumps(brief["team"]["source"]).lower()
-    assert "not a verified identity-provider or billing-seat roster" in brief["team"]["scope_limits"][0]
+    assert (
+        "not a verified identity-provider or billing-seat roster"
+        in brief["team"]["scope_limits"][0]
+    )
 
 
-def test_developer_memory_reports_unavailable_change_set_without_inference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_developer_memory_reports_unavailable_change_set_without_inference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def unavailable(*_args, **_kwargs):
         raise ChangeReviewError("DIFF_BASE_UNAVAILABLE", "base unavailable")
 
@@ -132,30 +175,53 @@ def test_developer_memory_reports_unavailable_change_set_without_inference(tmp_p
     assert "productivity" in brief["scope_limits"][0]
 
 
-def test_developer_memory_caps_action_cards_before_lower_priority_advice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_developer_memory_caps_action_cards_before_lower_priority_advice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     paths = [f"src/path-{index}.py" for index in range(MAX_ACTIONS + 4)]
     review = {
-        "base": "main", "input_source": "explicit", "changed_paths": paths,
+        "base": "main",
+        "input_source": "explicit",
+        "changed_paths": paths,
         "review_sha256": "a" * 64,
         "impact": {"unmatched_changed_paths": paths, "rerun_proofs": []},
         "coverage": {"ok": True, "uncovered": []},
         "risk": {"rerun_stages": []},
         "unproven_claims": [],
     }
-    monkeypatch.setattr("factoryline.developer_memory.review_change", lambda *_args, **_kwargs: review)
+    monkeypatch.setattr(
+        "factoryline.developer_memory.review_change", lambda *_args, **_kwargs: review
+    )
 
     brief = developer_memory_brief(tmp_path, changed=paths)
 
     assert len(brief["actions"]) == MAX_ACTIONS
-    assert all(action["kind"] == "bind_changed_path_to_proof" for action in brief["actions"])
+    assert all(
+        action["kind"] == "bind_changed_path_to_proof" for action in brief["actions"]
+    )
     assert brief["next_action"]["id"] == "scope-gap:src/path-0.py"
 
 
-def test_developer_memory_cli_is_machine_readable_and_read_only(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_developer_memory_cli_is_machine_readable_and_read_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     _stale_proof_workspace(tmp_path)
     before = _files(tmp_path)
 
-    assert main(["memory", "brief", "--root", str(tmp_path), "--changed", "input.txt", "--json"]) == 0
+    assert (
+        main(
+            [
+                "memory",
+                "brief",
+                "--root",
+                str(tmp_path),
+                "--changed",
+                "input.txt",
+                "--json",
+            ]
+        )
+        == 0
+    )
 
     brief = json.loads(capsys.readouterr().out)
     assert brief["schema"] == "factory.developer-memory-brief.v1"

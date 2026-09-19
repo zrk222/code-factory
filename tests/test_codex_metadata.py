@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from factoryline.cli import main
-from factoryline.codex_metadata import MAX_FILE_BYTES, MetadataAuditError, _read_metadata_bytes, audit_metadata, write_metadata_audit
+from factoryline.codex_metadata import (
+    MAX_FILE_BYTES,
+    MetadataAuditError,
+    _read_metadata_bytes,
+    audit_metadata,
+)
 
 
 def _bound(provider: str = "github") -> dict:
@@ -14,7 +19,10 @@ def _bound(provider: str = "github") -> dict:
         "status": "published",
         "provider": provider,
         "command": "release-command --verified",
-        "provider_receipt": {"url": f"https://example.test/{provider}/run/42", "sha256": "a" * 64},
+        "provider_receipt": {
+            "url": f"https://example.test/{provider}/run/42",
+            "sha256": "a" * 64,
+        },
         "agent": "coder",
         "independent_verifier": "reviewer",
         "intent_id": "REQ-42",
@@ -26,7 +34,9 @@ def test_bound_terminal_records_are_verified_and_authority_free(tmp_path: Path):
     metadata = tmp_path / "metadata.json"
     metadata.write_text(json.dumps(_bound()), encoding="utf-8")
     history = tmp_path / "history.jsonl"
-    history.write_text(json.dumps({**_bound("pypi"), "status": "verified"}) + "\n", encoding="utf-8")
+    history.write_text(
+        json.dumps({**_bound("pypi"), "status": "verified"}) + "\n", encoding="utf-8"
+    )
 
     result = audit_metadata(tmp_path, [metadata, history])
 
@@ -50,7 +60,10 @@ def test_bound_terminal_records_are_verified_and_authority_free(tmp_path: Path):
 
 def test_unbound_success_and_self_attested_gate_fail_closed(tmp_path: Path):
     path = tmp_path / "claim.json"
-    path.write_text(json.dumps({"status": "complete", "tests_passed": True, "agent": "coder"}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"status": "complete", "tests_passed": True, "agent": "coder"}),
+        encoding="utf-8",
+    )
 
     result = audit_metadata(tmp_path, [path])
     codes = {item["code"] for item in result["findings"]}
@@ -63,15 +76,30 @@ def test_unbound_success_and_self_attested_gate_fail_closed(tmp_path: Path):
 
 def test_unclear_intent_is_not_an_acceptable_test_gate(tmp_path: Path):
     path = tmp_path / "claim.json"
-    path.write_text(json.dumps({"tests_passed": True, "intent_status": "needs_clarification", "agent": "coder"}), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "tests_passed": True,
+                "intent_status": "needs_clarification",
+                "agent": "coder",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     result = audit_metadata(tmp_path, [path])
 
-    assert any(item["code"] == "E_METADATA_INTENT_UNCLEAR" for item in result["findings"])
-    assert any(item["code"] == "E_METADATA_INTENT_UNBOUND" for item in result["findings"])
+    assert any(
+        item["code"] == "E_METADATA_INTENT_UNCLEAR" for item in result["findings"]
+    )
+    assert any(
+        item["code"] == "E_METADATA_INTENT_UNBOUND" for item in result["findings"]
+    )
 
 
-def test_oversized_metadata_is_rejected_before_its_contents_are_read(tmp_path: Path, monkeypatch) -> None:
+def test_oversized_metadata_is_rejected_before_its_contents_are_read(
+    tmp_path: Path, monkeypatch
+) -> None:
     from factoryline.codex_metadata import MAX_FILE_BYTES
 
     path = tmp_path / "oversized.json"
@@ -86,46 +114,67 @@ def test_oversized_metadata_is_rejected_before_its_contents_are_read(tmp_path: P
     monkeypatch.setattr(Path, "read_bytes", guarded_read)
     result = audit_metadata(tmp_path, [path])
 
-    assert result["files"] == [{"path": "oversized.json", "bytes": MAX_FILE_BYTES + 1, "sha256": None, "format": "oversize"}]
+    assert result["files"] == [
+        {
+            "path": "oversized.json",
+            "bytes": MAX_FILE_BYTES + 1,
+            "sha256": None,
+            "format": "oversize",
+        }
+    ]
     assert any(item["code"] == "E_METADATA_TOO_LARGE" for item in result["findings"])
 
 
 def test_command_only_terminal_claim_is_weak_evidence(tmp_path: Path):
     path = tmp_path / "claim.json"
-    path.write_text(json.dumps({"status": "complete", "command": "pytest -q", "intent_id": "REQ-1"}), encoding="utf-8")
-
-    result = audit_metadata(tmp_path, [path])
-
-    assert any(item["code"] == "E_METADATA_WEAK_EVIDENCE" for item in result["findings"])
-
-
-def test_green_gate_requires_negative_or_adversarial_proof(tmp_path: Path):
-    path = tmp_path / "gate.json"
     path.write_text(
-        json.dumps({
-            "tests_passed": True,
-            "receipt": {"sha256": "a" * 64},
-            "independent_verifier": "reviewer",
-            "intent_hash": "b" * 64,
-        }),
+        json.dumps(
+            {"status": "complete", "command": "pytest -q", "intent_id": "REQ-1"}
+        ),
         encoding="utf-8",
     )
 
     result = audit_metadata(tmp_path, [path])
 
-    assert any(item["code"] == "E_METADATA_GATE_NO_NEGATIVE_PROOF" for item in result["findings"])
+    assert any(
+        item["code"] == "E_METADATA_WEAK_EVIDENCE" for item in result["findings"]
+    )
+
+
+def test_green_gate_requires_negative_or_adversarial_proof(tmp_path: Path):
+    path = tmp_path / "gate.json"
+    path.write_text(
+        json.dumps(
+            {
+                "tests_passed": True,
+                "receipt": {"sha256": "a" * 64},
+                "independent_verifier": "reviewer",
+                "intent_hash": "b" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_metadata(tmp_path, [path])
+
+    assert any(
+        item["code"] == "E_METADATA_GATE_NO_NEGATIVE_PROOF"
+        for item in result["findings"]
+    )
 
 
 def test_contradictory_provider_state_is_not_collapsed_into_success(tmp_path: Path):
     path = tmp_path / "claim.json"
     path.write_text(
-        json.dumps({
-            "status": "published",
-            "state": "pending",
-            "provider": "JetBrains Marketplace",
-            "command": "upload",
-            "agent": "coder",
-        }),
+        json.dumps(
+            {
+                "status": "published",
+                "state": "pending",
+                "provider": "JetBrains Marketplace",
+                "command": "upload",
+                "agent": "coder",
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -143,7 +192,10 @@ def test_malformed_jsonl_is_named_instead_of_skipped(tmp_path: Path):
     result = audit_metadata(tmp_path, [path])
 
     assert result["status"] == "REVIEW_REQUIRED"
-    assert any(item["code"] == "E_METADATA_PARSE_INVALID" and item["location"] == "line:2" for item in result["findings"])
+    assert any(
+        item["code"] == "E_METADATA_PARSE_INVALID" and item["location"] == "line:2"
+        for item in result["findings"]
+    )
 
 
 def test_orphan_active_and_workspace_mismatch_are_visible(tmp_path: Path):
@@ -160,27 +212,35 @@ def test_orphan_active_and_workspace_mismatch_are_visible(tmp_path: Path):
     assert "E_METADATA_WORKSPACE_MISMATCH" in codes
 
 
-def test_active_policy_constraints_are_not_misclassified_as_live_execution(tmp_path: Path):
+def test_active_policy_constraints_are_not_misclassified_as_live_execution(
+    tmp_path: Path,
+):
     path = tmp_path / "policy.json"
     path.write_text(
-        json.dumps({
-            "active_policy": {
-                "constraints": {"parser": {"status": "active", "prevented": 4}},
-            },
-            "version": 1,
-        }),
+        json.dumps(
+            {
+                "active_policy": {
+                    "constraints": {"parser": {"status": "active", "prevented": 4}},
+                },
+                "version": 1,
+            }
+        ),
         encoding="utf-8",
     )
 
     result = audit_metadata(tmp_path, [path])
 
     assert result["status"] == "VERIFIED"
-    assert not any(item["code"] == "E_METADATA_ORPHAN_ACTIVE" for item in result["findings"])
+    assert not any(
+        item["code"] == "E_METADATA_ORPHAN_ACTIVE" for item in result["findings"]
+    )
 
 
 def test_markdown_claims_without_receipts_are_review_required(tmp_path: Path):
     path = tmp_path / "progress.md"
-    path.write_text("Status: published to PyPI\nstatus=active\nall_green=true\n", encoding="utf-8")
+    path.write_text(
+        "Status: published to PyPI\nstatus=active\nall_green=true\n", encoding="utf-8"
+    )
 
     result = audit_metadata(tmp_path, [path])
     codes = {item["code"] for item in result["findings"]}
@@ -191,12 +251,29 @@ def test_markdown_claims_without_receipts_are_review_required(tmp_path: Path):
     assert "E_METADATA_SELF_ATTESTED_GATE" in codes
 
 
-def test_cli_writes_readable_receipt_and_returns_one_for_review(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+def test_cli_writes_readable_receipt_and_returns_one_for_review(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
     path = tmp_path / "claim.json"
     path.write_text(json.dumps({"status": "success"}), encoding="utf-8")
     out = tmp_path / ".factory" / "ops" / "metadata-integrity.json"
 
-    assert main(["ops", "metadata", "--root", str(tmp_path), "--path", "claim.json", "--out", str(out), "--json"]) == 1
+    assert (
+        main(
+            [
+                "ops",
+                "metadata",
+                "--root",
+                str(tmp_path),
+                "--path",
+                "claim.json",
+                "--out",
+                str(out),
+                "--json",
+            ]
+        )
+        == 1
+    )
     emitted = json.loads(capsys.readouterr().out)
 
     assert out.exists()
@@ -216,9 +293,13 @@ def test_path_escape_and_missing_inventory_are_rejected(tmp_path: Path):
     assert missing.value.code == "E_METADATA_INPUT_MISSING"
 
 
-def test_explicit_empty_inventory_is_rejected_instead_of_discovering_defaults(tmp_path: Path):
+def test_explicit_empty_inventory_is_rejected_instead_of_discovering_defaults(
+    tmp_path: Path,
+):
     (tmp_path / "context").mkdir()
-    (tmp_path / "context" / "claim.json").write_text(json.dumps(_bound()), encoding="utf-8")
+    (tmp_path / "context" / "claim.json").write_text(
+        json.dumps(_bound()), encoding="utf-8"
+    )
 
     with pytest.raises(MetadataAuditError) as raised:
         audit_metadata(tmp_path, [])
@@ -241,7 +322,12 @@ def test_file_growth_after_stat_is_still_classified_oversize():
     entry, raw, findings = _read_metadata_bytes(GrowingMetadata(), "growing.json")
 
     assert raw is None
-    assert entry == {"path": "growing.json", "bytes": MAX_FILE_BYTES + 1, "sha256": None, "format": "oversize"}
+    assert entry == {
+        "path": "growing.json",
+        "bytes": MAX_FILE_BYTES + 1,
+        "sha256": None,
+        "format": "oversize",
+    }
     assert [finding["code"] for finding in findings] == ["E_METADATA_TOO_LARGE"]
 
 
@@ -304,7 +390,10 @@ def test_state_without_receipt_lineage_is_not_proof(tmp_path: Path):
 
     result = audit_metadata(tmp_path, [state], scope="all")
 
-    assert any(item["code"] == "E_METADATA_STATE_RECEIPT_MISMATCH" for item in result["findings"])
+    assert any(
+        item["code"] == "E_METADATA_STATE_RECEIPT_MISMATCH"
+        for item in result["findings"]
+    )
 
 
 def test_nonterminal_state_without_receipt_lineage_is_not_a_mismatch(tmp_path: Path):
@@ -314,18 +403,24 @@ def test_nonterminal_state_without_receipt_lineage_is_not_a_mismatch(tmp_path: P
 
     result = audit_metadata(tmp_path, [state], scope="all")
 
-    assert not any(item["code"] == "E_METADATA_STATE_RECEIPT_MISMATCH" for item in result["findings"])
+    assert not any(
+        item["code"] == "E_METADATA_STATE_RECEIPT_MISMATCH"
+        for item in result["findings"]
+    )
 
 
 def test_compact_forgeline_hash_and_ssat_bind_a_receipt_to_intent(tmp_path: Path):
     receipt = tmp_path / ".forge" / "mission" / "receipts.jsonl"
     receipt.parent.mkdir(parents=True)
     receipt.write_text(
-        json.dumps({
-            "h": "a" * 12,
-            "input_components": {"ssat": "b" * 64},
-            "status": "passed",
-        }) + "\n",
+        json.dumps(
+            {
+                "h": "a" * 12,
+                "input_components": {"ssat": "b" * 64},
+                "status": "passed",
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -338,9 +433,14 @@ def test_compact_forgeline_hash_and_ssat_bind_a_receipt_to_intent(tmp_path: Path
 def test_smoked_forgeline_stream_is_classified_as_archive(tmp_path: Path):
     mission = tmp_path / ".forge" / "mission"
     mission.mkdir(parents=True)
-    (mission / "state.json").write_text(json.dumps({"state": "smoked"}), encoding="utf-8")
+    (mission / "state.json").write_text(
+        json.dumps({"state": "smoked"}), encoding="utf-8"
+    )
     (mission / "receipts.jsonl").write_text(
-        json.dumps({"h": "c" * 12, "input_components": {"ssat": "d" * 64}, "status": "passed"}) + "\n",
+        json.dumps(
+            {"h": "c" * 12, "input_components": {"ssat": "d" * 64}, "status": "passed"}
+        )
+        + "\n",
         encoding="utf-8",
     )
 

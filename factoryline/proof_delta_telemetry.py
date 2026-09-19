@@ -3,6 +3,7 @@
 This module only hashes already-verified inputs. It does not read files, run
 commands, or grant any authority; Graph Ops owns the read-only node projection.
 """
+
 from __future__ import annotations
 
 from hashlib import sha256
@@ -23,14 +24,18 @@ _AUTHORITY = {
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:
     return sha256(_canonical(value)).hexdigest()
 
 
-def build_proof_delta_telemetry(verification: dict[str, Any], proof_delta_sha256: str) -> dict[str, Any]:
+def build_proof_delta_telemetry(
+    verification: dict[str, Any], proof_delta_sha256: str
+) -> dict[str, Any]:
     """Build a deterministic, authority-free telemetry record for one verified delta."""
     prior = verification["prior_candidate"]["candidate"]
     repair = verification["repair_candidate"]["candidate"]

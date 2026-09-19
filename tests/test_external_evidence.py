@@ -41,10 +41,19 @@ def _write_bundle(
         "environment": {"fingerprint": "linux-node-22", "label": "ci"},
         "verdict": verdict,
         "failure_kind": failure_kind,
-        "first_failed_step": {"index": 2 if verdict == "failed" else None, "label": "submit" if verdict == "failed" else None},
-        "hypothesis": "The approval transition is not persisted." if verdict == "failed" else "",
-        "recommended_fix": "Check the transaction boundary." if verdict == "failed" else "",
-        "artifacts": [{"path": artifact_name, "sha256": _sha(artifact), "kind": "runtime-log"}],
+        "first_failed_step": {
+            "index": 2 if verdict == "failed" else None,
+            "label": "submit" if verdict == "failed" else None,
+        },
+        "hypothesis": "The approval transition is not persisted."
+        if verdict == "failed"
+        else "",
+        "recommended_fix": "Check the transaction boundary."
+        if verdict == "failed"
+        else "",
+        "artifacts": [
+            {"path": artifact_name, "sha256": _sha(artifact), "kind": "runtime-log"}
+        ],
         "observed_at": "2026-08-24T12:00:00Z",
     }
     path = root / f"bundle-{run_id}.json"
@@ -83,11 +92,29 @@ def test_tampered_artifact_fails_closed_without_receipt(tmp_path: Path):
 
 def test_diff_reports_deterministic_deltas_and_rejects_cross_test(tmp_path: Path):
     left_bundle = _write_bundle(tmp_path, "run-left", artifact_name="left.txt")
-    right_bundle = _write_bundle(tmp_path, "run-right", artifact_name="right.txt", verdict="passed", failure_kind="none")
-    left = import_external_runtime_bundle(tmp_path, left_bundle, "testsprite", tmp_path / ".factory" / "external-evidence" / "left.json")
-    right = import_external_runtime_bundle(tmp_path, right_bundle, "testsprite", tmp_path / ".factory" / "external-evidence" / "right.json")
+    right_bundle = _write_bundle(
+        tmp_path,
+        "run-right",
+        artifact_name="right.txt",
+        verdict="passed",
+        failure_kind="none",
+    )
+    left = import_external_runtime_bundle(
+        tmp_path,
+        left_bundle,
+        "testsprite",
+        tmp_path / ".factory" / "external-evidence" / "left.json",
+    )
+    right = import_external_runtime_bundle(
+        tmp_path,
+        right_bundle,
+        "testsprite",
+        tmp_path / ".factory" / "external-evidence" / "right.json",
+    )
 
-    diff = diff_external_runtime_receipts(tmp_path, Path(left["path"]), Path(right["path"]))
+    diff = diff_external_runtime_receipts(
+        tmp_path, Path(left["path"]), Path(right["path"])
+    )
     assert diff["marker"] == "EXTERNAL_DIFF_COMPARABLE"
     assert diff["comparable"] is True
     assert diff["deltas"]["verdict"]["changed"] is True
@@ -95,23 +122,83 @@ def test_diff_reports_deterministic_deltas_and_rejects_cross_test(tmp_path: Path
     assert diff["deltas"]["artifacts"]["removed"] == ["left.txt"]
     assert all(value is False for value in diff["authority"].values())
 
-    other_bundle = _write_bundle(tmp_path, "run-other", test_id="different-test", artifact_name="other.txt")
-    other = import_external_runtime_bundle(tmp_path, other_bundle, "testsprite", tmp_path / ".factory" / "external-evidence" / "other.json")
-    incomparable = diff_external_runtime_receipts(tmp_path, Path(left["path"]), Path(other["path"]))
+    other_bundle = _write_bundle(
+        tmp_path, "run-other", test_id="different-test", artifact_name="other.txt"
+    )
+    other = import_external_runtime_bundle(
+        tmp_path,
+        other_bundle,
+        "testsprite",
+        tmp_path / ".factory" / "external-evidence" / "other.json",
+    )
+    incomparable = diff_external_runtime_receipts(
+        tmp_path, Path(left["path"]), Path(other["path"])
+    )
     assert incomparable["marker"] == "EXTERNAL_DIFF_INCOMPARABLE"
     assert incomparable["comparable"] is False
 
 
 def test_cli_import_and_diff_use_stable_status_codes(tmp_path: Path, capsys):
     left = _write_bundle(tmp_path, "cli-left", artifact_name="cli-left.txt")
-    right = _write_bundle(tmp_path, "cli-right", artifact_name="cli-right.txt", verdict="passed", failure_kind="none")
+    right = _write_bundle(
+        tmp_path,
+        "cli-right",
+        artifact_name="cli-right.txt",
+        verdict="passed",
+        failure_kind="none",
+    )
     out_left = tmp_path / ".factory" / "external-evidence" / "left.json"
     out_right = tmp_path / ".factory" / "external-evidence" / "right.json"
 
-    assert main(["external", "import", str(left), "--root", str(tmp_path), "--provider", "testsprite", "--out", str(out_left), "--json"]) == 0
+    assert (
+        main(
+            [
+                "external",
+                "import",
+                str(left),
+                "--root",
+                str(tmp_path),
+                "--provider",
+                "testsprite",
+                "--out",
+                str(out_left),
+                "--json",
+            ]
+        )
+        == 0
+    )
     capsys.readouterr()
-    assert main(["external", "import", str(right), "--root", str(tmp_path), "--provider", "testsprite", "--out", str(out_right), "--json"]) == 0
+    assert (
+        main(
+            [
+                "external",
+                "import",
+                str(right),
+                "--root",
+                str(tmp_path),
+                "--provider",
+                "testsprite",
+                "--out",
+                str(out_right),
+                "--json",
+            ]
+        )
+        == 0
+    )
     capsys.readouterr()
-    assert main(["external", "diff", str(out_left), str(out_right), "--root", str(tmp_path), "--json"]) == 0
+    assert (
+        main(
+            [
+                "external",
+                "diff",
+                str(out_left),
+                str(out_right),
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
     payload = json.loads(capsys.readouterr().out)
     assert payload["marker"] == "EXTERNAL_DIFF_COMPARABLE"

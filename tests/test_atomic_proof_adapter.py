@@ -30,7 +30,9 @@ AGENT = {
 
 def _sha(value: object) -> str:
     return hashlib.sha256(
-        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     ).hexdigest()
 
 
@@ -50,19 +52,96 @@ def _contract(root: Path) -> Path:
         return existing
     intent = root / "briefs" / "original-intent.md"
     intent.parent.mkdir(parents=True, exist_ok=True)
-    intent.write_text("Checkout must preserve a valid order and never expose private account data.\n", encoding="utf-8")
+    intent.write_text(
+        "Checkout must preserve a valid order and never expose private account data.\n",
+        encoding="utf-8",
+    )
     source_file = root / "src" / "checkout.py"
     source_file.parent.mkdir(parents=True, exist_ok=True)
-    source_file.write_text("def checkout(order):\n    return bool(order)\n", encoding="utf-8", newline="\n")
-    handoff = capture_intent_handoff(root, intent, AGENT, "atomic-intake", Path(".factory/oracles/handoffs/atomic-intake.json"))
+    source_file.write_text(
+        "def checkout(order):\n    return bool(order)\n", encoding="utf-8", newline="\n"
+    )
+    handoff = capture_intent_handoff(
+        root,
+        intent,
+        AGENT,
+        "atomic-intake",
+        Path(".factory/oracles/handoffs/atomic-intake.json"),
+    )
     rules = {
-        "requirements": [{"id": "complete-checkout", "statement": "The approved checkout completes for a valid order.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True}],
-        "forbidden_behaviors": [{"id": "private-data", "statement": "Checkout must not expose private account data.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True}],
-        "gates": [{"id": "checkout-proof", "statement": "Checkout evidence reaches the approved threshold.", "origin": "trusted_source", "effect": "blocking", "source_id": "original-intent", "critical": True, "comparison": "gte", "value": 95}],
-        "exceptions": [{"id": "offline-note", "statement": "Offline evidence remains advisory until a human review.", "origin": "human_confirmed", "effect": "advisory", "source_id": "original-intent", "critical": False}],
-        "negative_cases": [{"id": "bad-order", "statement": "An invalid order must not complete checkout.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True}],
-        "invariants": [{"id": "scope-bound", "statement": "The candidate must remain inside the sealed source scope.", "origin": "trusted_source", "effect": "blocking", "source_id": "original-intent", "critical": True}],
-        "tests": [{"id": "checkout-test", "statement": "Checkout tests exercise the rejected order path.", "origin": "human_confirmed", "effect": "blocking", "source_id": "original-intent", "critical": True, "path": "tests/test_checkout.py"}],
+        "requirements": [
+            {
+                "id": "complete-checkout",
+                "statement": "The approved checkout completes for a valid order.",
+                "origin": "human_confirmed",
+                "effect": "blocking",
+                "source_id": "original-intent",
+                "critical": True,
+            }
+        ],
+        "forbidden_behaviors": [
+            {
+                "id": "private-data",
+                "statement": "Checkout must not expose private account data.",
+                "origin": "human_confirmed",
+                "effect": "blocking",
+                "source_id": "original-intent",
+                "critical": True,
+            }
+        ],
+        "gates": [
+            {
+                "id": "checkout-proof",
+                "statement": "Checkout evidence reaches the approved threshold.",
+                "origin": "trusted_source",
+                "effect": "blocking",
+                "source_id": "original-intent",
+                "critical": True,
+                "comparison": "gte",
+                "value": 95,
+            }
+        ],
+        "exceptions": [
+            {
+                "id": "offline-note",
+                "statement": "Offline evidence remains advisory until a human review.",
+                "origin": "human_confirmed",
+                "effect": "advisory",
+                "source_id": "original-intent",
+                "critical": False,
+            }
+        ],
+        "negative_cases": [
+            {
+                "id": "bad-order",
+                "statement": "An invalid order must not complete checkout.",
+                "origin": "human_confirmed",
+                "effect": "blocking",
+                "source_id": "original-intent",
+                "critical": True,
+            }
+        ],
+        "invariants": [
+            {
+                "id": "scope-bound",
+                "statement": "The candidate must remain inside the sealed source scope.",
+                "origin": "trusted_source",
+                "effect": "blocking",
+                "source_id": "original-intent",
+                "critical": True,
+            }
+        ],
+        "tests": [
+            {
+                "id": "checkout-test",
+                "statement": "Checkout tests exercise the rejected order path.",
+                "origin": "human_confirmed",
+                "effect": "blocking",
+                "source_id": "original-intent",
+                "critical": True,
+                "path": "tests/test_checkout.py",
+            }
+        ],
     }
     payload = {
         "schema": "factory.oracle-contract-input.v1",
@@ -76,7 +155,12 @@ def _contract(root: Path) -> Path:
         **rules,
     }
     source = _write(root / "oracle-input.json", payload)
-    return root / seal_oracle_contract(root, source, Path(".factory/oracles/contracts/atomic-checkout.json"))["path"]
+    return (
+        root
+        / seal_oracle_contract(
+            root, source, Path(".factory/oracles/contracts/atomic-checkout.json")
+        )["path"]
+    )
 
 
 def _workflow() -> dict[str, object]:
@@ -89,14 +173,24 @@ def _workflow() -> dict[str, object]:
     return {
         "id": "checkout-proof-workflow",
         "definition_sha256": _digest("atomic-workflow-definition"),
-        "topology_sha256": _sha({"nodes": sorted(nodes, key=lambda item: item["id"]), "edges": sorted(edges, key=lambda item: (item["from"], item["to"]))}),
+        "topology_sha256": _sha(
+            {
+                "nodes": sorted(nodes, key=lambda item: item["id"]),
+                "edges": sorted(edges, key=lambda item: (item["from"], item["to"])),
+            }
+        ),
         "nodes": nodes,
         "edges": edges,
     }
 
 
 def _stage(identifier: str, kind: str, capabilities: list[str]) -> dict[str, object]:
-    source_preconditions = [{"path": "src/checkout.py", "sha256": _digest("def checkout(order):\n    return bool(order)\n")}]
+    source_preconditions = [
+        {
+            "path": "src/checkout.py",
+            "sha256": _digest("def checkout(order):\n    return bool(order)\n"),
+        }
+    ]
     return {
         "id": identifier,
         "kind": kind,
@@ -107,12 +201,20 @@ def _stage(identifier: str, kind: str, capabilities: list[str]) -> dict[str, obj
         "output_sha256": _digest(f"{identifier}-output"),
         "artifact_sha256": _digest(f"{identifier}-artifact"),
         "tool_manifest_sha256": _digest(f"{identifier}-tools"),
-        "checkpoint": {"id": f"checkpoint-{identifier}", "sha256": _digest(f"checkpoint-{identifier}-v1")},
+        "checkpoint": {
+            "id": f"checkpoint-{identifier}",
+            "sha256": _digest(f"checkpoint-{identifier}-v1"),
+        },
         "source_preconditions": source_preconditions,
     }
 
 
-def _handoff(identifier: str, source: dict[str, object], target: dict[str, object], contract_sha: str) -> dict[str, object]:
+def _handoff(
+    identifier: str,
+    source: dict[str, object],
+    target: dict[str, object],
+    contract_sha: str,
+) -> dict[str, object]:
     return {
         "id": identifier,
         "from_stage": source["id"],
@@ -126,7 +228,9 @@ def _handoff(identifier: str, source: dict[str, object], target: dict[str, objec
     }
 
 
-def _envelope(root: Path, *, run_id: str = "atomic-run-1") -> tuple[dict[str, object], Path]:
+def _envelope(
+    root: Path, *, run_id: str = "atomic-run-1"
+) -> tuple[dict[str, object], Path]:
     contract = _contract(root)
     contract_value = json.loads(contract.read_text(encoding="utf-8"))
     plan = _stage("plan", "planner", ["read_workspace", "handoff"])
@@ -140,18 +244,25 @@ def _envelope(root: Path, *, run_id: str = "atomic-run-1") -> tuple[dict[str, ob
         "agent": AGENT,
         "autonomy": "supervised",
         "isolation": "declared_worktree",
-        "oracle": {"contract_path": contract.relative_to(root).as_posix(), "contract_sha256": contract_value["contract_sha256"]},
+        "oracle": {
+            "contract_path": contract.relative_to(root).as_posix(),
+            "contract_sha256": contract_value["contract_sha256"],
+        },
         "workflow": _workflow(),
         "stages": [plan, build, verify],
         "handoffs": [
             _handoff("plan-to-build", plan, build, contract_value["contract_sha256"]),
-            _handoff("build-to-verify", build, verify, contract_value["contract_sha256"]),
+            _handoff(
+                "build-to-verify", build, verify, contract_value["contract_sha256"]
+            ),
         ],
     }
     return payload, contract
 
 
-def _import(root: Path, envelope: dict[str, object], *, filename: str = "atomic-envelope.json") -> dict[str, object]:
+def _import(
+    root: Path, envelope: dict[str, object], *, filename: str = "atomic-envelope.json"
+) -> dict[str, object]:
     path = _write(root / filename, envelope)
     return import_atomic_run(root, path.relative_to(root))
 
@@ -163,14 +274,29 @@ def test_template_gives_connected_agents_a_secret_free_handoff_shape() -> None:
     assert template["envelope_schema"] == "factory.atomic-run-envelope.v1"
     assert template["authority"] == {key: False for key in template["authority"]}
     assert set(template["envelope"]) == {
-        "schema", "envelope_id", "run_id", "status", "agent", "autonomy", "isolation",
-        "oracle", "workflow", "stages", "handoffs",
+        "schema",
+        "envelope_id",
+        "run_id",
+        "status",
+        "agent",
+        "autonomy",
+        "isolation",
+        "oracle",
+        "workflow",
+        "stages",
+        "handoffs",
     }
-    assert [stage["id"] for stage in template["envelope"]["stages"]] == ["plan", "build", "verify"]
+    assert [stage["id"] for stage in template["envelope"]["stages"]] == [
+        "plan",
+        "build",
+        "verify",
+    ]
     assert "credentials" in template["claim_boundary"]
 
 
-def test_import_binds_typed_dag_handoffs_checkpoints_and_read_only_projection(tmp_path: Path) -> None:
+def test_import_binds_typed_dag_handoffs_checkpoints_and_read_only_projection(
+    tmp_path: Path,
+) -> None:
     envelope, _ = _envelope(tmp_path)
     receipt = _import(tmp_path, envelope)
 
@@ -184,7 +310,9 @@ def test_import_binds_typed_dag_handoffs_checkpoints_and_read_only_projection(tm
     assert projection["latest"]["handoff_count"] == 2
 
 
-def test_import_rejects_private_fields_and_scope_escape_without_adapter_receipt(tmp_path: Path) -> None:
+def test_import_rejects_private_fields_and_scope_escape_without_adapter_receipt(
+    tmp_path: Path,
+) -> None:
     envelope, _ = _envelope(tmp_path)
     envelope["raw_prompt"] = "not allowed"
     with pytest.raises(AtomicProofAdapterError, match="unsupported") as raised:
@@ -200,20 +328,33 @@ def test_import_rejects_private_fields_and_scope_escape_without_adapter_receipt(
     assert not (tmp_path / ".factory" / "atomic").exists()
 
 
-def test_import_rejects_cyclic_or_unbound_workflow_evidence_without_receipt(tmp_path: Path) -> None:
+def test_import_rejects_cyclic_or_unbound_workflow_evidence_without_receipt(
+    tmp_path: Path,
+) -> None:
     envelope, _ = _envelope(tmp_path)
     workflow = envelope["workflow"]
     workflow["edges"].append({"from": "verify", "to": "plan"})
-    workflow["topology_sha256"] = _sha({"nodes": sorted(workflow["nodes"], key=lambda item: item["id"]), "edges": sorted(workflow["edges"], key=lambda item: (item["from"], item["to"]))})
+    workflow["topology_sha256"] = _sha(
+        {
+            "nodes": sorted(workflow["nodes"], key=lambda item: item["id"]),
+            "edges": sorted(
+                workflow["edges"], key=lambda item: (item["from"], item["to"])
+            ),
+        }
+    )
     with pytest.raises(AtomicProofAdapterError) as raised:
         _import(tmp_path, envelope)
     assert raised.value.code == "E_ATOMIC_EVIDENCE_UNVERIFIED"
     assert not (tmp_path / ".factory" / "atomic").exists()
 
 
-def test_import_rejects_source_precondition_that_does_not_match_workspace_bytes(tmp_path: Path) -> None:
+def test_import_rejects_source_precondition_that_does_not_match_workspace_bytes(
+    tmp_path: Path,
+) -> None:
     envelope, _ = _envelope(tmp_path)
-    (tmp_path / "src" / "checkout.py").write_text("def checkout(order):\n    return True\n", encoding="utf-8", newline="\n")
+    (tmp_path / "src" / "checkout.py").write_text(
+        "def checkout(order):\n    return True\n", encoding="utf-8", newline="\n"
+    )
     with pytest.raises(AtomicProofAdapterError) as raised:
         _import(tmp_path, envelope)
     assert raised.value.code == "E_ATOMIC_EVIDENCE_UNVERIFIED"
@@ -237,7 +378,9 @@ def test_import_rejects_handoff_drift_and_history_drift(tmp_path: Path) -> None:
     assert raised.value.code == "E_ATOMIC_HANDOFF_DRIFT"
 
 
-def test_import_requires_hash_equal_checkpoint_for_human_reviewed_resume(tmp_path: Path) -> None:
+def test_import_requires_hash_equal_checkpoint_for_human_reviewed_resume(
+    tmp_path: Path,
+) -> None:
     first, _ = _envelope(tmp_path, run_id="atomic-run-1")
     first_receipt = _import(tmp_path, first, filename="first.json")
     resumed, _ = _envelope(tmp_path, run_id="atomic-run-2")
@@ -260,22 +403,34 @@ def test_import_requires_hash_equal_checkpoint_for_human_reviewed_resume(tmp_pat
     assert raised.value.code == "E_ATOMIC_RESUME_DIVERGENCE"
 
 
-def test_import_rejects_resume_when_a_checkpoint_moves_to_a_different_stage(tmp_path: Path) -> None:
+def test_import_rejects_resume_when_a_checkpoint_moves_to_a_different_stage(
+    tmp_path: Path,
+) -> None:
     first, _ = _envelope(tmp_path, run_id="atomic-run-1")
     first_receipt = _import(tmp_path, first, filename="first.json")
     resumed, _ = _envelope(tmp_path, run_id="atomic-run-2")
     prior_plan = next(stage for stage in first["stages"] if stage["id"] == "plan")
     current_plan = next(stage for stage in resumed["stages"] if stage["id"] == "plan")
     current_build = next(stage for stage in resumed["stages"] if stage["id"] == "build")
-    current_plan["checkpoint"] = {"id": "checkpoint-replaced-plan", "sha256": _digest("checkpoint-replaced-plan")}
+    current_plan["checkpoint"] = {
+        "id": "checkpoint-replaced-plan",
+        "sha256": _digest("checkpoint-replaced-plan"),
+    }
     current_build["checkpoint"] = copy.deepcopy(prior_plan["checkpoint"])
-    resumed["resume"] = {"prior_receipt": first_receipt["path"], "prior_run_id": "atomic-run-1", "checkpoint_id": prior_plan["checkpoint"]["id"], "checkpoint_sha256": prior_plan["checkpoint"]["sha256"]}
+    resumed["resume"] = {
+        "prior_receipt": first_receipt["path"],
+        "prior_run_id": "atomic-run-1",
+        "checkpoint_id": prior_plan["checkpoint"]["id"],
+        "checkpoint_sha256": prior_plan["checkpoint"]["sha256"],
+    }
     with pytest.raises(AtomicProofAdapterError) as raised:
         _import(tmp_path, resumed, filename="moved-stage.json")
     assert raised.value.code == "E_ATOMIC_RESUME_DIVERGENCE"
 
 
-def test_import_fails_closed_when_atomic_history_exceeds_its_comparison_bound(tmp_path: Path) -> None:
+def test_import_fails_closed_when_atomic_history_exceeds_its_comparison_bound(
+    tmp_path: Path,
+) -> None:
     envelope, _ = _envelope(tmp_path)
     history = tmp_path / ".factory" / "atomic"
     history.mkdir(parents=True)
@@ -287,7 +442,9 @@ def test_import_fails_closed_when_atomic_history_exceeds_its_comparison_bound(tm
 
 
 def test_adapter_has_no_runtime_or_network_dependency(tmp_path: Path) -> None:
-    source = (Path(__file__).parents[1] / "factoryline" / "atomic_proof_adapter.py").read_text(encoding="utf-8")
+    source = (
+        Path(__file__).parents[1] / "factoryline" / "atomic_proof_adapter.py"
+    ).read_text(encoding="utf-8")
     assert "import subprocess" not in source
     assert "import requests" not in source
     assert "import httpx" not in source
@@ -295,12 +452,27 @@ def test_adapter_has_no_runtime_or_network_dependency(tmp_path: Path) -> None:
     assert atomic_proof_projection(tmp_path)["receipt_count"] == 0
 
 
-def test_cli_and_graph_ops_expose_atomic_facts_without_an_execution_surface(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_and_graph_ops_expose_atomic_facts_without_an_execution_surface(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     envelope, _ = _envelope(tmp_path)
     source = _write(tmp_path / "atomic-envelope.json", envelope)
     from factoryline.cli import main
 
-    assert main(["atomic", "import", "--root", str(tmp_path), "--envelope", source.relative_to(tmp_path).as_posix(), "--json"]) == 0
+    assert (
+        main(
+            [
+                "atomic",
+                "import",
+                "--root",
+                str(tmp_path),
+                "--envelope",
+                source.relative_to(tmp_path).as_posix(),
+                "--json",
+            ]
+        )
+        == 0
+    )
     imported = json.loads(capsys.readouterr().out)
     assert imported["marker"] == BOUND_MARKER
     assert main(["atomic", "status", "--root", str(tmp_path), "--json"]) == 0
@@ -309,5 +481,17 @@ def test_cli_and_graph_ops_expose_atomic_facts_without_an_execution_surface(tmp_
     graph = graph_ops_snapshot(tmp_path)
     assert graph["facts"]["atomic_bound_count"] == 1
     assert "GRAPH_OPS_ATOMIC_PROOF_ADAPTER_READ_ONLY" in graph["markers"]
-    assert {node["kind"] for node in graph["nodes"]} >= {"atomic_contract", "atomic_workflow", "atomic_run", "atomic_stage", "atomic_handoff"}
-    assert all(value is False for value in graph["atomic_proof_adapter"].get("authority", {}).values()) or graph["atomic_proof_adapter"]["invalid_count"] == 0
+    assert {node["kind"] for node in graph["nodes"]} >= {
+        "atomic_contract",
+        "atomic_workflow",
+        "atomic_run",
+        "atomic_stage",
+        "atomic_handoff",
+    }
+    assert (
+        all(
+            value is False
+            for value in graph["atomic_proof_adapter"].get("authority", {}).values()
+        )
+        or graph["atomic_proof_adapter"]["invalid_count"] == 0
+    )

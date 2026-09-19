@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.46.6 - 2026-09-19
+
+- Add a deterministic agentic-control drift detector that compares a sealed
+  control projection with the current projection, classifies every change, and
+  fails closed on authority escalation, schema changes, feature removal,
+  disabled assurance, and weakened blocking policy.
+- Add a hash-bound drift receipt and verifier with explicit `CLEAR`,
+  `REVIEW_REQUIRED`, and `BLOCKED` outcomes plus a bounded CLI path for
+  baseline/current projections and offline verification.
+- Renew the architecture-health acceptance with exact measured metrics and an
+  expiry-bound human owner instead of hiding the known monolith and surface
+  debt.
+- Pattern review against Alibaba OpenCodeReview confirmed that CF should reuse
+  its existing resumable evidence and signed supply-chain paths rather than
+  duplicate them; the new detector closes the remaining control-plane drift
+  gap.
+
 ## 0.46.4 - 2026-09-09
 
 - Make the public Code Factory performance story concrete: explain how

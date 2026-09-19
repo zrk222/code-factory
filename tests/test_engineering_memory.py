@@ -15,15 +15,26 @@ def setup(root, promote=True, name="one"):
     evidence.write_text('{"observed":"failed-repair"}')
     store = ContinuityStore(root / ".factory/continuity.sqlite3")
     payload = _record()
-    payload["evidence_refs"] = ["sha256:" + hashlib.sha256(evidence.read_bytes()).hexdigest() + ":proof.json"]
-    store.record(_principal("writer", ("writer",)), payload, idempotency_key=name, record_id=name)
+    payload["evidence_refs"] = [
+        "sha256:" + hashlib.sha256(evidence.read_bytes()).hexdigest() + ":proof.json"
+    ]
+    store.record(
+        _principal("writer", ("writer",)), payload, idempotency_key=name, record_id=name
+    )
     if promote:
-        store.promote(_principal("reviewer", ("promoter",)), "tenant-a", name, reason="reviewed evidence")
+        store.promote(
+            _principal("reviewer", ("promoter",)),
+            "tenant-a",
+            name,
+            reason="reviewed evidence",
+        )
     return store
 
 
 def recall(root, scope=SCOPE):
-    return recall_engineering_memory(root, _principal("reader", ("reader",)), "tenant-a", PURPOSE, scope)
+    return recall_engineering_memory(
+        root, _principal("reader", ("reader",)), "tenant-a", PURPOSE, scope
+    )
 
 
 def test_admits_promoted_bound_metadata_and_deterministic_influence(tmp_path):
@@ -58,28 +69,54 @@ def test_withdrawal_is_audited_and_excluded(tmp_path, status):
     if status == "superseded":
         setup(tmp_path, name="two")
         replacement = "two"
-    store.withdraw(_principal("reviewer", ("promoter",)), "tenant-a", "one", status=status, reason="new evidence", replacement_id=replacement)
+    store.withdraw(
+        _principal("reviewer", ("promoter",)),
+        "tenant-a",
+        "one",
+        status=status,
+        reason="new evidence",
+        replacement_id=replacement,
+    )
     assert all(item["record_id"] != "one" for item in recall(tmp_path)["records"])
-    assert store.verify_audit(_principal("reader", ("reader",)), "tenant-a", purpose_ref=PURPOSE)["valid"]
+    assert store.verify_audit(
+        _principal("reader", ("reader",)), "tenant-a", purpose_ref=PURPOSE
+    )["valid"]
     # A row-only restoration must not override a withdrawal event.
     with sqlite3.connect(store.path) as db:
-        db.execute("UPDATE continuity_records SET status='verified' WHERE record_id='one'")
+        db.execute(
+            "UPDATE continuity_records SET status='verified' WHERE record_id='one'"
+        )
     assert all(item["record_id"] != "one" for item in recall(tmp_path)["records"])
 
 
 def test_self_withdrawal_and_invalid_replacement_rejected(tmp_path):
     store = setup(tmp_path)
     with pytest.raises(ContinuityError, match="creator"):
-        store.withdraw(_principal("writer", ("promoter",)), "tenant-a", "one", status="revoked", reason="hide")
+        store.withdraw(
+            _principal("writer", ("promoter",)),
+            "tenant-a",
+            "one",
+            status="revoked",
+            reason="hide",
+        )
     with pytest.raises(ContinuityError):
-        store.withdraw(_principal("reviewer", ("promoter",)), "tenant-a", "one", status="superseded", reason="new", replacement_id="one")
+        store.withdraw(
+            _principal("reviewer", ("promoter",)),
+            "tenant-a",
+            "one",
+            status="superseded",
+            reason="new",
+            replacement_id="one",
+        )
     assert len(recall(tmp_path)["records"]) == 1
 
 
 def test_tenant_and_audit_fail_closed(tmp_path):
     store = setup(tmp_path)
     with pytest.raises(ContinuityError):
-        recall_engineering_memory(tmp_path, _principal("reader", ("reader",)), "other", PURPOSE, SCOPE)
+        recall_engineering_memory(
+            tmp_path, _principal("reader", ("reader",)), "other", PURPOSE, SCOPE
+        )
     with sqlite3.connect(store.path) as db:
         db.execute("UPDATE continuity_audit_events SET event_hash='bad'")
     with pytest.raises(ContinuityError, match="chain changed"):
@@ -88,24 +125,51 @@ def test_tenant_and_audit_fail_closed(tmp_path):
 
 def test_cli_recall(tmp_path, capsys):
     setup(tmp_path)
-    assert main(["evidence-memory", "--root", str(tmp_path), "--tenant", "tenant-a", "--subject", "reader", "--purpose", PURPOSE, "--scope", SCOPE]) == 0
+    assert (
+        main(
+            [
+                "evidence-memory",
+                "--root",
+                str(tmp_path),
+                "--tenant",
+                "tenant-a",
+                "--subject",
+                "reader",
+                "--purpose",
+                PURPOSE,
+                "--scope",
+                SCOPE,
+            ]
+        )
+        == 0
+    )
     assert len(json.loads(capsys.readouterr().out)["records"]) == 1
 
 
 def test_expiry_blocks_influence(tmp_path, monkeypatch):
     setup(tmp_path)
-    monkeypatch.setattr("factoryline.engineering_memory._is_expired", lambda value: True)
+    monkeypatch.setattr(
+        "factoryline.engineering_memory._is_expired", lambda value: True
+    )
     result = recall(tmp_path)
     assert result["records"] == [] and result["influence_edges"] == []
 
 
 def test_failed_audit_write_rolls_back_withdrawal(tmp_path, monkeypatch):
     store = setup(tmp_path)
+
     def fail(*args, **kwargs):
         raise RuntimeError("simulated audit failure")
+
     monkeypatch.setattr(store, "_audit", fail)
     with pytest.raises(RuntimeError):
-        store.withdraw(_principal("reviewer", ("promoter",)), "tenant-a", "one", status="revoked", reason="review")
+        store.withdraw(
+            _principal("reviewer", ("promoter",)),
+            "tenant-a",
+            "one",
+            status="revoked",
+            reason="review",
+        )
     assert len(recall(tmp_path)["records"]) == 1
 
 

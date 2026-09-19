@@ -49,6 +49,7 @@ Every module, when driven through factoryline, emits a receipt with at least:
 The `meter` block is what makes the time/token/savings story *real*: each module
 reports its own cost, factoryline aggregates. Numbers are measured, never invented.
 """
+
 from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -61,32 +62,62 @@ from .protocol import RECEIPT_SCHEMA, package_version
 
 # Canonical subdirectories of a factory root.
 LAYOUT = {
-    "specs": "specs", "plans": "plans", "handoff": "handoff", "slices": "slices",
-    "smoke": "smoke", "registry": "registry", "receipts": "receipts", "state": ".factory",
+    "specs": "specs",
+    "plans": "plans",
+    "handoff": "handoff",
+    "slices": "slices",
+    "smoke": "smoke",
+    "registry": "registry",
+    "receipts": "receipts",
+    "state": ".factory",
 }
 
 # The ordered assembly stages and which module owns each.
 STAGES = [
-    ("specline", "new",     "scaffold a spec + plan for the feature"),
-    ("specline", "strict",  "reject ambiguity before the coder (input contract)"),
-    ("specline", "verify-validators", "prove strict validators kill requirement mutants"),
-    ("specline", "gate",    "seal the spec/plan gate"),
-    ("specline", "tasks",   "emit task packets for agents"),
+    ("specline", "new", "scaffold a spec + plan for the feature"),
+    ("specline", "strict", "reject ambiguity before the coder (input contract)"),
+    (
+        "specline",
+        "verify-validators",
+        "prove strict validators kill requirement mutants",
+    ),
+    ("specline", "gate", "seal the spec/plan gate"),
+    ("specline", "tasks", "emit task packets for agents"),
     ("forgeline", "architect", "SSAT / architecture-as-code"),
-    ("forgeline", "review",  "judge + adversary + QA audit"),
+    ("forgeline", "review", "judge + adversary + QA audit"),
     ("forgeline", "arch-gate", "architecture CI gate"),
-    ("forgeline", "verify-tests", "prove behavioral smoke checks fail on the SSAT scaffold"),
-    ("forgeline", "smoke",   "runtime behavior verification"),
-    ("prestige",  "score",   "design-quality gate (only if UI in scope)"),
-    ("hsf",       "compile", "compile decision table → deterministic artifact"),
-    ("forgeline", "ship",    "final ship with intent traceability"),
+    (
+        "forgeline",
+        "verify-tests",
+        "prove behavioral smoke checks fail on the SSAT scaffold",
+    ),
+    ("forgeline", "smoke", "runtime behavior verification"),
+    ("prestige", "score", "design-quality gate (only if UI in scope)"),
+    ("hsf", "compile", "compile decision table → deterministic artifact"),
+    ("forgeline", "ship", "final ship with intent traceability"),
 ]
 
 MODULES = {
-    "specline":  {"cli": "specline", "pip": "code-factory-1-spec",   "role": "spec integrity + anti-drift input contract"},
-    "forgeline": {"cli": "forge",    "pip": "code-factory-2-forge",  "role": "agentic SDLC state machine + gates + smoke"},
-    "hsf":       {"cli": "hsf",      "pip": "code-factory-3-compile","role": "compile-once deterministic decision artifacts"},
-    "prestige":  {"cli": "prestige", "pip": "code-factory-4-design", "role": "design-quality scoring gate for UI"},
+    "specline": {
+        "cli": "specline",
+        "pip": "code-factory-1-spec",
+        "role": "spec integrity + anti-drift input contract",
+    },
+    "forgeline": {
+        "cli": "forge",
+        "pip": "code-factory-2-forge",
+        "role": "agentic SDLC state machine + gates + smoke",
+    },
+    "hsf": {
+        "cli": "hsf",
+        "pip": "code-factory-3-compile",
+        "role": "compile-once deterministic decision artifacts",
+    },
+    "prestige": {
+        "cli": "prestige",
+        "pip": "code-factory-4-design",
+        "role": "design-quality scoring gate for UI",
+    },
 }
 
 
@@ -99,10 +130,12 @@ class Meter:
 
     def merge(self, other: "Meter") -> "Meter":
         """Return a new meter whose counters are the sums of both observations."""
-        return Meter(self.wall_ms + other.wall_ms,
-                     self.model_calls + other.model_calls,
-                     self.tokens_in + other.tokens_in,
-                     self.tokens_out + other.tokens_out)
+        return Meter(
+            self.wall_ms + other.wall_ms,
+            self.model_calls + other.model_calls,
+            self.tokens_in + other.tokens_in,
+            self.tokens_out + other.tokens_out,
+        )
 
 
 @dataclass
@@ -119,7 +152,9 @@ class Receipt:
     outputs: dict = field(default_factory=dict)
     meter: Meter = field(default_factory=Meter)
     attribution: dict | None = None
-    ts: str = field(default_factory=lambda: _dt.datetime.now(_dt.timezone.utc).isoformat())
+    ts: str = field(
+        default_factory=lambda: _dt.datetime.now(_dt.timezone.utc).isoformat()
+    )
 
     def write(self, root: Path) -> Path:
         """Write this receipt into the standard layout and return its final path."""
@@ -130,6 +165,22 @@ class Receipt:
             self.producer_version = package_version(package)
         p = d / f"{self.module}-{self.feature}-{self.stage}-{self.run_id[:12]}.json"
         payload = asdict(self)
+        # Bind every standard receipt to the producing package/build.  The
+        # source commit may be null for a dirty checkout; that uncertainty is
+        # explicit and must not be upgraded into release provenance.
+        try:
+            from .provenance import provenance
+
+            payload["provenance"] = provenance()
+        except Exception:
+            payload["provenance"] = {
+                "schema": "factoryline.provenance.v1",
+                "package": "factoryline-code-factory",
+                "version": self.producer_version,
+                "source_commit": None,
+                "build_hash": None,
+                "identity_complete": False,
+            }
         p.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         return p
 
@@ -162,10 +213,18 @@ class Receipt:
             raise ValueError(f"receipt schema must be {RECEIPT_SCHEMA}")
         for field_name in ("tenant_id", "run_id"):
             value = payload.get(field_name)
-            if not isinstance(value, str) or not value.strip() or len(value.strip()) > 256:
-                raise ValueError(f"receipt {field_name} must be a non-empty bounded string")
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value.strip()) > 256
+            ):
+                raise ValueError(
+                    f"receipt {field_name} must be a non-empty bounded string"
+                )
         producer_version = payload.get("producer_version")
-        if producer_version is not None and (not isinstance(producer_version, str) or len(producer_version.strip()) > 128):
+        if producer_version is not None and (
+            not isinstance(producer_version, str) or len(producer_version.strip()) > 128
+        ):
             raise ValueError("receipt producer_version must be a bounded string")
         for field_name in ("inputs", "outputs"):
             value = payload.get(field_name)
@@ -174,9 +233,15 @@ class Receipt:
         attribution = payload.get("attribution")
         if attribution is not None:
             from .attribution import Attribution
+
             Attribution.from_dict(attribution)
         meter = payload.get("meter", {})
-        if not isinstance(meter, dict) or set(meter) - {"wall_ms", "model_calls", "tokens_in", "tokens_out"}:
+        if not isinstance(meter, dict) or set(meter) - {
+            "wall_ms",
+            "model_calls",
+            "tokens_in",
+            "tokens_out",
+        }:
             raise ValueError("receipt meter must contain only known counters")
         counters: dict[str, int] = {}
         for name in ("wall_ms", "model_calls", "tokens_in", "tokens_out"):
@@ -186,7 +251,11 @@ class Receipt:
             counters[name] = value
         meter = Meter(**counters)
         timestamp = payload.get("ts")
-        if not isinstance(timestamp, str) or not timestamp.strip() or len(timestamp) > 128:
+        if (
+            not isinstance(timestamp, str)
+            or not timestamp.strip()
+            or len(timestamp) > 128
+        ):
             raise ValueError("receipt ts must be a bounded ISO-8601 string")
         try:
             _dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
@@ -199,7 +268,9 @@ class Receipt:
             ok=payload["ok"],
             tenant_id=payload["tenant_id"].strip(),
             schema=payload["schema"],
-            producer_version=producer_version.strip() if isinstance(producer_version, str) else producer_version,
+            producer_version=producer_version.strip()
+            if isinstance(producer_version, str)
+            else producer_version,
             run_id=payload["run_id"].strip(),
             inputs=payload["inputs"],
             outputs=payload["outputs"],
@@ -218,4 +289,8 @@ def ensure_layout(root: Path) -> None:
 
 def sha_of(path: Path) -> str:
     """Return a short SHA-256 digest for an existing file, or empty text if absent."""
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16] if Path(path).exists() else ""
+    return (
+        hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+        if Path(path).exists()
+        else ""
+    )

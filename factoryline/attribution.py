@@ -1,4 +1,5 @@
 """Deterministic, build-time failure attribution shared by factory modules."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -117,4 +118,9 @@ class Attribution:
 def attribution(stage: str, units: Iterable[UnitResult]) -> Attribution:
     """Materialize unit results and compute checked and passing counts."""
     materialized = list(units)
-    return Attribution(stage, len(materialized), sum(unit.passed for unit in materialized), materialized)
+    return Attribution(
+        stage,
+        len(materialized),
+        sum(unit.passed for unit in materialized),
+        materialized,
+    )

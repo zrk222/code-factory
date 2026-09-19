@@ -3,6 +3,7 @@
 These exercise `_cdte_gate` directly. Without them the gate's import and regex
 paths are never executed by the suite, and a NameError would ship silently.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,11 +20,28 @@ def _write(root, feature, constraints):
 
 
 CONFLICTING = [
-    {"constraintId": "c-001", "category": "performance", "metric": "p95_latency_ms", "value": 50, "operator": "lt"},
-    {"constraintId": "c-002", "category": "security", "metric": "field_level_encryption", "value": "aes-256"},
+    {
+        "constraintId": "c-001",
+        "category": "performance",
+        "metric": "p95_latency_ms",
+        "value": 50,
+        "operator": "lt",
+    },
+    {
+        "constraintId": "c-002",
+        "category": "security",
+        "metric": "field_level_encryption",
+        "value": "aes-256",
+    },
 ]
 CLEAN = [
-    {"constraintId": "c-001", "category": "scalability", "metric": "max_websocket_sessions", "value": 5000, "operator": "gte"},
+    {
+        "constraintId": "c-001",
+        "category": "scalability",
+        "metric": "max_websocket_sessions",
+        "value": 5000,
+        "operator": "gte",
+    },
 ]
 
 

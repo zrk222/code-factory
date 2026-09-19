@@ -1,4 +1,5 @@
 """Offline signer, binding, and freshness checks for deep-audit evidence."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -8,7 +9,13 @@ from typing import Any
 from .deep_audit import _read_receipt
 from .deep_audit_io import local_file
 from .enterprise_receipts import EnterpriseReceiptError, verify_signed_document
-from .runtime_audit_common import RuntimeAuditError, require_bool, require_digest, require_int, require_str
+from .runtime_audit_common import (
+    RuntimeAuditError,
+    require_bool,
+    require_digest,
+    require_int,
+    require_str,
+)
 
 SCHEMA = "factory.deep-audit-attestation.v1"
 PAYLOAD_TYPE = "application/vnd.factory.deep-audit-attestation.v1+json"
@@ -58,7 +65,9 @@ def _digest(value: object, field: str) -> str:
     try:
         return require_digest(value, field)
     except RuntimeAuditError as exc:
-        _fail("E_DEEP_ATTESTATION_BINDING", f"{field} is not a lowercase SHA-256 digest")
+        _fail(
+            "E_DEEP_ATTESTATION_BINDING", f"{field} is not a lowercase SHA-256 digest"
+        )
         raise AssertionError from exc
 
 
@@ -90,17 +99,33 @@ def _instant(value: object, field: str) -> datetime:
 
 def _verified_document(path: Path, trust_root: Path) -> dict[str, Any]:
     try:
-        return verify_signed_document(path, payload_type=PAYLOAD_TYPE, schema=SCHEMA, trust_root_path=trust_root)
+        return verify_signed_document(
+            path, payload_type=PAYLOAD_TYPE, schema=SCHEMA, trust_root_path=trust_root
+        )
     except EnterpriseReceiptError as exc:
-        _fail("E_DEEP_ATTESTATION_SIGNATURE", f"offline DSSE verification failed ({exc.code})")
+        _fail(
+            "E_DEEP_ATTESTATION_SIGNATURE",
+            f"offline DSSE verification failed ({exc.code})",
+        )
         raise AssertionError from exc
 
 
-def _validate_payload(payload: dict[str, Any], receipt: dict[str, Any], claimed_receipt: str) -> tuple[dict, dict, datetime, datetime]:
+def _validate_payload(
+    payload: dict[str, Any], receipt: dict[str, Any], claimed_receipt: str
+) -> tuple[dict, dict, datetime, datetime]:
     required = {
-        "schema", "attestation_id", "receipt_sha256", "plan_sha256", "candidate_sha256",
-        "ruleset_sha256", "canary_set_sha256", "issued_at", "expires_at", "verifier",
-        "observations", "authority",
+        "schema",
+        "attestation_id",
+        "receipt_sha256",
+        "plan_sha256",
+        "candidate_sha256",
+        "ruleset_sha256",
+        "canary_set_sha256",
+        "issued_at",
+        "expires_at",
+        "verifier",
+        "observations",
+        "authority",
     }
     _exact(payload, required, "payload")
     if payload["schema"] != SCHEMA:
@@ -116,7 +141,9 @@ def _validate_payload(payload: dict[str, Any], receipt: dict[str, Any], claimed_
         ("canary_set_sha256", receipt["canary_set_sha256"]),
     ):
         if _digest(payload[field], field) != _digest(expected, f"receipt.{field}"):
-            _fail("E_DEEP_ATTESTATION_BINDING", f"{field} differs from the signed receipt")
+            _fail(
+                "E_DEEP_ATTESTATION_BINDING", f"{field} differs from the signed receipt"
+            )
 
     verifier = _exact(payload["verifier"], {"id", "version", "independent"}, "verifier")
     verifier_id = _text(verifier["id"], "verifier.id")
@@ -127,32 +154,60 @@ def _validate_payload(payload: dict[str, Any], receipt: dict[str, Any], claimed_
         _fail("E_DEEP_ATTESTATION_INDEPENDENCE", "verifier.independent must be true")
         raise AssertionError from exc
     if not independent or verifier_id in set(receipt["report_hashes"]):
-        _fail("E_DEEP_ATTESTATION_INDEPENDENCE", "verifier must be independent of every analyzer")
+        _fail(
+            "E_DEEP_ATTESTATION_INDEPENDENCE",
+            "verifier must be independent of every analyzer",
+        )
 
-    observations = _exact(payload["observations"], {"report_hashes", "canary_hashes"}, "observations")
+    observations = _exact(
+        payload["observations"], {"report_hashes", "canary_hashes"}, "observations"
+    )
     for field in ("report_hashes", "canary_hashes"):
         observed = observations[field]
         expected = receipt[field]
         if not isinstance(observed, dict) or not 1 <= len(observed) <= 8:
             _fail("E_DEEP_ATTESTATION_BINDING", f"{field} coverage is incomplete")
         if set(observed) != set(expected):
-            _fail("E_DEEP_ATTESTATION_BINDING", f"{field} coverage differs from the receipt")
+            _fail(
+                "E_DEEP_ATTESTATION_BINDING",
+                f"{field} coverage differs from the receipt",
+            )
         for key, value in observed.items():
             _text(key, f"{field} analyzer id")
-            if _digest(value, f"{field}.{key}") != _digest(expected[key], f"receipt.{field}.{key}"):
-                _fail("E_DEEP_ATTESTATION_BINDING", f"{field}.{key} differs from the receipt")
+            if _digest(value, f"{field}.{key}") != _digest(
+                expected[key], f"receipt.{field}.{key}"
+            ):
+                _fail(
+                    "E_DEEP_ATTESTATION_BINDING",
+                    f"{field}.{key} differs from the receipt",
+                )
 
-    return verifier, observations, _instant(payload["issued_at"], "issued_at"), _instant(payload["expires_at"], "expires_at")
+    return (
+        verifier,
+        observations,
+        _instant(payload["issued_at"], "issued_at"),
+        _instant(payload["expires_at"], "expires_at"),
+    )
 
 
-def _freshness(issued: datetime, expires: datetime, now: datetime | None, max_age_seconds: int) -> dict[str, Any]:
+def _freshness(
+    issued: datetime, expires: datetime, now: datetime | None, max_age_seconds: int
+) -> dict[str, Any]:
     try:
-        max_age = require_int(max_age_seconds, "max_age_seconds", minimum=1, maximum=MAX_VALIDITY_SECONDS)
+        max_age = require_int(
+            max_age_seconds, "max_age_seconds", minimum=1, maximum=MAX_VALIDITY_SECONDS
+        )
     except RuntimeAuditError as exc:
-        _fail("E_DEEP_ATTESTATION_FRESHNESS", "max_age_seconds is outside the bounded window")
+        _fail(
+            "E_DEEP_ATTESTATION_FRESHNESS",
+            "max_age_seconds is outside the bounded window",
+        )
         raise AssertionError from exc
     if expires <= issued or (expires - issued).total_seconds() > MAX_VALIDITY_SECONDS:
-        _fail("E_DEEP_ATTESTATION_FRESHNESS", "attestation validity exceeds the 24-hour bound")
+        _fail(
+            "E_DEEP_ATTESTATION_FRESHNESS",
+            "attestation validity exceeds the 24-hour bound",
+        )
     actual = datetime.now(timezone.utc)
     supplied = actual if now is None else now
     if not isinstance(supplied, datetime):
@@ -164,8 +219,16 @@ def _freshness(issued: datetime, expires: datetime, now: datetime | None, max_ag
         _fail("E_DEEP_ATTESTATION_FRESHNESS", "attestation is future-dated or expired")
     age = (current - issued).total_seconds()
     if age > max_age:
-        _fail("E_DEEP_ATTESTATION_FRESHNESS", "attestation is older than the allowed observation age")
-    return {"issued_at": issued.isoformat(), "expires_at": expires.isoformat(), "age_seconds": int(age), "max_age_seconds": max_age}
+        _fail(
+            "E_DEEP_ATTESTATION_FRESHNESS",
+            "attestation is older than the allowed observation age",
+        )
+    return {
+        "issued_at": issued.isoformat(),
+        "expires_at": expires.isoformat(),
+        "age_seconds": int(age),
+        "max_age_seconds": max_age,
+    }
 
 
 def verify_deep_audit_attestation(
@@ -185,10 +248,15 @@ def verify_deep_audit_attestation(
     try:
         receipt, claimed_receipt, _ = _read_receipt(root, receipt_file)
     except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
-        _fail("E_DEEP_ATTESTATION_BINDING", "receipt is not a valid self-hash deep-audit receipt")
+        _fail(
+            "E_DEEP_ATTESTATION_BINDING",
+            "receipt is not a valid self-hash deep-audit receipt",
+        )
         raise AssertionError from exc
     verified = _verified_document(attestation, trust_root)
-    verifier, _, issued, expires = _validate_payload(verified["payload"], receipt, claimed_receipt)
+    verifier, _, issued, expires = _validate_payload(
+        verified["payload"], receipt, claimed_receipt
+    )
     freshness = _freshness(issued, expires, now, max_age_seconds)
     return {
         "schema": RESULT_SCHEMA,

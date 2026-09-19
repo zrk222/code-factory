@@ -5,6 +5,7 @@ validators.  It has no provider client, credential path, process execution, or
 repair authority.  In particular, a local block is never evidence that an
 external marketplace or provider rejected a release.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,7 +35,9 @@ AUTHORITY = {
 
 def _feature_id(value: object) -> str:
     if not isinstance(value, str) or _FEATURE.fullmatch(value) is None:
-        raise ValueError("feature must use 1-64 lowercase letters, digits, dots, underscores, or hyphens")
+        raise ValueError(
+            "feature must use 1-64 lowercase letters, digits, dots, underscores, or hyphens"
+        )
     return value
 
 
@@ -49,16 +52,30 @@ def _external_gates(integrity: dict[str, Any]) -> list[dict[str, str]]:
     ]
     if isinstance(requirements, list):
         rows.extend(
-            {"id": f"DECLARED_EXTERNAL_REQUIREMENT_{index:02d}", "state": "unobserved", "detail": str(requirement)}
+            {
+                "id": f"DECLARED_EXTERNAL_REQUIREMENT_{index:02d}",
+                "state": "unobserved",
+                "detail": str(requirement),
+            }
             for index, requirement in enumerate(requirements, start=1)
             if isinstance(requirement, str)
         )
     return rows
 
 
-def _base_card(workspace: Path, feature: str, integrity: dict[str, Any]) -> dict[str, Any]:
-    passed = [str(item.get("id")) for item in integrity.get("checks", []) if item.get("passed") is True]
-    failed = [str(item.get("id")) for item in integrity.get("checks", []) if item.get("passed") is False]
+def _base_card(
+    workspace: Path, feature: str, integrity: dict[str, Any]
+) -> dict[str, Any]:
+    passed = [
+        str(item.get("id"))
+        for item in integrity.get("checks", [])
+        if item.get("passed") is True
+    ]
+    failed = [
+        str(item.get("id"))
+        for item in integrity.get("checks", [])
+        if item.get("passed") is False
+    ]
     return {
         "schema": SCHEMA,
         "marker": MARKER,
@@ -81,7 +98,11 @@ def _base_card(workspace: Path, feature: str, integrity: dict[str, Any]) -> dict
 
 def _workflow_blockers(integrity: dict[str, Any]) -> list[dict[str, str]]:
     return [
-        {"source": "release_integrity", "code": str(item.get("id")), "detail": str(item.get("evidence", "workflow check failed"))}
+        {
+            "source": "release_integrity",
+            "code": str(item.get("id")),
+            "detail": str(item.get("evidence", "workflow check failed")),
+        }
         for item in integrity.get("checks", [])
         if item.get("passed") is False
     ]
@@ -109,21 +130,33 @@ def release_workflow_decision_projection(integrity: dict[str, Any]) -> dict[str,
             "not_applicable",
             "Release decision · no declared workflow",
         )
-        next_action, feature_required, source = "select_or_declare_release_workflow", False, None
+        next_action, feature_required, source = (
+            "select_or_declare_release_workflow",
+            False,
+            None,
+        )
     elif not workflow_ok:
         state, status, label = (
             "LOCAL_WORKFLOW_BLOCKED",
             "blocked",
             "Release decision · local workflow blocked",
         )
-        next_action, feature_required, source = "repair_release_workflow", False, ".github/workflows/publish.yml"
+        next_action, feature_required, source = (
+            "repair_release_workflow",
+            False,
+            ".github/workflows/publish.yml",
+        )
     else:
         state, status, label = (
             "FEATURE_DECISION_REQUIRED",
             "feature_required",
             "Release decision · choose feature",
         )
-        next_action, feature_required, source = "factory release decision <feature> --root . --json", True, ".github/workflows/publish.yml"
+        next_action, feature_required, source = (
+            "factory release decision <feature> --root . --json",
+            True,
+            ".github/workflows/publish.yml",
+        )
     return {
         "marker": "RELEASE_DECISION_GRAPH_READ_ONLY",
         "id": "release-decision:workflow",
@@ -175,46 +208,64 @@ def release_decision_card(root: Path, feature: str) -> dict[str, Any]:
     contract_path = workspace / ".factory" / "release-contracts" / f"{feature_id}.json"
 
     if integrity.get("ok") is not True:
-        card.update({
-            "state": "LOCAL_WORKFLOW_BLOCKED",
-            "classification": "local_workflow_failure",
-            "headline": "A declared local release-workflow boundary failed before feature evidence was evaluated.",
-            "explanation": "This is not a provider rejection. Repair the named local workflow boundary, then re-run the local decision card.",
-            "local_evidence": {
-                "evaluated": False,
-                "release_ready": None,
-                "contract_path": contract_path.relative_to(workspace).as_posix(),
-                "contract_marker": "NOT_EVALUATED",
-            },
-            "blockers": _workflow_blockers(integrity),
-            "next_action": _next_action("repair_release_workflow", "Static release workflow integrity is not OK."),
-        })
+        card.update(
+            {
+                "state": "LOCAL_WORKFLOW_BLOCKED",
+                "classification": "local_workflow_failure",
+                "headline": "A declared local release-workflow boundary failed before feature evidence was evaluated.",
+                "explanation": "This is not a provider rejection. Repair the named local workflow boundary, then re-run the local decision card.",
+                "local_evidence": {
+                    "evaluated": False,
+                    "release_ready": None,
+                    "contract_path": contract_path.relative_to(workspace).as_posix(),
+                    "contract_marker": "NOT_EVALUATED",
+                },
+                "blockers": _workflow_blockers(integrity),
+                "next_action": _next_action(
+                    "repair_release_workflow",
+                    "Static release workflow integrity is not OK.",
+                ),
+            }
+        )
         return card
 
     if not contract_path.is_file():
-        card.update({
-            "state": "LOCAL_EVIDENCE_MISSING",
-            "classification": "local_evidence_missing",
-            "headline": "No strict local release contract exists for this feature.",
-            "explanation": "This is not a provider rejection. Create or restore the exact Oracle-bound local release contract before requesting a release decision.",
-            "local_evidence": {
-                "evaluated": False,
-                "release_ready": False,
-                "contract_path": contract_path.relative_to(workspace).as_posix(),
-                "contract_marker": "RELEASE_CONTRACT_MISSING",
-            },
-            "blockers": [{
-                "source": "strict_release_verification",
-                "code": "RELEASE_CONTRACT_MISSING",
-                "detail": f"required local release contract is missing: {contract_path.relative_to(workspace).as_posix()}",
-            }],
-            "next_action": _next_action("create_or_restore_release_contract", "The strict local contract is absent."),
-        })
+        card.update(
+            {
+                "state": "LOCAL_EVIDENCE_MISSING",
+                "classification": "local_evidence_missing",
+                "headline": "No strict local release contract exists for this feature.",
+                "explanation": "This is not a provider rejection. Create or restore the exact Oracle-bound local release contract before requesting a release decision.",
+                "local_evidence": {
+                    "evaluated": False,
+                    "release_ready": False,
+                    "contract_path": contract_path.relative_to(workspace).as_posix(),
+                    "contract_marker": "RELEASE_CONTRACT_MISSING",
+                },
+                "blockers": [
+                    {
+                        "source": "strict_release_verification",
+                        "code": "RELEASE_CONTRACT_MISSING",
+                        "detail": f"required local release contract is missing: {contract_path.relative_to(workspace).as_posix()}",
+                    }
+                ],
+                "next_action": _next_action(
+                    "create_or_restore_release_contract",
+                    "The strict local contract is absent.",
+                ),
+            }
+        )
         return card
 
-    result = verify_feature(workspace, feature_id, strict_release=True, release_contract_path=contract_path)
+    result = verify_feature(
+        workspace, feature_id, strict_release=True, release_contract_path=contract_path
+    )
     release_contract = result.get("release_contract", {})
-    marker = str(release_contract.get("marker", "RELEASE_CONTRACT_INVALID")) if isinstance(release_contract, dict) else "RELEASE_CONTRACT_INVALID"
+    marker = (
+        str(release_contract.get("marker", "RELEASE_CONTRACT_INVALID"))
+        if isinstance(release_contract, dict)
+        else "RELEASE_CONTRACT_INVALID"
+    )
     local_evidence = {
         "evaluated": True,
         "release_ready": result.get("release_ready") is True,
@@ -226,31 +277,43 @@ def release_decision_card(root: Path, feature: str) -> dict[str, Any]:
     if result.get("release_ready") is not True:
         blockers = _verification_blockers(result)
         if not blockers:
-            blockers = [{
-                "source": "strict_release_verification",
-                "code": "LOCAL_RELEASE_NOT_READY",
-                "detail": "strict local verification returned release_ready=false without an individual blocker",
-            }]
-        card.update({
-            "state": "LOCAL_EVIDENCE_BLOCKED",
-            "classification": "local_evidence_failure",
-            "headline": "Strict local release evidence is incomplete, failed, stale, or not bound to its current policy.",
-            "explanation": "This is not a provider rejection. Repair the ordered local evidence blockers and re-run the strict verifier.",
-            "local_evidence": local_evidence,
-            "blockers": blockers,
-            "next_action": _next_action("repair_local_evidence_chain", str(result.get("next_action", "local evidence must be repaired"))),
-        })
+            blockers = [
+                {
+                    "source": "strict_release_verification",
+                    "code": "LOCAL_RELEASE_NOT_READY",
+                    "detail": "strict local verification returned release_ready=false without an individual blocker",
+                }
+            ]
+        card.update(
+            {
+                "state": "LOCAL_EVIDENCE_BLOCKED",
+                "classification": "local_evidence_failure",
+                "headline": "Strict local release evidence is incomplete, failed, stale, or not bound to its current policy.",
+                "explanation": "This is not a provider rejection. Repair the ordered local evidence blockers and re-run the strict verifier.",
+                "local_evidence": local_evidence,
+                "blockers": blockers,
+                "next_action": _next_action(
+                    "repair_local_evidence_chain",
+                    str(result.get("next_action", "local evidence must be repaired")),
+                ),
+            }
+        )
         return card
 
-    card.update({
-        "state": "EXTERNAL_GATES_UNOBSERVED",
-        "classification": "local_evidence_complete_external_state_unobserved",
-        "headline": "Declared local workflow and strict feature evidence pass; external provider state remains unobserved.",
-        "explanation": "No provider was contacted. This is not a publication, processing, deployment, or approval claim.",
-        "local_evidence": local_evidence,
-        "blockers": [],
-        "next_action": _next_action("review_external_publish_gates", "A named human must inspect each external provider gate separately."),
-    })
+    card.update(
+        {
+            "state": "EXTERNAL_GATES_UNOBSERVED",
+            "classification": "local_evidence_complete_external_state_unobserved",
+            "headline": "Declared local workflow and strict feature evidence pass; external provider state remains unobserved.",
+            "explanation": "No provider was contacted. This is not a publication, processing, deployment, or approval claim.",
+            "local_evidence": local_evidence,
+            "blockers": [],
+            "next_action": _next_action(
+                "review_external_publish_gates",
+                "A named human must inspect each external provider gate separately.",
+            ),
+        }
+    )
     return card
 
 
@@ -262,5 +325,7 @@ def render_release_decision_card(card: dict[str, Any]) -> str:
         lines.append(f"- {blocker['source']} {blocker['code']}: {blocker['detail']}")
     lines.append(f"next: {card['next_action']['action']}")
     lines.append("provider state: unobserved; no provider rejection is inferred")
-    lines.append("authority: no execution, approval, repair, merge, publication, deployment, signing, messaging, credential, or connector authority")
+    lines.append(
+        "authority: no execution, approval, repair, merge, publication, deployment, signing, messaging, credential, or connector authority"
+    )
     return "\n".join(lines)

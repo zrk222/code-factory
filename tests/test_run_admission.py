@@ -8,7 +8,11 @@ import pytest
 
 from factoryline.cli import main
 from factoryline.loop_passport import build_loop_passport, init_loop
-from factoryline.run_admission import AdmissionError, prepare_admission, verify_admission
+from factoryline.run_admission import (
+    AdmissionError,
+    prepare_admission,
+    verify_admission,
+)
 from test_intake_admission import _intake
 
 
@@ -19,16 +23,28 @@ def _passport(tmp_path: Path) -> Path:
 
 def _request(tmp_path: Path, *, action: str = "read_repository") -> Path:
     path = tmp_path / "request.json"
-    path.write_text(json.dumps({
-        "schema": "factory.run-admission.request.v1",
-        "id": "dependency-audit-run-1",
-        "valid_until": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
-        "trigger": {"type": "manual"},
-        "actions": [action],
-        "paths": ["."],
-        "budget": {"max_iterations": 1, "max_wall_seconds": 900, "max_tokens": 0, "max_cost_usd": 0},
-        "approvals": [],
-    }), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.run-admission.request.v1",
+                "id": "dependency-audit-run-1",
+                "valid_until": (
+                    datetime.now(timezone.utc) + timedelta(minutes=30)
+                ).isoformat(),
+                "trigger": {"type": "manual"},
+                "actions": [action],
+                "paths": ["."],
+                "budget": {
+                    "max_iterations": 1,
+                    "max_wall_seconds": 900,
+                    "max_tokens": 0,
+                    "max_cost_usd": 0,
+                },
+                "approvals": [],
+            }
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -37,14 +53,19 @@ def test_admission_seals_then_revalidates_without_external_authority(tmp_path: P
     verified = verify_admission(tmp_path, Path(packet["path"]))
 
     assert packet["verdict"] == "SEALED"
-    assert packet["markers"] == ["ADMISSION_PACKET_SEALED", "ADMISSION_EXTERNAL_EFFECTS_DENIED"]
+    assert packet["markers"] == [
+        "ADMISSION_PACKET_SEALED",
+        "ADMISSION_EXTERNAL_EFFECTS_DENIED",
+    ]
     assert verified["marker"] == "ADMISSION_READY"
     assert all(value is False for value in verified["authority"].values())
 
 
 def test_admission_rejects_undeclared_action_without_writing_packet(tmp_path: Path):
     with pytest.raises(AdmissionError) as raised:
-        prepare_admission(tmp_path, _passport(tmp_path), _request(tmp_path, action="publish"))
+        prepare_admission(
+            tmp_path, _passport(tmp_path), _request(tmp_path, action="publish")
+        )
 
     assert raised.value.code == "ADMISSION_ACTION_UNDECLARED"
     assert not (tmp_path / ".factory" / "admissions").exists()
@@ -62,10 +83,14 @@ def test_admission_becomes_stale_when_workspace_changes(tmp_path: Path):
     assert verified["reason"] == "workspace_or_graph_changed"
 
 
-def test_admission_rejects_expired_or_overlong_validity_before_writing_packet(tmp_path: Path):
+def test_admission_rejects_expired_or_overlong_validity_before_writing_packet(
+    tmp_path: Path,
+):
     request = _request(tmp_path)
     payload = json.loads(request.read_text(encoding="utf-8"))
-    payload["valid_until"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    payload["valid_until"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=1)
+    ).isoformat()
     request.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(AdmissionError) as raised:
@@ -90,9 +115,21 @@ def test_admission_blocks_a_tampered_packet_with_the_public_marker(tmp_path: Pat
 
 def test_admission_cli_seals_then_reports_a_ready_packet(tmp_path: Path, capsys):
     passport, request = _passport(tmp_path), _request(tmp_path)
-    code = main(["admission", "prepare", str(passport), str(request), "--root", str(tmp_path), "--json"])
+    code = main(
+        [
+            "admission",
+            "prepare",
+            str(passport),
+            str(request),
+            "--root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
     sealed = json.loads(capsys.readouterr().out)
-    verify_code = main(["admission", "verify", sealed["path"], "--root", str(tmp_path), "--json"])
+    verify_code = main(
+        ["admission", "verify", sealed["path"], "--root", str(tmp_path), "--json"]
+    )
     ready = json.loads(capsys.readouterr().out)
 
     assert code == 0
@@ -109,9 +146,17 @@ def test_strict_admission_binds_authoritative_intake_parameters(tmp_path: Path):
     request = _request(tmp_path)
     payload = json.loads(request.read_text(encoding="utf-8"))
     payload["paths"] = ["source.txt"]
-    payload["budget"] = {"max_iterations": 1, "max_wall_seconds": 100, "max_tokens": 0, "max_cost_usd": 0}
+    payload["budget"] = {
+        "max_iterations": 1,
+        "max_wall_seconds": 100,
+        "max_tokens": 0,
+        "max_cost_usd": 0,
+    }
     intake = json.loads(intake_path.read_text(encoding="utf-8"))
-    payload["intake_parameters"] = {"path": intake_path.relative_to(tmp_path).as_posix(), "parameter_sha256": intake["parameter_sha256"]}
+    payload["intake_parameters"] = {
+        "path": intake_path.relative_to(tmp_path).as_posix(),
+        "parameter_sha256": intake["parameter_sha256"],
+    }
     request.write_text(json.dumps(payload), encoding="utf-8")
 
     packet = prepare_admission(tmp_path, passport, request, require_intake=True)
@@ -122,7 +167,9 @@ def test_strict_admission_binds_authoritative_intake_parameters(tmp_path: Path):
 
 def test_strict_admission_rejects_missing_intake_binding(tmp_path: Path):
     with pytest.raises(AdmissionError) as raised:
-        prepare_admission(tmp_path, _passport(tmp_path), _request(tmp_path), require_intake=True)
+        prepare_admission(
+            tmp_path, _passport(tmp_path), _request(tmp_path), require_intake=True
+        )
     assert raised.value.code == "E_INTAKE_BINDING_REQUIRED"
 
 
@@ -137,9 +184,17 @@ def test_checkpoint_fix_is_bound_to_scope_patch_and_human_approval(tmp_path: Pat
     payload = json.loads(request.read_text(encoding="utf-8"))
     payload["actions"] = ["read_repository", "write_workspace"]
     payload["paths"] = ["source.txt"]
-    payload["budget"] = {"max_iterations": 1, "max_wall_seconds": 100, "max_tokens": 0, "max_cost_usd": 0}
+    payload["budget"] = {
+        "max_iterations": 1,
+        "max_wall_seconds": 100,
+        "max_tokens": 0,
+        "max_cost_usd": 0,
+    }
     intake = json.loads(intake_path.read_text(encoding="utf-8"))
-    payload["intake_parameters"] = {"path": intake_path.relative_to(tmp_path).as_posix(), "parameter_sha256": intake["parameter_sha256"]}
+    payload["intake_parameters"] = {
+        "path": intake_path.relative_to(tmp_path).as_posix(),
+        "parameter_sha256": intake["parameter_sha256"],
+    }
     payload["checkpoint_fix"] = {
         "checkpoint_id": "verify-1",
         "patch_path": "checkpoint.patch",

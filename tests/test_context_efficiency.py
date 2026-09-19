@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import pytest
 
@@ -21,7 +20,10 @@ def _request(paths=("README.md",), **overrides):
         "mission_id": "speed-slice",
         "contract_digest": "a" * 64,
         "changed_paths": list(paths),
-        "sources": [{"path": path, "role": "intent", "priority": 100 - index} for index, path in enumerate(paths)],
+        "sources": [
+            {"path": path, "role": "intent", "priority": 100 - index}
+            for index, path in enumerate(paths)
+        ],
         "max_tokens": 256,
         "per_file_tokens": 64,
     }
@@ -30,10 +32,15 @@ def _request(paths=("README.md",), **overrides):
 
 
 def test_packet_is_bounded_and_verifiable(tmp_path):
-    (tmp_path / "README.md").write_text("intent\n" + ("detail " * 1000), encoding="utf-8")
+    (tmp_path / "README.md").write_text(
+        "intent\n" + ("detail " * 1000), encoding="utf-8"
+    )
     packet = build_context_packet(tmp_path, _request())
     assert packet["budget"]["decision"] == "TRUNCATED"
-    assert packet["budget"]["token_quality"] == "estimated_from_utf8_bytes_not_provider_usage"
+    assert (
+        packet["budget"]["token_quality"]
+        == "estimated_from_utf8_bytes_not_provider_usage"
+    )
     assert packet["budget"]["selected_bytes"] <= packet["budget"]["max_bytes"]
     result = verify_context_packet(tmp_path, tmp_path / packet["cache"]["path"])
     assert result["valid"] is True
@@ -52,7 +59,15 @@ def test_secret_material_in_request_is_rejected(tmp_path):
         build_context_packet(tmp_path, _request(token="do-not-accept"))
 
 
-@pytest.mark.parametrize("field,value", [("max_tokens", 255), ("max_tokens", 12001), ("per_file_tokens", 31), ("per_file_tokens", 2001)])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("max_tokens", 255),
+        ("max_tokens", 12001),
+        ("per_file_tokens", 31),
+        ("per_file_tokens", 2001),
+    ],
+)
 def test_budget_bounds_are_fail_closed(tmp_path, field, value):
     (tmp_path / "README.md").write_text("safe", encoding="utf-8")
     with pytest.raises(ContextEfficiencyError, match="E_FIELD"):
@@ -107,10 +122,35 @@ def test_cli_pack_verify_and_status_are_read_only(tmp_path, capsys):
     (tmp_path / "README.md").write_text("safe", encoding="utf-8")
     manifest = tmp_path / "request.json"
     manifest.write_text(json.dumps(_request()), encoding="utf-8")
-    assert main(["efficiency", "pack", "--manifest", str(manifest), "--root", str(tmp_path), "--json"]) == 0
+    assert (
+        main(
+            [
+                "efficiency",
+                "pack",
+                "--manifest",
+                str(manifest),
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
     packet = json.loads(capsys.readouterr().out)
     packet_path = tmp_path / packet["cache"]["path"]
-    assert main(["efficiency", "verify", str(packet_path), "--root", str(tmp_path), "--json"]) == 0
+    assert (
+        main(
+            [
+                "efficiency",
+                "verify",
+                str(packet_path),
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["valid"] is True
     assert main(["efficiency", "status", "--root", str(tmp_path), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["state"] == "READY"
@@ -122,7 +162,10 @@ def test_mission_and_graph_surface_invalid_cache_as_review_only(tmp_path):
     (directory / "broken.json").write_text("{}", encoding="utf-8")
     mission = mission_control_status(tmp_path)
     assert mission["blockers"]["context_efficiency_blocked"] == 1
-    assert mission["human_control_plane"]["next_action"] == "repair_context_efficiency_packet"
+    assert (
+        mission["human_control_plane"]["next_action"]
+        == "repair_context_efficiency_packet"
+    )
     assert all(value is False for value in mission["authority"].values())
     snapshot = graph_ops_snapshot(tmp_path)
     assert snapshot["facts"]["context_efficiency_blocked"] == 1

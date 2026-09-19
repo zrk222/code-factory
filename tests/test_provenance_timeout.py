@@ -6,7 +6,9 @@ from pathlib import Path
 from factoryline import provenance as provenance_module
 
 
-def test_source_commit_fails_closed_when_git_status_times_out(tmp_path: Path, monkeypatch) -> None:
+def test_source_commit_fails_closed_when_git_status_times_out(
+    tmp_path: Path, monkeypatch
+) -> None:
     (tmp_path / ".git").mkdir()
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "factoryline-code-factory"\n',

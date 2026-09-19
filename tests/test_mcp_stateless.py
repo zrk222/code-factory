@@ -19,7 +19,9 @@ def _files(root: Path) -> dict[str, bytes]:
 
 
 def _request_digest(request: object) -> str:
-    canonical = json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(
+        request, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -90,13 +92,17 @@ def test_notification_returns_null_response_inside_stateless_envelope(tmp_path: 
     assert payload["state"] == "stateless"
 
 
-def test_cli_request_reads_relative_json_without_writing(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+def test_cli_request_reads_relative_json_without_writing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
     request = {"jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": {}}
     request_path = tmp_path / "request.json"
     request_path.write_text(json.dumps(request), encoding="utf-8")
     before = _files(tmp_path)
 
-    assert main(["mcp", "request", "request.json", "--root", str(tmp_path), "--json"]) == 0
+    assert (
+        main(["mcp", "request", "request.json", "--root", str(tmp_path), "--json"]) == 0
+    )
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["marker"] == "MCP_STATELESS_RESPONSE"
@@ -106,9 +112,13 @@ def test_cli_request_reads_relative_json_without_writing(tmp_path: Path, capsys:
     assert _files(tmp_path) == before
 
 
-@pytest.mark.parametrize("request_path", ["..\\request.json", "C:\\outside\\request.json"])
+@pytest.mark.parametrize(
+    "request_path", ["..\\request.json", "C:\\outside\\request.json"]
+)
 def test_cli_rejects_parent_or_absolute_request_paths(
     tmp_path: Path, request_path: str, capsys: pytest.CaptureFixture[str]
 ):
-    assert main(["mcp", "request", request_path, "--root", str(tmp_path), "--json"]) == 2
+    assert (
+        main(["mcp", "request", request_path, "--root", str(tmp_path), "--json"]) == 2
+    )
     assert "MCP_STATELESS_REQUEST_PATH_REJECTED" in capsys.readouterr().err

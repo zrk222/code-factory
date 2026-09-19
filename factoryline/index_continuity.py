@@ -5,13 +5,14 @@ IDE API, asks a remote service, reads source contents into its reports, changes
 settings, invalidates caches, or predicts indexing duration.  A changed
 baseline is a human review signal only.
 """
+
 from __future__ import annotations
 
 from hashlib import sha256
 import json
 import os
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 from .workspace_advisor import WorkspaceAdvisorError, inspect_workspace
 
@@ -21,11 +22,27 @@ INDEX_CONTINUITY_BASELINE_SCHEMA = "factory.index_continuity_baseline.v1"
 INDEX_CONTINUITY_MARKER = "INDEX_CONTINUITY_LOCAL_STRUCTURAL_ONLY"
 MAX_STRUCTURAL_FILE_BYTES = 8 * 1024 * 1024
 _STRUCTURAL_PATTERNS = (
-    "pyproject.toml", "poetry.lock", "uv.lock", "requirements*.txt",
-    "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
-    "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
-    "gradle.properties", "pom.xml", "go.mod", "go.sum", "Cargo.toml",
-    "Cargo.lock", "*.sln", "*.csproj", "*.fsproj",
+    "pyproject.toml",
+    "poetry.lock",
+    "uv.lock",
+    "requirements*.txt",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
+    "gradle.properties",
+    "pom.xml",
+    "go.mod",
+    "go.sum",
+    "Cargo.toml",
+    "Cargo.lock",
+    "*.sln",
+    "*.csproj",
+    "*.fsproj",
 )
 _SOURCE_ROOTS = {"src", "lib", "app", "apps", "packages", "modules", "test", "tests"}
 
@@ -39,7 +56,9 @@ class IndexContinuityError(ValueError):
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def _sha_file(path: Path) -> str:
@@ -53,7 +72,10 @@ def _sha_file(path: Path) -> str:
 def _workspace(root: Path | str) -> Path:
     workspace = Path(root).resolve()
     if not workspace.is_dir():
-        raise IndexContinuityError("INDEX_CONTINUITY_ROOT_INVALID", "workspace root must be an existing directory")
+        raise IndexContinuityError(
+            "INDEX_CONTINUITY_ROOT_INVALID",
+            "workspace root must be an existing directory",
+        )
     return workspace
 
 
@@ -62,7 +84,10 @@ def _inside(root: Path, path: Path | str) -> Path:
     try:
         resolved.relative_to(root)
     except ValueError as exc:
-        raise IndexContinuityError("INDEX_CONTINUITY_PATH_OUTSIDE_ROOT", "path must stay inside the workspace root") from exc
+        raise IndexContinuityError(
+            "INDEX_CONTINUITY_PATH_OUTSIDE_ROOT",
+            "path must stay inside the workspace root",
+        ) from exc
     return resolved
 
 
@@ -81,15 +106,20 @@ def _structural_files(workspace: Path) -> list[dict[str, object]]:
             entry["state"] = "hashed"
         else:
             entry["state"] = "too_large"
-            entry["boundary"] = f"Skipped content hash above {MAX_STRUCTURAL_FILE_BYTES} bytes."
+            entry["boundary"] = (
+                f"Skipped content hash above {MAX_STRUCTURAL_FILE_BYTES} bytes."
+            )
         entries.append(entry)
     return entries
 
 
 def _source_roots(workspace: Path) -> list[str]:
     return sorted(
-        child.name for child in workspace.iterdir()
-        if child.is_dir() and not child.is_symlink() and child.name.lower() in _SOURCE_ROOTS
+        child.name
+        for child in workspace.iterdir()
+        if child.is_dir()
+        and not child.is_symlink()
+        and child.name.lower() in _SOURCE_ROOTS
     )
 
 
@@ -103,8 +133,15 @@ def _managed_topology(advice: Mapping[str, object]) -> list[dict[str, object]]:
             continue
         path, category = item.get("path"), item.get("category")
         files, size = item.get("files"), item.get("bytes")
-        if isinstance(path, str) and isinstance(category, str) and isinstance(files, int) and isinstance(size, int):
-            entries.append({"path": path, "category": category, "files": files, "bytes": size})
+        if (
+            isinstance(path, str)
+            and isinstance(category, str)
+            and isinstance(files, int)
+            and isinstance(size, int)
+        ):
+            entries.append(
+                {"path": path, "category": category, "files": files, "bytes": size}
+            )
     return sorted(entries, key=lambda item: (str(item["path"]), str(item["category"])))
 
 
@@ -149,8 +186,13 @@ def capture_continuity_baseline(root: Path | str) -> dict[str, object]:
             "File contents are never stored in the baseline; named structural files are represented by size and optional SHA-256 only.",
         ],
         "authority": {
-            "ide_settings": False, "cache_mutation": False, "indexing_mutation": False,
-            "network": False, "credential": False, "publication": False, "deployment": False,
+            "ide_settings": False,
+            "cache_mutation": False,
+            "indexing_mutation": False,
+            "network": False,
+            "credential": False,
+            "publication": False,
+            "deployment": False,
         },
     }
     payload["baseline_sha256"] = sha256(_canonical(_baseline_core(payload))).hexdigest()
@@ -159,18 +201,27 @@ def capture_continuity_baseline(root: Path | str) -> dict[str, object]:
 
 def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
     temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     os.replace(temporary, path)
 
 
-def write_continuity_baseline(baseline: Mapping[str, object], root: Path | str, out: Path | str) -> str:
+def write_continuity_baseline(
+    baseline: Mapping[str, object], root: Path | str, out: Path | str
+) -> str:
     """Persist one verified structural baseline at an explicit local JSON path."""
     workspace = _workspace(root)
     if baseline.get("schema") != INDEX_CONTINUITY_BASELINE_SCHEMA:
-        raise IndexContinuityError("INDEX_CONTINUITY_BASELINE_INVALID", "baseline has an unexpected schema")
+        raise IndexContinuityError(
+            "INDEX_CONTINUITY_BASELINE_INVALID", "baseline has an unexpected schema"
+        )
     path = _inside(workspace, out)
     if path.suffix.lower() != ".json":
-        raise IndexContinuityError("INDEX_CONTINUITY_BASELINE_PATH_INVALID", "baseline output must be a .json file")
+        raise IndexContinuityError(
+            "INDEX_CONTINUITY_BASELINE_PATH_INVALID",
+            "baseline output must be a .json file",
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_json(path, baseline)
     return path.relative_to(workspace).as_posix()
@@ -179,23 +230,43 @@ def write_continuity_baseline(baseline: Mapping[str, object], root: Path | str, 
 def _load_baseline(root: Path, path: Path | str) -> dict[str, object]:
     resolved = _inside(root, path)
     if not resolved.is_file():
-        raise IndexContinuityError("INDEX_CONTINUITY_BASELINE_MISSING", "baseline must be an existing workspace-contained JSON file")
+        raise IndexContinuityError(
+            "INDEX_CONTINUITY_BASELINE_MISSING",
+            "baseline must be an existing workspace-contained JSON file",
+        )
     try:
         payload = json.loads(resolved.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise IndexContinuityError("INDEX_CONTINUITY_BASELINE_UNREADABLE", "baseline must be valid UTF-8 JSON") from exc
-    if not isinstance(payload, dict) or payload.get("schema") != INDEX_CONTINUITY_BASELINE_SCHEMA:
-        raise IndexContinuityError("INDEX_CONTINUITY_BASELINE_INVALID", "baseline has an unexpected schema")
+        raise IndexContinuityError(
+            "INDEX_CONTINUITY_BASELINE_UNREADABLE", "baseline must be valid UTF-8 JSON"
+        ) from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != INDEX_CONTINUITY_BASELINE_SCHEMA
+    ):
+        raise IndexContinuityError(
+            "INDEX_CONTINUITY_BASELINE_INVALID", "baseline has an unexpected schema"
+        )
     expected = payload.get("baseline_sha256")
-    if not isinstance(expected, str) or expected != sha256(_canonical(_baseline_core(payload))).hexdigest():
-        raise IndexContinuityError("INDEX_CONTINUITY_BASELINE_TAMPERED", "baseline digest does not match its structural content")
+    if (
+        not isinstance(expected, str)
+        or expected != sha256(_canonical(_baseline_core(payload))).hexdigest()
+    ):
+        raise IndexContinuityError(
+            "INDEX_CONTINUITY_BASELINE_TAMPERED",
+            "baseline digest does not match its structural content",
+        )
     return payload
 
 
 def _by_path(entries: object) -> dict[str, Mapping[str, object]]:
     if not isinstance(entries, list):
         return {}
-    return {item["path"]: item for item in entries if isinstance(item, Mapping) and isinstance(item.get("path"), str)}
+    return {
+        item["path"]: item
+        for item in entries
+        if isinstance(item, Mapping) and isinstance(item.get("path"), str)
+    }
 
 
 def _changed_files(before: object, after: object) -> list[dict[str, object]]:
@@ -218,7 +289,9 @@ def _change(label: str, before: object, after: object) -> dict[str, object] | No
     return {"kind": label, "before": before, "after": after}
 
 
-def compare_continuity(root: Path | str, baseline_path: Path | str) -> dict[str, object]:
+def compare_continuity(
+    root: Path | str, baseline_path: Path | str
+) -> dict[str, object]:
     """Compare a verified local baseline with current local project structure."""
     workspace = _workspace(root)
     before = _load_baseline(workspace, baseline_path)
@@ -231,8 +304,12 @@ def compare_continuity(root: Path | str, baseline_path: Path | str) -> dict[str,
         value = _change(label, before[label], current[label])
         if value is not None:
             changes.append(value)
-    broad = bool(files) or any(change["kind"] in {"workspace", "source_roots"} for change in changes)
-    scope = "broad_reanalysis" if broad else "targeted_reanalysis" if changes else "stable"
+    broad = bool(files) or any(
+        change["kind"] in {"workspace", "source_roots"} for change in changes
+    )
+    scope = (
+        "broad_reanalysis" if broad else "targeted_reanalysis" if changes else "stable"
+    )
     recommendations = {
         "stable": "No observed structural drift. Keep investigating the runtime symptom with IDE Health if it persists.",
         "targeted_reanalysis": "Review the named managed-directory change and project-model visibility before manually changing an IDE setting.",
@@ -262,5 +339,9 @@ def compare_continuity(root: Path | str, baseline_path: Path | str) -> dict[str,
         ],
         "authority": current["authority"],
     }
-    report["comparison_sha256"] = sha256(_canonical({key: report[key] for key in ("baseline", "review_scope", "changes")})).hexdigest()
+    report["comparison_sha256"] = sha256(
+        _canonical(
+            {key: report[key] for key in ("baseline", "review_scope", "changes")}
+        )
+    ).hexdigest()
     return report

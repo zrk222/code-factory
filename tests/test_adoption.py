@@ -18,8 +18,12 @@ from factoryline.adoption import (
 from factoryline.cli import main
 
 
-def test_first_proof_catches_the_deliberately_hollow_check_and_writes_a_private_card(tmp_path: Path) -> None:
-    result = run_first_proof(tmp_path, observed_at=datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc))
+def test_first_proof_catches_the_deliberately_hollow_check_and_writes_a_private_card(
+    tmp_path: Path,
+) -> None:
+    result = run_first_proof(
+        tmp_path, observed_at=datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+    )
 
     assert result["activation"]["marker"] == "HOLLOW_TEST_DETECTED"
     assert result["proof"]["marker"] == "HOLLOW_E2E_TEST"
@@ -40,7 +44,9 @@ def test_first_proof_catches_the_deliberately_hollow_check_and_writes_a_private_
     assert "local-first-proof-user" not in svg
 
 
-def test_proof_card_reuses_only_verified_receipt_facts_and_rejects_tampering(tmp_path: Path) -> None:
+def test_proof_card_reuses_only_verified_receipt_facts_and_rejects_tampering(
+    tmp_path: Path,
+) -> None:
     first = run_first_proof(tmp_path)
     receipt_path = Path(first["proof_artifacts"]["paths"]["json"])
     result = proof_card_from_receipt(tmp_path, receipt_path, Path("share-again"))
@@ -52,10 +58,14 @@ def test_proof_card_reuses_only_verified_receipt_facts_and_rejects_tampering(tmp
         verify_proof_card(tampered)
 
 
-def test_local_adoption_funnel_withholds_provider_metrics_and_never_stores_identity(tmp_path: Path) -> None:
+def test_local_adoption_funnel_withholds_provider_metrics_and_never_stores_identity(
+    tmp_path: Path,
+) -> None:
     observed = datetime(2026, 8, 1, tzinfo=timezone.utc)
     record_adoption_event(tmp_path, "first_proof_completed", observed_at=observed)
-    record_adoption_event(tmp_path, "seven_day_return", observed_at=observed + timedelta(days=8))
+    record_adoption_event(
+        tmp_path, "seven_day_return", observed_at=observed + timedelta(days=8)
+    )
     exported = export_adoption_status(tmp_path, Path(".factory/public-adoption.json"))
 
     assert exported["status"]["funnel"]["page_visit"] is None
@@ -68,14 +78,20 @@ def test_local_adoption_funnel_withholds_provider_metrics_and_never_stores_ident
     assert "repository" not in serialized
 
 
-def test_adoption_event_rejects_unknown_milestones_and_bad_evidence(tmp_path: Path) -> None:
+def test_adoption_event_rejects_unknown_milestones_and_bad_evidence(
+    tmp_path: Path,
+) -> None:
     with pytest.raises(AdoptionError, match="milestone must be"):
         record_adoption_event(tmp_path, "clicked_everything")
     with pytest.raises(AdoptionError, match="lowercase SHA-256"):
-        record_adoption_event(tmp_path, "proof_card_saved", evidence_sha256="not-a-digest")
+        record_adoption_event(
+            tmp_path, "proof_card_saved", evidence_sha256="not-a-digest"
+        )
 
 
-def test_first_proof_cli_is_successful_because_detection_is_the_demo_outcome(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_first_proof_cli_is_successful_because_detection_is_the_demo_outcome(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     code = main(["first-proof", "--root", str(tmp_path), "--json"])
     output = json.loads(capsys.readouterr().out)
 
@@ -84,8 +100,22 @@ def test_first_proof_cli_is_successful_because_detection_is_the_demo_outcome(tmp
     assert output["activation"]["marker"] == "HOLLOW_TEST_DETECTED"
 
 
-def test_adoption_cli_reports_local_counts_without_claiming_conversion(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["adoption", "record", "first_proof_completed", "--root", str(tmp_path), "--json"]) == 0
+def test_adoption_cli_reports_local_counts_without_claiming_conversion(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        main(
+            [
+                "adoption",
+                "record",
+                "first_proof_completed",
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
     capsys.readouterr()
     assert main(["adoption", "status", "--root", str(tmp_path), "--json"]) == 0
     status = json.loads(capsys.readouterr().out)

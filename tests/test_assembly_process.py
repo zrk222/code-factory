@@ -9,7 +9,11 @@ from factoryline.assembly_process import run_cli, run_cli_detailed
 
 
 def test_success_preserves_both_streams(tmp_path):
-    ok, output = run_cli(sys.executable, ["-c", "import sys; print('proof'); print('error', file=sys.stderr)"], tmp_path)
+    ok, output = run_cli(
+        sys.executable,
+        ["-c", "import sys; print('proof'); print('error', file=sys.stderr)"],
+        tmp_path,
+    )
     assert ok
     assert "proof" in output and "error" in output
 
@@ -25,7 +29,9 @@ def test_detailed_result_contains_cleanup_receipt(tmp_path):
 
 
 def test_detailed_timeout_keeps_cleanup_receipt_explicit(tmp_path):
-    result = run_cli_detailed(sys.executable, ["-c", "import time; time.sleep(30)"], tmp_path, timeout=0.2)
+    result = run_cli_detailed(
+        sys.executable, ["-c", "import time; time.sleep(30)"], tmp_path, timeout=0.2
+    )
     assert result["ok"] is False
     assert result["cleanup_confirmed"] is True
     assert result["streams_closed"] is True
@@ -60,7 +66,9 @@ def test_posix_snapshot_accepts_host_owned_zero_process_group(monkeypatch):
         stdout = "    1     0     0 Sun Sep  6 00:00:00 2026\n  100     1   100 Sun Sep  6 00:00:00 2026\n"
 
     monkeypatch.setattr(assembly_process.os, "name", "posix")
-    monkeypatch.setattr(assembly_process.subprocess, "run", lambda *args, **kwargs: _Result())
+    monkeypatch.setattr(
+        assembly_process.subprocess, "run", lambda *args, **kwargs: _Result()
+    )
     snapshot = assembly_process._posix_processes()
     assert snapshot is not None
     assert snapshot[1].pgid == 0
@@ -69,7 +77,12 @@ def test_posix_snapshot_accepts_host_owned_zero_process_group(monkeypatch):
 
 @pytest.mark.parametrize("stream", ["stdout", "stderr"])
 def test_output_overflow_cannot_pass(tmp_path, stream):
-    ok, output = run_cli(sys.executable, ["-c", f"import sys; sys.{stream}.write('x'*100000)"], tmp_path, max_stream_bytes=1024)
+    ok, output = run_cli(
+        sys.executable,
+        ["-c", f"import sys; sys.{stream}.write('x'*100000)"],
+        tmp_path,
+        max_stream_bytes=1024,
+    )
     assert not ok
     assert "output limit" in output
     assert len(output) < 1400
@@ -78,23 +91,38 @@ def test_output_overflow_cannot_pass(tmp_path, stream):
 @pytest.mark.parametrize("cancel", [False, True])
 def test_deadline_and_cancellation_are_bounded(tmp_path, cancel):
     start = time.monotonic()
-    ok, output = run_cli(sys.executable, ["-c", "import time; time.sleep(30)"], tmp_path,
-                         timeout=0.2, heartbeat=(lambda: False) if cancel else None)
+    ok, output = run_cli(
+        sys.executable,
+        ["-c", "import time; time.sleep(30)"],
+        tmp_path,
+        timeout=0.2,
+        heartbeat=(lambda: False) if cancel else None,
+    )
     assert not ok
     assert ("stop requested" if cancel else "timed out") in output
     assert time.monotonic() - start < 10
 
 
 def test_nonzero_exit_and_invalid_bytes(tmp_path):
-    ok, output = run_cli(sys.executable, ["-c", "import sys; sys.stdout.buffer.write(b'\\xff'); sys.exit(3)"], tmp_path)
+    ok, output = run_cli(
+        sys.executable,
+        ["-c", "import sys; sys.stdout.buffer.write(b'\\xff'); sys.exit(3)"],
+        tmp_path,
+    )
     assert not ok and "\ufffd" in output
 
 
 def test_heartbeat_exception_is_not_success(tmp_path):
     def broken():
         raise RuntimeError("monitor failed")
+
     with pytest.raises(RuntimeError, match="monitor failed"):
-        run_cli(sys.executable, ["-c", "import time; time.sleep(30)"], tmp_path, heartbeat=broken)
+        run_cli(
+            sys.executable,
+            ["-c", "import time; time.sleep(30)"],
+            tmp_path,
+            heartbeat=broken,
+        )
 
 
 def test_missing_cli_is_failure(tmp_path):
@@ -125,9 +153,21 @@ def test_windows_child_is_bound_before_resume(monkeypatch, tmp_path):
         _handle = 99
 
     monkeypatch.setattr(assembly_process.os, "name", "nt")
-    monkeypatch.setattr(assembly_process.subprocess, "Popen", lambda *args, **kwargs: (events.append(("launch", kwargs)) or Child()))
-    monkeypatch.setattr(assembly_process, "_windows_job", lambda child: (events.append("job") or (7, None)))
-    monkeypatch.setattr(assembly_process, "_resume_windows_process", lambda child: (events.append("resume") or (True, None)))
+    monkeypatch.setattr(
+        assembly_process.subprocess,
+        "Popen",
+        lambda *args, **kwargs: (events.append(("launch", kwargs)) or Child()),
+    )
+    monkeypatch.setattr(
+        assembly_process,
+        "_windows_job",
+        lambda child: (events.append("job") or (7, None)),
+    )
+    monkeypatch.setattr(
+        assembly_process,
+        "_resume_windows_process",
+        lambda child: (events.append("resume") or (True, None)),
+    )
 
     child, unit, error = assembly_process._launch("worker", [], tmp_path)
 
@@ -152,11 +192,27 @@ def test_windows_resume_failure_returns_non_success(monkeypatch, tmp_path):
             events.append("kill")
 
     monkeypatch.setattr(assembly_process.os, "name", "nt")
-    monkeypatch.setattr(assembly_process.subprocess, "Popen", lambda *args, **kwargs: Child())
-    monkeypatch.setattr(assembly_process, "_windows_job", lambda child: (events.append("job") or (7, None)))
-    monkeypatch.setattr(assembly_process, "_resume_windows_process", lambda child: (False, "resume failed"))
-    monkeypatch.setattr(assembly_process, "_terminate_unit", lambda child, unit: events.append("terminate") or True)
-    monkeypatch.setattr(assembly_process._CleanupUnit, "close", lambda self: events.append("close"))
+    monkeypatch.setattr(
+        assembly_process.subprocess, "Popen", lambda *args, **kwargs: Child()
+    )
+    monkeypatch.setattr(
+        assembly_process,
+        "_windows_job",
+        lambda child: (events.append("job") or (7, None)),
+    )
+    monkeypatch.setattr(
+        assembly_process,
+        "_resume_windows_process",
+        lambda child: (False, "resume failed"),
+    )
+    monkeypatch.setattr(
+        assembly_process,
+        "_terminate_unit",
+        lambda child, unit: events.append("terminate") or True,
+    )
+    monkeypatch.setattr(
+        assembly_process._CleanupUnit, "close", lambda self: events.append("close")
+    )
 
     child, unit, error = assembly_process._launch("worker", [], tmp_path)
 

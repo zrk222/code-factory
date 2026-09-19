@@ -32,9 +32,15 @@ def test_local_mcp_configuration_starts_only_the_read_only_factory_server() -> N
     assert server == {"command": "factory", "args": ["mcp", "serve", "--root", "."]}
 
 
-def test_plugin_skill_and_workflow_keep_execution_and_release_authority_human_controlled() -> None:
-    skill = (PLUGIN / "skills" / "langgraph-proof" / "SKILL.md").read_text(encoding="utf-8")
-    workflow = (PLUGIN / "assets" / "github-actions" / "langgraph-proof.yml").read_text(encoding="utf-8")
+def test_plugin_skill_and_workflow_keep_execution_and_release_authority_human_controlled() -> (
+    None
+):
+    skill = (PLUGIN / "skills" / "langgraph-proof" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    workflow = (PLUGIN / "assets" / "github-actions" / "langgraph-proof.yml").read_text(
+        encoding="utf-8"
+    )
 
     assert "factory langgraph replay-verify" in skill
     assert "factory.langgraph_assurance" in skill
@@ -46,7 +52,9 @@ def test_plugin_skill_and_workflow_keep_execution_and_release_authority_human_co
     assert "write" not in workflow
 
 
-def test_marketplace_entry_and_docs_expose_all_supported_coding_agent_installs() -> None:
+def test_marketplace_entry_and_docs_expose_all_supported_coding_agent_installs() -> (
+    None
+):
     marketplace = _json(ROOT / ".claude-plugin" / "marketplace.json")
     plugins = marketplace["plugins"]
     assert isinstance(plugins, list)

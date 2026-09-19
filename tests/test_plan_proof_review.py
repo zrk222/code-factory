@@ -45,14 +45,22 @@ def _plan(root: Path, *, deep: bool = False) -> Path:
 
 
 def _files(root: Path) -> dict[str, bytes]:
-    return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
 
 
-def test_plan_review_prioritizes_unplanned_paths_and_opens_deterministic_proof_debt(tmp_path: Path) -> None:
+def test_plan_review_prioritizes_unplanned_paths_and_opens_deterministic_proof_debt(
+    tmp_path: Path,
+) -> None:
     plan = _plan(tmp_path)
     before = _files(tmp_path)
 
-    review = review_plan_proof(tmp_path, plan, changed=["src/service.py", "src/secret.py"])
+    review = review_plan_proof(
+        tmp_path, plan, changed=["src/service.py", "src/secret.py"]
+    )
 
     assert review["schema"] == "factory.plan_proof_review.v1"
     assert {
@@ -71,36 +79,55 @@ def test_plan_review_prioritizes_unplanned_paths_and_opens_deterministic_proof_d
     assert _files(tmp_path) == before
 
 
-def test_plan_review_requires_declared_test_change_without_claiming_execution(tmp_path: Path) -> None:
+def test_plan_review_requires_declared_test_change_without_claiming_execution(
+    tmp_path: Path,
+) -> None:
     plan = _plan(tmp_path)
 
     review = review_plan_proof(tmp_path, plan, changed=["src/service.py"])
 
-    finding = next(item for item in review["findings"] if item["kind"] == "declared_test_path_missing")
+    finding = next(
+        item
+        for item in review["findings"]
+        if item["kind"] == "declared_test_path_missing"
+    )
     assert finding["facts"]["test_paths"] == ["tests/test_service.py"]
     assert review["next_action"]["action"] == "provide_declared_test_change"
     assert "test executed" not in review["review_markdown"].lower()
     assert "not evidence" in review["scope_limits"][1].lower()
 
 
-def test_deep_plan_review_routes_to_named_human_without_claiming_completed_review(tmp_path: Path) -> None:
+def test_deep_plan_review_routes_to_named_human_without_claiming_completed_review(
+    tmp_path: Path,
+) -> None:
     plan = _plan(tmp_path, deep=True)
 
-    review = review_plan_proof(tmp_path, plan, changed=["src/auth.py", "tests/test_auth.py"])
+    review = review_plan_proof(
+        tmp_path, plan, changed=["src/auth.py", "tests/test_auth.py"]
+    )
 
-    finding = next(item for item in review["findings"] if item["kind"] == "named_human_review_required")
+    finding = next(
+        item
+        for item in review["findings"]
+        if item["kind"] == "named_human_review_required"
+    )
     assert finding["facts"]["review_owner"] == "security-owner"
     assert review["next_action"]["action"] == "route_to_named_reviewer"
     assert "completed human review" not in review["review_markdown"].lower()
 
 
-@pytest.mark.parametrize("mutator", [
-    lambda payload: payload.__setitem__("extra", True),
-    lambda payload: payload["approval"].__setitem__("state", "draft"),
-    lambda payload: payload["items"].append(dict(payload["items"][0])),
-    lambda payload: payload["items"][0].__setitem__("paths", ["../escape.py"]),
-])
-def test_plan_validation_rejects_malformed_or_unapproved_inputs_before_artifacts(tmp_path: Path, mutator) -> None:
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda payload: payload.__setitem__("extra", True),
+        lambda payload: payload["approval"].__setitem__("state", "draft"),
+        lambda payload: payload["items"].append(dict(payload["items"][0])),
+        lambda payload: payload["items"][0].__setitem__("paths", ["../escape.py"]),
+    ],
+)
+def test_plan_validation_rejects_malformed_or_unapproved_inputs_before_artifacts(
+    tmp_path: Path, mutator
+) -> None:
     plan_path = _plan(tmp_path)
     payload = json.loads(plan_path.read_text(encoding="utf-8"))
     mutator(payload)
@@ -115,11 +142,15 @@ def test_plan_validation_rejects_malformed_or_unapproved_inputs_before_artifacts
     assert not out_dir.exists()
 
 
-def test_plan_review_writes_only_explicit_artifacts_and_rejects_tampered_payload(tmp_path: Path) -> None:
+def test_plan_review_writes_only_explicit_artifacts_and_rejects_tampered_payload(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     plan = _plan(workspace)
-    review = review_plan_proof(workspace, plan, changed=["src/service.py", "tests/test_service.py"])
+    review = review_plan_proof(
+        workspace, plan, changed=["src/service.py", "tests/test_service.py"]
+    )
     before = _files(workspace)
     artifacts = write_plan_proof_review_artifacts(review, tmp_path / "packet")
 
@@ -133,9 +164,13 @@ def test_plan_review_writes_only_explicit_artifacts_and_rejects_tampered_payload
     assert exc.value.code == "PLAN_TO_PROOF_REVIEW_INVALID"
 
 
-def test_github_plan_review_is_sha_bound_neutral_and_uses_existing_stable_marker(tmp_path: Path) -> None:
+def test_github_plan_review_is_sha_bound_neutral_and_uses_existing_stable_marker(
+    tmp_path: Path,
+) -> None:
     plan = _plan(tmp_path)
-    review = review_plan_proof(tmp_path, plan, changed=["src/service.py", "tests/test_service.py"])
+    review = review_plan_proof(
+        tmp_path, plan, changed=["src/service.py", "tests/test_service.py"]
+    )
     payload = render_github_plan_proof_review(review, HEAD_SHA)
 
     assert payload["schema"] == "factory.github_plan_proof_review.v1"
@@ -149,30 +184,70 @@ def test_github_plan_review_is_sha_bound_neutral_and_uses_existing_stable_marker
     assert "<!-- factoryline-proof-review -->" in payload["github_comment"]
     assert "CodeRabbit" not in payload["github_comment"]
     assert payload["proof_debt"] == review["proof_debt"]
-    assert render_github_plan_proof_review(review, HEAD_SHA)["payload_sha256"] == payload["payload_sha256"]
+    assert (
+        render_github_plan_proof_review(review, HEAD_SHA)["payload_sha256"]
+        == payload["payload_sha256"]
+    )
     with pytest.raises(GitHubPlanProofReviewError):
         render_github_plan_proof_review(review, "ABC")
 
 
-def test_github_plan_review_artifacts_and_cli_are_local_only(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_github_plan_review_artifacts_and_cli_are_local_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     plan = _plan(tmp_path)
-    payload = compile_github_plan_proof_review(tmp_path, plan, changed=["src/service.py", "tests/test_service.py"], head_sha=HEAD_SHA)
-    artifacts = write_github_plan_proof_review_artifacts(payload, tmp_path / "github-packet")
+    payload = compile_github_plan_proof_review(
+        tmp_path,
+        plan,
+        changed=["src/service.py", "tests/test_service.py"],
+        head_sha=HEAD_SHA,
+    )
+    artifacts = write_github_plan_proof_review_artifacts(
+        payload, tmp_path / "github-packet"
+    )
 
     assert artifacts["marker"] == "GITHUB_PLAN_PROOF_REVIEW_ARTIFACTS_WRITTEN"
     payload["github_comment"] = "tampered"
     with pytest.raises(GitHubPlanProofReviewError):
-        write_github_plan_proof_review_artifacts(payload, tmp_path / "tampered-github-packet")
-    assert main([
-        "plan", "verify", "--root", str(tmp_path), "--plan", str(plan), "--changed", "src/service.py",
-        "--json",
-    ]) == 0
+        write_github_plan_proof_review_artifacts(
+            payload, tmp_path / "tampered-github-packet"
+        )
+    assert (
+        main(
+            [
+                "plan",
+                "verify",
+                "--root",
+                str(tmp_path),
+                "--plan",
+                str(plan),
+                "--changed",
+                "src/service.py",
+                "--json",
+            ]
+        )
+        == 0
+    )
     cli = json.loads(capsys.readouterr().out)
     assert cli["schema"] == "factory.plan_proof_review.v1"
-    assert main([
-        "github", "plan-proof-review", "--root", str(tmp_path), "--plan", str(plan),
-        "--changed", "src/service.py", "--head-sha", HEAD_SHA, "--json",
-    ]) == 0
+    assert (
+        main(
+            [
+                "github",
+                "plan-proof-review",
+                "--root",
+                str(tmp_path),
+                "--plan",
+                str(plan),
+                "--changed",
+                "src/service.py",
+                "--head-sha",
+                HEAD_SHA,
+                "--json",
+            ]
+        )
+        == 0
+    )
     github = json.loads(capsys.readouterr().out)
     assert github["schema"] == "factory.github_plan_proof_review.v1"
     assert github["check"]["conclusion"] == "neutral"
@@ -180,9 +255,18 @@ def test_github_plan_review_artifacts_and_cli_are_local_only(tmp_path: Path, cap
 
 def test_agent_plan_canonicalization_preserves_required_human_approval() -> None:
     plan = {
-        "schema": "factory.agent_plan.v1", "provider": "blitzy", "plan_id": "AAP-9",
+        "schema": "factory.agent_plan.v1",
+        "provider": "blitzy",
+        "plan_id": "AAP-9",
         "approval": {"state": "approved", "approved_by": "Ari"},
-        "items": [{"id": "one", "paths": ["src/a.py"], "test_paths": [], "review_tier": "light"}],
+        "items": [
+            {
+                "id": "one",
+                "paths": ["src/a.py"],
+                "test_paths": [],
+                "review_tier": "light",
+            }
+        ],
     }
     normalized = validate_agent_plan(plan)
 

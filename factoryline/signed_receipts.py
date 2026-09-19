@@ -1,4 +1,5 @@
 """Sigstore identity signatures for existing factory receipt files."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -121,9 +122,13 @@ def sign_receipt(
                 "E_SIGNING_FAILED", f"bundle already exists: {bundle_path}"
             )
         bundle_path.unlink()
-    proc = _run(resolve_sigstore_command(command) + ["sign", str(receipt_path)], timeout=timeout)
+    proc = _run(
+        resolve_sigstore_command(command) + ["sign", str(receipt_path)], timeout=timeout
+    )
     if proc.returncode != 0 or not bundle_path.is_file():
-        diagnostic = (proc.stderr or proc.stdout or "Sigstore produced no bundle").strip()
+        diagnostic = (
+            proc.stderr or proc.stdout or "Sigstore produced no bundle"
+        ).strip()
         raise SignedReceiptError("E_SIGNING_FAILED", diagnostic)
     return SigstoreResult(str(receipt_path), str(bundle_path), "SIGNED")
 
@@ -167,7 +172,9 @@ def verify_receipt(
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SignedReceiptError("E_VERIFICATION_FAILED", str(exc)) from exc
     if proc.returncode != 0:
-        diagnostic = (proc.stderr or proc.stdout or "Sigstore verification failed").strip()
+        diagnostic = (
+            proc.stderr or proc.stdout or "Sigstore verification failed"
+        ).strip()
         raise SignedReceiptError("E_VERIFICATION_FAILED", diagnostic)
     return SigstoreResult(
         str(receipt_path),

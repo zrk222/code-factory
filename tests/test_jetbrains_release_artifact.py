@@ -7,17 +7,26 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
-from scripts.jetbrains_release_artifact import ArtifactError, create_manifest, verify_manifest
+from scripts.jetbrains_release_artifact import (
+    ArtifactError,
+    create_manifest,
+    verify_manifest,
+)
 
 
 COMMIT = "a" * 40
 
 
 def test_intellij_workflow_deduplicates_identical_sha_triggers() -> None:
-    workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "intellij-plugin.yml").read_text(encoding="utf-8")
+    workflow = (
+        Path(__file__).parents[1] / ".github" / "workflows" / "intellij-plugin.yml"
+    ).read_text(encoding="utf-8")
     assert "branches: [main]" in workflow
     assert "pull_request:" in workflow
-    assert "group: intellij-plugin-${{ github.event.pull_request.head.sha || github.sha }}" in workflow
+    assert (
+        "group: intellij-plugin-${{ github.event.pull_request.head.sha || github.sha }}"
+        in workflow
+    )
     assert "cancel-in-progress: true" in workflow
 
 
@@ -35,7 +44,9 @@ def _write_plugin_archive(
             </idea-plugin>""",
         )
     with ZipFile(path, "w", ZIP_DEFLATED) as distribution:
-        distribution.writestr("factoryline-intellij/lib/factoryline-intellij.jar", plugin_jar.getvalue())
+        distribution.writestr(
+            "factoryline-intellij/lib/factoryline-intellij.jar", plugin_jar.getvalue()
+        )
 
 
 def test_manifest_round_trip_binds_archive_and_release_inputs(tmp_path: Path) -> None:
@@ -48,13 +59,16 @@ def test_manifest_round_trip_binds_archive_and_release_inputs(tmp_path: Path) ->
     )
     manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
 
-    assert verify_manifest(
-        archive,
-        manifest_path,
-        release_ref="jetbrains-v0.7.2",
-        commit=COMMIT,
-        channel="default",
-    ) == manifest
+    assert (
+        verify_manifest(
+            archive,
+            manifest_path,
+            release_ref="jetbrains-v0.7.2",
+            commit=COMMIT,
+            channel="default",
+        )
+        == manifest
+    )
     assert manifest["plugin"] == {
         "id": "app.factoryline",
         "name": "FactoryLine AI Proof",

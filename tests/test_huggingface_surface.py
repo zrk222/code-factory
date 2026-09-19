@@ -24,7 +24,7 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     )
     assert len(short_description) <= 60
     assert "factoryline-code-factory" in page
-    assert "github.com/zrk222/code-factory/releases/tag/v0.46.5" in page
+    assert "github.com/zrk222/code-factory/releases/tag/v0.46.6" in page
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "Actual product capture set" in page
     assert '<meta name="viewport"' in page
@@ -32,7 +32,10 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "Catch AI-generated tests that could never fail — before review." in readme
     assert "Free, local proof for code built with AI." in page
     assert "Read or star on GitHub" in page
-    assert "thumbnail: https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/github-social-preview-1280x640.png" in readme
+    assert (
+        "thumbnail: https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/github-social-preview-1280x640.png"
+        in readme
+    )
     assert "developer-tools" in readme
     assert "ai-agents" in readme
     assert "devops" in readme
@@ -109,7 +112,9 @@ def test_huggingface_workflow_uses_secret_and_scoped_source_directory() -> None:
     assert "scripts/huggingface_space_metadata.py" in workflow
 
 
-def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(tmp_path: Path) -> None:
+def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(
+    tmp_path: Path,
+) -> None:
     valid_result = inspect(SPACE / "README.md")
     assert valid_result["ok"] is True
     assert valid_result["marker"] == "HUGGINGFACE_SPACE_METADATA_VALID"
@@ -117,7 +122,9 @@ def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(tm
 
     invalid_readme = tmp_path / "README.md"
     invalid_readme.write_text(
-        (SPACE / "README.md").read_text(encoding="utf-8").replace(
+        (SPACE / "README.md")
+        .read_text(encoding="utf-8")
+        .replace(
             "short_description: Verify AI tests, app evidence, and agent workflow drift.",
             f"short_description: {'x' * 61}",
         ),
@@ -129,7 +136,9 @@ def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(tm
     assert result["short_description_length"] == 61
 
 
-def test_huggingface_metadata_preflight_cli_reports_the_local_result(tmp_path: Path) -> None:
+def test_huggingface_metadata_preflight_cli_reports_the_local_result(
+    tmp_path: Path,
+) -> None:
     script = ROOT / "scripts" / "huggingface_space_metadata.py"
     valid = subprocess.run(
         [sys.executable, str(script), "--readme", str(SPACE / "README.md"), "--json"],
@@ -142,7 +151,9 @@ def test_huggingface_metadata_preflight_cli_reports_the_local_result(tmp_path: P
 
     invalid_readme = tmp_path / "invalid-README.md"
     invalid_readme.write_text(
-        (SPACE / "README.md").read_text(encoding="utf-8").replace(
+        (SPACE / "README.md")
+        .read_text(encoding="utf-8")
+        .replace(
             "short_description: Verify AI tests, app evidence, and agent workflow drift.",
             f"short_description: {'x' * 61}",
         ),

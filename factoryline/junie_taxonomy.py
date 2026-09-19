@@ -4,6 +4,7 @@ The module uses only documented local project artifacts.  It does not contact,
 enable, start, observe, or control Junie.  JetBrains controls remain the only
 place where a user can enable a custom MCP server.
 """
+
 from __future__ import annotations
 
 from hashlib import sha256
@@ -41,7 +42,10 @@ class JunieTaxonomyError(ValueError):
 def _workspace(root: Path | str) -> Path:
     workspace = Path(root).resolve()
     if not workspace.is_dir():
-        raise JunieTaxonomyError("workspace root must be an existing directory", "JUNIE_TAXONOMY_ROOT_REJECTED")
+        raise JunieTaxonomyError(
+            "workspace root must be an existing directory",
+            "JUNIE_TAXONOMY_ROOT_REJECTED",
+        )
     return workspace
 
 
@@ -53,7 +57,19 @@ _STAGES: tuple[dict[str, object], ...] = (
         "label": "1. Orient — inspect before deciding",
         "default": True,
         "when": "At the start of any task or when prior context is uncertain.",
-        "tools": ("factory.status", "factory.first_lap_status", "factory.agui_review_events", "factory.next_action", "factory.ide_playbook", "factory.junie_taxonomy", "factory.junie_contribution", "factory.mission_control_status", "factory.developer_memory", "factory.list_receipts", "factory.get_receipt"),
+        "tools": (
+            "factory.status",
+            "factory.first_lap_status",
+            "factory.agui_review_events",
+            "factory.next_action",
+            "factory.ide_playbook",
+            "factory.junie_taxonomy",
+            "factory.junie_contribution",
+            "factory.mission_control_status",
+            "factory.developer_memory",
+            "factory.list_receipts",
+            "factory.get_receipt",
+        ),
         "outcome": "A fact-derived local route and explicit unknowns.",
     },
     {
@@ -61,7 +77,15 @@ _STAGES: tuple[dict[str, object], ...] = (
         "label": "2. Contract — bind intent, scope, and forbidden behavior",
         "default": True,
         "when": "Before editing code or accepting an agent plan.",
-        "tools": ("factory.intent_ledger", "factory.intake_status", "factory.intake_parameters_status", "factory.prd_grill_status", "factory.oracle_firewall_status", "factory.semantic_authority_status", "factory.codex_metadata_audit"),
+        "tools": (
+            "factory.intent_ledger",
+            "factory.intake_status",
+            "factory.intake_parameters_status",
+            "factory.prd_grill_status",
+            "factory.oracle_firewall_status",
+            "factory.semantic_authority_status",
+            "factory.codex_metadata_audit",
+        ),
         "outcome": "A human-owned promise, non-goal, negative case, and no silent oracle weakening.",
     },
     {
@@ -69,7 +93,17 @@ _STAGES: tuple[dict[str, object], ...] = (
         "label": "3. Review — connect the diff to evidence",
         "default": True,
         "when": "After a proposed change or when deciding what must be rerun.",
-        "tools": ("factory.graph_ops", "factory.graph_impact", "factory.proof_delta_status", "factory.proof_reuse", "factory.context_efficiency_status", "factory.proof_continuity_status", "factory.judgment_status", "factory.judgment_safety_case", "factory.workspace_advisor"),
+        "tools": (
+            "factory.graph_ops",
+            "factory.graph_impact",
+            "factory.proof_delta_status",
+            "factory.proof_reuse",
+            "factory.context_efficiency_status",
+            "factory.proof_continuity_status",
+            "factory.judgment_status",
+            "factory.judgment_safety_case",
+            "factory.workspace_advisor",
+        ),
         "outcome": "An explainable source-to-evidence route and a bounded next action.",
     },
     {
@@ -77,7 +111,18 @@ _STAGES: tuple[dict[str, object], ...] = (
         "label": "4. Audit — challenge code, behavior, and operational risk",
         "default": True,
         "when": "For meaningful code changes, risky workflows, or a failing gate.",
-        "tools": ("factory.verifier_status", "factory.gauntlet_status", "factory.cdte_status", "factory.journey_status", "factory.langgraph_assurance", "factory.deep_audit_status", "factory.runtime_audit_status", "factory.search_audit_rules", "factory.repair_loop_status", "factory.combine_status"),
+        "tools": (
+            "factory.verifier_status",
+            "factory.gauntlet_status",
+            "factory.cdte_status",
+            "factory.journey_status",
+            "factory.langgraph_assurance",
+            "factory.deep_audit_status",
+            "factory.runtime_audit_status",
+            "factory.search_audit_rules",
+            "factory.repair_loop_status",
+            "factory.combine_status",
+        ),
         "outcome": "Independent challenge state, runtime-risk evidence, and known gaps rather than a green-looking assertion.",
     },
     {
@@ -85,7 +130,15 @@ _STAGES: tuple[dict[str, object], ...] = (
         "label": "5. Handoff — give Junie a sealed mission and verify its return",
         "default": True,
         "when": "Only after a repair scope and intent are ready.",
-        "tools": ("factory.agent_proof_mission", "factory.jetbrains_handshake", "factory.jetbrains_handshake_status", "factory.agent_handoff_brief", "factory.agent_bridge_status", "factory.agent_license_status", "factory.proof_worklog_status"),
+        "tools": (
+            "factory.agent_proof_mission",
+            "factory.jetbrains_handshake",
+            "factory.jetbrains_handshake_status",
+            "factory.agent_handoff_brief",
+            "factory.agent_bridge_status",
+            "factory.agent_license_status",
+            "factory.proof_worklog_status",
+        ),
         "outcome": "A sealed scope, returned paths and supplied analyzer/E2E evidence for human review; never an auto-approval.",
     },
     {
@@ -93,7 +146,14 @@ _STAGES: tuple[dict[str, object], ...] = (
         "label": "6. Enterprise — inspect control, lifecycle, and release evidence",
         "default": False,
         "when": "Use only when the task explicitly has enterprise, operations, or release scope.",
-        "tools": ("factory.enterprise_enforcement_status", "factory.operations_control_status", "factory.lifecycle_status", "factory.atomic_status", "factory.release_readiness", "factory.release_decision"),
+        "tools": (
+            "factory.enterprise_enforcement_status",
+            "factory.operations_control_status",
+            "factory.lifecycle_status",
+            "factory.atomic_status",
+            "factory.release_readiness",
+            "factory.release_decision",
+        ),
         "outcome": "Local assurance state with owner review still required.",
     },
     {
@@ -101,14 +161,34 @@ _STAGES: tuple[dict[str, object], ...] = (
         "label": "7. Product delivery — AppForge, SaaS, and revenue evidence",
         "default": False,
         "when": "Use only for an explicitly scoped mobile, SaaS, or product delivery task.",
-        "tools": ("factory.appforge_status", "factory.appforge_oracle_status", "factory.appforge_device_reality_status", "factory.appforge_release_rehearsal_status", "factory.appforge_native_surface_status", "factory.appforge_surface_matrix_status", "factory.appforge_mobile_evidence_status", "factory.appforge_storefront_story_status", "factory.appforge_fastlane_capture_status", "factory.appforge_submission_integrity_status", "factory.saas_status", "factory.revenue_status", "factory.revenue_memory"),
+        "tools": (
+            "factory.appforge_status",
+            "factory.appforge_oracle_status",
+            "factory.appforge_device_reality_status",
+            "factory.appforge_release_rehearsal_status",
+            "factory.appforge_native_surface_status",
+            "factory.appforge_surface_matrix_status",
+            "factory.appforge_mobile_evidence_status",
+            "factory.appforge_storefront_story_status",
+            "factory.appforge_fastlane_capture_status",
+            "factory.appforge_submission_integrity_status",
+            "factory.saas_status",
+            "factory.revenue_status",
+            "factory.revenue_memory",
+        ),
         "outcome": "Candidate-bound local evidence; not device, provider, App Store, payment, or approval proof.",
     },
 )
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:
@@ -134,7 +214,9 @@ def _contribution_protocol(taxonomy_sha256: str) -> dict[str, object]:
             "tools_called": ["factory.<actual_tool_name>"],
             "evidence_paths": ["workspace-relative/local-receipt.json"],
             "changed_paths": ["workspace-relative/changed-file"],
-            "change_rationales": {"workspace-relative/changed-file": "Why this path changed and which review obligation it supports."},
+            "change_rationales": {
+                "workspace-relative/changed-file": "Why this path changed and which review obligation it supports."
+            },
             "contribution": "What FactoryLine made more inspectable, in plain language.",
             "unknowns": ["An explicit unresolved fact, if any."],
         },
@@ -143,11 +225,23 @@ def _contribution_protocol(taxonomy_sha256: str) -> dict[str, object]:
     }
 
 
-def _string_list(value: object, name: str, *, maximum: int, allow_empty: bool = True) -> list[str]:
-    if not isinstance(value, list) or len(value) > maximum or (not allow_empty and not value):
-        raise JunieTaxonomyError(f"{name} must be a list with at most {maximum} entries")
-    if not all(isinstance(item, str) and item.strip() and len(item) <= 512 for item in value):
-        raise JunieTaxonomyError(f"{name} entries must be non-empty strings no longer than 512 characters")
+def _string_list(
+    value: object, name: str, *, maximum: int, allow_empty: bool = True
+) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or len(value) > maximum
+        or (not allow_empty and not value)
+    ):
+        raise JunieTaxonomyError(
+            f"{name} must be a list with at most {maximum} entries"
+        )
+    if not all(
+        isinstance(item, str) and item.strip() and len(item) <= 512 for item in value
+    ):
+        raise JunieTaxonomyError(
+            f"{name} entries must be non-empty strings no longer than 512 characters"
+        )
     normalized = [item.strip().replace("\\", "/") for item in value]
     if len(normalized) != len(set(normalized)):
         raise JunieTaxonomyError(f"{name} must not contain duplicates")
@@ -160,37 +254,63 @@ def _canonical_path(workspace: Path, raw: str, field: str) -> str:
     try:
         relative = candidate.relative_to(workspace)
     except ValueError as exc:
-        raise JunieTaxonomyError(f"{field} must stay inside the workspace", "JUNIE_CONTRIBUTION_PATH_REJECTED") from exc
+        raise JunieTaxonomyError(
+            f"{field} must stay inside the workspace",
+            "JUNIE_CONTRIBUTION_PATH_REJECTED",
+        ) from exc
     if not relative.parts:
-        raise JunieTaxonomyError(f"{field} must name a file inside the workspace", "JUNIE_CONTRIBUTION_PATH_REJECTED")
+        raise JunieTaxonomyError(
+            f"{field} must name a file inside the workspace",
+            "JUNIE_CONTRIBUTION_PATH_REJECTED",
+        )
     return relative.as_posix()
 
 
-def _canonical_path_list(workspace: Path, value: object, name: str, *, maximum: int, allow_empty: bool = True) -> list[str]:
+def _canonical_path_list(
+    workspace: Path, value: object, name: str, *, maximum: int, allow_empty: bool = True
+) -> list[str]:
     declared = _string_list(value, name, maximum=maximum, allow_empty=allow_empty)
     canonical = [_canonical_path(workspace, raw, name) for raw in declared]
     if len(canonical) != len(set(canonical)):
-        raise JunieTaxonomyError(f"{name} must not contain paths that resolve to the same file", "JUNIE_CONTRIBUTION_PATH_REJECTED")
+        raise JunieTaxonomyError(
+            f"{name} must not contain paths that resolve to the same file",
+            "JUNIE_CONTRIBUTION_PATH_REJECTED",
+        )
     return canonical
 
 
-def _local_file_hashes(workspace: Path, paths: list[str], field: str) -> list[dict[str, str]]:
+def _local_file_hashes(
+    workspace: Path, paths: list[str], field: str
+) -> list[dict[str, str]]:
     bound: list[dict[str, str]] = []
     for raw in paths:
         candidate = (workspace / raw).resolve()
         try:
             relative = candidate.relative_to(workspace).as_posix()
         except ValueError as exc:
-            raise JunieTaxonomyError(f"{field} must stay inside the workspace", "JUNIE_CONTRIBUTION_PATH_REJECTED") from exc
+            raise JunieTaxonomyError(
+                f"{field} must stay inside the workspace",
+                "JUNIE_CONTRIBUTION_PATH_REJECTED",
+            ) from exc
         if not candidate.is_file():
-            raise JunieTaxonomyError(f"{field} must name an existing regular file: {relative}", "JUNIE_CONTRIBUTION_PATH_REJECTED")
+            raise JunieTaxonomyError(
+                f"{field} must name an existing regular file: {relative}",
+                "JUNIE_CONTRIBUTION_PATH_REJECTED",
+            )
         if candidate.stat().st_size > 1_048_576:
-            raise JunieTaxonomyError(f"{field} file is too large to hash: {relative}", "JUNIE_CONTRIBUTION_PATH_REJECTED")
-        bound.append({"path": relative, "sha256": sha256(candidate.read_bytes()).hexdigest()})
+            raise JunieTaxonomyError(
+                f"{field} file is too large to hash: {relative}",
+                "JUNIE_CONTRIBUTION_PATH_REJECTED",
+            )
+        bound.append(
+            {"path": relative, "sha256": sha256(candidate.read_bytes()).hexdigest()}
+        )
     return bound
 
 
-def validate_junie_contribution(root: Path | str, declaration: object) -> dict[str, object]:
+def validate_junie_contribution(
+    root: Path | str, declaration: object
+) -> dict[str, object]:
     """Validate a Junie-declared FactoryLine contribution without persisting it.
 
     The result gives visible, falsifiable credit for the named FactoryLine
@@ -199,30 +319,65 @@ def validate_junie_contribution(root: Path | str, declaration: object) -> dict[s
     """
     workspace = _workspace(root)
     if not isinstance(declaration, dict):
-        raise JunieTaxonomyError("contribution must be an object", "JUNIE_CONTRIBUTION_INPUT_REJECTED")
-    required = {"taxonomy_sha256", "tools_called", "evidence_paths", "changed_paths", "change_rationales", "contribution", "unknowns"}
+        raise JunieTaxonomyError(
+            "contribution must be an object", "JUNIE_CONTRIBUTION_INPUT_REJECTED"
+        )
+    required = {
+        "taxonomy_sha256",
+        "tools_called",
+        "evidence_paths",
+        "changed_paths",
+        "change_rationales",
+        "contribution",
+        "unknowns",
+    }
     if set(declaration) != required:
-        raise JunieTaxonomyError("contribution must contain only the documented required arguments", "JUNIE_CONTRIBUTION_INPUT_REJECTED")
+        raise JunieTaxonomyError(
+            "contribution must contain only the documented required arguments",
+            "JUNIE_CONTRIBUTION_INPUT_REJECTED",
+        )
     taxonomy = junie_taxonomy(workspace)
     taxonomy_sha256 = declaration["taxonomy_sha256"]
-    if not isinstance(taxonomy_sha256, str) or taxonomy_sha256 != taxonomy["taxonomy_sha256"]:
-        raise JunieTaxonomyError("taxonomy_sha256 must match the current factory.junie_taxonomy result", "JUNIE_CONTRIBUTION_TAXONOMY_MISMATCH")
-    tools = _string_list(declaration["tools_called"], "tools_called", maximum=58, allow_empty=False)
+    if (
+        not isinstance(taxonomy_sha256, str)
+        or taxonomy_sha256 != taxonomy["taxonomy_sha256"]
+    ):
+        raise JunieTaxonomyError(
+            "taxonomy_sha256 must match the current factory.junie_taxonomy result",
+            "JUNIE_CONTRIBUTION_TAXONOMY_MISMATCH",
+        )
+    tools = _string_list(
+        declaration["tools_called"], "tools_called", maximum=58, allow_empty=False
+    )
     known_tools = set(_all_tools())
     unknown_tools = sorted(set(tools) - known_tools)
     if unknown_tools:
-        raise JunieTaxonomyError(f"tools_called contains unknown FactoryLine tools: {', '.join(unknown_tools)}", "JUNIE_CONTRIBUTION_TOOL_REJECTED")
-    evidence_paths = _canonical_path_list(workspace, declaration["evidence_paths"], "evidence_paths", maximum=32)
-    changed_paths = _canonical_path_list(workspace, declaration["changed_paths"], "changed_paths", maximum=200)
+        raise JunieTaxonomyError(
+            f"tools_called contains unknown FactoryLine tools: {', '.join(unknown_tools)}",
+            "JUNIE_CONTRIBUTION_TOOL_REJECTED",
+        )
+    evidence_paths = _canonical_path_list(
+        workspace, declaration["evidence_paths"], "evidence_paths", maximum=32
+    )
+    changed_paths = _canonical_path_list(
+        workspace, declaration["changed_paths"], "changed_paths", maximum=200
+    )
     raw_rationales = declaration["change_rationales"]
     if not isinstance(raw_rationales, dict) or not all(
-        isinstance(path, str) and isinstance(rationale, str) and 12 <= len(rationale.strip()) <= 1_000
+        isinstance(path, str)
+        and isinstance(rationale, str)
+        and 12 <= len(rationale.strip()) <= 1_000
         for path, rationale in raw_rationales.items()
     ):
-        raise JunieTaxonomyError("change_rationales must map every changed path to a 12 to 1000 character rationale", "JUNIE_CONTRIBUTION_INPUT_REJECTED")
+        raise JunieTaxonomyError(
+            "change_rationales must map every changed path to a 12 to 1000 character rationale",
+            "JUNIE_CONTRIBUTION_INPUT_REJECTED",
+        )
     rationales: dict[str, str] = {}
     for path, rationale in raw_rationales.items():
-        canonical = _canonical_path(workspace, path.strip().replace("\\", "/"), "change_rationales")
+        canonical = _canonical_path(
+            workspace, path.strip().replace("\\", "/"), "change_rationales"
+        )
         if canonical in rationales:
             raise JunieTaxonomyError(
                 "change_rationales must not contain paths that resolve to the same file",
@@ -230,25 +385,39 @@ def validate_junie_contribution(root: Path | str, declaration: object) -> dict[s
             )
         rationales[canonical] = rationale.strip()
     if set(rationales) != set(changed_paths):
-        raise JunieTaxonomyError("change_rationales must cover exactly the declared changed_paths", "JUNIE_CONTRIBUTION_RATIONALE_REJECTED")
+        raise JunieTaxonomyError(
+            "change_rationales must cover exactly the declared changed_paths",
+            "JUNIE_CONTRIBUTION_RATIONALE_REJECTED",
+        )
     contribution = declaration["contribution"]
-    if not isinstance(contribution, str) or not 12 <= len(contribution.strip()) <= 1_000:
-        raise JunieTaxonomyError("contribution must be 12 to 1000 characters", "JUNIE_CONTRIBUTION_INPUT_REJECTED")
+    if (
+        not isinstance(contribution, str)
+        or not 12 <= len(contribution.strip()) <= 1_000
+    ):
+        raise JunieTaxonomyError(
+            "contribution must be 12 to 1000 characters",
+            "JUNIE_CONTRIBUTION_INPUT_REJECTED",
+        )
     unknowns = _string_list(declaration["unknowns"], "unknowns", maximum=32)
     evidence = _local_file_hashes(workspace, evidence_paths, "evidence_paths")
     changes = _local_file_hashes(workspace, changed_paths, "changed_paths")
-    evidence_label = f"{len(evidence)} cited local evidence file(s) hash-verified" if evidence else "no local evidence file was cited"
+    evidence_label = (
+        f"{len(evidence)} cited local evidence file(s) hash-verified"
+        if evidence
+        else "no local evidence file was cited"
+    )
     return {
         "schema": CONTRIBUTION_SCHEMA,
         "marker": "JUNIE_FACTORYLINE_CONTRIBUTION_DECLARED",
-        "declaration_state": "declared_with_local_evidence" if evidence else "declared_without_local_evidence",
+        "declaration_state": "declared_with_local_evidence"
+        if evidence
+        else "declared_without_local_evidence",
         "credit_line": f"FactoryLine contribution declared: {', '.join(tools)}; {evidence_label}.",
         "taxonomy_sha256": taxonomy_sha256,
         "tools_called": tools,
         "evidence": evidence,
         "change_cards": [
-            {**change, "rationale": rationales[change["path"]]}
-            for change in changes
+            {**change, "rationale": rationales[change["path"]]} for change in changes
         ],
         "contribution": contribution.strip(),
         "unknowns": unknowns,
@@ -284,11 +453,18 @@ def junie_taxonomy(root: Path | str) -> dict[str, object]:
         "project_pack": junie_manifest(workspace),
     }
     taxonomy_sha256 = _sha(core)
-    return {**core, "taxonomy_sha256": taxonomy_sha256, "contribution_protocol": _contribution_protocol(taxonomy_sha256)}
+    return {
+        **core,
+        "taxonomy_sha256": taxonomy_sha256,
+        "contribution_protocol": _contribution_protocol(taxonomy_sha256),
+    }
 
 
 def _guidance() -> bytes:
-    stages = "\n".join(f"{index}. **{stage['label']}** — {stage['when']}" for index, stage in enumerate(_STAGES, start=1))
+    stages = "\n".join(
+        f"{index}. **{stage['label']}** — {stage['when']}"
+        for index, stage in enumerate(_STAGES, start=1)
+    )
     text = f"""# FactoryLine playbook for Junie
 
 This project uses a local, read-only FactoryLine MCP server. Follow its
@@ -311,6 +487,22 @@ task.
    exception, or negative case to make a result green. Report the conflict.
 5. Return exact changed paths, tests run, supplied evidence paths, failures,
    and unknowns. A human decides approval, merge, release, and deployment.
+
+## Efficiency profile (bounded by the manifest)
+
+Use progressive disclosure. Start with `factory.status` and
+`factory.junie_taxonomy`, then query only the status or rule surface needed for
+the current scope. Prefer `factory.search_audit_rules` before loading a lane;
+do not dump the full rejection inventory into context. Reuse an immutable
+receipt only when its candidate, contract, and source digests match exactly;
+otherwise mark the evidence stale and re-run the named check. Keep each round
+to a small set of tools (four or fewer) and finish with one fact-derived next
+action, not a list of speculative work.
+
+The route is: orient -> bind intent -> map impact -> select rules -> challenge
+the implementation -> return a contribution card. If the intent is unclear,
+the scope changes, an oracle is weakened, evidence is stale, or a provider /
+release action is requested, stop and surface the exact human decision needed.
 
 ## FactoryLine contribution acknowledgement
 
@@ -357,6 +549,9 @@ You are the FactoryLine proof reviewer. Work only as an evidence navigator;
 never edit files, execute shell commands, browse the web, or ask the user to
 change scope. Use the `code-factory` MCP server's read-only tools to inspect
 the progressive taxonomy and the relevant local status before forming a view.
+Keep the review token-efficient: make bounded, path-scoped calls; use
+`factory.search_audit_rules` to discover only relevant rules; and never load
+the complete inventory when a lane query is sufficient.
 
 Follow this chain exactly:
 `source -> obligation -> forbidden behavior -> gate -> test -> evidence -> decision`.
@@ -369,9 +564,11 @@ claim that a test ran unless a supplied receipt says so.
 
 Return a compact handoff containing: the exact paths inspected, FactoryLine
 tools called, evidence paths and digests supplied, findings by severity, one
-fact-derived next action, and unresolved unknowns. A FactoryLine result is
-review evidence, not Junie telemetry, proof of private tool calls, or release
-authority.
+fact-derived next action, and unresolved unknowns. If any stop condition is
+encountered (missing intent, scope or oracle drift, stale evidence, or a
+provider/release action), report it explicitly and do not continue. A
+FactoryLine result is review evidence, not Junie telemetry, proof of private
+tool calls, or release authority.
 
 User request: $prompt
 """
@@ -379,8 +576,20 @@ User request: $prompt
 
 
 def _junie_mcp_bytes(workspace: Path) -> bytes:
-    payload = {"mcpServers": {"code-factory": {"command": "factory", "args": ["mcp", "serve", "--root", str(workspace)]}}}
-    return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False).encode("utf-8") + b"\n"
+    payload = {
+        "mcpServers": {
+            "code-factory": {
+                "command": "factory",
+                "args": ["mcp", "serve", "--root", str(workspace)],
+            }
+        }
+    }
+    return (
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False).encode(
+            "utf-8"
+        )
+        + b"\n"
+    )
 
 
 def junie_manifest(root: Path | str) -> dict[str, object]:
@@ -399,9 +608,21 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
         "client": "junie",
         "workspace_root": str(workspace),
         "files": [
-            {"path": ".junie/AGENTS.md", "role": "project_guidelines", "sha256": sha256(guidance).hexdigest()},
-            {"path": ".junie/mcp/mcp.json", "role": "project_mcp", "sha256": sha256(mcp).hexdigest()},
-            {"path": SUBAGENT_PATH, "role": "read_only_proof_subagent", "sha256": sha256(subagent).hexdigest()},
+            {
+                "path": ".junie/AGENTS.md",
+                "role": "project_guidelines",
+                "sha256": sha256(guidance).hexdigest(),
+            },
+            {
+                "path": ".junie/mcp/mcp.json",
+                "role": "project_mcp",
+                "sha256": sha256(mcp).hexdigest(),
+            },
+            {
+                "path": SUBAGENT_PATH,
+                "role": "read_only_proof_subagent",
+                "sha256": sha256(subagent).hexdigest(),
+            },
         ],
         "subagent": {
             "name": "factoryline-proof",
@@ -416,6 +637,38 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
             "mcp": ".junie/mcp/mcp.json",
             "subagents": ".junie/agents/",
         },
+        "operating_profile": {
+            "version": "2",
+            "mode": "supervised",
+            "default_route": [
+                "factory.status",
+                "factory.junie_taxonomy",
+                "factory.intent_ledger",
+                "factory.graph_impact",
+                "factory.search_audit_rules",
+                "factory.runtime_audit_status",
+                "factory.junie_contribution",
+            ],
+            "max_tools_per_round": 4,
+            "prefer_bounded_queries": True,
+            "cache_only_immutable_receipts": True,
+            "stop_conditions": [
+                "missing_human_intent",
+                "scope_or_plan_drift",
+                "oracle_weakening",
+                "stale_or_missing_evidence",
+                "provider_or_release_action",
+            ],
+            "handoff_fields": [
+                "changed_paths",
+                "tests_run",
+                "evidence_paths",
+                "evidence_digests",
+                "findings",
+                "next_fact_derived_action",
+                "unknowns",
+            ],
+        },
         "authority": dict(_AUTHORITY),
         "claim_boundary": "This is a local, copy-only Junie project manifest. It does not enable, start, observe, or control Junie and does not grant edit, execution, approval, merge, publication, deployment, signing, credential, network, or connector authority.",
     }
@@ -423,20 +676,40 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
 
 
 def _planned_mcp_bytes(target: Path, workspace: Path) -> bytes:
-    expected = {"command": "factory", "args": ["mcp", "serve", "--root", str(workspace)]}
+    expected = {
+        "command": "factory",
+        "args": ["mcp", "serve", "--root", str(workspace)],
+    }
     if not target.exists():
         return _junie_mcp_bytes(workspace)
     try:
         loaded = json.loads(target.read_text(encoding="utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise JunieTaxonomyError("existing Junie MCP config is not valid UTF-8 JSON", "JUNIE_PACK_CONFLICT") from exc
-    if not isinstance(loaded, dict) or set(loaded) - {"mcpServers"} or not isinstance(loaded.get("mcpServers", {}), dict):
-        raise JunieTaxonomyError("existing Junie MCP config has an unsupported shape; no overwrite was performed", "JUNIE_PACK_CONFLICT")
+        raise JunieTaxonomyError(
+            "existing Junie MCP config is not valid UTF-8 JSON", "JUNIE_PACK_CONFLICT"
+        ) from exc
+    if (
+        not isinstance(loaded, dict)
+        or set(loaded) - {"mcpServers"}
+        or not isinstance(loaded.get("mcpServers", {}), dict)
+    ):
+        raise JunieTaxonomyError(
+            "existing Junie MCP config has an unsupported shape; no overwrite was performed",
+            "JUNIE_PACK_CONFLICT",
+        )
     servers = dict(loaded.get("mcpServers", {}))
     if "code-factory" in servers and servers["code-factory"] != expected:
-        raise JunieTaxonomyError("existing code-factory MCP entry differs; no overwrite was performed", "JUNIE_PACK_CONFLICT")
+        raise JunieTaxonomyError(
+            "existing code-factory MCP entry differs; no overwrite was performed",
+            "JUNIE_PACK_CONFLICT",
+        )
     servers["code-factory"] = expected
-    return json.dumps({"mcpServers": servers}, indent=2, sort_keys=True, ensure_ascii=False).encode("utf-8") + b"\n"
+    return (
+        json.dumps(
+            {"mcpServers": servers}, indent=2, sort_keys=True, ensure_ascii=False
+        ).encode("utf-8")
+        + b"\n"
+    )
 
 
 def _write_if_needed(target: Path, encoded: bytes) -> bool:
@@ -453,11 +726,16 @@ def _write_if_needed(target: Path, encoded: bytes) -> bool:
     return True
 
 
-def install_junie_factoryline_pack(root: Path | str, confirmation: str) -> dict[str, object]:
+def install_junie_factoryline_pack(
+    root: Path | str, confirmation: str
+) -> dict[str, object]:
     """Install only an exact, secret-free Junie project pack after confirmation."""
     workspace = _workspace(root)
     if confirmation != PACK_CONFIRMATION:
-        raise JunieTaxonomyError(f"confirmation must equal {PACK_CONFIRMATION}", "JUNIE_PACK_CONFIRMATION_REQUIRED")
+        raise JunieTaxonomyError(
+            f"confirmation must equal {PACK_CONFIRMATION}",
+            "JUNIE_PACK_CONFIRMATION_REQUIRED",
+        )
     agents_target = workspace / ".junie" / "AGENTS.md"
     mcp_target = workspace / ".junie" / "mcp" / "mcp.json"
     subagent_target = workspace / SUBAGENT_PATH
@@ -465,21 +743,34 @@ def install_junie_factoryline_pack(root: Path | str, confirmation: str) -> dict[
     subagent = _junie_proof_agent_bytes()
     # Check every conflict before making either write.
     if agents_target.exists() and agents_target.read_bytes() != agents:
-        raise JunieTaxonomyError("existing .junie/AGENTS.md differs; no overwrite was performed", "JUNIE_PACK_CONFLICT")
+        raise JunieTaxonomyError(
+            "existing .junie/AGENTS.md differs; no overwrite was performed",
+            "JUNIE_PACK_CONFLICT",
+        )
     mcp = _planned_mcp_bytes(mcp_target, workspace)
     if subagent_target.exists() and subagent_target.read_bytes() != subagent:
-        raise JunieTaxonomyError(f"existing {SUBAGENT_PATH} differs; no overwrite was performed", "JUNIE_PACK_CONFLICT")
+        raise JunieTaxonomyError(
+            f"existing {SUBAGENT_PATH} differs; no overwrite was performed",
+            "JUNIE_PACK_CONFLICT",
+        )
     changed_agents = _write_if_needed(agents_target, agents)
     changed_mcp = _write_if_needed(mcp_target, mcp)
     changed_subagent = _write_if_needed(subagent_target, subagent)
-    state = "installed" if changed_agents or changed_mcp or changed_subagent else "already_current"
+    state = (
+        "installed"
+        if changed_agents or changed_mcp or changed_subagent
+        else "already_current"
+    )
     manifest = junie_manifest(workspace)
     return {
         "schema": INSTALL_SCHEMA,
         "marker": "JUNIE_FACTORYLINE_PACK_INSTALLED",
         "state": state,
         "targets": {
-            "guidance": {"path": ".junie/AGENTS.md", "sha256": sha256(agents).hexdigest()},
+            "guidance": {
+                "path": ".junie/AGENTS.md",
+                "sha256": sha256(agents).hexdigest(),
+            },
             "mcp": {"path": ".junie/mcp/mcp.json", "sha256": sha256(mcp).hexdigest()},
             "subagent": {"path": SUBAGENT_PATH, "sha256": sha256(subagent).hexdigest()},
         },
