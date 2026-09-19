@@ -684,11 +684,19 @@ def _security_source_files(root: Path) -> list[Path]:
         "__pycache__",
         "node_modules",
     }
-    files = [
-        path
-        for path in root.rglob("*.py")
-        if path.is_file() and not ignored.intersection(path.parts)
-    ]
+    # Compare ignore markers against workspace-relative parts only.  Looking at
+    # absolute ``path.parts`` made every Linux checkout rooted at ``/tmp`` look
+    # like a generated temporary tree, causing the scanner to silently inspect
+    # zero files and report CLEAN.  A security scan must never become weaker
+    # because the workspace happens to live under an ignored-looking parent.
+    files = []
+    for path in root.rglob("*.py"):
+        if not path.is_file():
+            continue
+        relative_parts = path.relative_to(root).parts
+        if ignored.intersection(relative_parts):
+            continue
+        files.append(path)
     return sorted(files, key=lambda path: path.relative_to(root).as_posix())[:512]
 
 
