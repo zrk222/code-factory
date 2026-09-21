@@ -22,6 +22,10 @@
       "factoryline/a2a*.py",
       "factoryline/agent_*.py"
     ],
+    "cli_surfaces": [
+      "factoryline/cli.py",
+      "factoryline/cli_*.py"
+    ],
     "verification": [
       "factoryline/*proof*.py",
       "factoryline/*audit*.py",
@@ -35,6 +39,7 @@
     "graph_ops": "graph-ops-maintainers",
     "enterprise": "enterprise-controls-maintainers",
     "agent_protocols": "agent-protocols-maintainers",
+    "cli_surfaces": "cli-maintainers",
     "verification": "verification-maintainers"
   },
   "experimental": [
