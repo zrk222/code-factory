@@ -9,6 +9,7 @@ from typing import Any
 
 
 def add_parser(sub: Any) -> None:
+    """Register the First Lap activation and observation subcommands."""
     first_lap = sub.add_parser(
         "first-lap", help="prepare and verify the human-observed first activation lap"
     )
