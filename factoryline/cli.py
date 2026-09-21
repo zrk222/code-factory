@@ -48,8 +48,6 @@ from .run_metrics import export_public_metrics, public_metrics
 from .telemetry import telemetry_inventory
 from .agent_contract import (
     AgentContractError,
-    validate_agent_contract,
-    validate_verifier_attestation,
 )
 from .verifier_plane import (
     VerifierPlaneError,
@@ -91,13 +89,6 @@ from .target_compiler import (
     TargetCompileError,
     create_target_from_prd,
     create_target_from_prompt,
-)
-from .capability_packs import (
-    CapabilityPackError,
-    builtin_packs,
-    compose_packs,
-    install_pack,
-    validate_pack,
 )
 from .failure_guidance import explain_failure
 from .migration import (
@@ -554,11 +545,6 @@ from .first_lap import (
 from .agui import AguiError, build_review_events
 from .agentic_control import (
     AgenticControlError,
-    agentic_control_projection,
-    build_extended_assurance_receipt,
-    compare_agentic_control_drift,
-    verify_extended_assurance_receipt,
-    verify_agentic_control_drift,
 )
 
 # Keep parser construction independent from the optional app-builder module.
@@ -4435,82 +4421,13 @@ def _dispatch(argv=None) -> int:
         "--json", action="store_true", help="emit the target inventory as JSON"
     )
 
-    pack = sub.add_parser(
-        "pack", help="list, verify, and install signed mutation-tested capability packs"
-    )
-    pack_sub = pack.add_subparsers(dest="pack_cmd", required=True)
-    pack_sub.add_parser("list", help="list first-party packs and their trust status")
-    pack_validate = pack_sub.add_parser(
-        "validate", help="verify structure, signature, and validator mutations"
-    )
-    pack_validate.add_argument("path")
-    pack_install = pack_sub.add_parser(
-        "install", help="atomically install one verified pack into a workspace"
-    )
-    pack_install.add_argument("path")
-    pack_install.add_argument("--root", default=".")
-    pack_install.add_argument("--force", action="store_true")
-    pack_compose = pack_sub.add_parser(
-        "compose", help="write a compatible, hash-bound pack composition plan"
-    )
-    pack_compose.add_argument("paths", nargs="+")
-    pack_compose.add_argument("--root", default=".")
-    pack_compose.add_argument("--name", default="default")
-    pack_compose.add_argument("--force", action="store_true")
+    from .cli_pack import add_parser as add_pack_parser
 
-    agent = sub.add_parser(
-        "agent",
-        help="validate secret-free Core-5 agent contracts and verifier receipts",
-    )
-    agent_sub = agent.add_subparsers(dest="agent_cmd", required=True)
-    agent_contract = agent_sub.add_parser(
-        "contract", help="validate one hash-bound Core-5 contract"
-    )
-    agent_contract.add_argument("manifest")
-    agent_contract.add_argument("--json", action="store_true")
-    agent_attest = agent_sub.add_parser(
-        "attestation", help="validate a fresh creator/verifier adapter attestation"
-    )
-    agent_attest.add_argument("receipt")
-    agent_attest.add_argument("--mission-digest")
-    agent_attest.add_argument("--contract-digest")
-    agent_attest.add_argument("--json", action="store_true")
-    agent_control = agent_sub.add_parser(
-        "control",
-        help="show the deterministic agent-access control-plane projection",
-    )
-    agent_control.add_argument("--root", default=".")
-    agent_control.add_argument("--json", action="store_true")
-    agent_drift = agent_sub.add_parser(
-        "drift",
-        help="compare a prior control projection with the current one",
-    )
-    agent_drift.add_argument("baseline", nargs="?")
-    agent_drift.add_argument(
-        "--current", help="current projection JSON; defaults to the live projection"
-    )
-    agent_drift.add_argument("--root", default=".")
-    agent_drift.add_argument("--out", help="write the hash-bound drift receipt")
-    agent_drift.add_argument("--verify", help="verify an existing drift receipt")
-    agent_drift.add_argument("--json", action="store_true")
-    agent_extended = agent_sub.add_parser(
-        "extended",
-        help="validate optional lanes 7-8 from supplied evidence into Receipt v2",
-    )
-    agent_extended.add_argument("feature")
-    agent_extended.add_argument("--root", default=".")
-    agent_extended.add_argument(
-        "--evidence", help="JSON evidence object for the two extended lanes"
-    )
-    agent_extended.add_argument("--extended-assurance", action="store_true")
-    agent_extended.add_argument("--required-lane", action="append", default=[])
-    agent_extended.add_argument("--tenant-id", default="local")
-    agent_extended.add_argument("--run-id", default="extended-assurance")
-    agent_extended.add_argument("--timestamp")
-    agent_extended.add_argument(
-        "--verify", help="verify an existing Receipt v2 payload instead of building one"
-    )
-    agent_extended.add_argument("--json", action="store_true")
+    add_pack_parser(sub)
+
+    from .cli_agent import add_parser as add_agent_parser
+
+    add_agent_parser(sub)
 
     telemetry = sub.add_parser(
         "telemetry", help="reconcile local receipts, runs, traces, and meter ledgers"
@@ -5812,61 +5729,10 @@ def _dispatch(argv=None) -> int:
                 result = intake_parameters_status(Path(a.root))
             elif a.cmd == "intake":
                 result = intake_status(Path(a.root), Path(a.prd) if a.prd else None)
-            elif a.cmd == "agent" and a.agent_cmd == "contract":
-                result = validate_agent_contract(Path(a.manifest))
-            elif a.cmd == "agent" and a.agent_cmd == "attestation":
-                result = validate_verifier_attestation(
-                    Path(a.receipt),
-                    mission_digest=a.mission_digest,
-                    contract_digest=a.contract_digest,
-                )
-            elif a.cmd == "agent" and a.agent_cmd == "control":
-                result = agentic_control_projection(Path(a.root))
-            elif a.cmd == "agent" and a.agent_cmd == "drift":
-                if a.verify:
-                    result = verify_agentic_control_drift(
-                        json.loads(Path(a.verify).read_text(encoding="utf-8"))
-                    )
-                elif not a.baseline:
-                    raise AgenticControlError(
-                        "E_AGENTIC_DRIFT_INPUT",
-                        "baseline projection is required unless --verify is used",
-                    )
-                else:
-                    baseline = json.loads(Path(a.baseline).read_text(encoding="utf-8"))
-                    current = (
-                        json.loads(Path(a.current).read_text(encoding="utf-8"))
-                        if a.current
-                        else agentic_control_projection(Path(a.root))
-                    )
-                    result = compare_agentic_control_drift(baseline, current)
-                    if a.out:
-                        destination = Path(a.out)
-                        destination.parent.mkdir(parents=True, exist_ok=True)
-                        destination.write_text(
-                            json.dumps(result, indent=2, sort_keys=True) + "\n",
-                            encoding="utf-8",
-                        )
-            elif a.cmd == "agent" and a.agent_cmd == "extended":
-                if a.verify:
-                    result = verify_extended_assurance_receipt(
-                        json.loads(Path(a.verify).read_text(encoding="utf-8"))
-                    )
-                else:
-                    evidence = (
-                        json.loads(Path(a.evidence).read_text(encoding="utf-8"))
-                        if a.evidence
-                        else {}
-                    )
-                    result = build_extended_assurance_receipt(
-                        a.feature,
-                        extended_assurance=a.extended_assurance,
-                        evidence=evidence,
-                        required_lanes=a.required_lane,
-                        tenant_id=a.tenant_id,
-                        run_id=a.run_id,
-                        timestamp=a.timestamp,
-                    )
+            elif a.cmd == "agent":
+                from .cli_agent import run as run_agent
+
+                result = run_agent(a)
             elif a.cmd == "telemetry":
                 result = telemetry_inventory(Path(a.root))
             elif a.cmd == "verifier" and a.verifier_cmd == "session":
@@ -7060,61 +6926,9 @@ def _dispatch(argv=None) -> int:
         )
         return code
     if a.cmd == "pack":
-        try:
-            if a.pack_cmd == "list":
-                packs = []
-                for item in builtin_packs():
-                    validation = validate_pack(Path(item["path"]))
-                    packs.append(
-                        {
-                            "id": item["id"],
-                            "version": item["version"],
-                            "kind": item["kind"],
-                            "target_kind": item.get("target_kind"),
-                            "label": item["label"],
-                            "path": item["path"],
-                            "valid": validation["valid"],
-                            "signature": validation["signature"],
-                            "mutations": validation["mutations"],
-                        }
-                    )
-                result = {
-                    "schema": "factory.capability_pack.inventory.v1",
-                    "packs": packs,
-                    "markers": [
-                        "PACK_INVENTORY_DERIVED",
-                        "PACK_SIGNATURE_BYPASS_DENIED",
-                    ],
-                }
-            elif a.pack_cmd == "validate":
-                result = validate_pack(Path(a.path), verify_signature=True, mutate=True)
-            elif a.pack_cmd == "install":
-                result = install_pack(Path(a.path), Path(a.root), force=a.force)
-            else:
-                result = compose_packs(
-                    [Path(path) for path in a.paths],
-                    Path(a.root),
-                    name=a.name,
-                    force=a.force,
-                )
-        except CapabilityPackError as exc:
-            print(
-                json.dumps(
-                    {
-                        "schema": "factory.capability_pack.error.v1",
-                        "status": "failed",
-                        "code": exc.code,
-                        "message": exc.message,
-                        "markers": exc.markers,
-                        "failure": exc.guidance,
-                    },
-                    indent=2,
-                ),
-                file=sys.stderr,
-            )
-            return 1
-        print(json.dumps(result, indent=2, sort_keys=True))
-        return 0 if result.get("valid", True) else 1
+        from .cli_pack import run as run_pack
+
+        return run_pack(a)
     if a.cmd == "create":
         if bool(a.prompt) == bool(a.prd):
             payload = {

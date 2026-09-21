@@ -29,6 +29,7 @@ EXTENDED_ASSURANCE_SCHEMA = "factory.extended-assurance.v1"
 DRIFT_SCHEMA = "factory.agentic-control-drift.v1"
 CAPABILITY_SCHEMA = "factory.capability-registry.v1"
 TASK_CARD_SCHEMA = "factory.task-card.v1"
+ORCHESTRATOR_PLAN_SCHEMA = "factory.orchestrator-plan.v1"
 _ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40,64}$")
@@ -348,6 +349,107 @@ def verify_task_card(card: dict[str, Any]) -> dict[str, Any]:
     if any(value is not False for value in card["authority"].values()):
         raise AgenticControlError("E_TASK_AUTHORITY", "task card cannot grant authority")
     return dict(card)
+
+
+def create_orchestrator_plan(
+    request: dict[str, Any], *, created_at: str | None = None
+) -> dict[str, Any]:
+    """Compile a typed request-routing plan without dispatching an agent or tool."""
+    if not isinstance(request, dict):
+        raise AgenticControlError("E_ORCHESTRATOR_INPUT", "request must be an object")
+    required = {
+        "goal",
+        "intent_digest",
+        "capability_registry_sha256",
+        "workflow_ids",
+        "recipe_names",
+        "task_ids",
+        "model_tier",
+        "stop_condition",
+        "approval_required",
+    }
+    if set(request) != required:
+        raise AgenticControlError(
+            "E_ORCHESTRATOR_SCHEMA", "request fields must exactly match the routing contract"
+        )
+    goal = _bounded_text(request["goal"], "goal", maximum=1024)
+    intent_digest = _digest(request["intent_digest"], "intent_digest")
+    registry_digest = _digest(
+        request["capability_registry_sha256"], "capability_registry_sha256"
+    )
+    model_tier = _id(request["model_tier"], "model_tier")
+    stop_condition = _bounded_text(request["stop_condition"], "stop_condition")
+    if request["approval_required"] is not True:
+        raise AgenticControlError(
+            "E_ORCHESTRATOR_APPROVAL", "orchestrator plans require human approval"
+        )
+    def _ids(value: object, label: str) -> list[str]:
+        if not isinstance(value, list):
+            raise AgenticControlError("E_ORCHESTRATOR_SCHEMA", f"{label} must be a list")
+        return sorted({_id(item, f"{label} item") for item in value})
+
+    workflow_ids = _ids(request["workflow_ids"], "workflow_ids")
+    recipe_names = _ids(request["recipe_names"], "recipe_names")
+    task_ids = _ids(request["task_ids"], "task_ids")
+    if not workflow_ids or not task_ids:
+        raise AgenticControlError(
+            "E_ORCHESTRATOR_SCHEMA", "at least one workflow and task are required"
+        )
+    timestamp = created_at or datetime.now(timezone.utc).isoformat()
+    core = {
+        "schema": ORCHESTRATOR_PLAN_SCHEMA,
+        "goal": goal,
+        "intent_digest": intent_digest,
+        "capability_registry_sha256": registry_digest,
+        "workflow_ids": workflow_ids,
+        "recipe_names": recipe_names,
+        "task_ids": task_ids,
+        "model_tier": model_tier,
+        "stop_condition": stop_condition,
+        "approval_required": True,
+        "created_at": timestamp,
+        "status": "PLANNED",
+        "authority": dict(_AUTHORITY),
+    }
+    digest = _sha(core)
+    return {
+        **core,
+        "plan_id": "orchestrator-plan:" + digest[:32],
+        "plan_sha256": digest,
+        "next_action": "human_review_required",
+    }
+
+
+def verify_orchestrator_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    """Verify a routing plan and reject authority or intent mutations."""
+    if not isinstance(plan, dict) or plan.get("schema") != ORCHESTRATOR_PLAN_SCHEMA:
+        raise AgenticControlError("E_ORCHESTRATOR_SCHEMA", "unsupported orchestrator plan")
+    core_keys = {
+        "schema",
+        "goal",
+        "intent_digest",
+        "capability_registry_sha256",
+        "workflow_ids",
+        "recipe_names",
+        "task_ids",
+        "model_tier",
+        "stop_condition",
+        "approval_required",
+        "created_at",
+        "status",
+        "authority",
+    }
+    if set(plan) != core_keys | {"plan_id", "plan_sha256", "next_action"}:
+        raise AgenticControlError("E_ORCHESTRATOR_SCHEMA", "plan fields are not exact")
+    if plan.get("plan_sha256") != _sha({key: plan[key] for key in core_keys}):
+        raise AgenticControlError("E_ORCHESTRATOR_TAMPERED", "plan digest does not match contents")
+    if plan.get("plan_id") != "orchestrator-plan:" + str(plan["plan_sha256"])[:32]:
+        raise AgenticControlError("E_ORCHESTRATOR_TAMPERED", "plan id does not match digest")
+    if plan.get("approval_required") is not True or plan.get("status") != "PLANNED":
+        raise AgenticControlError("E_ORCHESTRATOR_APPROVAL", "plan must remain pending human approval")
+    if any(value is not False for value in plan.get("authority", {}).values()):
+        raise AgenticControlError("E_ORCHESTRATOR_AUTHORITY", "plan cannot grant authority")
+    return dict(plan)
 
 
 def _route_fields(
@@ -994,6 +1096,11 @@ def agentic_control_projection(root: Path) -> dict[str, Any]:
                 "schema": TASK_CARD_SCHEMA,
                 "states": list(_TASK_STATES),
                 "authority": "lease_and_checkpoint_metadata_only",
+            },
+            "orchestrator_request_routing": {
+                "status": "available",
+                "schema": ORCHESTRATOR_PLAN_SCHEMA,
+                "authority": "plan_only; human approval required",
             },
         },
         "extended_assurance": {

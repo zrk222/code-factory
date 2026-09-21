@@ -5,6 +5,7 @@ import json
 import hashlib
 
 import pytest
+from factoryline.cli import main
 
 from factoryline.agentic_control import (
     AgenticControlError,
@@ -30,6 +31,8 @@ from factoryline.agentic_control import (
     create_task_card,
     transition_task_card,
     verify_task_card,
+    create_orchestrator_plan,
+    verify_orchestrator_plan,
 )
 
 
@@ -264,8 +267,54 @@ def test_sandbox_boundary_is_read_only_and_pinned(tmp_path) -> None:
 
 def test_projection_exposes_all_six_controls_without_authority(tmp_path) -> None:
     projection = agentic_control_projection(tmp_path)
-    assert len(projection["features"]) == 9
+    assert len(projection["features"]) == 10
     assert all(value is False for value in projection["authority"].values())
+
+
+def test_orchestrator_plan_is_typed_and_human_gated() -> None:
+    plan = create_orchestrator_plan(
+        {
+            "goal": "route a bounded repair through independent verification",
+            "intent_digest": SHA,
+            "capability_registry_sha256": SHA,
+            "workflow_ids": ["workflow:repair"],
+            "recipe_names": ["quality-audit"],
+            "task_ids": ["task:repair"],
+            "model_tier": "workhorse",
+            "stop_condition": "stop when evidence is stale or approval is missing",
+            "approval_required": True,
+        }
+    )
+    assert verify_orchestrator_plan(plan)["status"] == "PLANNED"
+    tampered = dict(plan)
+    tampered["approval_required"] = False
+    with pytest.raises(AgenticControlError, match="digest"):
+        verify_orchestrator_plan(tampered)
+
+
+def test_orchestrator_plan_cli_writes_a_sealed_plan(tmp_path, capsys) -> None:
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "goal": "compile a bounded route",
+                "intent_digest": SHA,
+                "capability_registry_sha256": SHA,
+                "workflow_ids": ["workflow:demo"],
+                "recipe_names": ["demo"],
+                "task_ids": ["task:demo"],
+                "model_tier": "lightweight",
+                "stop_condition": "stop at missing approval",
+                "approval_required": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = tmp_path / "plan.json"
+    assert main(["agent", "plan", str(request), "--out", str(out), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == "factory.orchestrator-plan.v1"
+    assert json.loads(out.read_text(encoding="utf-8"))["plan_id"] == payload["plan_id"]
 
 
 def test_extended_assurance_is_opt_in_and_receipt_v2_compatible() -> None:
