@@ -22,6 +22,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .capability_evidence import CapabilityEvidenceError, audit_capability_evidence
+    from .full_stack_ux_harness import (
+        FullStackUXHarnessError,
+        verify_quality_harness,
+        write_quality_harness_template,
+    )
+    from .full_stack_ux_spec import (
+        FullStackUXSpecError,
+        validate_ux_harness_spec,
+        verify_ux_harness_spec_receipt,
+    )
     from .review_audits import (
         ReviewAuditError,
         audit_code,
@@ -103,17 +114,6 @@ from .intake_parameters import (
     verify_intake_parameters,
 )
 from .ide_playbook import AdoptionGuideError, adoption_guide
-from .capability_evidence import CapabilityEvidenceError, audit_capability_evidence
-from .full_stack_ux_harness import (
-    FullStackUXHarnessError,
-    verify_quality_harness,
-    write_quality_harness_template,
-)
-from .full_stack_ux_spec import (
-    FullStackUXSpecError,
-    validate_ux_harness_spec,
-    verify_ux_harness_spec_receipt,
-)
 from .graph_portfolio import graph_portfolio_plan
 from .graph_forensics import (
     GraphForensicsError,
@@ -7292,6 +7292,10 @@ def _dispatch(argv=None) -> int:
             print("Analysis only; declared policy is not authenticated approval.")
         return 0 if result["state"] == "no_structural_findings" else 2
     if a.cmd == "evidence-audit":
+        from .cli_quality import run_evidence
+
+        return run_evidence(a)
+    if False and a.cmd == "evidence-audit":
         try:
             result = audit_capability_evidence(
                 Path(a.root), Path(a.manifest), execute=a.execute
@@ -7314,6 +7318,10 @@ def _dispatch(argv=None) -> int:
         )
         return 0 if result["ok"] else 1
     if a.cmd == "quality-harness":
+        from .cli_quality import run_quality
+
+        return run_quality(a)
+    if False and a.cmd == "quality-harness":
         try:
             if a.quality_cmd == "template":
                 result = write_quality_harness_template(
