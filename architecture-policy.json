@@ -15,8 +15,8 @@
     "max_markdown_files": 658,
     "max_python_files": 435,
     "max_markdown_python_ratio": 1.7,
-    "max_cli_lines": 7134,
-    "max_cli_command_declarations": 275,
+    "max_cli_lines": 6938,
+    "max_cli_command_declarations": 272,
     "max_core_modules": 225
   },
   "review_thresholds": {
@@ -41,8 +41,8 @@
       "ARCH_RELEASE_CHURN"
     ],
     "metrics": {
-      "cli_lines": 7134,
-      "cli_command_declarations": 275,
+      "cli_lines": 6938,
+      "cli_command_declarations": 272,
       "core_modules": 225,
       "markdown_files": 658,
       "markdown_python_ratio": 1.5126,

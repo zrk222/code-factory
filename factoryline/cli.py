@@ -76,13 +76,6 @@ from .proof import (
     risk_for_paths,
     verify_trace,
 )
-from .target_compiler import (
-    SUPPORTED_TRIGGERS,
-    TARGETS,
-    TargetCompileError,
-    create_target_from_prd,
-    create_target_from_prompt,
-)
 from .failure_guidance import explain_failure
 from .migration import (
     MigrationError,
@@ -2525,13 +2518,6 @@ def _dispatch(argv=None) -> int:
 
     add_app_parser(sub)
 
-    targets = sub.add_parser(
-        "targets", help="list target kinds supported by the deterministic compiler"
-    )
-    targets.add_argument(
-        "--json", action="store_true", help="emit the target inventory as JSON"
-    )
-
     from .cli_pack import add_parser as add_pack_parser
 
     add_pack_parser(sub)
@@ -2556,44 +2542,9 @@ def _dispatch(argv=None) -> int:
     from .cli_verifier import add_parser as add_verifier_parser
     add_verifier_parser(sub)
 
-    target = sub.add_parser(
-        "create", help="compile one prompt or PRD into one governed starter target"
-    )
-    target.add_argument(
-        "prompt", nargs="?", help="plain-language intent; mutually exclusive with --prd"
-    )
-    target.add_argument("--prd", help="UTF-8 PRD path; mutually exclusive with prompt")
-    target.add_argument("--target", required=True, choices=sorted(TARGETS))
-    target.add_argument("--out", required=True, help="empty output directory")
-    target.add_argument("--name", help="target slug override")
-    target.add_argument(
-        "--purpose",
-        default="auto",
-        help="auto, developer, healthcare, fintech, marketplace, saas",
-    )
-    target.add_argument("--trigger", default="manual", choices=SUPPORTED_TRIGGERS)
-    target.add_argument(
-        "--deployment-profile",
-        help="deployment route id shown by `factory targets --json`; defaults to the local or preview route",
-    )
-    target.add_argument("--json", action="store_true")
+    from .cli_targets import add_parser as add_targets_parser
 
-    mvp = sub.add_parser(
-        "mvp", help="turn one outcome into a contained local web MVP starter"
-    )
-    mvp.add_argument("outcome", help="plain-language outcome for the first MVP")
-    mvp.add_argument(
-        "--root", default=".", help="workspace that receives the new my-mvp directory"
-    )
-    mvp.add_argument(
-        "--name", help="optional product name; the output directory remains my-mvp"
-    )
-    mvp.add_argument(
-        "--purpose",
-        default="auto",
-        help="auto, developer, healthcare, fintech, marketplace, saas",
-    )
-    mvp.add_argument("--json", action="store_true")
+    add_targets_parser(sub)
 
     studio = sub.add_parser("studio", help="run the loopback-only local target builder")
     studio.add_argument(
@@ -3895,19 +3846,10 @@ def _dispatch(argv=None) -> int:
         ):
             return 0 if result.get("valid", result.get("verdict") == "VERIFIED") else 1
         return 0
-    if a.cmd == "targets":
-        payload = {"schema": "factory.targets.v1", "targets": TARGETS}
-        if a.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            for target_kind, metadata in TARGETS.items():
-                print(f"{target_kind}: {metadata['label']}")
-                print(f"  {metadata['summary']}")
-                for profile in metadata["deployment_profiles"]:
-                    print(
-                        f"  - {profile['id']}: {profile['label']} [approval: {profile['approval']}]"
-                    )
-        return 0
+    if a.cmd in {"targets", "create", "mvp"}:
+        from .cli_targets import run as run_targets
+
+        return run_targets(a)
     if a.cmd == "admission":
         from .run_admission import AdmissionError, prepare_admission, verify_admission
 
@@ -4208,76 +4150,6 @@ def _dispatch(argv=None) -> int:
         from .cli_pack import run as run_pack
 
         return run_pack(a)
-    if a.cmd == "create":
-        if bool(a.prompt) == bool(a.prd):
-            payload = {
-                "schema": "factory.target_compile_error.v1",
-                "status": "failed",
-                "code": "SOURCE_EXACTLY_ONE",
-                "marker": "COMPILE_FAILED",
-                "message": "provide exactly one source: prompt or --prd",
-                "failure": explain_failure(
-                    "SOURCE_EXACTLY_ONE", "provide exactly one source: prompt or --prd"
-                ),
-            }
-            print(json.dumps(payload, indent=2), file=sys.stderr)
-            return 2
-        try:
-            if a.prd:
-                result = create_target_from_prd(
-                    Path(a.prd),
-                    target=a.target,
-                    out_dir=Path(a.out),
-                    name=a.name,
-                    purpose=a.purpose,
-                    trigger=a.trigger,
-                    deployment_profile=a.deployment_profile,
-                )
-            else:
-                result = create_target_from_prompt(
-                    a.prompt,
-                    target=a.target,
-                    out_dir=Path(a.out),
-                    name=a.name,
-                    purpose=a.purpose,
-                    trigger=a.trigger,
-                    deployment_profile=a.deployment_profile,
-                )
-        except (TargetCompileError, UnicodeDecodeError) as exc:
-            code = (
-                exc.code
-                if isinstance(exc, TargetCompileError)
-                else "PRD_ENCODING_INVALID"
-            )
-            message = (
-                exc.message
-                if isinstance(exc, TargetCompileError)
-                else "PRD must be valid UTF-8"
-            )
-            payload = {
-                "schema": "factory.target_compile_error.v1",
-                "status": "failed",
-                "code": code,
-                "marker": "COMPILE_FAILED",
-                "message": message,
-                "failure": exc.guidance
-                if isinstance(exc, TargetCompileError)
-                else explain_failure(code, message),
-            }
-            print(json.dumps(payload, indent=2), file=sys.stderr)
-            return 1
-        if a.json:
-            print(json.dumps(result, indent=2))
-        else:
-            print(f"target compiled: {result['out_dir']}")
-            print(f"kind           : {result['target_kind']}")
-            print(f"state          : {result['status']}")
-            print(
-                f"deploy route   : {result['deployment']['profile']['label']} ({result['deployment']['selected_profile_id']})"
-            )
-            print(f"deploy approval: {result['deployment']['profile']['approval']}")
-            print(f"receipt        : {result['receipt']}")
-        return 0
     if a.cmd == "studio":
         from .studio import StudioRequestError, serve_studio, studio_status
 
@@ -6272,74 +6144,6 @@ def _dispatch(argv=None) -> int:
                 print(f"{stage['module']}:{stage['stage']}")
                 for reason in stage["reasons"]:
                     print(f"  reason: {reason}")
-        return 0
-    if a.cmd == "mvp":
-        root = Path(a.root).resolve()
-        try:
-            result = create_target_from_prompt(
-                a.outcome,
-                target="web",
-                out_dir=root / "my-mvp",
-                name=a.name,
-                purpose=a.purpose,
-                trigger="manual",
-            )
-        except TargetCompileError as exc:
-            payload = {
-                "schema": "factory.mvp.error.v1",
-                "status": "failed",
-                "code": exc.code,
-                "marker": "MVP_STARTER_FAILED",
-                "message": exc.message,
-                "failure": exc.guidance,
-            }
-            print(
-                json.dumps(payload, indent=2)
-                if a.json
-                else f"MVP starter failed: {exc.code}: {exc.message}",
-                file=sys.stderr,
-            )
-            return 1
-        payload = {
-            "schema": "factory.mvp.v1",
-            "marker": "MVP_STARTER_CONTAINED",
-            "markers": sorted(
-                set(
-                    result["markers"]
-                    + ["MVP_STARTER_CONTAINED", "MVP_PROOF_PATH_EXPLICIT"]
-                )
-            ),
-            "status": result["status"],
-            "out_dir": result["out_dir"],
-            "target_kind": result["target_kind"],
-            "name": result["name"],
-            "output_map": result["output_map"],
-            "output_map_sha256": result["output_map_sha256"],
-            "next_proof_commands": result["next_commands"],
-            "authority": {
-                "execution": False,
-                "approval": False,
-                "publication": False,
-                "deployment": False,
-                "signing": False,
-                "messaging": False,
-                "credential": False,
-                "connector": False,
-            },
-            "claims": result["claims"],
-        }
-        if a.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            print("Your local MVP starter is ready.")
-            print(f"path       : {payload['out_dir']}")
-            print(f"output map : {payload['output_map']}")
-            print("next proof :")
-            for command in payload["next_proof_commands"]:
-                print(f"  {command}")
-            print(
-                "boundary   : deployment, publication, credentials, connectors, and messages remain unavailable"
-            )
         return 0
     if a.cmd == "graph":
         from .graph_ops import graph_ops_impact, graph_ops_snapshot
