@@ -55,8 +55,18 @@ def test_graph_ops_links_local_product_mission_and_valid_completion_exactly(
     assert "GRAPH_OPS_UNIFIED_READ_ONLY" in first["markers"]
     assert "GRAPH_OPS_SLICE_LINKS_EXACT" in first["markers"]
     assert "GRAPH_OPS_MISSION_EVIDENCE_LINKED" in first["markers"]
+    assert "GRAPH_OPS_AGENTIC_CONTROL_READ_ONLY" in first["markers"]
+    assert first["agentic_control"]["feature_count"] == 9
+    assert first["facts"]["agentic_control_available"] is True
     kinds = {node["kind"] for node in first["nodes"]}
-    assert {"product", "requirement", "slice", "mission", "completion"} <= kinds
+    assert {
+        "product",
+        "requirement",
+        "slice",
+        "mission",
+        "completion",
+        "agentic_control",
+    } <= kinds
 
     edges = {
         (edge["source"], edge["target"], edge["relation"]) for edge in first["edges"]
@@ -884,6 +894,10 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "Memory Spine · proof-aware briefing" in page
     assert "Turn the diff into the next safe proof." in page
     assert 'id="memory-refresh"' in page
+    assert 'id="agentic-control-summary"' in page
+    assert "GRAPH_OPS_AGENTIC_CONTROL_READ_ONLY" in page
+    assert "renderAgenticControl(payload)" in page
+    assert 'id="agentic-control-task-cards"' in page
     assert 'id="team-refresh"' in page
     assert 'id="memory-auto-refresh"' in page
     assert 'id="memory-actions"' in page
