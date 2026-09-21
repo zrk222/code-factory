@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import json
+import hashlib
 
 import pytest
 
@@ -24,6 +25,11 @@ from factoryline.agentic_control import (
     verify_typed_handoff,
     verify_extended_assurance_receipt,
     verify_agentic_control_drift,
+    create_capability_registry,
+    verify_capability_registry,
+    create_task_card,
+    transition_task_card,
+    verify_task_card,
 )
 
 
@@ -35,6 +41,66 @@ def test_model_route_is_deterministic_and_tiered() -> None:
     assert route_model("standard")["tier"] == "workhorse"
     assert route_model("critical", risk="critical")["tier"] == "frontier"
     assert route_model("standard") == route_model("standard")
+
+
+def test_capability_registry_is_hash_bound_and_cannot_grant_authority() -> None:
+    registry = create_capability_registry(
+        "factory-core", "1.0.0", [
+            {
+                "id": "planner",
+                "role": "planner",
+                "risk_class": "medium",
+                "allowed_tools": ["factory plan verify"],
+                "forbidden_tools": ["git push"],
+                "allowed_paths": ["plans/", "specs/"],
+                "model_tier": "frontier",
+                "stop_condition": "Stop after a reviewed plan is emitted.",
+                "approval_required": True,
+                "required_evidence": ["intent", "plan"],
+            }
+        ],
+    )
+    assert verify_capability_registry(registry)["registry_sha256"] == registry["registry_sha256"]
+    assert all(value is False for value in registry["authority"].values())
+    tampered = dict(registry)
+    tampered["capabilities"] = [dict(registry["capabilities"][0], allowed_tools=["git push"])]
+    with pytest.raises(AgenticControlError, match="digest"):
+        verify_capability_registry(tampered)
+
+
+def test_task_card_lease_checkpoint_and_completion_are_deterministic() -> None:
+    registry = create_capability_registry(
+        "factory-core", "1.0.0", [{
+            "id": "builder", "role": "builder", "risk_class": "high",
+            "allowed_tools": ["factory build"], "forbidden_tools": ["git push"],
+            "allowed_paths": ["src/"], "model_tier": "workhorse",
+            "stop_condition": "Stop when the bounded change is ready for verification.",
+            "approval_required": True, "required_evidence": ["test"],
+        }],
+    )
+    card = create_task_card(
+        "task-1", "wf-1", "builder", registry["registry_sha256"], SHA,
+        allowed_paths=["src/"], stop_condition="Stop at verification.",
+        next_action="Run the declared checks.", created_at="2026-09-21T00:00:00Z",
+    )
+    leased = transition_task_card(card, "leased", lease_id="lease-1", lease_expires_at="2026-09-21T01:00:00Z")
+    running = transition_task_card(leased, "running")
+    checkpointed = transition_task_card(running, "checkpointed", checkpoint_digest=SHA)
+    verifying = transition_task_card(checkpointed, "verifying", evidence_digest=SHA)
+    completed = transition_task_card(verifying, "completed")
+    assert verify_task_card(completed)["state"] == "completed"
+    malformed = dict(completed, unexpected="metadata")
+    malformed["task_sha256"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in malformed.items() if key not in {"task_sha256", "marker"}},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    with pytest.raises(AgenticControlError, match="fields are not exact"):
+        verify_task_card(malformed)
+    with pytest.raises(AgenticControlError, match="cannot move"):
+        transition_task_card(completed, "running")
 
 
 def test_typed_handoff_is_hash_bound_and_secret_free() -> None:
@@ -198,7 +264,7 @@ def test_sandbox_boundary_is_read_only_and_pinned(tmp_path) -> None:
 
 def test_projection_exposes_all_six_controls_without_authority(tmp_path) -> None:
     projection = agentic_control_projection(tmp_path)
-    assert len(projection["features"]) == 7
+    assert len(projection["features"]) == 9
     assert all(value is False for value in projection["authority"].values())
 
 

@@ -33,6 +33,7 @@
       "E_ARCH_CLI_LINES_GROWTH",
       "E_ARCH_CLI_COMMAND_DECLARATIONS_GROWTH",
       "E_ARCH_CORE_MODULES_GROWTH",
+      "E_ARCH_MARKDOWN_FILES_GROWTH",
       "ARCH_CLI_MONOLITH",
       "ARCH_CLI_COMMAND_SURFACE",
       "ARCH_CORE_SURFACE",
@@ -43,8 +44,9 @@
       "cli_lines": 11721,
       "cli_command_declarations": 493,
       "core_modules": 201,
-      "markdown_python_ratio": 1.5937,
-      "release_recent_count": 20
+      "markdown_files": 658,
+      "markdown_python_ratio": 1.601,
+      "release_recent_count": 17
     }
   },
   "release": {

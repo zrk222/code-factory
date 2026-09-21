@@ -68,6 +68,7 @@ from .agent_proof_bridge import (
 )
 from .proof_worklog import proof_worklog_projection
 from .operations_control import operations_control_projection
+from .agentic_control import agentic_control_projection
 from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
 from .mission_control_status import mission_control_status
@@ -541,6 +542,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.operations_control_status",
             "description": "Read local verified-isolation, repro-budget, change-envelope, proof-tier, architecture-zone, and coordination receipt facts. It never creates a worktree, dispatches a task, or approves work.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.agentic_control_status",
+            "description": "Read deterministic role, capability-registry, durable-task-card, route-trace, cookbook, workflow, and sandbox-boundary metadata. Read only; no model, execution, source, approval, merge, publication, deployment, signing, credential, or connector action.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1712,6 +1719,17 @@ def _operations_control_status(root: Path, arguments: object) -> dict[str, objec
     }
 
 
+def _agentic_control_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.agentic_control_status accepts no arguments")
+    return {
+        "marker": "AGENTIC_CONTROL_MCP_READ_ONLY",
+        "action_summary": "Read deterministic agentic-control metadata for role capabilities, durable task cards, route traces, lazy cookbook context, reusable workflows, and sandbox boundaries.",
+        "status": agentic_control_projection(root),
+        "scope": "Read-only local control-plane facts. No model, source, branch, merge, approval, repair, publication, deployment, credential, or connector action ran.",
+    }
+
+
 def _lifecycle_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.lifecycle_status accepts no arguments")
@@ -2250,6 +2268,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_atomic_status(root, arguments))
     if name == "factory.operations_control_status":
         return _content(_operations_control_status(root, arguments))
+    if name == "factory.agentic_control_status":
+        return _content(_agentic_control_status(root, arguments))
     if name == "factory.lifecycle_status":
         return _content(_lifecycle_status(root, arguments))
     if name == "factory.repair_loop_status":
