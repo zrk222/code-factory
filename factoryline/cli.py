@@ -46,7 +46,6 @@ from .contract import MODULES, ensure_layout, LAYOUT
 from .assembly import detect, assemble, DEFAULT_CHAIN, rollup_receipts
 from .continuation import ContinuationError, continue_assembly
 from .run_metrics import export_public_metrics, public_metrics
-from .telemetry import telemetry_inventory
 from .agent_contract import (
     AgentContractError,
 )
@@ -2526,15 +2525,9 @@ def _dispatch(argv=None) -> int:
 
     add_agent_parser(sub)
 
-    telemetry = sub.add_parser(
-        "telemetry", help="reconcile local receipts, runs, traces, and meter ledgers"
-    )
-    telemetry_sub = telemetry.add_subparsers(dest="telemetry_cmd", required=True)
-    telemetry_inventory_parser = telemetry_sub.add_parser(
-        "inventory", help="emit a privacy-safe reconciled inventory"
-    )
-    telemetry_inventory_parser.add_argument("--root", default=".")
-    telemetry_inventory_parser.add_argument("--json", action="store_true")
+    from .cli_telemetry import add_parser as add_telemetry_parser
+
+    add_telemetry_parser(sub)
 
     from .cli_ops import add_parser as add_ops_parser
     add_ops_parser(sub)
@@ -3392,6 +3385,10 @@ def _dispatch(argv=None) -> int:
         from .cli_verifier import run as run_verifier
 
         return run_verifier(a)
+    if a.cmd == "telemetry":
+        from .cli_telemetry import run as run_telemetry
+
+        return run_telemetry(a)
     if a.cmd in {
         "prd",
         "intake",
@@ -3407,7 +3404,6 @@ def _dispatch(argv=None) -> int:
         "langgraph",
         "provider",
         "agent",
-        "telemetry",
     }:
         try:
             if a.cmd == "prd" and a.prd_cmd == "grill":
@@ -3475,8 +3471,6 @@ def _dispatch(argv=None) -> int:
                 from .cli_agent import run as run_agent
 
                 result = run_agent(a)
-            elif a.cmd == "telemetry":
-                result = telemetry_inventory(Path(a.root))
             elif a.cmd == "langgraph" and a.langgraph_cmd == "doctor":
                 result = langgraph_doctor()
             elif a.cmd == "langgraph" and a.langgraph_cmd == "init":
