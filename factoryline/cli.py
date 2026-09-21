@@ -150,19 +150,6 @@ from .agent_proof_bridge import (
     provider_template,
     verify_agent_proof,
 )
-from .external_evidence import (
-    ExternalEvidenceError,
-    diff_external_runtime_receipts,
-    import_external_runtime_bundle,
-)
-from .journey_proof import (
-    JourneyProofError,
-    compile_reality_graph,
-    create_failure_capsule,
-    journey_proof_status,
-    verify_proof_gated_healing,
-    verify_stateful_workflow,
-)
 from .plan_proof_review import (
     PlanProofReviewError,
     review_plan_proof,
@@ -683,26 +670,6 @@ def _dispatch(argv=None) -> int:
     s = sub.add_parser("doctor", help="show brick versions and command compatibility")
     s.add_argument("--strict", action="store_true")
     s.add_argument("--json", action="store_true")
-    architecture = sub.add_parser(
-        "architecture", help="measure architecture debt and enforce growth budgets"
-    )
-    architecture_sub = architecture.add_subparsers(
-        required=True, dest="architecture_cmd"
-    )
-    architecture_health = architecture_sub.add_parser(
-        "health",
-        help="report documentation, CLI, module-surface, and release-cadence health",
-    )
-    architecture_health.add_argument("--root", default=".")
-    architecture_health.add_argument(
-        "--policy", help="policy JSON; defaults to architecture-policy.json below root"
-    )
-    architecture_health.add_argument(
-        "--strict",
-        action="store_true",
-        help="treat existing architecture debt as blocking",
-    )
-    architecture_health.add_argument("--json", action="store_true")
     plan = sub.add_parser(
         "plan", help="print the assembly pipeline or verify a human-approved agent plan"
     )
@@ -746,92 +713,9 @@ def _dispatch(argv=None) -> int:
     )
     e2e_verify.add_argument("--json", action="store_true")
 
-    external = sub.add_parser(
-        "external", help="import and compare offline external runtime evidence"
-    )
-    external_sub = external.add_subparsers(required=True, dest="external_cmd")
-    external_import = external_sub.add_parser(
-        "import", help="verify one provider bundle and write an observed-only receipt"
-    )
-    external_import.add_argument(
-        "bundle",
-        help="workspace-contained factory.external-runtime-bundle.v1 JSON path",
-    )
-    external_import.add_argument("--root", default=".")
-    external_import.add_argument(
-        "--provider", required=True, help="declared adapter id, for example testsprite"
-    )
-    external_import.add_argument(
-        "--out", help="receipt path below .factory/external-evidence/"
-    )
-    external_import.add_argument("--json", action="store_true")
-    external_diff = external_sub.add_parser(
-        "diff", help="compare two verified receipts without provider execution"
-    )
-    external_diff.add_argument("left", help="left receipt path")
-    external_diff.add_argument("right", help="right receipt path")
-    external_diff.add_argument("--root", default=".")
-    external_diff.add_argument("--json", action="store_true")
+    from .cli_foundations import add_parser as add_foundation_parsers
 
-    journey = sub.add_parser(
-        "journey",
-        help="prove runtime journeys, stateful workflows, failures, and bounded healing",
-    )
-    journey_sub = journey.add_subparsers(required=True, dest="journey_cmd")
-    journey_reality = journey_sub.add_parser(
-        "reality", help="compare declared and observed journey graphs without inference"
-    )
-    journey_reality.add_argument(
-        "declaration", help="factory.journey-declaration.v1 JSON path"
-    )
-    journey_reality.add_argument(
-        "observation", help="factory.journey-observation.v1 JSON path"
-    )
-    journey_reality.add_argument("--root", default=".")
-    journey_reality.add_argument(
-        "--out", help="receipt path below .factory/journey-proof/"
-    )
-    journey_reality.add_argument("--json", action="store_true")
-    journey_capsule = journey_sub.add_parser(
-        "capsule",
-        help="bind a failed step and adjacent evidence into JSON and Markdown",
-    )
-    journey_capsule.add_argument(
-        "input", help="factory.failure-capsule-input.v1 JSON path"
-    )
-    journey_capsule.add_argument("--root", default=".")
-    journey_capsule.add_argument(
-        "--out", help="receipt path below .factory/journey-proof/"
-    )
-    journey_capsule.add_argument("--json", action="store_true")
-    journey_workflow = journey_sub.add_parser(
-        "workflow-proof", help="prove state flow, cleanup, and idempotency"
-    )
-    journey_workflow.add_argument(
-        "input", help="factory.stateful-workflow-input.v1 JSON path"
-    )
-    journey_workflow.add_argument("--root", default=".")
-    journey_workflow.add_argument(
-        "--out", help="receipt path below .factory/journey-proof/"
-    )
-    journey_workflow.add_argument("--json", action="store_true")
-    journey_healing = journey_sub.add_parser(
-        "heal-verify", help="challenge a repair under human or supervised-auto review"
-    )
-    journey_healing.add_argument(
-        "input", help="factory.proof-gated-healing-input.v1 JSON path"
-    )
-    journey_healing.add_argument("--root", default=".")
-    journey_healing.add_argument(
-        "--out", help="receipt path below .factory/journey-proof/"
-    )
-    journey_healing.add_argument("--timeout-seconds", type=int, default=300)
-    journey_healing.add_argument("--json", action="store_true")
-    journey_status_parser = journey_sub.add_parser(
-        "status", help="read verified local Journey Proof receipts without execution"
-    )
-    journey_status_parser.add_argument("--root", default=".")
-    journey_status_parser.add_argument("--json", action="store_true")
+    add_foundation_parsers(sub)
 
     first_proof = sub.add_parser(
         "first-proof",
@@ -2897,31 +2781,6 @@ def _dispatch(argv=None) -> int:
     context_verify.add_argument("receipt")
     context_verify.add_argument("--json", action="store_true")
 
-    efficiency = sub.add_parser(
-        "efficiency", help="compile and verify bounded, cacheable context packets"
-    )
-    efficiency_sub = efficiency.add_subparsers(dest="efficiency_cmd", required=True)
-    efficiency_pack = efficiency_sub.add_parser(
-        "pack", help="build a read-only bounded context packet"
-    )
-    efficiency_pack.add_argument(
-        "--manifest", required=True, help="JSON request manifest"
-    )
-    efficiency_pack.add_argument("--root", default=".")
-    efficiency_pack.add_argument("--out")
-    efficiency_pack.add_argument("--json", action="store_true")
-    efficiency_verify = efficiency_sub.add_parser(
-        "verify", help="verify packet and source hashes"
-    )
-    efficiency_verify.add_argument("packet")
-    efficiency_verify.add_argument("--root", default=".")
-    efficiency_verify.add_argument("--json", action="store_true")
-    efficiency_status = efficiency_sub.add_parser(
-        "status", help="show bounded packet/cache metadata"
-    )
-    efficiency_status.add_argument("--root", default=".")
-    efficiency_status.add_argument("--json", action="store_true")
-
     from .cli_grill import add_parser as add_grill_parser
 
     add_grill_parser(sub)
@@ -3152,164 +3011,10 @@ def _dispatch(argv=None) -> int:
         return _home(Path(a.root), a.json)
     if a.cmd == "doctor":
         return _doctor(a.strict, a.json)
-    if a.cmd == "architecture":
-        from .architecture_health import (
-            ArchitectureHealthError,
-            evaluate_architecture_health,
-        )
+    if a.cmd in {"architecture", "external", "journey", "efficiency"}:
+        from .cli_foundations import run as run_foundation
 
-        try:
-            result = evaluate_architecture_health(
-                Path(a.root), Path(a.policy) if a.policy else None, strict=a.strict
-            )
-        except (
-            ArchitectureHealthError,
-            OSError,
-            UnicodeDecodeError,
-            ValueError,
-        ) as exc:
-            error = {
-                "schema": "factory.architecture-health-error.v1",
-                "status": "failed",
-                "code": getattr(exc, "code", "E_ARCHITECTURE_HEALTH"),
-                "message": str(exc),
-            }
-            print(json.dumps(error, indent=2, sort_keys=True), file=sys.stderr)
-            return 2
-        print(json.dumps(result, indent=2, sort_keys=True))
-        return 1 if result.get("decision") == "BLOCKED" else 0
-    if a.cmd == "external":
-        try:
-            if a.external_cmd == "import":
-                result = import_external_runtime_bundle(
-                    Path(a.root),
-                    Path(a.bundle),
-                    a.provider,
-                    Path(a.out) if a.out else None,
-                )
-            else:
-                result = diff_external_runtime_receipts(
-                    Path(a.root), Path(a.left), Path(a.right)
-                )
-        except ExternalEvidenceError as exc:
-            print(
-                json.dumps(
-                    {
-                        "schema": "factory.workflow_error.v1",
-                        "status": "failed",
-                        "code": exc.code,
-                        "message": exc.message,
-                        "marker": exc.code,
-                        "failure": explain_failure(exc.code, exc.message),
-                    },
-                    indent=2,
-                    sort_keys=True,
-                ),
-                file=sys.stderr,
-            )
-            return 1
-        print(json.dumps(result, indent=2, sort_keys=True))
-        if a.external_cmd == "diff" and result.get("comparable") is not True:
-            return 1
-        return 0
-    if a.cmd == "journey":
-        try:
-            root = Path(a.root)
-            if a.journey_cmd == "reality":
-                result = compile_reality_graph(
-                    root,
-                    Path(a.declaration),
-                    Path(a.observation),
-                    Path(a.out) if a.out else None,
-                )
-            elif a.journey_cmd == "capsule":
-                result = create_failure_capsule(
-                    root, Path(a.input), Path(a.out) if a.out else None
-                )
-            elif a.journey_cmd == "workflow-proof":
-                result = verify_stateful_workflow(
-                    root, Path(a.input), Path(a.out) if a.out else None
-                )
-            elif a.journey_cmd == "heal-verify":
-                result = verify_proof_gated_healing(
-                    root,
-                    Path(a.input),
-                    Path(a.out) if a.out else None,
-                    a.timeout_seconds,
-                )
-            else:
-                result = journey_proof_status(root)
-        except JourneyProofError as exc:
-            print(
-                json.dumps(
-                    {
-                        "schema": "factory.workflow_error.v1",
-                        "status": "failed",
-                        "code": exc.code,
-                        "message": str(exc),
-                        "marker": exc.code,
-                        "failure": explain_failure(exc.code, str(exc)),
-                    },
-                    indent=2,
-                    sort_keys=True,
-                ),
-                file=sys.stderr,
-            )
-            return 1
-        print(json.dumps(result, indent=2, sort_keys=True))
-        if a.journey_cmd == "reality" and result.get("decision") != "matched":
-            return 1
-        if a.journey_cmd in {"workflow-proof", "heal-verify"} and result.get(
-            "decision"
-        ) not in {"passed", "admissible_for_human_review"}:
-            return 1
-        return 0
-    if a.cmd == "efficiency":
-        from .context_efficiency import (
-            ContextEfficiencyError,
-            build_context_packet,
-            context_efficiency_status,
-            verify_context_packet,
-        )
-
-        root = Path(a.root).resolve()
-        try:
-            if a.efficiency_cmd == "pack":
-                request = json.loads(Path(a.manifest).read_text(encoding="utf-8-sig"))
-                result = build_context_packet(
-                    root, request, Path(a.out) if a.out else None
-                )
-                code = 0
-            elif a.efficiency_cmd == "verify":
-                result = verify_context_packet(root, Path(a.packet))
-                code = 0 if result.get("valid") is True else 1
-            else:
-                result = context_efficiency_status(root)
-                code = 0
-        except (
-            ContextEfficiencyError,
-            OSError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            ValueError,
-        ) as exc:
-            result = {
-                "schema": "factory.context-efficiency-error.v1",
-                "marker": "CONTEXT_EFFICIENCY_REFUSED",
-                "code": getattr(exc, "code", "E_CONTEXT_INPUT"),
-                "message": getattr(exc, "message", str(exc)),
-            }
-            code = 2
-        if getattr(a, "json", False):
-            print(json.dumps(result, indent=2, sort_keys=True))
-        elif code == 0:
-            print(result.get("marker", result.get("state", "CONTEXT_EFFICIENCY_OK")))
-            print(
-                "authority   : bounded local context metadata only; no execution, approval, repair, release, publication, or credentials"
-            )
-        else:
-            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
-        return code
+        return run_foundation(a)
     if a.cmd == "grill":
         from .cli_grill import run as run_grill
 
