@@ -13,6 +13,7 @@ from pathlib import Path
 
 
 def add_parser(sub) -> None:
+    """Register change, proof-operations, and proof-review CLI commands."""
     change = sub.add_parser(
         "change", help="prepare a deterministic, analysis-only diff-to-proof review"
     )
@@ -192,6 +193,7 @@ def add_parser(sub) -> None:
 
 
 def run(a) -> int:
+    """Dispatch one evidence-chain command without performing external actions."""
     if a.cmd == "change":
         from .change_review import ChangeReviewError, review_change, write_review_artifacts
 
