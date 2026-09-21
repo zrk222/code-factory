@@ -144,10 +144,6 @@ from .gauntlet import (
     write_gauntlet_proposal,
 )
 from .gauntlet_draft import GauntletDraftError, draft_gauntlet
-from .agent_license import (
-    AgentLicenseError,
-)
-from .session_recorder import SessionRecorderError, run_observed_session
 from .team_pilot import (
     TeamPilotError,
     evaluate_team_pilot_readiness,
@@ -722,26 +718,9 @@ def _dispatch(argv=None) -> int:
 
     add_runtime_proof_parsers(sub)
 
-    wrap = sub.add_parser(
-        "wrap",
-        help="run any admitted local agent CLI as an observed, validated evidence session",
-    )
-    wrap.add_argument("--root", default=".")
-    wrap.add_argument(
-        "--admission", required=True, help="READY factory.run-admission.packet.v1 path"
-    )
-    wrap.add_argument(
-        "--validators",
-        required=True,
-        help="factory.session-recorder.validators.v1 path",
-    )
-    wrap.add_argument(
-        "--run-id", required=True, help="unique lowercase immutable event id"
-    )
-    wrap.add_argument("--json", action="store_true")
-    wrap.add_argument(
-        "command", nargs=argparse.REMAINDER, help="agent command argv after --"
-    )
+    from .cli_wrap import add_parser as add_wrap_parser
+
+    add_wrap_parser(sub)
 
     gauntlet = sub.add_parser(
         "gauntlet",
@@ -3178,46 +3157,9 @@ def _dispatch(argv=None) -> int:
 
         return run_governance_surface(a)
     if a.cmd == "wrap":
-        workspace = Path(a.root).resolve()
-        command = list(a.command)
-        if command and command[0] == "--":
-            command = command[1:]
-        try:
-            payload = run_observed_session(
-                workspace,
-                workspace / a.admission,
-                workspace / a.validators,
-                command,
-                a.run_id,
-            )
-        except (SessionRecorderError, AgentLicenseError) as exc:
-            code = getattr(exc, "code", "SESSION_FAILED")
-            error = {
-                "schema": "factory.observed-session.error.v1",
-                "marker": code,
-                "code": code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if a.json
-                else f"wrap failed: {code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            print("factory wrap")
-            print("=" * 44)
-            print(
-                f"result   : {'PASSED' if payload['session']['passed'] else 'FAILED'}"
-            )
-            print(f"receipt  : {payload['path']}")
-            print(
-                "authority: observed local execution and declared validators; not a sandbox, approval, repair, merge, publication, or deployment"
-            )
-        return 0 if payload["session"]["passed"] else 1
+        from .cli_wrap import run as run_wrap
+
+        return run_wrap(a)
     if a.cmd == "gauntlet":
         workspace = Path(getattr(a, "root", ".")).resolve()
 
