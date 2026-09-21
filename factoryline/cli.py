@@ -110,17 +110,6 @@ from .graph_forensics import (
 )
 from .candidate_lineage import CandidateLineageError, verify_candidate_lineage
 from .langgraph_assurance import LangGraphAssuranceError, verify_langgraph_resume_parity
-from .proofsearch import (
-    ProofSearchError,
-    create_proofsearch_plan,
-    evaluate_proofsearch,
-    verify_proofsearch_evaluation,
-)
-from .evidence_frontier import (
-    EvidenceFrontierError,
-    plan_evidence_frontier,
-    verify_evidence_frontier,
-)
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
 from .continuous_proof import (
@@ -190,12 +179,6 @@ from .agent_proof_bridge import (
     import_agent_proof,
     provider_template,
     verify_agent_proof,
-)
-from .proof_worklog import (
-    ProofWorklogError,
-    create_proof_worklog,
-    proof_worklog_projection,
-    verify_proof_worklog,
 )
 from .saas_proof import SaasProofError, saas_proof_projection, verify_saas_proof
 from .jetbrains_handshake import (
@@ -2574,81 +2557,9 @@ def _dispatch(argv=None) -> int:
 
     add_deep_audit_parser(sub)
 
-    worklog = sub.add_parser(
-        "worklog",
-        help="draft a local review-required update from one sealed Oracle Contract; never posts externally",
-    )
-    worklog_sub = worklog.add_subparsers(required=True, dest="worklog_cmd")
-    worklog_draft = worklog_sub.add_parser(
-        "draft", help="write one immutable local proof worklog draft"
-    )
-    worklog_draft.add_argument("--root", default=".")
-    worklog_draft.add_argument(
-        "--contract",
-        required=True,
-        help="workspace-relative current sealed Oracle Contract",
-    )
-    worklog_draft.add_argument(
-        "--out", help="workspace-relative immutable local draft path"
-    )
-    worklog_draft.add_argument("--json", action="store_true")
-    worklog_verify = worklog_sub.add_parser(
-        "verify", help="verify one local proof worklog draft and current Oracle binding"
-    )
-    worklog_verify.add_argument("draft")
-    worklog_verify.add_argument("--root", default=".")
-    worklog_verify.add_argument("--json", action="store_true")
-    worklog_status = worklog_sub.add_parser(
-        "status", help="read bounded local proof worklog facts without posting anything"
-    )
-    worklog_status.add_argument("--root", default=".")
-    worklog_status.add_argument("--json", action="store_true")
+    from .cli_proofsearch import add_parser as add_proofsearch_parser
 
-    proofsearch = sub.add_parser(
-        "proofsearch", help="compare hash-bound repair candidates without applying them"
-    )
-    proofsearch_sub = proofsearch.add_subparsers(required=True, dest="proofsearch_cmd")
-    proofsearch_plan = proofsearch_sub.add_parser(
-        "plan", help="seal one graph divergence and its exact proof-impact slice"
-    )
-    proofsearch_plan.add_argument("--root", default=".")
-    proofsearch_plan.add_argument("--baseline", required=True)
-    proofsearch_plan.add_argument("--candidate", required=True)
-    proofsearch_plan.add_argument("--changed", action="append", required=True)
-    proofsearch_plan.add_argument("--out", required=True)
-    proofsearch_plan.add_argument("--json", action="store_true")
-    proofsearch_evaluate = proofsearch_sub.add_parser(
-        "evaluate", help="verify, reject, and rank supplied candidate evidence"
-    )
-    proofsearch_evaluate.add_argument("request")
-    proofsearch_evaluate.add_argument("--root", default=".")
-    proofsearch_evaluate.add_argument("--out", required=True)
-    proofsearch_evaluate.add_argument("--json", action="store_true")
-    proofsearch_verify = proofsearch_sub.add_parser(
-        "verify", help="verify one sealed ProofSearch evaluation and its evidence"
-    )
-    proofsearch_verify.add_argument("evaluation")
-    proofsearch_verify.add_argument("--root", default=".")
-    proofsearch_verify.add_argument("--json", action="store_true")
-    proofsearch_frontier = proofsearch_sub.add_parser(
-        "frontier", help="rank the next evidence experiment without executing it"
-    )
-    proofsearch_frontier_sub = proofsearch_frontier.add_subparsers(
-        required=True, dest="frontier_cmd"
-    )
-    proofsearch_frontier_plan = proofsearch_frontier_sub.add_parser(
-        "plan", help="seal a bounded Evidence Frontier from a verified evaluation"
-    )
-    proofsearch_frontier_plan.add_argument("request")
-    proofsearch_frontier_plan.add_argument("--root", default=".")
-    proofsearch_frontier_plan.add_argument("--out", required=True)
-    proofsearch_frontier_plan.add_argument("--json", action="store_true")
-    proofsearch_frontier_verify = proofsearch_frontier_sub.add_parser(
-        "verify", help="verify one sealed Evidence Frontier and its evaluation binding"
-    )
-    proofsearch_frontier_verify.add_argument("frontier")
-    proofsearch_frontier_verify.add_argument("--root", default=".")
-    proofsearch_frontier_verify.add_argument("--json", action="store_true")
+    add_proofsearch_parser(sub)
 
     change = sub.add_parser(
         "change", help="prepare a deterministic, analysis-only diff-to-proof review"
@@ -4956,41 +4867,10 @@ def _dispatch(argv=None) -> int:
         from .cli_deep_audit import run as run_deep_audit
 
         return run_deep_audit(a)
-    if a.cmd == "worklog":
-        root = Path(a.root).resolve()
-        try:
-            if a.worklog_cmd == "draft":
-                result = create_proof_worklog(
-                    root, Path(a.contract), Path(a.out) if a.out else None
-                )
-            elif a.worklog_cmd == "verify":
-                result = verify_proof_worklog(root, Path(a.draft))
-            else:
-                result = proof_worklog_projection(root)
-            code = (
-                0
-                if result.get("ok", True) and int(result.get("invalid_count", 0)) == 0
-                else 1
-            )
-        except (
-            ProofWorklogError,
-            OSError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            ValueError,
-        ) as exc:
-            result = {
-                "schema": "factory.proof-worklog.error.v1",
-                "marker": "PROOF_WORKLOG_INPUT_REJECTED",
-                "code": getattr(exc, "code", "E_PROOF_WORKLOG_SCHEMA"),
-                "message": str(exc),
-            }
-            code = 2
-        print(
-            json.dumps(result, indent=2, sort_keys=True),
-            file=sys.stderr if code else sys.stdout,
-        )
-        return code
+    if a.cmd in {"worklog", "proofsearch"}:
+        from .cli_proofsearch import run as run_proofsearch
+
+        return run_proofsearch(a)
     if a.cmd == "pack":
         from .cli_pack import run as run_pack
 
@@ -7127,61 +7007,6 @@ def _dispatch(argv=None) -> int:
             print(
                 "boundary   : deployment, publication, credentials, connectors, and messages remain unavailable"
             )
-        return 0
-    if a.cmd == "proofsearch":
-        try:
-            if a.proofsearch_cmd == "plan":
-                payload = create_proofsearch_plan(
-                    Path(a.root),
-                    Path(a.baseline),
-                    Path(a.candidate),
-                    a.changed,
-                    Path(a.out),
-                )
-            elif a.proofsearch_cmd == "evaluate":
-                payload = evaluate_proofsearch(
-                    Path(a.root), Path(a.request), Path(a.out)
-                )
-            elif a.proofsearch_cmd == "frontier" and a.frontier_cmd == "plan":
-                payload = plan_evidence_frontier(
-                    Path(a.root), Path(a.request), Path(a.out)
-                )
-            elif a.proofsearch_cmd == "frontier":
-                payload = verify_evidence_frontier(Path(a.root), Path(a.frontier))
-            else:
-                payload = verify_proofsearch_evaluation(
-                    Path(a.root), Path(a.evaluation)
-                )
-        except (ProofSearchError, EvidenceFrontierError) as exc:
-            schema = (
-                "factory.evidence-frontier.error.v1"
-                if isinstance(exc, EvidenceFrontierError)
-                else "factory.proofsearch.error.v1"
-            )
-            print(
-                json.dumps(
-                    {"schema": schema, "code": exc.code, "message": str(exc)}, indent=2
-                ),
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            print("factory ProofSearch (review only)")
-            print("=" * 44)
-            print(f"marker : {payload['marker']}")
-            if "winner" in payload:
-                print(f"winner : {payload['winner'] or 'none'}")
-            if "next_experiment" in payload:
-                print(f"next evidence : {payload['next_experiment'] or 'none'}")
-            if "path" in payload:
-                print(f"receipt: {payload['path']}")
-            print("apply  : locked")
-        if a.proofsearch_cmd == "verify" or (
-            a.proofsearch_cmd == "frontier" and a.frontier_cmd == "verify"
-        ):
-            return 0 if payload["valid"] else 1
         return 0
     if a.cmd == "graph":
         from .graph_ops import graph_ops_impact, graph_ops_snapshot
