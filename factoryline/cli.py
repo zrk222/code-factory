@@ -2922,39 +2922,9 @@ def _dispatch(argv=None) -> int:
     efficiency_status.add_argument("--root", default=".")
     efficiency_status.add_argument("--json", action="store_true")
 
-    grill = sub.add_parser(
-        "grill", help="run a deterministic one-question-at-a-time intent grill"
-    )
-    grill_sub = grill.add_subparsers(dest="grill_cmd", required=True)
-    grill_start = grill_sub.add_parser(
-        "start", help="start a source-bound grill session"
-    )
-    grill_start.add_argument("session_id")
-    grill_start.add_argument("--root", default=".")
-    grill_start.add_argument("--source")
-    grill_start.add_argument("--json", action="store_true")
-    grill_next = grill_sub.add_parser(
-        "next", help="show only the next unresolved question"
-    )
-    grill_next.add_argument("session_id")
-    grill_next.add_argument("--root", default=".")
-    grill_next.add_argument("--json", action="store_true")
-    grill_answer = grill_sub.add_parser(
-        "answer", help="record one human answer and advance the frontier"
-    )
-    grill_answer.add_argument("session_id")
-    grill_answer.add_argument("question_id")
-    grill_answer.add_argument("answer")
-    grill_answer.add_argument("--answered-by", required=True)
-    grill_answer.add_argument("--root", default=".")
-    grill_answer.add_argument("--json", action="store_true")
-    grill_confirm = grill_sub.add_parser(
-        "confirm", help="confirm shared understanding before implementation"
-    )
-    grill_confirm.add_argument("session_id")
-    grill_confirm.add_argument("--approved-by", required=True)
-    grill_confirm.add_argument("--root", default=".")
-    grill_confirm.add_argument("--json", action="store_true")
+    from .cli_grill import add_parser as add_grill_parser
+
+    add_grill_parser(sub)
 
     opinion = sub.add_parser(
         "opinion", help="maintain the owner-controlled architecture Opinion Dock"
@@ -3341,46 +3311,9 @@ def _dispatch(argv=None) -> int:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
         return code
     if a.cmd == "grill":
-        from .grill_engine import (
-            answer_question,
-            confirm_grill,
-            next_question,
-            start_grill,
-        )
+        from .cli_grill import run as run_grill
 
-        root = Path(a.root).resolve()
-        try:
-            if a.grill_cmd == "start":
-                result = start_grill(
-                    root, a.session_id, Path(a.source) if a.source else None
-                )
-            elif a.grill_cmd == "next":
-                result = next_question(root, a.session_id)
-            elif a.grill_cmd == "answer":
-                result = answer_question(
-                    root,
-                    a.session_id,
-                    a.question_id,
-                    a.answer,
-                    answered_by=a.answered_by,
-                )
-            else:
-                result = confirm_grill(root, a.session_id, approved_by=a.approved_by)
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            result = {
-                "schema": "factory.grill.error.v1",
-                "status": "BLOCKED",
-                "code": "GRILL_INPUT_INVALID",
-                "message": str(exc),
-            }
-            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
-            return 2
-        print(
-            json.dumps(result, indent=2, sort_keys=True)
-            if getattr(a, "json", False)
-            else f"grill {a.grill_cmd}: {result.get('status', 'READY')}"
-        )
-        return 0
+        return run_grill(a)
     if a.cmd == "verifier":
         from .cli_verifier import run as run_verifier
 
