@@ -127,22 +127,11 @@ from .plan_proof_review import (
     review_plan_proof,
     write_plan_proof_review_artifacts,
 )
-from .e2e_proof import (
-    E2EProofError,
-    public_e2e_proof_receipt,
-    verify_e2e_proof,
-    write_e2e_proof_artifacts,
-)
 from .adoption import (
     AdoptionError,
     run_first_proof,
 )
-from .reality_check import (
-    RealityCheckError,
-    inspect_reality_intent,
-    run_reality_check,
-    write_reality_check_artifacts,
-)
+from .e2e_proof import E2EProofError
 from .gauntlet import (
     GauntletError,
     admit_gauntlet,
@@ -641,24 +630,6 @@ def _dispatch(argv=None) -> int:
     )
     plan_verify.add_argument("--json", action="store_true")
 
-    e2e = sub.add_parser("e2e", help="run a native proof-by-sabotage E2E command pair")
-    e2e_sub = e2e.add_subparsers(required=True, dest="e2e_cmd")
-    e2e_verify = e2e_sub.add_parser(
-        "verify",
-        help="run approved positive and negative argv commands without vendor access",
-    )
-    e2e_verify.add_argument("--root", default=".")
-    e2e_verify.add_argument(
-        "--manifest",
-        required=True,
-        help="workspace-contained factory.e2e_proof_manifest.v1 JSON path",
-    )
-    e2e_verify.add_argument(
-        "--out-dir",
-        help="explicit local directory for receipt, Mermaid, and captured output artifacts",
-    )
-    e2e_verify.add_argument("--json", action="store_true")
-
     from .cli_foundations import add_parser as add_foundation_parsers
 
     add_foundation_parsers(sub)
@@ -760,37 +731,9 @@ def _dispatch(argv=None) -> int:
 
     add_review_surface_parsers(sub)
 
-    reality = sub.add_parser(
-        "reality",
-        help="run one approved behavior promise through a supervised local proof pair",
-    )
-    reality_sub = reality.add_subparsers(required=True, dest="reality_cmd")
-    reality_verify = reality_sub.add_parser(
-        "verify",
-        help="bind an approved happy and negative check to one product behavior",
-    )
-    reality_verify.add_argument("--root", default=".")
-    reality_verify.add_argument(
-        "--manifest",
-        required=True,
-        help="workspace-contained factory.reality-check-manifest.v1 JSON path",
-    )
-    reality_verify.add_argument(
-        "--out-dir",
-        help="explicit local directory for public receipt, Markdown, and Mermaid artifacts",
-    )
-    reality_verify.add_argument("--json", action="store_true")
-    reality_inspect = reality_sub.add_parser(
-        "inspect",
-        help="validate declared positive and negative intent assertions without execution",
-    )
-    reality_inspect.add_argument("--root", default=".")
-    reality_inspect.add_argument(
-        "--manifest",
-        required=True,
-        help="workspace-contained factory.reality-check-manifest.v1 JSON path",
-    )
-    reality_inspect.add_argument("--json", action="store_true")
+    from .cli_runtime_proof import add_parser as add_runtime_proof_parsers
+
+    add_runtime_proof_parsers(sub)
 
     wrap = sub.add_parser(
         "wrap",
@@ -1744,30 +1687,6 @@ def _dispatch(argv=None) -> int:
     graph_forensic.add_argument("--candidate", required=True)
     graph_forensic.add_argument("--json", action="store_true")
     graph_forensic.add_argument("--mermaid", action="store_true")
-
-    admission = sub.add_parser(
-        "admission", help="seal and revalidate a local external-run admission packet"
-    )
-    admission_sub = admission.add_subparsers(required=True, dest="admission_cmd")
-    admission_prepare = admission_sub.add_parser(
-        "prepare", help="seal one externally enforced run proposal without invoking it"
-    )
-    admission_prepare.add_argument("passport")
-    admission_prepare.add_argument("request")
-    admission_prepare.add_argument("--root", default=".")
-    admission_prepare.add_argument("--out-dir")
-    admission_prepare.add_argument(
-        "--require-intake",
-        action="store_true",
-        help="require an authoritative intake-parameter binding before sealing admission",
-    )
-    admission_prepare.add_argument("--json", action="store_true")
-    admission_verify = admission_sub.add_parser(
-        "verify", help="revalidate one sealed packet before a harness consumes it"
-    )
-    admission_verify.add_argument("packet")
-    admission_verify.add_argument("--root", default=".")
-    admission_verify.add_argument("--json", action="store_true")
 
     from .cli_authority import add_parser as add_authority_parsers
 
@@ -2989,36 +2908,10 @@ def _dispatch(argv=None) -> int:
         from .cli_targets import run as run_targets
 
         return run_targets(a)
-    if a.cmd == "admission":
-        from .run_admission import AdmissionError, prepare_admission, verify_admission
+    if a.cmd in {"admission", "e2e", "reality"}:
+        from .cli_runtime_proof import run as run_runtime_proof
 
-        try:
-            if a.admission_cmd == "prepare":
-                result = prepare_admission(
-                    Path(a.root),
-                    Path(a.passport),
-                    Path(a.request),
-                    Path(a.out_dir) if a.out_dir else None,
-                    require_intake=a.require_intake,
-                )
-                code = 0
-            else:
-                result = verify_admission(Path(a.root), Path(a.packet))
-                code = 0 if result["verdict"] == "READY" else 1
-        except AdmissionError as exc:
-            result = {
-                "schema": "factory.run-admission.error.v1",
-                "code": exc.code,
-                "message": str(exc),
-            }
-            code = 2
-        if a.json:
-            print(json.dumps(result, indent=2, sort_keys=True))
-        elif code == 0:
-            print(f"admission: {result.get('marker', result.get('verdict'))}")
-        else:
-            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
-        return code
+        return run_runtime_proof(a)
     if a.cmd in {"proof-continuity", "oracle", "semantic-authority"}:
         from .cli_authority import run as run_authority
 
@@ -3406,116 +3299,6 @@ def _dispatch(argv=None) -> int:
         from .cli_review_surfaces import run as run_review_surface
 
         return run_review_surface(a)
-    if a.cmd == "e2e":
-        workspace = Path(a.root).resolve()
-        manifest = Path(a.manifest)
-        if not manifest.is_absolute():
-            manifest = workspace / manifest
-        try:
-            receipt = verify_e2e_proof(workspace, manifest)
-            artifacts = (
-                write_e2e_proof_artifacts(receipt, Path(a.out_dir))
-                if a.out_dir
-                else None
-            )
-        except E2EProofError as exc:
-            error = {
-                "schema": "factory.e2e_proof.error.v1",
-                "marker": exc.code,
-                "code": exc.code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if a.json
-                else f"e2e proof failed: {exc.code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        public = public_e2e_proof_receipt(receipt)
-        if a.json:
-            output = {"receipt": public}
-            if artifacts:
-                output["artifacts"] = artifacts
-            print(json.dumps(output, indent=2, sort_keys=True))
-        else:
-            print("factory e2e verify")
-            print("=" * 44)
-            print(f"proof id : {public['manifest']['id']}")
-            print(
-                f"result   : {public['marker']} ({'passing' if public['ok'] else 'non-passing'})"
-            )
-            print(
-                f"positive : {public['commands']['positive']['status']} / exit {public['commands']['positive']['exit_code']}"
-            )
-            print(
-                f"negative : {public['commands']['negative']['status']} / exit {public['commands']['negative']['exit_code']}"
-            )
-            print(
-                "authority: caller-approved local test execution only; no release, deployment, credential, or egress enforcement"
-            )
-            if artifacts:
-                print(f"packet   : {artifacts['paths']['markdown']}")
-        return 0 if public["ok"] else 1
-    if a.cmd == "reality":
-        workspace = Path(a.root).resolve()
-        manifest = Path(a.manifest)
-        if not manifest.is_absolute():
-            manifest = workspace / manifest
-        try:
-            if a.reality_cmd == "inspect":
-                inspection = inspect_reality_intent(workspace, manifest)
-                if a.json:
-                    print(json.dumps(inspection, indent=2, sort_keys=True))
-                else:
-                    print("factory reality inspect")
-                    print("=" * 44)
-                    print(f"promise  : {inspection['manifest']['behavior']['promise']}")
-                    print(
-                        f"coverage : {len(inspection['positive_assertion_ids'])} positive / {len(inspection['negative_assertion_ids'])} negative assertions"
-                    )
-                    print(
-                        "execution: locked; this only validates the declared intent contract"
-                    )
-                return 0
-            receipt = run_reality_check(workspace, manifest)
-            artifacts = (
-                write_reality_check_artifacts(receipt, Path(a.out_dir))
-                if a.out_dir
-                else None
-            )
-        except RealityCheckError as exc:
-            error = {
-                "schema": "factory.reality-check.error.v1",
-                "marker": exc.code,
-                "code": exc.code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if a.json
-                else f"reality check failed: {exc.code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            output = {"receipt": receipt}
-            if artifacts:
-                output["artifacts"] = artifacts
-            print(json.dumps(output, indent=2, sort_keys=True))
-        else:
-            print("factory reality verify")
-            print("=" * 44)
-            print(f"promise  : {receipt['manifest']['behavior']['promise']}")
-            print(
-                f"result   : {receipt['marker']} ({'passing' if receipt['ok'] else 'non-passing'})"
-            )
-            print(
-                "authority: caller-approved local test execution only; no repair, merge, release, deployment, credential, or egress enforcement"
-            )
-            if artifacts:
-                print(f"packet   : {artifacts['markdown']}")
-        return 0 if receipt["ok"] else 1
     if a.cmd == "license":
 
         def local_path(workspace: Path, value: str) -> Path:
