@@ -82,17 +82,32 @@ def _changelog_contains_version(root: Path, version: str | None) -> bool:
     return bool(re.search(rf"^##\s+{re.escape(version)}(?:\s|$)", content, re.MULTILINE))
 
 
-def _module_domains(root: Path, relative: list[str]) -> dict[str, int]:
-    """Classify implementation modules using the reviewed boundary manifest."""
+def _module_classification(
+    root: Path, relative: list[str]
+) -> tuple[dict[str, int], dict[str, str]]:
+    """Classify implementation modules and retain each module's domain.
+
+    The manifest is intentionally authoritative for specialist boundaries.  A
+    missing or invalid manifest keeps every implementation module in ``core``
+    for measurement, while the returned domain counts still surface the
+    manifest problem as a blocking contract finding.
+    """
     manifest_path = root / "architecture-boundaries.json"
+    implementation = [
+        path
+        for path in relative
+        if path.startswith("factoryline/")
+        and path.endswith(".py")
+        and not path.endswith("/__init__.py")
+    ]
     if not manifest_path.exists():
-        return {"manifest_missing": 1}
+        return {"manifest_missing": 1}, {path: "core" for path in implementation}
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"manifest_invalid": 1}
+        return {"manifest_invalid": 1}, {path: "core" for path in implementation}
     if manifest.get("schema") != "factory.module-boundaries.v1":
-        return {"manifest_invalid": 1}
+        return {"manifest_invalid": 1}, {path: "core" for path in implementation}
     domains: dict[str, int] = {}
     patterns = manifest.get("domains", {})
     if not isinstance(patterns, dict) or any(
@@ -102,7 +117,7 @@ def _module_domains(root: Path, relative: list[str]) -> dict[str, int]:
         or not all(isinstance(pattern, str) and pattern for pattern in globs)
         for domain, globs in patterns.items()
     ):
-        return {"manifest_invalid": 1}
+        return {"manifest_invalid": 1}, {path: "core" for path in implementation}
     owners = manifest.get("owners")
     if owners is not None and (
         not isinstance(owners, dict)
@@ -113,7 +128,7 @@ def _module_domains(root: Path, relative: list[str]) -> dict[str, int]:
         )
         or any(domain not in owners for domain in patterns)
     ):
-        return {"manifest_invalid": 1}
+        return {"manifest_invalid": 1}, {path: "core" for path in implementation}
     experimental = manifest.get("experimental", [])
     if not isinstance(experimental, list) or not all(
         isinstance(path, str)
@@ -121,25 +136,26 @@ def _module_domains(root: Path, relative: list[str]) -> dict[str, int]:
         and not Path(path).is_absolute()
         for path in experimental
     ):
-        return {"manifest_invalid": 1}
+        return {"manifest_invalid": 1}, {path: "core" for path in implementation}
     for name in patterns:
         domains[name] = 0
     default = manifest.get("defaultDomain", "unclassified")
     domains.setdefault(default, 0)
-    for path in relative:
-        if (
-            not path.startswith("factoryline/")
-            or not path.endswith(".py")
-            or path.endswith("/__init__.py")
-        ):
-            continue
+    assignments: dict[str, str] = {}
+    for path in implementation:
         assigned = default
         for domain, globs in patterns.items():
             if any(fnmatch.fnmatch(path, pattern) for pattern in globs):
                 assigned = domain
                 break
+        assignments[path] = assigned
         domains[assigned] = domains.get(assigned, 0) + 1
-    return domains
+    return domains, assignments
+
+
+def _module_domains(root: Path, relative: list[str]) -> dict[str, int]:
+    """Classify implementation modules using the reviewed boundary manifest."""
+    return _module_classification(root, relative)[0]
 
 
 def _documentation_index(root: Path, relative: list[str]) -> dict[str, Any]:
@@ -315,11 +331,17 @@ def collect_architecture_health(root: Path) -> dict[str, Any]:
     relative = [path.relative_to(root).as_posix() for path in files if path.exists()]
     markdown = [name for name in relative if name.lower().endswith(".md")]
     python = [name for name in relative if name.lower().endswith(".py")]
-    core_modules = [
+    implementation_modules = [
         name
         for name in python
         if name.startswith("factoryline/")
         and not name.rsplit("/", 1)[-1].startswith("__init__")
+    ]
+    module_domains, module_assignments = _module_classification(root, relative)
+    core_modules = [
+        name
+        for name in implementation_modules
+        if module_assignments.get(name, "core") == "core"
     ]
     cli_path = root / "factoryline" / "cli.py"
     cli_lines = (
@@ -343,7 +365,8 @@ def collect_architecture_health(root: Path) -> dict[str, Any]:
             "cli_lines": cli_lines,
             "cli_command_declarations": cli_command_declarations,
             "core_modules": len(core_modules),
-            "module_domains": _module_domains(root, relative),
+            "total_factoryline_modules": len(implementation_modules),
+            "module_domains": module_domains,
             "documentation_index": _documentation_index(root, relative),
             "release_train": _release_train(root, relative),
             "version": _version(root),

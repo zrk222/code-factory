@@ -86,6 +86,35 @@ def test_health_exposes_core_and_specialist_module_domains(tmp_path: Path) -> No
     assert domains == {"appforge": 1, "core": 1}
 
 
+def test_specialist_modules_do_not_count_against_core_surface_budget(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "factoryline").mkdir()
+    for name in ("cli_demo.py", "appforge_demo.py", "contract.py"):
+        (tmp_path / "factoryline" / name).write_text("pass\n", encoding="utf-8")
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {
+                    "appforge": ["factoryline/appforge_*.py"],
+                    "cli_surfaces": ["factoryline/cli_*.py"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    metrics = collect_architecture_health(tmp_path)["metrics"]
+    assert metrics["total_factoryline_modules"] == 3
+    assert metrics["core_modules"] == 1
+    assert metrics["module_domains"] == {
+        "appforge": 1,
+        "cli_surfaces": 1,
+        "core": 1,
+    }
+
+
 def test_malformed_boundary_manifest_is_blocking(tmp_path: Path) -> None:
     (tmp_path / "factoryline").mkdir()
     (tmp_path / "factoryline" / "cli.py").write_text("pass\n", encoding="utf-8")

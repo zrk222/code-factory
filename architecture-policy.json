@@ -13,11 +13,11 @@
   },
   "budgets": {
     "max_markdown_files": 658,
-    "max_python_files": 444,
+    "max_python_files": 446,
     "max_markdown_python_ratio": 1.7,
-    "max_cli_lines": 5356,
-    "max_cli_command_declarations": 195,
-    "max_core_modules": 234
+    "max_cli_lines": 4970,
+    "max_cli_command_declarations": 182,
+    "max_core_modules": 129
   },
   "review_thresholds": {
     "markdown_python_ratio": 1.5,
@@ -31,22 +31,19 @@
     "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, typed human-gated orchestrator request routing, opt-in extended-assurance lanes, deterministic agentic-control drift detector, and lazily loaded audit, quality-evidence, agent, capability-pack, RevenueForge/AppForge, SaaS proof, human-governance, GitHub evidence, IDE repair/JetBrains handshake, proof artifacts, enterprise receipt, enterprise operations, verifier-plane, MCP/Junie integration, release-control, evidence-chain, PR, app-builder, target-compilation, Studio, telemetry, and Grill parser and dispatch boundaries while the decomposition plan remains active; re-review is required at expiry.",
     "codes": [
       "E_ARCH_CLI_LINES_GROWTH",
-      "E_ARCH_CORE_MODULES_GROWTH",
       "E_ARCH_MARKDOWN_FILES_GROWTH",
       "E_ARCH_PYTHON_FILES_GROWTH",
       "ARCH_CLI_MONOLITH",
       "ARCH_CLI_COMMAND_SURFACE",
-      "ARCH_CORE_SURFACE",
       "ARCH_DOC_CODE_RATIO",
       "ARCH_RELEASE_CHURN"
     ],
     "metrics": {
-      "cli_lines": 5356,
-      "cli_command_declarations": 195,
-      "core_modules": 234,
+      "cli_lines": 4970,
+      "cli_command_declarations": 182,
       "markdown_files": 658,
-      "markdown_python_ratio": 1.482,
-      "python_files": 444,
+      "markdown_python_ratio": 1.4753,
+      "python_files": 446,
       "release_recent_count": 17
     }
   },

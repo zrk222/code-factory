@@ -45,6 +45,11 @@ Three repository contracts make that rule executable:
 - `architecture-boundaries.json` explicitly maps the specialist domains and
   the remaining `factoryline/*.py` core surface to named owners. Experimental
   adapters stay opt-in and cannot become an authority source by being listed.
+  Architecture health reports both `total_factoryline_modules` and
+  `core_modules`; only modules classified as `core` count against the core
+  surface budget. This keeps a successful CLI or specialist-pack extraction
+  from manufacturing false core debt while preserving the total surface for
+  review.
 
 `factory architecture health --json` validates all three contracts alongside
 the measured CLI, module, documentation, and release-cadence budgets. An
