@@ -79,6 +79,33 @@ def _module_domains(root: Path, relative: list[str]) -> dict[str, int]:
         return {"manifest_invalid": 1}
     domains: dict[str, int] = {}
     patterns = manifest.get("domains", {})
+    if not isinstance(patterns, dict) or any(
+        not isinstance(domain, str)
+        or not isinstance(globs, list)
+        or not globs
+        or not all(isinstance(pattern, str) and pattern for pattern in globs)
+        for domain, globs in patterns.items()
+    ):
+        return {"manifest_invalid": 1}
+    owners = manifest.get("owners")
+    if owners is not None and (
+        not isinstance(owners, dict)
+        or any(
+            not isinstance(owner, str) or not owner.strip()
+            for domain, owner in owners.items()
+            if domain in patterns
+        )
+        or any(domain not in owners for domain in patterns)
+    ):
+        return {"manifest_invalid": 1}
+    experimental = manifest.get("experimental", [])
+    if not isinstance(experimental, list) or not all(
+        isinstance(path, str)
+        and path.startswith("factoryline/")
+        and not Path(path).is_absolute()
+        for path in experimental
+    ):
+        return {"manifest_invalid": 1}
     for name in patterns:
         domains[name] = 0
     default = manifest.get("defaultDomain", "unclassified")

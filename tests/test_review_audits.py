@@ -17,6 +17,15 @@ from factoryline.change_review import ChangeReviewError, review_change
 from factoryline.cli import main
 
 
+def test_audit_command_boundary_is_lazily_loaded() -> None:
+    import factoryline.cli as cli
+    from factoryline import cli_audit
+
+    assert not hasattr(cli, "audit_code")
+    assert cli_audit.COMMAND_GROUP == "audit"
+    assert cli_audit.OWNER == "quality-security"
+
+
 def workspace(root: Path, body: str = "require_auth()\nstore.delete()") -> Path:
     source = (
         "def safe():\n    require_auth()\n    store.delete()\n\ndef candidate():\n"

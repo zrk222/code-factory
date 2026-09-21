@@ -19,6 +19,16 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .review_audits import (
+        ReviewAuditError,
+        audit_code,
+        audit_fingerprint,
+        security_evals,
+        security_scan,
+    )
 
 from .contract import MODULES, ensure_layout, LAYOUT
 from .assembly import detect, assemble, DEFAULT_CHAIN, rollup_receipts
@@ -127,13 +137,6 @@ from .evidence_frontier import (
 )
 from .coverage import requirement_coverage
 from .change_review import ChangeReviewError, review_change, write_review_artifacts
-from .review_audits import (
-    ReviewAuditError,
-    audit_code,
-    audit_fingerprint,
-    security_scan,
-    security_evals,
-)
 from .continuous_proof import (
     ContinuousProofError,
     assess_continuous_proof,
@@ -1242,24 +1245,9 @@ def _dispatch(argv=None) -> int:
     quality_spec_verify.add_argument("--root", default=".")
     quality_spec_verify.add_argument("--json", action="store_true")
 
-    code_audit = sub.add_parser(
-        "audit",
-        help="inspect peer-pattern irregularities and guard-bypass paths without executing code",
-    )
-    code_audit.add_argument(
-        "tool",
-        choices=["patterns", "guard-paths", "all", "fingerprint", "security", "evals"],
-    )
-    code_audit.add_argument("--policy", default=".factory/review-audits.json")
-    code_audit.add_argument("--root", default=".")
-    code_audit.add_argument(
-        "--baseline",
-        help="previous fingerprint receipt for deterministic drift comparison",
-    )
-    code_audit.add_argument(
-        "--out", help="optional workspace-contained fingerprint receipt path"
-    )
-    code_audit.add_argument("--json", action="store_true")
+    from .cli_audit import add_parser as add_audit_parser
+
+    add_audit_parser(sub)
 
     evidence_audit = sub.add_parser(
         "evidence-audit",
@@ -7223,6 +7211,12 @@ def _dispatch(argv=None) -> int:
             return 1
         return 0
     if a.cmd == "audit":
+        from .cli_audit import run as run_audit
+
+        return run_audit(a)
+    # Kept unreachable for one release so old tracebacks retain their source
+    # shape while the bounded command module becomes the only audit dispatch.
+    if False and a.cmd == "audit":
         try:
             if a.tool == "evals":
                 result = security_evals()

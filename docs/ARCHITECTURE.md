@@ -5,6 +5,30 @@ throughout: blue is supplied input, amber is deterministic policy or planning,
 pink is human authority, purple is bounded execution, green is verified
 evidence, teal is observed outcome data, and red is a fail-closed correction.
 
+## Canonical module and evidence map
+
+`architecture-boundaries.json` is the source of truth for package ownership and
+specialist boundaries. The supported domains are `core`, `verification`,
+`agent_protocols`, `graph_ops`, `appforge`, and `enterprise`. The manifest lists
+the owning team for every specialist domain; unknown modules remain core until a
+human-reviewed boundary change classifies them. Experimental adapters are
+explicitly opt-in and require a claim-bound receipt plus human release review.
+
+The executable control surfaces are the authoritative behavior references:
+
+| Capability | Executable surface | Evidence boundary |
+| --- | --- | --- |
+| Agentic control plane | `factoryline/agentic_control.py` and `factory agent control` | Metadata only; no model, source, merge, or release authority |
+| Graph Ops Mission Control | `factoryline/graph_ops.py` and `factory graph ops --json` | Read-only graph, receipts, markers, and next fact-derived action |
+| Audit engine | `factoryline/review_audits.py` and `factory audit {patterns,guard-paths,security,evals}` | Static/fixture-backed analysis; not a penetration test or approval |
+| Full-stack/AppForge assurance | `factoryline/full_stack_ux_harness.py` and `factory quality-harness` | Local evidence normalization; provider submission remains human-owned |
+
+Release notes and the current version are maintained in `CHANGELOG.md` and
+`docs/RELEASE_CHANNELS.md`. New architecture documents should link to one of
+these executable surfaces or record a dated architecture decision; superseded
+narratives should be indexed here or archived rather than copied into another
+capability-specific document.
+
 ## Complete system topology
 
 ```mermaid

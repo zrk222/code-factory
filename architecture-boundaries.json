@@ -29,11 +29,29 @@
       "factoryline/oracle*.py"
     ]
   },
+  "owners": {
+    "core": "code-factory-maintainers",
+    "appforge": "appforge-maintainers",
+    "graph_ops": "graph-ops-maintainers",
+    "enterprise": "enterprise-controls-maintainers",
+    "agent_protocols": "agent-protocols-maintainers",
+    "verification": "verification-maintainers"
+  },
+  "experimental": [
+    "factoryline/appforge_eas.py",
+    "factoryline/atomic_proof_adapter.py",
+    "factoryline/agent_proof_bridge.py"
+  ],
   "governance": {
     "new_specialist_pack_requires": [
       "an explicit domain glob",
       "an owner",
       "an executable contract test"
+    ],
+    "experimental_module_requires": [
+      "explicit opt-in",
+      "claim-boundary receipt",
+      "human release review"
     ],
     "unknown_modules": "remain core until a human-approved boundary change classifies them"
   }

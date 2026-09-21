@@ -102,6 +102,53 @@ def test_malformed_boundary_manifest_is_blocking(tmp_path: Path) -> None:
     )
 
 
+def test_boundary_manifest_with_owners_validates_specialist_contract(tmp_path: Path) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "appforge_demo.py").write_text(
+        "pass\n", encoding="utf-8"
+    )
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {"appforge": ["factoryline/appforge_*.py"]},
+                "owners": {"appforge": "appforge-maintainers"},
+                "experimental": ["factoryline/appforge_demo.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    domains = collect_architecture_health(tmp_path)["metrics"]["module_domains"]
+    assert domains == {"appforge": 1, "core": 0}
+
+
+def test_boundary_manifest_missing_declared_owner_is_blocking(tmp_path: Path) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "appforge_demo.py").write_text(
+        "pass\n", encoding="utf-8"
+    )
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {"appforge": ["factoryline/appforge_*.py"]},
+                "owners": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = evaluate_architecture_health(
+        tmp_path, _policy(tmp_path / "policy.json", cli=2)
+    )
+    assert result["decision"] == "BLOCKED"
+    assert any(
+        item["code"] == "E_ARCH_BOUNDARY_MANIFEST_INVALID"
+        for item in result["regressions"]
+    )
+
+
 def test_architecture_health_cli_emits_machine_readable_receipt(
     capsys, tmp_path: Path
 ) -> None:
