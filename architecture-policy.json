@@ -13,11 +13,11 @@
   },
   "budgets": {
     "max_markdown_files": 658,
-    "max_python_files": 439,
+    "max_python_files": 440,
     "max_markdown_python_ratio": 1.7,
-    "max_cli_lines": 6829,
-    "max_cli_command_declarations": 264,
-    "max_core_modules": 229
+    "max_cli_lines": 6534,
+    "max_cli_command_declarations": 249,
+    "max_core_modules": 230
   },
   "review_thresholds": {
     "markdown_python_ratio": 1.5,
@@ -41,12 +41,12 @@
       "ARCH_RELEASE_CHURN"
     ],
     "metrics": {
-      "cli_lines": 6829,
-      "cli_command_declarations": 264,
-      "core_modules": 229,
+      "cli_lines": 6534,
+      "cli_command_declarations": 249,
+      "core_modules": 230,
       "markdown_files": 658,
-      "markdown_python_ratio": 1.4989,
-      "python_files": 439,
+      "markdown_python_ratio": 1.4955,
+      "python_files": 440,
       "release_recent_count": 17
     }
   },
