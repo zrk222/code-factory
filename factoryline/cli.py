@@ -2063,47 +2063,9 @@ def _dispatch(argv=None) -> int:
     )
     continuity_status.add_argument("--db", required=True)
 
-    s = sub.add_parser("assurance", help="produce deterministic assurance artifacts")
-    assurance_sub = s.add_subparsers(required=True, dest="assurance_cmd")
-    graph = assurance_sub.add_parser(
-        "graph", help="build a tenant-scoped evidence graph"
-    )
-    graph.add_argument("records")
-    graph.add_argument("--tenant", required=True)
-    graph.add_argument("--out", required=True)
-    sbom = assurance_sub.add_parser("sbom", help="build a sorted CycloneDX-shaped SBOM")
-    sbom.add_argument("components")
-    sbom.add_argument("--out", required=True)
-    vex = assurance_sub.add_parser("vex", help="build a validated VEX artifact")
-    vex.add_argument("entries")
-    vex.add_argument("--out", required=True)
-    mutation = assurance_sub.add_parser(
-        "policy-mutate", help="emit explicit policy mutations for a challenge run"
-    )
-    mutation.add_argument("policy")
-    mutation.add_argument("--out", required=True)
-    supply_chain = assurance_sub.add_parser(
-        "supply-chain",
-        help="verify a local source, dependency, vulnerability and reproducible-build manifest",
-    )
-    supply_chain.add_argument(
-        "manifest", help="workspace-relative supply-chain attestation JSON"
-    )
-    supply_chain.add_argument("--root", default=".")
-    supply_chain.add_argument(
-        "--out", default=".factory/supply-chain/supply-chain-receipt.json"
-    )
-    supply_chain.add_argument("--candidate-sha256")
-    supply_chain.add_argument("--json", action="store_true")
-    supply_chain_verify = assurance_sub.add_parser(
-        "supply-chain-verify",
-        help="verify an independently collected signed supply-chain attestation",
-    )
-    supply_chain_verify.add_argument("attestation")
-    supply_chain_verify.add_argument("--root", default=".")
-    supply_chain_verify.add_argument("--trust-root", required=True)
-    supply_chain_verify.add_argument("--candidate-sha256")
-    supply_chain_verify.add_argument("--json", action="store_true")
+    from .cli_assurance import add_parser as add_assurance_parser
+
+    add_assurance_parser(sub)
 
     s = sub.add_parser(
         "verify-policy",
@@ -9156,108 +9118,9 @@ def _dispatch(argv=None) -> int:
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
     if a.cmd == "assurance":
-        from .assurance import (
-            build_cyclonedx_sbom,
-            build_evidence_graph,
-            build_vex,
-            policy_mutations,
-        )
-        from .supply_chain import (
-            verify_signed_supply_chain_attestation,
-            write_supply_chain_receipt,
-        )
+        from .cli_assurance import run as run_assurance
 
-        try:
-            if a.assurance_cmd == "supply-chain":
-                root = Path(a.root).resolve()
-                manifest = Path(a.manifest)
-                manifest = manifest if manifest.is_absolute() else root / manifest
-                result = write_supply_chain_receipt(
-                    root, manifest, Path(a.out), candidate_sha256=a.candidate_sha256
-                )
-                print(
-                    json.dumps(result, indent=2, sort_keys=True)
-                    if a.json
-                    else f"supply-chain: {result.get('decision')} ({result.get('path')})"
-                )
-                return 0 if result.get("decision") == "PASS" else 1
-            if a.assurance_cmd == "supply-chain-verify":
-                root = Path(a.root).resolve()
-                attestation = Path(a.attestation)
-                trust_root = Path(a.trust_root)
-                attestation = (
-                    attestation if attestation.is_absolute() else root / attestation
-                )
-                trust_root = (
-                    trust_root if trust_root.is_absolute() else root / trust_root
-                )
-                result = verify_signed_supply_chain_attestation(
-                    attestation, trust_root, root, candidate_sha256=a.candidate_sha256
-                )
-                print(
-                    json.dumps(result, indent=2, sort_keys=True)
-                    if a.json
-                    else f"supply-chain signature: {result.get('state')} ({result.get('attestation_id')})"
-                )
-                return 0
-            if a.assurance_cmd == "graph":
-                records = json.loads(Path(a.records).read_text(encoding="utf-8"))
-                result = build_evidence_graph(records, tenant_id=a.tenant)
-            elif a.assurance_cmd == "sbom":
-                components = json.loads(Path(a.components).read_text(encoding="utf-8"))
-                result = build_cyclonedx_sbom(components)
-            elif a.assurance_cmd == "vex":
-                entries = json.loads(Path(a.entries).read_text(encoding="utf-8"))
-                result = build_vex(entries)
-            else:
-                policy_payload = json.loads(Path(a.policy).read_text(encoding="utf-8"))
-                result = {
-                    "schema": "factory.assurance.policy-mutations.v1",
-                    "mutations": policy_mutations(policy_payload),
-                }
-            Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-            Path(a.out).write_text(
-                json.dumps(result, indent=2, sort_keys=True), encoding="utf-8"
-            )
-        except (OSError, json.JSONDecodeError, ValueError) as exc:
-            print(
-                json.dumps(
-                    {
-                        "schema": "factory.assurance.result.v1",
-                        "verdict": "ERROR",
-                        "error": {"code": "E_INPUT", "message": str(exc)},
-                    },
-                    indent=2,
-                )
-            )
-            return 1
-        except Exception as exc:
-            error = {
-                "code": getattr(exc, "code", "E_ASSURANCE"),
-                "message": getattr(exc, "message", str(exc)),
-            }
-            print(
-                json.dumps(
-                    {
-                        "schema": "factory.assurance.result.v1",
-                        "verdict": "ERROR",
-                        "error": error,
-                    },
-                    indent=2,
-                )
-            )
-            return 1
-        print(
-            json.dumps(
-                {
-                    "schema": "factory.assurance.result.v1",
-                    "verdict": "WRITTEN",
-                    "path": str(Path(a.out).resolve()),
-                },
-                indent=2,
-            )
-        )
-        return 0
+        return run_assurance(a)
     if a.cmd == "verify-policy":
         from .assurance import AssuranceError, verify_policy_command
 
