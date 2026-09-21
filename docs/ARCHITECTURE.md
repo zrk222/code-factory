@@ -29,6 +29,29 @@ these executable surfaces or record a dated architecture decision; superseded
 narratives should be indexed here or archived rather than copied into another
 capability-specific document.
 
+### Structural-debt controls
+
+Three repository contracts make that rule executable:
+
+- `docs/DOCUMENTATION_INDEX.json` classifies root and `docs/` Markdown as
+  canonical, historical, or indexed and requires canonical entries to point to
+  an executable surface or a decision record. Unclassified Markdown blocks the
+  architecture gate when the policy requires the index.
+- `release-train.json` names the core, VS Code, and JetBrains channels,
+  requires their version-source and changelog files, and distinguishes
+  prepared, verified, uploaded, processing, published, pending-review,
+  blocked, and unconfigured states. Upload or moderation is never silently
+  promoted to publication.
+- `architecture-boundaries.json` explicitly maps the specialist domains and
+  the remaining `factoryline/*.py` core surface to named owners. Experimental
+  adapters stay opt-in and cannot become an authority source by being listed.
+
+`factory architecture health --json` validates all three contracts alongside
+the measured CLI, module, documentation, and release-cadence budgets. An
+accepted baseline debt record preserves the remaining monolith and historical
+release churn as visible, expiring review debt; it does not rename that debt
+healthy or authorize publication.
+
 ## Complete system topology
 
 ```mermaid
