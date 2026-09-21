@@ -197,12 +197,6 @@ from .proof_worklog import (
     proof_worklog_projection,
     verify_proof_worklog,
 )
-from .domain_ontology import (
-    DomainOntologyError,
-    domain_ontology_template,
-    validate_domain_ontology,
-)
-from .mission_control_status import mission_control_status, mission_control_profile
 from .senior_assurance import (
     SeniorAssuranceError,
     compare_repair,
@@ -2601,50 +2595,9 @@ def _dispatch(argv=None) -> int:
 
     add_coordination_parser(sub)
 
-    ontology = sub.add_parser(
-        "ontology",
-        help="validate an explicitly human-approved domain vocabulary without inferring or mutating intent",
-    )
-    ontology_sub = ontology.add_subparsers(required=True, dest="ontology_cmd")
-    ontology_template_parser = ontology_sub.add_parser(
-        "template", help="render a domain-ontology template"
-    )
-    ontology_template_parser.add_argument("--json", action="store_true")
-    ontology_validate = ontology_sub.add_parser(
-        "validate",
-        help="fail closed when referenced concepts are not in the approved ontology",
-    )
-    ontology_validate.add_argument("--root", default=".")
-    ontology_validate.add_argument(
-        "--ontology",
-        required=True,
-        help="workspace-relative factory.domain-ontology.v1 JSON",
-    )
-    ontology_validate.add_argument(
-        "--concept",
-        required=True,
-        action="append",
-        help="referenced domain concept id; repeat as needed",
-    )
-    ontology_validate.add_argument("--json", action="store_true")
+    from .cli_domain import add_parser as add_domain_parser
 
-    mission_control = sub.add_parser(
-        "mission-control",
-        help="read one unified, zero-authority human and agent evidence status",
-    )
-    mission_control_sub = mission_control.add_subparsers(
-        required=True, dest="mission_control_cmd"
-    )
-    mission_control_status_parser = mission_control_sub.add_parser(
-        "status", help="read local mission-control facts without granting authority"
-    )
-    mission_control_status_parser.add_argument("--root", default=".")
-    mission_control_status_parser.add_argument("--json", action="store_true")
-    mission_control_profile_parser = mission_control_sub.add_parser(
-        "profile", help="measure local evidence readers with body-free fingerprints"
-    )
-    mission_control_profile_parser.add_argument("--root", default=".")
-    mission_control_profile_parser.add_argument("--json", action="store_true")
+    add_domain_parser(sub)
 
     deep = sub.add_parser(
         "deep-audit",
@@ -5157,48 +5110,10 @@ def _dispatch(argv=None) -> int:
         from .cli_coordination import run as run_coordination
 
         return run_coordination(a)
-    if a.cmd == "ontology":
-        root = Path(getattr(a, "root", ".")).resolve()
-        try:
-            result = (
-                domain_ontology_template()
-                if a.ontology_cmd == "template"
-                else validate_domain_ontology(root, Path(a.ontology), a.concept)
-            )
-            code = (
-                0
-                if a.ontology_cmd == "template"
-                or result.get("marker") == "ONTOLOGY_READY"
-                else 1
-            )
-        except (
-            DomainOntologyError,
-            OSError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            ValueError,
-        ) as exc:
-            result = {
-                "schema": "factory.domain-ontology.error.v1",
-                "marker": "ONTOLOGY_INPUT_REJECTED",
-                "code": getattr(exc, "code", "E_ONTOLOGY_SCHEMA"),
-                "message": str(exc),
-            }
-            code = 2
-        print(
-            json.dumps(result, indent=2, sort_keys=True),
-            file=sys.stderr if code else sys.stdout,
-        )
-        return code
-    if a.cmd == "mission-control":
-        reader = (
-            mission_control_profile
-            if a.mission_control_cmd == "profile"
-            else mission_control_status
-        )
-        result = reader(Path(a.root).resolve())
-        print(json.dumps(result, indent=2, sort_keys=True))
-        return 0
+    if a.cmd in {"ontology", "mission-control"}:
+        from .cli_domain import run as run_domain
+
+        return run_domain(a)
     if a.cmd == "deep-audit":
         try:
             root = Path(a.root).resolve()
