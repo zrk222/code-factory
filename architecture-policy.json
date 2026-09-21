@@ -13,11 +13,11 @@
   },
   "budgets": {
     "max_markdown_files": 658,
-    "max_python_files": 438,
+    "max_python_files": 439,
     "max_markdown_python_ratio": 1.7,
-    "max_cli_lines": 6896,
-    "max_cli_command_declarations": 269,
-    "max_core_modules": 228
+    "max_cli_lines": 6829,
+    "max_cli_command_declarations": 264,
+    "max_core_modules": 229
   },
   "review_thresholds": {
     "markdown_python_ratio": 1.5,
@@ -28,7 +28,7 @@
     "decision_id": "ARCH-BASELINE-2026-09-19-AGENTIC-DRIFT",
     "owner": "human-release-authority",
     "expires_at": "2026-12-31T23:59:59+00:00",
-    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, typed human-gated orchestrator request routing, opt-in extended-assurance lanes, deterministic agentic-control drift detector, and lazily loaded audit, quality-evidence, agent, capability-pack, RevenueForge/AppForge, SaaS proof, human-governance, GitHub evidence, IDE repair/JetBrains handshake, proof artifacts, enterprise receipt, enterprise operations, verifier-plane, MCP/Junie integration, release-control, evidence-chain, and PR evidence parser and dispatch boundaries while the decomposition plan remains active; re-review is required at expiry.",
+    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, typed human-gated orchestrator request routing, opt-in extended-assurance lanes, deterministic agentic-control drift detector, and lazily loaded audit, quality-evidence, agent, capability-pack, RevenueForge/AppForge, SaaS proof, human-governance, GitHub evidence, IDE repair/JetBrains handshake, proof artifacts, enterprise receipt, enterprise operations, verifier-plane, MCP/Junie integration, release-control, evidence-chain, PR, app-builder, target-compilation, Studio, telemetry, and Grill parser and dispatch boundaries while the decomposition plan remains active; re-review is required at expiry.",
     "codes": [
       "E_ARCH_CLI_LINES_GROWTH",
       "E_ARCH_CORE_MODULES_GROWTH",
@@ -41,12 +41,12 @@
       "ARCH_RELEASE_CHURN"
     ],
     "metrics": {
-      "cli_lines": 6896,
-      "cli_command_declarations": 269,
-      "core_modules": 228,
+      "cli_lines": 6829,
+      "cli_command_declarations": 264,
+      "core_modules": 229,
       "markdown_files": 658,
       "markdown_python_ratio": 1.5023,
-      "python_files": 438,
+      "python_files": 439,
       "release_recent_count": 17
     }
   },
