@@ -20,6 +20,8 @@ from typing import Any
 
 
 DEFAULT_POLICY_NAME = "architecture-policy.json"
+DOCUMENTATION_INDEX_NAME = "docs/DOCUMENTATION_INDEX.json"
+RELEASE_TRAIN_NAME = "release-train.json"
 _VERSION_RE = re.compile(
     r"^(?:version|__version__)\s*=\s*[\"']([^\"']+)[\"']", re.MULTILINE
 )
@@ -140,6 +142,120 @@ def _module_domains(root: Path, relative: list[str]) -> dict[str, int]:
     return domains
 
 
+def _documentation_index(root: Path, relative: list[str]) -> dict[str, Any]:
+    """Validate the repository's canonical and historical Markdown index."""
+    markdown = [name for name in relative if name.lower().endswith(".md")]
+    index_path = root / DOCUMENTATION_INDEX_NAME
+    if not markdown and not index_path.exists():
+        return {"status": "not_applicable", "canonical_count": 0, "unmatched": []}
+    if not index_path.is_file():
+        return {
+            "status": "missing",
+            "canonical_count": 0,
+            "unmatched": markdown,
+        }
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
+    if index.get("schema") != "factory.documentation-index.v1":
+        return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
+    canonical = index.get("canonical")
+    coverage = index.get("coverage")
+    rules = index.get("rules")
+    if (
+        not isinstance(canonical, list)
+        or not isinstance(coverage, list)
+        or not isinstance(rules, dict)
+        or not rules.get("canonical_paths_must_exist")
+        or not rules.get("canonical_entries_require_executable_or_decision")
+    ):
+        return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
+    canonical_paths: set[str] = set()
+    for entry in canonical:
+        if not isinstance(entry, dict):
+            return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
+        path = entry.get("path")
+        if (
+            not isinstance(path, str)
+            or path in canonical_paths
+            or path not in relative
+            or not path.lower().endswith(".md")
+            or not any(
+                isinstance(entry.get(key), str) and entry[key].strip()
+                for key in ("executable", "decision")
+            )
+        ):
+            return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
+        canonical_paths.add(path)
+    patterns: list[str] = []
+    for entry in coverage:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("glob"), str)
+            or not entry["glob"]
+            or not isinstance(entry.get("status"), str)
+            or entry["status"] not in {"canonical", "historical", "indexed"}
+        ):
+            return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
+        patterns.append(entry["glob"])
+    unmatched = [name for name in markdown if not any(fnmatch.fnmatch(name, pattern) for pattern in patterns)]
+    return {
+        "status": "valid" if not unmatched else "incomplete",
+        "canonical_count": len(canonical_paths),
+        "coverage_patterns": len(patterns),
+        "unmatched": unmatched,
+    }
+
+
+def _release_train(root: Path) -> dict[str, Any]:
+    """Validate the release-train contract without touching providers."""
+    path = root / RELEASE_TRAIN_NAME
+    if not path.is_file():
+        return {"status": "missing", "channels": 0}
+    try:
+        train = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"status": "invalid", "channels": 0}
+    cadence = train.get("cadence")
+    channels = train.get("channels")
+    states = train.get("publication_states")
+    required_states = {
+        "prepared",
+        "verified",
+        "uploaded",
+        "processing",
+        "published",
+        "pending_review",
+        "blocked",
+        "not_configured",
+    }
+    valid_channels = isinstance(channels, list) and bool(channels) and all(
+        isinstance(channel, dict)
+        and isinstance(channel.get("id"), str)
+        and isinstance(channel.get("version_source"), str)
+        and isinstance(channel.get("changelog"), str)
+        and isinstance(channel.get("artifact"), str)
+        for channel in channels
+    )
+    valid = (
+        train.get("schema") == "factory.release-train.v1"
+        and isinstance(train.get("train_id"), str)
+        and isinstance(train.get("owner"), str)
+        and valid_channels
+        and isinstance(cadence, dict)
+        and cadence.get("max_releases_30d") == 4
+        and cadence.get("minimum_days_between_releases") == 7
+        and cadence.get("requires_changelog_entry") is True
+        and isinstance(states, list)
+        and required_states.issubset(states)
+    )
+    return {
+        "status": "valid" if valid else "invalid",
+        "channels": len(channels) if isinstance(channels, list) else 0,
+    }
+
+
 def _recent_release_tags(root: Path, now: datetime | None = None) -> dict[str, Any]:
     """Measure release-tag cadence without making the check network-dependent."""
     now = now or datetime.now(timezone.utc)
@@ -216,6 +332,8 @@ def collect_architecture_health(root: Path) -> dict[str, Any]:
             "cli_command_declarations": cli_command_declarations,
             "core_modules": len(core_modules),
             "module_domains": _module_domains(root, relative),
+            "documentation_index": _documentation_index(root, relative),
+            "release_train": _release_train(root),
             "version": _version(root),
             "tracked_files": len(relative),
         },
@@ -401,6 +519,32 @@ def evaluate_architecture_health(
                 "MEDIUM",
                 "No architecture-boundaries.json manifest was found for the measured repository.",
                 "Add a reviewed core-versus-specialist boundary manifest before expanding the module surface.",
+            )
+        )
+    documentation_index = metrics.get("documentation_index", {})
+    if policy.get("documentation", {}).get("require_index") and documentation_index.get(
+        "status"
+    ) in {"missing", "invalid", "incomplete"}:
+        regressions.append(
+            _finding(
+                "E_ARCH_DOCUMENTATION_INDEX_INVALID",
+                "BLOCKER",
+                "Documentation index is missing, malformed, or leaves Markdown files unclassified.",
+                "Repair docs/DOCUMENTATION_INDEX.json before adding or publishing narrative documentation.",
+                blocking=True,
+            )
+        )
+    release_train = metrics.get("release_train", {})
+    if policy.get("release", {}).get("require_train") and release_train.get(
+        "status"
+    ) in {"missing", "invalid"}:
+        regressions.append(
+            _finding(
+                "E_ARCH_RELEASE_TRAIN_INVALID",
+                "BLOCKER",
+                "release-train.json is missing or does not describe the governed release channels.",
+                "Restore the reviewed release-train.v1 contract before creating a release artifact.",
+                blocking=True,
             )
         )
     if metrics["cli_lines"] > policy.get("review_thresholds", {}).get(

@@ -53,7 +53,11 @@
   "release": {
     "max_releases_30d": 4,
     "minimum_days_between_releases": 7,
-    "requires_changelog_entry": true
+    "requires_changelog_entry": true,
+    "require_train": true
+  },
+  "documentation": {
+    "require_index": true
   },
   "decomposition_plan": [
     {

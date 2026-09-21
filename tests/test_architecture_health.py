@@ -267,3 +267,100 @@ def test_expiring_exact_acceptance_can_clear_intentional_measured_growth(
     assert {item["code"] for item in result["accepted_baseline_debt"]} == {
         "ARCH_CLI_MONOLITH"
     }
+
+
+def test_required_documentation_index_blocks_unclassified_markdown(tmp_path: Path) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "factoryline" / "cli.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# readme\n", encoding="utf-8")
+    (tmp_path / "docs" / "guide.md").write_text("# guide\n", encoding="utf-8")
+    policy = _policy(tmp_path / "policy.json")
+    value = json.loads(policy.read_text(encoding="utf-8"))
+    value["documentation"] = {"require_index": True}
+    policy.write_text(json.dumps(value), encoding="utf-8")
+    (tmp_path / "docs" / "DOCUMENTATION_INDEX.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.documentation-index.v1",
+                "canonical": [
+                    {
+                        "path": "docs/guide.md",
+                        "executable": "factoryline/cli.py",
+                    }
+                ],
+                "coverage": [{"glob": "README.md", "status": "canonical"}],
+                "rules": {
+                    "canonical_paths_must_exist": True,
+                    "canonical_entries_require_executable_or_decision": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = evaluate_architecture_health(tmp_path, policy)
+    assert result["decision"] == "BLOCKED"
+    assert any(
+        item["code"] == "E_ARCH_DOCUMENTATION_INDEX_INVALID"
+        for item in result["regressions"]
+    )
+
+
+def test_required_release_train_validates_channels_and_states(tmp_path: Path) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "__init__.py").write_text(
+        '__version__ = "1.0.0"\n', encoding="utf-8"
+    )
+    (tmp_path / "factoryline" / "cli.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## 1.0.0\n", encoding="utf-8")
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = _policy(tmp_path / "policy.json")
+    value = json.loads(policy.read_text(encoding="utf-8"))
+    value["release"]["requires_changelog_entry"] = True
+    value["release"]["require_train"] = True
+    policy.write_text(json.dumps(value), encoding="utf-8")
+    (tmp_path / "release-train.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.release-train.v1",
+                "train_id": "test",
+                "owner": "reviewer",
+                "channels": [
+                    {
+                        "id": "core",
+                        "version_source": "factoryline/__init__.py",
+                        "changelog": "CHANGELOG.md",
+                        "artifact": "dist/*.whl",
+                    }
+                ],
+                "cadence": {
+                    "max_releases_30d": 4,
+                    "minimum_days_between_releases": 7,
+                    "requires_changelog_entry": True,
+                },
+                "publication_states": [
+                    "prepared",
+                    "verified",
+                    "uploaded",
+                    "processing",
+                    "published",
+                    "pending_review",
+                    "blocked",
+                    "not_configured",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = evaluate_architecture_health(tmp_path, policy)
+    assert result["decision"] == "HEALTHY"
+    assert result["metrics"]["release_train"] == {"status": "valid", "channels": 1}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema": "factory.release-train.v1",
+  "train_id": "code-factory-release-train",
+  "owner": "human-release-authority",
+  "purpose": "Coordinate core and adapter releases without treating a provider upload or moderation queue as publication.",
+  "channels": [
+    {
+      "id": "core",
+      "version_source": "factoryline/__init__.py",
+      "changelog": "CHANGELOG.md",
+      "artifact": "dist/factoryline_code_factory-*.whl"
+    },
+    {
+      "id": "vscode",
+      "version_source": "editors/vscode/package.json",
+      "changelog": "docs/RELEASE_CHANNELS.md",
+      "artifact": "editors/vscode/*.vsix"
+    },
+    {
+      "id": "jetbrains",
+      "version_source": "editors/intellij/gradle.properties",
+      "changelog": "docs/RELEASE_CHANNELS.md",
+      "artifact": "editors/intellij/*.zip"
+    }
+  ],
+  "cadence": {
+    "max_releases_30d": 4,
+    "minimum_days_between_releases": 7,
+    "exception_requires": "human-release-authority",
+    "requires_changelog_entry": true
+  },
+  "publication_states": [
+    "prepared",
+    "verified",
+    "uploaded",
+    "processing",
+    "published",
+    "pending_review",
+    "blocked",
+    "not_configured"
+  ],
+  "invariants": [
+    "A tag and artifact must bind to one commit before publication.",
+    "Uploaded, processing, and pending_review are not published.",
+    "Provider credentials remain outside repository state.",
+    "A release exception is never inferred from a green build."
+  ]
+}
