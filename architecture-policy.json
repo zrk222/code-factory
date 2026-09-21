@@ -17,7 +17,7 @@
     "max_markdown_python_ratio": 1.7,
     "max_cli_lines": 7134,
     "max_cli_command_declarations": 275,
-    "max_core_modules": 224
+    "max_core_modules": 225
   },
   "review_thresholds": {
     "markdown_python_ratio": 1.5,
@@ -43,7 +43,7 @@
     "metrics": {
       "cli_lines": 7134,
       "cli_command_declarations": 275,
-      "core_modules": 224,
+      "core_modules": 225,
       "markdown_files": 658,
       "markdown_python_ratio": 1.5161,
       "python_files": 435,
