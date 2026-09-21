@@ -43,9 +43,9 @@
     "metrics": {
       "cli_lines": 11723,
       "cli_command_declarations": 492,
-      "core_modules": 202,
+      "core_modules": 203,
       "markdown_files": 658,
-      "markdown_python_ratio": 1.5971,
+      "markdown_python_ratio": 1.5932,
       "release_recent_count": 17
     }
   },
