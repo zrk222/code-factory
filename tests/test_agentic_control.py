@@ -19,6 +19,7 @@ from factoryline.agentic_control import (
     load_cookbook_recipe,
     new_swimlane_event,
     route_model,
+    verify_model_route,
     verify_route_trace,
     verify_reusable_workflow,
     verify_sandbox_boundary,
@@ -40,10 +41,33 @@ SHA = "a" * 64
 
 
 def test_model_route_is_deterministic_and_tiered() -> None:
-    assert route_model("routine", latency_budget_ms=1000)["tier"] == "lightweight"
+    route = route_model("routine", latency_budget_ms=1000)
+    assert route["tier"] == "lightweight"
+    assert verify_model_route(route)["route_sha256"] == route["route_sha256"]
     assert route_model("standard")["tier"] == "workhorse"
     assert route_model("critical", risk="critical")["tier"] == "frontier"
     assert route_model("standard") == route_model("standard")
+
+
+def test_model_route_receipt_rejects_tampering_and_unknown_tiers() -> None:
+    route = route_model("standard")
+    tampered = dict(route, tier="frontier")
+    with pytest.raises(AgenticControlError, match="digest"):
+        verify_model_route(tampered)
+    with pytest.raises(AgenticControlError, match="model_tier"):
+        create_orchestrator_plan(
+            {
+                "goal": "route a bounded repair",
+                "intent_digest": SHA,
+                "capability_registry_sha256": SHA,
+                "workflow_ids": ["workflow:repair"],
+                "recipe_names": ["quality-audit"],
+                "task_ids": ["task:repair"],
+                "model_tier": "unbounded",
+                "stop_condition": "stop at missing approval",
+                "approval_required": True,
+            }
+        )
 
 
 def test_capability_registry_is_hash_bound_and_cannot_grant_authority() -> None:

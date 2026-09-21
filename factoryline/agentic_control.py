@@ -30,11 +30,13 @@ DRIFT_SCHEMA = "factory.agentic-control-drift.v1"
 CAPABILITY_SCHEMA = "factory.capability-registry.v1"
 TASK_CARD_SCHEMA = "factory.task-card.v1"
 ORCHESTRATOR_PLAN_SCHEMA = "factory.orchestrator-plan.v1"
+MODEL_ROUTE_SCHEMA = "factory.model-route.v1"
 _ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40,64}$")
 _PHASES = ("scout", "plan", "build", "verify", "handoff", "review")
 _TASK_STATES = ("queued", "leased", "running", "checkpointed", "verifying", "review_required", "completed", "blocked", "expired", "cancelled")
+MODEL_TIERS = frozenset({"lightweight", "workhorse", "frontier"})
 BASELINE_LANES = (
     "stateful_workflows",
     "authorization_tenant_isolation",
@@ -378,6 +380,11 @@ def create_orchestrator_plan(
         request["capability_registry_sha256"], "capability_registry_sha256"
     )
     model_tier = _id(request["model_tier"], "model_tier")
+    if model_tier not in MODEL_TIERS:
+        raise AgenticControlError(
+            "E_ORCHESTRATOR_MODEL_TIER",
+            "model_tier must be lightweight, workhorse, or frontier",
+        )
     stop_condition = _bounded_text(request["stop_condition"], "stop_condition")
     if request["approval_required"] is not True:
         raise AgenticControlError(
@@ -456,7 +463,7 @@ def _route_fields(
     route: dict[str, Any], *, require_schema: bool = True
 ) -> dict[str, Any]:
     """Validate and normalize the deterministic model-route fields."""
-    if require_schema and route.get("schema") != "factory.model-route.v1":
+    if require_schema and route.get("schema") != MODEL_ROUTE_SCHEMA:
         raise AgenticControlError(
             "E_ROUTE_TRACE", "model route schema marker is missing"
         )
@@ -522,8 +529,8 @@ def route_model(
         tier, reason = "lightweight", "bounded token budget fits a lightweight route"
     else:
         tier, reason = "workhorse", "standard work uses the balanced default tier"
-    return {
-        "schema": "factory.model-route.v1",
+    core = {
+        "schema": MODEL_ROUTE_SCHEMA,
         "tier": tier,
         "task_class": task_class,
         "risk": risk,
@@ -535,6 +542,60 @@ def route_model(
         "authority": {"model_call": False, "execution": False},
         "marker": "MODEL_ROUTE_DETERMINISTIC",
     }
+    return {**core, "route_sha256": _sha(core)}
+
+
+def verify_model_route(route: dict[str, Any]) -> dict[str, Any]:
+    """Verify a standalone deterministic model-route receipt.
+
+    The receipt describes routing intent only. It cannot select a provider,
+    invoke a model, spend credits, or grant execution authority.
+    """
+    if not isinstance(route, dict) or route.get("schema") != MODEL_ROUTE_SCHEMA:
+        raise AgenticControlError("E_MODEL_ROUTE_TRACE", "unsupported model route")
+    required = {
+        "schema",
+        "tier",
+        "task_class",
+        "risk",
+        "budgets",
+        "rationale",
+        "authority",
+        "marker",
+    }
+    if set(route) != required | {"route_sha256"}:
+        raise AgenticControlError(
+            "E_MODEL_ROUTE_TRACE", "model route fields are not exact"
+        )
+    core = {key: route[key] for key in required}
+    _route_fields(core)
+    budgets = core["budgets"]
+    if not isinstance(budgets, dict) or set(budgets) != {
+        "latency_budget_ms",
+        "token_budget",
+    }:
+        raise AgenticControlError("E_MODEL_ROUTE_TRACE", "model route budgets are invalid")
+    for value, label in (
+        (budgets["latency_budget_ms"], "latency_budget_ms"),
+        (budgets["token_budget"], "token_budget"),
+    ):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            raise AgenticControlError(
+                "E_MODEL_ROUTE_TRACE", f"{label} must be a non-negative integer or null"
+            )
+    if core["marker"] != "MODEL_ROUTE_DETERMINISTIC":
+        raise AgenticControlError("E_MODEL_ROUTE_TRACE", "model route marker is invalid")
+    if core["authority"] != {"model_call": False, "execution": False}:
+        raise AgenticControlError(
+            "E_MODEL_ROUTE_AUTHORITY", "model route cannot grant authority"
+        )
+    if route["route_sha256"] != _sha(core):
+        raise AgenticControlError(
+            "E_MODEL_ROUTE_TAMPERED", "model route digest does not match contents"
+        )
+    return dict(route)
 
 
 def create_typed_handoff(
@@ -654,7 +715,11 @@ def create_route_trace(
         raise AgenticControlError(
             "E_ROUTE_TRACE", "a deterministic model route is required"
         )
-    route_fields = _route_fields(route)
+    route_fields = (
+        _route_fields(verify_model_route(route))
+        if "route_sha256" in route
+        else _route_fields(route)
+    )
     verified_workflow = verify_reusable_workflow(workflow)
     verified_handoff = verify_typed_handoff(handoff)
     events = verify_swimlane(swimlane_events)
