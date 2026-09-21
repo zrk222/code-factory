@@ -38,6 +38,14 @@ def add_parser(sub: Any) -> None:
     plan.add_argument("request", help="JSON request with intent, workflows, recipes, and task ids")
     plan.add_argument("--out", help="write the sealed plan to a workspace path")
     plan.add_argument("--json", action="store_true")
+    route = agent_sub.add_parser(
+        "route", help="compile a sealed, read-only tiered model-route receipt"
+    )
+    route.add_argument("task_class", choices=("routine", "standard", "critical"))
+    route.add_argument("--risk", choices=("low", "medium", "high", "critical"), default="medium")
+    route.add_argument("--latency-budget-ms", type=int)
+    route.add_argument("--token-budget", type=int)
+    route.add_argument("--json", action="store_true")
     drift = agent_sub.add_parser("drift", help="compare a prior control projection with the current one")
     drift.add_argument("baseline", nargs="?")
     drift.add_argument("--current", help="current projection JSON; defaults to the live projection")
@@ -79,6 +87,7 @@ def run(args: Any) -> dict[str, Any]:
         build_extended_assurance_receipt,
         compare_agentic_control_drift,
         create_orchestrator_plan,
+        route_model,
         verify_agentic_control_drift,
         verify_extended_assurance_receipt,
     )
@@ -94,6 +103,13 @@ def run(args: Any) -> dict[str, Any]:
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return result
+    if args.agent_cmd == "route":
+        return route_model(
+            args.task_class,
+            risk=args.risk,
+            latency_budget_ms=args.latency_budget_ms,
+            token_budget=args.token_budget,
+        )
     if args.agent_cmd == "drift":
         if args.verify:
             return verify_agentic_control_drift(json.loads(Path(args.verify).read_text(encoding="utf-8")))

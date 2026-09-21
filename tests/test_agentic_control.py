@@ -341,6 +341,24 @@ def test_orchestrator_plan_cli_writes_a_sealed_plan(tmp_path, capsys) -> None:
     assert json.loads(out.read_text(encoding="utf-8"))["plan_id"] == payload["plan_id"]
 
 
+def test_agent_route_cli_emits_hash_bound_receipt(capsys) -> None:
+    assert main(
+        [
+            "agent",
+            "route",
+            "routine",
+            "--risk",
+            "low",
+            "--latency-budget-ms",
+            "1000",
+            "--json",
+        ]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == "factory.model-route.v1"
+    assert verify_model_route(payload)["tier"] == "lightweight"
+
+
 def test_extended_assurance_is_opt_in_and_receipt_v2_compatible() -> None:
     skipped = build_extended_assurance_receipt(
         "demo", extended_assurance=False, timestamp="2026-09-17T00:00:00+00:00"
