@@ -31,7 +31,6 @@
     "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, typed human-gated orchestrator request routing, opt-in extended-assurance lanes, deterministic agentic-control drift detector, and lazily loaded audit, quality-evidence, agent, and capability-pack command boundaries while the decomposition plan remains active; re-review is required at expiry.",
     "codes": [
       "E_ARCH_CLI_LINES_GROWTH",
-      "E_ARCH_CLI_COMMAND_DECLARATIONS_GROWTH",
       "E_ARCH_CORE_MODULES_GROWTH",
       "E_ARCH_MARKDOWN_FILES_GROWTH",
       "ARCH_CLI_MONOLITH",
