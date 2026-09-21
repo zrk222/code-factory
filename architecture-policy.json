@@ -41,8 +41,8 @@
       "ARCH_RELEASE_CHURN"
     ],
     "metrics": {
-      "cli_lines": 9937,
-      "cli_command_declarations": 403,
+      "cli_lines": 9653,
+      "cli_command_declarations": 387,
       "core_modules": 211,
       "markdown_files": 658,
       "markdown_python_ratio": 1.5629,
