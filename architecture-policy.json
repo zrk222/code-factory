@@ -13,7 +13,7 @@
   },
   "budgets": {
     "max_markdown_files": 655,
-    "max_python_files": 430,
+    "max_python_files": 431,
     "max_markdown_python_ratio": 1.7,
     "max_cli_lines": 6505,
     "max_cli_command_declarations": 484,
@@ -28,7 +28,7 @@
     "decision_id": "ARCH-BASELINE-2026-09-19-AGENTIC-DRIFT",
     "owner": "human-release-authority",
     "expires_at": "2026-12-31T23:59:59+00:00",
-    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, typed human-gated orchestrator request routing, opt-in extended-assurance lanes, deterministic agentic-control drift detector, and lazily loaded audit, quality-evidence, agent, capability-pack, RevenueForge/AppForge, SaaS proof, human-governance, enterprise receipt, enterprise operations, verifier-plane, MCP/Junie integration, release-control, and evidence-chain parser and dispatch boundaries while the decomposition plan remains active; re-review is required at expiry.",
+    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, typed human-gated orchestrator request routing, opt-in extended-assurance lanes, deterministic agentic-control drift detector, and lazily loaded audit, quality-evidence, agent, capability-pack, RevenueForge/AppForge, SaaS proof, human-governance, GitHub evidence, enterprise receipt, enterprise operations, verifier-plane, MCP/Junie integration, release-control, and evidence-chain parser and dispatch boundaries while the decomposition plan remains active; re-review is required at expiry.",
     "codes": [
       "E_ARCH_CLI_LINES_GROWTH",
       "E_ARCH_CORE_MODULES_GROWTH",
@@ -41,12 +41,12 @@
       "ARCH_RELEASE_CHURN"
     ],
     "metrics": {
-    "cli_lines": 7787,
-    "cli_command_declarations": 299,
-    "core_modules": 220,
+    "cli_lines": 7562,
+    "cli_command_declarations": 294,
+    "core_modules": 221,
       "markdown_files": 658,
-    "markdown_python_ratio": 1.5302,
-    "python_files": 430,
+    "markdown_python_ratio": 1.5267,
+    "python_files": 431,
       "release_recent_count": 17
     }
   },
