@@ -66,6 +66,20 @@ def _version(root: Path) -> str | None:
     return None
 
 
+def _changelog_contains_version(root: Path, version: str | None) -> bool:
+    """Require the current package version to have a human-readable release entry."""
+    if not version:
+        return False
+    changelog = root / "CHANGELOG.md"
+    if not changelog.is_file():
+        return False
+    try:
+        content = changelog.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return bool(re.search(rf"^##\s+{re.escape(version)}(?:\s|$)", content, re.MULTILINE))
+
+
 def _module_domains(root: Path, relative: list[str]) -> dict[str, int]:
     """Classify implementation modules using the reviewed boundary manifest."""
     manifest_path = root / "architecture-boundaries.json"
@@ -435,6 +449,18 @@ def evaluate_architecture_health(
         )
     cadence = snapshot["release_cadence"]
     cadence_policy = policy.get("release", {})
+    if cadence_policy.get("requires_changelog_entry") and not _changelog_contains_version(
+        root, metrics.get("version")
+    ):
+        regressions.append(
+            _finding(
+                "E_ARCH_RELEASE_CHANGELOG_MISSING",
+                "BLOCKER",
+                f"Current version {metrics.get('version') or 'unknown'} has no CHANGELOG.md release entry.",
+                "Add a human-readable changelog heading for the exact current version before release.",
+                blocking=True,
+            )
+        )
     if cadence.get("available") and cadence.get("recent_count") is not None:
         if cadence["recent_count"] > cadence_policy.get("max_releases_30d", 4):
             debt.append(

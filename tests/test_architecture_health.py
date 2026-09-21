@@ -149,6 +149,36 @@ def test_boundary_manifest_missing_declared_owner_is_blocking(tmp_path: Path) ->
     )
 
 
+def test_release_policy_requires_exact_changelog_heading(tmp_path: Path) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "__init__.py").write_text(
+        '__version__ = "1.2.3"\n', encoding="utf-8"
+    )
+    (tmp_path / "factoryline" / "cli.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = _policy(tmp_path / "policy.json", cli=2)
+    value = json.loads(policy.read_text(encoding="utf-8"))
+    value["release"]["requires_changelog_entry"] = True
+    policy.write_text(json.dumps(value), encoding="utf-8")
+    result = evaluate_architecture_health(tmp_path, policy)
+    assert result["decision"] == "BLOCKED"
+    assert any(
+        item["code"] == "E_ARCH_RELEASE_CHANGELOG_MISSING"
+        for item in result["regressions"]
+    )
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## 1.2.3\n", encoding="utf-8")
+    assert evaluate_architecture_health(tmp_path, policy)["decision"] == "HEALTHY"
+
+
 def test_architecture_health_cli_emits_machine_readable_receipt(
     capsys, tmp_path: Path
 ) -> None:
