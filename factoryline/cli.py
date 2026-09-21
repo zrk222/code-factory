@@ -21,6 +21,7 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+
 if TYPE_CHECKING:
     from .capability_evidence import CapabilityEvidenceError, audit_capability_evidence
     from .full_stack_ux_harness import (
@@ -146,11 +147,7 @@ from .release_contract import (
     _sha as release_contract_digest,
     verify_release_contract,
 )
-from .release_candidate import (
-    release_candidate_preflight,
-    source_snapshot,
-    write_release_candidate_preflight,
-)
+from .release_candidate import source_snapshot
 from .proof_continuity_ledger import (
     ProofContinuityError,
     proof_continuity_projection,
@@ -405,12 +402,6 @@ from .index_continuity import (
     capture_continuity_baseline,
     compare_continuity,
     write_continuity_baseline,
-)
-from .release_integrity import release_integrity, render_release_integrity
-from .release_decision import (
-    SCHEMA as RELEASE_DECISION_SCHEMA,
-    release_decision_card,
-    render_release_decision_card,
 )
 from .passport import build_passport, verify_passport
 from .protocol import compatibility
@@ -818,6 +809,15 @@ def _plan() -> int:
         "passed on disk under the shared factory layout (portable across IDE/agent/OS)."
     )
     return 0
+
+
+def __getattr__(name: str):
+    """Preserve legacy lazy imports for compatibility-tested CLI seams."""
+    if name == "release_decision_card":
+        from .release_decision import release_decision_card
+
+        return release_decision_card
+    raise AttributeError(name)
 
 
 def _dispatch(argv=None) -> int:
@@ -3711,58 +3711,8 @@ def _dispatch(argv=None) -> int:
     jetbrains_status.add_argument("--root", default=".")
     jetbrains_status.add_argument("--json", action="store_true")
 
-    release = sub.add_parser(
-        "release", help="inspect local release workflow boundaries without publishing"
-    )
-    release_sub = release.add_subparsers(required=True, dest="release_cmd")
-    release_integrity_parser = release_sub.add_parser(
-        "integrity", help="verify release workflow fan-in and protected-gate topology"
-    )
-    release_integrity_parser.add_argument("--root", default=".")
-    release_integrity_parser.add_argument("--json", action="store_true")
-    release_preflight_parser = release_sub.add_parser(
-        "preflight", help="verify one exact release contract and candidate artifact set"
-    )
-    release_preflight_parser.add_argument("--root", default=".")
-    release_preflight_parser.add_argument(
-        "--contract",
-        required=True,
-        help="workspace-contained release contract with candidate source binding",
-    )
-    release_preflight_parser.add_argument(
-        "--artifact-dir",
-        action="append",
-        help="workspace-contained artifact directory; repeatable",
-    )
-    release_preflight_parser.add_argument(
-        "--metadata-path",
-        action="append",
-        help="workspace-contained active metadata file; repeatable and audited when supplied",
-    )
-    release_preflight_parser.add_argument(
-        "--supply-chain-manifest",
-        help="optional workspace-contained signed-evidence manifest; blocks when supplied evidence is invalid",
-    )
-    release_preflight_parser.add_argument(
-        "--intake-parameters",
-        help="optional workspace-contained authoritative intake-parameter envelope",
-    )
-    release_preflight_parser.add_argument(
-        "--require-intake",
-        action="store_true",
-        help="require an authoritative intake-parameter envelope for this release",
-    )
-    release_preflight_parser.add_argument(
-        "--out", help="optional workspace-contained JSON receipt path"
-    )
-    release_preflight_parser.add_argument("--json", action="store_true")
-    release_decision_parser = release_sub.add_parser(
-        "decision",
-        help="explain one strict local release decision without contacting a provider",
-    )
-    release_decision_parser.add_argument("feature")
-    release_decision_parser.add_argument("--root", default=".")
-    release_decision_parser.add_argument("--json", action="store_true")
+    from .cli_release import add_parser as add_release_parser
+    add_release_parser(sub)
 
     from .cli_integrations import add_parser as add_integrations_parser
     add_integrations_parser(sub)
@@ -9022,119 +8972,10 @@ def _dispatch(argv=None) -> int:
                 "authority   : no source modification, test execution, commit, merge, publication, deployment, credential, or network action"
             )
         return 0
-    if a.cmd == "release" and a.release_cmd == "integrity":
-        result = release_integrity(Path(a.root))
-        if a.json:
-            print(json.dumps(result, indent=2, sort_keys=True))
-        else:
-            print(render_release_integrity(result))
-        return 0 if result["ok"] else 1
-    if a.cmd == "release" and a.release_cmd == "preflight":
-        root = Path(a.root).resolve()
-        try:
-            artifact_dirs = (
-                [Path(item) for item in a.artifact_dir] if a.artifact_dir else None
-            )
-            metadata_paths = (
-                [Path(item) for item in a.metadata_path] if a.metadata_path else None
-            )
-            supply_chain_manifest = (
-                Path(a.supply_chain_manifest) if a.supply_chain_manifest else None
-            )
-            intake_parameters = (
-                Path(a.intake_parameters) if a.intake_parameters else None
-            )
-            result = (
-                write_release_candidate_preflight(
-                    root,
-                    Path(a.contract),
-                    artifact_dirs,
-                    Path(a.out),
-                    metadata_paths=metadata_paths,
-                    supply_chain_manifest=supply_chain_manifest,
-                    intake_parameters=intake_parameters,
-                    require_intake=a.require_intake,
-                )
-                if a.out
-                else release_candidate_preflight(
-                    root,
-                    Path(a.contract),
-                    artifact_dirs,
-                    metadata_paths=metadata_paths,
-                    supply_chain_manifest=supply_chain_manifest,
-                    intake_parameters=intake_parameters,
-                    require_intake=a.require_intake,
-                )
-            )
-        except (OSError, UnicodeDecodeError, ValueError, TypeError) as exc:
-            result = {
-                "schema": "factory.release-candidate-preflight.v1",
-                "marker": "RELEASE_CANDIDATE_PREFLIGHT_BLOCKED",
-                "ok": False,
-                "blockers": [
-                    {
-                        "code": "RELEASE_CANDIDATE_INPUT_INVALID",
-                        "detail": str(exc)[:240],
-                    }
-                ],
-                "authority": {
-                    "execution": False,
-                    "approval": False,
-                    "repair": False,
-                    "merge": False,
-                    "publication": False,
-                    "deployment": False,
-                    "signing": False,
-                    "credential": False,
-                    "provider_call": False,
-                },
-            }
-        if a.json:
-            print(json.dumps(result, indent=2, sort_keys=True))
-        else:
-            print(
-                f"release candidate preflight: {'PASS' if result.get('ok') else 'BLOCKED'}"
-            )
-            for check in result.get("checks", []):
-                print(
-                    f"- {'PASS' if check.get('passed') else 'FAIL'} {check.get('id')}: {check.get('evidence')}"
-                )
-            for blocker in result.get("blockers", []):
-                print(f"- BLOCK {blocker.get('code')}: {blocker.get('detail')}")
-            print(
-                "authority: no execution, credential, provider, publication, deployment, signing, merge, or approval authority"
-            )
-        return 0 if result.get("ok") else 1
-    if a.cmd == "release" and a.release_cmd == "decision":
-        try:
-            result = release_decision_card(Path(a.root), a.feature)
-        except ValueError as exc:
-            result = {
-                "schema": RELEASE_DECISION_SCHEMA,
-                "marker": "RELEASE_DECISION_INPUT_REJECTED",
-                "state": "INPUT_REJECTED",
-                "reason": str(exc),
-                "authority": {
-                    "execution": False,
-                    "approval": False,
-                    "repair": False,
-                    "merge": False,
-                    "publication": False,
-                    "deployment": False,
-                    "signing": False,
-                    "messaging": False,
-                    "credential": False,
-                    "connector": False,
-                },
-                "claim_boundary": "Input validation only; no local workflow, feature evidence, provider, credential, or release action ran.",
-            }
-        if a.json:
-            print(json.dumps(result, indent=2, sort_keys=True))
-        elif result.get("state") == "INPUT_REJECTED":
-            print(f"release decision: INPUT_REJECTED ({result['reason']})")
-        else:
-            print(render_release_decision_card(result))
-        return 0 if result.get("state") == "EXTERNAL_GATES_UNOBSERVED" else 1
+    if a.cmd == "release":
+        from .cli_release import run as run_release
+
+        return run_release(a)
     if a.cmd == "jetbrains":
         root = Path(a.root).resolve()
         try:

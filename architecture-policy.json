@@ -13,7 +13,7 @@
   },
   "budgets": {
     "max_markdown_files": 655,
-    "max_python_files": 419,
+    "max_python_files": 420,
     "max_markdown_python_ratio": 1.7,
     "max_cli_lines": 6505,
     "max_cli_command_declarations": 484,
@@ -28,11 +28,12 @@
     "decision_id": "ARCH-BASELINE-2026-09-19-AGENTIC-DRIFT",
     "owner": "human-release-authority",
     "expires_at": "2026-12-31T23:59:59+00:00",
-    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, typed human-gated orchestrator request routing, opt-in extended-assurance lanes, deterministic agentic-control drift detector, and lazily loaded audit, quality-evidence, agent, capability-pack, RevenueForge/AppForge, enterprise receipt, enterprise operations, verifier-plane, and MCP/Junie integration parser and dispatch boundaries while the decomposition plan remains active; re-review is required at expiry.",
+    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, typed human-gated orchestrator request routing, opt-in extended-assurance lanes, deterministic agentic-control drift detector, and lazily loaded audit, quality-evidence, agent, capability-pack, RevenueForge/AppForge, enterprise receipt, enterprise operations, verifier-plane, MCP/Junie integration, and release-control parser and dispatch boundaries while the decomposition plan remains active; re-review is required at expiry.",
     "codes": [
       "E_ARCH_CLI_LINES_GROWTH",
       "E_ARCH_CORE_MODULES_GROWTH",
       "E_ARCH_MARKDOWN_FILES_GROWTH",
+      "E_ARCH_PYTHON_FILES_GROWTH",
       "ARCH_CLI_MONOLITH",
       "ARCH_CLI_COMMAND_SURFACE",
       "ARCH_CORE_SURFACE",
@@ -40,11 +41,12 @@
       "ARCH_RELEASE_CHURN"
     ],
     "metrics": {
-      "cli_lines": 10096,
-      "cli_command_declarations": 407,
-      "core_modules": 209,
+      "cli_lines": 9937,
+      "cli_command_declarations": 403,
+      "core_modules": 210,
       "markdown_files": 658,
-      "markdown_python_ratio": 1.5704,
+      "markdown_python_ratio": 1.5667,
+      "python_files": 420,
       "release_recent_count": 17
     }
   },
