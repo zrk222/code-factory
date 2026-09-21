@@ -169,6 +169,7 @@ def _documentation_index(root: Path, relative: list[str]) -> dict[str, Any]:
         or not isinstance(rules, dict)
         or not rules.get("canonical_paths_must_exist")
         or not rules.get("canonical_entries_require_executable_or_decision")
+        or not rules.get("evidence_refs_must_exist")
     ):
         return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
     canonical_paths: set[str] = set()
@@ -186,6 +187,13 @@ def _documentation_index(root: Path, relative: list[str]) -> dict[str, Any]:
                 for key in ("executable", "decision")
             )
         ):
+            return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
+        evidence_refs = [
+            entry.get(key)
+            for key in ("executable", "decision")
+            if isinstance(entry.get(key), str) and entry[key].strip()
+        ]
+        if not any(ref in relative for ref in evidence_refs):
             return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
         canonical_paths.add(path)
     patterns: list[str] = []
@@ -208,7 +216,7 @@ def _documentation_index(root: Path, relative: list[str]) -> dict[str, Any]:
     }
 
 
-def _release_train(root: Path) -> dict[str, Any]:
+def _release_train(root: Path, relative: list[str]) -> dict[str, Any]:
     """Validate the release-train contract without touching providers."""
     path = root / RELEASE_TRAIN_NAME
     if not path.is_file():
@@ -238,11 +246,15 @@ def _release_train(root: Path) -> dict[str, Any]:
         and isinstance(channel.get("artifact"), str)
         for channel in channels
     )
+    valid_sources = valid_channels and all(
+        channel["version_source"] in relative and channel["changelog"] in relative
+        for channel in channels
+    )
     valid = (
         train.get("schema") == "factory.release-train.v1"
         and isinstance(train.get("train_id"), str)
         and isinstance(train.get("owner"), str)
-        and valid_channels
+        and valid_sources
         and isinstance(cadence, dict)
         and cadence.get("max_releases_30d") == 4
         and cadence.get("minimum_days_between_releases") == 7
@@ -333,7 +345,7 @@ def collect_architecture_health(root: Path) -> dict[str, Any]:
             "core_modules": len(core_modules),
             "module_domains": _module_domains(root, relative),
             "documentation_index": _documentation_index(root, relative),
-            "release_train": _release_train(root),
+            "release_train": _release_train(root, relative),
             "version": _version(root),
             "tracked_files": len(relative),
         },

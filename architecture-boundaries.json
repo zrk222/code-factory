@@ -31,6 +31,9 @@
       "factoryline/*audit*.py",
       "factoryline/gauntlet.py",
       "factoryline/oracle*.py"
+    ],
+    "core": [
+      "factoryline/*.py"
     ]
   },
   "owners": {

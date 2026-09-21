@@ -45,5 +45,6 @@
     "Uploaded, processing, and pending_review are not published.",
     "Provider credentials remain outside repository state.",
     "A release exception is never inferred from a green build."
-  ]
+  ],
+  "source_files_must_exist": true
 }

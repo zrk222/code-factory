@@ -51,6 +51,7 @@
     "unmatched_markdown": "BLOCK",
     "canonical_paths_must_exist": true,
     "canonical_entries_require_executable_or_decision": true,
+    "evidence_refs_must_exist": true,
     "historical_docs_are_not_current_product_guidance": true
   }
 }
