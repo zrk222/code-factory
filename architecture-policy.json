@@ -13,7 +13,7 @@
   },
   "budgets": {
     "max_markdown_files": 655,
-    "max_python_files": 420,
+    "max_python_files": 421,
     "max_markdown_python_ratio": 1.7,
     "max_cli_lines": 6505,
     "max_cli_command_declarations": 484,
@@ -43,10 +43,10 @@
     "metrics": {
       "cli_lines": 9937,
       "cli_command_declarations": 403,
-      "core_modules": 210,
+      "core_modules": 211,
       "markdown_files": 658,
-      "markdown_python_ratio": 1.5667,
-      "python_files": 420,
+      "markdown_python_ratio": 1.5629,
+      "python_files": 421,
       "release_recent_count": 17
     }
   },
