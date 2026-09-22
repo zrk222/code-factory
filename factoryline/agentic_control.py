@@ -294,6 +294,10 @@ def transition_task_card(
     }
     if state not in allowed[current]:
         raise AgenticControlError("E_TASK_TRANSITION", f"cannot move {current} to {state}")
+    if state == "completed" and evidence_digest is None and card.get("evidence_digest") is None:
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE", "completion requires a hash-bound evidence digest"
+        )
     updated = dict(card)
     updated["state"] = state
     if state == "leased":
@@ -349,6 +353,10 @@ def verify_task_card(card: dict[str, Any]) -> dict[str, Any]:
         _digest(card["checkpoint"], "checkpoint_digest")
     if card.get("evidence_digest") is not None:
         _digest(card["evidence_digest"], "evidence_digest")
+    if card.get("state") == "completed" and card.get("evidence_digest") is None:
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE", "completed task cards require a hash-bound evidence digest"
+        )
     _digest(card["registry_sha256"], "registry_sha256")
     _digest(card["intent_digest"], "intent_digest")
     if any(value is not False for value in card["authority"].values()):

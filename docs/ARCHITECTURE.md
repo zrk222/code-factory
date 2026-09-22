@@ -105,6 +105,10 @@ rejecting paths outside the task's declared scope. The
 `factory.candidate_alignment_status` fact is evidence-only; it does not run,
 repair, approve, merge, or publish the candidate.
 
+Task completion is evidence-gated: `transition_task_card(..., "completed")`
+and `verify_task_card` both require a hash-bound `evidence_digest`. A green
+state without evidence fails closed as `E_TASK_EVIDENCE`.
+
 ## Complete system topology
 
 ```mermaid

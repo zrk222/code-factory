@@ -119,6 +119,9 @@ def test_task_card_lease_checkpoint_and_completion_are_deterministic() -> None:
     leased = transition_task_card(card, "leased", lease_id="lease-1", lease_expires_at="2026-09-21T01:00:00Z")
     running = transition_task_card(leased, "running")
     checkpointed = transition_task_card(running, "checkpointed", checkpoint_digest=SHA)
+    verifying_without_evidence = transition_task_card(checkpointed, "verifying")
+    with pytest.raises(AgenticControlError, match="evidence"):
+        transition_task_card(verifying_without_evidence, "completed")
     verifying = transition_task_card(checkpointed, "verifying", evidence_digest=SHA)
     completed = transition_task_card(verifying, "completed")
     assert verify_task_card(completed)["state"] == "completed"

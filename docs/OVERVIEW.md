@@ -88,6 +88,9 @@ known, what is missing, and the one fact-derived next action.
   alignment binds a digest and changed-path list to the task and handoff, so an
   agent cannot silently expand its work outside the declared scope before CF
   review. The result is a proof receipt, not an approval.
+- **Never treats completion as proof by itself.** A task cannot enter
+  `completed` unless it carries a hash-bound evidence digest; missing evidence
+  fails closed before the board reports the work as done.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.
