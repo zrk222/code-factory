@@ -540,6 +540,8 @@ developers can find it. This optional link only opens the repository.
 | Choose among competing repairs | [`factory proofsearch`](docs/PROOFSEARCH.md) | Hash-bound candidate rejection, mutation-tested evidence, a deterministic winner, and locked apply authority |
 | Decide what evidence to collect next | [Evidence Frontier](docs/EVIDENCE_FRONTIER.md) | A deterministic next-test hypothesis that separates repair candidates, with execution locked |
 | Admit a repair retry only with new evidence | [Proof-Delta Loop](docs/PROOF_DELTA_LOOP.md) | A changed candidate and fresh hash-bound evidence, or a deliberate no-gain halt |
+| Get fast feedback after a save | [CF Live](docs/CF_LIVE_AND_FIX.md) | Change-aware check selection, bounded replay, and the exact next action |
+| Reproduce and verify a repair | [CF Fix](docs/CF_LIVE_AND_FIX.md) | Original failure, repair candidate, and negative controls in one receipt |
 | Reconsider verified prior work safely | [Factory Continuity](docs/FACTORY_CONTINUITY.md) | Purpose-bound, expiring Decision Replay metadata with independent promotion and no private content |
 | Prove one user-visible behavior | [Factory Reality Check](docs/REALITY_CHECK.md) | Deep intent assertions, a deliberate failure case, and an optional named one-time re-run authorization |
 | Verify supplied work | [Verifier Plane](docs/VERIFIER_PLANE.md) | Independent, hash-bound evidence checks |

@@ -152,6 +152,14 @@ known, what is missing, and the one fact-derived next action.
   `factory repair candidate` rejects a textual patch that crosses that scope.
   Neither command runs an agent, estimates credits, applies a patch, or replaces
   independent verification and human review.
+- **Shortens the edit-to-feedback loop.** `factory senior live` maps changed
+  paths to affected checks, skips unrelated work, and can collect fresh replay
+  receipts in temporary workspaces. Each check returns an explicit next action,
+  with no source or release authority.
+- **Turns a failure into one repair handoff.** `factory senior fix` combines
+  original reproduction, candidate verification, negative controls, and a
+  failure brief. A green repair requires the original failure to reproduce, the
+  candidate to pass, and every negative control to remain effective.
 - **Makes release blockers visible before dispatch.** `factory release integrity`
   checks local artifact fan-in, trusted PyPI publishing, and protected
   marketplace boundaries without touching credentials or publication state.

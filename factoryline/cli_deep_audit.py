@@ -106,6 +106,19 @@ def add_parser(sub: Any) -> None:
     brief.add_argument("receipt")
     brief.add_argument("--out")
     brief.add_argument("--json", action="store_true")
+    live = senior_sub.add_parser("live", help="give change-aware feedback and run only affected checks")
+    live.add_argument("manifest")
+    live.add_argument("--root", default=".")
+    live.add_argument("--changed", action="append", help="override changed paths; repeat for multiple paths")
+    live.add_argument("--execute", action="store_true", help="run affected checks in fresh temporary workspaces")
+    live.add_argument("--out")
+    live.add_argument("--json", action="store_true")
+    fix = senior_sub.add_parser("fix", help="reproduce a failure, verify a repair, and challenge negative controls")
+    fix.add_argument("manifest")
+    fix.add_argument("--root", default=".")
+    fix.add_argument("--execute", action="store_true", help="run all replay legs in fresh temporary workspaces")
+    fix.add_argument("--out")
+    fix.add_argument("--json", action="store_true")
 
 
 def _emit(result: dict[str, Any], code: int) -> int:
@@ -166,8 +179,10 @@ def _run_runtime(args: Any) -> int:
 
 def _run_senior(args: Any) -> int:
     from .benchmark_lab import BenchmarkError, evaluate_benchmark, load_benchmark_json
+    from .fix_workflow import FixWorkflowError, load_fix_json, run_fix_workflow
     from .incremental_scheduler import SchedulerError, compare_shadow, load_schedule_json, plan_incremental
     from .independent_execution import ExecutionAttestationError, verify_signed_execution_attestation
+    from .live_feedback import LiveFeedbackError, load_live_json, run_live_feedback
     from .runtime_attestation import verify_signed_runtime_attestation
     from .senior_assurance import SeniorAssuranceError, compare_repair, explain_evidence_reuse, failure_brief, load_assurance_json, run_replay
 
@@ -200,6 +215,14 @@ def _run_senior(args: Any) -> int:
             result = compare_repair(Path(args.root).resolve(), load_assurance_json(Path(args.manifest)), execute=args.execute, out=Path(args.out) if args.out else None)
             result["action_summary"] = "Compared original, repaired, and negative-control executions; release authority stayed disabled." if args.execute else "Validated a repair comparison; no candidate command ran."
             code = 0 if result["state"] in {"PLAN_ONLY", "PASS"} else 1
+        elif args.senior_cmd == "live":
+            result = run_live_feedback(Path(args.root).resolve(), load_live_json(Path(args.manifest)), execute=args.execute, changed_paths=args.changed, out=Path(args.out) if args.out else None)
+            result["action_summary"] = "Ran affected checks in fresh temporary workspaces; no source or release action ran." if args.execute else "Planned affected checks and next feedback actions; no command ran."
+            code = 0 if not result["counts"]["FAIL"] and not result["counts"]["BLOCKED"] else 1
+        elif args.senior_cmd == "fix":
+            result = run_fix_workflow(Path(args.root).resolve(), load_fix_json(Path(args.manifest)), execute=args.execute, out=Path(args.out) if args.out else None)
+            result["action_summary"] = "Reproduced the failure and compared the repair with negative controls; release authority stayed disabled." if args.execute else "Validated the reproduce-and-repair workflow; no candidate command ran."
+            code = 0 if result["state"] in {"PLAN_ONLY", "PASS"} else 1
         elif args.senior_cmd == "reuse":
             result = explain_evidence_reuse(Path(args.root).resolve(), load_assurance_json(Path(args.manifest)), out=Path(args.out) if args.out else None)
             result["action_summary"] = "Explained exact evidence reuse and fail-closed reruns; no gate command ran."
@@ -210,7 +233,7 @@ def _run_senior(args: Any) -> int:
             result = failure_brief(receipt, receipt_path=receipt_path.as_posix(), receipt_sha256=hashlib.sha256(receipt_path.read_bytes()).hexdigest(), out=Path(args.out) if args.out else None)
             result["action_summary"] = "Built an evidence-linked failure briefing; no repair or release action ran."
             code = 0
-    except (SeniorAssuranceError, ExecutionAttestationError, BenchmarkError, SchedulerError, OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+    except (SeniorAssuranceError, FixWorkflowError, LiveFeedbackError, ExecutionAttestationError, BenchmarkError, SchedulerError, OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         return _emit({"schema": "factory.senior.error.v1", "code": getattr(exc, "code", "E_SENIOR_INPUT"), "message": str(exc), "authority": "none", "release_approval": False}, 2)
     return _emit(result, code)
 
