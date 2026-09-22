@@ -84,6 +84,10 @@ known, what is missing, and the one fact-derived next action.
   checks the workflow, intent digest, and allowed-path subset before an agent's
   work is considered connected to a task. `factory.task_handoff_status` exposes
   the receipt read-only and rejects scope or intent drift before review.
+- **Checks the submitted candidate against that same intent.** Candidate
+  alignment binds a digest and changed-path list to the task and handoff, so an
+  agent cannot silently expand its work outside the declared scope before CF
+  review. The result is a proof receipt, not an approval.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.

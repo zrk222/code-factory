@@ -99,6 +99,12 @@ card, and requires the handoff paths to be a subset of the task scope. The
 `factory.task_handoff_status` MCP fact returns a hash-bound lineage receipt and
 fails closed on intent or scope drift; it does not execute the handoff.
 
+Candidate alignment completes that chain. `align_candidate_to_task` binds the
+submitted candidate digest and changed paths to the verified task and handoff,
+rejecting paths outside the task's declared scope. The
+`factory.candidate_alignment_status` fact is evidence-only; it does not run,
+repair, approve, merge, or publish the candidate.
+
 ## Complete system topology
 
 ```mermaid

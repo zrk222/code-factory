@@ -154,6 +154,7 @@ _STAGES: tuple[dict[str, object], ...] = (
             "factory.agentic_control_status",
             "factory.task_board_status",
             "factory.task_handoff_status",
+            "factory.candidate_alignment_status",
             "factory.lifecycle_status",
             "factory.atomic_status",
             "factory.release_readiness",

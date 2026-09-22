@@ -36,6 +36,8 @@ from factoryline.agentic_control import (
     verify_task_board,
     bind_task_card_handoff,
     verify_task_card_handoff,
+    align_candidate_to_task,
+    verify_candidate_alignment,
     create_orchestrator_plan,
     verify_orchestrator_plan,
 )
@@ -190,6 +192,24 @@ def test_task_handoff_binding_preserves_original_intent_and_scope() -> None:
     )
     with pytest.raises(AgenticControlError, match="intent"):
         bind_task_card_handoff(card, wrong_intent)
+
+
+def test_candidate_alignment_rejects_scope_drift() -> None:
+    card = create_task_card(
+        "task-candidate", "wf-candidate", "builder", SHA, SHA,
+        allowed_paths=["src/"], dependencies=(),
+        stop_condition="Stop at verification.",
+        next_action="Run the declared checks.", created_at="2026-09-21T00:00:00Z",
+    )
+    handoff = create_typed_handoff(
+        "wf-candidate", "build", "planner", "builder", SHA, SHA,
+        allowed_paths=["src/"], next_action="Build only the approved scope.",
+        created_at="2026-09-21T00:00:00Z",
+    )
+    receipt = align_candidate_to_task(card, handoff, SHA, ["src/app.py"])
+    assert verify_candidate_alignment(receipt)["scope_verdict"] == "ALIGNED"
+    with pytest.raises(AgenticControlError, match="scope"):
+        align_candidate_to_task(card, handoff, SHA, ["docs/README.md"])
 
 
 def test_typed_handoff_is_hash_bound_and_secret_free() -> None:
@@ -353,7 +373,7 @@ def test_sandbox_boundary_is_read_only_and_pinned(tmp_path) -> None:
 
 def test_projection_exposes_all_six_controls_without_authority(tmp_path) -> None:
     projection = agentic_control_projection(tmp_path)
-    assert len(projection["features"]) == 12
+    assert len(projection["features"]) == 13
     assert all(value is False for value in projection["authority"].values())
 
 

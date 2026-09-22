@@ -33,6 +33,7 @@ ORCHESTRATOR_PLAN_SCHEMA = "factory.orchestrator-plan.v1"
 MODEL_ROUTE_SCHEMA = "factory.model-route.v1"
 TASK_BOARD_SCHEMA = "factory.task-board.v1"
 TASK_HANDOFF_BINDING_SCHEMA = "factory.task-handoff-binding.v1"
+CANDIDATE_ALIGNMENT_SCHEMA = "factory.candidate-alignment.v1"
 _ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40,64}$")
@@ -565,6 +566,80 @@ def verify_task_card_handoff(binding: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(binding["authority"], dict) or any(value is not False for value in binding["authority"].values()):
         raise AgenticControlError("E_TASK_HANDOFF_AUTHORITY", "binding cannot grant authority")
     return dict(binding)
+
+
+def align_candidate_to_task(
+    card: dict[str, Any],
+    handoff: dict[str, Any],
+    candidate_hash: str,
+    changed_paths: Iterable[str],
+) -> dict[str, Any]:
+    """Bind a submitted candidate digest and paths to the task/handoff scope."""
+    verified_card = verify_task_card(card)
+    verified_handoff = verify_typed_handoff(handoff)
+    bind_task_card_handoff(verified_card, verified_handoff)
+    _digest(candidate_hash, "candidate_hash")
+    paths = _relative_paths(changed_paths, "changed_paths")
+    if not paths:
+        raise AgenticControlError("E_CANDIDATE_SCOPE", "changed_paths cannot be empty")
+    allowed = verified_card["allowed_paths"]
+
+    def in_scope(path: str) -> bool:
+        return any(path == root or path.startswith(root.rstrip("/") + "/") for root in allowed)
+
+    out_of_scope = sorted(path for path in paths if not in_scope(path))
+    if out_of_scope:
+        raise AgenticControlError(
+            "E_CANDIDATE_SCOPE",
+            "candidate paths exceed the task card scope: " + ", ".join(out_of_scope),
+        )
+    core = {
+        "schema": CANDIDATE_ALIGNMENT_SCHEMA,
+        "task_id": verified_card["task_id"],
+        "workflow_id": verified_card["workflow_id"],
+        "task_sha256": verified_card["task_sha256"],
+        "handoff_id": verified_handoff["handoff_id"],
+        "handoff_sha256": verified_handoff["handoff_sha256"],
+        "intent_digest": verified_card["intent_digest"],
+        "candidate_hash": candidate_hash,
+        "changed_paths": paths,
+        "scope_verdict": "ALIGNED",
+        "authority": dict(_AUTHORITY),
+    }
+    digest = _sha(core)
+    return {
+        **core,
+        "alignment_sha256": digest,
+        "marker": "CANDIDATE_INTENT_ALIGNED",
+        "claim_boundary": "Candidate digest and path scope only; no code execution, repair, approval, merge, publication, or deployment action ran.",
+    }
+
+
+def verify_candidate_alignment(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Verify candidate alignment receipt integrity and authority."""
+    if not isinstance(receipt, dict) or receipt.get("schema") != CANDIDATE_ALIGNMENT_SCHEMA:
+        raise AgenticControlError("E_CANDIDATE_SCHEMA", f"receipt must use {CANDIDATE_ALIGNMENT_SCHEMA}")
+    required = {
+        "schema", "task_id", "workflow_id", "task_sha256", "handoff_id", "handoff_sha256",
+        "intent_digest", "candidate_hash", "changed_paths", "scope_verdict", "authority",
+    }
+    if set(receipt) != required | {"alignment_sha256", "marker", "claim_boundary"}:
+        raise AgenticControlError("E_CANDIDATE_SCHEMA", "receipt fields are not exact")
+    core = {key: receipt[key] for key in required}
+    if receipt.get("alignment_sha256") != _sha(core):
+        raise AgenticControlError("E_CANDIDATE_TAMPERED", "receipt digest does not match contents")
+    if receipt.get("marker") != "CANDIDATE_INTENT_ALIGNED" or receipt.get("scope_verdict") != "ALIGNED":
+        raise AgenticControlError("E_CANDIDATE_SCHEMA", "receipt marker or scope verdict is invalid")
+    _id(receipt["task_id"], "task_id")
+    _id(receipt["workflow_id"], "workflow_id")
+    for key in ("task_sha256", "handoff_sha256", "intent_digest", "candidate_hash"):
+        _digest(receipt[key], key)
+    if not isinstance(receipt["changed_paths"], list) or not receipt["changed_paths"]:
+        raise AgenticControlError("E_CANDIDATE_SCHEMA", "changed_paths must be non-empty")
+    _relative_paths(receipt["changed_paths"], "changed_paths")
+    if not isinstance(receipt["authority"], dict) or any(value is not False for value in receipt["authority"].values()):
+        raise AgenticControlError("E_CANDIDATE_AUTHORITY", "receipt cannot grant authority")
+    return dict(receipt)
 
 
 def create_orchestrator_plan(
@@ -1387,6 +1462,11 @@ def agentic_control_projection(root: Path) -> dict[str, Any]:
                 "status": "available",
                 "schema": TASK_HANDOFF_BINDING_SCHEMA,
                 "authority": "lineage_only; task intent and path scope must match",
+            },
+            "candidate_intent_alignment": {
+                "status": "available",
+                "schema": CANDIDATE_ALIGNMENT_SCHEMA,
+                "authority": "proof_only; candidate digest and changed paths are checked",
             },
             "orchestrator_request_routing": {
                 "status": "available",

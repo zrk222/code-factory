@@ -71,6 +71,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.agentic_control_status",
         "factory.task_board_status",
         "factory.task_handoff_status",
+        "factory.candidate_alignment_status",
         "factory.blueprint_status",
         "factory.update_status",
         "factory.lifecycle_status",
@@ -201,6 +202,17 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         tmp_path,
     )
     assert handoff["error"]["data"]["marker"] == "TASK_HANDOFF_INPUT_REFUSED"
+
+    candidate = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 2912,
+            "method": "tools/call",
+            "params": {"name": "factory.candidate_alignment_status", "arguments": {}},
+        },
+        tmp_path,
+    )
+    assert candidate["error"]["data"]["marker"] == "CANDIDATE_INPUT_REFUSED"
 
     blueprint = _content(
         dispatch(
