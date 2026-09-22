@@ -3,8 +3,25 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import factoryline.release_candidate as candidate
 from test_intake_admission import _intake
+
+
+@pytest.fixture(autouse=True)
+def _eligible_release_cadence(monkeypatch) -> None:
+    monkeypatch.setattr(
+        candidate,
+        "release_cadence_status",
+        lambda _root: {
+            "available": True,
+            "admission": True,
+            "state": "eligible",
+            "release_train_status": "valid",
+            "reason": "fixture cadence admitted",
+        },
+    )
 
 
 def _source(root: Path, *, version: str = "0.46.3") -> None:
@@ -125,6 +142,49 @@ def test_source_commit_mismatch_blocks_before_candidate_pass(
     assert any(
         item["code"] == "RELEASE_CONTRACT_SOURCE_MISMATCH"
         for item in result["blockers"]
+    )
+
+
+def test_release_cadence_hold_blocks_candidate_preflight(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _source(tmp_path)
+    monkeypatch.setattr(candidate, "_git_head", lambda _root: "a" * 40)
+    monkeypatch.setattr(
+        candidate,
+        "verify_release_contract",
+        lambda *args: {"ok": True, "marker": "RELEASE_CONTRACT_VALID"},
+    )
+    monkeypatch.setattr(
+        candidate,
+        "release_cadence_status",
+        lambda _root: {
+            "available": True,
+            "admission": False,
+            "state": "rate_limited",
+            "release_train_status": "valid",
+            "next_eligible_at": "2026-10-10T02:49:36Z",
+            "reason": "4 tags are inside the rolling budget.",
+        },
+    )
+    artifact_dir = tmp_path / "candidate"
+    artifact_dir.mkdir()
+    (artifact_dir / "factoryline_code_factory-0.46.3-py3-none-any.whl").write_bytes(
+        b"new"
+    )
+
+    result = candidate.release_candidate_preflight(
+        tmp_path, _contract(tmp_path), [artifact_dir]
+    )
+
+    assert result["ok"] is False
+    assert result["facts"]["release_cadence_admissible"] is False
+    assert any(
+        item["code"] == "E_RELEASE_CADENCE_BLOCKED" for item in result["blockers"]
+    )
+    assert any(
+        item["id"] == "RELEASE_CADENCE_ADMISSION" and not item["passed"]
+        for item in result["checks"]
     )
 
 

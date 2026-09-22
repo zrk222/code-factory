@@ -23,6 +23,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
 
 from .release_contract import verify_release_contract
 from .intake_parameters import verify_intake_binding
+from .architecture_health import release_cadence_status
 
 
 SCHEMA = "factory.release-candidate-preflight.v1"
@@ -321,6 +322,7 @@ def release_candidate_preflight(
     """Evaluate contract/source/artifact identity without external authority."""
     workspace = Path(root).resolve()
     source = source_snapshot(workspace)
+    release_cadence = release_cadence_status(workspace)
     checks: list[dict[str, Any]] = []
     blockers: list[dict[str, str]] = []
     try:
@@ -351,6 +353,7 @@ def release_candidate_preflight(
                 "files": [],
             },
             "supply_chain": {"status": "NOT_REQUESTED"},
+            "release_cadence": release_cadence,
             "facts": {
                 "contract_valid": False,
                 "artifact_versions_match": False,
@@ -359,17 +362,40 @@ def release_candidate_preflight(
                 "windows_binding_proven": True,
                 "supply_chain_verified": None,
                 "intake_binding_verified": False,
+                "release_cadence_admissible": False,
             },
             "checks": [
-                {"id": "RELEASE_CONTRACT_VALID", "passed": False, "evidence": str(exc)}
+                {"id": "RELEASE_CONTRACT_VALID", "passed": False, "evidence": str(exc)},
+                {"id": "RELEASE_CADENCE_ADMISSION", "passed": False, "evidence": release_cadence.get("reason", "cadence unavailable")},
             ],
-            "blockers": [{"code": "RELEASE_CONTRACT_INVALID", "detail": str(exc)}],
+            "blockers": [
+                {"code": "RELEASE_CONTRACT_INVALID", "detail": str(exc)},
+                {"code": "E_RELEASE_CADENCE_BLOCKED", "detail": release_cadence.get("reason", "release cadence unavailable")},
+            ],
             "next_action": "repair_release_candidate",
             "authority": dict(AUTHORITY),
             "claim_boundary": "Read-only local candidate identity and artifact-version proof; no execution, credentials, signing, provider call, publication, deployment, approval, or merge authority.",
         }
         body["receipt_sha256"] = _sha(body)
         return body
+    cadence_admitted = (
+        release_cadence.get("release_train_status") == "valid"
+        and release_cadence.get("available") is True
+        and release_cadence.get("admission") is True
+    )
+    checks.append(
+        {
+            "id": "RELEASE_CADENCE_ADMISSION",
+            "passed": cadence_admitted,
+            "evidence": release_cadence.get("reason", "release cadence unavailable"),
+        }
+    )
+    if not cadence_admitted:
+        next_eligible = release_cadence.get("next_eligible_at")
+        detail = str(release_cadence.get("reason", "release cadence unavailable"))
+        if next_eligible:
+            detail += f" Next eligible at {next_eligible}."
+        blockers.append({"code": "E_RELEASE_CADENCE_BLOCKED", "detail": detail})
     contract_value: dict[str, Any] | None = None
     contract_result: dict[str, Any]
     try:
@@ -660,6 +686,7 @@ def release_candidate_preflight(
             if intake_parameters is None and not require_intake
             else bool(intake_result.get("ok"))
         ),
+        "release_cadence_admissible": cadence_admitted,
     }
     ok = bool(source.get("ok")) and binding_ok and not blockers
     body: dict[str, Any] = {
@@ -678,6 +705,7 @@ def release_candidate_preflight(
         "artifacts": artifacts,
         "metadata": metadata,
         "supply_chain": supply_chain,
+        "release_cadence": release_cadence,
         "intake_parameters": intake_result,
         "facts": facts,
         "checks": checks,

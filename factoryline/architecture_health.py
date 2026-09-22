@@ -266,14 +266,23 @@ def _release_train(root: Path, relative: list[str]) -> dict[str, Any]:
         channel["version_source"] in relative and channel["changelog"] in relative
         for channel in channels
     )
+    max_releases = cadence.get("max_releases_30d") if isinstance(cadence, dict) else None
+    minimum_days = (
+        cadence.get("minimum_days_between_releases")
+        if isinstance(cadence, dict)
+        else None
+    )
     valid = (
         train.get("schema") == "factory.release-train.v1"
         and isinstance(train.get("train_id"), str)
         and isinstance(train.get("owner"), str)
         and valid_sources
         and isinstance(cadence, dict)
-        and cadence.get("max_releases_30d") == 4
-        and cadence.get("minimum_days_between_releases") == 7
+        and type(max_releases) is int
+        and max_releases > 0
+        and type(minimum_days) is int
+        and minimum_days > 0
+        and cadence.get("exception_requires") == "human-release-authority"
         and cadence.get("requires_changelog_entry") is True
         and isinstance(states, list)
         and required_states.issubset(states)
@@ -281,11 +290,100 @@ def _release_train(root: Path, relative: list[str]) -> dict[str, Any]:
     return {
         "status": "valid" if valid else "invalid",
         "channels": len(channels) if isinstance(channels, list) else 0,
+        "cadence": {
+            "max_releases_30d": max_releases,
+            "minimum_days_between_releases": minimum_days,
+            "exception_requires": cadence.get("exception_requires"),
+            "requires_changelog_entry": cadence.get("requires_changelog_entry"),
+        },
     }
 
 
-def _recent_release_tags(root: Path, now: datetime | None = None) -> dict[str, Any]:
-    """Measure release-tag cadence without making the check network-dependent."""
+def _cadence_projection(
+    releases: list[tuple[str, datetime]],
+    *,
+    now: datetime,
+    max_releases_30d: int = 4,
+    minimum_days_between_releases: int = 7,
+) -> dict[str, Any]:
+    """Project a deterministic future release admission decision.
+
+    Historical tags remain immutable evidence.  This projection turns the
+    observed history into a forward-looking guard: a release is eligible only
+    when both the inter-release cooldown and the rolling 30-day budget pass.
+    It never deletes, rewrites, or reclassifies historical tags.
+    """
+    releases = sorted(releases, key=lambda item: item[1], reverse=True)
+    recent = [
+        item for item in releases if now - item[1] <= timedelta(days=30)
+    ]
+    latest = releases[0] if releases else None
+    cooldown_until = (
+        latest[1] + timedelta(days=minimum_days_between_releases)
+        if latest
+        else None
+    )
+    window_until = None
+    if len(recent) >= max_releases_30d:
+        # The fourth-newest tag must age out before a fifth release is allowed.
+        # `now - tag <= 30 days` includes the exact boundary, so move the
+        # admission time forward by one clock tick to avoid an off-by-one hold.
+        window_until = (
+            recent[max_releases_30d - 1][1]
+            + timedelta(days=30, microseconds=1)
+        )
+    candidates = [value for value in (cooldown_until, window_until) if value]
+    next_eligible = max(candidates) if candidates else now
+    if not releases:
+        state = "no_tags"
+        reason = "No version tags were observed; the release train is eligible."
+    elif len(recent) >= max_releases_30d:
+        state = "rate_limited"
+        reason = (
+            f"{len(recent)} version tags are inside the rolling 30-day budget "
+            f"of {max_releases_30d}."
+        )
+    elif cooldown_until and now < cooldown_until:
+        state = "cooldown"
+        reason = (
+            f"The minimum {minimum_days_between_releases}-day interval since "
+            f"{latest[0]} has not elapsed."
+        )
+    else:
+        state = "eligible"
+        reason = "The observed release history satisfies the configured cadence."
+    interval = (
+        (releases[0][1] - releases[1][1]).total_seconds() / 86400
+        if len(releases) > 1
+        else None
+    )
+    def iso(value: datetime | None) -> str | None:
+        return value.isoformat().replace("+00:00", "Z") if value else None
+    return {
+        "available": True,
+        "recent_count": len(recent),
+        "max_releases_30d": max_releases_30d,
+        "minimum_days_between_releases": minimum_days_between_releases,
+        "latest_tag": latest[0] if latest else None,
+        "latest_release_at": iso(latest[1]) if latest else None,
+        "latest_interval_days": round(interval, 2) if interval is not None else None,
+        "cooldown_until": iso(cooldown_until),
+        "window_budget_until": iso(window_until),
+        "next_eligible_at": iso(next_eligible),
+        "admission": state == "eligible",
+        "state": state,
+        "reason": reason,
+    }
+
+
+def _recent_release_tags(
+    root: Path,
+    now: datetime | None = None,
+    *,
+    max_releases_30d: int = 4,
+    minimum_days_between_releases: int = 7,
+) -> dict[str, Any]:
+    """Measure release-tag cadence and expose a forward release guard."""
     now = now or datetime.now(timezone.utc)
     try:
         completed = subprocess.run(
@@ -295,7 +393,7 @@ def _recent_release_tags(root: Path, now: datetime | None = None) -> dict[str, A
                 str(root),
                 "for-each-ref",
                 "refs/tags/v*",
-                "--format=%(creatordate:iso-strict)",
+                "--format=%(refname:short)\t%(creatordate:iso-strict)",
             ],
             check=True,
             capture_output=True,
@@ -304,24 +402,88 @@ def _recent_release_tags(root: Path, now: datetime | None = None) -> dict[str, A
         )
     except (OSError, subprocess.SubprocessError):
         return {"available": False, "recent_count": None, "latest_interval_days": None}
-    dates: list[datetime] = []
+    releases: list[tuple[str, datetime]] = []
     for line in completed.stdout.splitlines():
         try:
-            dates.append(
-                datetime.fromisoformat(line.strip().replace("Z", "+00:00")).astimezone(
-                    timezone.utc
+            name, stamp = line.split("\t", 1)
+            releases.append(
+                (
+                    name,
+                    datetime.fromisoformat(stamp.strip().replace("Z", "+00:00")).astimezone(
+                        timezone.utc
+                    ),
                 )
             )
-        except ValueError:
+        except (ValueError, IndexError):
             continue
-    dates.sort(reverse=True)
-    recent = [stamp for stamp in dates if now - stamp <= timedelta(days=30)]
-    interval = (dates[0] - dates[1]).total_seconds() / 86400 if len(dates) > 1 else None
-    return {
-        "available": True,
-        "recent_count": len(recent),
-        "latest_interval_days": round(interval, 2) if interval is not None else None,
-    }
+    return _cadence_projection(
+        releases,
+        now=now,
+        max_releases_30d=max_releases_30d,
+        minimum_days_between_releases=minimum_days_between_releases,
+    )
+
+
+def release_cadence_status(
+    root: Path, now: datetime | None = None
+) -> dict[str, Any]:
+    """Return release-train validity and its tag-derived admission projection."""
+    root = Path(root).resolve()
+    relative = [
+        path.relative_to(root).as_posix()
+        for path in _tracked_files(root)
+        if path.exists()
+    ]
+    train = _release_train(root, relative)
+    cadence = train.get("cadence", {})
+    if train.get("status") != "valid":
+        return {
+            "available": False,
+            "admission": False,
+            "state": "release_train_invalid",
+            "reason": "A valid release-train.json is required for release admission.",
+            "release_train_status": train.get("status"),
+            "recent_count": None,
+            "latest_interval_days": None,
+        }
+    policy_path = root / DEFAULT_POLICY_NAME
+    try:
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        policy_cadence = policy["release"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        policy_cadence = None
+    if not isinstance(policy_cadence, dict) or any(
+        policy_cadence.get(key) != cadence.get(key)
+        for key in (
+            "max_releases_30d",
+            "minimum_days_between_releases",
+            "exception_requires",
+            "requires_changelog_entry",
+        )
+    ):
+        return {
+            "available": False,
+            "admission": False,
+            "state": "release_policy_mismatch",
+            "reason": "architecture-policy.json and release-train.json cadence rules must match exactly.",
+            "release_train_status": train["status"],
+            "recent_count": None,
+            "latest_interval_days": None,
+        }
+    projection = _recent_release_tags(
+        root,
+        now,
+        max_releases_30d=cadence["max_releases_30d"],
+        minimum_days_between_releases=cadence["minimum_days_between_releases"],
+    )
+    projection["release_train_status"] = train["status"]
+    if not projection.get("available"):
+        projection.update(
+            admission=False,
+            state="unavailable",
+            reason="Git tag history could not be read; release admission fails closed.",
+        )
+    return projection
 
 
 def collect_architecture_health(root: Path) -> dict[str, Any]:
@@ -355,6 +517,8 @@ def collect_architecture_health(root: Path) -> dict[str, Any]:
             re.findall(r"\.add_parser\(", cli_path.read_text(encoding="utf-8"))
         )
     ratio = round(len(markdown) / len(python), 4) if python else None
+    release_train = _release_train(root, relative)
+    cadence = release_cadence_status(root)
     return {
         "schema": "factory.architecture-health.v1",
         "root": str(root),
@@ -368,11 +532,11 @@ def collect_architecture_health(root: Path) -> dict[str, Any]:
             "total_factoryline_modules": len(implementation_modules),
             "module_domains": module_domains,
             "documentation_index": _documentation_index(root, relative),
-            "release_train": _release_train(root, relative),
+            "release_train": release_train,
             "version": _version(root),
             "tracked_files": len(relative),
         },
-        "release_cadence": _recent_release_tags(root),
+        "release_cadence": cadence,
     }
 
 
@@ -399,7 +563,6 @@ _ACCEPTED_METRIC_FOR_CODE = {
     "ARCH_CLI_COMMAND_SURFACE": "cli_command_declarations",
     "ARCH_CORE_SURFACE": "core_modules",
     "ARCH_DOC_CODE_RATIO": "markdown_python_ratio",
-    "ARCH_RELEASE_CHURN": "release_recent_count",
 }
 
 
@@ -640,17 +803,6 @@ def evaluate_architecture_health(
                 blocking=True,
             )
         )
-    if cadence.get("available") and cadence.get("recent_count") is not None:
-        if cadence["recent_count"] > cadence_policy.get("max_releases_30d", 4):
-            debt.append(
-                _finding(
-                    "ARCH_RELEASE_CHURN",
-                    "MEDIUM",
-                    f"{cadence['recent_count']} version tags were created in the last 30 days.",
-                    "Use a release train and changelog entry; reserve patch releases for externally observable fixes.",
-                )
-            )
-
     accepted, acceptance_error = _accepted_debt(policy, metrics, cadence)
     if acceptance_error:
         regressions.append(
@@ -675,6 +827,16 @@ def evaluate_architecture_health(
         if regressions or (strict and debt)
         else ("REVIEW_REQUIRED" if debt else "HEALTHY")
     )
+    cadence_action = ""
+    if snapshot["release_cadence"].get("admission") is False:
+        cadence = snapshot["release_cadence"]
+        next_eligible = cadence.get("next_eligible_at")
+        cadence_action = (
+            " Release admission is blocked by the cadence guard: "
+            f"{cadence.get('reason', 'cadence evidence unavailable')}"
+        )
+        if next_eligible:
+            cadence_action += f" Next eligible at {next_eligible}."
     return {
         **snapshot,
         "policy": {
@@ -696,6 +858,6 @@ def evaluate_architecture_health(
             if strict and debt
             else "Keep the existing debt visible and execute the bounded decomposition plan."
             if debt
-            else "Architecture budgets are within policy."
+            else "Architecture budgets are within policy." + cadence_action
         ),
     }

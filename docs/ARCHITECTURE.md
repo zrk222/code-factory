@@ -231,3 +231,15 @@ They invoke explicit local CLI commands and display local artifacts; they do
 not upload source, infer approval, or bypass the no-finish and release gates.
 Graph Ops is a bounded read-only overlay over those same artifacts, not a new
 authority source. See [Unified Graph Ops](GRAPH_OPS.md).
+
+## Release-cadence guard
+
+Architecture health reports immutable tag history and projects a forward
+admission decision from `release-train.json`. The release limits and exception
+owner must match `architecture-policy.json`; missing/invalid history or a
+policy mismatch fails closed. Release-candidate preflight enforces the same
+decision with `E_RELEASE_CADENCE_BLOCKED` and includes the exact
+`next_eligible_at` timestamp. The guard never deletes, rewrites, or hides
+historical tags. No automatic exception bypass exists: a release exception
+requires a separately reviewed human-authority decision and must not be
+inferred from a healthy architecture report.

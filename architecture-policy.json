@@ -35,21 +35,20 @@
       "E_ARCH_PYTHON_FILES_GROWTH",
       "ARCH_CLI_MONOLITH",
       "ARCH_CLI_COMMAND_SURFACE",
-      "ARCH_DOC_CODE_RATIO",
-      "ARCH_RELEASE_CHURN"
+      "ARCH_DOC_CODE_RATIO"
     ],
     "metrics": {
       "cli_lines": 4970,
       "cli_command_declarations": 182,
       "markdown_files": 658,
       "markdown_python_ratio": 1.4753,
-      "python_files": 446,
-      "release_recent_count": 17
+      "python_files": 446
     }
   },
   "release": {
     "max_releases_30d": 4,
     "minimum_days_between_releases": 7,
+    "exception_requires": "human-release-authority",
     "requires_changelog_entry": true,
     "require_train": true
   },

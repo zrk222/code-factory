@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
+import factoryline.architecture_health as architecture_health
 from factoryline.architecture_health import (
+    _cadence_projection,
     collect_architecture_health,
     evaluate_architecture_health,
+    release_cadence_status,
 )
 from factoryline.cli import main
 
@@ -26,7 +30,12 @@ def _policy(path: Path, **budgets: int | float) -> Path:
             "cli_lines": 5000,
             "core_modules": 150,
         },
-        "release": {"max_releases_30d": 4},
+        "release": {
+            "max_releases_30d": 4,
+            "minimum_days_between_releases": 7,
+            "exception_requires": "human-release-authority",
+            "requires_changelog_entry": False,
+        },
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
@@ -374,6 +383,7 @@ def test_required_release_train_validates_channels_and_states(tmp_path: Path) ->
                 "cadence": {
                     "max_releases_30d": 4,
                     "minimum_days_between_releases": 7,
+                    "exception_requires": "human-release-authority",
                     "requires_changelog_entry": True,
                 },
                 "publication_states": [
@@ -392,4 +402,83 @@ def test_required_release_train_validates_channels_and_states(tmp_path: Path) ->
     )
     result = evaluate_architecture_health(tmp_path, policy)
     assert result["decision"] == "HEALTHY"
-    assert result["metrics"]["release_train"] == {"status": "valid", "channels": 1}
+    assert result["metrics"]["release_train"] == {
+        "status": "valid",
+        "channels": 1,
+        "cadence": {
+            "max_releases_30d": 4,
+            "minimum_days_between_releases": 7,
+            "exception_requires": "human-release-authority",
+            "requires_changelog_entry": True,
+        },
+    }
+
+
+def test_release_cadence_projects_a_forward_freeze_without_rewriting_history() -> None:
+    now = datetime(2026, 9, 21, tzinfo=timezone.utc)
+    releases = [
+        ("v0.46.7", datetime(2026, 9, 19, tzinfo=timezone.utc)),
+        ("v0.46.6", datetime(2026, 9, 18, tzinfo=timezone.utc)),
+        ("v0.46.5", datetime(2026, 9, 14, tzinfo=timezone.utc)),
+        ("v0.46.4", datetime(2026, 9, 9, tzinfo=timezone.utc)),
+        ("v0.46.3", datetime(2026, 9, 6, tzinfo=timezone.utc)),
+    ]
+    result = _cadence_projection(releases, now=now)
+    assert result["state"] == "rate_limited"
+    assert result["admission"] is False
+    assert result["latest_tag"] == "v0.46.7"
+    assert result["next_eligible_at"] == "2026-10-09T00:00:00.000001Z"
+
+    boundary = _cadence_projection(
+        releases,
+        now=datetime(2026, 10, 9, tzinfo=timezone.utc),
+    )
+    assert boundary["admission"] is False
+    after_boundary = _cadence_projection(
+        releases,
+        now=datetime(2026, 10, 9, 0, 0, 0, 1, tzinfo=timezone.utc),
+    )
+    assert after_boundary["admission"] is True
+
+
+def test_release_cadence_fails_closed_when_policy_and_train_diverge(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / "architecture-policy.json").write_text(
+        json.dumps(
+            {
+                "release": {
+                    "max_releases_30d": 5,
+                    "minimum_days_between_releases": 7,
+                    "exception_requires": "human-release-authority",
+                    "requires_changelog_entry": True,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "release-train.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        architecture_health,
+        "_tracked_files",
+        lambda root: [root / "architecture-policy.json", root / "release-train.json"],
+    )
+    monkeypatch.setattr(
+        architecture_health,
+        "_release_train",
+        lambda *_args: {
+            "status": "valid",
+            "cadence": {
+                "max_releases_30d": 4,
+                "minimum_days_between_releases": 7,
+                "exception_requires": "human-release-authority",
+                "requires_changelog_entry": True,
+            },
+        },
+    )
+
+    result = release_cadence_status(tmp_path)
+
+    assert result["available"] is False
+    assert result["admission"] is False
+    assert result["state"] == "release_policy_mismatch"
