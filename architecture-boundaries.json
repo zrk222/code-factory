@@ -20,7 +20,8 @@
       "factoryline/mcp.py",
       "factoryline/agui.py",
       "factoryline/a2a*.py",
-      "factoryline/agent_*.py"
+      "factoryline/agent_*.py",
+      "factoryline/blueprint.py"
     ],
     "cli_surfaces": [
       "factoryline/cli.py",

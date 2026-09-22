@@ -69,6 +69,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.atomic_status",
         "factory.operations_control_status",
         "factory.agentic_control_status",
+        "factory.blueprint_status",
         "factory.lifecycle_status",
         "factory.repair_loop_status",
         "factory.mission_control_status",
@@ -171,6 +172,20 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     assert agentic["status"]["features"]["capability_registry"]["status"] == "available"
     assert agentic["status"]["features"]["durable_task_cards"]["schema"] == "factory.task-card.v1"
     assert all(value is False for value in agentic["status"]["authority"].values())
+
+    blueprint = _content(
+        dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 292,
+                "method": "tools/call",
+                "params": {"name": "factory.blueprint_status"},
+            },
+            tmp_path,
+        )
+    )
+    assert blueprint["marker"] == "BLUEPRINT_MCP_READ_ONLY"
+    assert blueprint["status"]["schema"] == "factory.ai-native-blueprint.v1"
 
     evidence_path = tmp_path / "junie-evidence.json"
     evidence_path.write_text('{"local": true}\n', encoding="utf-8")

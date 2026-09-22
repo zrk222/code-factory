@@ -61,6 +61,12 @@ known, what is missing, and the one fact-derived next action.
   visible in Graph Ops and read-only MCP. Humans retain approval; an agent
   cannot weaken intent, alter thresholds, self-approve a repair, or change a
   repository through this surface. See [Control Plane](CONTROL_PLANE.md).
+- **Adds bounded AI-native factory contracts.** Blueprint receipts provide
+  provenance-aware memory retain/recall/reflect, librarian promotion,
+  production-signal-to-intent proposals, typed model-tier team plans, and
+  explicit access profiles. They are inspectable and hash-bound, but do not
+  dispatch workers, call models, enforce a sandbox, or grant release authority.
+  Use `factory blueprint status` for the local projection.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.

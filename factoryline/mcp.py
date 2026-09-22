@@ -69,6 +69,7 @@ from .agent_proof_bridge import (
 from .proof_worklog import proof_worklog_projection
 from .operations_control import operations_control_projection
 from .agentic_control import agentic_control_projection
+from .blueprint import blueprint_projection
 from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
 from .mission_control_status import mission_control_status
@@ -548,6 +549,12 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.agentic_control_status",
             "description": "Read deterministic role, capability-registry, durable-task-card, route-trace, cookbook, workflow, and sandbox-boundary metadata. Read only; no model, execution, source, approval, merge, publication, deployment, signing, credential, or connector action.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.blueprint_status",
+            "description": "Read local AI-native blueprint receipts for provenance-aware memory, librarian stages, signal-to-intent proposals, access declarations, and typed team plans. It never calls a model, provider, runtime, task dispatcher, or release authority.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -1730,6 +1737,17 @@ def _agentic_control_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _blueprint_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.blueprint_status accepts no arguments")
+    return {
+        "marker": "BLUEPRINT_MCP_READ_ONLY",
+        "action_summary": "Read local AI-native blueprint receipt inventory; no memory promotion, signal intake, access enforcement, task dispatch, model call, or release action ran.",
+        "status": blueprint_projection(root),
+        "scope": "Read-only local contracts. External memory engines, providers, Docker/kernel enforcement, workers, and human release authority remain separate.",
+    }
+
+
 def _lifecycle_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.lifecycle_status accepts no arguments")
@@ -2270,6 +2288,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_operations_control_status(root, arguments))
     if name == "factory.agentic_control_status":
         return _content(_agentic_control_status(root, arguments))
+    if name == "factory.blueprint_status":
+        return _content(_blueprint_status(root, arguments))
     if name == "factory.lifecycle_status":
         return _content(_lifecycle_status(root, arguments))
     if name == "factory.repair_loop_status":

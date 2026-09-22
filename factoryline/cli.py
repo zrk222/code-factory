@@ -1703,6 +1703,8 @@ def _dispatch(argv=None) -> int:
 
     add_agent_parser(sub)
 
+    __import__("factoryline.cli_blueprint", fromlist=["add_parser"]).add_parser(sub)
+
     from .cli_telemetry import add_parser as add_telemetry_parser
 
     add_telemetry_parser(sub)
@@ -2301,6 +2303,8 @@ def _dispatch(argv=None) -> int:
         return _home()
     if a.cmd == "version":
         return _emit_version(a.json)
+    if a.cmd == "blueprint":
+        return __import__("factoryline.cli_blueprint", fromlist=["run"]).run(a)
     if a.cmd == "home":
         return _home(Path(a.root), a.json)
     if a.cmd == "doctor":

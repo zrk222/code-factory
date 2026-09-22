@@ -57,6 +57,21 @@ accepted baseline debt record preserves the remaining monolith and historical
 release churn as visible, expiring review debt; it does not rename that debt
 healthy or authorize publication.
 
+### AI-native blueprint contracts
+
+`factoryline/blueprint.py` supplies the bounded contracts described in the
+AI-native factory blueprint. Retain/Recall/Reflect records are local,
+hash-bound observations; librarian promotion preserves source provenance and
+forces contested claims into human review. Production signals become
+`agent_proposed` intent proposals rather than tasks, approvals, or release
+decisions. Typed team plans describe model tiers, dependencies, and polling
+metadata without dispatching workers. Access profiles declare read/write,
+read-only, and masked paths, but deliberately do not claim Docker, kernel, or
+runtime isolation. `factory blueprint status` and the read-only
+`factory.blueprint_status` MCP tool expose only verified local receipt counts.
+These contracts add deterministic inspectability without pretending that an
+external model, provider, sandbox, or orchestration runtime ran.
+
 ## Complete system topology
 
 ```mermaid
