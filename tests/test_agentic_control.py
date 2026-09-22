@@ -32,6 +32,8 @@ from factoryline.agentic_control import (
     create_task_card,
     transition_task_card,
     verify_task_card,
+    project_task_board,
+    verify_task_board,
     create_orchestrator_plan,
     verify_orchestrator_plan,
 )
@@ -128,6 +130,39 @@ def test_task_card_lease_checkpoint_and_completion_are_deterministic() -> None:
         verify_task_card(malformed)
     with pytest.raises(AgenticControlError, match="cannot move"):
         transition_task_card(completed, "running")
+
+
+def test_task_board_projects_dependencies_and_rejects_cycles() -> None:
+    base = {
+        "workflow_id": "wf-1",
+        "capability_id": "builder",
+        "registry_sha256": SHA,
+        "intent_digest": SHA,
+        "allowed_paths": ["src/"],
+        "stop_condition": "Stop at verification.",
+        "next_action": "Run the declared checks.",
+        "created_at": "2026-09-21T00:00:00Z",
+    }
+    first = create_task_card("task-1", **base, dependencies=())
+    second = create_task_card("task-2", **base, dependencies=("task-1",))
+    board = project_task_board([second, first])
+    assert board["lanes"]["ready"] == ["task-1"]
+    assert board["lanes"]["triage"] == ["task-2"]
+    assert board["dispatcher"] == {"poll_interval_seconds": 60, "started": False}
+    assert verify_task_board(board)["board_sha256"] == board["board_sha256"]
+
+    completed = transition_task_card(first, "leased", lease_id="lease-1", lease_expires_at="2026-09-21T01:00:00Z")
+    completed = transition_task_card(completed, "running")
+    completed = transition_task_card(completed, "verifying", evidence_digest=SHA)
+    completed = transition_task_card(completed, "completed")
+    ready_board = project_task_board([completed, second])
+    assert ready_board["lanes"]["done"] == ["task-1"]
+    assert ready_board["lanes"]["ready"] == ["task-2"]
+
+    cycle_a = create_task_card("cycle-a", **base, dependencies=("cycle-b",))
+    cycle_b = create_task_card("cycle-b", **base, dependencies=("cycle-a",))
+    with pytest.raises(AgenticControlError, match="cycle"):
+        project_task_board([cycle_a, cycle_b])
 
 
 def test_typed_handoff_is_hash_bound_and_secret_free() -> None:
@@ -291,7 +326,7 @@ def test_sandbox_boundary_is_read_only_and_pinned(tmp_path) -> None:
 
 def test_projection_exposes_all_six_controls_without_authority(tmp_path) -> None:
     projection = agentic_control_projection(tmp_path)
-    assert len(projection["features"]) == 10
+    assert len(projection["features"]) == 11
     assert all(value is False for value in projection["authority"].values())
 
 

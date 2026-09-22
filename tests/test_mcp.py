@@ -69,6 +69,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.atomic_status",
         "factory.operations_control_status",
         "factory.agentic_control_status",
+        "factory.task_board_status",
         "factory.blueprint_status",
         "factory.update_status",
         "factory.lifecycle_status",
@@ -173,6 +174,21 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     assert agentic["status"]["features"]["capability_registry"]["status"] == "available"
     assert agentic["status"]["features"]["durable_task_cards"]["schema"] == "factory.task-card.v1"
     assert all(value is False for value in agentic["status"]["authority"].values())
+
+    board = _content(
+        dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 2910,
+                "method": "tools/call",
+                "params": {"name": "factory.task_board_status", "arguments": {}},
+            },
+            tmp_path,
+        )
+    )
+    assert board["marker"] == "TASK_BOARD_MCP_READ_ONLY"
+    assert board["status"]["task_count"] == 0
+    assert board["status"]["dispatcher"] == {"poll_interval_seconds": 60, "started": False}
 
     blueprint = _content(
         dispatch(

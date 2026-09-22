@@ -85,6 +85,14 @@ manifest is local and explicit: CF compares versions and shows a deterministic
 `UPDATE_AVAILABLE` or `UP_TO_DATE` result, but never downloads, installs,
 restarts, contacts a provider, or publishes on a user's behalf.
 
+Task cards now have a deterministic board projection. `project_task_board`
+verifies each hash-bound card, rejects unknown dependencies and cycles, and
+maps cards to `triage`, `ready`, `running`, `review`, `blocked`, or `done`
+lanes. The `factory.task_board_status` MCP fact exposes dependency edges and
+fact-derived next actions, while its 60-second dispatcher value is metadata
+only: no lease, dispatch, model, branch, merge, or release authority is
+granted.
+
 ## Complete system topology
 
 ```mermaid

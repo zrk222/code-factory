@@ -75,6 +75,11 @@ known, what is missing, and the one fact-derived next action.
   manifest powers `factory update` and the `factory.update_status` MCP fact;
   CF can show an `UPDATE_AVAILABLE` notice inside an IDE/client while leaving
   download, install, restart, and provider publication explicitly human-owned.
+- **Turns task cards into an observable Kanban loop.** The deterministic
+  `factory.task_board_status` fact verifies dependency edges and projects cards
+  into triage, ready, running, review, blocked, and done lanes. It surfaces the
+  next fact-derived action and a 60-second cadence hint without dispatching a
+  worker or granting lease, merge, or release authority.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.

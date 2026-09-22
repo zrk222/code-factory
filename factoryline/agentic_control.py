@@ -31,6 +31,7 @@ CAPABILITY_SCHEMA = "factory.capability-registry.v1"
 TASK_CARD_SCHEMA = "factory.task-card.v1"
 ORCHESTRATOR_PLAN_SCHEMA = "factory.orchestrator-plan.v1"
 MODEL_ROUTE_SCHEMA = "factory.model-route.v1"
+TASK_BOARD_SCHEMA = "factory.task-board.v1"
 _ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40,64}$")
@@ -351,6 +352,147 @@ def verify_task_card(card: dict[str, Any]) -> dict[str, Any]:
     if any(value is not False for value in card["authority"].values()):
         raise AgenticControlError("E_TASK_AUTHORITY", "task card cannot grant authority")
     return dict(card)
+
+
+def project_task_board(cards: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Project verified task cards into deterministic Kanban swim lanes.
+
+    This is intentionally a projection, not a dispatcher.  It validates the
+    dependency graph, rejects missing edges and cycles, then reports what is
+    ready, waiting, running, in review, or blocked.  No lease, model, branch,
+    merge, or release action is performed.
+    """
+    verified = [verify_task_card(card) for card in cards]
+    by_id: dict[str, dict[str, Any]] = {}
+    for card in verified:
+        task_id = _id(card["task_id"], "task_id")
+        if task_id in by_id:
+            raise AgenticControlError("E_TASK_BOARD_DUPLICATE", "task ids must be unique")
+        if not isinstance(card.get("dependencies"), list):
+            raise AgenticControlError("E_TASK_BOARD_DEPENDENCY", "dependencies must be a list")
+        for dependency in card["dependencies"]:
+            _id(dependency, "dependency")
+        by_id[task_id] = card
+
+    for card in verified:
+        missing = sorted(set(card["dependencies"]) - set(by_id))
+        if missing:
+            raise AgenticControlError(
+                "E_TASK_BOARD_DEPENDENCY",
+                f"unknown dependencies for {card['task_id']}: {', '.join(missing)}",
+            )
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(task_id: str) -> None:
+        if task_id in visiting:
+            raise AgenticControlError("E_TASK_BOARD_CYCLE", "task dependency graph contains a cycle")
+        if task_id in visited:
+            return
+        visiting.add(task_id)
+        for dependency in by_id[task_id]["dependencies"]:
+            visit(dependency)
+        visiting.remove(task_id)
+        visited.add(task_id)
+
+    for task_id in sorted(by_id):
+        visit(task_id)
+
+    completed = {task_id for task_id, card in by_id.items() if card["state"] == "completed"}
+    rows: list[dict[str, Any]] = []
+    lane_ids: dict[str, list[str]] = {
+        "triage": [], "ready": [], "running": [], "review": [],
+        "blocked": [], "done": [],
+    }
+    for task_id in sorted(by_id):
+        card = by_id[task_id]
+        unmet = sorted(set(card["dependencies"]) - completed)
+        state = card["state"]
+        if state == "completed":
+            lane = "done"
+        elif state in {"leased", "running", "checkpointed"}:
+            lane = "running"
+        elif state in {"verifying", "review_required"}:
+            lane = "review"
+        elif state in {"blocked", "expired", "cancelled"}:
+            lane = "blocked"
+        elif unmet:
+            lane = "triage"
+        else:
+            lane = "ready"
+        lane_ids[lane].append(task_id)
+        rows.append({
+            "task_id": task_id,
+            "workflow_id": card["workflow_id"],
+            "state": state,
+            "lane": lane,
+            "dependencies": sorted(card["dependencies"]),
+            "unmet_dependencies": unmet,
+            "attempt": card["attempt"],
+            "task_sha256": card["task_sha256"],
+            "next_action": card["next_action"],
+            "stop_condition": card["stop_condition"],
+        })
+
+    edges = [
+        {"from": task_id, "to": dependency}
+        for task_id in sorted(by_id)
+        for dependency in sorted(by_id[task_id]["dependencies"])
+    ]
+    next_actions = [
+        {
+            "task_id": task_id,
+            "action": "REVIEW_READY_CARD",
+            "reason": "All dependencies are completed; a human or approved orchestrator may decide the next step.",
+        }
+        for task_id in lane_ids["ready"]
+    ] + [
+        {
+            "task_id": task_id,
+            "action": "RESOLVE_DEPENDENCIES",
+            "reason": "Task is waiting on incomplete dependency cards.",
+        }
+        for task_id in lane_ids["triage"]
+    ]
+    core = {
+        "schema": TASK_BOARD_SCHEMA,
+        "task_count": len(rows),
+        "cards": rows,
+        "lanes": {lane: ids for lane, ids in lane_ids.items()},
+        "dependency_edges": edges,
+        "next_actions": next_actions,
+        "dispatcher": {"poll_interval_seconds": 60, "started": False},
+        "authority": dict(_AUTHORITY),
+        "claim_boundary": "Read-only task metadata; no dispatch, lease, model, branch, merge, approval, publication, or deployment action ran.",
+    }
+    return {
+        **core,
+        "board_sha256": _sha(core),
+        "marker": "TASK_BOARD_PROJECTED_READ_ONLY",
+    }
+
+
+def verify_task_board(board: dict[str, Any]) -> dict[str, Any]:
+    """Verify a projected task board and its authority boundary."""
+    if not isinstance(board, dict) or board.get("schema") != TASK_BOARD_SCHEMA:
+        raise AgenticControlError("E_TASK_BOARD_SCHEMA", f"board must use {TASK_BOARD_SCHEMA}")
+    required = {
+        "schema", "task_count", "cards", "lanes", "dependency_edges", "next_actions",
+        "dispatcher", "authority", "claim_boundary",
+    }
+    if set(board) != required | {"board_sha256", "marker"}:
+        raise AgenticControlError("E_TASK_BOARD_SCHEMA", "board fields are not exact")
+    core = {key: board[key] for key in required}
+    if board.get("board_sha256") != _sha(core):
+        raise AgenticControlError("E_TASK_BOARD_TAMPERED", "board digest does not match contents")
+    if board.get("marker") != "TASK_BOARD_PROJECTED_READ_ONLY":
+        raise AgenticControlError("E_TASK_BOARD_SCHEMA", "board marker is invalid")
+    if not isinstance(board["authority"], dict) or any(value is not False for value in board["authority"].values()):
+        raise AgenticControlError("E_TASK_BOARD_AUTHORITY", "task board cannot grant authority")
+    if board["dispatcher"] != {"poll_interval_seconds": 60, "started": False}:
+        raise AgenticControlError("E_TASK_BOARD_SCHEMA", "dispatcher metadata is invalid")
+    return dict(board)
 
 
 def create_orchestrator_plan(
@@ -1161,6 +1303,13 @@ def agentic_control_projection(root: Path) -> dict[str, Any]:
                 "schema": TASK_CARD_SCHEMA,
                 "states": list(_TASK_STATES),
                 "authority": "lease_and_checkpoint_metadata_only",
+            },
+            "deterministic_task_board": {
+                "status": "available",
+                "schema": TASK_BOARD_SCHEMA,
+                "lanes": ["triage", "ready", "running", "review", "blocked", "done"],
+                "dispatcher": "projection_only; 60-second cadence metadata",
+                "authority": "read_only; no dispatch or lease grant",
             },
             "orchestrator_request_routing": {
                 "status": "available",

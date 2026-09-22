@@ -68,7 +68,7 @@ from .agent_proof_bridge import (
 )
 from .proof_worklog import proof_worklog_projection
 from .operations_control import operations_control_projection
-from .agentic_control import agentic_control_projection
+from .agentic_control import agentic_control_projection, project_task_board
 from .blueprint import blueprint_projection
 from .update_notifier import UpdateNotifierError, check_for_update, read_manifest
 from .lifecycle_ledger import lifecycle_projection
@@ -551,6 +551,16 @@ def _tool_definitions() -> list[dict[str, object]]:
             "name": "factory.agentic_control_status",
             "description": "Read deterministic role, capability-registry, durable-task-card, route-trace, cookbook, workflow, and sandbox-boundary metadata. Read only; no model, execution, source, approval, merge, publication, deployment, signing, credential, or connector action.",
             "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.task_board_status",
+            "description": "Project local hash-bound task cards into deterministic triage, ready, running, review, blocked, and done lanes. Read only; no dispatch, lease, model, branch, merge, approval, publication, deployment, signing, credential, or connector action.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"paths": {"type": "array", "items": {"type": "string"}}},
+                "additionalProperties": False,
+            },
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
@@ -1748,6 +1758,48 @@ def _agentic_control_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _task_board_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"paths"}:
+        raise McpError("factory.task_board_status accepts only paths")
+    raw_paths = arguments.get("paths")
+    if raw_paths is None:
+        candidates = sorted((root / ".factory" / "task-cards").glob("*.json"))
+    elif isinstance(raw_paths, list) and all(isinstance(value, str) and value.strip() for value in raw_paths):
+        candidates = []
+        base = root.resolve()
+        for raw_path in raw_paths:
+            candidate = Path(raw_path)
+            if not candidate.is_absolute():
+                candidate = base / candidate
+            candidate = candidate.resolve()
+            if candidate != base and base not in candidate.parents:
+                raise McpError("task card paths must remain inside the workspace", "TASK_BOARD_PATH_REFUSED")
+            candidates.append(candidate)
+    else:
+        raise McpError("paths must be an array of workspace-relative strings", "TASK_BOARD_INPUT_REFUSED")
+    cards: list[dict[str, object]] = []
+    for path in candidates[:500]:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise McpError(f"cannot read task card {path.name}: {exc}", "TASK_BOARD_READ_REFUSED") from exc
+        if not isinstance(value, dict):
+            raise McpError(f"task card {path.name} must be an object", "TASK_BOARD_INPUT_REFUSED")
+        cards.append(value)
+    try:
+        board = project_task_board(cards)
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            raise McpError(str(exc), getattr(exc, "code")) from exc
+        raise McpError(str(exc), "TASK_BOARD_PROJECTION_REFUSED") from exc
+    return {
+        "marker": "TASK_BOARD_MCP_READ_ONLY",
+        "action_summary": "Projected verified local task cards into deterministic Kanban lanes and dependency actions; no dispatcher ran.",
+        "status": board,
+        "scope": "Read-only local task-card facts. The 60-second cadence is metadata only; no dispatch, lease, model, branch, merge, approval, publication, deployment, credential, or connector action ran.",
+    }
+
+
 def _blueprint_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.blueprint_status accepts no arguments")
@@ -2318,6 +2370,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_operations_control_status(root, arguments))
     if name == "factory.agentic_control_status":
         return _content(_agentic_control_status(root, arguments))
+    if name == "factory.task_board_status":
+        return _content(_task_board_status(root, arguments))
     if name == "factory.blueprint_status":
         return _content(_blueprint_status(root, arguments))
     if name == "factory.update_status":
