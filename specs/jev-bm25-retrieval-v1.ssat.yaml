@@ -1,0 +1,56 @@
+name: jev-bm25-retrieval-v1
+language: python
+modules:
+  - name: audit_rule_search
+    path: factoryline/audit_rule_search.py
+    functions:
+      - name: search_audit_rules
+        args: [arguments]
+        returns: "dict[str, object]"
+        doc: "Return bounded deterministic lexical, BM25, or BM25F rule discovery without executing a lane."
+      - name: _bm25_scores
+        args: [rules, query, fielded]
+        returns: "dict[str, float]"
+        doc: "Score only the supplied in-memory rule candidates."
+  - name: jev_classifier
+    path: factoryline/jev_classifier.py
+    functions:
+      - name: build_jev_input
+        args: [search_payload]
+        returns: "dict[str, object]"
+        doc: "Build a secret-free, hash-bound Jev classifier request."
+      - name: normalize_jev_result
+        args: [raw, request]
+        returns: "dict[str, object]"
+        doc: "Validate a typed Jev response against the retrieved candidate set."
+      - name: classify_retrieval
+        args: [search_payload, transport]
+        returns: "dict[str, object]"
+        doc: "Classify bounded candidates with fail-closed human-review fallback."
+      - name: fuse_advisory_scores
+        args: [search_payload, classification]
+        returns: "dict[str, object]"
+        doc: "Fuse local BM25/BM25F relevance with optional Jev per-rule scores."
+dependencies: []
+invariants:
+  - name: classifier-never-authorizes
+    forbid_pattern: "(?i)(?:approve|merge|publish|deploy|sign|grant_credentials|release_decision)\\s*=\\s*True"
+    scopes:
+      - module: jev_classifier
+        symbol: classify_retrieval
+        max_lines: 180
+      - module: jev_classifier
+        symbol: fuse_advisory_scores
+        max_lines: 140
+  - name: retrieval-is-local-and-non-executing
+    forbid_pattern: "(?i)(?:requests\\.|httpx\\.|urllib\\.|socket\\.|subprocess\\.|eval\\s*\\(|exec\\s*\\()"
+    scopes:
+      - module: audit_rule_search
+        symbol: search_audit_rules
+        max_lines: 180
+      - module: jev_classifier
+        symbol: build_jev_input
+        max_lines: 90
+      - module: jev_classifier
+        symbol: normalize_jev_result
+        max_lines: 140

@@ -656,6 +656,29 @@ def _call_name(node: ast.Call) -> str:
     return _name(node.func)
 
 
+def _security_aliases(tree: ast.AST) -> dict[str, str]:
+    """Resolve common import aliases before applying security rules."""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                aliases[item.asname or item.name.split(".")[0]] = item.name
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for item in node.names:
+                if item.name == "*":
+                    continue
+                aliases[item.asname or item.name] = f"{node.module}.{item.name}"
+    return aliases
+
+
+def _normalized_call_name(node: ast.Call, aliases: dict[str, str]) -> str:
+    name = _call_name(node)
+    if not name:
+        return name
+    head, *tail = name.split(".")
+    return ".".join([aliases.get(head, head), *tail])
+
+
 def _security_finding(
     code: str, path: str, node: ast.AST, message: str, severity: str, **facts: Any
 ) -> dict[str, Any]:
@@ -703,9 +726,10 @@ def _security_source_files(root: Path) -> list[Path]:
 def _security_scan_tree(root: Path, path: Path, tree: ast.AST) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
     findings: list[dict[str, Any]] = []
+    aliases = _security_aliases(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
-            call = _call_name(node)
+            call = _normalized_call_name(node, aliases)
             if call in {"eval", "exec", "builtins.eval", "builtins.exec"}:
                 findings.append(
                     _security_finding(
@@ -773,7 +797,9 @@ def _security_scan_tree(root: Path, path: Path, tree: ast.AST) -> list[dict[str,
                     ),
                     None,
                 )
-                if loader is None:
+                loader_name = _name(loader) if isinstance(loader, ast.AST) else ""
+                unsafe_loader = loader_name.endswith("UnsafeLoader") or loader_name.endswith("FullLoader")
+                if call != "yaml.load" or loader is None or unsafe_loader:
                     findings.append(
                         _security_finding(
                             "SECURITY_UNSAFE_YAML",

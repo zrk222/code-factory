@@ -609,6 +609,7 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "properties": {
                     "task_card_path": {"type": "string"},
                     "evidence_path": {"type": "string"},
+                    "alignment_path": {"type": "string"},
                 },
                 "required": ["task_card_path", "evidence_path"],
                 "additionalProperties": False,
@@ -707,6 +708,11 @@ def _tool_definitions() -> list[dict[str, object]]:
                         "minimum": 1,
                         "maximum": 20,
                         "default": 5,
+                    },
+                    "ranking": {
+                        "type": "string",
+                        "enum": ["lexical", "bm25", "bm25f"],
+                        "default": "bm25f",
                     },
                 },
                 "required": ["query"],
@@ -1931,7 +1937,8 @@ def _candidate_alignment_status(root: Path, arguments: object) -> dict[str, obje
         values.append(value)
     try:
         receipt = align_candidate_to_task(
-            values[0], values[1], str(arguments["candidate_hash"]), arguments["changed_paths"]
+            values[0], values[1], str(arguments["candidate_hash"]), arguments["changed_paths"],
+            candidate_root=base,
         )
     except Exception as exc:
         if hasattr(exc, "code"):
@@ -1947,7 +1954,8 @@ def _candidate_alignment_status(root: Path, arguments: object) -> dict[str, obje
 
 def _task_evidence_status(root: Path, arguments: object) -> dict[str, object]:
     required = {"task_card_path", "evidence_path"}
-    if not isinstance(arguments, dict) or set(arguments) != required or not all(isinstance(arguments[key], str) and arguments[key].strip() for key in arguments):
+    allowed = required | {"alignment_path"}
+    if not isinstance(arguments, dict) or not required.issubset(arguments) or not set(arguments).issubset(allowed) or not all(isinstance(arguments[key], str) and arguments[key].strip() for key in arguments):
         raise McpError("factory.task_evidence_status requires task_card_path and evidence_path", "TASK_EVIDENCE_INPUT_REFUSED")
     base = root.resolve()
     values: list[dict[str, object]] = []
@@ -1968,13 +1976,20 @@ def _task_evidence_status(root: Path, arguments: object) -> dict[str, object]:
     try:
         receipt = verify_task_evidence(values[1])
         card = values[0]
-        eligible = (
-            receipt["outcome"] == "passed"
-            and receipt["task_id"] == card.get("task_id")
-            and receipt["task_sha256"] == card.get("task_sha256")
-            and receipt["workflow_id"] == card.get("workflow_id")
-            and receipt["intent_digest"] == card.get("intent_digest")
-        )
+        alignment = None
+        if isinstance(arguments.get("alignment_path"), str) and arguments["alignment_path"].strip():
+            alignment_path = Path(arguments["alignment_path"])
+            if not alignment_path.is_absolute():
+                alignment_path = base / alignment_path
+            alignment_path = alignment_path.resolve()
+            if alignment_path != base and base not in alignment_path.parents:
+                raise McpError("receipt paths must remain inside the workspace", "TASK_EVIDENCE_PATH_REFUSED")
+            alignment = json.loads(alignment_path.read_text(encoding="utf-8"))
+        eligible = False
+        if alignment is not None:
+            from .agentic_control import complete_task_with_evidence
+            complete_task_with_evidence(card, receipt, alignment)
+            eligible = True
     except Exception as exc:
         if hasattr(exc, "code"):
             raise McpError(str(exc), getattr(exc, "code")) from exc
@@ -2006,7 +2021,7 @@ def _senior_control_status(root: Path, arguments: object) -> dict[str, object]:
         }
     try:
         bundle = json.loads(path.read_text(encoding="utf-8"))
-        status = verify_senior_control_bundle(bundle)
+        status = verify_senior_control_bundle(bundle, base)
     except (OSError, json.JSONDecodeError) as exc:
         raise McpError(str(exc), "SENIOR_CONTROL_READ_REFUSED") from exc
     except Exception as exc:

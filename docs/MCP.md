@@ -141,7 +141,7 @@ network transport, or mutation authority.
 | `factory.proof_reuse` | Fails closed until a complete explicit proof request can establish a disposition | Read only |
 | `factory.context_efficiency_status` | Bounded context-packet/cache metadata and estimated token budget; no provider-usage or savings claim | Read only |
 | `factory.intake_parameters_status` | Bounded intake mode, risk, budget, scope, provenance, expiry, and canonical six-lane coverage | Read only |
-| `factory.search_audit_rules` | Context-bounded search over six-lane rejection conditions and required evidence; never executes a lane | Read only |
+| `factory.search_audit_rules` | Context-bounded lexical/BM25/BM25F search over six-lane rejection conditions and required evidence; emits an optional hash-bound Jev handoff and never executes a lane | Read only |
 | `factory.proof_delta_status` | Existing retry-admission evidence; never admits, starts, or repairs a retry | Read only |
 | `factory.cdte_status` | Latest existing deterministic CDTE scan; never creates a scan record | Read only |
 | `factory.prd_grill_status` | Existing source-bound PRD Grill state for the supplied PRD | Read only |

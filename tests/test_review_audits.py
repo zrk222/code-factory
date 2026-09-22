@@ -330,6 +330,20 @@ def test_security_scan_accepts_reviewed_loaders_and_argv_bound_processes(tmp_pat
     assert result["parse_errors"] == 0
 
 
+def test_security_scan_tracks_import_aliases_and_unsafe_yaml_loaders(tmp_path):
+    (tmp_path / "aliases.py").write_text(
+        "from subprocess import run as launch\nimport yaml as y\n"
+        "def run(value):\n    launch(value, shell=True)\n    y.load(value, Loader=y.UnsafeLoader)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["state"] == "BLOCKED"
+    assert {item["code"] for item in result["findings"]} == {
+        "SECURITY_SHELL_COMMAND",
+        "SECURITY_UNSAFE_YAML",
+    }
+
+
 def test_security_scan_reports_parse_errors_fail_closed(tmp_path):
     (tmp_path / "broken.py").write_text("def broken(:\n", encoding="utf-8")
     result = security_scan(tmp_path)

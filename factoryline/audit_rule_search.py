@@ -12,6 +12,8 @@ import ast
 from hashlib import sha256
 import json
 from pathlib import Path
+import math
+import re
 from typing import Any
 
 
@@ -126,6 +128,28 @@ _EVIDENCE_TYPES = {
     ],
 }
 _ROOT = Path(__file__).resolve().parent
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_SEARCH_FIELDS = (
+    "name",
+    "description",
+    "practicalQuestion",
+    "rejectionCondition",
+    "lane",
+    "laneLabel",
+    "requiredEvidenceTypes",
+    "sourceModule",
+)
+_BM25F_FIELDS = {
+    # Higher weights keep rule identifiers and the human-facing name precise.
+    "name": (2.8, 0.55),
+    "rejectionCondition": (3.2, 0.45),
+    "practicalQuestion": (2.0, 0.70),
+    "laneLabel": (1.5, 0.70),
+    "description": (1.0, 0.80),
+    "requiredEvidenceTypes": (0.9, 0.75),
+    "lane": (0.8, 0.60),
+    "sourceModule": (0.6, 0.65),
+}
 
 
 def _markers(module: str, *, lane_specific: bool = False) -> list[str]:
@@ -203,10 +227,10 @@ def _inventory() -> list[dict[str, Any]]:
     )
 
 
-def _validate(arguments: object) -> tuple[str, str | None, bool, int]:
+def _validate(arguments: object) -> tuple[str, str | None, bool, int, str]:
     if not isinstance(arguments, dict):
         raise AuditRuleSearchError("factory.search_audit_rules requires an object")
-    allowed = {"query", "lane", "includeCrossCutting", "limit"}
+    allowed = {"query", "lane", "includeCrossCutting", "limit", "ranking"}
     unknown = sorted(set(arguments) - allowed)
     if unknown:
         raise AuditRuleSearchError("unsupported search fields: " + ", ".join(unknown))
@@ -226,18 +250,120 @@ def _validate(arguments: object) -> tuple[str, str | None, bool, int]:
     limit = arguments.get("limit", 5)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
         raise AuditRuleSearchError("limit must be an integer from 1 to 20")
-    return query.strip().lower(), lane, include_cross_cutting, limit
+    ranking = arguments.get("ranking", "bm25f")
+    if ranking not in {"lexical", "bm25", "bm25f"}:
+        raise AuditRuleSearchError("ranking must be lexical, bm25, or bm25f")
+    return query.strip().lower(), lane, include_cross_cutting, limit, ranking
 
 
-def search_audit_rules(arguments: object) -> dict[str, object]:
-    """Return a bounded, deterministic search result over the six-lane index."""
-    query, lane, include_cross_cutting, limit = _validate(arguments)
-    inventory = _inventory()
-    searchable = []
+def _tokens(value: object) -> list[str]:
+    """Tokenize search text without locale, stemming, or model dependencies."""
+    if isinstance(value, list):
+        value = " ".join(str(item) for item in value)
+    return _TOKEN_RE.findall(str(value).lower())
+
+
+def _field_values(rule: dict[str, Any]) -> dict[str, str]:
+    return {field: str(rule.get(field, "")) for field in _SEARCH_FIELDS}
+
+
+def _bm25_scores(
+    rules: list[dict[str, Any]], query: str, *, fielded: bool
+) -> dict[str, float]:
+    """Return explainable BM25/BM25F scores for the bounded in-memory index.
+
+    This intentionally stays local and deterministic.  It is a retrieval aid,
+    not a semantic verifier and never changes the rule inventory or authority.
+    """
+    query_terms = sorted(set(_tokens(query)))
+    if not query_terms:
+        return {str(rule["ruleId"]): 0.0 for rule in rules}
+    documents = [_field_values(rule) for rule in rules]
+    n_docs = len(documents)
+    field_tokens = [
+        {field: _tokens(value) for field, value in document.items()}
+        for document in documents
+    ]
+    avg_len = {
+        field: (sum(len(item[field]) for item in field_tokens) / n_docs)
+        if n_docs
+        else 0.0
+        for field in _SEARCH_FIELDS
+    }
+    if not fielded:
+        flattened = [
+            [token for values in item.values() for token in values]
+            for item in field_tokens
+        ]
+        avg = sum(len(tokens) for tokens in flattened) / n_docs if n_docs else 0.0
+        doc_frequency = {
+            term: sum(term in set(tokens) for tokens in flattened)
+            for term in query_terms
+        }
+        scores: dict[str, float] = {}
+        for rule, tokens in zip(rules, flattened):
+            counts = {term: tokens.count(term) for term in query_terms}
+            length = len(tokens)
+            score = 0.0
+            for term in query_terms:
+                df = doc_frequency[term]
+                if not counts[term] or not df:
+                    continue
+                idf = math.log(1.0 + (n_docs - df + 0.5) / (df + 0.5))
+                norm = 1.2 * (1.0 - 0.75 + 0.75 * length / avg) if avg else 1.2
+                score += idf * (counts[term] * 2.2) / (counts[term] + norm)
+            scores[str(rule["ruleId"])] = round(score, 8)
+        return scores
+
+    doc_frequency = {
+        term: sum(
+            any(term in set(tokens) for tokens in fields.values())
+            for fields in field_tokens
+        )
+        for term in query_terms
+    }
+    scores = {}
+    for rule, fields in zip(rules, field_tokens):
+        score = 0.0
+        for term in query_terms:
+            df = doc_frequency[term]
+            if not df:
+                continue
+            idf = math.log(1.0 + (n_docs - df + 0.5) / (df + 0.5))
+            weighted_tf = 0.0
+            for field, (boost, b_value) in _BM25F_FIELDS.items():
+                tokens = fields[field]
+                count = tokens.count(term)
+                if not count:
+                    continue
+                average = avg_len[field]
+                normalization = (
+                    1.0 - b_value + b_value * len(tokens) / average
+                    if average
+                    else 1.0
+                )
+                weighted_tf += boost * count / normalization
+            if weighted_tf:
+                score += idf * (2.2 * weighted_tf) / (2.2 + weighted_tf)
+        scores[str(rule["ruleId"])] = round(score, 8)
+    return scores
+
+
+def _filter_rules(
+    inventory: list[dict[str, Any]],
+    query: str,
+    lane: str | None,
+    include_cross_cutting: bool,
+    ranking: str,
+) -> list[dict[str, Any]]:
+    candidates = []
     for rule in inventory:
         if lane is not None and rule["lane"] not in {lane, "cross_cutting"}:
             continue
         if not include_cross_cutting and rule["lane"] == "cross_cutting":
+            continue
+        if ranking != "lexical":
+            candidates.append(rule)
             continue
         haystack = " ".join(
             str(rule[field]).lower()
@@ -251,27 +377,69 @@ def search_audit_rules(arguments: object) -> dict[str, object]:
             )
         )
         if query in haystack:
-            searchable.append(rule)
-    results = searchable[:limit]
+            candidates.append(rule)
+    return candidates
+
+
+def _rank_rules(
+    candidates: list[dict[str, Any]], query: str, ranking: str
+) -> tuple[list[dict[str, Any]], dict[str, float]]:
+    scores = _bm25_scores(candidates, query, fielded=ranking == "bm25f")
+    if ranking == "lexical":
+        return candidates, scores
+    ranked = [
+        rule for rule in candidates if scores.get(str(rule["ruleId"]), 0.0) > 0.0
+    ]
+    ranked.sort(key=lambda rule: (-scores[str(rule["ruleId"])], str(rule["ruleId"])))
+    return ranked, scores
+
+
+def _render_rules(
+    rules: list[dict[str, Any]], scores: dict[str, float], ranking: str, limit: int
+) -> list[dict[str, Any]]:
+    rendered = []
+    for rule in rules[:limit]:
+        item = dict(rule)
+        if ranking != "lexical":
+            item["retrievalScore"] = scores[str(rule["ruleId"])]
+        rendered.append(item)
+    return rendered
+
+
+def search_audit_rules(arguments: object) -> dict[str, object]:
+    """Return bounded deterministic lexical/BM25/BM25F results over the index."""
+    query, lane, include_cross_cutting, limit, ranking = _validate(arguments)
+    inventory = _inventory()
+    searchable = _filter_rules(inventory, query, lane, include_cross_cutting, ranking)
+    searchable, scores = _rank_rules(searchable, query, ranking)
+    result_rules = _render_rules(searchable, scores, ranking, limit)
     index_sha256 = sha256(
         json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    return {
+    payload = {
         "marker": "MCP_AUDIT_RULE_SEARCH_READ_ONLY",
         "schema": "factory.audit-rule-search.v1",
         "query": query,
         "lane": lane,
         "includeCrossCutting": include_cross_cutting,
+        "ranking": ranking,
         "totalMatched": len(searchable),
-        "returned": len(results),
+        "returned": len(result_rules),
         "ruleIndexSha256": index_sha256,
-        "rules": results,
+        "rules": result_rules,
         "nextRecommendedStep": (
             "Use the matching rule IDs to select a signed runtime-audit lane plan; execution remains human-controlled through the CLI."
-            if results
+            if result_rules
             else "No matching rules found. Try broader terms or include cross-cutting rules."
         ),
-        "action_summary": "Search the bounded six-lane rejection inventory without executing an audit or changing a gate.",
+        "action_summary": "Search the bounded six-lane rejection inventory with deterministic lexical or BM25 retrieval without executing an audit or changing a gate.",
         "authority": "none",
-        "claim_boundary": "Rule discovery is advisory context only; it does not execute, approve, weaken, or release an audit lane.",
+        "claim_boundary": "Rule discovery is advisory context only; BM25/BM25F ranks text matches but does not prove semantics, execute, approve, weaken, or release an audit lane.",
     }
+    if ranking in {"bm25", "bm25f"}:
+        # The handoff is a hash-bound, secret-free request.  It does not call
+        # a provider; callers explicitly inject an optional Jev transport.
+        from .jev_classifier import build_jev_input
+
+        payload["jevHandoff"] = build_jev_input(payload)
+    return payload

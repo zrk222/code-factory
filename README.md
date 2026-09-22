@@ -9,7 +9,7 @@
 
 <!-- mcp-name: io.github.zrk222/code-factory -->
 
-> **6 mandatory audit lanes. 140 coded rejection conditions. One human-owned release decision.**
+> **6 mandatory audit lanes. 141 coded rejection conditions. One human-owned release decision.**
 
 ## Your code passed. But did it pass the right tests?
 
@@ -37,10 +37,10 @@ a weakened rule, the result does not quietly become a pass.
 | Migration and data integrity | Can the system upgrade without losing, corrupting, or stranding data? |
 | Performance and resources | Did latency, queries, memory, connections, or other resources regress against an approved baseline? |
 
-Those lanes contain **81 lane-specific and 59 cross-cutting coded rejection
+Those lanes contain **81 lane-specific and 60 cross-cutting coded rejection
 conditions**. The [source-bound inventory](docs/AUDIT_CONDITION_INVENTORY.md)
 recomputes the total from the implementation; it is not a claim that every
-project executes 140 tests.
+project executes 141 tests.
 
 ### What the Code Factory upgrade improves
 

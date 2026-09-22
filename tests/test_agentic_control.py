@@ -37,6 +37,7 @@ from factoryline.agentic_control import (
     bind_task_card_handoff,
     verify_task_card_handoff,
     align_candidate_to_task,
+    candidate_digest_for_paths,
     verify_candidate_alignment,
     create_task_evidence,
     verify_task_evidence,
@@ -129,7 +130,13 @@ def test_task_card_lease_checkpoint_and_completion_are_deterministic() -> None:
     with pytest.raises(AgenticControlError, match="evidence"):
         transition_task_card(verifying_without_evidence, "completed")
     verifying = transition_task_card(checkpointed, "verifying", evidence_digest=SHA)
-    completed = transition_task_card(verifying, "completed")
+    handoff = create_typed_handoff(
+        "wf-1", "build", "planner", "builder", SHA, SHA,
+        allowed_paths=["src/"], next_action="Build.", created_at="2026-09-21T00:00:00Z",
+    )
+    alignment = align_candidate_to_task(verifying, handoff, SHA, ["src/app.py"])
+    evidence = create_task_evidence(verifying, SHA, SHA, "pytest", "independent-verifier", alignment=alignment)
+    completed = complete_task_with_evidence(verifying, evidence, alignment)
     assert verify_task_card(completed)["state"] == "completed"
     malformed = dict(completed, unexpected="metadata")
     malformed["task_sha256"] = hashlib.sha256(
@@ -167,7 +174,13 @@ def test_task_board_projects_dependencies_and_rejects_cycles() -> None:
     completed = transition_task_card(first, "leased", lease_id="lease-1", lease_expires_at="2026-09-21T01:00:00Z")
     completed = transition_task_card(completed, "running")
     completed = transition_task_card(completed, "verifying", evidence_digest=SHA)
-    completed = transition_task_card(completed, "completed")
+    handoff = create_typed_handoff(
+        "wf-1", "build", "planner", "builder", SHA, SHA,
+        allowed_paths=["src/"], next_action="Build.", created_at="2026-09-21T00:00:00Z",
+    )
+    alignment = align_candidate_to_task(completed, handoff, SHA, ["src/app.py"])
+    evidence = create_task_evidence(completed, SHA, SHA, "pytest", "independent-verifier", alignment=alignment)
+    completed = complete_task_with_evidence(completed, evidence, alignment)
     ready_board = project_task_board([completed, second])
     assert ready_board["lanes"]["done"] == ["task-1"]
     assert ready_board["lanes"]["ready"] == ["task-2"]
@@ -231,37 +244,77 @@ def test_task_evidence_binds_verifier_and_controls_completion() -> None:
     leased = transition_task_card(card, "leased", lease_id="lease-evidence", lease_expires_at="2026-09-21T01:00:00Z")
     running = transition_task_card(leased, "running")
     verifying = transition_task_card(running, "verifying")
+    handoff = create_typed_handoff(
+        "wf-evidence", "build", "planner", "builder", SHA, SHA,
+        allowed_paths=["src/"], next_action="Build.", created_at="2026-09-21T00:00:00Z",
+    )
+    alignment = align_candidate_to_task(verifying, handoff, SHA, ["src/app.py"])
     evidence = create_task_evidence(
-        verifying, SHA, SHA, "pytest", "independent-verifier", source_paths=["tests/"],
+        verifying, SHA, SHA, "pytest", "independent-verifier", source_paths=["tests/"], alignment=alignment,
     )
     assert verify_task_evidence(evidence)["outcome"] == "passed"
-    assert complete_task_with_evidence(verifying, evidence)["state"] == "completed"
+    assert complete_task_with_evidence(verifying, evidence, alignment)["state"] == "completed"
     failed = create_task_evidence(
         verifying, SHA, SHA, "pytest", "independent-verifier", outcome="failed",
     )
     with pytest.raises(AgenticControlError, match="failed evidence"):
-        complete_task_with_evidence(verifying, failed)
+        complete_task_with_evidence(verifying, failed, alignment)
 
 
-def test_senior_control_bundle_requires_all_six_slices() -> None:
+def test_senior_control_bundle_requires_all_six_slices(tmp_path) -> None:
+    import json
+
+    def receipt(name: str) -> dict:
+        payload = {"candidate_hash": SHA, "evidence_digest": SHA, "outcome": "passed", "authority": {"merge": False}}
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return {"receipt_path": path.name, "receipt_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
     slices = {
-        name: {"status": "PASSED", "evidence_digest": SHA, "source": f"engine:{name}"}
+        name: {"status": "PASSED", "evidence_digest": SHA, "source": f"engine:{name}", **receipt(name)}
         for name in SENIOR_CONTROL_SLICES
     }
     bundle = build_senior_control_bundle(SHA, slices)
     assert bundle["readiness"] == "READY_FOR_HUMAN_REVIEW"
     assert bundle["blocking_slices"] == []
-    assert verify_senior_control_bundle(bundle)["bundle_sha256"] == bundle["bundle_sha256"]
+    assert verify_senior_control_bundle(bundle, tmp_path)["bundle_sha256"] == bundle["bundle_sha256"]
 
     blocked = dict(slices)
     blocked["policy_simulation"] = {
-        "status": "BLOCKED", "evidence_digest": None, "source": "policy-engine",
+        "status": "BLOCKED", "evidence_digest": None, "source": "policy-engine", "receipt_path": None, "receipt_sha256": None,
     }
     blocked_bundle = build_senior_control_bundle(SHA, blocked)
     assert blocked_bundle["readiness"] == "BLOCKED"
     assert blocked_bundle["blocking_slices"] == ["policy_simulation"]
     with pytest.raises(AgenticControlError, match="six"):
         build_senior_control_bundle(SHA, {name: slices[name] for name in SENIOR_CONTROL_SLICES[:-1]})
+
+    with pytest.raises(AgenticControlError, match="receipt-backed"):
+        verify_senior_control_bundle(bundle)
+
+
+def test_completion_requires_alignment_and_handoff_scope_is_narrowest(tmp_path) -> None:
+    card = create_task_card(
+        "task-strict", "wf-strict", "builder", SHA, SHA,
+        allowed_paths=["src/", "tests/"], dependencies=(), stop_condition="Stop.",
+        next_action="Verify.", created_at="2026-09-21T00:00:00Z",
+    )
+    handoff = create_typed_handoff(
+        "wf-strict", "build", "planner", "builder", SHA, SHA,
+        allowed_paths=["src/"], next_action="Build.", created_at="2026-09-21T00:00:00Z",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/app.py").write_text("value = 1\n", encoding="utf-8")
+    candidate_hash = candidate_digest_for_paths(tmp_path, ["src/app.py"])
+    alignment = align_candidate_to_task(card, handoff, candidate_hash, ["src/app.py"], candidate_root=tmp_path)
+    with pytest.raises(AgenticControlError, match="scope"):
+        align_candidate_to_task(card, handoff, candidate_hash, ["tests/test_app.py"])
+    leased = transition_task_card(card, "leased", lease_id="lease-strict", lease_expires_at="2026-09-21T01:00:00Z")
+    running = transition_task_card(leased, "running")
+    verifying = transition_task_card(running, "verifying")
+    alignment = align_candidate_to_task(verifying, handoff, candidate_hash, ["src/app.py"], candidate_root=tmp_path)
+    evidence = create_task_evidence(verifying, candidate_hash, SHA, "pytest", "independent-verifier", alignment=alignment)
+    assert complete_task_with_evidence(verifying, evidence, alignment)["state"] == "completed"
 
 
 def test_typed_handoff_is_hash_bound_and_secret_free() -> None:

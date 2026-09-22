@@ -284,11 +284,16 @@ def transition_task_card(
     lease_expires_at: str | None = None,
     checkpoint_digest: str | None = None,
     evidence_digest: str | None = None,
+    _verified_alignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Apply one deterministic task transition and return a new hash-bound card."""
     verify_task_card(card)
     if state not in _TASK_STATES:
         raise AgenticControlError("E_TASK_STATE", "unsupported task state")
+    if state == "completed" and _verified_alignment is None:
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE", "completed state requires candidate alignment and evidence verification"
+        )
     current = card["state"]
     allowed = {
         "queued": {"leased", "cancelled"},
@@ -591,8 +596,15 @@ def align_candidate_to_task(
     handoff: dict[str, Any],
     candidate_hash: str,
     changed_paths: Iterable[str],
+    *,
+    candidate_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Bind a submitted candidate digest and paths to the task/handoff scope."""
+    """Bind a candidate digest and paths to the narrowest approved scope.
+
+    When ``candidate_root`` is supplied, the digest is recomputed from the
+    actual workspace bytes.  Without it this remains a declaration-only
+    compatibility path and must not be treated as execution evidence.
+    """
     verified_card = verify_task_card(card)
     verified_handoff = verify_typed_handoff(handoff)
     bind_task_card_handoff(verified_card, verified_handoff)
@@ -600,7 +612,7 @@ def align_candidate_to_task(
     paths = _relative_paths(changed_paths, "changed_paths")
     if not paths:
         raise AgenticControlError("E_CANDIDATE_SCOPE", "changed_paths cannot be empty")
-    allowed = verified_card["allowed_paths"]
+    allowed = verified_handoff["allowed_paths"]
 
     def in_scope(path: str) -> bool:
         return any(path == root or path.startswith(root.rstrip("/") + "/") for root in allowed)
@@ -611,6 +623,13 @@ def align_candidate_to_task(
             "E_CANDIDATE_SCOPE",
             "candidate paths exceed the task card scope: " + ", ".join(out_of_scope),
         )
+    if candidate_root is not None:
+        actual = candidate_digest_for_paths(candidate_root, paths)
+        if actual != candidate_hash:
+            raise AgenticControlError(
+                "E_CANDIDATE_PROVENANCE",
+                "candidate hash does not match the supplied workspace bytes",
+            )
     core = {
         "schema": CANDIDATE_ALIGNMENT_SCHEMA,
         "task_id": verified_card["task_id"],
@@ -631,6 +650,35 @@ def align_candidate_to_task(
         "marker": "CANDIDATE_INTENT_ALIGNED",
         "claim_boundary": "Candidate digest and path scope only; no code execution, repair, approval, merge, publication, or deployment action ran.",
     }
+
+
+def candidate_digest_for_paths(root: Path, changed_paths: Iterable[str]) -> str:
+    """Hash the exact relative paths and current bytes used by an alignment.
+
+    This is deliberately independent of Git metadata so dirty worktrees and
+    non-Git repositories receive the same deterministic provenance treatment.
+    """
+    workspace = Path(root).resolve()
+    paths = _relative_paths(changed_paths, "changed_paths")
+    if not paths:
+        raise AgenticControlError("E_CANDIDATE_PROVENANCE", "changed_paths cannot be empty")
+    digest = hashlib.sha256()
+    for relative in paths:
+        path = (workspace / relative).resolve()
+        if workspace not in path.parents or not path.is_file():
+            raise AgenticControlError(
+                "E_CANDIDATE_PROVENANCE", f"candidate path is missing or escapes workspace: {relative}"
+            )
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        try:
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 64), b""):
+                    digest.update(chunk)
+        except OSError as exc:
+            raise AgenticControlError("E_CANDIDATE_PROVENANCE", str(exc)) from exc
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def verify_candidate_alignment(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -669,6 +717,7 @@ def create_task_evidence(
     *,
     outcome: str = "passed",
     source_paths: Iterable[str] = (),
+    alignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a provenance-bound evidence receipt for one task candidate."""
     verified_card = verify_task_card(card)
@@ -679,6 +728,12 @@ def create_task_evidence(
     if outcome not in {"passed", "failed"}:
         raise AgenticControlError("E_TASK_EVIDENCE", "outcome must be passed or failed")
     paths = _relative_paths(source_paths, "source_paths")
+    alignment_sha256: str | None = None
+    if alignment is not None:
+        verified_alignment = verify_candidate_alignment(alignment)
+        if verified_alignment["task_id"] != verified_card["task_id"] or verified_alignment["candidate_hash"] != candidate_hash:
+            raise AgenticControlError("E_TASK_EVIDENCE", "alignment does not belong to the candidate task")
+        alignment_sha256 = verified_alignment["alignment_sha256"]
     core = {
         "schema": TASK_EVIDENCE_SCHEMA,
         "task_id": verified_card["task_id"],
@@ -691,6 +746,7 @@ def create_task_evidence(
         "verifier_id": verifier_id,
         "outcome": outcome,
         "source_paths": paths,
+        "alignment_sha256": alignment_sha256,
         "authority": dict(_AUTHORITY),
     }
     digest = _sha(core)
@@ -708,7 +764,7 @@ def verify_task_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
         raise AgenticControlError("E_TASK_EVIDENCE_SCHEMA", f"receipt must use {TASK_EVIDENCE_SCHEMA}")
     required = {
         "schema", "task_id", "task_sha256", "workflow_id", "intent_digest", "candidate_hash",
-        "evidence_digest", "evidence_kind", "verifier_id", "outcome", "source_paths", "authority",
+        "evidence_digest", "evidence_kind", "verifier_id", "outcome", "source_paths", "alignment_sha256", "authority",
     }
     if set(receipt) != required | {"evidence_receipt_sha256", "marker", "claim_boundary"}:
         raise AgenticControlError("E_TASK_EVIDENCE_SCHEMA", "receipt fields are not exact")
@@ -722,6 +778,8 @@ def verify_task_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
     _id(receipt["verifier_id"], "verifier_id")
     for key in ("task_sha256", "intent_digest", "candidate_hash", "evidence_digest"):
         _digest(receipt[key], key)
+    if receipt["alignment_sha256"] is not None:
+        _digest(receipt["alignment_sha256"], "alignment_sha256")
     _bounded_text(receipt["evidence_kind"], "evidence_kind", 96)
     if receipt["outcome"] not in {"passed", "failed"}:
         raise AgenticControlError("E_TASK_EVIDENCE", "outcome must be passed or failed")
@@ -734,18 +792,34 @@ def verify_task_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
 
 
 def complete_task_with_evidence(
-    card: dict[str, Any], evidence: dict[str, Any]
+    card: dict[str, Any], evidence: dict[str, Any], alignment: dict[str, Any]
 ) -> dict[str, Any]:
     """Complete a task only when its provenance-bound evidence passed."""
     verified_card = verify_task_card(card)
     verified_evidence = verify_task_evidence(evidence)
+    verified_alignment = verify_candidate_alignment(alignment)
     if verified_evidence["task_id"] != verified_card["task_id"] or verified_evidence["task_sha256"] != verified_card["task_sha256"]:
         raise AgenticControlError("E_TASK_EVIDENCE", "evidence does not belong to the task card")
     if verified_evidence["workflow_id"] != verified_card["workflow_id"] or verified_evidence["intent_digest"] != verified_card["intent_digest"]:
         raise AgenticControlError("E_TASK_EVIDENCE", "evidence lineage does not match the task")
     if verified_evidence["outcome"] != "passed":
         raise AgenticControlError("E_TASK_EVIDENCE", "failed evidence cannot complete a task")
-    return transition_task_card(verified_card, "completed", evidence_digest=verified_evidence["evidence_digest"])
+    if verified_evidence["alignment_sha256"] != verified_alignment["alignment_sha256"]:
+        raise AgenticControlError("E_TASK_EVIDENCE", "evidence alignment does not match the candidate receipt")
+    if (
+        verified_alignment["task_id"] != verified_card["task_id"]
+        or verified_alignment["task_sha256"] != verified_card["task_sha256"]
+        or verified_alignment["workflow_id"] != verified_card["workflow_id"]
+        or verified_alignment["intent_digest"] != verified_card["intent_digest"]
+        or verified_alignment["candidate_hash"] != verified_evidence["candidate_hash"]
+    ):
+        raise AgenticControlError("E_TASK_EVIDENCE", "candidate alignment does not belong to the task evidence")
+    return transition_task_card(
+        verified_card,
+        "completed",
+        evidence_digest=verified_evidence["evidence_digest"],
+        _verified_alignment=verified_alignment,
+    )
 
 
 def build_senior_control_bundle(
@@ -762,7 +836,7 @@ def build_senior_control_bundle(
     normalized: dict[str, dict[str, Any]] = {}
     for name in SENIOR_CONTROL_SLICES:
         value = slices[name]
-        if not isinstance(value, dict) or set(value) != {"status", "evidence_digest", "source"}:
+        if not isinstance(value, dict) or set(value) != {"status", "evidence_digest", "source", "receipt_path", "receipt_sha256"}:
             raise AgenticControlError("E_SENIOR_CONTROL_SCHEMA", f"slice {name} fields are not exact")
         status = value["status"]
         if status not in {"PASSED", "BLOCKED", "NOT_AVAILABLE"}:
@@ -772,10 +846,23 @@ def build_senior_control_bundle(
             _digest(evidence_digest, f"{name}.evidence_digest")
         elif evidence_digest is not None:
             _digest(evidence_digest, f"{name}.evidence_digest")
+        receipt_path = value["receipt_path"]
+        receipt_sha256 = value["receipt_sha256"]
+        if status == "PASSED":
+            if not isinstance(receipt_path, str) or not receipt_path.strip():
+                raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} requires receipt_path")
+            _digest(receipt_sha256, f"{name}.receipt_sha256")
+        elif receipt_path is not None or receipt_sha256 is not None:
+            if receipt_path is not None and (not isinstance(receipt_path, str) or not receipt_path.strip()):
+                raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name}.receipt_path is invalid")
+            if receipt_sha256 is not None:
+                _digest(receipt_sha256, f"{name}.receipt_sha256")
         normalized[name] = {
             "status": status,
             "evidence_digest": evidence_digest,
             "source": _bounded_text(value["source"], f"{name}.source", 160),
+            "receipt_path": receipt_path,
+            "receipt_sha256": receipt_sha256,
         }
     blocking = [name for name in SENIOR_CONTROL_SLICES if normalized[name]["status"] != "PASSED"]
     core = {
@@ -799,8 +886,8 @@ def build_senior_control_bundle(
     }
 
 
-def verify_senior_control_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
-    """Verify all six senior controls and fail closed on drift or false readiness."""
+def verify_senior_control_bundle(bundle: dict[str, Any], root: Path | None = None) -> dict[str, Any]:
+    """Verify six controls and their receipt bytes before accepting readiness."""
     if not isinstance(bundle, dict) or bundle.get("schema") != SENIOR_CONTROL_SCHEMA:
         raise AgenticControlError("E_SENIOR_CONTROL_SCHEMA", f"bundle must use {SENIOR_CONTROL_SCHEMA}")
     required = {
@@ -820,6 +907,36 @@ def verify_senior_control_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
             raise AgenticControlError("E_SENIOR_CONTROL_TAMPERED", f"bundle {key} is inconsistent")
     if not isinstance(bundle["authority"], dict) or any(value is not False for value in bundle["authority"].values()):
         raise AgenticControlError("E_SENIOR_CONTROL_AUTHORITY", "bundle cannot grant authority")
+    if root is None:
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_RECEIPT",
+            "receipt-backed verification requires the workspace root",
+        )
+    workspace = Path(root).resolve()
+    for name in SENIOR_CONTROL_SLICES:
+        slice_value = bundle["slices"][name]
+        if slice_value["status"] != "PASSED":
+            continue
+        receipt_path = Path(slice_value["receipt_path"])
+        if receipt_path.is_absolute() or ".." in receipt_path.parts:
+            raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt escapes workspace")
+        resolved = (workspace / receipt_path).resolve()
+        if workspace not in resolved.parents or not resolved.is_file():
+            raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt is missing")
+        raw = resolved.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != slice_value["receipt_sha256"]:
+            raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt bytes changed")
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt is not JSON") from exc
+        if not isinstance(payload, dict) or payload.get("candidate_hash") != bundle["candidate_hash"] or payload.get("evidence_digest") != slice_value["evidence_digest"]:
+            raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt is not bound to candidate/evidence")
+        if payload.get("outcome", "passed") != "passed":
+            raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt did not pass")
+        authority = payload.get("authority")
+        if authority is not None and (not isinstance(authority, dict) or any(value is not False for value in authority.values())):
+            raise AgenticControlError("E_SENIOR_CONTROL_AUTHORITY", f"slice {name} receipt grants authority")
     return dict(bundle)
 
 

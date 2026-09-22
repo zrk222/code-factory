@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -72,9 +73,12 @@ def run_runtime_audit_plan(
     output_root: Path,
     *,
     plan_sha256: str | None = None,
+    max_parallelism: int = 1,
 ) -> dict[str, Any]:
     """Run exact target and known-bad argv for a previously verified plan in distinct evidence directories."""
     workspace = Path(workspace_root).resolve()
+    if isinstance(max_parallelism, bool) or not isinstance(max_parallelism, int) or not 1 <= max_parallelism <= 8:
+        raise RuntimeAuditError("E_PARALLELISM", "max_parallelism must be an integer between 1 and 8")
     output = _inside(
         workspace,
         Path(output_root)
@@ -84,22 +88,32 @@ def run_runtime_audit_plan(
     output.mkdir(parents=True, exist_ok=True)
     run_root = output / f"run-{uuid.uuid4()}"
     run_root.mkdir(parents=False, exist_ok=False)
-    executions = []
-    for lane in plan["lanes"]:
-        executions.append(
-            {
-                "id": lane["id"],
-                "kind": lane["kind"],
-                "target": _run_one(lane, "target", "target_argv", run_root, workspace),
-                "known_bad": _run_one(
-                    lane, "known_bad", "known_bad_argv", run_root, workspace
-                ),
-            }
-        )
+    def run_lane(lane: dict[str, Any]) -> dict[str, Any]:
+        # Each lane owns a separate subtree; this is the isolation boundary
+        # that makes bounded parallelism safe for artifact-producing checks.
+        return {
+            "id": lane["id"],
+            "kind": lane["kind"],
+            "target": _run_one(lane, "target", "target_argv", run_root, workspace),
+            "known_bad": _run_one(lane, "known_bad", "known_bad_argv", run_root, workspace),
+        }
+
+    lanes = list(plan["lanes"])
+    if max_parallelism == 1 or len(lanes) < 2:
+        executions = [run_lane(lane) for lane in lanes]
+    else:
+        with ThreadPoolExecutor(max_workers=min(max_parallelism, len(lanes)), thread_name_prefix="cf-audit") as pool:
+            futures = [pool.submit(run_lane, lane) for lane in lanes]
+            executions = [future.result() for future in futures]
     result = {
         "schema": "factory.runtime-audit-execution.v1",
         "run_root": str(run_root),
         "executions": executions,
+        "execution_policy": {
+            "max_parallelism": max_parallelism,
+            "lane_isolation": "per-lane-scratch-subtree",
+            "ordering": "manifest-order",
+        },
         "authority": "none",
     }
     boundary = plan.get("runtime_boundary")
