@@ -35,6 +35,15 @@ TASK_BOARD_SCHEMA = "factory.task-board.v1"
 TASK_HANDOFF_BINDING_SCHEMA = "factory.task-handoff-binding.v1"
 CANDIDATE_ALIGNMENT_SCHEMA = "factory.candidate-alignment.v1"
 TASK_EVIDENCE_SCHEMA = "factory.task-evidence.v1"
+SENIOR_CONTROL_SCHEMA = "factory.senior-control-bundle.v1"
+SENIOR_CONTROL_SLICES = (
+    "cross_lane_proof_admission",
+    "append_only_transition_ledger",
+    "independent_challenge_lane",
+    "multi_repository_intent_graph",
+    "evidence_retention_export",
+    "policy_simulation",
+)
 _ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40,64}$")
@@ -737,6 +746,81 @@ def complete_task_with_evidence(
     if verified_evidence["outcome"] != "passed":
         raise AgenticControlError("E_TASK_EVIDENCE", "failed evidence cannot complete a task")
     return transition_task_card(verified_card, "completed", evidence_digest=verified_evidence["evidence_digest"])
+
+
+def build_senior_control_bundle(
+    candidate_hash: str,
+    slices: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Assemble the six senior controls into one deterministic readiness gate."""
+    _digest(candidate_hash, "candidate_hash")
+    if not isinstance(slices, dict) or set(slices) != set(SENIOR_CONTROL_SLICES):
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_SCHEMA",
+            "all six senior control slices must be supplied exactly once",
+        )
+    normalized: dict[str, dict[str, Any]] = {}
+    for name in SENIOR_CONTROL_SLICES:
+        value = slices[name]
+        if not isinstance(value, dict) or set(value) != {"status", "evidence_digest", "source"}:
+            raise AgenticControlError("E_SENIOR_CONTROL_SCHEMA", f"slice {name} fields are not exact")
+        status = value["status"]
+        if status not in {"PASSED", "BLOCKED", "NOT_AVAILABLE"}:
+            raise AgenticControlError("E_SENIOR_CONTROL_SCHEMA", f"slice {name} status is invalid")
+        evidence_digest = value["evidence_digest"]
+        if status == "PASSED":
+            _digest(evidence_digest, f"{name}.evidence_digest")
+        elif evidence_digest is not None:
+            _digest(evidence_digest, f"{name}.evidence_digest")
+        normalized[name] = {
+            "status": status,
+            "evidence_digest": evidence_digest,
+            "source": _bounded_text(value["source"], f"{name}.source", 160),
+        }
+    blocking = [name for name in SENIOR_CONTROL_SLICES if normalized[name]["status"] != "PASSED"]
+    core = {
+        "schema": SENIOR_CONTROL_SCHEMA,
+        "candidate_hash": candidate_hash,
+        "slices": normalized,
+        "readiness": "READY_FOR_HUMAN_REVIEW" if not blocking else "BLOCKED",
+        "blocking_slices": blocking,
+        "next_actions": [
+            {"slice": name, "action": "SUPPLY_VERIFIED_RECEIPT"}
+            for name in blocking
+        ],
+        "authority": dict(_AUTHORITY),
+        "claim_boundary": "Cross-cutting readiness projection only; no audit runner, mutation, repository operation, approval, merge, publication, or deployment action ran.",
+    }
+    digest = _sha(core)
+    return {
+        **core,
+        "bundle_sha256": digest,
+        "marker": "SENIOR_CONTROL_BUNDLE_HASH_BOUND",
+    }
+
+
+def verify_senior_control_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
+    """Verify all six senior controls and fail closed on drift or false readiness."""
+    if not isinstance(bundle, dict) or bundle.get("schema") != SENIOR_CONTROL_SCHEMA:
+        raise AgenticControlError("E_SENIOR_CONTROL_SCHEMA", f"bundle must use {SENIOR_CONTROL_SCHEMA}")
+    required = {
+        "schema", "candidate_hash", "slices", "readiness", "blocking_slices",
+        "next_actions", "authority", "claim_boundary",
+    }
+    if set(bundle) != required | {"bundle_sha256", "marker"}:
+        raise AgenticControlError("E_SENIOR_CONTROL_SCHEMA", "bundle fields are not exact")
+    core = {key: bundle[key] for key in required}
+    if bundle.get("bundle_sha256") != _sha(core):
+        raise AgenticControlError("E_SENIOR_CONTROL_TAMPERED", "bundle digest does not match contents")
+    if bundle.get("marker") != "SENIOR_CONTROL_BUNDLE_HASH_BOUND":
+        raise AgenticControlError("E_SENIOR_CONTROL_SCHEMA", "bundle marker is invalid")
+    rebuilt = build_senior_control_bundle(bundle["candidate_hash"], bundle["slices"])
+    for key in ("readiness", "blocking_slices", "next_actions"):
+        if rebuilt[key] != bundle[key]:
+            raise AgenticControlError("E_SENIOR_CONTROL_TAMPERED", f"bundle {key} is inconsistent")
+    if not isinstance(bundle["authority"], dict) or any(value is not False for value in bundle["authority"].values()):
+        raise AgenticControlError("E_SENIOR_CONTROL_AUTHORITY", "bundle cannot grant authority")
+    return dict(bundle)
 
 
 def create_orchestrator_plan(
@@ -1569,6 +1653,12 @@ def agentic_control_projection(root: Path) -> dict[str, Any]:
                 "status": "available",
                 "schema": TASK_EVIDENCE_SCHEMA,
                 "authority": "proof_only; verifier and outcome are receipt-bound",
+            },
+            "senior_control_bundle": {
+                "status": "available",
+                "schema": SENIOR_CONTROL_SCHEMA,
+                "slices": list(SENIOR_CONTROL_SLICES),
+                "authority": "read_only; readiness remains human-reviewed",
             },
             "orchestrator_request_routing": {
                 "status": "available",

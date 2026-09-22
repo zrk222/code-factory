@@ -73,6 +73,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.task_handoff_status",
         "factory.candidate_alignment_status",
         "factory.task_evidence_status",
+        "factory.senior_control_status",
         "factory.blueprint_status",
         "factory.update_status",
         "factory.lifecycle_status",
@@ -225,6 +226,20 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         tmp_path,
     )
     assert evidence["error"]["data"]["marker"] == "TASK_EVIDENCE_INPUT_REFUSED"
+
+    senior = _content(
+        dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 2914,
+                "method": "tools/call",
+                "params": {"name": "factory.senior_control_status", "arguments": {}},
+            },
+            tmp_path,
+        )
+    )
+    assert senior["marker"] == "SENIOR_CONTROL_MCP_READ_ONLY"
+    assert senior["status"]["readiness"] == "AWAITING_BUNDLE"
 
     blueprint = _content(
         dispatch(

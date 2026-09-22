@@ -72,7 +72,9 @@ from .agentic_control import (
     align_candidate_to_task,
     agentic_control_projection,
     bind_task_card_handoff,
+    SENIOR_CONTROL_SLICES,
     verify_task_evidence,
+    verify_senior_control_bundle,
     project_task_board,
 )
 from .blueprint import blueprint_projection
@@ -609,6 +611,16 @@ def _tool_definitions() -> list[dict[str, object]]:
                     "evidence_path": {"type": "string"},
                 },
                 "required": ["task_card_path", "evidence_path"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.senior_control_status",
+            "description": "Verify the six-slice senior engineering control bundle: cross-lane proof, transition ledger, challenge lane, multi-repository graph, evidence retention/export, and policy simulation. Read only; no release authority.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"bundle_path": {"type": "string"}},
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -1975,6 +1987,40 @@ def _task_evidence_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _senior_control_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"bundle_path"}:
+        raise McpError("factory.senior_control_status accepts only bundle_path", "SENIOR_CONTROL_INPUT_REFUSED")
+    path = Path(str(arguments.get("bundle_path", ".factory/senior-control.json")))
+    if not path.is_absolute():
+        path = root / path
+    path = path.resolve()
+    base = root.resolve()
+    if path != base and base not in path.parents:
+        raise McpError("bundle path must remain inside the workspace", "SENIOR_CONTROL_PATH_REFUSED")
+    if not path.exists():
+        return {
+            "marker": "SENIOR_CONTROL_MCP_READ_ONLY",
+            "action_summary": "Reported the six required senior controls without inventing a local readiness result.",
+            "status": {"readiness": "AWAITING_BUNDLE", "required_slices": list(SENIOR_CONTROL_SLICES), "bundle_path": path.relative_to(base).as_posix()},
+            "scope": "No bundle was present; no audit runner, challenge, repository operation, retention action, policy simulation, approval, merge, publication, or deployment action ran.",
+        }
+    try:
+        bundle = json.loads(path.read_text(encoding="utf-8"))
+        status = verify_senior_control_bundle(bundle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise McpError(str(exc), "SENIOR_CONTROL_READ_REFUSED") from exc
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            raise McpError(str(exc), getattr(exc, "code")) from exc
+        raise McpError(str(exc), "SENIOR_CONTROL_VERIFY_REFUSED") from exc
+    return {
+        "marker": "SENIOR_CONTROL_MCP_READ_ONLY",
+        "action_summary": "Verified the six-slice senior engineering control bundle; no control action ran.",
+        "status": status,
+        "scope": "Read-only bundle verification; readiness remains human-reviewed and no audit, challenge, repository, retention, policy, approval, merge, publication, or deployment action ran.",
+    }
+
+
 def _blueprint_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.blueprint_status accepts no arguments")
@@ -2553,6 +2599,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_candidate_alignment_status(root, arguments))
     if name == "factory.task_evidence_status":
         return _content(_task_evidence_status(root, arguments))
+    if name == "factory.senior_control_status":
+        return _content(_senior_control_status(root, arguments))
     if name == "factory.blueprint_status":
         return _content(_blueprint_status(root, arguments))
     if name == "factory.update_status":

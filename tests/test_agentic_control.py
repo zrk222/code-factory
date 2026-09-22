@@ -41,6 +41,9 @@ from factoryline.agentic_control import (
     create_task_evidence,
     verify_task_evidence,
     complete_task_with_evidence,
+    SENIOR_CONTROL_SLICES,
+    build_senior_control_bundle,
+    verify_senior_control_bundle,
     create_orchestrator_plan,
     verify_orchestrator_plan,
 )
@@ -240,6 +243,27 @@ def test_task_evidence_binds_verifier_and_controls_completion() -> None:
         complete_task_with_evidence(verifying, failed)
 
 
+def test_senior_control_bundle_requires_all_six_slices() -> None:
+    slices = {
+        name: {"status": "PASSED", "evidence_digest": SHA, "source": f"engine:{name}"}
+        for name in SENIOR_CONTROL_SLICES
+    }
+    bundle = build_senior_control_bundle(SHA, slices)
+    assert bundle["readiness"] == "READY_FOR_HUMAN_REVIEW"
+    assert bundle["blocking_slices"] == []
+    assert verify_senior_control_bundle(bundle)["bundle_sha256"] == bundle["bundle_sha256"]
+
+    blocked = dict(slices)
+    blocked["policy_simulation"] = {
+        "status": "BLOCKED", "evidence_digest": None, "source": "policy-engine",
+    }
+    blocked_bundle = build_senior_control_bundle(SHA, blocked)
+    assert blocked_bundle["readiness"] == "BLOCKED"
+    assert blocked_bundle["blocking_slices"] == ["policy_simulation"]
+    with pytest.raises(AgenticControlError, match="six"):
+        build_senior_control_bundle(SHA, {name: slices[name] for name in SENIOR_CONTROL_SLICES[:-1]})
+
+
 def test_typed_handoff_is_hash_bound_and_secret_free() -> None:
     packet = create_typed_handoff(
         "release-1",
@@ -401,7 +425,7 @@ def test_sandbox_boundary_is_read_only_and_pinned(tmp_path) -> None:
 
 def test_projection_exposes_all_six_controls_without_authority(tmp_path) -> None:
     projection = agentic_control_projection(tmp_path)
-    assert len(projection["features"]) == 14
+    assert len(projection["features"]) == 15
     assert all(value is False for value in projection["authority"].values())
 
 

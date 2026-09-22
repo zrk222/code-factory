@@ -116,6 +116,14 @@ when that receipt is intact, belongs to the card, and reports `passed`; the
 `factory.task_evidence_status` MCP fact exposes eligibility without transitioning
 the task.
 
+The six senior-engineering controls are unified by
+`build_senior_control_bundle`: cross-lane proof admission, append-only
+transition lineage, independent challenge evidence, multi-repository intent
+coordination, evidence retention/export, and policy simulation. Each slice must
+provide its own receipt digest and source; missing or non-passed slices block
+the bundle. `factory.senior_control_status` verifies the bundle read-only and
+never converts readiness into approval or release authority.
+
 ## Complete system topology
 
 ```mermaid

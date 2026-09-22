@@ -94,6 +94,11 @@ known, what is missing, and the one fact-derived next action.
 - **Makes completion evidence accountable.** A task-evidence receipt binds the
   verifier, candidate digest, intent, workflow, evidence kind, and outcome;
   only a passed receipt belonging to that task can satisfy completion.
+- **Unifies the six senior controls.** A senior-control bundle requires
+  cross-lane admission, transition lineage, independent challenge evidence,
+  multi-repository coordination, retention/export evidence, and policy
+  simulation. Any missing or blocked slice keeps the bundle blocked; the MCP
+  status is read-only and remains human-reviewed.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.
