@@ -70,6 +70,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.operations_control_status",
         "factory.agentic_control_status",
         "factory.task_board_status",
+        "factory.task_handoff_status",
         "factory.blueprint_status",
         "factory.update_status",
         "factory.lifecycle_status",
@@ -189,6 +190,17 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     assert board["marker"] == "TASK_BOARD_MCP_READ_ONLY"
     assert board["status"]["task_count"] == 0
     assert board["status"]["dispatcher"] == {"poll_interval_seconds": 60, "started": False}
+
+    handoff = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 2911,
+            "method": "tools/call",
+            "params": {"name": "factory.task_handoff_status", "arguments": {}},
+        },
+        tmp_path,
+    )
+    assert handoff["error"]["data"]["marker"] == "TASK_HANDOFF_INPUT_REFUSED"
 
     blueprint = _content(
         dispatch(

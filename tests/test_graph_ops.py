@@ -56,7 +56,7 @@ def test_graph_ops_links_local_product_mission_and_valid_completion_exactly(
     assert "GRAPH_OPS_SLICE_LINKS_EXACT" in first["markers"]
     assert "GRAPH_OPS_MISSION_EVIDENCE_LINKED" in first["markers"]
     assert "GRAPH_OPS_AGENTIC_CONTROL_READ_ONLY" in first["markers"]
-    assert first["agentic_control"]["feature_count"] == 11
+    assert first["agentic_control"]["feature_count"] == 12
     assert first["facts"]["agentic_control_available"] is True
     kinds = {node["kind"] for node in first["nodes"]}
     assert {

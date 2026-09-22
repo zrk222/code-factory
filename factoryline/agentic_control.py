@@ -32,6 +32,7 @@ TASK_CARD_SCHEMA = "factory.task-card.v1"
 ORCHESTRATOR_PLAN_SCHEMA = "factory.orchestrator-plan.v1"
 MODEL_ROUTE_SCHEMA = "factory.model-route.v1"
 TASK_BOARD_SCHEMA = "factory.task-board.v1"
+TASK_HANDOFF_BINDING_SCHEMA = "factory.task-handoff-binding.v1"
 _ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40,64}$")
@@ -493,6 +494,77 @@ def verify_task_board(board: dict[str, Any]) -> dict[str, Any]:
     if board["dispatcher"] != {"poll_interval_seconds": 60, "started": False}:
         raise AgenticControlError("E_TASK_BOARD_SCHEMA", "dispatcher metadata is invalid")
     return dict(board)
+
+
+def bind_task_card_handoff(
+    card: dict[str, Any], handoff: dict[str, Any]
+) -> dict[str, Any]:
+    """Bind an agent handoff to the task's original intent and path scope."""
+    verified_card = verify_task_card(card)
+    verified_handoff = verify_typed_handoff(handoff)
+    if verified_card["workflow_id"] != verified_handoff["workflow_id"]:
+        raise AgenticControlError(
+            "E_TASK_HANDOFF_WORKFLOW", "task card and handoff workflows differ"
+        )
+    if verified_card["intent_digest"] != verified_handoff["intent_digest"]:
+        raise AgenticControlError(
+            "E_TASK_HANDOFF_INTENT", "handoff intent does not match the task card"
+        )
+    card_paths = set(verified_card["allowed_paths"])
+    handoff_paths = set(verified_handoff["allowed_paths"])
+    if not handoff_paths.issubset(card_paths):
+        raise AgenticControlError(
+            "E_TASK_HANDOFF_SCOPE", "handoff paths exceed the task card scope"
+        )
+    core = {
+        "schema": TASK_HANDOFF_BINDING_SCHEMA,
+        "task_id": verified_card["task_id"],
+        "task_sha256": verified_card["task_sha256"],
+        "handoff_id": verified_handoff["handoff_id"],
+        "handoff_sha256": verified_handoff["handoff_sha256"],
+        "workflow_id": verified_card["workflow_id"],
+        "intent_digest": verified_card["intent_digest"],
+        "allowed_paths": sorted(handoff_paths),
+        "scope_verdict": "WITHIN_TASK_SCOPE",
+        "authority": dict(_AUTHORITY),
+    }
+    digest = _sha(core)
+    return {
+        **core,
+        "binding_sha256": digest,
+        "marker": "TASK_HANDOFF_INTENT_BOUND",
+        "claim_boundary": "Intent and path lineage only; no source mutation, execution, approval, merge, or release action ran.",
+    }
+
+
+def verify_task_card_handoff(binding: dict[str, Any]) -> dict[str, Any]:
+    """Verify the task/handoff binding and preserve its zero-authority boundary."""
+    if not isinstance(binding, dict) or binding.get("schema") != TASK_HANDOFF_BINDING_SCHEMA:
+        raise AgenticControlError(
+            "E_TASK_HANDOFF_SCHEMA", f"binding must use {TASK_HANDOFF_BINDING_SCHEMA}"
+        )
+    required = {
+        "schema", "task_id", "task_sha256", "handoff_id", "handoff_sha256",
+        "workflow_id", "intent_digest", "allowed_paths", "scope_verdict", "authority",
+    }
+    if set(binding) != required | {"binding_sha256", "marker", "claim_boundary"}:
+        raise AgenticControlError("E_TASK_HANDOFF_SCHEMA", "binding fields are not exact")
+    core = {key: binding[key] for key in required}
+    if binding.get("binding_sha256") != _sha(core):
+        raise AgenticControlError("E_TASK_HANDOFF_TAMPERED", "binding digest does not match contents")
+    if binding.get("marker") != "TASK_HANDOFF_INTENT_BOUND" or binding.get("scope_verdict") != "WITHIN_TASK_SCOPE":
+        raise AgenticControlError("E_TASK_HANDOFF_SCHEMA", "binding marker or scope verdict is invalid")
+    _id(binding["task_id"], "task_id")
+    _id(binding["workflow_id"], "workflow_id")
+    _digest(binding["task_sha256"], "task_sha256")
+    _digest(binding["handoff_sha256"], "handoff_sha256")
+    _digest(binding["intent_digest"], "intent_digest")
+    if not isinstance(binding["allowed_paths"], list):
+        raise AgenticControlError("E_TASK_HANDOFF_SCHEMA", "allowed_paths must be a list")
+    _relative_paths(binding["allowed_paths"], "allowed_paths")
+    if not isinstance(binding["authority"], dict) or any(value is not False for value in binding["authority"].values()):
+        raise AgenticControlError("E_TASK_HANDOFF_AUTHORITY", "binding cannot grant authority")
+    return dict(binding)
 
 
 def create_orchestrator_plan(
@@ -1310,6 +1382,11 @@ def agentic_control_projection(root: Path) -> dict[str, Any]:
                 "lanes": ["triage", "ready", "running", "review", "blocked", "done"],
                 "dispatcher": "projection_only; 60-second cadence metadata",
                 "authority": "read_only; no dispatch or lease grant",
+            },
+            "intent_bound_handoffs": {
+                "status": "available",
+                "schema": TASK_HANDOFF_BINDING_SCHEMA,
+                "authority": "lineage_only; task intent and path scope must match",
             },
             "orchestrator_request_routing": {
                 "status": "available",

@@ -80,6 +80,10 @@ known, what is missing, and the one fact-derived next action.
   into triage, ready, running, review, blocked, and done lanes. It surfaces the
   next fact-derived action and a 60-second cadence hint without dispatching a
   worker or granting lease, merge, or release authority.
+- **Keeps handoffs faithful to the original request.** The task/handoff binding
+  checks the workflow, intent digest, and allowed-path subset before an agent's
+  work is considered connected to a task. `factory.task_handoff_status` exposes
+  the receipt read-only and rejects scope or intent drift before review.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.

@@ -68,7 +68,11 @@ from .agent_proof_bridge import (
 )
 from .proof_worklog import proof_worklog_projection
 from .operations_control import operations_control_projection
-from .agentic_control import agentic_control_projection, project_task_board
+from .agentic_control import (
+    agentic_control_projection,
+    bind_task_card_handoff,
+    project_task_board,
+)
 from .blueprint import blueprint_projection
 from .update_notifier import UpdateNotifierError, check_for_update, read_manifest
 from .lifecycle_ledger import lifecycle_projection
@@ -559,6 +563,20 @@ def _tool_definitions() -> list[dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {"paths": {"type": "array", "items": {"type": "string"}}},
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.task_handoff_status",
+            "description": "Verify that a local typed handoff preserves the task card's original intent digest and allowed-path scope. Read only; no execution, mutation, approval, merge, or release action.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_card_path": {"type": "string"},
+                    "handoff_path": {"type": "string"},
+                },
+                "required": ["task_card_path", "handoff_path"],
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -1800,6 +1818,46 @@ def _task_board_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _task_handoff_status(root: Path, arguments: object) -> dict[str, object]:
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) != {"task_card_path", "handoff_path"}
+        or not all(isinstance(arguments[key], str) and arguments[key].strip() for key in arguments)
+    ):
+        raise McpError(
+            "factory.task_handoff_status requires task_card_path and handoff_path",
+            "TASK_HANDOFF_INPUT_REFUSED",
+        )
+    base = root.resolve()
+    values: list[dict[str, object]] = []
+    for key in ("task_card_path", "handoff_path"):
+        path = Path(str(arguments[key]))
+        if not path.is_absolute():
+            path = base / path
+        path = path.resolve()
+        if path != base and base not in path.parents:
+            raise McpError("receipt paths must remain inside the workspace", "TASK_HANDOFF_PATH_REFUSED")
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise McpError(f"cannot read {key}: {exc}", "TASK_HANDOFF_READ_REFUSED") from exc
+        if not isinstance(value, dict):
+            raise McpError(f"{key} must contain an object", "TASK_HANDOFF_INPUT_REFUSED")
+        values.append(value)
+    try:
+        binding = bind_task_card_handoff(values[0], values[1])
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            raise McpError(str(exc), getattr(exc, "code")) from exc
+        raise McpError(str(exc), "TASK_HANDOFF_BINDING_REFUSED") from exc
+    return {
+        "marker": "TASK_HANDOFF_MCP_READ_ONLY",
+        "action_summary": "Compared the task card and typed handoff intent and path scope; no code or workflow action ran.",
+        "status": binding,
+        "scope": "Read-only local lineage proof. No model, execution, repair, approval, branch, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
 def _blueprint_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.blueprint_status accepts no arguments")
@@ -2372,6 +2430,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_agentic_control_status(root, arguments))
     if name == "factory.task_board_status":
         return _content(_task_board_status(root, arguments))
+    if name == "factory.task_handoff_status":
+        return _content(_task_handoff_status(root, arguments))
     if name == "factory.blueprint_status":
         return _content(_blueprint_status(root, arguments))
     if name == "factory.update_status":

@@ -34,6 +34,8 @@ from factoryline.agentic_control import (
     verify_task_card,
     project_task_board,
     verify_task_board,
+    bind_task_card_handoff,
+    verify_task_card_handoff,
     create_orchestrator_plan,
     verify_orchestrator_plan,
 )
@@ -163,6 +165,31 @@ def test_task_board_projects_dependencies_and_rejects_cycles() -> None:
     cycle_b = create_task_card("cycle-b", **base, dependencies=("cycle-a",))
     with pytest.raises(AgenticControlError, match="cycle"):
         project_task_board([cycle_a, cycle_b])
+
+
+def test_task_handoff_binding_preserves_original_intent_and_scope() -> None:
+    card = create_task_card(
+        "task-bind", "wf-bind", "builder", SHA, SHA,
+        allowed_paths=["src/", "tests/"], dependencies=(),
+        stop_condition="Stop at verification.",
+        next_action="Run the declared checks.", created_at="2026-09-21T00:00:00Z",
+    )
+    handoff = create_typed_handoff(
+        "wf-bind", "build", "planner", "builder", SHA, SHA,
+        allowed_paths=["src/"], next_action="Build only the approved scope.",
+        created_at="2026-09-21T00:00:00Z",
+    )
+    binding = bind_task_card_handoff(card, handoff)
+    assert binding["scope_verdict"] == "WITHIN_TASK_SCOPE"
+    assert verify_task_card_handoff(binding)["binding_sha256"] == binding["binding_sha256"]
+
+    wrong_intent = create_typed_handoff(
+        "wf-bind", "build", "planner", "builder", "b" * 64, SHA,
+        allowed_paths=["src/"], next_action="Build only the approved scope.",
+        created_at="2026-09-21T00:00:00Z",
+    )
+    with pytest.raises(AgenticControlError, match="intent"):
+        bind_task_card_handoff(card, wrong_intent)
 
 
 def test_typed_handoff_is_hash_bound_and_secret_free() -> None:
@@ -326,7 +353,7 @@ def test_sandbox_boundary_is_read_only_and_pinned(tmp_path) -> None:
 
 def test_projection_exposes_all_six_controls_without_authority(tmp_path) -> None:
     projection = agentic_control_projection(tmp_path)
-    assert len(projection["features"]) == 11
+    assert len(projection["features"]) == 12
     assert all(value is False for value in projection["authority"].values())
 
 

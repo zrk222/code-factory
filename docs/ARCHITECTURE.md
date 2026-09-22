@@ -93,6 +93,12 @@ fact-derived next actions, while its 60-second dispatcher value is metadata
 only: no lease, dispatch, model, branch, merge, or release authority is
 granted.
 
+The task-to-agent handoff boundary is explicit as well. `bind_task_card_handoff`
+requires the handoff workflow and original intent digest to match the task
+card, and requires the handoff paths to be a subset of the task scope. The
+`factory.task_handoff_status` MCP fact returns a hash-bound lineage receipt and
+fails closed on intent or scope drift; it does not execute the handoff.
+
 ## Complete system topology
 
 ```mermaid
