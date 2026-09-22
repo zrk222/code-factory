@@ -5,6 +5,7 @@ import pytest
 from factoryline.blueprint import (
     BlueprintError,
     access_profile,
+    build_artifact_chain,
     blueprint_projection,
     librarian_promotion,
     recall_observations,
@@ -12,6 +13,7 @@ from factoryline.blueprint import (
     retain_observation,
     signal_intent_proposal,
     team_plan,
+    verify_artifact_chain,
 )
 from factoryline.signal_loop import capture_signal
 
@@ -128,3 +130,39 @@ def test_projection_counts_only_hash_valid_receipts(tmp_path) -> None:
     projection = blueprint_projection(tmp_path)
     assert projection["counts"]["factory.blueprint-memory.v1"] == 1
     assert projection["invalid_count"] == 1
+
+
+def test_artifact_chain_binds_intent_spec_and_plan_and_detects_drift() -> None:
+    chain = build_artifact_chain(
+        intent="# Intent\nShip a safe checkout.",
+        spec="# Spec\nThe checkout must be idempotent.",
+        plan="# Plan\nRun the six audit lanes.",
+        author="product-owner",
+        project="checkout",
+        intent_status="approved",
+        files_changed=["src/checkout.py"],
+        work_order=["implement", "audit", "review"],
+        risks=["duplicate charge"],
+        proof_of_completion=["pytest tests/test_checkout.py", "factory proof-review"],
+    )
+    verified = verify_artifact_chain(chain)
+    assert verified["marker"] == "BLUEPRINT_ARTIFACT_CHAIN_VERIFIED"
+    assert verified["lineage"] == "intent -> spec -> plan"
+    assert all(value is False for value in verified["authority"].values())
+    chain["documents"]["plan"]["text"] = "changed"
+    with pytest.raises(BlueprintError, match="TAMPERED|drift"):
+        verify_artifact_chain(chain)
+
+
+def test_artifact_chain_requires_proof_contract() -> None:
+    with pytest.raises(BlueprintError, match="required"):
+        build_artifact_chain(
+            intent="intent",
+            spec="spec",
+            plan="plan",
+            author="owner",
+            project="demo",
+            files_changed=[],
+            work_order=["build"],
+            proof_of_completion=[],
+        )

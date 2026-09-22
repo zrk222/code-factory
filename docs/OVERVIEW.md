@@ -67,6 +67,14 @@ known, what is missing, and the one fact-derived next action.
   explicit access profiles. They are inspectable and hash-bound, but do not
   dispatch workers, call models, enforce a sandbox, or grant release authority.
   Use `factory blueprint status` for the local projection.
+- **Binds the planning chain.** `factory blueprint artifact-chain build` seals
+  Intent (why), Spec (what), and Plan (how) together with changed files, work
+  order, risks, and proof commands. `verify` detects document drift without
+  executing any command or converting the receipt into approval.
+- **Keeps users informed without hidden updater authority.** The local release
+  manifest powers `factory update` and the `factory.update_status` MCP fact;
+  CF can show an `UPDATE_AVAILABLE` notice inside an IDE/client while leaving
+  download, install, restart, and provider publication explicitly human-owned.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.

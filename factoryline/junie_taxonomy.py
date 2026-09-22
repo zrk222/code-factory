@@ -66,6 +66,7 @@ _STAGES: tuple[dict[str, object], ...] = (
             "factory.junie_taxonomy",
             "factory.junie_contribution",
             "factory.blueprint_status",
+            "factory.update_status",
             "factory.mission_control_status",
             "factory.developer_memory",
             "factory.list_receipts",

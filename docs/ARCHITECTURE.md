@@ -72,6 +72,19 @@ runtime isolation. `factory blueprint status` and the read-only
 These contracts add deterministic inspectability without pretending that an
 external model, provider, sandbox, or orchestration runtime ran.
 
+The same boundary now supports an explicit artifact chain: `Intent` captures
+the why, `Spec` the what, and `Plan` the how. `factory blueprint artifact-chain
+build` seals the three documents, changed-file scope, work order, risks, and
+proof-of-completion commands into one lineage receipt. `verify` recomputes the
+document and chain hashes and fails on drift; it never runs the listed commands
+or grants execution or release authority.
+
+`factory update --manifest .factory/update-manifest.json` and the read-only
+`factory.update_status` MCP tool provide the in-product update notice. The
+manifest is local and explicit: CF compares versions and shows a deterministic
+`UPDATE_AVAILABLE` or `UP_TO_DATE` result, but never downloads, installs,
+restarts, contacts a provider, or publishes on a user's behalf.
+
 ## Complete system topology
 
 ```mermaid

@@ -70,6 +70,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.operations_control_status",
         "factory.agentic_control_status",
         "factory.blueprint_status",
+        "factory.update_status",
         "factory.lifecycle_status",
         "factory.repair_loop_status",
         "factory.mission_control_status",
@@ -186,6 +187,20 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     )
     assert blueprint["marker"] == "BLUEPRINT_MCP_READ_ONLY"
     assert blueprint["status"]["schema"] == "factory.ai-native-blueprint.v1"
+
+    update = dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 293,
+                "method": "tools/call",
+                "params": {
+                    "name": "factory.update_status",
+                    "arguments": {"manifest_path": "missing-update-manifest.json"},
+                },
+            },
+            tmp_path,
+        )
+    assert update["error"]["data"]["marker"] == "UPDATE_CHECK_REFUSED"
 
     evidence_path = tmp_path / "junie-evidence.json"
     evidence_path.write_text('{"local": true}\n', encoding="utf-8")

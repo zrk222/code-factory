@@ -70,6 +70,7 @@ from .proof_worklog import proof_worklog_projection
 from .operations_control import operations_control_projection
 from .agentic_control import agentic_control_projection
 from .blueprint import blueprint_projection
+from .update_notifier import UpdateNotifierError, check_for_update, read_manifest
 from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
 from .mission_control_status import mission_control_status
@@ -556,6 +557,16 @@ def _tool_definitions() -> list[dict[str, object]]:
             "name": "factory.blueprint_status",
             "description": "Read local AI-native blueprint receipts for provenance-aware memory, librarian stages, signal-to-intent proposals, access declarations, and typed team plans. It never calls a model, provider, runtime, task dispatcher, or release authority.",
             "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.update_status",
+            "description": "Compare the installed CF version with a local release manifest and return a read-only in-product notice. No provider, download, installation, restart, or release action occurs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"manifest_path": {"type": "string"}, "installed_version": {"type": "string"}, "channel": {"type": "string"}},
+                "additionalProperties": False,
+            },
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
@@ -1748,6 +1759,25 @@ def _blueprint_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _update_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"manifest_path", "installed_version", "channel"}:
+        raise McpError("factory.update_status accepts only manifest_path, installed_version, and channel")
+    manifest_path = Path(arguments.get("manifest_path", ".factory/update-manifest.json"))
+    if not manifest_path.is_absolute():
+        manifest_path = root / manifest_path
+    try:
+        from . import __version__
+
+        notice = check_for_update(
+            str(arguments.get("installed_version", __version__)),
+            read_manifest(manifest_path),
+            channel=str(arguments.get("channel", "stable")),
+        )
+    except (UpdateNotifierError, OSError, ValueError) as exc:
+        raise McpError(str(exc), "UPDATE_CHECK_REFUSED") from exc
+    return {"marker": "UPDATE_STATUS_MCP_READ_ONLY", "action_summary": "Compared the installed version with local release metadata; no update action ran.", "notice": notice, "scope": "Read-only local notice; no provider, download, installation, restart, credential, or release action."}
+
+
 def _lifecycle_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.lifecycle_status accepts no arguments")
@@ -2290,6 +2320,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_agentic_control_status(root, arguments))
     if name == "factory.blueprint_status":
         return _content(_blueprint_status(root, arguments))
+    if name == "factory.update_status":
+        return _content(_update_status(root, arguments))
     if name == "factory.lifecycle_status":
         return _content(_lifecycle_status(root, arguments))
     if name == "factory.repair_loop_status":

@@ -22,12 +22,14 @@ LIBRARIAN_SCHEMA = "factory.blueprint-librarian.v1"
 INTENT_SCHEMA = "factory.blueprint-intent-proposal.v1"
 ACCESS_SCHEMA = "factory.blueprint-access-profile.v1"
 TEAM_SCHEMA = "factory.blueprint-team-plan.v1"
+ARTIFACT_SCHEMA = "factory.blueprint-artifact-chain.v1"
 MAX_OBSERVATIONS = 500
 MAX_TASKS = 100
 MODEL_TIERS = {"lightweight", "workhorse", "frontier"}
 MEMORY_CLASSES = {"fact", "unknown", "uncertain"}
 LIBRARIAN_STAGES = {"bronze", "silver", "gold", "contested"}
 ACCESS_PROFILES = {"read_write", "read_only", "masked"}
+ARTIFACT_STATUSES = {"draft", "approved", "processed"}
 
 
 class BlueprintError(ValueError):
@@ -57,6 +59,15 @@ def _digest(value: object, field: str) -> str:
     if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
         raise BlueprintError("E_BLUEPRINT_DIGEST", f"{field} must be a lowercase SHA-256 digest")
     return value
+
+
+def _document(value: object, field: str, maximum: int = 20000) -> str:
+    """Validate bounded UTF-8 document text while allowing Markdown newlines."""
+    if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+        raise BlueprintError("E_BLUEPRINT_SCHEMA", f"{field} must be bounded document text")
+    if any(ord(char) < 9 or (13 < ord(char) < 32) for char in value):
+        raise BlueprintError("E_BLUEPRINT_SCHEMA", f"{field} contains unsupported control characters")
+    return value.strip()
 
 
 def _timestamp(value: object, field: str = "observed_at") -> str:
@@ -332,6 +343,67 @@ def team_plan(
     return _seal(core, "plan_sha256")
 
 
+def build_artifact_chain(
+    *,
+    intent: str,
+    spec: str,
+    plan: str,
+    author: str,
+    project: str,
+    intent_status: str = "draft",
+    files_changed: Iterable[object] = (),
+    work_order: Iterable[object] = (),
+    risks: Iterable[object] = (),
+    proof_of_completion: Iterable[object] = (),
+) -> dict[str, Any]:
+    """Bind Intent, Spec, and Plan text into one drift-detectable chain."""
+    if intent_status not in ARTIFACT_STATUSES:
+        raise BlueprintError("E_BLUEPRINT_STATUS", "intent_status must be draft, approved, or processed")
+    documents = {
+        "intent": _document(intent, "intent"),
+        "spec": _document(spec, "spec"),
+        "plan": _document(plan, "plan"),
+    }
+    author = _text(author, "author", 120)
+    project = _text(project, "project", 120)
+    changed = _list(files_changed, "files_changed", 200)
+    order = _list(work_order, "work_order", 200)
+    risk_rows = _list(risks, "risks", 100)
+    proof = _list(proof_of_completion, "proof_of_completion", 100)
+    if not changed or not order or not proof:
+        raise BlueprintError("E_BLUEPRINT_CHAIN_INCOMPLETE", "files_changed, work_order, and proof_of_completion are required")
+    core = {
+        "schema": ARTIFACT_SCHEMA,
+        "project": project,
+        "author": author,
+        "intent_status": intent_status,
+        "documents": {name: {"text": value, "sha256": _sha(value)} for name, value in documents.items()},
+        "plan_contract": {
+            "files_changed": changed,
+            "work_order": order,
+            "risks": risk_rows,
+            "proof_of_completion": proof,
+        },
+        "authority": {"execute": False, "approve": False, "merge": False, "publish": False},
+        "claim_boundary": "Intent-to-plan lineage only; no code, test, branch, task, approval, or release action ran.",
+        "lineage": "intent -> spec -> plan",
+    }
+    sealed = _seal(core, "chain_sha256")
+    return sealed
+
+
+def verify_artifact_chain(value: dict[str, Any]) -> dict[str, Any]:
+    """Verify chain and document hashes without interpreting or executing them."""
+    _verify(value, ARTIFACT_SCHEMA, "chain_sha256")
+    documents = value.get("documents")
+    if not isinstance(documents, dict) or set(documents) != {"intent", "spec", "plan"}:
+        raise BlueprintError("E_BLUEPRINT_CHAIN_SCHEMA", "documents must contain intent, spec, and plan")
+    drifted = [name for name, item in documents.items() if not isinstance(item, dict) or item.get("sha256") != _sha(item.get("text"))]
+    if drifted:
+        raise BlueprintError("E_BLUEPRINT_CHAIN_DRIFT", f"document hash drift: {', '.join(sorted(drifted))}")
+    return {"schema": ARTIFACT_SCHEMA, "marker": "BLUEPRINT_ARTIFACT_CHAIN_VERIFIED", "chain_sha256": value["chain_sha256"], "lineage": value.get("lineage"), "drifted": [], "authority": value.get("authority", {}), "claim_boundary": value.get("claim_boundary")}
+
+
 def blueprint_projection(root: Path) -> dict[str, Any]:
     """Summarize valid blueprint receipts under the local factory directory."""
     directory = Path(root).resolve() / ".factory" / "blueprint"
@@ -342,7 +414,7 @@ def blueprint_projection(root: Path) -> dict[str, Any]:
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
                 schema = value.get("schema")
-                field = {MEMORY_SCHEMA: "memory_sha256", LIBRARIAN_SCHEMA: "librarian_sha256", INTENT_SCHEMA: "intent_sha256", ACCESS_SCHEMA: "access_sha256", TEAM_SCHEMA: "plan_sha256"}.get(schema)
+                field = {MEMORY_SCHEMA: "memory_sha256", LIBRARIAN_SCHEMA: "librarian_sha256", INTENT_SCHEMA: "intent_sha256", ACCESS_SCHEMA: "access_sha256", TEAM_SCHEMA: "plan_sha256", ARTIFACT_SCHEMA: "chain_sha256"}.get(schema)
                 if not field:
                     raise BlueprintError("E_BLUEPRINT_SCHEMA", "unknown blueprint schema")
                 _verify(value, schema, field)

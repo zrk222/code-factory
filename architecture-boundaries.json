@@ -21,7 +21,8 @@
       "factoryline/agui.py",
       "factoryline/a2a*.py",
       "factoryline/agent_*.py",
-      "factoryline/blueprint.py"
+      "factoryline/blueprint.py",
+      "factoryline/update_notifier.py"
     ],
     "cli_surfaces": [
       "factoryline/cli.py",

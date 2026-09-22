@@ -52,6 +52,24 @@ def add_parser(sub: Any) -> None:
     team.add_argument("payload")
     team.add_argument("--out", required=True)
     team.add_argument("--json", action="store_true")
+    chain = commands.add_parser("artifact-chain", help="bind Intent, Spec, and Plan documents")
+    chain_sub = chain.add_subparsers(required=True, dest="artifact_cmd")
+    build = chain_sub.add_parser("build", help="seal an Intent-to-Plan lineage receipt")
+    build.add_argument("--intent", required=True)
+    build.add_argument("--spec", required=True)
+    build.add_argument("--plan", required=True)
+    build.add_argument("--author", required=True)
+    build.add_argument("--project", required=True)
+    build.add_argument("--intent-status", choices=["draft", "approved", "processed"], default="draft")
+    build.add_argument("--files-changed", nargs="+", required=True)
+    build.add_argument("--work-order", nargs="+", required=True)
+    build.add_argument("--risks", nargs="*", default=[])
+    build.add_argument("--proof-of-completion", nargs="+", required=True)
+    build.add_argument("--out", required=True)
+    build.add_argument("--json", action="store_true")
+    verify = chain_sub.add_parser("verify", help="verify an Intent-to-Plan lineage receipt")
+    verify.add_argument("receipt")
+    verify.add_argument("--json", action="store_true")
 
 
 def _read(path: str) -> dict[str, Any]:
@@ -65,7 +83,7 @@ def _write(path: str, value: dict[str, Any]) -> dict[str, Any]:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return {"path": str(destination), "sha256": value.get("memory_sha256") or value.get("librarian_sha256") or value.get("intent_sha256") or value.get("access_sha256") or value.get("plan_sha256")}
+    return {"path": str(destination), "sha256": value.get("memory_sha256") or value.get("librarian_sha256") or value.get("intent_sha256") or value.get("access_sha256") or value.get("plan_sha256") or value.get("chain_sha256")}
 
 
 def run(args: Any) -> int:
@@ -73,6 +91,7 @@ def run(args: Any) -> int:
     from .blueprint import (
         BlueprintError,
         access_profile,
+        build_artifact_chain,
         blueprint_projection,
         librarian_promotion,
         recall_observations,
@@ -80,6 +99,7 @@ def run(args: Any) -> int:
         retain_observation,
         signal_intent_proposal,
         team_plan,
+        verify_artifact_chain,
     )
 
     try:
@@ -108,6 +128,23 @@ def run(args: Any) -> int:
         elif args.blueprint_cmd == "access":
             result = access_profile(**_read(args.payload))
             result["artifact"] = _write(args.out, result)
+        elif args.blueprint_cmd == "artifact-chain":
+            if args.artifact_cmd == "build":
+                result = build_artifact_chain(
+                    intent=Path(args.intent).read_text(encoding="utf-8"),
+                    spec=Path(args.spec).read_text(encoding="utf-8"),
+                    plan=Path(args.plan).read_text(encoding="utf-8"),
+                    author=args.author,
+                    project=args.project,
+                    intent_status=args.intent_status,
+                    files_changed=args.files_changed,
+                    work_order=args.work_order,
+                    risks=args.risks,
+                    proof_of_completion=args.proof_of_completion,
+                )
+                result["artifact"] = _write(args.out, result)
+            else:
+                result = verify_artifact_chain(_read(args.receipt))
         else:
             result = team_plan(**_read(args.payload))
             result["artifact"] = _write(args.out, result)
