@@ -38,6 +38,9 @@ from factoryline.agentic_control import (
     verify_task_card_handoff,
     align_candidate_to_task,
     verify_candidate_alignment,
+    create_task_evidence,
+    verify_task_evidence,
+    complete_task_with_evidence,
     create_orchestrator_plan,
     verify_orchestrator_plan,
 )
@@ -215,6 +218,28 @@ def test_candidate_alignment_rejects_scope_drift() -> None:
         align_candidate_to_task(card, handoff, SHA, ["docs/README.md"])
 
 
+def test_task_evidence_binds_verifier_and_controls_completion() -> None:
+    card = create_task_card(
+        "task-evidence", "wf-evidence", "builder", SHA, SHA,
+        allowed_paths=["src/"], dependencies=(),
+        stop_condition="Stop at verification.",
+        next_action="Run the declared checks.", created_at="2026-09-21T00:00:00Z",
+    )
+    leased = transition_task_card(card, "leased", lease_id="lease-evidence", lease_expires_at="2026-09-21T01:00:00Z")
+    running = transition_task_card(leased, "running")
+    verifying = transition_task_card(running, "verifying")
+    evidence = create_task_evidence(
+        verifying, SHA, SHA, "pytest", "independent-verifier", source_paths=["tests/"],
+    )
+    assert verify_task_evidence(evidence)["outcome"] == "passed"
+    assert complete_task_with_evidence(verifying, evidence)["state"] == "completed"
+    failed = create_task_evidence(
+        verifying, SHA, SHA, "pytest", "independent-verifier", outcome="failed",
+    )
+    with pytest.raises(AgenticControlError, match="failed evidence"):
+        complete_task_with_evidence(verifying, failed)
+
+
 def test_typed_handoff_is_hash_bound_and_secret_free() -> None:
     packet = create_typed_handoff(
         "release-1",
@@ -376,7 +401,7 @@ def test_sandbox_boundary_is_read_only_and_pinned(tmp_path) -> None:
 
 def test_projection_exposes_all_six_controls_without_authority(tmp_path) -> None:
     projection = agentic_control_projection(tmp_path)
-    assert len(projection["features"]) == 13
+    assert len(projection["features"]) == 14
     assert all(value is False for value in projection["authority"].values())
 
 

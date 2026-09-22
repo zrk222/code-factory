@@ -109,6 +109,13 @@ Task completion is evidence-gated: `transition_task_card(..., "completed")`
 and `verify_task_card` both require a hash-bound `evidence_digest`. A green
 state without evidence fails closed as `E_TASK_EVIDENCE`.
 
+The evidence digest is now provenance-bound. `create_task_evidence` records the
+task, workflow, original intent, candidate digest, evidence kind, verifier, and
+outcome in one receipt. `complete_task_with_evidence` only permits completion
+when that receipt is intact, belongs to the card, and reports `passed`; the
+`factory.task_evidence_status` MCP fact exposes eligibility without transitioning
+the task.
+
 ## Complete system topology
 
 ```mermaid

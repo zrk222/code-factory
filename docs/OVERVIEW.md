@@ -91,6 +91,9 @@ known, what is missing, and the one fact-derived next action.
 - **Never treats completion as proof by itself.** A task cannot enter
   `completed` unless it carries a hash-bound evidence digest; missing evidence
   fails closed before the board reports the work as done.
+- **Makes completion evidence accountable.** A task-evidence receipt binds the
+  verifier, candidate digest, intent, workflow, evidence kind, and outcome;
+  only a passed receipt belonging to that task can satisfy completion.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.

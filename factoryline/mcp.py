@@ -72,6 +72,7 @@ from .agentic_control import (
     align_candidate_to_task,
     agentic_control_projection,
     bind_task_card_handoff,
+    verify_task_evidence,
     project_task_board,
 )
 from .blueprint import blueprint_projection
@@ -594,6 +595,20 @@ def _tool_definitions() -> list[dict[str, object]]:
                     "changed_paths": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["task_card_path", "handoff_path", "candidate_hash", "changed_paths"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.task_evidence_status",
+            "description": "Verify provenance-bound task evidence and report whether it can satisfy completion. Read only; failed evidence never completes work and no execution or release action occurs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_card_path": {"type": "string"},
+                    "evidence_path": {"type": "string"},
+                },
+                "required": ["task_card_path", "evidence_path"],
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -1918,6 +1933,48 @@ def _candidate_alignment_status(root: Path, arguments: object) -> dict[str, obje
     }
 
 
+def _task_evidence_status(root: Path, arguments: object) -> dict[str, object]:
+    required = {"task_card_path", "evidence_path"}
+    if not isinstance(arguments, dict) or set(arguments) != required or not all(isinstance(arguments[key], str) and arguments[key].strip() for key in arguments):
+        raise McpError("factory.task_evidence_status requires task_card_path and evidence_path", "TASK_EVIDENCE_INPUT_REFUSED")
+    base = root.resolve()
+    values: list[dict[str, object]] = []
+    for key in ("task_card_path", "evidence_path"):
+        path = Path(str(arguments[key]))
+        if not path.is_absolute():
+            path = base / path
+        path = path.resolve()
+        if path != base and base not in path.parents:
+            raise McpError("receipt paths must remain inside the workspace", "TASK_EVIDENCE_PATH_REFUSED")
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise McpError(f"cannot read {key}: {exc}", "TASK_EVIDENCE_READ_REFUSED") from exc
+        if not isinstance(value, dict):
+            raise McpError(f"{key} must contain an object", "TASK_EVIDENCE_INPUT_REFUSED")
+        values.append(value)
+    try:
+        receipt = verify_task_evidence(values[1])
+        card = values[0]
+        eligible = (
+            receipt["outcome"] == "passed"
+            and receipt["task_id"] == card.get("task_id")
+            and receipt["task_sha256"] == card.get("task_sha256")
+            and receipt["workflow_id"] == card.get("workflow_id")
+            and receipt["intent_digest"] == card.get("intent_digest")
+        )
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            raise McpError(str(exc), getattr(exc, "code")) from exc
+        raise McpError(str(exc), "TASK_EVIDENCE_REFUSED") from exc
+    return {
+        "marker": "TASK_EVIDENCE_MCP_READ_ONLY",
+        "action_summary": "Verified task evidence provenance and completion eligibility; no task transition or execution ran.",
+        "status": {"receipt": receipt, "completion_eligible": eligible},
+        "scope": "Read-only evidence provenance. No dispatch, code execution, repair, approval, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
 def _blueprint_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.blueprint_status accepts no arguments")
@@ -2494,6 +2551,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_task_handoff_status(root, arguments))
     if name == "factory.candidate_alignment_status":
         return _content(_candidate_alignment_status(root, arguments))
+    if name == "factory.task_evidence_status":
+        return _content(_task_evidence_status(root, arguments))
     if name == "factory.blueprint_status":
         return _content(_blueprint_status(root, arguments))
     if name == "factory.update_status":

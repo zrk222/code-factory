@@ -34,6 +34,7 @@ MODEL_ROUTE_SCHEMA = "factory.model-route.v1"
 TASK_BOARD_SCHEMA = "factory.task-board.v1"
 TASK_HANDOFF_BINDING_SCHEMA = "factory.task-handoff-binding.v1"
 CANDIDATE_ALIGNMENT_SCHEMA = "factory.candidate-alignment.v1"
+TASK_EVIDENCE_SCHEMA = "factory.task-evidence.v1"
 _ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40,64}$")
@@ -648,6 +649,94 @@ def verify_candidate_alignment(receipt: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(receipt["authority"], dict) or any(value is not False for value in receipt["authority"].values()):
         raise AgenticControlError("E_CANDIDATE_AUTHORITY", "receipt cannot grant authority")
     return dict(receipt)
+
+
+def create_task_evidence(
+    card: dict[str, Any],
+    candidate_hash: str,
+    evidence_digest: str,
+    evidence_kind: str,
+    verifier_id: str,
+    *,
+    outcome: str = "passed",
+    source_paths: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Create a provenance-bound evidence receipt for one task candidate."""
+    verified_card = verify_task_card(card)
+    _digest(candidate_hash, "candidate_hash")
+    _digest(evidence_digest, "evidence_digest")
+    evidence_kind = _bounded_text(evidence_kind, "evidence_kind", 96)
+    verifier_id = _id(verifier_id, "verifier_id")
+    if outcome not in {"passed", "failed"}:
+        raise AgenticControlError("E_TASK_EVIDENCE", "outcome must be passed or failed")
+    paths = _relative_paths(source_paths, "source_paths")
+    core = {
+        "schema": TASK_EVIDENCE_SCHEMA,
+        "task_id": verified_card["task_id"],
+        "task_sha256": verified_card["task_sha256"],
+        "workflow_id": verified_card["workflow_id"],
+        "intent_digest": verified_card["intent_digest"],
+        "candidate_hash": candidate_hash,
+        "evidence_digest": evidence_digest,
+        "evidence_kind": evidence_kind,
+        "verifier_id": verifier_id,
+        "outcome": outcome,
+        "source_paths": paths,
+        "authority": dict(_AUTHORITY),
+    }
+    digest = _sha(core)
+    return {
+        **core,
+        "evidence_receipt_sha256": digest,
+        "marker": "TASK_EVIDENCE_HASH_BOUND",
+        "claim_boundary": "Evidence provenance only; no task dispatch, code execution, approval, merge, publication, or deployment action ran.",
+    }
+
+
+def verify_task_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Verify task evidence receipt integrity and its zero-authority boundary."""
+    if not isinstance(receipt, dict) or receipt.get("schema") != TASK_EVIDENCE_SCHEMA:
+        raise AgenticControlError("E_TASK_EVIDENCE_SCHEMA", f"receipt must use {TASK_EVIDENCE_SCHEMA}")
+    required = {
+        "schema", "task_id", "task_sha256", "workflow_id", "intent_digest", "candidate_hash",
+        "evidence_digest", "evidence_kind", "verifier_id", "outcome", "source_paths", "authority",
+    }
+    if set(receipt) != required | {"evidence_receipt_sha256", "marker", "claim_boundary"}:
+        raise AgenticControlError("E_TASK_EVIDENCE_SCHEMA", "receipt fields are not exact")
+    core = {key: receipt[key] for key in required}
+    if receipt.get("evidence_receipt_sha256") != _sha(core):
+        raise AgenticControlError("E_TASK_EVIDENCE_TAMPERED", "evidence receipt digest does not match contents")
+    if receipt.get("marker") != "TASK_EVIDENCE_HASH_BOUND":
+        raise AgenticControlError("E_TASK_EVIDENCE_SCHEMA", "evidence receipt marker is invalid")
+    _id(receipt["task_id"], "task_id")
+    _id(receipt["workflow_id"], "workflow_id")
+    _id(receipt["verifier_id"], "verifier_id")
+    for key in ("task_sha256", "intent_digest", "candidate_hash", "evidence_digest"):
+        _digest(receipt[key], key)
+    _bounded_text(receipt["evidence_kind"], "evidence_kind", 96)
+    if receipt["outcome"] not in {"passed", "failed"}:
+        raise AgenticControlError("E_TASK_EVIDENCE", "outcome must be passed or failed")
+    if not isinstance(receipt["source_paths"], list):
+        raise AgenticControlError("E_TASK_EVIDENCE_SCHEMA", "source_paths must be a list")
+    _relative_paths(receipt["source_paths"], "source_paths")
+    if not isinstance(receipt["authority"], dict) or any(value is not False for value in receipt["authority"].values()):
+        raise AgenticControlError("E_TASK_EVIDENCE_AUTHORITY", "evidence receipt cannot grant authority")
+    return dict(receipt)
+
+
+def complete_task_with_evidence(
+    card: dict[str, Any], evidence: dict[str, Any]
+) -> dict[str, Any]:
+    """Complete a task only when its provenance-bound evidence passed."""
+    verified_card = verify_task_card(card)
+    verified_evidence = verify_task_evidence(evidence)
+    if verified_evidence["task_id"] != verified_card["task_id"] or verified_evidence["task_sha256"] != verified_card["task_sha256"]:
+        raise AgenticControlError("E_TASK_EVIDENCE", "evidence does not belong to the task card")
+    if verified_evidence["workflow_id"] != verified_card["workflow_id"] or verified_evidence["intent_digest"] != verified_card["intent_digest"]:
+        raise AgenticControlError("E_TASK_EVIDENCE", "evidence lineage does not match the task")
+    if verified_evidence["outcome"] != "passed":
+        raise AgenticControlError("E_TASK_EVIDENCE", "failed evidence cannot complete a task")
+    return transition_task_card(verified_card, "completed", evidence_digest=verified_evidence["evidence_digest"])
 
 
 def create_orchestrator_plan(
@@ -1475,6 +1564,11 @@ def agentic_control_projection(root: Path) -> dict[str, Any]:
                 "status": "available",
                 "schema": CANDIDATE_ALIGNMENT_SCHEMA,
                 "authority": "proof_only; candidate digest and changed paths are checked",
+            },
+            "task_evidence_provenance": {
+                "status": "available",
+                "schema": TASK_EVIDENCE_SCHEMA,
+                "authority": "proof_only; verifier and outcome are receipt-bound",
             },
             "orchestrator_request_routing": {
                 "status": "available",
