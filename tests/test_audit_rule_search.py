@@ -52,18 +52,22 @@ def test_search_is_bounded_lane_filtered_and_hash_addressed():
 
 def test_bm25_and_bm25f_are_deterministic_and_explainable():
     bm25 = search_audit_rules({"query": "tenant cache isolation", "ranking": "bm25"})
-    bm25f = search_audit_rules(
-        {"query": "tenant cache isolation", "ranking": "bm25f"}
-    )
+    bm25f = search_audit_rules({"query": "tenant cache isolation", "ranking": "bm25f"})
 
     assert bm25["ranking"] == "bm25"
     assert bm25f["ranking"] == "bm25f"
-    assert bm25["rules"] == search_audit_rules(
-        {"query": "tenant cache isolation", "ranking": "bm25"}
-    )["rules"]
-    assert bm25f["rules"] == search_audit_rules(
-        {"query": "tenant cache isolation", "ranking": "bm25f"}
-    )["rules"]
+    assert (
+        bm25["rules"]
+        == search_audit_rules({"query": "tenant cache isolation", "ranking": "bm25"})[
+            "rules"
+        ]
+    )
+    assert (
+        bm25f["rules"]
+        == search_audit_rules({"query": "tenant cache isolation", "ranking": "bm25f"})[
+            "rules"
+        ]
+    )
     assert all(rule["retrievalScore"] > 0 for rule in bm25f["rules"])
     assert bm25f["jevHandoff"]["schema"] == "factory.jev-classification-input.v1"
     assert bm25f["jevHandoff"]["authority"] == "none"
@@ -139,7 +143,7 @@ def test_lexical_mode_preserves_legacy_substring_search():
 def test_search_inventory_matches_the_six_lane_source_count():
     payload = search_audit_rules({"query": "code factory", "limit": 20})
 
-    assert payload["totalMatched"] == 141
+    assert payload["totalMatched"] == 143
     assert payload["returned"] == 20
 
 

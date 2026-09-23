@@ -23,9 +23,17 @@ CF’s agent-access plane uses three deterministic routing tiers:
 explicit task, risk, latency, and token inputs; it never contacts a provider or
 grants model authority. The returned `factory.model-route.v1` receipt is
 SHA-256 bound and can be independently checked with `verify_model_route`.
-Orchestrator plans reject unknown tiers before workflow admission. This keeps
-tiered model allocation observable without turning model choice into an
-unmeasured cost, quality, or execution claim.
+Orchestrator plans reject unknown tiers before workflow admission. To detect a
+validly re-sealed route that no longer matches the current rule, use:
+
+```bash
+factory agent route-audit path/to/model-route.json --json
+```
+
+The route audit verifies the receipt, recomputes the expected tier, and emits
+a hash-bound `MATCH` or `POLICY_DRIFT` result. It does not call a model or pick
+a provider. This keeps tiered model allocation observable without turning
+model choice into an unmeasured cost, quality, or execution claim.
 
 Creator/verifier missions additionally carry an adapter attestation. The
 attestation binds the mission digest, distinct creator/verifier identities,
@@ -52,4 +60,15 @@ factory metrics --root . --json
 
 Conflicting run identities are surfaced as conflicts. Missing cost, token, or
 queue telemetry remains unknown; it is never turned into zero or a savings
-claim.
+claim. Receipt discovery reuses the local hash-bound receipt index when fresh,
+otherwise performs a bounded scan. Parsed JSON is memoized by content digest,
+so same-size/same-timestamp changes are not mistaken for a cache hit. The
+inventory reports when a source reaches its configured file bound.
+
+## Lifecycle measurements
+
+`factory metrics --root . --json` validates each CLI lifecycle receipt's
+content digest before aggregation using bounded parallel reads, and reports
+coverage, invalid-receipt counts, and observed p50/p95/max elapsed time overall
+and by top-level command family. These are local invocation measurements only;
+they are not provider latency or productivity claims.

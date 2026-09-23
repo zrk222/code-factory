@@ -17,13 +17,19 @@ def add_parser(sub: Any) -> None:
     )
     pack_sub = pack.add_subparsers(dest="pack_cmd", required=True)
     pack_sub.add_parser("list", help="list first-party packs and their trust status")
-    validate = pack_sub.add_parser("validate", help="verify structure, signature, and validator mutations")
+    validate = pack_sub.add_parser(
+        "validate", help="verify structure, signature, and validator mutations"
+    )
     validate.add_argument("path")
-    install = pack_sub.add_parser("install", help="atomically install one verified pack into a workspace")
+    install = pack_sub.add_parser(
+        "install", help="atomically install one verified pack into a workspace"
+    )
     install.add_argument("path")
     install.add_argument("--root", default=".")
     install.add_argument("--force", action="store_true")
-    compose = pack_sub.add_parser("compose", help="write a compatible, hash-bound pack composition plan")
+    compose = pack_sub.add_parser(
+        "compose", help="write a compatible, hash-bound pack composition plan"
+    )
     compose.add_argument("paths", nargs="+")
     compose.add_argument("--root", default=".")
     compose.add_argument("--name", default="default")

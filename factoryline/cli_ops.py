@@ -182,7 +182,12 @@ def run(args: Any) -> int:
             result = workspace_status(root)
         elif args.ops_cmd == "identity":
             result = provision_identity(
-                root, args.tenant, args.subject, args.role, actor=args.actor, status=args.status
+                root,
+                args.tenant,
+                args.subject,
+                args.role,
+                actor=args.actor,
+                status=args.status,
             )
         elif args.ops_cmd == "evidence":
             payload = json.loads(Path(args.payload).read_text(encoding="utf-8"))
@@ -192,7 +197,9 @@ def run(args: Any) -> int:
         elif args.ops_cmd == "export":
             result = export_evidence(root, Path(args.out))
         elif args.ops_cmd == "run":
-            command = json.loads(args.command_json) if args.command_json else args.command
+            command = (
+                json.loads(args.command_json) if args.command_json else args.command
+            )
             result = run_proof(
                 root,
                 command,
@@ -202,7 +209,9 @@ def run(args: Any) -> int:
                 allow_process_boundary=args.allow_process_boundary,
             )
         elif args.ops_cmd == "checks":
-            result = evaluate_required_checks(root, args.changed, proof_receipts=args.proof)
+            result = evaluate_required_checks(
+                root, args.changed, proof_receipts=args.proof
+            )
         elif args.ops_cmd == "outcome":
             result = record_outcome(
                 root,

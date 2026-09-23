@@ -366,11 +366,20 @@ def release_candidate_preflight(
             },
             "checks": [
                 {"id": "RELEASE_CONTRACT_VALID", "passed": False, "evidence": str(exc)},
-                {"id": "RELEASE_CADENCE_ADMISSION", "passed": False, "evidence": release_cadence.get("reason", "cadence unavailable")},
+                {
+                    "id": "RELEASE_CADENCE_ADMISSION",
+                    "passed": False,
+                    "evidence": release_cadence.get("reason", "cadence unavailable"),
+                },
             ],
             "blockers": [
                 {"code": "RELEASE_CONTRACT_INVALID", "detail": str(exc)},
-                {"code": "E_RELEASE_CADENCE_BLOCKED", "detail": release_cadence.get("reason", "release cadence unavailable")},
+                {
+                    "code": "E_RELEASE_CADENCE_BLOCKED",
+                    "detail": release_cadence.get(
+                        "reason", "release cadence unavailable"
+                    ),
+                },
             ],
             "next_action": "repair_release_candidate",
             "authority": dict(AUTHORITY),

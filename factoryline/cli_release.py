@@ -26,27 +26,40 @@ def add_parser(sub: Any) -> None:
     )
     preflight.add_argument("--root", default=".")
     preflight.add_argument(
-        "--contract", required=True, help="workspace-contained release contract with candidate source binding"
+        "--contract",
+        required=True,
+        help="workspace-contained release contract with candidate source binding",
     )
     preflight.add_argument(
-        "--artifact-dir", action="append", help="workspace-contained artifact directory; repeatable"
+        "--artifact-dir",
+        action="append",
+        help="workspace-contained artifact directory; repeatable",
     )
     preflight.add_argument(
-        "--metadata-path", action="append", help="workspace-contained active metadata file; repeatable and audited when supplied"
+        "--metadata-path",
+        action="append",
+        help="workspace-contained active metadata file; repeatable and audited when supplied",
     )
     preflight.add_argument(
-        "--supply-chain-manifest", help="optional workspace-contained signed-evidence manifest; blocks when supplied evidence is invalid"
+        "--supply-chain-manifest",
+        help="optional workspace-contained signed-evidence manifest; blocks when supplied evidence is invalid",
     )
     preflight.add_argument(
-        "--intake-parameters", help="optional workspace-contained authoritative intake-parameter envelope"
+        "--intake-parameters",
+        help="optional workspace-contained authoritative intake-parameter envelope",
     )
     preflight.add_argument(
-        "--require-intake", action="store_true", help="require an authoritative intake-parameter envelope for this release"
+        "--require-intake",
+        action="store_true",
+        help="require an authoritative intake-parameter envelope for this release",
     )
-    preflight.add_argument("--out", help="optional workspace-contained JSON receipt path")
+    preflight.add_argument(
+        "--out", help="optional workspace-contained JSON receipt path"
+    )
     preflight.add_argument("--json", action="store_true")
     decision = release_sub.add_parser(
-        "decision", help="explain one strict local release decision without contacting a provider"
+        "decision",
+        help="explain one strict local release decision without contacting a provider",
     )
     decision.add_argument("feature")
     decision.add_argument("--root", default=".")
@@ -59,28 +72,56 @@ def run(args: Any) -> int:
         from .release_integrity import release_integrity, render_release_integrity
 
         result = release_integrity(Path(args.root))
-        print(json.dumps(result, indent=2, sort_keys=True) if args.json else render_release_integrity(result))
+        print(
+            json.dumps(result, indent=2, sort_keys=True)
+            if args.json
+            else render_release_integrity(result)
+        )
         return 0 if result["ok"] else 1
     if args.release_cmd == "preflight":
-        from .release_candidate import release_candidate_preflight, write_release_candidate_preflight
+        from .release_candidate import (
+            release_candidate_preflight,
+            write_release_candidate_preflight,
+        )
 
         root = Path(args.root).resolve()
         try:
-            artifact_dirs = [Path(item) for item in args.artifact_dir] if args.artifact_dir else None
-            metadata_paths = [Path(item) for item in args.metadata_path] if args.metadata_path else None
-            supply_chain_manifest = Path(args.supply_chain_manifest) if args.supply_chain_manifest else None
-            intake_parameters = Path(args.intake_parameters) if args.intake_parameters else None
+            artifact_dirs = (
+                [Path(item) for item in args.artifact_dir]
+                if args.artifact_dir
+                else None
+            )
+            metadata_paths = (
+                [Path(item) for item in args.metadata_path]
+                if args.metadata_path
+                else None
+            )
+            supply_chain_manifest = (
+                Path(args.supply_chain_manifest) if args.supply_chain_manifest else None
+            )
+            intake_parameters = (
+                Path(args.intake_parameters) if args.intake_parameters else None
+            )
             result = (
                 write_release_candidate_preflight(
-                    root, Path(args.contract), artifact_dirs, Path(args.out),
-                    metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest,
-                    intake_parameters=intake_parameters, require_intake=args.require_intake,
+                    root,
+                    Path(args.contract),
+                    artifact_dirs,
+                    Path(args.out),
+                    metadata_paths=metadata_paths,
+                    supply_chain_manifest=supply_chain_manifest,
+                    intake_parameters=intake_parameters,
+                    require_intake=args.require_intake,
                 )
                 if args.out
                 else release_candidate_preflight(
-                    root, Path(args.contract), artifact_dirs,
-                    metadata_paths=metadata_paths, supply_chain_manifest=supply_chain_manifest,
-                    intake_parameters=intake_parameters, require_intake=args.require_intake,
+                    root,
+                    Path(args.contract),
+                    artifact_dirs,
+                    metadata_paths=metadata_paths,
+                    supply_chain_manifest=supply_chain_manifest,
+                    intake_parameters=intake_parameters,
+                    require_intake=args.require_intake,
                 )
             )
         except (OSError, UnicodeDecodeError, ValueError, TypeError) as exc:
@@ -88,20 +129,48 @@ def run(args: Any) -> int:
                 "schema": "factory.release-candidate-preflight.v1",
                 "marker": "RELEASE_CANDIDATE_PREFLIGHT_BLOCKED",
                 "ok": False,
-                "blockers": [{"code": "RELEASE_CANDIDATE_INPUT_INVALID", "detail": str(exc)[:240]}],
-                "authority": {key: False for key in ("execution", "approval", "repair", "merge", "publication", "deployment", "signing", "credential", "provider_call")},
+                "blockers": [
+                    {
+                        "code": "RELEASE_CANDIDATE_INPUT_INVALID",
+                        "detail": str(exc)[:240],
+                    }
+                ],
+                "authority": {
+                    key: False
+                    for key in (
+                        "execution",
+                        "approval",
+                        "repair",
+                        "merge",
+                        "publication",
+                        "deployment",
+                        "signing",
+                        "credential",
+                        "provider_call",
+                    )
+                },
             }
         if args.json:
             print(json.dumps(result, indent=2, sort_keys=True))
         else:
-            print(f"release candidate preflight: {'PASS' if result.get('ok') else 'BLOCKED'}")
+            print(
+                f"release candidate preflight: {'PASS' if result.get('ok') else 'BLOCKED'}"
+            )
             for check in result.get("checks", []):
-                print(f"- {'PASS' if check.get('passed') else 'FAIL'} {check.get('id')}: {check.get('evidence')}")
+                print(
+                    f"- {'PASS' if check.get('passed') else 'FAIL'} {check.get('id')}: {check.get('evidence')}"
+                )
             for blocker in result.get("blockers", []):
                 print(f"- BLOCK {blocker.get('code')}: {blocker.get('detail')}")
-            print("authority: no execution, credential, provider, publication, deployment, signing, merge, or approval authority")
+            print(
+                "authority: no execution, credential, provider, publication, deployment, signing, merge, or approval authority"
+            )
         return 0 if result.get("ok") else 1
-    from .release_decision import SCHEMA, release_decision_card, render_release_decision_card
+    from .release_decision import (
+        SCHEMA,
+        release_decision_card,
+        render_release_decision_card,
+    )
 
     try:
         result = release_decision_card(Path(args.root), args.feature)
@@ -111,7 +180,21 @@ def run(args: Any) -> int:
             "marker": "RELEASE_DECISION_INPUT_REJECTED",
             "state": "INPUT_REJECTED",
             "reason": str(exc),
-            "authority": {key: False for key in ("execution", "approval", "repair", "merge", "publication", "deployment", "signing", "messaging", "credential", "connector")},
+            "authority": {
+                key: False
+                for key in (
+                    "execution",
+                    "approval",
+                    "repair",
+                    "merge",
+                    "publication",
+                    "deployment",
+                    "signing",
+                    "messaging",
+                    "credential",
+                    "connector",
+                )
+            },
             "claim_boundary": "Input validation only; no local workflow, feature evidence, provider, credential, or release action ran.",
         }
     if args.json:

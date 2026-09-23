@@ -3,7 +3,7 @@
     {
       "name": "senior_assurance_receipts_reject_weak_replay_repair_and_reuse",
       "kind": "python",
-      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_senior_assurance.py', 'tests/test_senior_cli.py', 'tests/test_senior_graph_ops.py']) == 0\nprint('SENIOR_ASSURANCE_SMOKE_PASS')\n",
+      "run": "import os\nos.environ['PYTEST_DISABLE_PLUGIN_AUTOLOAD'] = '1'\nos.environ['PYTEST_PLUGINS'] = 'pytest_asyncio.plugin'\nimport pytest\nassert pytest.main(['-q', 'tests/test_senior_assurance.py', 'tests/test_senior_cli.py', 'tests/test_senior_graph_ops.py']) == 0\nprint('SENIOR_ASSURANCE_SMOKE_PASS')\n",
       "expect_exit": 0,
       "expect_stdout": "SENIOR_ASSURANCE_SMOKE_PASS",
       "timeout_s": 120,

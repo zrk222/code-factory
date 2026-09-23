@@ -20,10 +20,15 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Verify AI tests, app evidence, and agent workflow drift.
+short_description: Trace AI changes from intent to reviewable proof.
 ---
 
 # Code Factory
+
+The current source preview connects the original request, agent handoffs,
+verification routes, current receipts, and human review. It also makes stale
+repair loops and missing evidence easier to spot. Six audit lanes stay in the
+core path; local receipts support review but do not approve releases.
 
 This is the browser preview for
 [Code Factory](https://github.com/zrk222/code-factory), an open-source,

@@ -50,7 +50,13 @@ def test_live_feedback_plans_only_affected_checks(tmp_path):
     (tmp_path / "check.py").write_text("print('ok')\n", encoding="utf-8")
     result = run_live_feedback(tmp_path, _live(tmp_path))
     assert result["mode"] == "plan"
-    assert result["counts"] == {"PASS": 0, "FAIL": 0, "READY": 1, "SKIPPED": 1, "BLOCKED": 0}
+    assert result["counts"] == {
+        "PASS": 0,
+        "FAIL": 0,
+        "READY": 1,
+        "SKIPPED": 1,
+        "BLOCKED": 0,
+    }
     assert result["checks"][0]["next_action"].startswith("Run the same manifest")
 
 
@@ -66,7 +72,9 @@ def test_live_feedback_executes_affected_check_in_replay_workspace(tmp_path):
 def test_live_feedback_rejects_network_or_publication_commands(tmp_path):
     (tmp_path / "check.py").write_text("print('ok')\n", encoding="utf-8")
     with pytest.raises(LiveFeedbackError) as error:
-        run_live_feedback(tmp_path, _live(tmp_path, command=["curl", "https://example.test"]))
+        run_live_feedback(
+            tmp_path, _live(tmp_path, command=["curl", "https://example.test"])
+        )
     assert error.value.code == "E_LIVE_SIDE_EFFECT"
 
 

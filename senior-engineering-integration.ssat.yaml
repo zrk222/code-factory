@@ -37,6 +37,10 @@ modules:
         args: ["value: dict[str, Any]"]
         returns: "dict[str, Any]"
         doc: "Validate a bounded dependency DAG, closure, assurance level, and side-effect declarations."
+      - name: paths_intersect
+        args: ["left: str", "right: str"]
+        returns: "bool"
+        doc: "Conservatively compare path segments across Windows and POSIX so path drift cannot enable stale proof reuse."
       - name: plan_incremental
         args: ["root: Path", "manifest: dict[str, Any]"]
         returns: "dict[str, Any]"
@@ -91,6 +95,9 @@ invariants:
         symbol: plan_incremental
         max_lines: 260
       - module: incremental_scheduler
+        symbol: paths_intersect
+        max_lines: 40
+      - module: incremental_scheduler
         symbol: compare_shadow
         max_lines: 120
       - module: senior_assurance
@@ -117,6 +124,9 @@ invariants:
       - module: incremental_scheduler
         symbol: plan_incremental
         max_lines: 260
+      - module: incremental_scheduler
+        symbol: paths_intersect
+        max_lines: 40
       - module: senior_assurance
         symbol: validate_replay_manifest
         max_lines: 260

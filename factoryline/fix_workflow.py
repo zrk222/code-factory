@@ -33,13 +33,25 @@ def _sha(value: object) -> str:
     return sha256(canonical_bytes(value)).hexdigest()
 
 
-def run_fix_workflow(root: Path, repair_manifest: dict[str, Any], *, execute: bool = False, out: Path | None = None) -> dict[str, Any]:
+def run_fix_workflow(
+    root: Path,
+    repair_manifest: dict[str, Any],
+    *,
+    execute: bool = False,
+    out: Path | None = None,
+) -> dict[str, Any]:
     """Run or plan the complete fix handoff around a repair comparison manifest."""
     try:
-        comparison = compare_repair(Path(root).resolve(), repair_manifest, execute=execute)
+        comparison = compare_repair(
+            Path(root).resolve(), repair_manifest, execute=execute
+        )
     except SeniorAssuranceError as exc:
         raise FixWorkflowError(exc.code, exc.message) from exc
-    original = comparison.get("original") if isinstance(comparison.get("original"), dict) else None
+    original = (
+        comparison.get("original")
+        if isinstance(comparison.get("original"), dict)
+        else None
+    )
     brief = None
     if original is not None and comparison.get("state") == "FAIL":
         brief = failure_brief(original, receipt_sha256=original.get("receipt_sha256"))
@@ -58,16 +70,29 @@ def run_fix_workflow(root: Path, repair_manifest: dict[str, Any], *, execute: bo
         "state": comparison.get("state"),
         "reproduction": {
             "required": True,
-            "observed": bool(original and original.get("state") == "PASS") if execute else None,
+            "observed": bool(original and original.get("state") == "PASS")
+            if execute
+            else None,
             "receipt_sha256": original.get("receipt_sha256") if original else None,
         },
         "repair": {
-            "candidate_receipt_sha256": (comparison.get("repaired") or {}).get("receipt_sha256") if isinstance(comparison.get("repaired"), dict) else None,
+            "candidate_receipt_sha256": (comparison.get("repaired") or {}).get(
+                "receipt_sha256"
+            )
+            if isinstance(comparison.get("repaired"), dict)
+            else None,
             "regression_checks": comparison.get("regression_checks"),
         },
         "negative_controls": {
-            "required": comparison.get("negative_controls_required", len(comparison.get("negative_controls", []))),
-            "preserved": (comparison.get("regression_checks") or {}).get("negative_controls_fail") if execute else None,
+            "required": comparison.get(
+                "negative_controls_required",
+                len(comparison.get("negative_controls", [])),
+            ),
+            "preserved": (comparison.get("regression_checks") or {}).get(
+                "negative_controls_fail"
+            )
+            if execute
+            else None,
         },
         "failure_brief": brief,
         "findings": comparison.get("findings", []),

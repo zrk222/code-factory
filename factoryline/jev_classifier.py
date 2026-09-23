@@ -88,7 +88,9 @@ def _rule_scores(raw: object, allowed: set[str]) -> dict[str, float]:
     normalized: dict[str, float] = {}
     for rule_id, score in raw.items():
         if rule_id not in allowed:
-            raise JevClassificationError("Jev scored a rule outside the retrieved candidates")
+            raise JevClassificationError(
+                "Jev scored a rule outside the retrieved candidates"
+            )
         normalized[rule_id] = _probability(score, "Jev rule score")
     return normalized
 
@@ -113,11 +115,15 @@ def normalize_jev_result(
     probability = _probability(probability, "Jev probability")
     if context_sha != request.get("contextSha256"):
         raise JevClassificationError("Jev context hash does not match retrieval")
-    if not isinstance(selected, list) or not all(isinstance(item, str) for item in selected):
+    if not isinstance(selected, list) or not all(
+        isinstance(item, str) for item in selected
+    ):
         raise JevClassificationError("selectedRuleIds must be a list of strings")
     allowed = set(request.get("candidateRuleIds", []))
     if not set(selected) <= allowed:
-        raise JevClassificationError("Jev selected a rule outside the retrieved candidates")
+        raise JevClassificationError(
+            "Jev selected a rule outside the retrieved candidates"
+        )
     normalized_scores = _rule_scores(rule_scores, allowed)
     return {
         "schema": "factory.jev-classification-result.v1",
@@ -170,7 +176,14 @@ def classify_retrieval(
             model_id=model_id,
             model_version=model_version,
         )
-    except (JevClassificationError, OSError, TimeoutError, ValueError, TypeError, KeyError) as exc:
+    except (
+        JevClassificationError,
+        OSError,
+        TimeoutError,
+        ValueError,
+        TypeError,
+        KeyError,
+    ) as exc:
         return {
             "schema": "factory.jev-classification-result.v1",
             "label": "HUMAN_REVIEW",

@@ -20,6 +20,15 @@ import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
+from functools import lru_cache
+from importlib import import_module
+
+
+@lru_cache(maxsize=256)
+def _lazy_import(module: str, symbol: str):
+    """Load command implementation symbols only when their command runs."""
+    relative = f".{module}" if module else "."
+    return getattr(import_module(relative, __package__), symbol)
 
 
 if TYPE_CHECKING:
@@ -42,207 +51,6 @@ if TYPE_CHECKING:
         security_scan,
     )
 
-from .contract import MODULES, ensure_layout, LAYOUT
-from .assembly import detect, assemble, DEFAULT_CHAIN, rollup_receipts
-from .continuation import ContinuationError, continue_assembly
-from .run_metrics import export_public_metrics, public_metrics
-from .agent_contract import (
-    AgentContractError,
-)
-from .savings import (
-    SavingsError,
-    export_public_savings_report,
-    public_savings_report,
-    record_savings_pair,
-)
-from .proof_reuse import (
-    ProofReuseError,
-    challenge_proof_receipt,
-    load_manifest as load_proof_manifest,
-    plan_proofs,
-    record_proof,
-    verify_proof_receipt,
-)
-from .meter import live_snapshot, live_summary_table, overhead
-from .proof import (
-    build_trace,
-    execute_replay,
-    git_changed_paths,
-    load_trace,
-    public_evidence,
-    public_evidence_text,
-    replay_plan,
-    risk_for_paths,
-    verify_trace,
-)
-from .failure_guidance import explain_failure
-from .migration import (
-    MigrationError,
-    assess_migration_readiness,
-    build_repository_context,
-    verify_migration_readiness,
-    verify_repository_context,
-)
-from .intake_parameters import (
-    IntakeParametersError,
-    intake_parameters_status,
-    seal_intake_parameters,
-    verify_intake_parameters,
-)
-from .ide_playbook import AdoptionGuideError, adoption_guide
-from .graph_portfolio import graph_portfolio_plan
-from .graph_forensics import (
-    GraphForensicsError,
-    graph_forensics,
-    seal_graph_lineage,
-    seal_mission_graph_lineage,
-    verify_graph_lineage,
-)
-from .candidate_lineage import CandidateLineageError, verify_candidate_lineage
-from .langgraph_assurance import LangGraphAssuranceError, verify_langgraph_resume_parity
-from .change_review import ChangeReviewError
-from .release_contract import (
-    SCHEMA as RELEASE_CONTRACT_SCHEMA,
-    _sha as release_contract_digest,
-    verify_release_contract,
-)
-from .release_candidate import source_snapshot
-from .atomic_proof_adapter import (
-    AtomicProofAdapterError,
-    atomic_envelope_template,
-    atomic_proof_projection,
-    import_atomic_run,
-    verify_atomic_receipt,
-)
-from .agent_proof_bridge import (
-    AgentProofBridgeError,
-    agent_handoff_brief,
-    agent_proof_projection,
-    import_agent_proof,
-    provider_template,
-    verify_agent_proof,
-)
-from .plan_proof_review import (
-    PlanProofReviewError,
-    review_plan_proof,
-    write_plan_proof_review_artifacts,
-)
-from .adoption import (
-    AdoptionError,
-    run_first_proof,
-)
-from .e2e_proof import E2EProofError
-from .gauntlet import (
-    GauntletError,
-    admit_gauntlet,
-    challenge_survival_card,
-    compile_gauntlet_proposal,
-    gauntlet_status,
-    run_gauntlet,
-    seal_survival_card,
-    verify_survival_card,
-    write_gauntlet_proposal,
-)
-from .gauntlet_draft import GauntletDraftError, draft_gauntlet
-from .team_pilot import (
-    TeamPilotError,
-    evaluate_team_pilot_readiness,
-    validate_team_pilot_receipt,
-    write_team_pilot_artifacts,
-)
-from .workspace_advisor import (
-    WorkspaceAdvisorError,
-    inspect_workspace,
-    write_workspace_advisor_artifacts,
-)
-from .index_continuity import (
-    IndexContinuityError,
-    capture_continuity_baseline,
-    compare_continuity,
-    write_continuity_baseline,
-)
-from .protocol import compatibility
-from .verification import verify_feature
-from .product_missions import (
-    EXECUTORS,
-    EVIDENCE_CLASSES,
-    MISSION_DECISIONS,
-    ProductMissionError,
-    close_mission,
-    compile_product_prd,
-    create_mission,
-    decide_mission,
-    draft_pr,
-    plan_value_slices,
-    record_outcome,
-    outcome_summary,
-    verify_mission,
-    verify_mission_completion,
-    verify_product_graph,
-)
-from .prd_grill import grill_prd, verify_prd_grill
-from .proof_delta import (
-    ProofDeltaError,
-    create_proof_delta,
-    proof_delta_status,
-    verify_proof_delta,
-)
-from .intake_grill import (
-    confirm_intake,
-    grill_intake,
-    intake_status,
-    verify_intake_confirmation,
-    verify_intake_grill,
-)
-from .mission_graph import (
-    MissionGraphError,
-    apply_mission_event,
-    export_mission_graph,
-    init_mission_graph,
-    langgraph_doctor,
-    mission_graph_history,
-    mission_graph_status,
-    verify_mission_graph,
-)
-from .provider_router import (
-    SUPPORTED_IDES,
-    ProviderRouterError,
-    create_provider_policy,
-    provider_doctor,
-    route_provider,
-    verify_provider_policy,
-)
-from .signal_loop import (
-    AUTHORIZATIONS,
-    DECISIONS,
-    SOURCES,
-    SignalLoopError,
-    capture_signal,
-    capture_outcome_feedback,
-    correct_opinion_dock,
-    decide_triage,
-    init_opinion_dock,
-    promote_signal,
-    triage_signal,
-    verify_opinion_dock,
-)
-from .learning_loop import (
-    LearningLoopError,
-    build_fresh_worker_packet,
-    init_learning_task,
-    plan_learning_experiment,
-    promote_instruction_candidate,
-    propose_instruction_candidate,
-    validate_instruction_candidate,
-)
-from .first_lap import (
-    FirstLapError,
-    first_lap_status,
-)
-from .agui import AguiError, build_review_events
-from .agentic_control import (
-    AgenticControlError,
-)
 
 def _cli_command(name: str) -> str:
     """Prefer this launcher's script directory over an ambient PATH lookup."""
@@ -385,7 +193,7 @@ def _workflow_canary(module) -> dict:
 
 def _home(root: Path = Path("."), as_json: bool = False) -> int:
     """Return compact, live state for agents without requiring command discovery."""
-    modules = detect()
+    modules = _lazy_import("assembly", "detect")()
     factory_root = root / ".factory"
     counts = {
         "receipts": len(list((factory_root / "receipts").glob("*.json")))
@@ -436,7 +244,7 @@ def _home(root: Path = Path("."), as_json: bool = False) -> int:
 
 
 def _doctor(strict: bool = False, as_json: bool = False) -> int:
-    mods = detect()
+    mods = _lazy_import("assembly", "detect")()
     checks = []
     for module in mods:
         help_text = None
@@ -459,9 +267,9 @@ def _doctor(strict: bool = False, as_json: bool = False) -> int:
             if isinstance(provenance.get("version"), str)
             else None
         )
-        check = compatibility(
+        check = _lazy_import("protocol", "compatibility")(
             module.name,
-            MODULES[module.name],
+            _lazy_import("contract", "MODULES")[module.name],
             help_text,
             reported_version=reported_version,
         )
@@ -535,9 +343,9 @@ def _doctor(strict: bool = False, as_json: bool = False) -> int:
 
 def _plan() -> int:
     print("factoryline assembly pipeline\n" + "=" * 44)
-    installed = {m.name: m.installed for m in detect()}
-    for module, args in DEFAULT_CHAIN:
-        cli = MODULES[module]["cli"]
+    installed = {m.name: m.installed for m in _lazy_import("assembly", "detect")()}
+    for module, args in _lazy_import("assembly", "DEFAULT_CHAIN"):
+        cli = _lazy_import("contract", "MODULES")[module]["cli"]
         tag = "" if installed.get(module) else "   (skipped - not installed)"
         if module == "prestige":
             tag += "   (runs only when smoke/<feature>.ui declares UI scope)"
@@ -1198,8 +1006,12 @@ def _dispatch(argv=None) -> int:
     engineering_memory.add_argument("--subject", required=True)
     engineering_memory.add_argument("--purpose", required=True)
     engineering_memory.add_argument("--scope", required=True)
-    engineering_memory.add_argument("--sender", choices=sorted(MODULES))
-    engineering_memory.add_argument("--receiver", choices=sorted(MODULES))
+    engineering_memory.add_argument(
+        "--sender", choices=sorted(_lazy_import("contract", "MODULES"))
+    )
+    engineering_memory.add_argument(
+        "--receiver", choices=sorted(_lazy_import("contract", "MODULES"))
+    )
     engineering_memory.add_argument(
         "--accept", help="workspace-relative handoff JSON to revalidate"
     )
@@ -1678,9 +1490,11 @@ def _dispatch(argv=None) -> int:
     add_ide_parser(sub)
 
     from .cli_release import add_parser as add_release_parser
+
     add_release_parser(sub)
 
     from .cli_integrations import add_parser as add_integrations_parser
+
     add_integrations_parser(sub)
 
     from .cli_artifacts import add_parser as add_artifacts_parser
@@ -1711,9 +1525,11 @@ def _dispatch(argv=None) -> int:
     add_telemetry_parser(sub)
 
     from .cli_ops import add_parser as add_ops_parser
+
     add_ops_parser(sub)
 
     from .cli_verifier import add_parser as add_verifier_parser
+
     add_verifier_parser(sub)
 
     from .cli_targets import add_parser as add_targets_parser
@@ -1859,7 +1675,9 @@ def _dispatch(argv=None) -> int:
     mission_create.add_argument("--root", default=".")
     mission_create.add_argument("--owner", required=True)
     mission_create.add_argument(
-        "--executor", default="manual", choices=sorted(EXECUTORS)
+        "--executor",
+        default="manual",
+        choices=sorted(_lazy_import("product_missions", "EXECUTORS")),
     )
     mission_create.add_argument("--max-iterations", type=int)
     mission_create.add_argument("--max-wall-seconds", type=int)
@@ -1900,7 +1718,9 @@ def _dispatch(argv=None) -> int:
     mission_decide.add_argument("--root", default=".")
     mission_decide.add_argument("--owner", required=True)
     mission_decide.add_argument(
-        "--decision", required=True, choices=sorted(MISSION_DECISIONS)
+        "--decision",
+        required=True,
+        choices=sorted(_lazy_import("product_missions", "MISSION_DECISIONS")),
     )
     mission_decide.add_argument("--rationale", required=True)
     mission_decide.add_argument("--force", action="store_true")
@@ -2023,7 +1843,11 @@ def _dispatch(argv=None) -> int:
     provider_route.add_argument("policy")
     provider_route.add_argument("mission")
     provider_route.add_argument("--root", default=".")
-    provider_route.add_argument("--ide", required=True, choices=sorted(SUPPORTED_IDES))
+    provider_route.add_argument(
+        "--ide",
+        required=True,
+        choices=sorted(_lazy_import("provider_router", "SUPPORTED_IDES")),
+    )
     provider_route.add_argument(
         "--risk", required=True, choices=["low", "medium", "high"]
     )
@@ -2116,13 +1940,19 @@ def _dispatch(argv=None) -> int:
         help="normalize one owner-supplied signal without polling or execution",
     )
     signal_capture.add_argument("--root", default=".")
-    signal_capture.add_argument("--source", required=True, choices=sorted(SOURCES))
+    signal_capture.add_argument(
+        "--source",
+        required=True,
+        choices=sorted(_lazy_import("signal_loop", "SOURCES")),
+    )
     signal_capture.add_argument("--title", required=True)
     signal_capture_body = signal_capture.add_mutually_exclusive_group(required=True)
     signal_capture_body.add_argument("--body")
     signal_capture_body.add_argument("--body-file")
     signal_capture.add_argument(
-        "--authorization", required=True, choices=sorted(AUTHORIZATIONS)
+        "--authorization",
+        required=True,
+        choices=sorted(_lazy_import("signal_loop", "AUTHORIZATIONS")),
     )
     signal_capture.add_argument("--severity", type=int, default=3)
     signal_capture.add_argument("--external-id")
@@ -2147,7 +1977,11 @@ def _dispatch(argv=None) -> int:
     signal_decide.add_argument("triage")
     signal_decide.add_argument("--root", default=".")
     signal_decide.add_argument("--owner", required=True)
-    signal_decide.add_argument("--decision", required=True, choices=sorted(DECISIONS))
+    signal_decide.add_argument(
+        "--decision",
+        required=True,
+        choices=sorted(_lazy_import("signal_loop", "DECISIONS")),
+    )
     signal_decide.add_argument("--rationale", required=True)
     signal_decide.add_argument("--override-block", action="store_true")
     signal_decide.add_argument("--force", action="store_true")
@@ -2279,7 +2113,9 @@ def _dispatch(argv=None) -> int:
     outcome_record.add_argument("--value", type=float)
     outcome_record.add_argument("--target", type=float)
     outcome_record.add_argument(
-        "--evidence-class", required=True, choices=sorted(EVIDENCE_CLASSES)
+        "--evidence-class",
+        required=True,
+        choices=sorted(_lazy_import("product_missions", "EVIDENCE_CLASSES")),
     )
     outcome_record.add_argument("--source")
     outcome_record.add_argument("--notes", default="")
@@ -2346,7 +2182,7 @@ def _dispatch(argv=None) -> int:
     }:
         try:
             if a.cmd == "prd" and a.prd_cmd == "grill":
-                result = grill_prd(
+                result = _lazy_import("prd_grill", "grill_prd")(
                     Path(a.prd),
                     Path(a.root),
                     a.mode,
@@ -2356,9 +2192,9 @@ def _dispatch(argv=None) -> int:
                     a.force,
                 )
             elif a.cmd == "prd" and a.prd_cmd == "verify":
-                result = verify_prd_grill(Path(a.receipt))
+                result = _lazy_import("prd_grill", "verify_prd_grill")(Path(a.receipt))
             elif a.cmd == "intake" and a.intake_cmd == "grill":
-                result = grill_intake(
+                result = _lazy_import("intake_grill", "grill_intake")(
                     Path(a.prd),
                     Path(a.root),
                     a.project,
@@ -2366,7 +2202,7 @@ def _dispatch(argv=None) -> int:
                     a.force,
                 )
             elif a.cmd == "intake" and a.intake_cmd == "confirm":
-                result = confirm_intake(
+                result = _lazy_import("intake_grill", "confirm_intake")(
                     Path(a.root),
                     Path(a.intake),
                     a.framework,
@@ -2381,16 +2217,20 @@ def _dispatch(argv=None) -> int:
                 )
             elif a.cmd == "intake" and a.intake_cmd == "verify":
                 result = (
-                    verify_intake_confirmation(Path(a.root), Path(a.receipt))
+                    _lazy_import("intake_grill", "verify_intake_confirmation")(
+                        Path(a.root), Path(a.receipt)
+                    )
                     if a.confirmation
-                    else verify_intake_grill(Path(a.root), Path(a.receipt))
+                    else _lazy_import("intake_grill", "verify_intake_grill")(
+                        Path(a.root), Path(a.receipt)
+                    )
                 )
             elif (
                 a.cmd == "intake"
                 and a.intake_cmd in {"parameters", "params"}
                 and a.intake_parameters_cmd == "seal"
             ):
-                result = seal_intake_parameters(
+                result = _lazy_import("intake_parameters", "seal_intake_parameters")(
                     Path(a.root),
                     Path(a.request),
                     Path(a.out) if a.out else None,
@@ -2401,29 +2241,47 @@ def _dispatch(argv=None) -> int:
                 and a.intake_cmd in {"parameters", "params"}
                 and a.intake_parameters_cmd == "verify"
             ):
-                result = verify_intake_parameters(Path(a.root), Path(a.receipt))
+                result = _lazy_import("intake_parameters", "verify_intake_parameters")(
+                    Path(a.root), Path(a.receipt)
+                )
             elif a.cmd == "intake" and a.intake_cmd in {"parameters", "params"}:
-                result = intake_parameters_status(Path(a.root))
+                result = _lazy_import("intake_parameters", "intake_parameters_status")(
+                    Path(a.root)
+                )
             elif a.cmd == "intake":
-                result = intake_status(Path(a.root), Path(a.prd) if a.prd else None)
+                result = _lazy_import("intake_grill", "intake_status")(
+                    Path(a.root), Path(a.prd) if a.prd else None
+                )
             elif a.cmd == "agent":
                 from .cli_agent import run as run_agent
 
                 result = run_agent(a)
             elif a.cmd == "langgraph" and a.langgraph_cmd == "doctor":
-                result = langgraph_doctor()
+                result = _lazy_import("mission_graph", "langgraph_doctor")()
             elif a.cmd == "langgraph" and a.langgraph_cmd == "init":
-                result = init_mission_graph(Path(a.mission), Path(a.root))
+                result = _lazy_import("mission_graph", "init_mission_graph")(
+                    Path(a.mission), Path(a.root)
+                )
             elif a.cmd == "langgraph" and a.langgraph_cmd == "status":
-                result = mission_graph_status(Path(a.mission), Path(a.root))
+                result = _lazy_import("mission_graph", "mission_graph_status")(
+                    Path(a.mission), Path(a.root)
+                )
             elif a.cmd == "langgraph" and a.langgraph_cmd == "history":
-                result = mission_graph_history(Path(a.mission), Path(a.root))
+                result = _lazy_import("mission_graph", "mission_graph_history")(
+                    Path(a.mission), Path(a.root)
+                )
             elif a.cmd == "langgraph" and a.langgraph_cmd == "verify":
-                result = verify_mission_graph(Path(a.mission), Path(a.root))
+                result = _lazy_import("mission_graph", "verify_mission_graph")(
+                    Path(a.mission), Path(a.root)
+                )
             elif a.cmd == "langgraph" and a.langgraph_cmd == "export":
-                result = export_mission_graph(Path(a.mission), Path(a.root))
+                result = _lazy_import("mission_graph", "export_mission_graph")(
+                    Path(a.mission), Path(a.root)
+                )
             elif a.cmd == "langgraph" and a.langgraph_cmd == "replay-verify":
-                result = verify_langgraph_resume_parity(
+                result = _lazy_import(
+                    "langgraph_assurance", "verify_langgraph_resume_parity"
+                )(
                     Path(a.root),
                     a.reference,
                     a.resumed,
@@ -2436,11 +2294,11 @@ def _dispatch(argv=None) -> int:
                     else {}
                 )
                 if not isinstance(payload, dict):
-                    raise MissionGraphError(
+                    raise _lazy_import("mission_graph", "MissionGraphError")(
                         "MISSION_GRAPH_EVENT_INVALID",
                         "payload file must contain one JSON object",
                     )
-                result = apply_mission_event(
+                result = _lazy_import("mission_graph", "apply_mission_event")(
                     Path(a.mission),
                     Path(a.root),
                     a.event,
@@ -2453,10 +2311,10 @@ def _dispatch(argv=None) -> int:
             elif a.cmd == "provider" and a.provider_cmd == "init":
                 config = json.loads(Path(a.config).read_text(encoding="utf-8"))
                 if not isinstance(config, dict):
-                    raise ProviderRouterError(
+                    raise _lazy_import("provider_router", "ProviderRouterError")(
                         "PROVIDER_POLICY_INVALID", "config must contain one JSON object"
                     )
-                result = create_provider_policy(
+                result = _lazy_import("provider_router", "create_provider_policy")(
                     Path(a.root),
                     config.get("owner", ""),
                     config.get("providers", []),
@@ -2467,11 +2325,15 @@ def _dispatch(argv=None) -> int:
                     a.force,
                 )
             elif a.cmd == "provider" and a.provider_cmd == "verify":
-                result = verify_provider_policy(Path(a.policy))
+                result = _lazy_import("provider_router", "verify_provider_policy")(
+                    Path(a.policy)
+                )
             elif a.cmd == "provider" and a.provider_cmd == "doctor":
-                result = provider_doctor(Path(a.policy))
+                result = _lazy_import("provider_router", "provider_doctor")(
+                    Path(a.policy)
+                )
             elif a.cmd == "provider":
-                result = route_provider(
+                result = _lazy_import("provider_router", "route_provider")(
                     Path(a.policy),
                     Path(a.mission),
                     Path(a.root),
@@ -2489,17 +2351,23 @@ def _dispatch(argv=None) -> int:
                     a.output_contract,
                 )
             elif a.cmd == "migration" and a.migration_cmd == "assess":
-                result = assess_migration_readiness(
+                result = _lazy_import("migration", "assess_migration_readiness")(
                     Path(a.manifest), Path(a.root), force=a.force
                 )
             elif a.cmd == "migration":
-                result = verify_migration_readiness(Path(a.receipt))
+                result = _lazy_import("migration", "verify_migration_readiness")(
+                    Path(a.receipt)
+                )
             elif a.cmd == "context" and a.context_cmd == "build":
-                result = build_repository_context(Path(a.root), force=a.force)
+                result = _lazy_import("migration", "build_repository_context")(
+                    Path(a.root), force=a.force
+                )
             elif a.cmd == "context":
-                result = verify_repository_context(Path(a.receipt))
+                result = _lazy_import("migration", "verify_repository_context")(
+                    Path(a.receipt)
+                )
             elif a.cmd == "product" and a.product_cmd == "compile":
-                result = compile_product_prd(
+                result = _lazy_import("product_missions", "compile_product_prd")(
                     Path(a.prd),
                     Path(a.root),
                     a.project,
@@ -2507,9 +2375,11 @@ def _dispatch(argv=None) -> int:
                     Path(a.intake) if a.intake else None,
                 )
             elif a.cmd == "product" and a.product_cmd == "verify":
-                result = verify_product_graph(Path(a.graph))
+                result = _lazy_import("product_missions", "verify_product_graph")(
+                    Path(a.graph)
+                )
             elif a.cmd == "product":
-                result = plan_value_slices(
+                result = _lazy_import("product_missions", "plan_value_slices")(
                     Path(a.graph), Path(a.root), a.max_requirements, a.force
                 )
             elif (
@@ -2517,7 +2387,7 @@ def _dispatch(argv=None) -> int:
                 and a.mission_cmd == "proof-delta"
                 and a.mission_delta_cmd == "create"
             ):
-                result = create_proof_delta(
+                result = _lazy_import("proof_delta", "create_proof_delta")(
                     Path(a.root),
                     Path(a.mission),
                     Path(a.prior_candidate),
@@ -2531,11 +2401,15 @@ def _dispatch(argv=None) -> int:
                 and a.mission_cmd == "proof-delta"
                 and a.mission_delta_cmd == "verify"
             ):
-                result = verify_proof_delta(Path(a.root), Path(a.receipt))
+                result = _lazy_import("proof_delta", "verify_proof_delta")(
+                    Path(a.root), Path(a.receipt)
+                )
             elif a.cmd == "mission" and a.mission_cmd == "proof-delta":
-                result = proof_delta_status(Path(a.root), a.mission_id)
+                result = _lazy_import("proof_delta", "proof_delta_status")(
+                    Path(a.root), a.mission_id
+                )
             elif a.cmd == "mission" and a.mission_cmd == "create":
-                result = create_mission(
+                result = _lazy_import("product_missions", "create_mission")(
                     Path(a.slices),
                     a.slice_id,
                     Path(a.root),
@@ -2550,15 +2424,19 @@ def _dispatch(argv=None) -> int:
                     a.require_intake,
                 )
             elif a.cmd == "mission" and a.mission_cmd == "verify":
-                result = verify_mission(Path(a.mission))
+                result = _lazy_import("product_missions", "verify_mission")(
+                    Path(a.mission)
+                )
             elif a.cmd == "mission" and a.mission_cmd == "close":
-                result = close_mission(
+                result = _lazy_import("product_missions", "close_mission")(
                     Path(a.mission), Path(a.validation), Path(a.root), force=a.force
                 )
             elif a.cmd == "mission" and a.mission_cmd == "verify-completion":
-                result = verify_mission_completion(Path(a.completion))
+                result = _lazy_import("product_missions", "verify_mission_completion")(
+                    Path(a.completion)
+                )
             elif a.cmd == "mission":
-                result = decide_mission(
+                result = _lazy_import("product_missions", "decide_mission")(
                     Path(a.mission),
                     Path(a.root),
                     owner=a.owner,
@@ -2567,19 +2445,25 @@ def _dispatch(argv=None) -> int:
                     force=a.force,
                 )
             elif a.cmd == "opinion" and a.opinion_cmd == "init":
-                result = init_opinion_dock(Path(a.root), a.owner, force=a.force)
+                result = _lazy_import("signal_loop", "init_opinion_dock")(
+                    Path(a.root), a.owner, force=a.force
+                )
             elif a.cmd == "opinion" and a.opinion_cmd == "verify":
-                result = verify_opinion_dock(Path(a.dock))
+                result = _lazy_import("signal_loop", "verify_opinion_dock")(
+                    Path(a.dock)
+                )
             elif a.cmd == "opinion":
                 rule = json.loads(Path(a.rule_file).read_text(encoding="utf-8"))
-                result = correct_opinion_dock(Path(a.dock), a.owner, rule, a.rationale)
+                result = _lazy_import("signal_loop", "correct_opinion_dock")(
+                    Path(a.dock), a.owner, rule, a.rationale
+                )
             elif a.cmd == "signal" and a.signal_cmd == "capture":
                 body = (
                     a.body
                     if a.body is not None
                     else Path(a.body_file).read_text(encoding="utf-8")
                 )
-                result = capture_signal(
+                result = _lazy_import("signal_loop", "capture_signal")(
                     Path(a.root),
                     source=a.source,
                     title=a.title,
@@ -2595,11 +2479,11 @@ def _dispatch(argv=None) -> int:
                     acceptance=a.acceptance,
                 )
             elif a.cmd == "signal" and a.signal_cmd == "triage":
-                result = triage_signal(
+                result = _lazy_import("signal_loop", "triage_signal")(
                     Path(a.signal), Path(a.dock), Path(a.root), force=a.force
                 )
             elif a.cmd == "signal" and a.signal_cmd == "decide":
-                result = decide_triage(
+                result = _lazy_import("signal_loop", "decide_triage")(
                     Path(a.triage),
                     Path(a.root),
                     owner=a.owner,
@@ -2609,7 +2493,7 @@ def _dispatch(argv=None) -> int:
                     force=a.force,
                 )
             elif a.cmd == "signal" and a.signal_cmd == "feedback":
-                result = capture_outcome_feedback(
+                result = _lazy_import("signal_loop", "capture_outcome_feedback")(
                     Path(a.root),
                     mission_id=a.mission_id,
                     metric=a.metric,
@@ -2618,12 +2502,12 @@ def _dispatch(argv=None) -> int:
                     evidence_path=Path(a.evidence),
                 )
             elif a.cmd == "signal":
-                result = promote_signal(
+                result = _lazy_import("signal_loop", "promote_signal")(
                     Path(a.decision), Path(a.root), project=a.project, force=a.force
                 )
             elif a.cmd == "learning" and a.learning_cmd == "init":
                 milestones = json.loads(Path(a.milestones).read_text(encoding="utf-8"))
-                result = init_learning_task(
+                result = _lazy_import("learning_loop", "init_learning_task")(
                     Path(a.root),
                     a.task_id,
                     a.owner,
@@ -2632,14 +2516,14 @@ def _dispatch(argv=None) -> int:
                     force=a.force,
                 )
             elif a.cmd == "learning" and a.learning_cmd == "packet":
-                result = build_fresh_worker_packet(
+                result = _lazy_import("learning_loop", "build_fresh_worker_packet")(
                     Path(a.task), a.milestone, a.worker, force=a.force
                 )
             elif a.cmd == "learning" and a.learning_cmd == "propose":
                 instructions = json.loads(
                     Path(a.instructions).read_text(encoding="utf-8")
                 )
-                result = propose_instruction_candidate(
+                result = _lazy_import("learning_loop", "propose_instruction_candidate")(
                     Path(a.task),
                     Path(a.root),
                     a.milestone,
@@ -2650,7 +2534,9 @@ def _dispatch(argv=None) -> int:
                 )
             elif a.cmd == "learning" and a.learning_cmd == "validate":
                 results = json.loads(Path(a.results).read_text(encoding="utf-8"))
-                result = validate_instruction_candidate(
+                result = _lazy_import(
+                    "learning_loop", "validate_instruction_candidate"
+                )(
                     Path(a.candidate),
                     Path(a.root),
                     a.validator,
@@ -2659,7 +2545,7 @@ def _dispatch(argv=None) -> int:
                 )
             elif a.cmd == "learning" and a.learning_cmd == "experiment":
                 space = json.loads(Path(a.space).read_text(encoding="utf-8"))
-                result = plan_learning_experiment(
+                result = _lazy_import("learning_loop", "plan_learning_experiment")(
                     Path(a.task),
                     space,
                     variant=a.variant,
@@ -2671,18 +2557,18 @@ def _dispatch(argv=None) -> int:
                     force=a.force,
                 )
             elif a.cmd == "learning":
-                result = promote_instruction_candidate(
+                result = _lazy_import("learning_loop", "promote_instruction_candidate")(
                     Path(a.validation), a.owner, force=a.force
                 )
             elif a.cmd == "pr":
-                result = draft_pr(
+                result = _lazy_import("product_missions", "draft_pr")(
                     Path(a.mission),
                     Path(a.root),
                     [Path(item) for item in a.evidence],
                     a.force,
                 )
             elif a.outcome_cmd == "record":
-                result = record_outcome(
+                result = _lazy_import("product_missions", "record_outcome")(
                     Path(a.mission),
                     Path(a.root),
                     a.metric,
@@ -2693,19 +2579,21 @@ def _dispatch(argv=None) -> int:
                     a.notes,
                 )
             else:
-                result = outcome_summary(Path(a.root), a.mission_id)
+                result = _lazy_import("product_missions", "outcome_summary")(
+                    Path(a.root), a.mission_id
+                )
         except (
-            ProductMissionError,
-            IntakeParametersError,
-            SignalLoopError,
-            LearningLoopError,
-            MigrationError,
-            MissionGraphError,
-            ProofDeltaError,
-            ProviderRouterError,
-            AgentContractError,
-            AgenticControlError,
-            LangGraphAssuranceError,
+            _lazy_import("product_missions", "ProductMissionError"),
+            _lazy_import("intake_parameters", "IntakeParametersError"),
+            _lazy_import("signal_loop", "SignalLoopError"),
+            _lazy_import("learning_loop", "LearningLoopError"),
+            _lazy_import("migration", "MigrationError"),
+            _lazy_import("mission_graph", "MissionGraphError"),
+            _lazy_import("proof_delta", "ProofDeltaError"),
+            _lazy_import("provider_router", "ProviderRouterError"),
+            _lazy_import("agent_contract", "AgentContractError"),
+            _lazy_import("agentic_control", "AgenticControlError"),
+            _lazy_import("langgraph_assurance", "LangGraphAssuranceError"),
         ) as exc:
             print(
                 json.dumps(
@@ -2716,7 +2604,11 @@ def _dispatch(argv=None) -> int:
                         "message": exc.message,
                         "marker": getattr(exc, "marker", "WORKFLOW_REJECTED"),
                         "failure": getattr(
-                            exc, "guidance", explain_failure(exc.code, exc.message)
+                            exc,
+                            "guidance",
+                            _lazy_import("failure_guidance", "explain_failure")(
+                                exc.code, exc.message
+                            ),
                         ),
                     },
                     indent=2,
@@ -2732,7 +2624,9 @@ def _dispatch(argv=None) -> int:
                         "status": "failed",
                         "code": "E_INPUT",
                         "message": str(exc),
-                        "failure": explain_failure("E_INPUT", str(exc)),
+                        "failure": _lazy_import("failure_guidance", "explain_failure")(
+                            "E_INPUT", str(exc)
+                        ),
                     },
                     indent=2,
                 ),
@@ -2755,7 +2649,11 @@ def _dispatch(argv=None) -> int:
             or (a.cmd == "langgraph" and a.langgraph_cmd == "verify")
             or (a.cmd == "langgraph" and a.langgraph_cmd == "replay-verify")
             or (a.cmd == "provider" and a.provider_cmd == "verify")
-            or (a.cmd == "agent" and a.agent_cmd in {"contract", "attestation"})
+            or (
+                a.cmd == "agent"
+                and a.agent_cmd
+                in {"contract", "attestation", "route-audit", "card-audit"}
+            )
             or (
                 a.cmd == "intake"
                 and a.intake_cmd in {"parameters", "params"}
@@ -2780,22 +2678,28 @@ def _dispatch(argv=None) -> int:
         root = Path(getattr(a, "root", ".")).resolve()
         try:
             if a.atomic_cmd == "import":
-                result = import_atomic_run(
+                result = _lazy_import("atomic_proof_adapter", "import_atomic_run")(
                     root, Path(a.envelope), Path(a.out) if a.out else None
                 )
             elif a.atomic_cmd == "verify":
-                result = verify_atomic_receipt(root, Path(a.receipt))
+                result = _lazy_import("atomic_proof_adapter", "verify_atomic_receipt")(
+                    root, Path(a.receipt)
+                )
             elif a.atomic_cmd == "template":
-                result = atomic_envelope_template()
+                result = _lazy_import(
+                    "atomic_proof_adapter", "atomic_envelope_template"
+                )()
             else:
-                result = atomic_proof_projection(root)
+                result = _lazy_import(
+                    "atomic_proof_adapter", "atomic_proof_projection"
+                )(root)
             code = (
                 0
                 if result.get("ok", True) and int(result.get("invalid_count", 0)) == 0
                 else 1
             )
         except (
-            AtomicProofAdapterError,
+            _lazy_import("atomic_proof_adapter", "AtomicProofAdapterError"),
             OSError,
             UnicodeDecodeError,
             json.JSONDecodeError,
@@ -2820,24 +2724,32 @@ def _dispatch(argv=None) -> int:
         root = Path(getattr(a, "root", ".")).resolve()
         try:
             if a.agent_bridge_cmd == "import":
-                result = import_agent_proof(
+                result = _lazy_import("agent_proof_bridge", "import_agent_proof")(
                     root, Path(a.envelope), Path(a.out) if a.out else None
                 )
             elif a.agent_bridge_cmd == "verify":
-                result = verify_agent_proof(root, Path(a.receipt))
+                result = _lazy_import("agent_proof_bridge", "verify_agent_proof")(
+                    root, Path(a.receipt)
+                )
             elif a.agent_bridge_cmd == "template":
-                result = provider_template(a.provider)
+                result = _lazy_import("agent_proof_bridge", "provider_template")(
+                    a.provider
+                )
             elif a.agent_bridge_cmd == "mission":
-                result = agent_handoff_brief(root, Path(a.contract))
+                result = _lazy_import("agent_proof_bridge", "agent_handoff_brief")(
+                    root, Path(a.contract)
+                )
             else:
-                result = agent_proof_projection(root)
+                result = _lazy_import("agent_proof_bridge", "agent_proof_projection")(
+                    root
+                )
             code = (
                 0
                 if result.get("ok", True) and int(result.get("invalid_count", 0)) == 0
                 else 1
             )
         except (
-            AgentProofBridgeError,
+            _lazy_import("agent_proof_bridge", "AgentProofBridgeError"),
             OSError,
             UnicodeDecodeError,
             json.JSONDecodeError,
@@ -2857,7 +2769,13 @@ def _dispatch(argv=None) -> int:
             file=sys.stderr if code else sys.stdout,
         )
         return code
-    if a.cmd in {"operations-control", "lifecycle", "service-boundary", "repair-loop", "repo-coordinate"}:
+    if a.cmd in {
+        "operations-control",
+        "lifecycle",
+        "service-boundary",
+        "repair-loop",
+        "repo-coordinate",
+    }:
         from .cli_coordination import run as run_coordination
 
         return run_coordination(a)
@@ -3050,8 +2968,8 @@ def _dispatch(argv=None) -> int:
         return code
     if a.cmd == "guide":
         try:
-            result = adoption_guide(a.journey)
-        except AdoptionGuideError as exc:
+            result = _lazy_import("ide_playbook", "adoption_guide")(a.journey)
+        except _lazy_import("ide_playbook", "AdoptionGuideError") as exc:
             error = {
                 "schema": "factory.adoption-guide.error.v1",
                 "code": exc.code,
@@ -3092,17 +3010,23 @@ def _dispatch(argv=None) -> int:
     if a.cmd == "agui":
         workspace = Path(a.root).resolve()
         try:
-            status = first_lap_status(workspace)
+            status = _lazy_import("first_lap", "first_lap_status")(workspace)
             result = {
                 "schema": "factory.agui.events.v1",
                 "marker": "AGUI_REVIEW_EVENTS_READY",
-                "events": build_review_events(
+                "events": _lazy_import("agui", "build_review_events")(
                     status, run_id=a.run_id, surface=a.surface
                 ),
                 "scope": "Controlled/declarative review events only; no agent, execution, approval, provider, credential, or transport action ran.",
             }
             code = 0
-        except (FirstLapError, AguiError, OSError, TypeError, ValueError) as exc:
+        except (
+            _lazy_import("first_lap", "FirstLapError"),
+            _lazy_import("agui", "AguiError"),
+            OSError,
+            TypeError,
+            ValueError,
+        ) as exc:
             result = {
                 "schema": "factory.agui.error.v1",
                 "marker": "AGUI_REVIEW_EVENTS_BLOCKED",
@@ -3125,8 +3049,14 @@ def _dispatch(argv=None) -> int:
         workspace = Path(a.root).resolve()
         out_dir = Path(a.out_dir) if a.out_dir else None
         try:
-            result = run_first_proof(workspace, out_dir=out_dir)
-        except (AdoptionError, E2EProofError, OSError) as exc:
+            result = _lazy_import("adoption", "run_first_proof")(
+                workspace, out_dir=out_dir
+            )
+        except (
+            _lazy_import("adoption", "AdoptionError"),
+            _lazy_import("e2e_proof", "E2EProofError"),
+            OSError,
+        ) as exc:
             code = getattr(exc, "code", "E_FIRST_PROOF_FAILED")
             error = {
                 "schema": "factory.first-proof.error.v1",
@@ -3178,19 +3108,21 @@ def _dispatch(argv=None) -> int:
 
         try:
             if a.gauntlet_cmd == "draft":
-                payload = draft_gauntlet(workspace, a.source_id)
+                payload = _lazy_import("gauntlet_draft", "draft_gauntlet")(
+                    workspace, a.source_id
+                )
                 code = 0
             elif a.gauntlet_cmd == "plan":
-                proposal = compile_gauntlet_proposal(
+                proposal = _lazy_import("gauntlet", "compile_gauntlet_proposal")(
                     workspace, workspace_path(a.source)
                 )
-                path = write_gauntlet_proposal(
+                path = _lazy_import("gauntlet", "write_gauntlet_proposal")(
                     workspace, proposal, workspace_path(a.out)
                 )
                 payload: dict[str, object] = {"proposal": proposal, "path": str(path)}
                 code = 0
             elif a.gauntlet_cmd == "admit":
-                payload = admit_gauntlet(
+                payload = _lazy_import("gauntlet", "admit_gauntlet")(
                     workspace,
                     workspace_path(a.proposal),
                     approved_by=a.approved_by,
@@ -3201,7 +3133,7 @@ def _dispatch(argv=None) -> int:
                 )
                 code = 0
             elif a.gauntlet_cmd == "run":
-                payload = run_gauntlet(
+                payload = _lazy_import("gauntlet", "run_gauntlet")(
                     workspace,
                     workspace_path(a.proposal),
                     workspace_path(a.admission),
@@ -3209,20 +3141,24 @@ def _dispatch(argv=None) -> int:
                 )
                 code = 0 if payload["card"]["ok"] else 1
             elif a.gauntlet_cmd == "status":
-                payload = gauntlet_status(workspace, a.source_id)
+                payload = _lazy_import("gauntlet", "gauntlet_status")(
+                    workspace, a.source_id
+                )
                 code = 0
             elif a.gauntlet_card_cmd == "verify":
-                payload = verify_survival_card(
+                payload = _lazy_import("gauntlet", "verify_survival_card")(
                     Path(a.card),
                     envelope_path=Path(a.envelope) if a.envelope else None,
                     trust_root_path=Path(a.trust_root) if a.trust_root else None,
                 )
                 code = 0
             elif a.gauntlet_card_cmd == "challenge":
-                payload = challenge_survival_card(Path(a.card))
+                payload = _lazy_import("gauntlet", "challenge_survival_card")(
+                    Path(a.card)
+                )
                 code = 0 if payload["ok"] else 1
             else:
-                payload = seal_survival_card(
+                payload = _lazy_import("gauntlet", "seal_survival_card")(
                     Path(a.card),
                     private_key_path=Path(a.private_key),
                     keyid=a.keyid,
@@ -3232,7 +3168,10 @@ def _dispatch(argv=None) -> int:
                     out=Path(a.out),
                 )
                 code = 0
-        except (GauntletError, GauntletDraftError) as exc:
+        except (
+            _lazy_import("gauntlet", "GauntletError"),
+            _lazy_import("gauntlet_draft", "GauntletDraftError"),
+        ) as exc:
             error = {
                 "schema": "factory.gauntlet.error.v1",
                 "marker": exc.code,
@@ -3288,7 +3227,9 @@ def _dispatch(argv=None) -> int:
         try:
             if a.team_pilot_cmd == "verify":
                 receipt = json.loads(Path(a.receipt).read_text(encoding="utf-8"))
-                result = validate_team_pilot_receipt(receipt)
+                result = _lazy_import("team_pilot", "validate_team_pilot_receipt")(
+                    receipt
+                )
                 if a.json:
                     print(json.dumps({"receipt": result}, indent=2, sort_keys=True))
                 else:
@@ -3304,21 +3245,25 @@ def _dispatch(argv=None) -> int:
             manifest = Path(a.manifest)
             if not manifest.is_absolute():
                 manifest = workspace / manifest
-            receipt = evaluate_team_pilot_readiness(workspace, manifest)
+            receipt = _lazy_import("team_pilot", "evaluate_team_pilot_readiness")(
+                workspace, manifest
+            )
             artifacts = (
-                write_team_pilot_artifacts(receipt, Path(a.out_dir))
+                _lazy_import("team_pilot", "write_team_pilot_artifacts")(
+                    receipt, Path(a.out_dir)
+                )
                 if a.out_dir
                 else None
             )
         except (
-            TeamPilotError,
+            _lazy_import("team_pilot", "TeamPilotError"),
             UnicodeDecodeError,
             json.JSONDecodeError,
             OSError,
         ) as exc:
             code = (
                 exc.code
-                if isinstance(exc, TeamPilotError)
+                if isinstance(exc, _lazy_import("team_pilot", "TeamPilotError"))
                 else "E_TEAM_PILOT_RECEIPT_INVALID"
             )
             error = {
@@ -3355,17 +3300,20 @@ def _dispatch(argv=None) -> int:
         if a.plan_cmd is None:
             return _plan()
         try:
-            review = review_plan_proof(
+            review = _lazy_import("plan_proof_review", "review_plan_proof")(
                 Path(a.root),
                 Path(a.plan),
                 base=a.base,
                 changed=a.changed or None,
             )
             if a.out_dir:
-                review["artifacts"] = write_plan_proof_review_artifacts(
-                    review, Path(a.out_dir)
-                )
-        except (ChangeReviewError, PlanProofReviewError) as exc:
+                review["artifacts"] = _lazy_import(
+                    "plan_proof_review", "write_plan_proof_review_artifacts"
+                )(review, Path(a.out_dir))
+        except (
+            _lazy_import("change_review", "ChangeReviewError"),
+            _lazy_import("plan_proof_review", "PlanProofReviewError"),
+        ) as exc:
             error = {
                 "schema": "factory.plan_proof_review.error.v1",
                 "marker": getattr(exc, "code", "PLAN_TO_PROOF_PLAN_INVALID"),
@@ -3399,9 +3347,9 @@ def _dispatch(argv=None) -> int:
             )
         return 0
     if a.cmd == "init":
-        ensure_layout(Path(a.root))
+        _lazy_import("contract", "ensure_layout")(Path(a.root))
         print(f"factory layout created under {Path(a.root).resolve()}")
-        for sub_name in LAYOUT.values():
+        for sub_name in _lazy_import("contract", "LAYOUT").values():
             print(f"  {sub_name}/")
         return 0
     if a.cmd == "release-contract":
@@ -3444,7 +3392,7 @@ def _dispatch(argv=None) -> int:
                     key, value = item.split("=", 1)
                     evidence[key] = value
                 oracle_relative = oracle_path.relative_to(workspace).as_posix()
-                source = source_snapshot(workspace)
+                source = _lazy_import("release_candidate", "source_snapshot")(workspace)
                 if not source.get("ok"):
                     raise ValueError(
                         str(source.get("reason", "core source binding is unavailable"))
@@ -3457,7 +3405,7 @@ def _dispatch(argv=None) -> int:
                     if isinstance(value, str) and value
                 }
                 core = {
-                    "schema": RELEASE_CONTRACT_SCHEMA,
+                    "schema": _lazy_import("release_contract", "SCHEMA"),
                     "feature": a.feature,
                     "oracle_contract": oracle_relative,
                     "oracle_contract_sha256": oracle_sha,
@@ -3471,7 +3419,10 @@ def _dispatch(argv=None) -> int:
                 }
                 if evidence:
                     core["evidence"] = evidence
-                payload = {**core, "policy_digest": release_contract_digest(core)}
+                payload = {
+                    **core,
+                    "policy_digest": _lazy_import("release_contract", "_sha")(core),
+                }
                 destination = Path(a.out)
                 if not destination.is_absolute():
                     destination = workspace / destination
@@ -3503,7 +3454,7 @@ def _dispatch(argv=None) -> int:
                     if isinstance(value, dict)
                     else set()
                 )
-                result = verify_release_contract(
+                result = _lazy_import("release_contract", "verify_release_contract")(
                     workspace, a.feature, contract_path, required
                 )
         except (
@@ -3526,7 +3477,7 @@ def _dispatch(argv=None) -> int:
         )
         return 0 if result.get("ok") else 1
     if a.cmd == "assemble":
-        report = assemble(
+        report = _lazy_import("assembly", "assemble")(
             Path(a.root),
             a.feature,
             dry_run=a.dry_run,
@@ -3543,17 +3494,22 @@ def _dispatch(argv=None) -> int:
                 if a.usage_json
                 else None
             )
-            report = continue_assembly(
+            report = _lazy_import("continuation", "continue_assembly")(
                 Path(a.root), a.feature, dry_run=a.dry_run, usage=usage
             )
-        except (ContinuationError, ValueError, OSError, json.JSONDecodeError) as exc:
+        except (
+            _lazy_import("continuation", "ContinuationError"),
+            ValueError,
+            OSError,
+            json.JSONDecodeError,
+        ) as exc:
             code = getattr(exc, "code", "CONTINUATION_INPUT_INVALID")
             payload = {
                 "schema": "factory.assembly-continuation.error.v1",
                 "code": code,
                 "message": str(exc),
             }
-            if isinstance(exc, ContinuationError):
+            if isinstance(exc, _lazy_import("continuation", "ContinuationError")):
                 payload["candidates"] = exc.candidates
             print(
                 json.dumps(payload, indent=2)
@@ -3583,9 +3539,11 @@ def _dispatch(argv=None) -> int:
             else 0
         )
     if a.cmd == "metrics":
-        payload = public_metrics(Path(a.root))
+        payload = _lazy_import("run_metrics", "public_metrics")(Path(a.root))
         if a.out:
-            export_public_metrics(Path(a.root), Path(a.out))
+            _lazy_import("run_metrics", "export_public_metrics")(
+                Path(a.root), Path(a.out)
+            )
         if a.json or not a.out:
             print(json.dumps(payload, indent=2))
         else:
@@ -3595,13 +3553,13 @@ def _dispatch(argv=None) -> int:
         try:
             if a.workspace_cmd == "inspect":
                 root = Path(a.root)
-                payload = inspect_workspace(root)
+                payload = _lazy_import("workspace_advisor", "inspect_workspace")(root)
                 payload = dict(payload)
                 payload["artifacts"] = {}
                 if a.out_dir:
-                    artifacts = write_workspace_advisor_artifacts(
-                        payload, root, Path(a.out_dir)
-                    )
+                    artifacts = _lazy_import(
+                        "workspace_advisor", "write_workspace_advisor_artifacts"
+                    )(payload, root, Path(a.out_dir))
                     payload["artifacts"] = {
                         "paths": artifacts,
                         "write_mode": "explicit_local",
@@ -3612,19 +3570,28 @@ def _dispatch(argv=None) -> int:
                     ]
             elif a.continuity_cmd == "baseline":
                 root = Path(a.root)
-                payload = capture_continuity_baseline(root)
+                payload = _lazy_import(
+                    "index_continuity", "capture_continuity_baseline"
+                )(root)
                 payload = dict(payload)
-                payload["baseline_path"] = write_continuity_baseline(
-                    payload, root, Path(a.out)
-                )
+                payload["baseline_path"] = _lazy_import(
+                    "index_continuity", "write_continuity_baseline"
+                )(payload, root, Path(a.out))
                 payload["markers"] = [
                     *payload["markers"],
                     "INDEX_CONTINUITY_ARTIFACT_EXPLICIT",
                 ]
             else:
-                payload = compare_continuity(Path(a.root), Path(a.baseline))
-        except (WorkspaceAdvisorError, IndexContinuityError) as exc:
-            is_continuity = isinstance(exc, IndexContinuityError)
+                payload = _lazy_import("index_continuity", "compare_continuity")(
+                    Path(a.root), Path(a.baseline)
+                )
+        except (
+            _lazy_import("workspace_advisor", "WorkspaceAdvisorError"),
+            _lazy_import("index_continuity", "IndexContinuityError"),
+        ) as exc:
+            is_continuity = isinstance(
+                exc, _lazy_import("index_continuity", "IndexContinuityError")
+            )
             error = {
                 "schema": "factory.index_continuity.error.v1"
                 if is_continuity
@@ -3875,7 +3842,7 @@ def _dispatch(argv=None) -> int:
                 "cost_usd": a.factory_cost_usd,
             }
             try:
-                payload = record_savings_pair(
+                payload = _lazy_import("savings", "record_savings_pair")(
                     Path(a.root),
                     a.pair_id,
                     baseline,
@@ -3884,7 +3851,7 @@ def _dispatch(argv=None) -> int:
                     evidence=Path(a.evidence) if a.evidence else None,
                     replace=a.replace,
                 )
-            except (SavingsError, OSError) as exc:
+            except (_lazy_import("savings", "SavingsError"), OSError) as exc:
                 code = getattr(exc, "code", "SAVINGS_INPUT_INVALID")
                 print(
                     json.dumps({"code": code, "message": str(exc)}, indent=2)
@@ -3912,9 +3879,11 @@ def _dispatch(argv=None) -> int:
                 print(f"receipt       : {payload['receipt']}")
             return 0
         if a.savings_cmd == "report":
-            payload = public_savings_report(Path(a.root))
+            payload = _lazy_import("savings", "public_savings_report")(Path(a.root))
             if a.out:
-                export_public_savings_report(Path(a.root), Path(a.out))
+                _lazy_import("savings", "export_public_savings_report")(
+                    Path(a.root), Path(a.out)
+                )
             if a.json or not a.out:
                 print(json.dumps(payload, indent=2))
             else:
@@ -3925,10 +3894,12 @@ def _dispatch(argv=None) -> int:
     if a.cmd == "proofs":
         try:
             if a.proofs_cmd == "record":
-                manifest = load_proof_manifest(Path(a.manifest))
+                manifest = _lazy_import("proof_reuse", "load_manifest")(
+                    Path(a.manifest)
+                )
                 gates = manifest.get("gates") if isinstance(manifest, dict) else None
                 if not isinstance(gates, list) or not gates:
-                    raise ProofReuseError(
+                    raise _lazy_import("proof_reuse", "ProofReuseError")(
                         "PROOF_MANIFEST_INVALID", "manifest contains no gates"
                     )
                 selected = [
@@ -3938,10 +3909,10 @@ def _dispatch(argv=None) -> int:
                     and (a.gate is None or gate.get("name") == a.gate)
                 ]
                 if len(selected) != 1:
-                    raise ProofReuseError(
+                    raise _lazy_import("proof_reuse", "ProofReuseError")(
                         "PROOF_GATE_AMBIGUOUS", "select exactly one gate with --gate"
                     )
-                payload = record_proof(
+                payload = _lazy_import("proof_reuse", "record_proof")(
                     Path(a.root),
                     selected[0],
                     elapsed_ms=a.elapsed_ms,
@@ -3949,20 +3920,24 @@ def _dispatch(argv=None) -> int:
                     replace=a.replace,
                 )
             elif a.proofs_cmd == "plan":
-                payload = plan_proofs(
+                payload = _lazy_import("proof_reuse", "plan_proofs")(
                     Path(a.root),
-                    load_proof_manifest(Path(a.manifest)),
+                    _lazy_import("proof_reuse", "load_manifest")(Path(a.manifest)),
                     changed_paths=a.changed,
                     auto_savings=a.auto_savings,
                     out=Path(a.out) if a.out else None,
                 )
             elif a.proofs_cmd == "verify":
-                payload = verify_proof_receipt(Path(a.root), Path(a.receipt))
+                payload = _lazy_import("proof_reuse", "verify_proof_receipt")(
+                    Path(a.root), Path(a.receipt)
+                )
             elif a.proofs_cmd == "challenge":
-                payload = challenge_proof_receipt(Path(a.root), Path(a.receipt))
+                payload = _lazy_import("proof_reuse", "challenge_proof_receipt")(
+                    Path(a.root), Path(a.receipt)
+                )
             else:
                 p.error("proofs requires record, plan, verify, or challenge")
-        except ProofReuseError as exc:
+        except _lazy_import("proof_reuse", "ProofReuseError") as exc:
             failure = {
                 "schema": "factory.proof-error.v1",
                 "code": exc.code,
@@ -3990,7 +3965,7 @@ def _dispatch(argv=None) -> int:
             return 0 if payload.get("valid", payload.get("passed", False)) else 1
         return 0
     if a.cmd == "verify":
-        result = verify_feature(
+        result = _lazy_import("verification", "verify_feature")(
             Path(a.root),
             a.feature,
             strict_release=a.strict_release,
@@ -4066,7 +4041,7 @@ def _dispatch(argv=None) -> int:
             )
         updates = 0
         while True:
-            snapshot = live_snapshot(
+            snapshot = _lazy_import("meter", "live_snapshot")(
                 Path(a.root),
                 baseline_tokens_per_run=a.baseline,
                 runs_projected=a.runs,
@@ -4074,18 +4049,23 @@ def _dispatch(argv=None) -> int:
             if a.json:
                 print(json.dumps(snapshot, sort_keys=True))
             else:
-                print(live_summary_table(snapshot))
+                print(_lazy_import("meter", "live_summary_table")(snapshot))
             updates += 1
             if not a.watch or (a.max_updates is not None and updates >= a.max_updates):
                 break
             time.sleep(a.interval)
         return capture_exit
     if a.cmd == "rollup":
-        print(json.dumps(rollup_receipts(Path(a.root), a.feature), indent=2))
+        print(
+            json.dumps(
+                _lazy_import("assembly", "rollup_receipts")(Path(a.root), a.feature),
+                indent=2,
+            )
+        )
         return 0
     if a.cmd == "trace":
         try:
-            trace = build_trace(
+            trace = _lazy_import("proof", "build_trace")(
                 Path(a.root), a.feature, out=Path(a.out) if a.out else None
             )
         except ValueError as exc:
@@ -4103,7 +4083,9 @@ def _dispatch(argv=None) -> int:
             )
         return 0
     if a.cmd == "verify-trace":
-        result = verify_trace(Path(a.trace), root=Path(a.root) if a.root else None)
+        result = _lazy_import("proof", "verify_trace")(
+            Path(a.trace), root=Path(a.root) if a.root else None
+        )
         if a.json:
             print(json.dumps(result, indent=2))
         else:
@@ -4118,14 +4100,22 @@ def _dispatch(argv=None) -> int:
     if a.cmd == "replay":
         trace_path = Path(a.trace)
         trace_root = (
-            Path(a.root) if a.root else Path(load_trace(trace_path).get("root", "."))
+            Path(a.root)
+            if a.root
+            else Path(_lazy_import("proof", "load_trace")(trace_path).get("root", "."))
         )
         changed = list(a.changed)
         if a.base:
-            changed.extend(git_changed_paths(trace_root, a.base))
-        plan = replay_plan(load_trace(trace_path), changed)
+            changed.extend(
+                _lazy_import("proof", "git_changed_paths")(trace_root, a.base)
+            )
+        plan = _lazy_import("proof", "replay_plan")(
+            _lazy_import("proof", "load_trace")(trace_path), changed
+        )
         if a.execute:
-            verification = verify_trace(trace_path, root=trace_root)
+            verification = _lazy_import("proof", "verify_trace")(
+                trace_path, root=trace_root
+            )
             if not verification["valid"]:
                 print(
                     json.dumps(verification, indent=2)
@@ -4133,7 +4123,7 @@ def _dispatch(argv=None) -> int:
                     else "trace verification failed; replay refused"
                 )
                 return 1
-            result = execute_replay(plan, root=trace_root)
+            result = _lazy_import("proof", "execute_replay")(plan, root=trace_root)
             print(
                 json.dumps(result, indent=2)
                 if a.json
@@ -4158,22 +4148,26 @@ def _dispatch(argv=None) -> int:
                     print(f"  run   : {item['command']}")
         return 0
     if a.cmd == "evidence":
-        evidence = public_evidence(
+        evidence = _lazy_import("proof", "public_evidence")(
             Path(a.root), a.feature, trace_path=Path(a.trace) if a.trace else None
         )
         print(
-            json.dumps(evidence, indent=2) if a.json else public_evidence_text(evidence)
+            json.dumps(evidence, indent=2)
+            if a.json
+            else _lazy_import("proof", "public_evidence_text")(evidence)
         )
         return 0 if evidence["verified"] else 1
     if a.cmd == "risk-diff":
         changed = list(a.changed)
         if not changed:
             try:
-                changed = git_changed_paths(Path(a.root), a.base)
+                changed = _lazy_import("proof", "git_changed_paths")(
+                    Path(a.root), a.base
+                )
             except RuntimeError as exc:
                 print(f"risk-diff failed: {exc}", file=sys.stderr)
                 return 1
-        risk = risk_for_paths(changed)
+        risk = _lazy_import("proof", "risk_for_paths")(changed)
         if a.json:
             print(json.dumps(risk, indent=2))
         else:
@@ -4189,8 +4183,10 @@ def _dispatch(argv=None) -> int:
 
         if a.graph_cmd == "lineage-continuity":
             try:
-                payload = verify_candidate_lineage(Path(a.root), Path(a.manifest))
-            except CandidateLineageError as exc:
+                payload = _lazy_import("candidate_lineage", "verify_candidate_lineage")(
+                    Path(a.root), Path(a.manifest)
+                )
+            except _lazy_import("candidate_lineage", "CandidateLineageError") as exc:
                 print(
                     json.dumps(
                         {
@@ -4211,17 +4207,22 @@ def _dispatch(argv=None) -> int:
             return 0
         if a.graph_cmd == "lineage-mission":
             try:
-                payload = seal_mission_graph_lineage(
+                payload = _lazy_import("graph_forensics", "seal_mission_graph_lineage")(
                     Path(a.mission),
                     Path(a.root),
                     a.run_id,
                     Path(a.out),
                     a.candidate_sha256,
                 )
-            except (GraphForensicsError, ValueError) as exc:
+            except (
+                _lazy_import("graph_forensics", "GraphForensicsError"),
+                ValueError,
+            ) as exc:
                 code = (
                     exc.code
-                    if isinstance(exc, GraphForensicsError)
+                    if isinstance(
+                        exc, _lazy_import("graph_forensics", "GraphForensicsError")
+                    )
                     else "GRAPH_LINEAGE_HISTORY_INVALID"
                 )
                 print(
@@ -4244,10 +4245,10 @@ def _dispatch(argv=None) -> int:
             return 0
         if a.graph_cmd == "lineage-seal":
             try:
-                payload = seal_graph_lineage(
+                payload = _lazy_import("graph_forensics", "seal_graph_lineage")(
                     a.run_id, a.graph_id, Path(a.steps), Path(a.out), a.candidate_sha256
                 )
-            except GraphForensicsError as exc:
+            except _lazy_import("graph_forensics", "GraphForensicsError") as exc:
                 print(
                     json.dumps(
                         {
@@ -4268,8 +4269,10 @@ def _dispatch(argv=None) -> int:
             return 0
         if a.graph_cmd == "lineage-verify":
             try:
-                payload = verify_graph_lineage(Path(a.lineage), a.candidate_sha256)
-            except GraphForensicsError as exc:
+                payload = _lazy_import("graph_forensics", "verify_graph_lineage")(
+                    Path(a.lineage), a.candidate_sha256
+                )
+            except _lazy_import("graph_forensics", "GraphForensicsError") as exc:
                 print(
                     json.dumps(
                         {
@@ -4291,8 +4294,10 @@ def _dispatch(argv=None) -> int:
             return 0 if payload["valid"] else 1
         if a.graph_cmd == "forensics":
             try:
-                payload = graph_forensics(Path(a.baseline), Path(a.candidate))
-            except GraphForensicsError as exc:
+                payload = _lazy_import("graph_forensics", "graph_forensics")(
+                    Path(a.baseline), Path(a.candidate)
+                )
+            except _lazy_import("graph_forensics", "GraphForensicsError") as exc:
                 print(
                     json.dumps(
                         {
@@ -4368,7 +4373,9 @@ def _dispatch(argv=None) -> int:
                         file=sys.stderr,
                     )
                     return 2
-            payload = graph_portfolio_plan(graph_ops_snapshot(Path(a.root)), durations)
+            payload = _lazy_import("graph_portfolio", "graph_portfolio_plan")(
+                graph_ops_snapshot(Path(a.root)), durations
+            )
             payload = {**payload, "cli_marker": "GRAPH_PORTFOLIO_CLI_READ_ONLY"}
             if a.json:
                 print(json.dumps(payload, indent=2, sort_keys=True))
@@ -4456,7 +4463,7 @@ def _dispatch(argv=None) -> int:
 
         return run_artifacts(a)
     if a.cmd == "overhead":
-        payload = overhead(Path(a.root))
+        payload = _lazy_import("meter", "overhead")(Path(a.root))
         if a.json:
             print(json.dumps(payload, indent=2))
         else:

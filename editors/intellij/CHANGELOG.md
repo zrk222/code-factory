@@ -1,5 +1,12 @@
 # FactoryLine for IntelliJ Changelog
 
+## 1.0.1 - 2026-09-23 (release preview; publication gated)
+
+- Show candidate-bound route traces and typed, proof-coupled agent handoffs so
+  reviewers can follow the request, checks, evidence, and next decision.
+- Surface no-gain repair stops and current receipt provenance without allowing
+  Junie or another agent to approve, merge, publish, or deploy.
+
 ## 0.9.8 - 2026-09-19
 
 - Align the JetBrains adapter with the current cross-platform release bundle and

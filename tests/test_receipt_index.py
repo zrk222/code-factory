@@ -28,7 +28,9 @@ def test_receipt_index_cli_writes_local_index(tmp_path: Path, capsys) -> None:
     assert (tmp_path / ".factory" / "ops" / "receipt-index.json").is_file()
 
 
-def test_receipt_index_reports_scan_budget_and_keeps_hot_entries_first(tmp_path: Path) -> None:
+def test_receipt_index_reports_scan_budget_and_keeps_hot_entries_first(
+    tmp_path: Path,
+) -> None:
     receipt_dir = tmp_path / "receipts"
     receipt_dir.mkdir()
     for index in range(3):
@@ -43,4 +45,5 @@ def test_receipt_index_rejects_output_escape(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="inside the workspace"):
         from factoryline.receipt_index import write_receipt_index
+
         write_receipt_index(tmp_path, tmp_path.parent / "outside.json")

@@ -19,7 +19,7 @@
     },
     {
       "id": "jetbrains",
-      "version_source": "editors/intellij/gradle.properties",
+      "version_source": "editors/intellij/build.gradle.kts",
       "changelog": "docs/RELEASE_CHANNELS.md",
       "artifact": "editors/intellij/*.zip"
     }

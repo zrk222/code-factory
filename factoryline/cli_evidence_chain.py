@@ -195,7 +195,11 @@ def add_parser(sub) -> None:
 def run(a) -> int:
     """Dispatch one evidence-chain command without performing external actions."""
     if a.cmd == "change":
-        from .change_review import ChangeReviewError, review_change, write_review_artifacts
+        from .change_review import (
+            ChangeReviewError,
+            review_change,
+            write_review_artifacts,
+        )
 
         try:
             review = review_change(
@@ -297,8 +301,12 @@ def run(a) -> int:
             print("=" * 44)
             print(f"verified records : {payload['verified_record_count']}")
             print(f"invalid or stale : {payload['invalid_or_stale_count']}")
-            print(f"latest route     : {(payload['latest'] or {}).get('route', 'none')}")
-            print("claim boundary   : records are not unique users; no savings are inferred")
+            print(
+                f"latest route     : {(payload['latest'] or {}).get('route', 'none')}"
+            )
+            print(
+                "claim boundary   : records are not unique users; no savings are inferred"
+            )
         if a.proof_ops_cmd == "verify" and not payload["ok"]:
             return 1
         return 0
@@ -321,7 +329,9 @@ def run(a) -> int:
         root = Path(getattr(a, "root", "."))
         try:
             if a.proof_review_cmd == "contract":
-                payload = create_intent_contract(root, a.id, Path(a.draft), a.confirmed_by)
+                payload = create_intent_contract(
+                    root, a.id, Path(a.draft), a.confirmed_by
+                )
             elif a.proof_review_cmd == "quick":
                 payload = create_quick_review(
                     root,
@@ -350,7 +360,9 @@ def run(a) -> int:
             elif a.proof_review_cmd == "trajectory-verify":
                 payload = verify_trajectory(root, Path(a.trajectory))
             elif a.proof_review_cmd == "learn":
-                payload = promote_regression(root, Path(a.review), a.id, a.confirmed_by, a.title)
+                payload = promote_regression(
+                    root, Path(a.review), a.id, a.confirmed_by, a.title
+                )
             elif a.proof_review_cmd == "inbox":
                 payload = team_proof_inbox(root)
             elif a.proof_review_cmd == "card":
@@ -382,7 +394,11 @@ def run(a) -> int:
             print(
                 "authority   : human review remains required; no execution, approval, merge, publication, deployment, credential, connector, or network action"
             )
-        if a.proof_review_cmd in {"verify", "trajectory-verify", "card-verify"} and not payload.get("ok"):
+        if a.proof_review_cmd in {
+            "verify",
+            "trajectory-verify",
+            "card-verify",
+        } and not payload.get("ok"):
             return 1
         return 0
 

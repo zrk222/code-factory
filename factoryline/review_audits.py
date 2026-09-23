@@ -798,7 +798,9 @@ def _security_scan_tree(root: Path, path: Path, tree: ast.AST) -> list[dict[str,
                     None,
                 )
                 loader_name = _name(loader) if isinstance(loader, ast.AST) else ""
-                unsafe_loader = loader_name.endswith("UnsafeLoader") or loader_name.endswith("FullLoader")
+                unsafe_loader = loader_name.endswith(
+                    "UnsafeLoader"
+                ) or loader_name.endswith("FullLoader")
                 if call != "yaml.load" or loader is None or unsafe_loader:
                     findings.append(
                         _security_finding(

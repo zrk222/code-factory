@@ -103,12 +103,27 @@ def test_team_plan_is_typed_and_never_dispatches() -> None:
         plan_id="release-review",
         intent_digest="c" * 64,
         workers=[
-            {"id": "planner", "kind": "bot", "model_tier": "frontier", "tools": ["spec"]},
-            {"id": "builder", "kind": "subagent", "model_tier": "workhorse", "tools": ["edit"]},
+            {
+                "id": "planner",
+                "kind": "bot",
+                "model_tier": "frontier",
+                "tools": ["spec"],
+            },
+            {
+                "id": "builder",
+                "kind": "subagent",
+                "model_tier": "workhorse",
+                "tools": ["edit"],
+            },
         ],
         tasks=[
             {"id": "plan", "worker_id": "planner", "acceptance": "sealed plan exists"},
-            {"id": "build", "worker_id": "builder", "dependencies": ["plan"], "acceptance": "candidate exists"},
+            {
+                "id": "build",
+                "worker_id": "builder",
+                "dependencies": ["plan"],
+                "acceptance": "candidate exists",
+            },
         ],
     )
     assert plan["dispatcher"]["started"] is False
@@ -125,7 +140,9 @@ def test_team_plan_is_typed_and_never_dispatches() -> None:
 def test_projection_counts_only_hash_valid_receipts(tmp_path) -> None:
     directory = tmp_path / ".factory" / "blueprint"
     directory.mkdir(parents=True)
-    (directory / "memory.json").write_text(__import__("json").dumps(_observation()), encoding="utf-8")
+    (directory / "memory.json").write_text(
+        __import__("json").dumps(_observation()), encoding="utf-8"
+    )
     (directory / "bad.json").write_text("{}", encoding="utf-8")
     projection = blueprint_projection(tmp_path)
     assert projection["counts"]["factory.blueprint-memory.v1"] == 1

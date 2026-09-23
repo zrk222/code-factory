@@ -67,6 +67,45 @@ def _run_one(
     }
 
 
+def _run_one_guarded(
+    lane: dict[str, Any],
+    command_name: str,
+    argv_key: str,
+    run_root: Path,
+    workspace: Path,
+) -> dict[str, Any]:
+    """Preserve an explicit incomplete leg instead of aborting sibling lanes."""
+    try:
+        return _run_one(lane, command_name, argv_key, run_root, workspace)
+    except RuntimeAuditError as exc:
+        code = exc.code
+    except OSError:
+        code = "RUNTIME_AUDIT_IO_ERROR"
+    except Exception:
+        # Do not leak exception text: it may contain absolute paths or secrets.
+        code = "RUNTIME_AUDIT_LANE_ERROR"
+    return {
+        "command": command_name,
+        "signed_argv": list(lane[argv_key]),
+        "timeout_seconds": lane["timeout_seconds"],
+        "supervision": "supervised_subprocess_not_sandboxed",
+        "execution": {
+            "exit_code": None,
+            "timed_out": False,
+            "launch_error": True,
+            "output_limit_exceeded": False,
+            "cleanup_confirmed": False,
+        },
+        "artifact": None,
+        "artifact_sha256": None,
+        "normalized_artifact_sha256": None,
+        "artifact_error": {
+            "code": code,
+            "message": "This bounded audit leg could not complete; sibling lane results were preserved.",
+        },
+    }
+
+
 def run_runtime_audit_plan(
     plan: dict[str, Any],
     workspace_root: Path,
@@ -77,8 +116,14 @@ def run_runtime_audit_plan(
 ) -> dict[str, Any]:
     """Run exact target and known-bad argv for a previously verified plan in distinct evidence directories."""
     workspace = Path(workspace_root).resolve()
-    if isinstance(max_parallelism, bool) or not isinstance(max_parallelism, int) or not 1 <= max_parallelism <= 8:
-        raise RuntimeAuditError("E_PARALLELISM", "max_parallelism must be an integer between 1 and 8")
+    if (
+        isinstance(max_parallelism, bool)
+        or not isinstance(max_parallelism, int)
+        or not 1 <= max_parallelism <= 8
+    ):
+        raise RuntimeAuditError(
+            "E_PARALLELISM", "max_parallelism must be an integer between 1 and 8"
+        )
     output = _inside(
         workspace,
         Path(output_root)
@@ -88,21 +133,28 @@ def run_runtime_audit_plan(
     output.mkdir(parents=True, exist_ok=True)
     run_root = output / f"run-{uuid.uuid4()}"
     run_root.mkdir(parents=False, exist_ok=False)
+
     def run_lane(lane: dict[str, Any]) -> dict[str, Any]:
         # Each lane owns a separate subtree; this is the isolation boundary
         # that makes bounded parallelism safe for artifact-producing checks.
         return {
             "id": lane["id"],
             "kind": lane["kind"],
-            "target": _run_one(lane, "target", "target_argv", run_root, workspace),
-            "known_bad": _run_one(lane, "known_bad", "known_bad_argv", run_root, workspace),
+            "target": _run_one_guarded(
+                lane, "target", "target_argv", run_root, workspace
+            ),
+            "known_bad": _run_one_guarded(
+                lane, "known_bad", "known_bad_argv", run_root, workspace
+            ),
         }
 
     lanes = list(plan["lanes"])
     if max_parallelism == 1 or len(lanes) < 2:
         executions = [run_lane(lane) for lane in lanes]
     else:
-        with ThreadPoolExecutor(max_workers=min(max_parallelism, len(lanes)), thread_name_prefix="cf-audit") as pool:
+        with ThreadPoolExecutor(
+            max_workers=min(max_parallelism, len(lanes)), thread_name_prefix="cf-audit"
+        ) as pool:
             futures = [pool.submit(run_lane, lane) for lane in lanes]
             executions = [future.result() for future in futures]
     result = {
@@ -113,6 +165,7 @@ def run_runtime_audit_plan(
             "max_parallelism": max_parallelism,
             "lane_isolation": "per-lane-scratch-subtree",
             "ordering": "manifest-order",
+            "partial_lane_failure_policy": "record-incomplete-leg-and-preserve-sibling-evidence",
         },
         "authority": "none",
     }

@@ -26,8 +26,8 @@ def test_public_audit_condition_count_is_recomputed_from_source():
     result = module.inventory()
     assert result["mandatory_audit_lanes"] == 6
     assert result["lane_specific_rejection_conditions"] == 81
-    assert result["crosscutting_rejection_conditions"] == 60
-    assert result["total_coded_rejection_conditions"] == 141
+    assert result["crosscutting_rejection_conditions"] == 62
+    assert result["total_coded_rejection_conditions"] == 143
     assert "E_POLICY" in result["crosscutting_condition_codes"]
     assert set(module.NON_CONDITION_MODULES) == {"runtime_audit_process.py"}
     assert not {
@@ -38,15 +38,19 @@ def test_public_audit_condition_count_is_recomputed_from_source():
     }
     claim = module.public_claim(result)
     breakdown = module.public_breakdown(result)
-    for relative in (
-        "README.md",
-        "docs/LLM_PRODUCT_CARD.md",
-        "docs/RELEASE_NOTES_0.46.3.md",
-        "docs/RELEASE_NOTES_0.46.4.md",
-    ):
+    for relative in ("README.md", "docs/LLM_PRODUCT_CARD.md"):
         content = (ROOT / relative).read_text(encoding="utf-8")
         assert claim in content
         assert breakdown in content
+    for relative in (
+        "docs/RELEASE_NOTES_0.46.3.md",
+        "docs/RELEASE_NOTES_0.46.4.md",
+    ):
+        # Release notes retain the source counts that were true for those
+        # releases; current inventory changes must not rewrite history.
+        content = (ROOT / relative).read_text(encoding="utf-8")
+        assert "6 mandatory audit lanes. 141 coded rejection conditions." in content
+        assert "81 lane-specific and 60 cross-cutting" in content
     inventory_doc = (ROOT / "docs/AUDIT_CONDITION_INVENTORY.md").read_text(
         encoding="utf-8"
     )
@@ -101,7 +105,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
     }
     assert (
         project["description"]
-        == "Independent local audit for AI-built code: catch hollow tests, security, recovery, compatibility, migration, and performance gaps before review."
+        == "Audit AI-built code with six evidence lanes, intent-to-proof traces, agent workflow receipts, and human-owned release gates."
     )
     assert {
         "mvp",
@@ -174,7 +178,7 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     assert "factory gauntlet" in readme
     assert (
         vscode_package["description"]
-        == "Start with First Proof: find AI tests that cannot fail, then keep agent and app-release evidence reviewable."
+        == "Trace AI changes from intent through six audits to reviewable proof and a human-owned release decision."
     )
     assert {
         "mvp",
@@ -489,10 +493,10 @@ def test_hosted_release_and_editor_versions_are_declared():
         encoding="utf-8"
     )
 
-    assert project["version"] == "0.46.7"
+    assert project["version"] == "0.46.8"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "0.9.9"
-    assert 'version = "0.9.8"' in gradle
+    assert vscode["version"] == "1.0.1"
+    assert 'version = "1.0.1"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 

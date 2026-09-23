@@ -62,7 +62,9 @@ def test_runner_supports_bounded_parallel_lanes_with_isolated_scratch(tmp_path):
         }
         for suffix in ("a", "b")
     ]
-    result = run_runtime_audit_plan({"lanes": lanes}, tmp_path, tmp_path / "out", max_parallelism=2)
+    result = run_runtime_audit_plan(
+        {"lanes": lanes}, tmp_path, tmp_path / "out", max_parallelism=2
+    )
     assert result["execution_policy"]["max_parallelism"] == 2
     assert [item["id"] for item in result["executions"]] == ["lane-a", "lane-b"]
     assert all(item["target"]["artifact"] for item in result["executions"])

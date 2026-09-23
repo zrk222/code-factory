@@ -39,14 +39,18 @@ def run(a) -> int:
         else:
             print("Factory Studio check")
             print(f"marker  : {payload['marker']}")
-            print(f"listener: {payload['listener']['host']}:{payload['listener']['port']}")
+            print(
+                f"listener: {payload['listener']['host']}:{payload['listener']['port']}"
+            )
             print(f"root    : {payload['root']}")
         return 0
     try:
         print("marker: STUDIO_STARTED", flush=True)
         serve_studio(Path(a.root), port=a.port, open_browser=not a.no_browser)
     except StudioRequestError as exc:
-        print(f"studio failed: {exc.code}: {exc.message}", file=__import__("sys").stderr)
+        print(
+            f"studio failed: {exc.code}: {exc.message}", file=__import__("sys").stderr
+        )
         return 2
     except OSError as exc:
         print(f"studio failed: LISTENER_ERROR: {exc}", file=__import__("sys").stderr)

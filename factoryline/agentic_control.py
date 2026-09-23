@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import subprocess
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 
 
 SCHEMA = "factory.agentic-control.v1"
@@ -31,6 +32,8 @@ CAPABILITY_SCHEMA = "factory.capability-registry.v1"
 TASK_CARD_SCHEMA = "factory.task-card.v1"
 ORCHESTRATOR_PLAN_SCHEMA = "factory.orchestrator-plan.v1"
 MODEL_ROUTE_SCHEMA = "factory.model-route.v1"
+MODEL_ROUTE_AUDIT_SCHEMA = "factory.model-route-audit.v1"
+AGENT_CARD_AUDIT_SCHEMA = "factory.a2a-agent-card-audit.v1"
 TASK_BOARD_SCHEMA = "factory.task-board.v1"
 TASK_HANDOFF_BINDING_SCHEMA = "factory.task-handoff-binding.v1"
 CANDIDATE_ALIGNMENT_SCHEMA = "factory.candidate-alignment.v1"
@@ -48,7 +51,18 @@ _ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40,64}$")
 _PHASES = ("scout", "plan", "build", "verify", "handoff", "review")
-_TASK_STATES = ("queued", "leased", "running", "checkpointed", "verifying", "review_required", "completed", "blocked", "expired", "cancelled")
+_TASK_STATES = (
+    "queued",
+    "leased",
+    "running",
+    "checkpointed",
+    "verifying",
+    "review_required",
+    "completed",
+    "blocked",
+    "expired",
+    "cancelled",
+)
 MODEL_TIERS = frozenset({"lightweight", "workhorse", "frontier"})
 BASELINE_LANES = (
     "stateful_workflows",
@@ -83,6 +97,284 @@ class AgenticControlError(ValueError):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def audit_a2a_agent_card(card: object) -> dict[str, Any]:
+    """Validate an imported A2A v0.3 AgentCard declaration without contacting it.
+
+    This is a structural and self-consistency check only. It does not prove the
+    publisher's identity, reachability, advertised behavior, or authorization.
+    """
+    if not isinstance(card, dict):
+        raise AgenticControlError(
+            "E_A2A_CARD_INPUT", "Agent Card must be a JSON object"
+        )
+    try:
+        card_digest = hashlib.sha256(_canonical(card)).hexdigest()
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise AgenticControlError(
+            "E_A2A_CARD_INPUT", "Agent Card must be JSON serializable"
+        ) from exc
+
+    findings: list[dict[str, str]] = []
+
+    def reject(code: str, message: str) -> None:
+        findings.append({"code": code, "message": message})
+
+    required_text = (
+        "protocolVersion",
+        "name",
+        "description",
+        "version",
+        "preferredTransport",
+    )
+    for key in required_text:
+        if not isinstance(card.get(key), str) or not card[key].strip():
+            reject("E_A2A_CARD_REQUIRED", f"{key} must be a non-empty string")
+
+    endpoint = card.get("url")
+    endpoint_host = None
+    if not isinstance(endpoint, str) or not endpoint.strip():
+        reject("E_A2A_CARD_ENDPOINT", "url must be a non-empty endpoint URL")
+    else:
+        try:
+            parsed = urlsplit(endpoint)
+            endpoint_host = parsed.hostname
+            local_hosts = {"localhost", "127.0.0.1", "::1"}
+            safe_scheme = parsed.scheme == "https" or (
+                parsed.scheme == "http" and parsed.hostname in local_hosts
+            )
+            if (
+                not safe_scheme
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+                or parsed.fragment
+            ):
+                reject(
+                    "E_A2A_CARD_ENDPOINT",
+                    "url must use HTTPS (or HTTP on loopback) without userinfo or a fragment",
+                )
+            _ = parsed.port  # force validation of malformed ports
+        except ValueError:
+            reject("E_A2A_CARD_ENDPOINT", "url is not a valid endpoint URL")
+
+    transport = card.get("preferredTransport")
+    known_transports = {"JSONRPC", "GRPC", "HTTP+JSON"}
+    if isinstance(transport, str) and transport not in known_transports:
+        reject(
+            "E_A2A_CARD_TRANSPORT",
+            "preferredTransport must name a supported A2A transport",
+        )
+
+    interfaces = card.get("additionalInterfaces", [])
+    if not isinstance(interfaces, list):
+        reject(
+            "E_A2A_CARD_INTERFACES",
+            "additionalInterfaces must be an array when present",
+        )
+        interfaces = []
+    seen_interfaces: dict[str, str] = {}
+    for index, interface in enumerate(interfaces):
+        if not isinstance(interface, dict):
+            reject(
+                "E_A2A_CARD_INTERFACES",
+                f"additionalInterfaces[{index}] must be an object",
+            )
+            continue
+        interface_url, interface_transport = (
+            interface.get("url"),
+            interface.get("transport"),
+        )
+        if (
+            not isinstance(interface_url, str)
+            or not interface_url.strip()
+            or not isinstance(interface_transport, str)
+            or not interface_transport.strip()
+        ):
+            reject(
+                "E_A2A_CARD_INTERFACES",
+                f"additionalInterfaces[{index}] requires url and transport",
+            )
+            continue
+        if interface_transport not in known_transports:
+            reject(
+                "E_A2A_CARD_TRANSPORT",
+                f"additionalInterfaces[{index}] uses an unsupported transport",
+            )
+        try:
+            parsed_interface = urlsplit(interface_url)
+            interface_host = parsed_interface.hostname
+            local_hosts = {"localhost", "127.0.0.1", "::1"}
+            if (
+                not (
+                    parsed_interface.scheme == "https"
+                    or (
+                        parsed_interface.scheme == "http"
+                        and interface_host in local_hosts
+                    )
+                )
+                or not interface_host
+                or parsed_interface.username
+                or parsed_interface.password
+                or parsed_interface.fragment
+            ):
+                reject(
+                    "E_A2A_CARD_ENDPOINT",
+                    f"additionalInterfaces[{index}].url must use HTTPS (or HTTP on loopback) without userinfo or a fragment",
+                )
+            _ = parsed_interface.port
+        except ValueError:
+            reject(
+                "E_A2A_CARD_ENDPOINT",
+                f"additionalInterfaces[{index}].url is not a valid endpoint URL",
+            )
+        previous = seen_interfaces.get(interface_url)
+        if previous is not None and previous != interface_transport:
+            reject(
+                "E_A2A_CARD_TRANSPORT_CONFLICT",
+                "one endpoint URL cannot declare conflicting transports",
+            )
+        seen_interfaces[interface_url] = interface_transport
+    if isinstance(endpoint, str) and isinstance(transport, str):
+        if endpoint in seen_interfaces and seen_interfaces[endpoint] != transport:
+            reject(
+                "E_A2A_CARD_TRANSPORT_CONFLICT",
+                "url and preferredTransport conflict with additionalInterfaces",
+            )
+
+    capabilities = card.get("capabilities")
+    if not isinstance(capabilities, dict):
+        reject("E_A2A_CARD_REQUIRED", "capabilities must be an object")
+    else:
+        for capability in ("streaming", "pushNotifications", "stateTransitionHistory"):
+            if capability in capabilities and not isinstance(
+                capabilities[capability], bool
+            ):
+                reject(
+                    "E_A2A_CARD_CAPABILITIES",
+                    f"capabilities.{capability} must be a boolean",
+                )
+    for key in ("defaultInputModes", "defaultOutputModes"):
+        values = card.get(key)
+        if (
+            not isinstance(values, list)
+            or not values
+            or not all(isinstance(item, str) and item.strip() for item in values)
+        ):
+            reject(
+                "E_A2A_CARD_MODES", f"{key} must be a non-empty array of media types"
+            )
+
+    skills = card.get("skills")
+    if not isinstance(skills, list) or not skills:
+        reject("E_A2A_CARD_SKILLS", "skills must be a non-empty array")
+        skills = []
+    skill_ids: set[str] = set()
+    for index, skill in enumerate(skills):
+        if not isinstance(skill, dict):
+            reject("E_A2A_CARD_SKILLS", f"skills[{index}] must be an object")
+            continue
+        for key in ("id", "name", "description"):
+            if not isinstance(skill.get(key), str) or not skill[key].strip():
+                reject(
+                    "E_A2A_CARD_SKILLS",
+                    f"skills[{index}].{key} must be a non-empty string",
+                )
+        skill_id = skill.get("id")
+        if isinstance(skill_id, str) and skill_id in skill_ids:
+            reject("E_A2A_CARD_SKILLS", f"skill id {skill_id!r} is duplicated")
+        elif isinstance(skill_id, str):
+            skill_ids.add(skill_id)
+        if (
+            not isinstance(skill.get("tags"), list)
+            or not skill["tags"]
+            or not all(isinstance(tag, str) and tag.strip() for tag in skill["tags"])
+        ):
+            reject(
+                "E_A2A_CARD_SKILLS",
+                f"skills[{index}].tags must be a non-empty array of strings",
+            )
+
+    schemes = card.get("securitySchemes", {})
+    security = card.get("security", [])
+    if not isinstance(schemes, dict) or not isinstance(security, list):
+        reject(
+            "E_A2A_CARD_SECURITY",
+            "securitySchemes must be an object and security must be an array",
+        )
+    else:
+        known_scheme_types = ("apiKey", "http", "oauth2", "openIdConnect", "mutualTLS")
+        for scheme_name, definition in schemes.items():
+            if (
+                not isinstance(scheme_name, str)
+                or not scheme_name
+                or not isinstance(definition, dict)
+            ):
+                reject(
+                    "E_A2A_CARD_SECURITY",
+                    "securitySchemes entries must map non-empty names to objects",
+                )
+                continue
+            scheme_type = definition.get("type")
+            if (
+                not isinstance(scheme_type, str)
+                or scheme_type not in known_scheme_types
+            ):
+                reject(
+                    "E_A2A_CARD_SECURITY",
+                    f"securitySchemes.{scheme_name}.type is missing or unsupported",
+                )
+            elif scheme_type == "apiKey" and (
+                not isinstance(definition.get("name"), str)
+                or definition.get("in") not in ("header", "query", "cookie")
+            ):
+                reject(
+                    "E_A2A_CARD_SECURITY",
+                    f"securitySchemes.{scheme_name} requires an API key name and location",
+                )
+            elif scheme_type == "http" and not isinstance(
+                definition.get("scheme"), str
+            ):
+                reject(
+                    "E_A2A_CARD_SECURITY",
+                    f"securitySchemes.{scheme_name} requires an HTTP scheme",
+                )
+        for index, requirement in enumerate(security):
+            if not isinstance(requirement, dict):
+                reject("E_A2A_CARD_SECURITY", f"security[{index}] must be an object")
+                continue
+            for scheme_name, scopes in requirement.items():
+                if scheme_name not in schemes:
+                    reject(
+                        "E_A2A_CARD_SECURITY",
+                        f"security[{index}] references undeclared scheme {scheme_name!r}",
+                    )
+                if not isinstance(scopes, list) or not all(
+                    isinstance(scope, str) for scope in scopes
+                ):
+                    reject(
+                        "E_A2A_CARD_SECURITY",
+                        f"security[{index}].{scheme_name} scopes must be an array of strings",
+                    )
+
+    return {
+        "schema": AGENT_CARD_AUDIT_SCHEMA,
+        "marker": "A2A_AGENT_CARD_AUDIT",
+        "valid": not findings,
+        "card_sha256": card_digest,
+        "endpoint_host": endpoint_host,
+        "preferred_transport": transport if isinstance(transport, str) else None,
+        "skill_count": len(skills),
+        "findings": findings,
+        "trust_checks": {
+            "publisher_identity_verified": False,
+            "endpoint_reached": False,
+            "behavior_verified": False,
+        },
+        "authority": {key: False for key in _AUTHORITY},
+        "claim_boundary": "Validates imported Agent Card structure and internal transport/security references only; it does not fetch, authenticate, trust, authorize, or invoke the declared agent.",
+    }
 
 
 def _canonical(value: object) -> bytes:
@@ -132,10 +424,14 @@ def _relative_paths(values: Iterable[str], label: str = "allowed_paths") -> list
     normalized: list[str] = []
     for value in values:
         if not isinstance(value, str) or not value.strip():
-            raise AgenticControlError("E_AGENTIC_PATH", f"{label} contains an invalid path")
+            raise AgenticControlError(
+                "E_AGENTIC_PATH", f"{label} contains an invalid path"
+            )
         path = Path(value.replace("\\", "/"))
         if path.is_absolute() or ".." in path.parts:
-            raise AgenticControlError("E_AGENTIC_PATH", f"{label} must be workspace-relative")
+            raise AgenticControlError(
+                "E_AGENTIC_PATH", f"{label} must be workspace-relative"
+            )
         normalized.append(path.as_posix())
     return sorted(set(normalized))
 
@@ -155,17 +451,30 @@ def create_capability_registry(
     seen: set[str] = set()
     for raw in capabilities:
         if not isinstance(raw, dict):
-            raise AgenticControlError("E_CAPABILITY_SCHEMA", "capability must be an object")
+            raise AgenticControlError(
+                "E_CAPABILITY_SCHEMA", "capability must be an object"
+            )
         required = {
-            "id", "role", "risk_class", "allowed_tools", "forbidden_tools",
-            "allowed_paths", "model_tier", "stop_condition", "approval_required",
+            "id",
+            "role",
+            "risk_class",
+            "allowed_tools",
+            "forbidden_tools",
+            "allowed_paths",
+            "model_tier",
+            "stop_condition",
+            "approval_required",
             "required_evidence",
         }
         if set(raw) != required:
-            raise AgenticControlError("E_CAPABILITY_SCHEMA", "capability fields are not exact")
+            raise AgenticControlError(
+                "E_CAPABILITY_SCHEMA", "capability fields are not exact"
+            )
         capability_id = _id(raw["id"], "capability.id")
         if capability_id in seen:
-            raise AgenticControlError("E_CAPABILITY_SCHEMA", "capability ids must be unique")
+            raise AgenticControlError(
+                "E_CAPABILITY_SCHEMA", "capability ids must be unique"
+            )
         seen.add(capability_id)
         role = _id(raw["role"], "capability.role")
         if raw["risk_class"] not in {"low", "medium", "high", "critical"}:
@@ -173,30 +482,44 @@ def create_capability_registry(
         if raw["model_tier"] not in {"lightweight", "workhorse", "frontier"}:
             raise AgenticControlError("E_CAPABILITY_SCHEMA", "model_tier is invalid")
         if not isinstance(raw["approval_required"], bool):
-            raise AgenticControlError("E_CAPABILITY_SCHEMA", "approval_required must be boolean")
+            raise AgenticControlError(
+                "E_CAPABILITY_SCHEMA", "approval_required must be boolean"
+            )
         tools = {}
         for key in ("allowed_tools", "forbidden_tools", "required_evidence"):
             value = raw[key]
-            if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
-                raise AgenticControlError("E_CAPABILITY_SCHEMA", f"{key} must be a list of strings")
+            if not isinstance(value, list) or any(
+                not isinstance(item, str) or not item.strip() for item in value
+            ):
+                raise AgenticControlError(
+                    "E_CAPABILITY_SCHEMA", f"{key} must be a list of strings"
+                )
             tools[key] = sorted(set(item.strip() for item in value))
         overlap = set(tools["allowed_tools"]) & set(tools["forbidden_tools"])
         if overlap:
-            raise AgenticControlError("E_CAPABILITY_SCHEMA", "allowed and forbidden tools overlap")
-        rows.append({
-            "id": capability_id,
-            "role": role,
-            "risk_class": raw["risk_class"],
-            "allowed_tools": tools["allowed_tools"],
-            "forbidden_tools": tools["forbidden_tools"],
-            "allowed_paths": _relative_paths(raw["allowed_paths"]),
-            "model_tier": raw["model_tier"],
-            "stop_condition": _bounded_text(raw["stop_condition"], "stop_condition"),
-            "approval_required": raw["approval_required"],
-            "required_evidence": tools["required_evidence"],
-        })
+            raise AgenticControlError(
+                "E_CAPABILITY_SCHEMA", "allowed and forbidden tools overlap"
+            )
+        rows.append(
+            {
+                "id": capability_id,
+                "role": role,
+                "risk_class": raw["risk_class"],
+                "allowed_tools": tools["allowed_tools"],
+                "forbidden_tools": tools["forbidden_tools"],
+                "allowed_paths": _relative_paths(raw["allowed_paths"]),
+                "model_tier": raw["model_tier"],
+                "stop_condition": _bounded_text(
+                    raw["stop_condition"], "stop_condition"
+                ),
+                "approval_required": raw["approval_required"],
+                "required_evidence": tools["required_evidence"],
+            }
+        )
     if not rows:
-        raise AgenticControlError("E_CAPABILITY_SCHEMA", "at least one capability is required")
+        raise AgenticControlError(
+            "E_CAPABILITY_SCHEMA", "at least one capability is required"
+        )
     core = {
         "schema": CAPABILITY_SCHEMA,
         "registry_id": registry_id,
@@ -206,29 +529,52 @@ def create_capability_registry(
         "authority": dict(_AUTHORITY),
     }
     digest = _sha(core)
-    return {**core, "registry_sha256": digest, "marker": "CAPABILITY_REGISTRY_HASH_BOUND"}
+    return {
+        **core,
+        "registry_sha256": digest,
+        "marker": "CAPABILITY_REGISTRY_HASH_BOUND",
+    }
 
 
 def verify_capability_registry(registry: dict[str, Any]) -> dict[str, Any]:
     """Verify registry bytes and reject any authority escalation or ambiguity."""
     if not isinstance(registry, dict) or registry.get("schema") != CAPABILITY_SCHEMA:
-        raise AgenticControlError("E_CAPABILITY_SCHEMA", f"registry must use {CAPABILITY_SCHEMA}")
-    required = {"schema", "registry_id", "version", "owner", "capabilities", "authority"}
+        raise AgenticControlError(
+            "E_CAPABILITY_SCHEMA", f"registry must use {CAPABILITY_SCHEMA}"
+        )
+    required = {
+        "schema",
+        "registry_id",
+        "version",
+        "owner",
+        "capabilities",
+        "authority",
+    }
     if set(registry) != required | {"registry_sha256", "marker"}:
-        raise AgenticControlError("E_CAPABILITY_SCHEMA", "registry fields are not exact")
+        raise AgenticControlError(
+            "E_CAPABILITY_SCHEMA", "registry fields are not exact"
+        )
     core = {key: registry[key] for key in required}
     if registry.get("registry_sha256") != _sha(core):
-        raise AgenticControlError("E_CAPABILITY_TAMPERED", "registry digest does not match contents")
+        raise AgenticControlError(
+            "E_CAPABILITY_TAMPERED", "registry digest does not match contents"
+        )
     if registry.get("marker") != "CAPABILITY_REGISTRY_HASH_BOUND":
         raise AgenticControlError("E_CAPABILITY_SCHEMA", "registry marker is invalid")
-    if not isinstance(core["authority"], dict) or any(value is not False for value in core["authority"].values()):
-        raise AgenticControlError("E_CAPABILITY_AUTHORITY", "registry cannot grant authority")
+    if not isinstance(core["authority"], dict) or any(
+        value is not False for value in core["authority"].values()
+    ):
+        raise AgenticControlError(
+            "E_CAPABILITY_AUTHORITY", "registry cannot grant authority"
+        )
     # Re-run the canonical constructor to validate every nested field.
     rebuilt = create_capability_registry(
         core["registry_id"], core["version"], core["capabilities"], owner=core["owner"]
     )
     if rebuilt["registry_sha256"] != registry["registry_sha256"]:
-        raise AgenticControlError("E_CAPABILITY_TAMPERED", "registry normalization changed its digest")
+        raise AgenticControlError(
+            "E_CAPABILITY_TAMPERED", "registry normalization changed its digest"
+        )
     return dict(registry)
 
 
@@ -247,7 +593,9 @@ def create_task_card(
 ) -> dict[str, Any]:
     """Create a durable, lease-ready task card; it never dispatches work."""
     task_id, workflow_id, capability_id = (
-        _id(task_id, "task_id"), _id(workflow_id, "workflow_id"), _id(capability_id, "capability_id")
+        _id(task_id, "task_id"),
+        _id(workflow_id, "workflow_id"),
+        _id(capability_id, "capability_id"),
     )
     _digest(registry_sha256, "registry_sha256")
     _digest(intent_digest, "intent_digest")
@@ -292,7 +640,8 @@ def transition_task_card(
         raise AgenticControlError("E_TASK_STATE", "unsupported task state")
     if state == "completed" and _verified_alignment is None:
         raise AgenticControlError(
-            "E_TASK_EVIDENCE", "completed state requires candidate alignment and evidence verification"
+            "E_TASK_EVIDENCE",
+            "completed state requires candidate alignment and evidence verification",
         )
     current = card["state"]
     allowed = {
@@ -308,8 +657,14 @@ def transition_task_card(
         "cancelled": set(),
     }
     if state not in allowed[current]:
-        raise AgenticControlError("E_TASK_TRANSITION", f"cannot move {current} to {state}")
-    if state == "completed" and evidence_digest is None and card.get("evidence_digest") is None:
+        raise AgenticControlError(
+            "E_TASK_TRANSITION", f"cannot move {current} to {state}"
+        )
+    if (
+        state == "completed"
+        and evidence_digest is None
+        and card.get("evidence_digest") is None
+    ):
         raise AgenticControlError(
             "E_TASK_EVIDENCE", "completion requires a hash-bound evidence digest"
         )
@@ -317,8 +672,13 @@ def transition_task_card(
     updated["state"] = state
     if state == "leased":
         if not lease_id or not lease_expires_at:
-            raise AgenticControlError("E_TASK_LEASE", "lease id and expiry are required")
-        updated["lease"] = {"lease_id": _id(lease_id, "lease_id"), "expires_at": _bounded_text(lease_expires_at, "lease_expires_at", 80)}
+            raise AgenticControlError(
+                "E_TASK_LEASE", "lease id and expiry are required"
+            )
+        updated["lease"] = {
+            "lease_id": _id(lease_id, "lease_id"),
+            "expires_at": _bounded_text(lease_expires_at, "lease_expires_at", 80),
+        }
         updated["attempt"] = int(card["attempt"]) + 1
     elif state in {"expired", "cancelled", "completed"}:
         updated["lease"] = None
@@ -328,7 +688,11 @@ def transition_task_card(
     if evidence_digest is not None:
         _digest(evidence_digest, "evidence_digest")
         updated["evidence_digest"] = evidence_digest
-    core = {key: value for key, value in updated.items() if key not in {"task_sha256", "marker", "evidence_digest"}}
+    core = {
+        key: value
+        for key, value in updated.items()
+        if key not in {"task_sha256", "marker", "evidence_digest"}
+    }
     if "evidence_digest" in updated:
         core["evidence_digest"] = updated["evidence_digest"]
     digest = _sha(core)
@@ -338,30 +702,66 @@ def transition_task_card(
 def verify_task_card(card: dict[str, Any]) -> dict[str, Any]:
     """Verify a task card's digest, state, and authority boundary."""
     if not isinstance(card, dict) or card.get("schema") != TASK_CARD_SCHEMA:
-        raise AgenticControlError("E_TASK_SCHEMA", f"task card must use {TASK_CARD_SCHEMA}")
-    if card.get("marker") != "TASK_CARD_HASH_BOUND" or not isinstance(card.get("task_sha256"), str):
-        raise AgenticControlError("E_TASK_SCHEMA", "task card marker or digest is missing")
+        raise AgenticControlError(
+            "E_TASK_SCHEMA", f"task card must use {TASK_CARD_SCHEMA}"
+        )
+    if card.get("marker") != "TASK_CARD_HASH_BOUND" or not isinstance(
+        card.get("task_sha256"), str
+    ):
+        raise AgenticControlError(
+            "E_TASK_SCHEMA", "task card marker or digest is missing"
+        )
     required = {
-        "schema", "task_id", "workflow_id", "capability_id", "registry_sha256",
-        "intent_digest", "allowed_paths", "dependencies", "state", "attempt",
-        "lease", "checkpoint", "stop_condition", "next_action", "created_at",
-        "authority", "task_sha256", "marker",
+        "schema",
+        "task_id",
+        "workflow_id",
+        "capability_id",
+        "registry_sha256",
+        "intent_digest",
+        "allowed_paths",
+        "dependencies",
+        "state",
+        "attempt",
+        "lease",
+        "checkpoint",
+        "stop_condition",
+        "next_action",
+        "created_at",
+        "authority",
+        "task_sha256",
+        "marker",
     }
     optional = {"evidence_digest"}
     if set(card) - required - optional or required - set(card):
         raise AgenticControlError("E_TASK_SCHEMA", "task card fields are not exact")
-    core = {key: value for key, value in card.items() if key not in {"task_sha256", "marker"}}
+    core = {
+        key: value
+        for key, value in card.items()
+        if key not in {"task_sha256", "marker"}
+    }
     if card["task_sha256"] != _sha(core):
-        raise AgenticControlError("E_TASK_TAMPERED", "task card digest does not match contents")
-    if card.get("state") not in _TASK_STATES or not isinstance(card.get("authority"), dict):
-        raise AgenticControlError("E_TASK_SCHEMA", "task card state or authority is invalid")
-    if not isinstance(card.get("attempt"), int) or isinstance(card.get("attempt"), bool) or card["attempt"] < 0:
+        raise AgenticControlError(
+            "E_TASK_TAMPERED", "task card digest does not match contents"
+        )
+    if card.get("state") not in _TASK_STATES or not isinstance(
+        card.get("authority"), dict
+    ):
+        raise AgenticControlError(
+            "E_TASK_SCHEMA", "task card state or authority is invalid"
+        )
+    if (
+        not isinstance(card.get("attempt"), int)
+        or isinstance(card.get("attempt"), bool)
+        or card["attempt"] < 0
+    ):
         raise AgenticControlError("E_TASK_SCHEMA", "task card attempt is invalid")
     if not isinstance(card.get("lease"), (dict, type(None))):
         raise AgenticControlError("E_TASK_SCHEMA", "task card lease is invalid")
     if isinstance(card.get("lease"), dict):
         if set(card["lease"]) != {"lease_id", "expires_at"}:
-            raise AgenticControlError("E_TASK_SCHEMA", "task card lease fields are not exact")
+            raise AgenticControlError(
+                "E_TASK_SCHEMA", "task card lease fields are not exact"
+            )
         _id(card["lease"]["lease_id"], "lease_id")
         _bounded_text(card["lease"]["expires_at"], "lease_expires_at", 80)
     if card.get("checkpoint") is not None:
@@ -370,12 +770,15 @@ def verify_task_card(card: dict[str, Any]) -> dict[str, Any]:
         _digest(card["evidence_digest"], "evidence_digest")
     if card.get("state") == "completed" and card.get("evidence_digest") is None:
         raise AgenticControlError(
-            "E_TASK_EVIDENCE", "completed task cards require a hash-bound evidence digest"
+            "E_TASK_EVIDENCE",
+            "completed task cards require a hash-bound evidence digest",
         )
     _digest(card["registry_sha256"], "registry_sha256")
     _digest(card["intent_digest"], "intent_digest")
     if any(value is not False for value in card["authority"].values()):
-        raise AgenticControlError("E_TASK_AUTHORITY", "task card cannot grant authority")
+        raise AgenticControlError(
+            "E_TASK_AUTHORITY", "task card cannot grant authority"
+        )
     return dict(card)
 
 
@@ -392,9 +795,13 @@ def project_task_board(cards: Iterable[dict[str, Any]]) -> dict[str, Any]:
     for card in verified:
         task_id = _id(card["task_id"], "task_id")
         if task_id in by_id:
-            raise AgenticControlError("E_TASK_BOARD_DUPLICATE", "task ids must be unique")
+            raise AgenticControlError(
+                "E_TASK_BOARD_DUPLICATE", "task ids must be unique"
+            )
         if not isinstance(card.get("dependencies"), list):
-            raise AgenticControlError("E_TASK_BOARD_DEPENDENCY", "dependencies must be a list")
+            raise AgenticControlError(
+                "E_TASK_BOARD_DEPENDENCY", "dependencies must be a list"
+            )
         for dependency in card["dependencies"]:
             _id(dependency, "dependency")
         by_id[task_id] = card
@@ -412,7 +819,9 @@ def project_task_board(cards: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
     def visit(task_id: str) -> None:
         if task_id in visiting:
-            raise AgenticControlError("E_TASK_BOARD_CYCLE", "task dependency graph contains a cycle")
+            raise AgenticControlError(
+                "E_TASK_BOARD_CYCLE", "task dependency graph contains a cycle"
+            )
         if task_id in visited:
             return
         visiting.add(task_id)
@@ -424,11 +833,17 @@ def project_task_board(cards: Iterable[dict[str, Any]]) -> dict[str, Any]:
     for task_id in sorted(by_id):
         visit(task_id)
 
-    completed = {task_id for task_id, card in by_id.items() if card["state"] == "completed"}
+    completed = {
+        task_id for task_id, card in by_id.items() if card["state"] == "completed"
+    }
     rows: list[dict[str, Any]] = []
     lane_ids: dict[str, list[str]] = {
-        "triage": [], "ready": [], "running": [], "review": [],
-        "blocked": [], "done": [],
+        "triage": [],
+        "ready": [],
+        "running": [],
+        "review": [],
+        "blocked": [],
+        "done": [],
     }
     for task_id in sorted(by_id):
         card = by_id[task_id]
@@ -447,18 +862,20 @@ def project_task_board(cards: Iterable[dict[str, Any]]) -> dict[str, Any]:
         else:
             lane = "ready"
         lane_ids[lane].append(task_id)
-        rows.append({
-            "task_id": task_id,
-            "workflow_id": card["workflow_id"],
-            "state": state,
-            "lane": lane,
-            "dependencies": sorted(card["dependencies"]),
-            "unmet_dependencies": unmet,
-            "attempt": card["attempt"],
-            "task_sha256": card["task_sha256"],
-            "next_action": card["next_action"],
-            "stop_condition": card["stop_condition"],
-        })
+        rows.append(
+            {
+                "task_id": task_id,
+                "workflow_id": card["workflow_id"],
+                "state": state,
+                "lane": lane,
+                "dependencies": sorted(card["dependencies"]),
+                "unmet_dependencies": unmet,
+                "attempt": card["attempt"],
+                "task_sha256": card["task_sha256"],
+                "next_action": card["next_action"],
+                "stop_condition": card["stop_condition"],
+            }
+        )
 
     edges = [
         {"from": task_id, "to": dependency}
@@ -501,22 +918,39 @@ def project_task_board(cards: Iterable[dict[str, Any]]) -> dict[str, Any]:
 def verify_task_board(board: dict[str, Any]) -> dict[str, Any]:
     """Verify a projected task board and its authority boundary."""
     if not isinstance(board, dict) or board.get("schema") != TASK_BOARD_SCHEMA:
-        raise AgenticControlError("E_TASK_BOARD_SCHEMA", f"board must use {TASK_BOARD_SCHEMA}")
+        raise AgenticControlError(
+            "E_TASK_BOARD_SCHEMA", f"board must use {TASK_BOARD_SCHEMA}"
+        )
     required = {
-        "schema", "task_count", "cards", "lanes", "dependency_edges", "next_actions",
-        "dispatcher", "authority", "claim_boundary",
+        "schema",
+        "task_count",
+        "cards",
+        "lanes",
+        "dependency_edges",
+        "next_actions",
+        "dispatcher",
+        "authority",
+        "claim_boundary",
     }
     if set(board) != required | {"board_sha256", "marker"}:
         raise AgenticControlError("E_TASK_BOARD_SCHEMA", "board fields are not exact")
     core = {key: board[key] for key in required}
     if board.get("board_sha256") != _sha(core):
-        raise AgenticControlError("E_TASK_BOARD_TAMPERED", "board digest does not match contents")
+        raise AgenticControlError(
+            "E_TASK_BOARD_TAMPERED", "board digest does not match contents"
+        )
     if board.get("marker") != "TASK_BOARD_PROJECTED_READ_ONLY":
         raise AgenticControlError("E_TASK_BOARD_SCHEMA", "board marker is invalid")
-    if not isinstance(board["authority"], dict) or any(value is not False for value in board["authority"].values()):
-        raise AgenticControlError("E_TASK_BOARD_AUTHORITY", "task board cannot grant authority")
+    if not isinstance(board["authority"], dict) or any(
+        value is not False for value in board["authority"].values()
+    ):
+        raise AgenticControlError(
+            "E_TASK_BOARD_AUTHORITY", "task board cannot grant authority"
+        )
     if board["dispatcher"] != {"poll_interval_seconds": 60, "started": False}:
-        raise AgenticControlError("E_TASK_BOARD_SCHEMA", "dispatcher metadata is invalid")
+        raise AgenticControlError(
+            "E_TASK_BOARD_SCHEMA", "dispatcher metadata is invalid"
+        )
     return dict(board)
 
 
@@ -563,31 +997,57 @@ def bind_task_card_handoff(
 
 def verify_task_card_handoff(binding: dict[str, Any]) -> dict[str, Any]:
     """Verify the task/handoff binding and preserve its zero-authority boundary."""
-    if not isinstance(binding, dict) or binding.get("schema") != TASK_HANDOFF_BINDING_SCHEMA:
+    if (
+        not isinstance(binding, dict)
+        or binding.get("schema") != TASK_HANDOFF_BINDING_SCHEMA
+    ):
         raise AgenticControlError(
             "E_TASK_HANDOFF_SCHEMA", f"binding must use {TASK_HANDOFF_BINDING_SCHEMA}"
         )
     required = {
-        "schema", "task_id", "task_sha256", "handoff_id", "handoff_sha256",
-        "workflow_id", "intent_digest", "allowed_paths", "scope_verdict", "authority",
+        "schema",
+        "task_id",
+        "task_sha256",
+        "handoff_id",
+        "handoff_sha256",
+        "workflow_id",
+        "intent_digest",
+        "allowed_paths",
+        "scope_verdict",
+        "authority",
     }
     if set(binding) != required | {"binding_sha256", "marker", "claim_boundary"}:
-        raise AgenticControlError("E_TASK_HANDOFF_SCHEMA", "binding fields are not exact")
+        raise AgenticControlError(
+            "E_TASK_HANDOFF_SCHEMA", "binding fields are not exact"
+        )
     core = {key: binding[key] for key in required}
     if binding.get("binding_sha256") != _sha(core):
-        raise AgenticControlError("E_TASK_HANDOFF_TAMPERED", "binding digest does not match contents")
-    if binding.get("marker") != "TASK_HANDOFF_INTENT_BOUND" or binding.get("scope_verdict") != "WITHIN_TASK_SCOPE":
-        raise AgenticControlError("E_TASK_HANDOFF_SCHEMA", "binding marker or scope verdict is invalid")
+        raise AgenticControlError(
+            "E_TASK_HANDOFF_TAMPERED", "binding digest does not match contents"
+        )
+    if (
+        binding.get("marker") != "TASK_HANDOFF_INTENT_BOUND"
+        or binding.get("scope_verdict") != "WITHIN_TASK_SCOPE"
+    ):
+        raise AgenticControlError(
+            "E_TASK_HANDOFF_SCHEMA", "binding marker or scope verdict is invalid"
+        )
     _id(binding["task_id"], "task_id")
     _id(binding["workflow_id"], "workflow_id")
     _digest(binding["task_sha256"], "task_sha256")
     _digest(binding["handoff_sha256"], "handoff_sha256")
     _digest(binding["intent_digest"], "intent_digest")
     if not isinstance(binding["allowed_paths"], list):
-        raise AgenticControlError("E_TASK_HANDOFF_SCHEMA", "allowed_paths must be a list")
+        raise AgenticControlError(
+            "E_TASK_HANDOFF_SCHEMA", "allowed_paths must be a list"
+        )
     _relative_paths(binding["allowed_paths"], "allowed_paths")
-    if not isinstance(binding["authority"], dict) or any(value is not False for value in binding["authority"].values()):
-        raise AgenticControlError("E_TASK_HANDOFF_AUTHORITY", "binding cannot grant authority")
+    if not isinstance(binding["authority"], dict) or any(
+        value is not False for value in binding["authority"].values()
+    ):
+        raise AgenticControlError(
+            "E_TASK_HANDOFF_AUTHORITY", "binding cannot grant authority"
+        )
     return dict(binding)
 
 
@@ -615,7 +1075,9 @@ def align_candidate_to_task(
     allowed = verified_handoff["allowed_paths"]
 
     def in_scope(path: str) -> bool:
-        return any(path == root or path.startswith(root.rstrip("/") + "/") for root in allowed)
+        return any(
+            path == root or path.startswith(root.rstrip("/") + "/") for root in allowed
+        )
 
     out_of_scope = sorted(path for path in paths if not in_scope(path))
     if out_of_scope:
@@ -661,13 +1123,16 @@ def candidate_digest_for_paths(root: Path, changed_paths: Iterable[str]) -> str:
     workspace = Path(root).resolve()
     paths = _relative_paths(changed_paths, "changed_paths")
     if not paths:
-        raise AgenticControlError("E_CANDIDATE_PROVENANCE", "changed_paths cannot be empty")
+        raise AgenticControlError(
+            "E_CANDIDATE_PROVENANCE", "changed_paths cannot be empty"
+        )
     digest = hashlib.sha256()
     for relative in paths:
         path = (workspace / relative).resolve()
         if workspace not in path.parents or not path.is_file():
             raise AgenticControlError(
-                "E_CANDIDATE_PROVENANCE", f"candidate path is missing or escapes workspace: {relative}"
+                "E_CANDIDATE_PROVENANCE",
+                f"candidate path is missing or escapes workspace: {relative}",
             )
         digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
@@ -683,28 +1148,55 @@ def candidate_digest_for_paths(root: Path, changed_paths: Iterable[str]) -> str:
 
 def verify_candidate_alignment(receipt: dict[str, Any]) -> dict[str, Any]:
     """Verify candidate alignment receipt integrity and authority."""
-    if not isinstance(receipt, dict) or receipt.get("schema") != CANDIDATE_ALIGNMENT_SCHEMA:
-        raise AgenticControlError("E_CANDIDATE_SCHEMA", f"receipt must use {CANDIDATE_ALIGNMENT_SCHEMA}")
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schema") != CANDIDATE_ALIGNMENT_SCHEMA
+    ):
+        raise AgenticControlError(
+            "E_CANDIDATE_SCHEMA", f"receipt must use {CANDIDATE_ALIGNMENT_SCHEMA}"
+        )
     required = {
-        "schema", "task_id", "workflow_id", "task_sha256", "handoff_id", "handoff_sha256",
-        "intent_digest", "candidate_hash", "changed_paths", "scope_verdict", "authority",
+        "schema",
+        "task_id",
+        "workflow_id",
+        "task_sha256",
+        "handoff_id",
+        "handoff_sha256",
+        "intent_digest",
+        "candidate_hash",
+        "changed_paths",
+        "scope_verdict",
+        "authority",
     }
     if set(receipt) != required | {"alignment_sha256", "marker", "claim_boundary"}:
         raise AgenticControlError("E_CANDIDATE_SCHEMA", "receipt fields are not exact")
     core = {key: receipt[key] for key in required}
     if receipt.get("alignment_sha256") != _sha(core):
-        raise AgenticControlError("E_CANDIDATE_TAMPERED", "receipt digest does not match contents")
-    if receipt.get("marker") != "CANDIDATE_INTENT_ALIGNED" or receipt.get("scope_verdict") != "ALIGNED":
-        raise AgenticControlError("E_CANDIDATE_SCHEMA", "receipt marker or scope verdict is invalid")
+        raise AgenticControlError(
+            "E_CANDIDATE_TAMPERED", "receipt digest does not match contents"
+        )
+    if (
+        receipt.get("marker") != "CANDIDATE_INTENT_ALIGNED"
+        or receipt.get("scope_verdict") != "ALIGNED"
+    ):
+        raise AgenticControlError(
+            "E_CANDIDATE_SCHEMA", "receipt marker or scope verdict is invalid"
+        )
     _id(receipt["task_id"], "task_id")
     _id(receipt["workflow_id"], "workflow_id")
     for key in ("task_sha256", "handoff_sha256", "intent_digest", "candidate_hash"):
         _digest(receipt[key], key)
     if not isinstance(receipt["changed_paths"], list) or not receipt["changed_paths"]:
-        raise AgenticControlError("E_CANDIDATE_SCHEMA", "changed_paths must be non-empty")
+        raise AgenticControlError(
+            "E_CANDIDATE_SCHEMA", "changed_paths must be non-empty"
+        )
     _relative_paths(receipt["changed_paths"], "changed_paths")
-    if not isinstance(receipt["authority"], dict) or any(value is not False for value in receipt["authority"].values()):
-        raise AgenticControlError("E_CANDIDATE_AUTHORITY", "receipt cannot grant authority")
+    if not isinstance(receipt["authority"], dict) or any(
+        value is not False for value in receipt["authority"].values()
+    ):
+        raise AgenticControlError(
+            "E_CANDIDATE_AUTHORITY", "receipt cannot grant authority"
+        )
     return dict(receipt)
 
 
@@ -731,8 +1223,13 @@ def create_task_evidence(
     alignment_sha256: str | None = None
     if alignment is not None:
         verified_alignment = verify_candidate_alignment(alignment)
-        if verified_alignment["task_id"] != verified_card["task_id"] or verified_alignment["candidate_hash"] != candidate_hash:
-            raise AgenticControlError("E_TASK_EVIDENCE", "alignment does not belong to the candidate task")
+        if (
+            verified_alignment["task_id"] != verified_card["task_id"]
+            or verified_alignment["candidate_hash"] != candidate_hash
+        ):
+            raise AgenticControlError(
+                "E_TASK_EVIDENCE", "alignment does not belong to the candidate task"
+            )
         alignment_sha256 = verified_alignment["alignment_sha256"]
     core = {
         "schema": TASK_EVIDENCE_SCHEMA,
@@ -761,18 +1258,42 @@ def create_task_evidence(
 def verify_task_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
     """Verify task evidence receipt integrity and its zero-authority boundary."""
     if not isinstance(receipt, dict) or receipt.get("schema") != TASK_EVIDENCE_SCHEMA:
-        raise AgenticControlError("E_TASK_EVIDENCE_SCHEMA", f"receipt must use {TASK_EVIDENCE_SCHEMA}")
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE_SCHEMA", f"receipt must use {TASK_EVIDENCE_SCHEMA}"
+        )
     required = {
-        "schema", "task_id", "task_sha256", "workflow_id", "intent_digest", "candidate_hash",
-        "evidence_digest", "evidence_kind", "verifier_id", "outcome", "source_paths", "alignment_sha256", "authority",
+        "schema",
+        "task_id",
+        "task_sha256",
+        "workflow_id",
+        "intent_digest",
+        "candidate_hash",
+        "evidence_digest",
+        "evidence_kind",
+        "verifier_id",
+        "outcome",
+        "source_paths",
+        "alignment_sha256",
+        "authority",
     }
-    if set(receipt) != required | {"evidence_receipt_sha256", "marker", "claim_boundary"}:
-        raise AgenticControlError("E_TASK_EVIDENCE_SCHEMA", "receipt fields are not exact")
+    if set(receipt) != required | {
+        "evidence_receipt_sha256",
+        "marker",
+        "claim_boundary",
+    }:
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE_SCHEMA", "receipt fields are not exact"
+        )
     core = {key: receipt[key] for key in required}
     if receipt.get("evidence_receipt_sha256") != _sha(core):
-        raise AgenticControlError("E_TASK_EVIDENCE_TAMPERED", "evidence receipt digest does not match contents")
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE_TAMPERED",
+            "evidence receipt digest does not match contents",
+        )
     if receipt.get("marker") != "TASK_EVIDENCE_HASH_BOUND":
-        raise AgenticControlError("E_TASK_EVIDENCE_SCHEMA", "evidence receipt marker is invalid")
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE_SCHEMA", "evidence receipt marker is invalid"
+        )
     _id(receipt["task_id"], "task_id")
     _id(receipt["workflow_id"], "workflow_id")
     _id(receipt["verifier_id"], "verifier_id")
@@ -784,10 +1305,16 @@ def verify_task_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
     if receipt["outcome"] not in {"passed", "failed"}:
         raise AgenticControlError("E_TASK_EVIDENCE", "outcome must be passed or failed")
     if not isinstance(receipt["source_paths"], list):
-        raise AgenticControlError("E_TASK_EVIDENCE_SCHEMA", "source_paths must be a list")
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE_SCHEMA", "source_paths must be a list"
+        )
     _relative_paths(receipt["source_paths"], "source_paths")
-    if not isinstance(receipt["authority"], dict) or any(value is not False for value in receipt["authority"].values()):
-        raise AgenticControlError("E_TASK_EVIDENCE_AUTHORITY", "evidence receipt cannot grant authority")
+    if not isinstance(receipt["authority"], dict) or any(
+        value is not False for value in receipt["authority"].values()
+    ):
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE_AUTHORITY", "evidence receipt cannot grant authority"
+        )
     return dict(receipt)
 
 
@@ -798,14 +1325,28 @@ def complete_task_with_evidence(
     verified_card = verify_task_card(card)
     verified_evidence = verify_task_evidence(evidence)
     verified_alignment = verify_candidate_alignment(alignment)
-    if verified_evidence["task_id"] != verified_card["task_id"] or verified_evidence["task_sha256"] != verified_card["task_sha256"]:
-        raise AgenticControlError("E_TASK_EVIDENCE", "evidence does not belong to the task card")
-    if verified_evidence["workflow_id"] != verified_card["workflow_id"] or verified_evidence["intent_digest"] != verified_card["intent_digest"]:
-        raise AgenticControlError("E_TASK_EVIDENCE", "evidence lineage does not match the task")
+    if (
+        verified_evidence["task_id"] != verified_card["task_id"]
+        or verified_evidence["task_sha256"] != verified_card["task_sha256"]
+    ):
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE", "evidence does not belong to the task card"
+        )
+    if (
+        verified_evidence["workflow_id"] != verified_card["workflow_id"]
+        or verified_evidence["intent_digest"] != verified_card["intent_digest"]
+    ):
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE", "evidence lineage does not match the task"
+        )
     if verified_evidence["outcome"] != "passed":
-        raise AgenticControlError("E_TASK_EVIDENCE", "failed evidence cannot complete a task")
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE", "failed evidence cannot complete a task"
+        )
     if verified_evidence["alignment_sha256"] != verified_alignment["alignment_sha256"]:
-        raise AgenticControlError("E_TASK_EVIDENCE", "evidence alignment does not match the candidate receipt")
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE", "evidence alignment does not match the candidate receipt"
+        )
     if (
         verified_alignment["task_id"] != verified_card["task_id"]
         or verified_alignment["task_sha256"] != verified_card["task_sha256"]
@@ -813,7 +1354,10 @@ def complete_task_with_evidence(
         or verified_alignment["intent_digest"] != verified_card["intent_digest"]
         or verified_alignment["candidate_hash"] != verified_evidence["candidate_hash"]
     ):
-        raise AgenticControlError("E_TASK_EVIDENCE", "candidate alignment does not belong to the task evidence")
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE",
+            "candidate alignment does not belong to the task evidence",
+        )
     return transition_task_card(
         verified_card,
         "completed",
@@ -836,11 +1380,21 @@ def build_senior_control_bundle(
     normalized: dict[str, dict[str, Any]] = {}
     for name in SENIOR_CONTROL_SLICES:
         value = slices[name]
-        if not isinstance(value, dict) or set(value) != {"status", "evidence_digest", "source", "receipt_path", "receipt_sha256"}:
-            raise AgenticControlError("E_SENIOR_CONTROL_SCHEMA", f"slice {name} fields are not exact")
+        if not isinstance(value, dict) or set(value) != {
+            "status",
+            "evidence_digest",
+            "source",
+            "receipt_path",
+            "receipt_sha256",
+        }:
+            raise AgenticControlError(
+                "E_SENIOR_CONTROL_SCHEMA", f"slice {name} fields are not exact"
+            )
         status = value["status"]
         if status not in {"PASSED", "BLOCKED", "NOT_AVAILABLE"}:
-            raise AgenticControlError("E_SENIOR_CONTROL_SCHEMA", f"slice {name} status is invalid")
+            raise AgenticControlError(
+                "E_SENIOR_CONTROL_SCHEMA", f"slice {name} status is invalid"
+            )
         evidence_digest = value["evidence_digest"]
         if status == "PASSED":
             _digest(evidence_digest, f"{name}.evidence_digest")
@@ -850,11 +1404,17 @@ def build_senior_control_bundle(
         receipt_sha256 = value["receipt_sha256"]
         if status == "PASSED":
             if not isinstance(receipt_path, str) or not receipt_path.strip():
-                raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} requires receipt_path")
+                raise AgenticControlError(
+                    "E_SENIOR_CONTROL_RECEIPT", f"slice {name} requires receipt_path"
+                )
             _digest(receipt_sha256, f"{name}.receipt_sha256")
         elif receipt_path is not None or receipt_sha256 is not None:
-            if receipt_path is not None and (not isinstance(receipt_path, str) or not receipt_path.strip()):
-                raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name}.receipt_path is invalid")
+            if receipt_path is not None and (
+                not isinstance(receipt_path, str) or not receipt_path.strip()
+            ):
+                raise AgenticControlError(
+                    "E_SENIOR_CONTROL_RECEIPT", f"slice {name}.receipt_path is invalid"
+                )
             if receipt_sha256 is not None:
                 _digest(receipt_sha256, f"{name}.receipt_sha256")
         normalized[name] = {
@@ -864,7 +1424,9 @@ def build_senior_control_bundle(
             "receipt_path": receipt_path,
             "receipt_sha256": receipt_sha256,
         }
-    blocking = [name for name in SENIOR_CONTROL_SLICES if normalized[name]["status"] != "PASSED"]
+    blocking = [
+        name for name in SENIOR_CONTROL_SLICES if normalized[name]["status"] != "PASSED"
+    ]
     core = {
         "schema": SENIOR_CONTROL_SCHEMA,
         "candidate_hash": candidate_hash,
@@ -872,8 +1434,7 @@ def build_senior_control_bundle(
         "readiness": "READY_FOR_HUMAN_REVIEW" if not blocking else "BLOCKED",
         "blocking_slices": blocking,
         "next_actions": [
-            {"slice": name, "action": "SUPPLY_VERIFIED_RECEIPT"}
-            for name in blocking
+            {"slice": name, "action": "SUPPLY_VERIFIED_RECEIPT"} for name in blocking
         ],
         "authority": dict(_AUTHORITY),
         "claim_boundary": "Cross-cutting readiness projection only; no audit runner, mutation, repository operation, approval, merge, publication, or deployment action ran.",
@@ -886,27 +1447,47 @@ def build_senior_control_bundle(
     }
 
 
-def verify_senior_control_bundle(bundle: dict[str, Any], root: Path | None = None) -> dict[str, Any]:
+def verify_senior_control_bundle(
+    bundle: dict[str, Any], root: Path | None = None
+) -> dict[str, Any]:
     """Verify six controls and their receipt bytes before accepting readiness."""
     if not isinstance(bundle, dict) or bundle.get("schema") != SENIOR_CONTROL_SCHEMA:
-        raise AgenticControlError("E_SENIOR_CONTROL_SCHEMA", f"bundle must use {SENIOR_CONTROL_SCHEMA}")
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_SCHEMA", f"bundle must use {SENIOR_CONTROL_SCHEMA}"
+        )
     required = {
-        "schema", "candidate_hash", "slices", "readiness", "blocking_slices",
-        "next_actions", "authority", "claim_boundary",
+        "schema",
+        "candidate_hash",
+        "slices",
+        "readiness",
+        "blocking_slices",
+        "next_actions",
+        "authority",
+        "claim_boundary",
     }
     if set(bundle) != required | {"bundle_sha256", "marker"}:
-        raise AgenticControlError("E_SENIOR_CONTROL_SCHEMA", "bundle fields are not exact")
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_SCHEMA", "bundle fields are not exact"
+        )
     core = {key: bundle[key] for key in required}
     if bundle.get("bundle_sha256") != _sha(core):
-        raise AgenticControlError("E_SENIOR_CONTROL_TAMPERED", "bundle digest does not match contents")
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_TAMPERED", "bundle digest does not match contents"
+        )
     if bundle.get("marker") != "SENIOR_CONTROL_BUNDLE_HASH_BOUND":
         raise AgenticControlError("E_SENIOR_CONTROL_SCHEMA", "bundle marker is invalid")
     rebuilt = build_senior_control_bundle(bundle["candidate_hash"], bundle["slices"])
     for key in ("readiness", "blocking_slices", "next_actions"):
         if rebuilt[key] != bundle[key]:
-            raise AgenticControlError("E_SENIOR_CONTROL_TAMPERED", f"bundle {key} is inconsistent")
-    if not isinstance(bundle["authority"], dict) or any(value is not False for value in bundle["authority"].values()):
-        raise AgenticControlError("E_SENIOR_CONTROL_AUTHORITY", "bundle cannot grant authority")
+            raise AgenticControlError(
+                "E_SENIOR_CONTROL_TAMPERED", f"bundle {key} is inconsistent"
+            )
+    if not isinstance(bundle["authority"], dict) or any(
+        value is not False for value in bundle["authority"].values()
+    ):
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_AUTHORITY", "bundle cannot grant authority"
+        )
     if root is None:
         raise AgenticControlError(
             "E_SENIOR_CONTROL_RECEIPT",
@@ -919,24 +1500,46 @@ def verify_senior_control_bundle(bundle: dict[str, Any], root: Path | None = Non
             continue
         receipt_path = Path(slice_value["receipt_path"])
         if receipt_path.is_absolute() or ".." in receipt_path.parts:
-            raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt escapes workspace")
+            raise AgenticControlError(
+                "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt escapes workspace"
+            )
         resolved = (workspace / receipt_path).resolve()
         if workspace not in resolved.parents or not resolved.is_file():
-            raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt is missing")
+            raise AgenticControlError(
+                "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt is missing"
+            )
         raw = resolved.read_bytes()
         if hashlib.sha256(raw).hexdigest() != slice_value["receipt_sha256"]:
-            raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt bytes changed")
+            raise AgenticControlError(
+                "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt bytes changed"
+            )
         try:
             payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt is not JSON") from exc
-        if not isinstance(payload, dict) or payload.get("candidate_hash") != bundle["candidate_hash"] or payload.get("evidence_digest") != slice_value["evidence_digest"]:
-            raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt is not bound to candidate/evidence")
+            raise AgenticControlError(
+                "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt is not JSON"
+            ) from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("candidate_hash") != bundle["candidate_hash"]
+            or payload.get("evidence_digest") != slice_value["evidence_digest"]
+        ):
+            raise AgenticControlError(
+                "E_SENIOR_CONTROL_RECEIPT",
+                f"slice {name} receipt is not bound to candidate/evidence",
+            )
         if payload.get("outcome", "passed") != "passed":
-            raise AgenticControlError("E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt did not pass")
+            raise AgenticControlError(
+                "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt did not pass"
+            )
         authority = payload.get("authority")
-        if authority is not None and (not isinstance(authority, dict) or any(value is not False for value in authority.values())):
-            raise AgenticControlError("E_SENIOR_CONTROL_AUTHORITY", f"slice {name} receipt grants authority")
+        if authority is not None and (
+            not isinstance(authority, dict)
+            or any(value is not False for value in authority.values())
+        ):
+            raise AgenticControlError(
+                "E_SENIOR_CONTROL_AUTHORITY", f"slice {name} receipt grants authority"
+            )
     return dict(bundle)
 
 
@@ -959,7 +1562,8 @@ def create_orchestrator_plan(
     }
     if set(request) != required:
         raise AgenticControlError(
-            "E_ORCHESTRATOR_SCHEMA", "request fields must exactly match the routing contract"
+            "E_ORCHESTRATOR_SCHEMA",
+            "request fields must exactly match the routing contract",
         )
     goal = _bounded_text(request["goal"], "goal", maximum=1024)
     intent_digest = _digest(request["intent_digest"], "intent_digest")
@@ -977,9 +1581,12 @@ def create_orchestrator_plan(
         raise AgenticControlError(
             "E_ORCHESTRATOR_APPROVAL", "orchestrator plans require human approval"
         )
+
     def _ids(value: object, label: str) -> list[str]:
         if not isinstance(value, list):
-            raise AgenticControlError("E_ORCHESTRATOR_SCHEMA", f"{label} must be a list")
+            raise AgenticControlError(
+                "E_ORCHESTRATOR_SCHEMA", f"{label} must be a list"
+            )
         return sorted({_id(item, f"{label} item") for item in value})
 
     workflow_ids = _ids(request["workflow_ids"], "workflow_ids")
@@ -1017,7 +1624,9 @@ def create_orchestrator_plan(
 def verify_orchestrator_plan(plan: dict[str, Any]) -> dict[str, Any]:
     """Verify a routing plan and reject authority or intent mutations."""
     if not isinstance(plan, dict) or plan.get("schema") != ORCHESTRATOR_PLAN_SCHEMA:
-        raise AgenticControlError("E_ORCHESTRATOR_SCHEMA", "unsupported orchestrator plan")
+        raise AgenticControlError(
+            "E_ORCHESTRATOR_SCHEMA", "unsupported orchestrator plan"
+        )
     core_keys = {
         "schema",
         "goal",
@@ -1036,13 +1645,21 @@ def verify_orchestrator_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if set(plan) != core_keys | {"plan_id", "plan_sha256", "next_action"}:
         raise AgenticControlError("E_ORCHESTRATOR_SCHEMA", "plan fields are not exact")
     if plan.get("plan_sha256") != _sha({key: plan[key] for key in core_keys}):
-        raise AgenticControlError("E_ORCHESTRATOR_TAMPERED", "plan digest does not match contents")
+        raise AgenticControlError(
+            "E_ORCHESTRATOR_TAMPERED", "plan digest does not match contents"
+        )
     if plan.get("plan_id") != "orchestrator-plan:" + str(plan["plan_sha256"])[:32]:
-        raise AgenticControlError("E_ORCHESTRATOR_TAMPERED", "plan id does not match digest")
+        raise AgenticControlError(
+            "E_ORCHESTRATOR_TAMPERED", "plan id does not match digest"
+        )
     if plan.get("approval_required") is not True or plan.get("status") != "PLANNED":
-        raise AgenticControlError("E_ORCHESTRATOR_APPROVAL", "plan must remain pending human approval")
+        raise AgenticControlError(
+            "E_ORCHESTRATOR_APPROVAL", "plan must remain pending human approval"
+        )
     if any(value is not False for value in plan.get("authority", {}).values()):
-        raise AgenticControlError("E_ORCHESTRATOR_AUTHORITY", "plan cannot grant authority")
+        raise AgenticControlError(
+            "E_ORCHESTRATOR_AUTHORITY", "plan cannot grant authority"
+        )
     return dict(plan)
 
 
@@ -1161,7 +1778,9 @@ def verify_model_route(route: dict[str, Any]) -> dict[str, Any]:
         "latency_budget_ms",
         "token_budget",
     }:
-        raise AgenticControlError("E_MODEL_ROUTE_TRACE", "model route budgets are invalid")
+        raise AgenticControlError(
+            "E_MODEL_ROUTE_TRACE", "model route budgets are invalid"
+        )
     for value, label in (
         (budgets["latency_budget_ms"], "latency_budget_ms"),
         (budgets["token_budget"], "token_budget"),
@@ -1173,7 +1792,9 @@ def verify_model_route(route: dict[str, Any]) -> dict[str, Any]:
                 "E_MODEL_ROUTE_TRACE", f"{label} must be a non-negative integer or null"
             )
     if core["marker"] != "MODEL_ROUTE_DETERMINISTIC":
-        raise AgenticControlError("E_MODEL_ROUTE_TRACE", "model route marker is invalid")
+        raise AgenticControlError(
+            "E_MODEL_ROUTE_TRACE", "model route marker is invalid"
+        )
     if core["authority"] != {"model_call": False, "execution": False}:
         raise AgenticControlError(
             "E_MODEL_ROUTE_AUTHORITY", "model route cannot grant authority"
@@ -1183,6 +1804,127 @@ def verify_model_route(route: dict[str, Any]) -> dict[str, Any]:
             "E_MODEL_ROUTE_TAMPERED", "model route digest does not match contents"
         )
     return dict(route)
+
+
+def audit_model_route_policy(route: dict[str, Any]) -> dict[str, Any]:
+    """Recompute the local route policy and expose hash-bound drift diagnostics.
+
+    A valid digest alone proves only that a route was not altered after sealing;
+    this audit additionally proves that the tier still matches CF's current
+    deterministic routing rule. It never contacts or selects a provider.
+    """
+    observed = verify_model_route(route)
+    budgets = observed["budgets"]
+    expected = route_model(
+        observed["task_class"],
+        risk=observed["risk"],
+        latency_budget_ms=budgets["latency_budget_ms"],
+        token_budget=budgets["token_budget"],
+    )
+    fields = (
+        "tier",
+        "task_class",
+        "risk",
+        "budgets",
+        "rationale",
+        "authority",
+        "marker",
+    )
+    differences = sorted(
+        field for field in fields if observed.get(field) != expected.get(field)
+    )
+    core = {
+        "schema": MODEL_ROUTE_AUDIT_SCHEMA,
+        "status": "MATCH" if not differences else "POLICY_DRIFT",
+        "valid": not differences,
+        "observed_route_sha256": observed["route_sha256"],
+        "expected_route_sha256": expected["route_sha256"],
+        "differences": differences,
+        "authority": {
+            "provider_selection": False,
+            "model_call": False,
+            "execution": False,
+        },
+    }
+    result = {
+        **core,
+        "audit_sha256": _sha(core),
+        "marker": "MODEL_ROUTE_POLICY_RECOMPUTED",
+        "claim_boundary": "Deterministic policy consistency only; no model/provider was contacted and no work was dispatched.",
+    }
+    return verify_model_route_policy_audit(result)
+
+
+def verify_model_route_policy_audit(audit: dict[str, Any]) -> dict[str, Any]:
+    """Verify the exact field set, authority boundary, and digest of a route audit."""
+    if not isinstance(audit, dict) or audit.get("schema") != MODEL_ROUTE_AUDIT_SCHEMA:
+        raise AgenticControlError(
+            "E_ROUTE_AUDIT_SCHEMA", "unsupported model-route audit"
+        )
+    core_keys = {
+        "schema",
+        "status",
+        "valid",
+        "observed_route_sha256",
+        "expected_route_sha256",
+        "differences",
+        "authority",
+    }
+    expected_keys = core_keys | {"audit_sha256", "marker", "claim_boundary"}
+    if set(audit) != expected_keys:
+        raise AgenticControlError(
+            "E_ROUTE_AUDIT_SCHEMA", "model-route audit fields are not exact"
+        )
+    core = {key: audit[key] for key in core_keys}
+    _digest(core["observed_route_sha256"], "observed_route_sha256")
+    _digest(core["expected_route_sha256"], "expected_route_sha256")
+    allowed_differences = {
+        "tier",
+        "task_class",
+        "risk",
+        "budgets",
+        "rationale",
+        "authority",
+        "marker",
+    }
+    differences = core["differences"]
+    if (
+        not isinstance(differences, list)
+        or any(not isinstance(item, str) for item in differences)
+        or differences != sorted(set(differences))
+        or any(item not in allowed_differences for item in differences)
+    ):
+        raise AgenticControlError(
+            "E_ROUTE_AUDIT_SCHEMA", "route audit differences are invalid"
+        )
+    valid = not differences
+    if core["valid"] is not valid or core["status"] != (
+        "MATCH" if valid else "POLICY_DRIFT"
+    ):
+        raise AgenticControlError(
+            "E_ROUTE_AUDIT_SCHEMA", "route audit result does not match its differences"
+        )
+    if core["authority"] != {
+        "provider_selection": False,
+        "model_call": False,
+        "execution": False,
+    }:
+        raise AgenticControlError(
+            "E_ROUTE_AUDIT_AUTHORITY", "route audit cannot grant authority"
+        )
+    if audit["marker"] != "MODEL_ROUTE_POLICY_RECOMPUTED" or audit[
+        "claim_boundary"
+    ] != (
+        "Deterministic policy consistency only; no model/provider was contacted and no work was dispatched."
+    ):
+        raise AgenticControlError(
+            "E_ROUTE_AUDIT_SCHEMA", "route audit marker or boundary is invalid"
+        )
+    if audit["audit_sha256"] != _sha(core):
+        raise AgenticControlError(
+            "E_ROUTE_AUDIT_TAMPERED", "route audit digest does not match contents"
+        )
+    return dict(audit)
 
 
 def create_typed_handoff(

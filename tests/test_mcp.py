@@ -26,13 +26,18 @@ def _files(root: Path) -> dict[str, bytes]:
     }
 
 
-def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path):
+def test_mcp_status_declares_default_stdio_and_zero_authority_boundary(tmp_path: Path):
     status = mcp_status(tmp_path)
 
     assert status["schema"] == "factory.mcp.status.v1"
     assert status["marker"] == "FACTORY_MCP_LOCAL_READ_ONLY"
     assert status["markers"] == ["FACTORY_MCP_LOCAL_READ_ONLY", "MCP_STDLIB_ONLY"]
     assert status["transport"] == "stdio"
+    assert status["available_transports"] == [
+        "stdio",
+        "stateless-streamable-http-local-only",
+    ]
+    assert status["server"]["streamable_http_protocol_version"] == "2026-07-28"
     assert status["workspace_root"] == str(tmp_path.resolve())
     assert status["tools"] == [
         "factory.status",
@@ -69,6 +74,7 @@ def test_mcp_status_declares_a_stdio_only_zero_authority_boundary(tmp_path: Path
         "factory.atomic_status",
         "factory.operations_control_status",
         "factory.agentic_control_status",
+        "factory.model_route_audit",
         "factory.task_board_status",
         "factory.task_handoff_status",
         "factory.candidate_alignment_status",
@@ -127,7 +133,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-            "serverInfo": {"name": "code-factory", "version": "0.46.7"},
+            "serverInfo": {"name": "code-factory", "version": "0.46.8"},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }
@@ -176,7 +182,10 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     )
     assert agentic["marker"] == "AGENTIC_CONTROL_MCP_READ_ONLY"
     assert agentic["status"]["features"]["capability_registry"]["status"] == "available"
-    assert agentic["status"]["features"]["durable_task_cards"]["schema"] == "factory.task-card.v1"
+    assert (
+        agentic["status"]["features"]["durable_task_cards"]["schema"]
+        == "factory.task-card.v1"
+    )
     assert all(value is False for value in agentic["status"]["authority"].values())
 
     board = _content(
@@ -192,7 +201,10 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     )
     assert board["marker"] == "TASK_BOARD_MCP_READ_ONLY"
     assert board["status"]["task_count"] == 0
-    assert board["status"]["dispatcher"] == {"poll_interval_seconds": 60, "started": False}
+    assert board["status"]["dispatcher"] == {
+        "poll_interval_seconds": 60,
+        "started": False,
+    }
 
     handoff = dispatch(
         {
@@ -256,17 +268,17 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     assert blueprint["status"]["schema"] == "factory.ai-native-blueprint.v1"
 
     update = dispatch(
-            {
-                "jsonrpc": "2.0",
-                "id": 293,
-                "method": "tools/call",
-                "params": {
-                    "name": "factory.update_status",
-                    "arguments": {"manifest_path": "missing-update-manifest.json"},
-                },
+        {
+            "jsonrpc": "2.0",
+            "id": 293,
+            "method": "tools/call",
+            "params": {
+                "name": "factory.update_status",
+                "arguments": {"manifest_path": "missing-update-manifest.json"},
             },
-            tmp_path,
-        )
+        },
+        tmp_path,
+    )
     assert update["error"]["data"]["marker"] == "UPDATE_CHECK_REFUSED"
 
     evidence_path = tmp_path / "junie-evidence.json"

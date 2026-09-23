@@ -767,25 +767,50 @@ def create_sandbox_execution_receipt(
     runner, create a container, or infer that a local process was isolated.
     """
     if not re.fullmatch(r"[0-9a-f]{64}", scope_sha256):
-        raise RepairSandboxError("SANDBOX_EXECUTION_INVALID", "scope_sha256 must be a SHA-256 digest")
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "scope_sha256 must be a SHA-256 digest"
+        )
     if not isinstance(runner_id, str) or not runner_id.strip() or len(runner_id) > 160:
-        raise RepairSandboxError("SANDBOX_EXECUTION_INVALID", "runner_id is required and bounded")
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "runner_id is required and bounded"
+        )
     if isolation_level not in _ISOLATION_LEVELS:
-        raise RepairSandboxError("SANDBOX_EXECUTION_INVALID", "isolation_level is unsupported")
-    for digest, label in ((runtime_digest, "runtime_digest"), (toolchain_digest, "toolchain_digest")):
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "isolation_level is unsupported"
+        )
+    for digest, label in (
+        (runtime_digest, "runtime_digest"),
+        (toolchain_digest, "toolchain_digest"),
+    ):
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise RepairSandboxError("SANDBOX_EXECUTION_INVALID", f"{label} must be a SHA-256 digest")
+            raise RepairSandboxError(
+                "SANDBOX_EXECUTION_INVALID", f"{label} must be a SHA-256 digest"
+            )
     if network_policy not in {"none", "restricted", "unrestricted", "unknown"}:
-        raise RepairSandboxError("SANDBOX_EXECUTION_INVALID", "network_policy is unsupported")
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "network_policy is unsupported"
+        )
     if teardown_status not in {"complete", "incomplete", "unknown"}:
-        raise RepairSandboxError("SANDBOX_EXECUTION_INVALID", "teardown_status is unsupported")
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "teardown_status is unsupported"
+        )
     if not isinstance(executed, bool):
-        raise RepairSandboxError("SANDBOX_EXECUTION_INVALID", "executed must be boolean")
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "executed must be boolean"
+        )
     normalized_inputs = sorted(set(input_digests))
     normalized_outputs = sorted(set(output_digests))
-    for values, label in ((normalized_inputs, "input_digests"), (normalized_outputs, "output_digests")):
-        if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in values):
-            raise RepairSandboxError("SANDBOX_EXECUTION_INVALID", f"{label} must contain SHA-256 digests")
+    for values, label in (
+        (normalized_inputs, "input_digests"),
+        (normalized_outputs, "output_digests"),
+    ):
+        if any(
+            not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+            for value in values
+        ):
+            raise RepairSandboxError(
+                "SANDBOX_EXECUTION_INVALID", f"{label} must contain SHA-256 digests"
+            )
     if executed and isolation_level == "UNENFORCED":
         status = "UNENFORCED"
     elif executed and teardown_status != "complete":
@@ -817,20 +842,48 @@ def create_sandbox_execution_receipt(
 
 def verify_sandbox_execution_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
     """Verify runner observation integrity and keep isolation claims explicit."""
-    if not isinstance(receipt, dict) or receipt.get("schema") != SANDBOX_EXECUTION_SCHEMA:
-        raise RepairSandboxError("SANDBOX_EXECUTION_INVALID", f"receipt must use {SANDBOX_EXECUTION_SCHEMA}")
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schema") != SANDBOX_EXECUTION_SCHEMA
+    ):
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", f"receipt must use {SANDBOX_EXECUTION_SCHEMA}"
+        )
     if receipt.get("marker") != "SANDBOX_EXECUTION_OBSERVED":
-        raise RepairSandboxError("SANDBOX_EXECUTION_INVALID", "receipt marker is invalid")
-    core = {key: value for key, value in receipt.items() if key not in {"receipt_sha256", "marker"}}
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "receipt marker is invalid"
+        )
+    core = {
+        key: value
+        for key, value in receipt.items()
+        if key not in {"receipt_sha256", "marker"}
+    }
     if receipt.get("receipt_sha256") != sha256(_canonical(core)).hexdigest():
-        raise RepairSandboxError("SANDBOX_EXECUTION_TAMPERED", "receipt digest does not match contents")
-    if not isinstance(core.get("authority"), dict) or any(value is not False for value in core["authority"].values()):
-        raise RepairSandboxError("SANDBOX_EXECUTION_AUTHORITY", "receipt cannot grant authority")
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_TAMPERED", "receipt digest does not match contents"
+        )
+    if not isinstance(core.get("authority"), dict) or any(
+        value is not False for value in core["authority"].values()
+    ):
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_AUTHORITY", "receipt cannot grant authority"
+        )
     expected = (
-        "UNENFORCED" if core["executed"] and core["isolation_level"] == "UNENFORCED"
-        else "REVIEW_REQUIRED" if core["executed"] and core["teardown_status"] != "complete"
-        else "OBSERVED" if core["executed"] else "DECLARED_ONLY"
+        "UNENFORCED"
+        if core["executed"] and core["isolation_level"] == "UNENFORCED"
+        else "REVIEW_REQUIRED"
+        if core["executed"] and core["teardown_status"] != "complete"
+        else "OBSERVED"
+        if core["executed"]
+        else "DECLARED_ONLY"
     )
     if core.get("status") != expected:
-        raise RepairSandboxError("SANDBOX_EXECUTION_TAMPERED", "receipt status does not match observations")
-    return {"schema": SANDBOX_EXECUTION_SCHEMA, "status": expected, "receipt_sha256": receipt["receipt_sha256"], "claim_boundary": core["claim_boundary"]}
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_TAMPERED", "receipt status does not match observations"
+        )
+    return {
+        "schema": SANDBOX_EXECUTION_SCHEMA,
+        "status": expected,
+        "receipt_sha256": receipt["receipt_sha256"],
+        "claim_boundary": core["claim_boundary"],
+    }

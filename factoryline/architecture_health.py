@@ -79,7 +79,9 @@ def _changelog_contains_version(root: Path, version: str | None) -> bool:
         content = changelog.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return False
-    return bool(re.search(rf"^##\s+{re.escape(version)}(?:\s|$)", content, re.MULTILINE))
+    return bool(
+        re.search(rf"^##\s+{re.escape(version)}(?:\s|$)", content, re.MULTILINE)
+    )
 
 
 def _module_classification(
@@ -223,7 +225,11 @@ def _documentation_index(root: Path, relative: list[str]) -> dict[str, Any]:
         ):
             return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
         patterns.append(entry["glob"])
-    unmatched = [name for name in markdown if not any(fnmatch.fnmatch(name, pattern) for pattern in patterns)]
+    unmatched = [
+        name
+        for name in markdown
+        if not any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
+    ]
     return {
         "status": "valid" if not unmatched else "incomplete",
         "canonical_count": len(canonical_paths),
@@ -254,19 +260,25 @@ def _release_train(root: Path, relative: list[str]) -> dict[str, Any]:
         "blocked",
         "not_configured",
     }
-    valid_channels = isinstance(channels, list) and bool(channels) and all(
-        isinstance(channel, dict)
-        and isinstance(channel.get("id"), str)
-        and isinstance(channel.get("version_source"), str)
-        and isinstance(channel.get("changelog"), str)
-        and isinstance(channel.get("artifact"), str)
-        for channel in channels
+    valid_channels = (
+        isinstance(channels, list)
+        and bool(channels)
+        and all(
+            isinstance(channel, dict)
+            and isinstance(channel.get("id"), str)
+            and isinstance(channel.get("version_source"), str)
+            and isinstance(channel.get("changelog"), str)
+            and isinstance(channel.get("artifact"), str)
+            for channel in channels
+        )
     )
     valid_sources = valid_channels and all(
         channel["version_source"] in relative and channel["changelog"] in relative
         for channel in channels
     )
-    max_releases = cadence.get("max_releases_30d") if isinstance(cadence, dict) else None
+    max_releases = (
+        cadence.get("max_releases_30d") if isinstance(cadence, dict) else None
+    )
     minimum_days = (
         cadence.get("minimum_days_between_releases")
         if isinstance(cadence, dict)
@@ -314,23 +326,18 @@ def _cadence_projection(
     It never deletes, rewrites, or reclassifies historical tags.
     """
     releases = sorted(releases, key=lambda item: item[1], reverse=True)
-    recent = [
-        item for item in releases if now - item[1] <= timedelta(days=30)
-    ]
+    recent = [item for item in releases if now - item[1] <= timedelta(days=30)]
     latest = releases[0] if releases else None
     cooldown_until = (
-        latest[1] + timedelta(days=minimum_days_between_releases)
-        if latest
-        else None
+        latest[1] + timedelta(days=minimum_days_between_releases) if latest else None
     )
     window_until = None
     if len(recent) >= max_releases_30d:
         # The fourth-newest tag must age out before a fifth release is allowed.
         # `now - tag <= 30 days` includes the exact boundary, so move the
         # admission time forward by one clock tick to avoid an off-by-one hold.
-        window_until = (
-            recent[max_releases_30d - 1][1]
-            + timedelta(days=30, microseconds=1)
+        window_until = recent[max_releases_30d - 1][1] + timedelta(
+            days=30, microseconds=1
         )
     candidates = [value for value in (cooldown_until, window_until) if value]
     next_eligible = max(candidates) if candidates else now
@@ -357,8 +364,10 @@ def _cadence_projection(
         if len(releases) > 1
         else None
     )
+
     def iso(value: datetime | None) -> str | None:
         return value.isoformat().replace("+00:00", "Z") if value else None
+
     return {
         "available": True,
         "recent_count": len(recent),
@@ -409,9 +418,9 @@ def _recent_release_tags(
             releases.append(
                 (
                     name,
-                    datetime.fromisoformat(stamp.strip().replace("Z", "+00:00")).astimezone(
-                        timezone.utc
-                    ),
+                    datetime.fromisoformat(
+                        stamp.strip().replace("Z", "+00:00")
+                    ).astimezone(timezone.utc),
                 )
             )
         except (ValueError, IndexError):
@@ -424,9 +433,7 @@ def _recent_release_tags(
     )
 
 
-def release_cadence_status(
-    root: Path, now: datetime | None = None
-) -> dict[str, Any]:
+def release_cadence_status(root: Path, now: datetime | None = None) -> dict[str, Any]:
     """Return release-train validity and its tag-derived admission projection."""
     root = Path(root).resolve()
     relative = [
@@ -567,7 +574,10 @@ _ACCEPTED_METRIC_FOR_CODE = {
 
 
 def _accepted_debt(
-    policy: dict[str, Any], metrics: dict[str, Any], cadence: dict[str, Any]
+    policy: dict[str, Any],
+    metrics: dict[str, Any],
+    cadence: dict[str, Any],
+    active_finding_codes: set[str],
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Validate an explicit, expiring acceptance of measured architecture debt."""
     value = policy.get("accepted_debt")
@@ -618,7 +628,8 @@ def _accepted_debt(
     if not isinstance(accepted_metrics, dict):
         return None, "accepted_debt metrics must be an object"
     observed = {**metrics, "release_recent_count": cadence.get("recent_count")}
-    for code in codes:
+    active_codes = [code for code in codes if code in active_finding_codes]
+    for code in active_codes:
         metric = _ACCEPTED_METRIC_FOR_CODE[code]
         if metric not in accepted_metrics or accepted_metrics[metric] != observed.get(
             metric
@@ -627,13 +638,24 @@ def _accepted_debt(
                 None,
                 f"accepted_debt metric {metric} must exactly match the measured value",
             )
+    if not active_codes:
+        # Approval snapshots only apply to findings that still exist. A fixed
+        # metric must not keep the gate red because an obsolete waiver digest
+        # was not rewritten by the same code change that fixed the issue.
+        return None, None
     return {
         "decision_id": value["decision_id"],
         "owner": value["owner"],
         "expires_at": value["expires_at"],
         "reason": value["reason"],
-        "codes": list(codes),
-        "metrics": dict(accepted_metrics),
+        "codes": active_codes,
+        "retired_codes": [code for code in codes if code not in active_finding_codes],
+        "metrics": {
+            _ACCEPTED_METRIC_FOR_CODE[code]: accepted_metrics[
+                _ACCEPTED_METRIC_FOR_CODE[code]
+            ]
+            for code in active_codes
+        },
     }, None
 
 
@@ -791,9 +813,9 @@ def evaluate_architecture_health(
         )
     cadence = snapshot["release_cadence"]
     cadence_policy = policy.get("release", {})
-    if cadence_policy.get("requires_changelog_entry") and not _changelog_contains_version(
-        root, metrics.get("version")
-    ):
+    if cadence_policy.get(
+        "requires_changelog_entry"
+    ) and not _changelog_contains_version(root, metrics.get("version")):
         regressions.append(
             _finding(
                 "E_ARCH_RELEASE_CHANGELOG_MISSING",
@@ -803,7 +825,10 @@ def evaluate_architecture_health(
                 blocking=True,
             )
         )
-    accepted, acceptance_error = _accepted_debt(policy, metrics, cadence)
+    active_finding_codes = {item["code"] for item in [*regressions, *debt]}
+    accepted, acceptance_error = _accepted_debt(
+        policy, metrics, cadence, active_finding_codes
+    )
     if acceptance_error:
         regressions.append(
             _finding(

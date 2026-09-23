@@ -10,8 +10,16 @@ def _manifest():
         "schema": "factory.update-manifest.v1",
         "channel": "stable",
         "releases": [
-            {"version": "0.46.8", "released_at": "2026-09-22T00:00:00Z", "summary": "Blueprint artifact-chain receipts."},
-            {"version": "0.46.7", "released_at": "2026-09-19T00:00:00Z", "summary": "Previous release."},
+            {
+                "version": "0.46.8",
+                "released_at": "2026-09-22T00:00:00Z",
+                "summary": "Blueprint artifact-chain receipts.",
+            },
+            {
+                "version": "0.46.7",
+                "released_at": "2026-09-19T00:00:00Z",
+                "summary": "Previous release.",
+            },
         ],
     }
 

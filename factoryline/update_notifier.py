@@ -11,7 +11,9 @@ from typing import Any
 
 UPDATE_MANIFEST_SCHEMA = "factory.update-manifest.v1"
 UPDATE_NOTICE_SCHEMA = "factory.update-notice.v1"
-_VERSION = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?$")
+_VERSION = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?$"
+)
 
 
 class UpdateNotifierError(ValueError):
@@ -32,12 +34,17 @@ def _text(value: object, field: str, maximum: int = 300) -> str:
 
 
 def _digest(value: object) -> str:
-    return sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def validate_manifest(manifest: object) -> dict[str, Any]:
     """Validate a local release manifest without contacting a provider."""
-    if not isinstance(manifest, dict) or manifest.get("schema") != UPDATE_MANIFEST_SCHEMA:
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schema") != UPDATE_MANIFEST_SCHEMA
+    ):
         raise UpdateNotifierError(f"manifest must use {UPDATE_MANIFEST_SCHEMA}")
     channel = _text(manifest.get("channel", "stable"), "channel", 40)
     releases = manifest.get("releases")
@@ -53,23 +60,39 @@ def validate_manifest(manifest: object) -> dict[str, Any]:
         if version in seen:
             raise UpdateNotifierError("release versions must be unique")
         seen.add(version)
-        normalized.append({
-            "version": version,
-            "released_at": _text(release.get("released_at"), "release.released_at", 80),
-            "summary": _text(release.get("summary"), "release.summary", 512),
-        })
-    normalized.sort(key=lambda item: _version(item["version"], "release.version"), reverse=True)
-    return {"schema": UPDATE_MANIFEST_SCHEMA, "channel": channel, "releases": normalized}
+        normalized.append(
+            {
+                "version": version,
+                "released_at": _text(
+                    release.get("released_at"), "release.released_at", 80
+                ),
+                "summary": _text(release.get("summary"), "release.summary", 512),
+            }
+        )
+    normalized.sort(
+        key=lambda item: _version(item["version"], "release.version"), reverse=True
+    )
+    return {
+        "schema": UPDATE_MANIFEST_SCHEMA,
+        "channel": channel,
+        "releases": normalized,
+    }
 
 
-def check_for_update(installed_version: str, manifest: object, *, channel: str = "stable") -> dict[str, Any]:
+def check_for_update(
+    installed_version: str, manifest: object, *, channel: str = "stable"
+) -> dict[str, Any]:
     """Return a deterministic notice for the newest local release, if any."""
     installed = _text(installed_version, "installed_version", 40)
     installed_tuple = _version(installed, "installed_version")
     normalized = validate_manifest(manifest)
     if normalized["channel"] != channel:
         raise UpdateNotifierError("requested channel does not match manifest channel")
-    newer = [release for release in normalized["releases"] if _version(release["version"], "release.version") > installed_tuple]
+    newer = [
+        release
+        for release in normalized["releases"]
+        if _version(release["version"], "release.version") > installed_tuple
+    ]
     latest = newer[0] if newer else None
     status = "UPDATE_AVAILABLE" if latest else "UP_TO_DATE"
     core = {
@@ -80,7 +103,12 @@ def check_for_update(installed_version: str, manifest: object, *, channel: str =
         "latest_version": latest["version"] if latest else installed,
         "release": latest,
         "manifest_sha256": _digest(normalized),
-        "authority": {"download": False, "install": False, "restart": False, "publish": False},
+        "authority": {
+            "download": False,
+            "install": False,
+            "restart": False,
+            "publish": False,
+        },
         "claim_boundary": "Local manifest comparison only; no provider request, download, installation, restart, or release action ran.",
     }
     return {**core, "notice_sha256": _digest(core)}

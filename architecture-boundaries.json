@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "schema": "factory.module-boundaries.v1",
   "defaultDomain": "core",
-  "purpose": "Discoverability map for the supported core and specialist packs. Matching is informational and does not grant execution authority.",
+  "purpose": "Discoverability map for supported core and specialist packs. Agent protocol adapters, MCP transports, and protocol projections are owned by agent-protocols-maintainers; matching is informational and grants no execution authority.",
   "domains": {
     "appforge": [
       "factoryline/appforge_*.py",
@@ -18,7 +18,9 @@
     ],
     "agent_protocols": [
       "factoryline/mcp.py",
+      "factoryline/mcp*.py",
       "factoryline/agui.py",
+      "factoryline/webmcp.py",
       "factoryline/a2a*.py",
       "factoryline/agent_*.py",
       "factoryline/blueprint.py",

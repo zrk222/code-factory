@@ -140,7 +140,9 @@ def test_malformed_boundary_manifest_is_blocking(tmp_path: Path) -> None:
     )
 
 
-def test_boundary_manifest_with_owners_validates_specialist_contract(tmp_path: Path) -> None:
+def test_boundary_manifest_with_owners_validates_specialist_contract(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "factoryline").mkdir()
     (tmp_path / "factoryline" / "appforge_demo.py").write_text(
         "pass\n", encoding="utf-8"
@@ -213,7 +215,9 @@ def test_release_policy_requires_exact_changelog_heading(tmp_path: Path) -> None
         item["code"] == "E_ARCH_RELEASE_CHANGELOG_MISSING"
         for item in result["regressions"]
     )
-    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## 1.2.3\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## 1.2.3\n", encoding="utf-8"
+    )
     assert evaluate_architecture_health(tmp_path, policy)["decision"] == "HEALTHY"
 
 
@@ -307,7 +311,124 @@ def test_expiring_exact_acceptance_can_clear_intentional_measured_growth(
     }
 
 
-def test_required_documentation_index_blocks_unclassified_markdown(tmp_path: Path) -> None:
+def test_stale_acceptance_is_retired_when_its_finding_no_longer_exists(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "cli.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# readme\n", encoding="utf-8")
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = _policy(tmp_path / "policy.json", cli=10, core=2)
+    value = json.loads(policy.read_text(encoding="utf-8"))
+    value["accepted_debt"] = {
+        "decision_id": "ARCH-RETIRED-1",
+        "owner": "reviewer",
+        "expires_at": "2099-01-01T00:00:00+00:00",
+        "reason": "A previous command-surface regression was accepted while it was active.",
+        "codes": ["E_ARCH_CLI_LINES_GROWTH"],
+        "metrics": {"cli_lines": 99},
+    }
+    policy.write_text(json.dumps(value), encoding="utf-8")
+
+    result = evaluate_architecture_health(tmp_path, policy)
+
+    assert result["decision"] == "HEALTHY"
+    assert not result["regressions"]
+    assert result["accepted_debt"] is None
+
+
+def test_active_acceptance_with_stale_measurement_still_blocks(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "cli.py").write_text(
+        "\n".join(["pass"] * 6), encoding="utf-8"
+    )
+    (tmp_path / "README.md").write_text("# readme\n", encoding="utf-8")
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = _policy(tmp_path / "policy.json", cli=5, core=2)
+    value = json.loads(policy.read_text(encoding="utf-8"))
+    value["accepted_debt"] = {
+        "decision_id": "ARCH-STALE-MEASURE-1",
+        "owner": "reviewer",
+        "expires_at": "2099-01-01T00:00:00+00:00",
+        "reason": "The current CLI growth was reviewed against its measured value.",
+        "codes": ["E_ARCH_CLI_LINES_GROWTH"],
+        "metrics": {"cli_lines": 5},
+    }
+    policy.write_text(json.dumps(value), encoding="utf-8")
+
+    result = evaluate_architecture_health(tmp_path, policy)
+
+    assert result["decision"] == "BLOCKED"
+    assert "E_ARCH_ACCEPTANCE_INVALID" in {
+        item["code"] for item in result["regressions"]
+    }
+
+
+def test_protocol_modules_are_classified_under_their_owned_boundary(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "factoryline"
+    package.mkdir()
+    for name in ("mcp_setup.py", "mcp_mrt.py", "webmcp.py", "ordinary.py"):
+        (package / name).write_text("pass\n", encoding="utf-8")
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {
+                    "agent_protocols": ["factoryline/mcp*.py", "factoryline/webmcp.py"]
+                },
+                "owners": {"agent_protocols": "agent-protocols-maintainers"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = collect_architecture_health(tmp_path)
+
+    assert snapshot["metrics"]["module_domains"] == {"agent_protocols": 3, "core": 1}
+    assert snapshot["metrics"]["core_modules"] == 1
+
+
+def test_repository_classifies_mcp_transport_helpers_as_agent_protocols() -> None:
+    root = Path(__file__).resolve().parents[1]
+    paths = [
+        "factoryline/mcp.py",
+        "factoryline/mcp_setup.py",
+        "factoryline/mcp_mrt.py",
+        "factoryline/mcp_replay.py",
+        "factoryline/webmcp.py",
+    ]
+
+    _counts, assignments = architecture_health._module_classification(root, paths)
+
+    assert set(assignments.values()) == {"agent_protocols"}
+
+
+def test_required_documentation_index_blocks_unclassified_markdown(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "factoryline").mkdir()
     (tmp_path / "docs").mkdir()
     (tmp_path / "factoryline" / "cli.py").write_text("pass\n", encoding="utf-8")
@@ -350,7 +471,9 @@ def test_required_release_train_validates_channels_and_states(tmp_path: Path) ->
         '__version__ = "1.0.0"\n', encoding="utf-8"
     )
     (tmp_path / "factoryline" / "cli.py").write_text("pass\n", encoding="utf-8")
-    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## 1.0.0\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## 1.0.0\n", encoding="utf-8"
+    )
     (tmp_path / "architecture-boundaries.json").write_text(
         json.dumps(
             {

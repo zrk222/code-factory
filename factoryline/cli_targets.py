@@ -82,7 +82,11 @@ def run(a) -> int:
 
 
 def _run_create(a) -> int:
-    from .target_compiler import TargetCompileError, create_target_from_prd, create_target_from_prompt
+    from .target_compiler import (
+        TargetCompileError,
+        create_target_from_prd,
+        create_target_from_prompt,
+    )
 
     if bool(a.prompt) == bool(a.prd):
         payload = {
@@ -119,8 +123,14 @@ def _run_create(a) -> int:
                 deployment_profile=a.deployment_profile,
             )
     except (TargetCompileError, UnicodeDecodeError) as exc:
-        code = exc.code if isinstance(exc, TargetCompileError) else "PRD_ENCODING_INVALID"
-        message = exc.message if isinstance(exc, TargetCompileError) else "PRD must be valid UTF-8"
+        code = (
+            exc.code if isinstance(exc, TargetCompileError) else "PRD_ENCODING_INVALID"
+        )
+        message = (
+            exc.message
+            if isinstance(exc, TargetCompileError)
+            else "PRD must be valid UTF-8"
+        )
         payload = {
             "schema": "factory.target_compile_error.v1",
             "status": "failed",
@@ -179,7 +189,11 @@ def _run_mvp(a) -> int:
     payload = {
         "schema": "factory.mvp.v1",
         "marker": "MVP_STARTER_CONTAINED",
-        "markers": sorted(set(result["markers"] + ["MVP_STARTER_CONTAINED", "MVP_PROOF_PATH_EXPLICIT"])),
+        "markers": sorted(
+            set(
+                result["markers"] + ["MVP_STARTER_CONTAINED", "MVP_PROOF_PATH_EXPLICIT"]
+            )
+        ),
         "status": result["status"],
         "out_dir": result["out_dir"],
         "target_kind": result["target_kind"],

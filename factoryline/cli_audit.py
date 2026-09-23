@@ -71,7 +71,13 @@ def run(args: Any) -> int:
                         f"{item['path']}:{item['line']} — {item['message']}"
                     )
                 print(result["action_summary"])
-            return 0 if result["state"] == "CLEAN" else 2 if result["state"] == "BLOCKED" else 1
+            return (
+                0
+                if result["state"] == "CLEAN"
+                else 2
+                if result["state"] == "BLOCKED"
+                else 1
+            )
         if args.tool == "fingerprint":
             result = audit_fingerprint(
                 Path(args.root),
@@ -87,7 +93,13 @@ def run(args: Any) -> int:
                     f"({result['fingerprint_sha256']})"
                 )
                 print(result.get("action_summary", ""))
-            return 0 if result["state"] == "CURRENT" else 1 if result["state"] == "DRIFT_DETECTED" else 2
+            return (
+                0
+                if result["state"] == "CURRENT"
+                else 1
+                if result["state"] == "DRIFT_DETECTED"
+                else 2
+            )
         result = audit_code(Path(args.root), args.policy, tool=args.tool)
     except ReviewAuditError as exc:
         print(

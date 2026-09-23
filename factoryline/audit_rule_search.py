@@ -338,9 +338,7 @@ def _bm25_scores(
                     continue
                 average = avg_len[field]
                 normalization = (
-                    1.0 - b_value + b_value * len(tokens) / average
-                    if average
-                    else 1.0
+                    1.0 - b_value + b_value * len(tokens) / average if average else 1.0
                 )
                 weighted_tf += boost * count / normalization
             if weighted_tf:
@@ -387,9 +385,7 @@ def _rank_rules(
     scores = _bm25_scores(candidates, query, fielded=ranking == "bm25f")
     if ranking == "lexical":
         return candidates, scores
-    ranked = [
-        rule for rule in candidates if scores.get(str(rule["ruleId"]), 0.0) > 0.0
-    ]
+    ranked = [rule for rule in candidates if scores.get(str(rule["ruleId"]), 0.0) > 0.0]
     ranked.sort(key=lambda rule: (-scores[str(rule["ruleId"])], str(rule["ruleId"])))
     return ranked, scores
 

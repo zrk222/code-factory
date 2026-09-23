@@ -42,7 +42,13 @@ class BlueprintError(ValueError):
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:
@@ -50,23 +56,40 @@ def _sha(value: object) -> str:
 
 
 def _text(value: object, field: str, maximum: int = 240) -> str:
-    if not isinstance(value, str) or not value.strip() or len(value.strip()) > maximum or any(ord(char) < 32 for char in value):
-        raise BlueprintError("E_BLUEPRINT_SCHEMA", f"{field} must be bounded printable text")
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value.strip()) > maximum
+        or any(ord(char) < 32 for char in value)
+    ):
+        raise BlueprintError(
+            "E_BLUEPRINT_SCHEMA", f"{field} must be bounded printable text"
+        )
     return value.strip()
 
 
 def _digest(value: object, field: str) -> str:
-    if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
-        raise BlueprintError("E_BLUEPRINT_DIGEST", f"{field} must be a lowercase SHA-256 digest")
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(char not in "0123456789abcdef" for char in value)
+    ):
+        raise BlueprintError(
+            "E_BLUEPRINT_DIGEST", f"{field} must be a lowercase SHA-256 digest"
+        )
     return value
 
 
 def _document(value: object, field: str, maximum: int = 20000) -> str:
     """Validate bounded UTF-8 document text while allowing Markdown newlines."""
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
-        raise BlueprintError("E_BLUEPRINT_SCHEMA", f"{field} must be bounded document text")
+        raise BlueprintError(
+            "E_BLUEPRINT_SCHEMA", f"{field} must be bounded document text"
+        )
     if any(ord(char) < 9 or (13 < ord(char) < 32) for char in value):
-        raise BlueprintError("E_BLUEPRINT_SCHEMA", f"{field} contains unsupported control characters")
+        raise BlueprintError(
+            "E_BLUEPRINT_SCHEMA", f"{field} contains unsupported control characters"
+        )
     return value.strip()
 
 
@@ -86,19 +109,29 @@ def _list(values: Iterable[object], field: str, maximum: int = 40) -> list[str]:
         raise BlueprintError("E_BLUEPRINT_SCHEMA", f"{field} must be a list")
     result = sorted({_text(item, field, 120) for item in values})
     if len(result) > maximum:
-        raise BlueprintError("E_BLUEPRINT_LIMIT", f"{field} may contain at most {maximum} items")
+        raise BlueprintError(
+            "E_BLUEPRINT_LIMIT", f"{field} may contain at most {maximum} items"
+        )
     return result
 
 
 def _seal(core: dict[str, Any], field: str) -> dict[str, Any]:
-    return {**core, field: _sha(core), "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+    return {
+        **core,
+        field: _sha(core),
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
 
 
 def _verify(value: dict[str, Any], schema: str, field: str) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("schema") != schema:
         raise BlueprintError("E_BLUEPRINT_SCHEMA", f"expected {schema}")
     expected = value.get(field)
-    core = {key: item for key, item in value.items() if key not in {field, "generated_at", "path"}}
+    core = {
+        key: item
+        for key, item in value.items()
+        if key not in {field, "generated_at", "path"}
+    }
     if expected != _sha(core):
         raise BlueprintError("E_BLUEPRINT_TAMPERED", f"{field} does not match contents")
     return value
@@ -118,7 +151,10 @@ def retain_observation(
 ) -> dict[str, Any]:
     """Retain a secret-free, provenance-bound observation for later recall."""
     if classification not in MEMORY_CLASSES:
-        raise BlueprintError("E_BLUEPRINT_CLASSIFICATION", "classification must be fact, unknown, or uncertain")
+        raise BlueprintError(
+            "E_BLUEPRINT_CLASSIFICATION",
+            "classification must be fact, unknown, or uncertain",
+        )
     core = {
         "schema": MEMORY_SCHEMA,
         "stage": "bronze",
@@ -148,8 +184,14 @@ def recall_observations(
     """Recall bounded facts with keyword, entity/tag, and temporal ordering."""
     if not isinstance(limit, int) or not 1 <= limit <= MAX_OBSERVATIONS:
         raise BlueprintError("E_BLUEPRINT_LIMIT", "limit must be between 1 and 500")
-    project_filter = project.strip() if isinstance(project, str) and project.strip() else None
-    query_terms = [term.casefold() for term in query.split() if term.strip()] if isinstance(query, str) else []
+    project_filter = (
+        project.strip() if isinstance(project, str) and project.strip() else None
+    )
+    query_terms = (
+        [term.casefold() for term in query.split() if term.strip()]
+        if isinstance(query, str)
+        else []
+    )
     tag_filter = set(_list(tags, "tags"))
     matches: list[dict[str, Any]] = []
     invalid = 0
@@ -159,7 +201,9 @@ def recall_observations(
         except BlueprintError:
             invalid += 1
             continue
-        haystack = " ".join([value["subject"], value["summary"], *value["entities"], *value["tags"]]).casefold()
+        haystack = " ".join(
+            [value["subject"], value["summary"], *value["entities"], *value["tags"]]
+        ).casefold()
         if project_filter and value["project"] != project_filter:
             continue
         if query_terms and not all(term in haystack for term in query_terms):
@@ -167,14 +211,20 @@ def recall_observations(
         if tag_filter and not tag_filter.issubset(set(value["tags"])):
             continue
         matches.append(value)
-    matches.sort(key=lambda item: (item["observed_at"], item["memory_sha256"]), reverse=True)
+    matches.sort(
+        key=lambda item: (item["observed_at"], item["memory_sha256"]), reverse=True
+    )
     matches = matches[:limit]
     return {
         "schema": "factory.blueprint-memory-recall.v1",
         "marker": "BLUEPRINT_MEMORY_RECALLED",
         "matches": matches,
         "invalid_count": invalid,
-        "query": {"project": project_filter, "terms": query_terms, "tags": sorted(tag_filter)},
+        "query": {
+            "project": project_filter,
+            "terms": query_terms,
+            "tags": sorted(tag_filter),
+        },
         "authority": {"execute": False, "promote": False, "approve": False},
         "claim_boundary": "Recall is retrieval guidance only; it never mutates intent or proves the current implementation.",
     }
@@ -185,9 +235,14 @@ def reflect_observations(observations: Iterable[dict[str, Any]]) -> dict[str, An
     recalled = recall_observations(observations, limit=MAX_OBSERVATIONS)
     groups: dict[str, dict[str, Any]] = {}
     for item in recalled["matches"]:
-        group = groups.setdefault(item["project"], {"project": item["project"], "count": 0, "classes": {}, "subjects": []})
+        group = groups.setdefault(
+            item["project"],
+            {"project": item["project"], "count": 0, "classes": {}, "subjects": []},
+        )
         group["count"] += 1
-        group["classes"][item["classification"]] = group["classes"].get(item["classification"], 0) + 1
+        group["classes"][item["classification"]] = (
+            group["classes"].get(item["classification"], 0) + 1
+        )
         if item["subject"] not in group["subjects"] and len(group["subjects"]) < 50:
             group["subjects"].append(item["subject"])
     return {
@@ -215,15 +270,26 @@ def librarian_promotion(
     reviewer = _text(reviewer, "reviewer", 120)
     _digest(source_digest, "source_digest")
     if source_digest != observation["source_digest"]:
-        raise BlueprintError("E_BLUEPRINT_SOURCE_DRIFT", "source digest changed since observation capture")
+        raise BlueprintError(
+            "E_BLUEPRINT_SOURCE_DRIFT",
+            "source digest changed since observation capture",
+        )
     if stage not in {"silver", "gold", "contested"}:
-        raise BlueprintError("E_BLUEPRINT_STAGE", "stage must be silver, gold, or contested")
+        raise BlueprintError(
+            "E_BLUEPRINT_STAGE", "stage must be silver, gold, or contested"
+        )
     if stage == "gold" and contested:
-        raise BlueprintError("E_BLUEPRINT_CONTRADICTION", "contested knowledge cannot be promoted to gold")
+        raise BlueprintError(
+            "E_BLUEPRINT_CONTRADICTION",
+            "contested knowledge cannot be promoted to gold",
+        )
     core = {
         "schema": LIBRARIAN_SCHEMA,
         "stage": "contested" if contested else stage,
-        "observation": {"memory_sha256": observation["memory_sha256"], "source_digest": source_digest},
+        "observation": {
+            "memory_sha256": observation["memory_sha256"],
+            "source_digest": source_digest,
+        },
         "reviewer": reviewer,
         "feedback": _text(feedback, "feedback", 512) if feedback else "",
         "contested": contested,
@@ -237,20 +303,28 @@ def librarian_promotion(
 def signal_intent_proposal(signal: dict[str, Any], *, owner: str) -> dict[str, Any]:
     """Convert a verified local signal into an agent-proposed intent, never an auto-created task."""
     if not isinstance(signal, dict) or signal.get("schema") != "factory.signal.v1":
-        raise BlueprintError("E_BLUEPRINT_SIGNAL", "a normalized factory.signal.v1 receipt is required")
+        raise BlueprintError(
+            "E_BLUEPRINT_SIGNAL", "a normalized factory.signal.v1 receipt is required"
+        )
     signal_digest = signal.get("signal_sha256")
     _digest(signal_digest, "signal_sha256")
     owner = _text(owner, "owner", 120)
     content = signal.get("content") if isinstance(signal.get("content"), dict) else {}
     title = _text(content.get("title"), "signal.title", 240)
-    outcomes = content.get("outcomes") if isinstance(content.get("outcomes"), list) else []
+    outcomes = (
+        content.get("outcomes") if isinstance(content.get("outcomes"), list) else []
+    )
     core = {
         "schema": INTENT_SCHEMA,
         "status": "agent_proposed",
         "title": f"Investigate: {title}",
         "problem": _text(content.get("body"), "signal.body", 512),
         "proposed_outcomes": _list(outcomes, "proposed_outcomes", 20),
-        "source_signal": {"id": signal.get("id"), "sha256": signal_digest, "source": content.get("source")},
+        "source_signal": {
+            "id": signal.get("id"),
+            "sha256": signal_digest,
+            "source": content.get("source"),
+        },
         "owner": owner,
         "requires_human_confirmation": True,
         "authority": {"create_intent": False, "execute": False, "approve": False},
@@ -270,9 +344,14 @@ def access_profile(
     """Create a fail-closed access declaration; it does not enforce isolation."""
     workspace = _text(workspace, "workspace", 240)
     runtime = _text(runtime, "runtime", 80)
-    rw, ro, mask = map(lambda value: _list(value, "paths", 200), (read_write, read_only, masked))
+    rw, ro, mask = map(
+        lambda value: _list(value, "paths", 200), (read_write, read_only, masked)
+    )
     if set(rw) & (set(ro) | set(mask)) or set(ro) & set(mask):
-        raise BlueprintError("E_BLUEPRINT_ACCESS_OVERLAP", "read-write, read-only, and masked paths must be disjoint")
+        raise BlueprintError(
+            "E_BLUEPRINT_ACCESS_OVERLAP",
+            "read-write, read-only, and masked paths must be disjoint",
+        )
     core = {
         "schema": ACCESS_SCHEMA,
         "workspace": workspace,
@@ -297,8 +376,13 @@ def team_plan(
     """Compile typed bot/subagent tasks without dispatching a worker."""
     plan_id = _text(plan_id, "plan_id", 120)
     _digest(intent_digest, "intent_digest")
-    if not isinstance(poll_interval_seconds, int) or not 5 <= poll_interval_seconds <= 3600:
-        raise BlueprintError("E_BLUEPRINT_POLL", "poll_interval_seconds must be between 5 and 3600")
+    if (
+        not isinstance(poll_interval_seconds, int)
+        or not 5 <= poll_interval_seconds <= 3600
+    ):
+        raise BlueprintError(
+            "E_BLUEPRINT_POLL", "poll_interval_seconds must be between 5 and 3600"
+        )
     worker_rows: list[dict[str, Any]] = []
     worker_ids: set[str] = set()
     for worker in workers:
@@ -311,7 +395,14 @@ def team_plan(
         tier = worker.get("model_tier", "workhorse")
         if tier not in MODEL_TIERS:
             raise BlueprintError("E_BLUEPRINT_WORKER", "worker.model_tier is invalid")
-        worker_rows.append({"id": worker_id, "kind": worker.get("kind", "subagent"), "model_tier": tier, "tools": _list(worker.get("tools", []), "worker.tools", 40)})
+        worker_rows.append(
+            {
+                "id": worker_id,
+                "kind": worker.get("kind", "subagent"),
+                "model_tier": tier,
+                "tools": _list(worker.get("tools", []), "worker.tools", 40),
+            }
+        )
     task_rows: list[dict[str, Any]] = []
     task_ids: set[str] = set()
     for task in tasks:
@@ -325,7 +416,15 @@ def team_plan(
         if worker_id not in worker_ids:
             raise BlueprintError("E_BLUEPRINT_TASK", "task worker_id is not declared")
         deps = _list(task.get("dependencies", []), "task.dependencies", MAX_TASKS)
-        task_rows.append({"id": task_id, "worker_id": worker_id, "dependencies": deps, "state": "queued", "acceptance": _text(task.get("acceptance"), "task.acceptance", 240)})
+        task_rows.append(
+            {
+                "id": task_id,
+                "worker_id": worker_id,
+                "dependencies": deps,
+                "state": "queued",
+                "acceptance": _text(task.get("acceptance"), "task.acceptance", 240),
+            }
+        )
     known = task_ids
     if any(dep not in known for task in task_rows for dep in task["dependencies"]):
         raise BlueprintError("E_BLUEPRINT_TASK", "task dependency is not declared")
@@ -337,7 +436,12 @@ def team_plan(
         "tasks": sorted(task_rows, key=lambda item: item["id"]),
         "poll_interval_seconds": poll_interval_seconds,
         "dispatcher": {"mode": "declarative", "started": False, "last_poll": None},
-        "authority": {"dispatch": False, "execute": False, "merge": False, "approve": False},
+        "authority": {
+            "dispatch": False,
+            "execute": False,
+            "merge": False,
+            "approve": False,
+        },
         "claim_boundary": "Typed plan only; no dispatcher, worker, model, branch, or merge action ran.",
     }
     return _seal(core, "plan_sha256")
@@ -358,7 +462,9 @@ def build_artifact_chain(
 ) -> dict[str, Any]:
     """Bind Intent, Spec, and Plan text into one drift-detectable chain."""
     if intent_status not in ARTIFACT_STATUSES:
-        raise BlueprintError("E_BLUEPRINT_STATUS", "intent_status must be draft, approved, or processed")
+        raise BlueprintError(
+            "E_BLUEPRINT_STATUS", "intent_status must be draft, approved, or processed"
+        )
     documents = {
         "intent": _document(intent, "intent"),
         "spec": _document(spec, "spec"),
@@ -371,20 +477,31 @@ def build_artifact_chain(
     risk_rows = _list(risks, "risks", 100)
     proof = _list(proof_of_completion, "proof_of_completion", 100)
     if not changed or not order or not proof:
-        raise BlueprintError("E_BLUEPRINT_CHAIN_INCOMPLETE", "files_changed, work_order, and proof_of_completion are required")
+        raise BlueprintError(
+            "E_BLUEPRINT_CHAIN_INCOMPLETE",
+            "files_changed, work_order, and proof_of_completion are required",
+        )
     core = {
         "schema": ARTIFACT_SCHEMA,
         "project": project,
         "author": author,
         "intent_status": intent_status,
-        "documents": {name: {"text": value, "sha256": _sha(value)} for name, value in documents.items()},
+        "documents": {
+            name: {"text": value, "sha256": _sha(value)}
+            for name, value in documents.items()
+        },
         "plan_contract": {
             "files_changed": changed,
             "work_order": order,
             "risks": risk_rows,
             "proof_of_completion": proof,
         },
-        "authority": {"execute": False, "approve": False, "merge": False, "publish": False},
+        "authority": {
+            "execute": False,
+            "approve": False,
+            "merge": False,
+            "publish": False,
+        },
         "claim_boundary": "Intent-to-plan lineage only; no code, test, branch, task, approval, or release action ran.",
         "lineage": "intent -> spec -> plan",
     }
@@ -397,11 +514,28 @@ def verify_artifact_chain(value: dict[str, Any]) -> dict[str, Any]:
     _verify(value, ARTIFACT_SCHEMA, "chain_sha256")
     documents = value.get("documents")
     if not isinstance(documents, dict) or set(documents) != {"intent", "spec", "plan"}:
-        raise BlueprintError("E_BLUEPRINT_CHAIN_SCHEMA", "documents must contain intent, spec, and plan")
-    drifted = [name for name, item in documents.items() if not isinstance(item, dict) or item.get("sha256") != _sha(item.get("text"))]
+        raise BlueprintError(
+            "E_BLUEPRINT_CHAIN_SCHEMA", "documents must contain intent, spec, and plan"
+        )
+    drifted = [
+        name
+        for name, item in documents.items()
+        if not isinstance(item, dict) or item.get("sha256") != _sha(item.get("text"))
+    ]
     if drifted:
-        raise BlueprintError("E_BLUEPRINT_CHAIN_DRIFT", f"document hash drift: {', '.join(sorted(drifted))}")
-    return {"schema": ARTIFACT_SCHEMA, "marker": "BLUEPRINT_ARTIFACT_CHAIN_VERIFIED", "chain_sha256": value["chain_sha256"], "lineage": value.get("lineage"), "drifted": [], "authority": value.get("authority", {}), "claim_boundary": value.get("claim_boundary")}
+        raise BlueprintError(
+            "E_BLUEPRINT_CHAIN_DRIFT",
+            f"document hash drift: {', '.join(sorted(drifted))}",
+        )
+    return {
+        "schema": ARTIFACT_SCHEMA,
+        "marker": "BLUEPRINT_ARTIFACT_CHAIN_VERIFIED",
+        "chain_sha256": value["chain_sha256"],
+        "lineage": value.get("lineage"),
+        "drifted": [],
+        "authority": value.get("authority", {}),
+        "claim_boundary": value.get("claim_boundary"),
+    }
 
 
 def blueprint_projection(root: Path) -> dict[str, Any]:
@@ -414,9 +548,18 @@ def blueprint_projection(root: Path) -> dict[str, Any]:
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
                 schema = value.get("schema")
-                field = {MEMORY_SCHEMA: "memory_sha256", LIBRARIAN_SCHEMA: "librarian_sha256", INTENT_SCHEMA: "intent_sha256", ACCESS_SCHEMA: "access_sha256", TEAM_SCHEMA: "plan_sha256", ARTIFACT_SCHEMA: "chain_sha256"}.get(schema)
+                field = {
+                    MEMORY_SCHEMA: "memory_sha256",
+                    LIBRARIAN_SCHEMA: "librarian_sha256",
+                    INTENT_SCHEMA: "intent_sha256",
+                    ACCESS_SCHEMA: "access_sha256",
+                    TEAM_SCHEMA: "plan_sha256",
+                    ARTIFACT_SCHEMA: "chain_sha256",
+                }.get(schema)
                 if not field:
-                    raise BlueprintError("E_BLUEPRINT_SCHEMA", "unknown blueprint schema")
+                    raise BlueprintError(
+                        "E_BLUEPRINT_SCHEMA", "unknown blueprint schema"
+                    )
                 _verify(value, schema, field)
                 counts[schema] = counts.get(schema, 0) + 1
             except (OSError, json.JSONDecodeError, BlueprintError):
@@ -427,6 +570,11 @@ def blueprint_projection(root: Path) -> dict[str, Any]:
         "directory": str(directory),
         "counts": dict(sorted(counts.items())),
         "invalid_count": invalid,
-        "authority": {"execute": False, "dispatch": False, "approve": False, "publish": False},
+        "authority": {
+            "execute": False,
+            "dispatch": False,
+            "approve": False,
+            "publish": False,
+        },
         "claim_boundary": "Local blueprint receipt inventory only; no memory, provider, runtime, task, or release action ran.",
     }
