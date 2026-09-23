@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema": "factory.documentation-index.v1",
+  "version": 1,
+  "purpose": "Machine-readable map of canonical, historical, and indexed documentation. It governs discoverability only and grants no execution or release authority.",
+  "canonical": [
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "capability": "architecture",
+      "executable": "factoryline/architecture_health.py",
+      "decision": "architecture-policy.json"
+    },
+    {
+      "path": "docs/LLM_PRODUCT_CARD.md",
+      "capability": "public product claims",
+      "executable": "factoryline/cli.py",
+      "decision": "CHANGELOG.md"
+    },
+    {
+      "path": "docs/RELEASE_CHANNELS.md",
+      "capability": "release channels",
+      "executable": ".github/workflows/architecture-health.yml",
+      "decision": "architecture-policy.json"
+    },
+    {
+      "path": "docs/MODULE_AUDIT_REGISTER.md",
+      "capability": "module audit register",
+      "executable": "tests/test_architecture_health.py",
+      "decision": "architecture-boundaries.json"
+    }
+  ],
+  "coverage": [
+    {
+      "glob": "README.md",
+      "status": "canonical"
+    },
+    {
+      "glob": "*.md",
+      "status": "indexed"
+    },
+    {
+      "glob": "docs/RELEASE_NOTES_*.md",
+      "status": "historical"
+    },
+    {
+      "glob": "**/*.md",
+      "status": "indexed"
+    }
+  ],
+  "rules": {
+    "unmatched_markdown": "BLOCK",
+    "canonical_paths_must_exist": true,
+    "canonical_entries_require_executable_or_decision": true,
+    "evidence_refs_must_exist": true,
+    "historical_docs_are_not_current_product_guidance": true
+  }
+}

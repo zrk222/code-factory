@@ -56,6 +56,7 @@ from .deep_audit_loop import deep_audit_lineage
 from .mission_control_status import mission_control_status
 from .senior_engineering import senior_engineering_projection
 from .continuous_controls import continuous_controls_projection, build_control_graph
+from .agentic_control import agentic_control_projection
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -2499,6 +2500,36 @@ def _append_operations_controls(
     return facts
 
 
+def _append_agentic_control(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Expose the agentic control plane as read-only Mission Control facts."""
+    projection = agentic_control_projection(root)
+    features = projection.get("features", {})
+    feature_names = sorted(features) if isinstance(features, dict) else []
+    authority = projection.get("authority", _AUTHORITY)
+    _node(
+        state,
+        node_id="agentic-control:projection",
+        kind="agentic_control",
+        label="Agentic control-plane",
+        source="factoryline/agentic_control.py",
+        status="available" if feature_names else "missing",
+        facts={
+            "schema": projection.get("schema"),
+            "feature_count": len(feature_names),
+            "features": feature_names,
+            "authority": authority,
+            "execution": False,
+        },
+    )
+    return {
+        "schema": projection.get("schema"),
+        "feature_count": len(feature_names),
+        "features": feature_names,
+        "authority": authority,
+        "claim_boundary": projection.get("claim_boundary"),
+    }
+
+
 def _append_lifecycle_events(
     state: dict[str, Any], root: Path, projection: dict | None = None
 ) -> dict[str, Any]:
@@ -3624,7 +3655,8 @@ def _snapshot_facts(
     return {
         "node_count": len(nodes),
         "operational_node_count": sum(
-            node["kind"] != "release_decision" for node in nodes
+            node["kind"] not in {"release_decision", "agentic_control"}
+            for node in nodes
         ),
         "edge_count": 0,
         "stale_proof_count": stale_proof_count,
@@ -4097,6 +4129,7 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
             "operations_control": _append_operations_controls(
                 state, workspace, shared["operations"]
             ),
+            "agentic_control": _append_agentic_control(state, workspace),
             "lifecycle": _append_lifecycle_events(
                 state, workspace, shared["lifecycle"]
             ),
@@ -4218,6 +4251,12 @@ def _update_snapshot_facts(
                 p["supply_chain"].get("state") in {"BLOCKED", "INCOMPLETE"}
             ),
             "context_efficiency_state": p["context_efficiency"].get("state", "MISSING"),
+            "agentic_control_feature_count": int(
+                p.get("agentic_control", {}).get("feature_count", 0)
+            ),
+            "agentic_control_available": bool(
+                p.get("agentic_control", {}).get("feature_count", 0)
+            ),
             "context_efficiency_blocked": int(
                 p["context_efficiency"].get("state") == "BLOCKED"
             ),
@@ -4360,6 +4399,10 @@ def _extend_snapshot_markers(markers: list[str], p: dict[str, Any]) -> list[str]
         (
             p["jetbrains_handshake"]["state"] != "empty",
             ("GRAPH_OPS_JETBRAINS_HANDSHAKE_READ_ONLY",),
+        ),
+        (
+            p.get("agentic_control", {}).get("feature_count", 0),
+            ("GRAPH_OPS_AGENTIC_CONTROL_READ_ONLY",),
         ),
         (
             True,
@@ -4611,6 +4654,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "agent_proof_bridge": p["agent_proof_bridge"],
         "proof_worklogs": p["proof_worklogs"],
         "operations_control": p["operations_control"],
+        "agentic_control": p["agentic_control"],
         "lifecycle": p["lifecycle"],
         "repair_loops": p["repair_loops"],
         "deep_audit": p["deep_audit"],

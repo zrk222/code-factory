@@ -287,7 +287,7 @@ def test_release_integrity_rejects_huggingface_metadata_that_would_fail_remotely
     readme = root / "deploy" / "huggingface" / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "short_description: Verify AI tests, app evidence, and agent workflow drift.",
+            "short_description: Trace AI changes from intent to reviewable proof.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",

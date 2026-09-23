@@ -22,6 +22,17 @@ def test_release_preflight_cli_writes_machine_receipt(
         "verify_release_contract",
         lambda *args: {"ok": True, "marker": "RELEASE_CONTRACT_VALID"},
     )
+    monkeypatch.setattr(
+        candidate,
+        "release_cadence_status",
+        lambda _root: {
+            "available": True,
+            "admission": True,
+            "state": "eligible",
+            "release_train_status": "valid",
+            "reason": "fixture cadence admitted",
+        },
+    )
     contract = tmp_path / "contract.json"
     contract.write_text(
         json.dumps(

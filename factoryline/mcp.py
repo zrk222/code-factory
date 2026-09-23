@@ -9,12 +9,19 @@ and no server-side session or cursor is accepted or retained.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from collections import OrderedDict
+from copy import deepcopy
 from hashlib import sha256
+import base64
+import binascii
+import hmac
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
 import re
 import sys
-from typing import Any, TextIO
+from threading import RLock
+from typing import Any, Callable, TextIO
 
 from . import __version__
 from .developer_memory import developer_memory_brief
@@ -68,6 +75,19 @@ from .agent_proof_bridge import (
 )
 from .proof_worklog import proof_worklog_projection
 from .operations_control import operations_control_projection
+from .agentic_control import (
+    AgenticControlError,
+    align_candidate_to_task,
+    agentic_control_projection,
+    audit_model_route_policy,
+    bind_task_card_handoff,
+    SENIOR_CONTROL_SLICES,
+    verify_task_evidence,
+    verify_senior_control_bundle,
+    project_task_board,
+)
+from .blueprint import blueprint_projection
+from .update_notifier import UpdateNotifierError, check_for_update, read_manifest
 from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
 from .mission_control_status import mission_control_status
@@ -92,9 +112,11 @@ from .first_lap import FirstLapError, first_lap_status
 from .agui import AguiError, build_review_events
 from .mcp_mrt import McpMrtError, release_gate_completed, release_gate_input_required
 from .mcp_replay import build_stateless_replay_hints
+from .receipt_index import indexed_receipt_paths
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
+MCP_STREAMABLE_HTTP_VERSION = "2026-07-28"
 MCP_STATUS_SCHEMA = "factory.mcp.status.v1"
 MCP_SERVER_NAME = "code-factory"
 _AUTHORITY = {
@@ -116,6 +138,10 @@ _READ_ONLY_ANNOTATIONS = {
 _MAX_RECEIPT_BYTES = 262_144
 _MAX_RECEIPTS = 250
 _MAX_STATELESS_REQUEST_BYTES = 65_536
+_RECEIPT_JSON_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_RECEIPT_JSON_CACHE_LOCK = RLock()
+_RECEIPT_JSON_CACHE_LIMIT = 256
+_RECEIPT_JSON_CACHE_MAX_BYTES = 65_536
 _RECEIPT_ROOTS = (
     Path("receipts"),
     Path(".factory/proofs"),
@@ -144,6 +170,10 @@ _RECEIPT_ROOTS = (
     Path(".factory/repair-loops"),
     Path(".factory/first-lap"),
 )
+
+_HTTP_MAX_BODY_BYTES = 65_536
+_HTTP_META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion"
+_HTTP_META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
 
 
 class McpError(ValueError):
@@ -545,6 +575,180 @@ def _tool_definitions() -> list[dict[str, object]]:
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
+            "name": "factory.agentic_control_status",
+            "description": "Read deterministic role, capability-registry, durable-task-card, route-trace, cookbook, workflow, and sandbox-boundary metadata. Read only; no model, execution, source, approval, merge, publication, deployment, signing, credential, or connector action.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.model_route_audit",
+            "description": "Recompute one hash-sealed deterministic model route against the current CF routing policy and report drift. Read only; it never selects a provider, invokes a model, or dispatches work.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "route": {
+                        "type": "object",
+                        "properties": {
+                            "schema": {
+                                "type": "string",
+                                "const": "factory.model-route.v1",
+                            },
+                            "tier": {
+                                "type": "string",
+                                "enum": ["lightweight", "workhorse", "frontier"],
+                            },
+                            "task_class": {
+                                "type": "string",
+                                "enum": ["routine", "standard", "critical"],
+                            },
+                            "risk": {
+                                "type": "string",
+                                "enum": ["low", "medium", "high", "critical"],
+                            },
+                            "budgets": {
+                                "type": "object",
+                                "properties": {
+                                    "latency_budget_ms": {
+                                        "type": ["integer", "null"],
+                                        "minimum": 0,
+                                    },
+                                    "token_budget": {
+                                        "type": ["integer", "null"],
+                                        "minimum": 0,
+                                    },
+                                },
+                                "required": ["latency_budget_ms", "token_budget"],
+                                "additionalProperties": False,
+                            },
+                            "rationale": {"type": "string"},
+                            "authority": {
+                                "type": "object",
+                                "properties": {
+                                    "model_call": {"type": "boolean", "const": False},
+                                    "execution": {"type": "boolean", "const": False},
+                                },
+                                "required": ["model_call", "execution"],
+                                "additionalProperties": False,
+                            },
+                            "marker": {
+                                "type": "string",
+                                "const": "MODEL_ROUTE_DETERMINISTIC",
+                            },
+                            "route_sha256": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$",
+                            },
+                        },
+                        "required": [
+                            "schema",
+                            "tier",
+                            "task_class",
+                            "risk",
+                            "budgets",
+                            "rationale",
+                            "authority",
+                            "marker",
+                            "route_sha256",
+                        ],
+                        "additionalProperties": False,
+                    }
+                },
+                "required": ["route"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.task_board_status",
+            "description": "Project local hash-bound task cards into deterministic triage, ready, running, review, blocked, and done lanes. Read only; no dispatch, lease, model, branch, merge, approval, publication, deployment, signing, credential, or connector action.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"paths": {"type": "array", "items": {"type": "string"}}},
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.task_handoff_status",
+            "description": "Verify that a local typed handoff preserves the task card's original intent digest and allowed-path scope. Read only; no execution, mutation, approval, merge, or release action.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_card_path": {"type": "string"},
+                    "handoff_path": {"type": "string"},
+                },
+                "required": ["task_card_path", "handoff_path"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.candidate_alignment_status",
+            "description": "Bind a supplied candidate digest and changed paths to a verified task card and typed handoff. Read only; it rejects intent or path drift and never executes or approves code.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_card_path": {"type": "string"},
+                    "handoff_path": {"type": "string"},
+                    "candidate_hash": {"type": "string"},
+                    "changed_paths": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": [
+                    "task_card_path",
+                    "handoff_path",
+                    "candidate_hash",
+                    "changed_paths",
+                ],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.task_evidence_status",
+            "description": "Verify provenance-bound task evidence and report whether it can satisfy completion. Read only; failed evidence never completes work and no execution or release action occurs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_card_path": {"type": "string"},
+                    "evidence_path": {"type": "string"},
+                    "alignment_path": {"type": "string"},
+                },
+                "required": ["task_card_path", "evidence_path"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.senior_control_status",
+            "description": "Verify the six-slice senior engineering control bundle: cross-lane proof, transition ledger, challenge lane, multi-repository graph, evidence retention/export, and policy simulation. Read only; no release authority.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"bundle_path": {"type": "string"}},
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.blueprint_status",
+            "description": "Read local AI-native blueprint receipts for provenance-aware memory, librarian stages, signal-to-intent proposals, access declarations, and typed team plans. It never calls a model, provider, runtime, task dispatcher, or release authority.",
+            "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.update_status",
+            "description": "Compare the installed CF version with a local release manifest and return a read-only in-product notice. No provider, download, installation, restart, or release action occurs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "manifest_path": {"type": "string"},
+                    "installed_version": {"type": "string"},
+                    "channel": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
             "name": "factory.lifecycle_status",
             "description": "Read local hash-linked harness lifecycle summaries. It does not broadcast, contact an agent, resume a run, or grant authority.",
             "inputSchema": no_args,
@@ -610,6 +814,11 @@ def _tool_definitions() -> list[dict[str, object]]:
                         "minimum": 1,
                         "maximum": 20,
                         "default": 5,
+                    },
+                    "ranking": {
+                        "type": "string",
+                        "enum": ["lexical", "bm25", "bm25f"],
+                        "default": "bm25f",
                     },
                 },
                 "required": ["query"],
@@ -923,11 +1132,13 @@ def mcp_status(root: Path | str) -> dict[str, object]:
         "marker": "FACTORY_MCP_LOCAL_READ_ONLY",
         "markers": ["FACTORY_MCP_LOCAL_READ_ONLY", "MCP_STDLIB_ONLY"],
         "transport": "stdio",
+        "available_transports": ["stdio", "stateless-streamable-http-local-only"],
         "workspace_root": str(workspace),
         "server": {
             "name": MCP_SERVER_NAME,
             "version": __version__,
             "protocol_version": MCP_PROTOCOL_VERSION,
+            "streamable_http_protocol_version": MCP_STREAMABLE_HTTP_VERSION,
         },
         "authority": dict(_AUTHORITY),
         "tools": [tool["name"] for tool in _tool_definitions()],
@@ -974,16 +1185,24 @@ def _receipt_path(
 
 
 def _receipt_files(root: Path) -> list[Path]:
+    workspace = Path(root).resolve()
+    candidates = indexed_receipt_paths(
+        workspace,
+        max_files=_MAX_RECEIPTS,
+        max_scan_files=max(100_000, _MAX_RECEIPTS),
+        suffixes={".json"},
+        under=_RECEIPT_ROOTS,
+    )
     files: list[Path] = []
-    for relative in _RECEIPT_ROOTS:
-        directory = root / relative
-        if not directory.is_dir():
+    for path in candidates:
+        try:
+            candidate = path.resolve()
+            candidate.relative_to(workspace)
+            candidate.stat()
+        except (OSError, ValueError):
             continue
-        for path in directory.rglob("*.json"):
-            if path.is_file():
-                candidate = path.resolve()
-                if candidate.is_relative_to(root):
-                    files.append(candidate)
+        if candidate.is_file():
+            files.append(candidate)
     return sorted(files, key=lambda path: (-path.stat().st_mtime_ns, path.as_posix()))[
         :_MAX_RECEIPTS
     ]
@@ -993,10 +1212,29 @@ def _load_small_json(path: Path) -> dict[str, Any] | None:
     try:
         if path.stat().st_size > _MAX_RECEIPT_BYTES:
             return None
-        value = json.loads(path.read_text(encoding="utf-8-sig"))
+        raw = path.read_bytes()
+        digest = sha256(raw).hexdigest()
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
-    return value if isinstance(value, dict) else None
+    if len(raw) <= _RECEIPT_JSON_CACHE_MAX_BYTES:
+        with _RECEIPT_JSON_CACHE_LOCK:
+            cached = _RECEIPT_JSON_CACHE.get(digest)
+            if cached is not None:
+                _RECEIPT_JSON_CACHE.move_to_end(digest)
+                return deepcopy(cached)
+    try:
+        value = json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    if len(raw) <= _RECEIPT_JSON_CACHE_MAX_BYTES:
+        with _RECEIPT_JSON_CACHE_LOCK:
+            _RECEIPT_JSON_CACHE[digest] = value
+            _RECEIPT_JSON_CACHE.move_to_end(digest)
+            while len(_RECEIPT_JSON_CACHE) > _RECEIPT_JSON_CACHE_LIMIT:
+                _RECEIPT_JSON_CACHE.popitem(last=False)
+    return value
 
 
 def _receipt_metadata(root: Path, path: Path) -> dict[str, object]:
@@ -1712,6 +1950,345 @@ def _operations_control_status(root: Path, arguments: object) -> dict[str, objec
     }
 
 
+def _agentic_control_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.agentic_control_status accepts no arguments")
+    return {
+        "marker": "AGENTIC_CONTROL_MCP_READ_ONLY",
+        "action_summary": "Read deterministic agentic-control metadata for role capabilities, durable task cards, route traces, lazy cookbook context, reusable workflows, and sandbox boundaries.",
+        "status": agentic_control_projection(root),
+        "scope": "Read-only local control-plane facts. No model, source, branch, merge, approval, repair, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _task_board_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"paths"}:
+        raise McpError("factory.task_board_status accepts only paths")
+    raw_paths = arguments.get("paths")
+    if raw_paths is None:
+        candidates = sorted((root / ".factory" / "task-cards").glob("*.json"))
+    elif isinstance(raw_paths, list) and all(
+        isinstance(value, str) and value.strip() for value in raw_paths
+    ):
+        candidates = []
+        base = root.resolve()
+        for raw_path in raw_paths:
+            candidate = Path(raw_path)
+            if not candidate.is_absolute():
+                candidate = base / candidate
+            candidate = candidate.resolve()
+            if candidate != base and base not in candidate.parents:
+                raise McpError(
+                    "task card paths must remain inside the workspace",
+                    "TASK_BOARD_PATH_REFUSED",
+                )
+            candidates.append(candidate)
+    else:
+        raise McpError(
+            "paths must be an array of workspace-relative strings",
+            "TASK_BOARD_INPUT_REFUSED",
+        )
+    cards: list[dict[str, object]] = []
+    for path in candidates[:500]:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise McpError(
+                f"cannot read task card {path.name}: {exc}", "TASK_BOARD_READ_REFUSED"
+            ) from exc
+        if not isinstance(value, dict):
+            raise McpError(
+                f"task card {path.name} must be an object", "TASK_BOARD_INPUT_REFUSED"
+            )
+        cards.append(value)
+    try:
+        board = project_task_board(cards)
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            raise McpError(str(exc), getattr(exc, "code")) from exc
+        raise McpError(str(exc), "TASK_BOARD_PROJECTION_REFUSED") from exc
+    return {
+        "marker": "TASK_BOARD_MCP_READ_ONLY",
+        "action_summary": "Projected verified local task cards into deterministic Kanban lanes and dependency actions; no dispatcher ran.",
+        "status": board,
+        "scope": "Read-only local task-card facts. The 60-second cadence is metadata only; no dispatch, lease, model, branch, merge, approval, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _task_handoff_status(root: Path, arguments: object) -> dict[str, object]:
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) != {"task_card_path", "handoff_path"}
+        or not all(
+            isinstance(arguments[key], str) and arguments[key].strip()
+            for key in arguments
+        )
+    ):
+        raise McpError(
+            "factory.task_handoff_status requires task_card_path and handoff_path",
+            "TASK_HANDOFF_INPUT_REFUSED",
+        )
+    base = root.resolve()
+    values: list[dict[str, object]] = []
+    for key in ("task_card_path", "handoff_path"):
+        path = Path(str(arguments[key]))
+        if not path.is_absolute():
+            path = base / path
+        path = path.resolve()
+        if path != base and base not in path.parents:
+            raise McpError(
+                "receipt paths must remain inside the workspace",
+                "TASK_HANDOFF_PATH_REFUSED",
+            )
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise McpError(
+                f"cannot read {key}: {exc}", "TASK_HANDOFF_READ_REFUSED"
+            ) from exc
+        if not isinstance(value, dict):
+            raise McpError(
+                f"{key} must contain an object", "TASK_HANDOFF_INPUT_REFUSED"
+            )
+        values.append(value)
+    try:
+        binding = bind_task_card_handoff(values[0], values[1])
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            raise McpError(str(exc), getattr(exc, "code")) from exc
+        raise McpError(str(exc), "TASK_HANDOFF_BINDING_REFUSED") from exc
+    return {
+        "marker": "TASK_HANDOFF_MCP_READ_ONLY",
+        "action_summary": "Compared the task card and typed handoff intent and path scope; no code or workflow action ran.",
+        "status": binding,
+        "scope": "Read-only local lineage proof. No model, execution, repair, approval, branch, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _candidate_alignment_status(root: Path, arguments: object) -> dict[str, object]:
+    required = {"task_card_path", "handoff_path", "candidate_hash", "changed_paths"}
+    if not isinstance(arguments, dict) or set(arguments) != required:
+        raise McpError(
+            "factory.candidate_alignment_status requires task_card_path, handoff_path, candidate_hash, and changed_paths",
+            "CANDIDATE_INPUT_REFUSED",
+        )
+    if not all(
+        isinstance(arguments[key], str) and arguments[key].strip()
+        for key in ("task_card_path", "handoff_path", "candidate_hash")
+    ):
+        raise McpError(
+            "candidate paths and hash must be non-empty strings",
+            "CANDIDATE_INPUT_REFUSED",
+        )
+    if not isinstance(arguments["changed_paths"], list) or not all(
+        isinstance(path, str) and path.strip() for path in arguments["changed_paths"]
+    ):
+        raise McpError(
+            "changed_paths must be a non-empty string array", "CANDIDATE_INPUT_REFUSED"
+        )
+    base = root.resolve()
+    values: list[dict[str, object]] = []
+    for key in ("task_card_path", "handoff_path"):
+        path = Path(str(arguments[key]))
+        if not path.is_absolute():
+            path = base / path
+        path = path.resolve()
+        if path != base and base not in path.parents:
+            raise McpError(
+                "receipt paths must remain inside the workspace",
+                "CANDIDATE_PATH_REFUSED",
+            )
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise McpError(
+                f"cannot read {key}: {exc}", "CANDIDATE_READ_REFUSED"
+            ) from exc
+        if not isinstance(value, dict):
+            raise McpError(f"{key} must contain an object", "CANDIDATE_INPUT_REFUSED")
+        values.append(value)
+    try:
+        receipt = align_candidate_to_task(
+            values[0],
+            values[1],
+            str(arguments["candidate_hash"]),
+            arguments["changed_paths"],
+            candidate_root=base,
+        )
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            raise McpError(str(exc), getattr(exc, "code")) from exc
+        raise McpError(str(exc), "CANDIDATE_ALIGNMENT_REFUSED") from exc
+    return {
+        "marker": "CANDIDATE_ALIGNMENT_MCP_READ_ONLY",
+        "action_summary": "Compared the candidate digest and changed paths with the task's original intent and handoff scope; no code action ran.",
+        "status": receipt,
+        "scope": "Read-only candidate alignment proof. No model, execution, repair, approval, branch, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _task_evidence_status(root: Path, arguments: object) -> dict[str, object]:
+    required = {"task_card_path", "evidence_path"}
+    allowed = required | {"alignment_path"}
+    if (
+        not isinstance(arguments, dict)
+        or not required.issubset(arguments)
+        or not set(arguments).issubset(allowed)
+        or not all(
+            isinstance(arguments[key], str) and arguments[key].strip()
+            for key in arguments
+        )
+    ):
+        raise McpError(
+            "factory.task_evidence_status requires task_card_path and evidence_path",
+            "TASK_EVIDENCE_INPUT_REFUSED",
+        )
+    base = root.resolve()
+    values: list[dict[str, object]] = []
+    for key in ("task_card_path", "evidence_path"):
+        path = Path(str(arguments[key]))
+        if not path.is_absolute():
+            path = base / path
+        path = path.resolve()
+        if path != base and base not in path.parents:
+            raise McpError(
+                "receipt paths must remain inside the workspace",
+                "TASK_EVIDENCE_PATH_REFUSED",
+            )
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise McpError(
+                f"cannot read {key}: {exc}", "TASK_EVIDENCE_READ_REFUSED"
+            ) from exc
+        if not isinstance(value, dict):
+            raise McpError(
+                f"{key} must contain an object", "TASK_EVIDENCE_INPUT_REFUSED"
+            )
+        values.append(value)
+    try:
+        receipt = verify_task_evidence(values[1])
+        card = values[0]
+        alignment = None
+        if (
+            isinstance(arguments.get("alignment_path"), str)
+            and arguments["alignment_path"].strip()
+        ):
+            alignment_path = Path(arguments["alignment_path"])
+            if not alignment_path.is_absolute():
+                alignment_path = base / alignment_path
+            alignment_path = alignment_path.resolve()
+            if alignment_path != base and base not in alignment_path.parents:
+                raise McpError(
+                    "receipt paths must remain inside the workspace",
+                    "TASK_EVIDENCE_PATH_REFUSED",
+                )
+            alignment = json.loads(alignment_path.read_text(encoding="utf-8"))
+        eligible = False
+        if alignment is not None:
+            from .agentic_control import complete_task_with_evidence
+
+            complete_task_with_evidence(card, receipt, alignment)
+            eligible = True
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            raise McpError(str(exc), getattr(exc, "code")) from exc
+        raise McpError(str(exc), "TASK_EVIDENCE_REFUSED") from exc
+    return {
+        "marker": "TASK_EVIDENCE_MCP_READ_ONLY",
+        "action_summary": "Verified task evidence provenance and completion eligibility; no task transition or execution ran.",
+        "status": {"receipt": receipt, "completion_eligible": eligible},
+        "scope": "Read-only evidence provenance. No dispatch, code execution, repair, approval, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _senior_control_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {"bundle_path"}:
+        raise McpError(
+            "factory.senior_control_status accepts only bundle_path",
+            "SENIOR_CONTROL_INPUT_REFUSED",
+        )
+    path = Path(str(arguments.get("bundle_path", ".factory/senior-control.json")))
+    if not path.is_absolute():
+        path = root / path
+    path = path.resolve()
+    base = root.resolve()
+    if path != base and base not in path.parents:
+        raise McpError(
+            "bundle path must remain inside the workspace",
+            "SENIOR_CONTROL_PATH_REFUSED",
+        )
+    if not path.exists():
+        return {
+            "marker": "SENIOR_CONTROL_MCP_READ_ONLY",
+            "action_summary": "Reported the six required senior controls without inventing a local readiness result.",
+            "status": {
+                "readiness": "AWAITING_BUNDLE",
+                "required_slices": list(SENIOR_CONTROL_SLICES),
+                "bundle_path": path.relative_to(base).as_posix(),
+            },
+            "scope": "No bundle was present; no audit runner, challenge, repository operation, retention action, policy simulation, approval, merge, publication, or deployment action ran.",
+        }
+    try:
+        bundle = json.loads(path.read_text(encoding="utf-8"))
+        status = verify_senior_control_bundle(bundle, base)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise McpError(str(exc), "SENIOR_CONTROL_READ_REFUSED") from exc
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            raise McpError(str(exc), getattr(exc, "code")) from exc
+        raise McpError(str(exc), "SENIOR_CONTROL_VERIFY_REFUSED") from exc
+    return {
+        "marker": "SENIOR_CONTROL_MCP_READ_ONLY",
+        "action_summary": "Verified the six-slice senior engineering control bundle; no control action ran.",
+        "status": status,
+        "scope": "Read-only bundle verification; readiness remains human-reviewed and no audit, challenge, repository, retention, policy, approval, merge, publication, or deployment action ran.",
+    }
+
+
+def _blueprint_status(root: Path, arguments: object) -> dict[str, object]:
+    if arguments != {}:
+        raise McpError("factory.blueprint_status accepts no arguments")
+    return {
+        "marker": "BLUEPRINT_MCP_READ_ONLY",
+        "action_summary": "Read local AI-native blueprint receipt inventory; no memory promotion, signal intake, access enforcement, task dispatch, model call, or release action ran.",
+        "status": blueprint_projection(root),
+        "scope": "Read-only local contracts. External memory engines, providers, Docker/kernel enforcement, workers, and human release authority remain separate.",
+    }
+
+
+def _update_status(root: Path, arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, dict) or set(arguments) - {
+        "manifest_path",
+        "installed_version",
+        "channel",
+    }:
+        raise McpError(
+            "factory.update_status accepts only manifest_path, installed_version, and channel"
+        )
+    manifest_path = Path(
+        arguments.get("manifest_path", ".factory/update-manifest.json")
+    )
+    if not manifest_path.is_absolute():
+        manifest_path = root / manifest_path
+    try:
+        from . import __version__
+
+        notice = check_for_update(
+            str(arguments.get("installed_version", __version__)),
+            read_manifest(manifest_path),
+            channel=str(arguments.get("channel", "stable")),
+        )
+    except (UpdateNotifierError, OSError, ValueError) as exc:
+        raise McpError(str(exc), "UPDATE_CHECK_REFUSED") from exc
+    return {
+        "marker": "UPDATE_STATUS_MCP_READ_ONLY",
+        "action_summary": "Compared the installed version with local release metadata; no update action ran.",
+        "notice": notice,
+        "scope": "Read-only local notice; no provider, download, installation, restart, credential, or release action.",
+    }
+
+
 def _lifecycle_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.lifecycle_status accepts no arguments")
@@ -2182,6 +2759,16 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
                 "impact": graph_ops_impact(root, _changed_paths(arguments)),
             }
         )
+    if name == "factory.model_route_audit":
+        if not isinstance(arguments, dict) or set(arguments) != {"route"}:
+            raise McpError("factory.model_route_audit requires one route object")
+        route = arguments["route"]
+        if not isinstance(route, dict):
+            raise McpError("route must be a JSON object", "MODEL_ROUTE_INPUT_REFUSED")
+        try:
+            return _content(audit_model_route_policy(route))
+        except AgenticControlError as exc:
+            raise McpError(str(exc), exc.code) from exc
     if name == "factory.developer_memory":
         return _content(_developer_memory(root, arguments))
     if name == "factory.intent_ledger":
@@ -2250,6 +2837,22 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_atomic_status(root, arguments))
     if name == "factory.operations_control_status":
         return _content(_operations_control_status(root, arguments))
+    if name == "factory.agentic_control_status":
+        return _content(_agentic_control_status(root, arguments))
+    if name == "factory.task_board_status":
+        return _content(_task_board_status(root, arguments))
+    if name == "factory.task_handoff_status":
+        return _content(_task_handoff_status(root, arguments))
+    if name == "factory.candidate_alignment_status":
+        return _content(_candidate_alignment_status(root, arguments))
+    if name == "factory.task_evidence_status":
+        return _content(_task_evidence_status(root, arguments))
+    if name == "factory.senior_control_status":
+        return _content(_senior_control_status(root, arguments))
+    if name == "factory.blueprint_status":
+        return _content(_blueprint_status(root, arguments))
+    if name == "factory.update_status":
+        return _content(_update_status(root, arguments))
     if name == "factory.lifecycle_status":
         return _content(_lifecycle_status(root, arguments))
     if name == "factory.repair_loop_status":
@@ -2536,3 +3139,464 @@ def serve_stdio(
             output_stream.write(_canonical(response) + "\n")
             output_stream.flush()
     return 0
+
+
+def create_streamable_http_server(
+    root: Path | str,
+    *,
+    bearer_token: str | None = None,
+    bearer_validator: Callable[[str], bool] | None = None,
+    port: int = 8765,
+    allowed_origins: tuple[str, ...] = (),
+) -> HTTPServer:
+    """Create a loopback-only, authenticated, stateless MCP HTTP server.
+
+    This intentionally implements request-scoped JSON responses only: no SSE,
+    subscription stream, session, OAuth authorization server, or remote bind is
+    advertised. Supply exactly one local bearer token or a bearer validator
+    backed by a trusted identity provider.
+    """
+    workspace = _workspace_root(root)
+    if (bearer_token is None) == (bearer_validator is None):
+        raise McpError(
+            "configure exactly one bearer token or bearer validator",
+            "MCP_HTTP_AUTH_CONFIG_INVALID",
+        )
+    if bearer_token is not None and (
+        not isinstance(bearer_token, str) or len(bearer_token) < 24
+    ):
+        raise McpError(
+            "HTTP bearer token must contain at least 24 characters",
+            "MCP_HTTP_TOKEN_INVALID",
+        )
+    if bearer_validator is not None and not callable(bearer_validator):
+        raise McpError(
+            "bearer validator must be callable", "MCP_HTTP_AUTH_CONFIG_INVALID"
+        )
+    if not isinstance(port, int) or isinstance(port, bool) or not 0 <= port <= 65535:
+        raise McpError("HTTP port must be between 0 and 65535", "MCP_HTTP_PORT_INVALID")
+    if not all(isinstance(origin, str) and origin for origin in allowed_origins):
+        raise McpError(
+            "allowed origins must be non-empty strings", "MCP_HTTP_ORIGIN_INVALID"
+        )
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+        def _send_json(self, status: int, payload: object | None) -> None:
+            body = b"" if payload is None else _canonical(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Connection", "close")
+            if payload is not None:
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+            else:
+                self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+
+        def _source_checks_pass(self) -> bool:
+            host_values = self.headers.get_all("Host", [])
+            origin_values = self.headers.get_all("Origin", [])
+            server_port = self.server.server_address[1]
+            allowed_hosts = {
+                f"127.0.0.1:{server_port}",
+                f"localhost:{server_port}",
+            }
+            host_valid = (
+                len(host_values) == 1 and host_values[0].lower() in allowed_hosts
+            )
+            origin_valid = len(origin_values) <= 1 and (
+                not origin_values or origin_values[0] in allowed_origins
+            )
+            if not host_valid or not origin_valid:
+                self._send_json(403, None)
+                return False
+            return True
+
+        def _transport_error(
+            self, status: int, request_id: object, code: int, message: str, marker: str
+        ) -> None:
+            self._send_json(status, _error(request_id, code, message, marker))
+
+        def _discard_chunked_body(self) -> bool:
+            """Drain a bounded, syntactically valid chunked body before rejection.
+
+            A rejected request with unread bytes can cause Windows TCP stacks to
+            reset the socket and hide the intended 400 response from the client.
+            Only the one unambiguous chunked framing is drained; malformed or
+            oversized framing is closed without attempting to reinterpret it.
+            """
+            max_body = _HTTP_MAX_BODY_BYTES
+            max_chunks = 256
+            max_trailers = 16_384
+            consumed = 0
+            self.connection.settimeout(2.0)
+            try:
+                for _ in range(max_chunks):
+                    line = self.rfile.readline(8192)
+                    if not line.endswith(b"\r\n") or len(line) > 8192:
+                        return False
+                    size_token = line[:-2].split(b";", 1)[0]
+                    if (
+                        not size_token
+                        or len(size_token) > 16
+                        or any(
+                            char not in b"0123456789abcdefABCDEF" for char in size_token
+                        )
+                    ):
+                        return False
+                    size = int(size_token, 16)
+                    if size == 0:
+                        trailer_bytes = 0
+                        while trailer_bytes <= max_trailers:
+                            trailer = self.rfile.readline(8192)
+                            if not trailer.endswith(b"\r\n") or len(trailer) > 8192:
+                                return False
+                            trailer_bytes += len(trailer)
+                            if trailer == b"\r\n":
+                                return True
+                        return False
+                    if size > max_body - consumed:
+                        return False
+                    chunk = self.rfile.read(size)
+                    if len(chunk) != size or self.rfile.read(2) != b"\r\n":
+                        return False
+                    consumed += size
+            except (OSError, TimeoutError):
+                return False
+            return False
+
+        def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
+            if not self._source_checks_pass():
+                return
+            self.send_response(405)
+            self.send_header("Allow", "POST")
+            self.send_header("Connection", "close")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+            if self.path != "/mcp":
+                self._send_json(404, None)
+                return
+            transfer_encodings = self.headers.get_all("Transfer-Encoding", [])
+            content_lengths = self.headers.get_all("Content-Length", [])
+            if transfer_encodings:
+                if (
+                    len(transfer_encodings) == 1
+                    and transfer_encodings[0].strip().lower() == "chunked"
+                    and not content_lengths
+                    and self._discard_chunked_body()
+                ):
+                    self._transport_error(
+                        400,
+                        None,
+                        -32020,
+                        "Transfer-Encoding is not supported",
+                        "MCP_HTTP_HEADER_MISMATCH",
+                    )
+                else:
+                    # Ambiguous framing is not drained or parsed as a request.
+                    self.close_connection = True
+                return
+            singleton_headers = (
+                "Authorization",
+                "Content-Type",
+                "MCP-Protocol-Version",
+                "Mcp-Method",
+            )
+            if any(
+                len(self.headers.get_all(name, [])) != 1 for name in singleton_headers
+            ):
+                self._transport_error(
+                    400,
+                    None,
+                    -32020,
+                    "required transport headers must occur exactly once",
+                    "MCP_HTTP_HEADER_MISMATCH",
+                )
+                return
+            content_type = (
+                self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            )
+            if content_type != "application/json":
+                self._send_json(415, None)
+                return
+            if len(content_lengths) != 1:
+                self._transport_error(
+                    400,
+                    None,
+                    -32020,
+                    "Content-Length must occur exactly once",
+                    "MCP_HTTP_HEADER_MISMATCH",
+                )
+                return
+            accept_header = ",".join(self.headers.get_all("Accept", []))
+            accept = {
+                value.strip().split(";", 1)[0].lower()
+                for value in accept_header.split(",")
+            }
+            if not {"application/json", "text/event-stream"}.issubset(accept):
+                self._send_json(406, None)
+                return
+            try:
+                content_length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                self._transport_error(
+                    400,
+                    None,
+                    -32020,
+                    "invalid Content-Length",
+                    "MCP_HTTP_HEADER_MISMATCH",
+                )
+                return
+            if content_length < 1:
+                self._transport_error(
+                    400, None, -32700, "request body is required", "MCP_HTTP_EMPTY_BODY"
+                )
+                return
+            if content_length > _HTTP_MAX_BODY_BYTES:
+                self._transport_error(
+                    413,
+                    None,
+                    -32600,
+                    "request body exceeds the size limit",
+                    "MCP_HTTP_BODY_TOO_LARGE",
+                )
+                return
+            try:
+                raw = self.rfile.read(content_length)
+            except (OSError, TimeoutError):
+                self.close_connection = True
+                return
+            # Read only a bounded body before rejecting Host/Origin. Returning
+            # while request bytes remain unread can reset the response socket on
+            # Windows; validation still precedes JSON parsing and all dispatch.
+            if not self._source_checks_pass():
+                return
+            try:
+                request = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self._transport_error(
+                    400, None, -32700, "invalid JSON request", "MCP_HTTP_JSON_INVALID"
+                )
+                return
+            request_id = request.get("id") if isinstance(request, dict) else None
+            if (
+                not isinstance(request, dict)
+                or request.get("jsonrpc") != "2.0"
+                or not isinstance(request.get("method"), str)
+                or "id" not in request
+            ):
+                self._transport_error(
+                    400,
+                    request_id,
+                    -32600,
+                    "a JSON-RPC request with an id is required",
+                    "MCP_HTTP_REQUEST_INVALID",
+                )
+                return
+            method = request["method"]
+            if self.headers.get("Mcp-Method") != method:
+                self._transport_error(
+                    400,
+                    request_id,
+                    -32020,
+                    "Mcp-Method does not match request body",
+                    "MCP_HTTP_HEADER_MISMATCH",
+                )
+                return
+            params = request.get("params", {})
+            if not isinstance(params, dict):
+                self._transport_error(
+                    400,
+                    request_id,
+                    -32602,
+                    "request params must be an object",
+                    "MCP_HTTP_PARAMS_INVALID",
+                )
+                return
+            meta = params.get("_meta")
+            if not isinstance(meta, dict) or not isinstance(
+                meta.get(_HTTP_META_CLIENT_CAPABILITIES), dict
+            ):
+                self._transport_error(
+                    400,
+                    request_id,
+                    -32020,
+                    "request metadata and clientCapabilities are required",
+                    "MCP_HTTP_HEADER_MISMATCH",
+                )
+                return
+            requested_version = meta.get(_HTTP_META_PROTOCOL_VERSION)
+            header_version = self.headers.get("MCP-Protocol-Version")
+            if not header_version or requested_version != header_version:
+                self._transport_error(
+                    400,
+                    request_id,
+                    -32020,
+                    "MCP-Protocol-Version does not match request metadata",
+                    "MCP_HTTP_HEADER_MISMATCH",
+                )
+                return
+            if header_version != MCP_STREAMABLE_HTTP_VERSION:
+                self._send_json(
+                    400,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {
+                            "code": -32022,
+                            "message": "unsupported MCP protocol version",
+                            "data": {
+                                "supported": [MCP_STREAMABLE_HTTP_VERSION],
+                                "requested": header_version,
+                            },
+                        },
+                    },
+                )
+                return
+            expected_name: object | None = None
+            if method == "tools/call":
+                expected_name = params.get("name")
+            elif method == "resources/read":
+                expected_name = params.get("uri")
+            if method in {"tools/call", "resources/read", "prompts/get"}:
+                if len(self.headers.get_all("Mcp-Name", [])) != 1:
+                    self._transport_error(
+                        400,
+                        request_id,
+                        -32020,
+                        "Mcp-Name must occur exactly once",
+                        "MCP_HTTP_HEADER_MISMATCH",
+                    )
+                    return
+                encoded_name = self.headers.get("Mcp-Name")
+                decoded_name: str | None = encoded_name
+                if (
+                    isinstance(encoded_name, str)
+                    and encoded_name.startswith("=?base64?")
+                    and encoded_name.endswith("?=")
+                ):
+                    try:
+                        decoded_name = base64.b64decode(
+                            encoded_name[9:-2], validate=True
+                        ).decode("utf-8")
+                    except (binascii.Error, UnicodeDecodeError):
+                        decoded_name = None
+                if not isinstance(expected_name, str) or decoded_name != expected_name:
+                    self._transport_error(
+                        400,
+                        request_id,
+                        -32020,
+                        "Mcp-Name does not match request body",
+                        "MCP_HTTP_HEADER_MISMATCH",
+                    )
+                    return
+            # Authenticate only after consuming and validating the bounded body.
+            # This avoids Windows TCP resets from replying while request bytes
+            # remain unread, and prevents malformed frames triggering JWKS I/O.
+            authorization = self.headers.get("Authorization", "")
+            scheme, _, credential = authorization.partition(" ")
+            authenticated = False
+            if scheme.lower() == "bearer" and 1 <= len(credential) <= 16_384:
+                if bearer_validator is not None:
+                    try:
+                        authenticated = bearer_validator(credential) is True
+                    except McpError as exc:
+                        if exc.marker == "MCP_HTTP_AUTH_UNAVAILABLE":
+                            self._send_json(503, None)
+                            return
+                    except Exception:
+                        # Never expose identity-provider, token, or key details.
+                        self._send_json(503, None)
+                        return
+                elif bearer_token is not None:
+                    authenticated = hmac.compare_digest(credential, bearer_token)
+            if not authenticated:
+                self.send_response(401)
+                self.send_header(
+                    "WWW-Authenticate", 'Bearer realm="code-factory-local"'
+                )
+                self.send_header("Connection", "close")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            clean_params = {
+                key: value for key, value in params.items() if key != "_meta"
+            }
+            clean_request = {**request, "params": clean_params}
+            if method == "server/discover":
+                result: dict[str, object] = {
+                    "supportedVersions": [MCP_STREAMABLE_HTTP_VERSION],
+                    "capabilities": {"tools": {}, "resources": {}},
+                    "instructions": "Code Factory returns read-only local evidence. It does not run code, approve, publish, deploy, sign, message, or grant credentials.",
+                    "ttlMs": 0,
+                    "cacheScope": "private",
+                    "resultType": "complete",
+                    "_meta": {
+                        "io.modelcontextprotocol/serverInfo": {
+                            "name": MCP_SERVER_NAME,
+                            "version": __version__,
+                        }
+                    },
+                }
+                response: object = _result(request_id, result)
+            else:
+                try:
+                    response = dispatch(clean_request, workspace)
+                except Exception:
+                    response = _error(
+                        request_id,
+                        -32603,
+                        "internal MCP handler error",
+                        "MCP_HTTP_INTERNAL_ERROR",
+                    )
+                if response is None:
+                    self._transport_error(
+                        400,
+                        request_id,
+                        -32600,
+                        "HTTP notifications are not supported by this adapter",
+                        "MCP_HTTP_NOTIFICATION_REJECTED",
+                    )
+                    return
+                if "result" in response and isinstance(response["result"], dict):
+                    modern_result = dict(response["result"])
+                    modern_result.update(
+                        {
+                            "resultType": "complete",
+                            "ttlMs": 0,
+                            "cacheScope": "private",
+                            "_meta": {
+                                "io.modelcontextprotocol/serverInfo": {
+                                    "name": MCP_SERVER_NAME,
+                                    "version": __version__,
+                                }
+                            },
+                        }
+                    )
+                    response = {**response, "result": modern_result}
+            status = (
+                404
+                if isinstance(response, dict)
+                and isinstance(response.get("error"), dict)
+                and response["error"].get("code") == -32601
+                else 200
+            )
+            self._send_json(status, response)
+
+    try:
+        return HTTPServer(("127.0.0.1", port), Handler)
+    except OSError as exc:
+        raise McpError(
+            f"could not bind local MCP HTTP server: {exc}", "MCP_HTTP_BIND_FAILED"
+        ) from exc

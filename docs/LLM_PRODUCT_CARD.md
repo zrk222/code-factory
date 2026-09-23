@@ -19,12 +19,22 @@ deployment: local-first Python CLI with IDE, MCP, and read-only WebMCP surfaces
 primary_question: Did the change fulfill approved intent, what could break, and what does the audit evidence support?
 ```
 
+## Current release preview
+
+Core 0.46.8, VS Code/Open VSX 1.0.1, and JetBrains 1.0.1 are preview targets,
+not publication claims. The change set emphasizes intent-to-proof agent
+handoffs, deterministic route traces, proof-delta retry stops, exact-hash
+receipt reuse and indexing, lifecycle telemetry, searchable audit rules, and
+optional local stateless MCP HTTP. The six mandatory audit lanes and human-owned
+release decision remain unchanged. The shared public preview is in
+[`CHANGELOG.md`](../CHANGELOG.md).
+
 ## What it does
 
-**6 mandatory audit lanes. 140 coded rejection conditions. One human-owned release decision.**
+**6 mandatory audit lanes. 143 coded rejection conditions. One human-owned release decision.**
 These source-inventoried counts describe the senior runtime
-assurance path: 81 lane-specific and 59 cross-cutting conditions. They do not
-mean every project executes 140 tests; observations scale with approved scope.
+assurance path: 81 lane-specific and 62 cross-cutting conditions. They do not
+mean every project executes 143 tests; observations scale with approved scope.
 
 Code Factory is an engineering audit and orchestration system for human and
 AI-written software. It connects intent validation, six runtime audit lanes,

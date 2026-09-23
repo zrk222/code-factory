@@ -1,9 +1,10 @@
 # AI client connections
 
-Code Factory's local MCP server can supply bounded, receipt-backed proof
-context to any coding assistant that supports local stdio MCP. The standard
-connection is local, stdio-only, and read-only; Cursor, OpenCode, and Codex
-have copy-only renderers below.
+Code Factory's local MCP server supplies bounded, receipt-backed proof
+context to coding assistants. Stdio is the default and most broadly supported
+connection; a separately configured, loopback-only Streamable HTTP adapter is
+available for clients that require HTTP. Both surfaces are read-only. Cursor,
+OpenCode, and Codex have copy-only stdio renderers below.
 
 ## Prerequisites
 
@@ -169,9 +170,10 @@ The rendered command is equivalent to:
 codex mcp add code-factory -- factory mcp serve --root C:\work\my-mvp
 ```
 
-This is still a local stdio server. It does not add a remote endpoint, share
-source with a provider, or give Codex write, approval, release, credential, or
-connector authority through MCP.
+This configured command uses the local stdio server. It does not add a remote
+endpoint, share source with a provider, or give Codex write, approval, release,
+credential, or connector authority through MCP. The optional HTTP adapter is
+not installed by this renderer.
 
 ## What the connection provides
 
@@ -250,15 +252,21 @@ than a hidden autonomous path.
 
 ## Support boundary
 
-**Proven now:** Code Factory's local stdio MCP server and its read-only tool
-contract are implemented and tested. The generic, Cursor, OpenCode, and Codex
-renderers produce deterministic local setup packets; each client must still
-approve and operate that packet under its own controls.
+**Proven now:** Code Factory's local stdio MCP server and read-only tool
+contract are implemented and tested. A separate authenticated loopback HTTP
+request/response adapter validates current protocol metadata and is covered by
+focused tests; it does not provide SSE subscriptions or OAuth. The generic,
+Cursor, OpenCode, and Codex renderers produce deterministic local stdio setup
+packets; the renderers remain stdio-only. Each client must still approve and
+operate that packet under its own controls.
 
 **Not claimed:** universal support by clients that do not implement local
 stdio MCP, automatic client configuration, a Cursor-specific extension listing,
-a Cursor Marketplace publication, or a hosted MCP endpoint with OIDC. Use the
-portable CLI handoff when a client lacks MCP support. A Cursor-specific extension smoke test is not part of the current CI matrix.
+a Cursor Marketplace publication, or a hosted MCP endpoint with OIDC or OAuth.
+The HTTP adapter is a local request/response slice, not complete feature parity
+with subscriptions or event streams. Use the portable CLI handoff when a
+client lacks MCP support. A Cursor-specific extension smoke test is not part
+of the current CI matrix.
 
 **Remote future path:** a hosted adapter would need its own authenticated
 endpoint, tenant isolation, rate limits, audit receipts, and explicit

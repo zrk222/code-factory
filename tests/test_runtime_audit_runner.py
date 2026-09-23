@@ -46,6 +46,30 @@ def test_runner_uses_exact_argv_separate_artifacts_and_no_worktree_home(tmp_path
     assert not (tmp_path / "runtime-home").exists()
 
 
+def test_runner_supports_bounded_parallel_lanes_with_isolated_scratch(tmp_path):
+    writer = tmp_path / "writer.py"
+    writer.write_text(
+        "import json,sys; json.dump({'schema':'fixture','mode':sys.argv[1]},open(sys.argv[2],'w'))\n",
+        encoding="utf-8",
+    )
+    lanes = [
+        {
+            "id": f"lane-{suffix}",
+            "kind": "stateful_invariant",
+            "timeout_seconds": 5,
+            "target_argv": [sys.executable, str(writer), "target", "{artifact}"],
+            "known_bad_argv": [sys.executable, str(writer), "known_bad", "{artifact}"],
+        }
+        for suffix in ("a", "b")
+    ]
+    result = run_runtime_audit_plan(
+        {"lanes": lanes}, tmp_path, tmp_path / "out", max_parallelism=2
+    )
+    assert result["execution_policy"]["max_parallelism"] == 2
+    assert [item["id"] for item in result["executions"]] == ["lane-a", "lane-b"]
+    assert all(item["target"]["artifact"] for item in result["executions"])
+
+
 def test_supervisor_times_out_and_hashes_output_without_retaining_it(tmp_path):
     scratch = tmp_path / "scratch"
     scratch.mkdir()

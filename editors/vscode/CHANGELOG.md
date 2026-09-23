@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1 - 2026-09-23 (release preview; publication gated)
+
+- Show typed intent-to-proof agent handoffs, route traces, and checkpoint
+  provenance in the same local review path.
+- Make no-gain repair stops, exact-hash receipt reuse, and audit-rule search
+  easier to inspect without adding release authority to the IDE.
+- Clarify that optional stateless MCP HTTP is loopback-only and that stdio
+  remains the default local connection.
+
 ## 0.9.9 - 2026-09-19
 
 - Align the VS Code adapter with the current Marketplace upload target while

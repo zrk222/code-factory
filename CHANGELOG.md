@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.46.8 - 2026-09-23 (release preview; publication gated)
+
+- Add typed, evidence-bound agent workflows that connect approved intent,
+  candidate changes, verification routes, checkpoints, and reviewer handoffs.
+- Improve repair-loop efficiency with proof-delta/no-gain detection, exact-hash
+  receipt reuse, bounded receipt indexing/retention, and route telemetry.
+- Add compact audit-rule search and optional loopback-only stateless MCP HTTP;
+  stdio remains the default, and neither transport gains release authority.
+- Continue splitting CLI command families into lazy-loaded modules, with
+  architecture-health measurements and evidence refreshed alongside the code.
+- Preserve all six mandatory audit lanes and the human-owned release decision.
+
 ## 0.46.7 - 2026-09-19
 
 - Fix the security scanner's workspace-relative ignore handling on Linux. A

@@ -17,6 +17,15 @@ from factoryline.change_review import ChangeReviewError, review_change
 from factoryline.cli import main
 
 
+def test_audit_command_boundary_is_lazily_loaded() -> None:
+    import factoryline.cli as cli
+    from factoryline import cli_audit
+
+    assert not hasattr(cli, "audit_code")
+    assert cli_audit.COMMAND_GROUP == "audit"
+    assert cli_audit.OWNER == "quality-security"
+
+
 def workspace(root: Path, body: str = "require_auth()\nstore.delete()") -> Path:
     source = (
         "def safe():\n    require_auth()\n    store.delete()\n\ndef candidate():\n"
@@ -319,6 +328,20 @@ def test_security_scan_accepts_reviewed_loaders_and_argv_bound_processes(tmp_pat
     result = security_scan(tmp_path)
     assert result["state"] == "CLEAN"
     assert result["parse_errors"] == 0
+
+
+def test_security_scan_tracks_import_aliases_and_unsafe_yaml_loaders(tmp_path):
+    (tmp_path / "aliases.py").write_text(
+        "from subprocess import run as launch\nimport yaml as y\n"
+        "def run(value):\n    launch(value, shell=True)\n    y.load(value, Loader=y.UnsafeLoader)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["state"] == "BLOCKED"
+    assert {item["code"] for item in result["findings"]} == {
+        "SECURITY_SHELL_COMMAND",
+        "SECURITY_UNSAFE_YAML",
+    }
 
 
 def test_security_scan_reports_parse_errors_fail_closed(tmp_path):

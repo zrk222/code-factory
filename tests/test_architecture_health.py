@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
+import factoryline.architecture_health as architecture_health
 from factoryline.architecture_health import (
+    _cadence_projection,
     collect_architecture_health,
     evaluate_architecture_health,
+    release_cadence_status,
 )
 from factoryline.cli import main
 
@@ -26,7 +30,12 @@ def _policy(path: Path, **budgets: int | float) -> Path:
             "cli_lines": 5000,
             "core_modules": 150,
         },
-        "release": {"max_releases_30d": 4},
+        "release": {
+            "max_releases_30d": 4,
+            "minimum_days_between_releases": 7,
+            "exception_requires": "human-release-authority",
+            "requires_changelog_entry": False,
+        },
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
@@ -86,6 +95,35 @@ def test_health_exposes_core_and_specialist_module_domains(tmp_path: Path) -> No
     assert domains == {"appforge": 1, "core": 1}
 
 
+def test_specialist_modules_do_not_count_against_core_surface_budget(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "factoryline").mkdir()
+    for name in ("cli_demo.py", "appforge_demo.py", "contract.py"):
+        (tmp_path / "factoryline" / name).write_text("pass\n", encoding="utf-8")
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {
+                    "appforge": ["factoryline/appforge_*.py"],
+                    "cli_surfaces": ["factoryline/cli_*.py"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    metrics = collect_architecture_health(tmp_path)["metrics"]
+    assert metrics["total_factoryline_modules"] == 3
+    assert metrics["core_modules"] == 1
+    assert metrics["module_domains"] == {
+        "appforge": 1,
+        "cli_surfaces": 1,
+        "core": 1,
+    }
+
+
 def test_malformed_boundary_manifest_is_blocking(tmp_path: Path) -> None:
     (tmp_path / "factoryline").mkdir()
     (tmp_path / "factoryline" / "cli.py").write_text("pass\n", encoding="utf-8")
@@ -100,6 +138,87 @@ def test_malformed_boundary_manifest_is_blocking(tmp_path: Path) -> None:
         item["code"] == "E_ARCH_BOUNDARY_MANIFEST_INVALID"
         for item in result["regressions"]
     )
+
+
+def test_boundary_manifest_with_owners_validates_specialist_contract(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "appforge_demo.py").write_text(
+        "pass\n", encoding="utf-8"
+    )
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {"appforge": ["factoryline/appforge_*.py"]},
+                "owners": {"appforge": "appforge-maintainers"},
+                "experimental": ["factoryline/appforge_demo.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    domains = collect_architecture_health(tmp_path)["metrics"]["module_domains"]
+    assert domains == {"appforge": 1, "core": 0}
+
+
+def test_boundary_manifest_missing_declared_owner_is_blocking(tmp_path: Path) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "appforge_demo.py").write_text(
+        "pass\n", encoding="utf-8"
+    )
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {"appforge": ["factoryline/appforge_*.py"]},
+                "owners": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = evaluate_architecture_health(
+        tmp_path, _policy(tmp_path / "policy.json", cli=2)
+    )
+    assert result["decision"] == "BLOCKED"
+    assert any(
+        item["code"] == "E_ARCH_BOUNDARY_MANIFEST_INVALID"
+        for item in result["regressions"]
+    )
+
+
+def test_release_policy_requires_exact_changelog_heading(tmp_path: Path) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "__init__.py").write_text(
+        '__version__ = "1.2.3"\n', encoding="utf-8"
+    )
+    (tmp_path / "factoryline" / "cli.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = _policy(tmp_path / "policy.json", cli=2)
+    value = json.loads(policy.read_text(encoding="utf-8"))
+    value["release"]["requires_changelog_entry"] = True
+    policy.write_text(json.dumps(value), encoding="utf-8")
+    result = evaluate_architecture_health(tmp_path, policy)
+    assert result["decision"] == "BLOCKED"
+    assert any(
+        item["code"] == "E_ARCH_RELEASE_CHANGELOG_MISSING"
+        for item in result["regressions"]
+    )
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## 1.2.3\n", encoding="utf-8"
+    )
+    assert evaluate_architecture_health(tmp_path, policy)["decision"] == "HEALTHY"
 
 
 def test_architecture_health_cli_emits_machine_readable_receipt(
@@ -190,3 +309,299 @@ def test_expiring_exact_acceptance_can_clear_intentional_measured_growth(
     assert {item["code"] for item in result["accepted_baseline_debt"]} == {
         "ARCH_CLI_MONOLITH"
     }
+
+
+def test_stale_acceptance_is_retired_when_its_finding_no_longer_exists(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "cli.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# readme\n", encoding="utf-8")
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = _policy(tmp_path / "policy.json", cli=10, core=2)
+    value = json.loads(policy.read_text(encoding="utf-8"))
+    value["accepted_debt"] = {
+        "decision_id": "ARCH-RETIRED-1",
+        "owner": "reviewer",
+        "expires_at": "2099-01-01T00:00:00+00:00",
+        "reason": "A previous command-surface regression was accepted while it was active.",
+        "codes": ["E_ARCH_CLI_LINES_GROWTH"],
+        "metrics": {"cli_lines": 99},
+    }
+    policy.write_text(json.dumps(value), encoding="utf-8")
+
+    result = evaluate_architecture_health(tmp_path, policy)
+
+    assert result["decision"] == "HEALTHY"
+    assert not result["regressions"]
+    assert result["accepted_debt"] is None
+
+
+def test_active_acceptance_with_stale_measurement_still_blocks(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "cli.py").write_text(
+        "\n".join(["pass"] * 6), encoding="utf-8"
+    )
+    (tmp_path / "README.md").write_text("# readme\n", encoding="utf-8")
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = _policy(tmp_path / "policy.json", cli=5, core=2)
+    value = json.loads(policy.read_text(encoding="utf-8"))
+    value["accepted_debt"] = {
+        "decision_id": "ARCH-STALE-MEASURE-1",
+        "owner": "reviewer",
+        "expires_at": "2099-01-01T00:00:00+00:00",
+        "reason": "The current CLI growth was reviewed against its measured value.",
+        "codes": ["E_ARCH_CLI_LINES_GROWTH"],
+        "metrics": {"cli_lines": 5},
+    }
+    policy.write_text(json.dumps(value), encoding="utf-8")
+
+    result = evaluate_architecture_health(tmp_path, policy)
+
+    assert result["decision"] == "BLOCKED"
+    assert "E_ARCH_ACCEPTANCE_INVALID" in {
+        item["code"] for item in result["regressions"]
+    }
+
+
+def test_protocol_modules_are_classified_under_their_owned_boundary(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "factoryline"
+    package.mkdir()
+    for name in ("mcp_setup.py", "mcp_mrt.py", "webmcp.py", "ordinary.py"):
+        (package / name).write_text("pass\n", encoding="utf-8")
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {
+                    "agent_protocols": ["factoryline/mcp*.py", "factoryline/webmcp.py"]
+                },
+                "owners": {"agent_protocols": "agent-protocols-maintainers"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = collect_architecture_health(tmp_path)
+
+    assert snapshot["metrics"]["module_domains"] == {"agent_protocols": 3, "core": 1}
+    assert snapshot["metrics"]["core_modules"] == 1
+
+
+def test_repository_classifies_mcp_transport_helpers_as_agent_protocols() -> None:
+    root = Path(__file__).resolve().parents[1]
+    paths = [
+        "factoryline/mcp.py",
+        "factoryline/mcp_setup.py",
+        "factoryline/mcp_mrt.py",
+        "factoryline/mcp_replay.py",
+        "factoryline/webmcp.py",
+    ]
+
+    _counts, assignments = architecture_health._module_classification(root, paths)
+
+    assert set(assignments.values()) == {"agent_protocols"}
+
+
+def test_required_documentation_index_blocks_unclassified_markdown(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "factoryline" / "cli.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# readme\n", encoding="utf-8")
+    (tmp_path / "docs" / "guide.md").write_text("# guide\n", encoding="utf-8")
+    policy = _policy(tmp_path / "policy.json")
+    value = json.loads(policy.read_text(encoding="utf-8"))
+    value["documentation"] = {"require_index": True}
+    policy.write_text(json.dumps(value), encoding="utf-8")
+    (tmp_path / "docs" / "DOCUMENTATION_INDEX.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.documentation-index.v1",
+                "canonical": [
+                    {
+                        "path": "docs/guide.md",
+                        "executable": "factoryline/cli.py",
+                    }
+                ],
+                "coverage": [{"glob": "README.md", "status": "canonical"}],
+                "rules": {
+                    "canonical_paths_must_exist": True,
+                    "canonical_entries_require_executable_or_decision": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = evaluate_architecture_health(tmp_path, policy)
+    assert result["decision"] == "BLOCKED"
+    assert any(
+        item["code"] == "E_ARCH_DOCUMENTATION_INDEX_INVALID"
+        for item in result["regressions"]
+    )
+
+
+def test_required_release_train_validates_channels_and_states(tmp_path: Path) -> None:
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline" / "__init__.py").write_text(
+        '__version__ = "1.0.0"\n', encoding="utf-8"
+    )
+    (tmp_path / "factoryline" / "cli.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## 1.0.0\n", encoding="utf-8"
+    )
+    (tmp_path / "architecture-boundaries.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.module-boundaries.v1",
+                "defaultDomain": "core",
+                "domains": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = _policy(tmp_path / "policy.json")
+    value = json.loads(policy.read_text(encoding="utf-8"))
+    value["release"]["requires_changelog_entry"] = True
+    value["release"]["require_train"] = True
+    policy.write_text(json.dumps(value), encoding="utf-8")
+    (tmp_path / "release-train.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.release-train.v1",
+                "train_id": "test",
+                "owner": "reviewer",
+                "channels": [
+                    {
+                        "id": "core",
+                        "version_source": "factoryline/__init__.py",
+                        "changelog": "CHANGELOG.md",
+                        "artifact": "dist/*.whl",
+                    }
+                ],
+                "cadence": {
+                    "max_releases_30d": 4,
+                    "minimum_days_between_releases": 7,
+                    "exception_requires": "human-release-authority",
+                    "requires_changelog_entry": True,
+                },
+                "publication_states": [
+                    "prepared",
+                    "verified",
+                    "uploaded",
+                    "processing",
+                    "published",
+                    "pending_review",
+                    "blocked",
+                    "not_configured",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = evaluate_architecture_health(tmp_path, policy)
+    assert result["decision"] == "HEALTHY"
+    assert result["metrics"]["release_train"] == {
+        "status": "valid",
+        "channels": 1,
+        "cadence": {
+            "max_releases_30d": 4,
+            "minimum_days_between_releases": 7,
+            "exception_requires": "human-release-authority",
+            "requires_changelog_entry": True,
+        },
+    }
+
+
+def test_release_cadence_projects_a_forward_freeze_without_rewriting_history() -> None:
+    now = datetime(2026, 9, 21, tzinfo=timezone.utc)
+    releases = [
+        ("v0.46.7", datetime(2026, 9, 19, tzinfo=timezone.utc)),
+        ("v0.46.6", datetime(2026, 9, 18, tzinfo=timezone.utc)),
+        ("v0.46.5", datetime(2026, 9, 14, tzinfo=timezone.utc)),
+        ("v0.46.4", datetime(2026, 9, 9, tzinfo=timezone.utc)),
+        ("v0.46.3", datetime(2026, 9, 6, tzinfo=timezone.utc)),
+    ]
+    result = _cadence_projection(releases, now=now)
+    assert result["state"] == "rate_limited"
+    assert result["admission"] is False
+    assert result["latest_tag"] == "v0.46.7"
+    assert result["next_eligible_at"] == "2026-10-09T00:00:00.000001Z"
+
+    boundary = _cadence_projection(
+        releases,
+        now=datetime(2026, 10, 9, tzinfo=timezone.utc),
+    )
+    assert boundary["admission"] is False
+    after_boundary = _cadence_projection(
+        releases,
+        now=datetime(2026, 10, 9, 0, 0, 0, 1, tzinfo=timezone.utc),
+    )
+    assert after_boundary["admission"] is True
+
+
+def test_release_cadence_fails_closed_when_policy_and_train_diverge(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / "architecture-policy.json").write_text(
+        json.dumps(
+            {
+                "release": {
+                    "max_releases_30d": 5,
+                    "minimum_days_between_releases": 7,
+                    "exception_requires": "human-release-authority",
+                    "requires_changelog_entry": True,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "release-train.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        architecture_health,
+        "_tracked_files",
+        lambda root: [root / "architecture-policy.json", root / "release-train.json"],
+    )
+    monkeypatch.setattr(
+        architecture_health,
+        "_release_train",
+        lambda *_args: {
+            "status": "valid",
+            "cadence": {
+                "max_releases_30d": 4,
+                "minimum_days_between_releases": 7,
+                "exception_requires": "human-release-authority",
+                "requires_changelog_entry": True,
+            },
+        },
+    )
+
+    result = release_cadence_status(tmp_path)
+
+    assert result["available"] is False
+    assert result["admission"] is False
+    assert result["state"] == "release_policy_mismatch"

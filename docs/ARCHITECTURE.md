@@ -5,6 +5,138 @@ throughout: blue is supplied input, amber is deterministic policy or planning,
 pink is human authority, purple is bounded execution, green is verified
 evidence, teal is observed outcome data, and red is a fail-closed correction.
 
+## Canonical module and evidence map
+
+`architecture-boundaries.json` is the source of truth for package ownership and
+specialist boundaries. The supported domains are `core`, `verification`,
+`agent_protocols`, `graph_ops`, `appforge`, and `enterprise`. The manifest lists
+the owning team for every specialist domain; unknown modules remain core until a
+human-reviewed boundary change classifies them. Experimental adapters are
+explicitly opt-in and require a claim-bound receipt plus human release review.
+
+The executable control surfaces are the authoritative behavior references:
+
+| Capability | Executable surface | Evidence boundary |
+| --- | --- | --- |
+| Agentic control plane | `factoryline/agentic_control.py` and `factory agent control` | Metadata only; no model, source, merge, or release authority |
+| Graph Ops Mission Control | `factoryline/graph_ops.py` and `factory graph ops --json` | Read-only graph, receipts, markers, and next fact-derived action |
+| Audit engine | `factoryline/review_audits.py` and `factory audit {patterns,guard-paths,security,evals}` | Static/fixture-backed analysis; not a penetration test or approval |
+| Full-stack/AppForge assurance | `factoryline/full_stack_ux_harness.py` and `factory quality-harness` | Local evidence normalization; provider submission remains human-owned |
+
+Release notes and the current version are maintained in `CHANGELOG.md` and
+`docs/RELEASE_CHANNELS.md`. New architecture documents should link to one of
+these executable surfaces or record a dated architecture decision; superseded
+narratives should be indexed here or archived rather than copied into another
+capability-specific document.
+
+### Structural-debt controls
+
+Three repository contracts make that rule executable:
+
+- `docs/DOCUMENTATION_INDEX.json` classifies root and `docs/` Markdown as
+  canonical, historical, or indexed and requires canonical entries to point to
+  an executable surface or a decision record. Unclassified Markdown blocks the
+  architecture gate when the policy requires the index.
+- `release-train.json` names the core, VS Code, and JetBrains channels,
+  requires their version-source and changelog files, and distinguishes
+  prepared, verified, uploaded, processing, published, pending-review,
+  blocked, and unconfigured states. Upload or moderation is never silently
+  promoted to publication.
+- `architecture-boundaries.json` explicitly maps the specialist domains and
+  the remaining `factoryline/*.py` core surface to named owners. Experimental
+  adapters stay opt-in and cannot become an authority source by being listed.
+  Architecture health reports both `total_factoryline_modules` and
+  `core_modules`; only modules classified as `core` count against the core
+  surface budget. This keeps a successful CLI or specialist-pack extraction
+  from manufacturing false core debt while preserving the total surface for
+  review.
+
+`factory architecture health --json` validates all three contracts alongside
+the measured CLI, module, documentation, and release-cadence budgets. An
+accepted baseline debt record preserves the remaining monolith and historical
+release churn as visible, expiring review debt; it does not rename that debt
+healthy or authorize publication.
+
+### AI-native blueprint contracts
+
+`factoryline/blueprint.py` supplies the bounded contracts described in the
+AI-native factory blueprint. Retain/Recall/Reflect records are local,
+hash-bound observations; librarian promotion preserves source provenance and
+forces contested claims into human review. Production signals become
+`agent_proposed` intent proposals rather than tasks, approvals, or release
+decisions. Typed team plans describe model tiers, dependencies, and polling
+metadata without dispatching workers. Access profiles declare read/write,
+read-only, and masked paths, but deliberately do not claim Docker, kernel, or
+runtime isolation. `factory blueprint status` and the read-only
+`factory.blueprint_status` MCP tool expose only verified local receipt counts.
+These contracts add deterministic inspectability without pretending that an
+external model, provider, sandbox, or orchestration runtime ran.
+
+The same boundary now supports an explicit artifact chain: `Intent` captures
+the why, `Spec` the what, and `Plan` the how. `factory blueprint artifact-chain
+build` seals the three documents, changed-file scope, work order, risks, and
+proof-of-completion commands into one lineage receipt. `verify` recomputes the
+document and chain hashes and fails on drift; it never runs the listed commands
+or grants execution or release authority.
+
+`factory update --manifest .factory/update-manifest.json` and the read-only
+`factory.update_status` MCP tool provide the in-product update notice. The
+manifest is local and explicit: CF compares versions and shows a deterministic
+`UPDATE_AVAILABLE` or `UP_TO_DATE` result, but never downloads, installs,
+restarts, contacts a provider, or publishes on a user's behalf.
+
+### Architecture budget decision addendum — 2026-09-23
+
+The 0.46.8 release-preview working tree measures 660 Markdown files, 456 Python files, 4,984
+CLI lines, 184 command declarations, 128 core modules, and a 1.4474
+Markdown/Python ratio. The existing expiring `ARCH-BASELINE-2026-09-19-AGENTIC-DRIFT`
+acceptance already covers the active receipt-index, telemetry, MCP/Junie,
+agent-control, and assurance decomposition work. This addendum refreshes only
+that acceptance's exact measured snapshot; it does not raise any architecture
+budget, clear unrelated debt, or alter the release-cadence guard. The accepted
+surface growth remains visible and expires at the existing review date. The
+strict architecture-health command is the verification source for these
+measurements.
+
+Task cards now have a deterministic board projection. `project_task_board`
+verifies each hash-bound card, rejects unknown dependencies and cycles, and
+maps cards to `triage`, `ready`, `running`, `review`, `blocked`, or `done`
+lanes. The `factory.task_board_status` MCP fact exposes dependency edges and
+fact-derived next actions, while its 60-second dispatcher value is metadata
+only: no lease, dispatch, model, branch, merge, or release authority is
+granted.
+
+The task-to-agent handoff boundary is explicit as well. `bind_task_card_handoff`
+requires the handoff workflow and original intent digest to match the task
+card, and requires the handoff paths to be a subset of the task scope. The
+`factory.task_handoff_status` MCP fact returns a hash-bound lineage receipt and
+fails closed on intent or scope drift; it does not execute the handoff.
+
+Candidate alignment completes that chain. `align_candidate_to_task` binds the
+submitted candidate digest and changed paths to the verified task and handoff,
+rejecting paths outside the task's declared scope. The
+`factory.candidate_alignment_status` fact is evidence-only; it does not run,
+repair, approve, merge, or publish the candidate.
+
+Task completion is evidence-gated: `transition_task_card(..., "completed")`
+and `verify_task_card` both require a hash-bound `evidence_digest`. A green
+state without evidence fails closed as `E_TASK_EVIDENCE`.
+
+The evidence digest is now provenance-bound. `create_task_evidence` records the
+task, workflow, original intent, candidate digest, evidence kind, verifier, and
+outcome in one receipt. `complete_task_with_evidence` only permits completion
+when that receipt is intact, belongs to the card, and reports `passed`; the
+`factory.task_evidence_status` MCP fact exposes eligibility without transitioning
+the task.
+
+The six senior-engineering controls are unified by
+`build_senior_control_bundle`: cross-lane proof admission, append-only
+transition lineage, independent challenge evidence, multi-repository intent
+coordination, evidence retention/export, and policy simulation. Each slice must
+provide its own receipt digest and source; missing or non-passed slices block
+the bundle. `factory.senior_control_status` verifies the bundle read-only and
+never converts readiness into approval or release authority.
+
 ## Complete system topology
 
 ```mermaid
@@ -179,3 +311,15 @@ They invoke explicit local CLI commands and display local artifacts; they do
 not upload source, infer approval, or bypass the no-finish and release gates.
 Graph Ops is a bounded read-only overlay over those same artifacts, not a new
 authority source. See [Unified Graph Ops](GRAPH_OPS.md).
+
+## Release-cadence guard
+
+Architecture health reports immutable tag history and projects a forward
+admission decision from `release-train.json`. The release limits and exception
+owner must match `architecture-policy.json`; missing/invalid history or a
+policy mismatch fails closed. Release-candidate preflight enforces the same
+decision with `E_RELEASE_CADENCE_BLOCKED` and includes the exact
+`next_eligible_at` timestamp. The guard never deletes, rewrites, or hides
+historical tags. No automatic exception bypass exists: a release exception
+requires a separately reviewed human-authority decision and must not be
+inferred from a healthy architecture report.

@@ -36,11 +36,12 @@ hollow negative control caught in a disposable sandbox, then open
 `factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
-**Current in 0.9.9:** the adapter metadata and installable artifact are aligned
-with the Code Factory 0.46.7 release candidate. The proof-coupled Junie handoff
-story is visible beside the existing First Proof, AppForge, and evidence-boundary
-controls. Marketplace publication remains a protected provider action; this
-repository does not claim a live listing until a provider read-back confirms it.
+**1.0.1 release preview:** the editor surfaces typed intent-to-proof handoffs,
+route traces, current checkpoints, and proof-delta retry stops beside the
+existing First Proof and AppForge paths. Searchable audit rules and exact-hash
+receipt reuse make evidence easier to locate without loading the whole rule set.
+This is a release preview; marketplace publication requires its own verified
+provider read-back.
 
 **New First Lap control:** `factory first-lap init` creates plain-language
 `MISSION.md`, `END-TO-END.md`, and verifier-only holdout scenarios. Critical
@@ -160,7 +161,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-0.9.9.vsix
+code --install-extension factoryline-vscode-1.0.1.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

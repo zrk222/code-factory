@@ -13,6 +13,8 @@ from factoryline.repair_sandbox import (
     verify_repair_scope,
     write_repair_candidate_artifacts,
     write_repair_scope_artifacts,
+    create_sandbox_execution_receipt,
+    verify_sandbox_execution_receipt,
 )
 
 
@@ -323,3 +325,39 @@ def test_repair_cli_marks_outside_candidate_path_machine_readably(
     assert failure["schema"] == "factory.repair_candidate.error.v1"
     assert failure["marker"] == "REPAIR_SANDBOX_PATH_REJECTED"
     assert failure["code"] == "REPAIR_CANDIDATE_OUT_OF_SCOPE"
+
+
+def test_external_sandbox_observation_is_explicit_and_fail_closed() -> None:
+    digest = "a" * 64
+    receipt = create_sandbox_execution_receipt(
+        digest,
+        runner_id="docker-runner",
+        isolation_level="CONTAINER_BOUNDARY",
+        runtime_digest=digest,
+        toolchain_digest=digest,
+        network_policy="restricted",
+        input_digests=[digest],
+        output_digests=[digest],
+        teardown_status="complete",
+        executed=True,
+        observed_at="2026-09-21T00:00:00Z",
+    )
+    assert verify_sandbox_execution_receipt(receipt)["status"] == "OBSERVED"
+    unenforced = create_sandbox_execution_receipt(
+        digest,
+        runner_id="local",
+        isolation_level="UNENFORCED",
+        runtime_digest=digest,
+        toolchain_digest=digest,
+        network_policy="unknown",
+        input_digests=[],
+        output_digests=[],
+        teardown_status="unknown",
+        executed=True,
+    )
+    assert verify_sandbox_execution_receipt(unenforced)["status"] == "UNENFORCED"
+    tampered = dict(receipt)
+    tampered["status"] = "OBSERVED"
+    tampered["isolation_level"] = "UNENFORCED"
+    with pytest.raises(RepairSandboxError, match="digest"):
+        verify_sandbox_execution_receipt(tampered)

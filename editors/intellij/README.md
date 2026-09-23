@@ -18,6 +18,11 @@ coverage, and quality thresholds; FactoryLine asks a different question:
 could the test and supplied run evidence actually reject a broken result? It
 does not replace, control, or imply endorsement by either JetBrains product.
 
+**1.0.1 release preview:** follow typed handoffs from approved intent through
+agent route, candidate, and current evidence. Graph Ops makes no-gain repair
+stops and the next supported human action visible. Junie is supported, not
+required; the IDE remains read-only and release authority remains human-owned.
+
 **New in 0.9.1:** Unified Graph Ops now fails closed on same-ID semantic
 rewrites of blocking/release Oracle rules and keeps AppForge authority receipts
 path-to-digest verifiable.
@@ -147,7 +152,7 @@ facts, and their review scope is never a root-cause or repair claim. See
 
 ## Install
 
-1. Install `factoryline-code-factory==0.46.7` into the Python environment that
+1. Install `factoryline-code-factory==0.46.8` into the Python environment that
    IntelliJ inherits.
 2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
    **FactoryLine**, and install the

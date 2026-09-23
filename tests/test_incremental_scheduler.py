@@ -4,6 +4,7 @@ from factoryline.incremental_scheduler import (
     SchedulerError,
     SCHEMA,
     compare_shadow,
+    paths_intersect,
     plan_incremental,
     validate_schedule_manifest,
 )
@@ -89,6 +90,28 @@ def test_cycle_and_unsafe_path_are_rejected():
         plan_incremental(__import__("pathlib").Path.cwd(), cyclic)
     with pytest.raises(SchedulerError, match="unsafe path"):
         validate_schedule_manifest(_manifest(changed_paths=["../secrets.txt"]))
+    with pytest.raises(SchedulerError, match="unsafe path"):
+        validate_schedule_manifest(_manifest(changed_paths=[".."]))
+    with pytest.raises(SchedulerError, match="unsafe path"):
+        validate_schedule_manifest(_manifest(changed_paths=["C:\\secrets.txt"]))
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        ("src/app.py", "src", True),
+        ("src/app.py", "src/app.py", True),
+        ("src/app.py", "src/apply.py", False),
+        ("Src\\App.py", "src", True),
+        (".factory/receipts/run.json", ".factory/receipts", True),
+        ("./.factory/run.json", "factory/run.json", False),
+        ("", "src", False),
+    ],
+)
+def test_paths_intersect_is_conservative_and_segment_aware(
+    left: str, right: str, expected: bool
+):
+    assert paths_intersect(left, right) is expected
 
 
 def test_shadow_comparison_exposes_differences_without_authority():

@@ -15,15 +15,25 @@ from pathlib import Path
 import tempfile
 import time
 import uuid
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
+from threading import RLock
 from typing import Any, Iterable
 
 from . import __version__
 from .provenance import provenance
+from .receipt_index import indexed_receipt_paths
 
 
 LIFECYCLE_SCHEMA = "factory.ops-lifecycle.v1"
 LIFECYCLE_DIR = Path(".factory") / "ops" / "lifecycle"
+_LIFECYCLE_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_LIFECYCLE_CACHE_LOCK = RLock()
+_LIFECYCLE_CACHE_LIMIT = 256
+_LIFECYCLE_CACHE_MAX_BYTES = 65_536
+_LIFECYCLE_RECEIPT_MAX_BYTES = 1_048_576
+_LIFECYCLE_READ_WORKERS = 8
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -92,6 +102,10 @@ def is_read_only_command(argv: Iterable[str]) -> bool:
         ("judgment", "safety-case"),
         ("mcp", "request"),
         ("agent", "control"),
+        ("agent", "contract"),
+        ("agent", "attestation"),
+        ("agent", "route"),
+        ("agent", "route-audit"),
         ("workspace", "inspect"),
     }
 
@@ -145,22 +159,71 @@ def record_lifecycle(
     return destination
 
 
+def _read_lifecycle_receipt(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    """Read, content-cache, and validate one bounded immutable receipt."""
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(_LIFECYCLE_RECEIPT_MAX_BYTES + 1)
+        if len(raw) > _LIFECYCLE_RECEIPT_MAX_BYTES:
+            return None, "receipt_too_large"
+        digest = hashlib.sha256(raw).hexdigest()
+        value = None
+        with _LIFECYCLE_CACHE_LOCK:
+            value = _LIFECYCLE_CACHE.get(digest)
+            if value is not None:
+                _LIFECYCLE_CACHE.move_to_end(digest)
+        if value is None:
+            parsed = json.loads(raw.decode("utf-8-sig"))
+            value = parsed if isinstance(parsed, dict) else None
+            if value is not None and len(raw) <= _LIFECYCLE_CACHE_MAX_BYTES:
+                with _LIFECYCLE_CACHE_LOCK:
+                    _LIFECYCLE_CACHE[digest] = value
+                    _LIFECYCLE_CACHE.move_to_end(digest)
+                    while len(_LIFECYCLE_CACHE) > _LIFECYCLE_CACHE_LIMIT:
+                        _LIFECYCLE_CACHE.popitem(last=False)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None, "unreadable_or_invalid_json"
+    if not isinstance(value, dict) or value.get("schema") != LIFECYCLE_SCHEMA:
+        return None, "schema_mismatch"
+    receipt_digest = value.get("receipt_sha256")
+    core = {key: item for key, item in value.items() if key != "receipt_sha256"}
+    if not isinstance(receipt_digest, str) or receipt_digest != _digest(core):
+        return None, "receipt_digest_mismatch"
+    elapsed = value.get("elapsed_ms")
+    if isinstance(elapsed, bool) or not isinstance(elapsed, int) or elapsed < 0:
+        return None, "invalid_elapsed_ms"
+    return value, None
+
+
 def lifecycle_inventory(root: Path) -> dict[str, Any]:
     """Aggregate lifecycle receipts without exposing command arguments."""
-    directory = Path(root).resolve() / LIFECYCLE_DIR
+    workspace = Path(root).resolve()
     rows: list[dict[str, Any]] = []
     invalid = 0
-    if directory.is_dir():
-        for path in sorted(directory.glob("*.json")):
-            try:
-                value = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                invalid += 1
-                continue
-            if not isinstance(value, dict) or value.get("schema") != LIFECYCLE_SCHEMA:
-                invalid += 1
-                continue
-            rows.append(value)
+    invalid_reasons: dict[str, int] = {}
+    paths = indexed_receipt_paths(
+        workspace,
+        max_files=10_000,
+        max_scan_files=100_000,
+        suffixes={".json"},
+        under=LIFECYCLE_DIR,
+        # Every file is read and SHA-256 checked below; we need fresh directory
+        # membership, not filesystem-mtime ordering, for this aggregate.
+        validate_file_metadata=False,
+    )
+    scan_bounded = len(paths) >= 10_000
+    workers = min(_LIFECYCLE_READ_WORKERS, len(paths))
+    if workers:
+        with ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="cf-lifecycle"
+        ) as pool:
+            verified_rows = pool.map(_read_lifecycle_receipt, paths)
+            for value, reason in verified_rows:
+                if reason is not None:
+                    invalid += 1
+                    invalid_reasons[reason] = invalid_reasons.get(reason, 0) + 1
+                elif value is not None:
+                    rows.append(value)
     statuses: dict[str, int] = {}
     commands: dict[str, int] = {}
     for row in rows:
@@ -170,17 +233,55 @@ def lifecycle_inventory(root: Path) -> dict[str, Any]:
         commands[str(row.get("command_family", "unknown"))] = (
             commands.get(str(row.get("command_family", "unknown")), 0) + 1
         )
-    elapsed = sum(int(row.get("elapsed_ms", 0)) for row in rows)
+    elapsed_values = sorted(int(row["elapsed_ms"]) for row in rows)
+    elapsed = sum(elapsed_values)
+
+    def percentile(values: list[int], percentile_value: int) -> int | None:
+        if not values:
+            return None
+        # Nearest-rank percentile is deterministic and avoids interpolation
+        # that could imply precision beyond integer-millisecond observations.
+        position = max(0, (len(values) * percentile_value + 99) // 100 - 1)
+        return values[min(position, len(values) - 1)]
+
+    latency_by_command: dict[str, dict[str, int | None]] = {}
+    for command in sorted(commands):
+        values = sorted(
+            int(row["elapsed_ms"])
+            for row in rows
+            if str(row.get("command_family", "unknown")) == command
+        )
+        latency_by_command[command] = {
+            "count": len(values),
+            "p50_ms": percentile(values, 50),
+            "p95_ms": percentile(values, 95),
+            "max_ms": values[-1] if values else None,
+        }
     return {
         "schema": LIFECYCLE_SCHEMA,
         "receipt_count": len(rows),
         "invalid_count": invalid,
+        "coverage": {
+            "status": "partial" if scan_bounded or invalid else "complete_within_bound",
+            "file_limit": 10_000,
+        },
         "statuses": dict(sorted(statuses.items())),
         "commands": dict(sorted(commands.items())),
         "total_elapsed_ms": elapsed,
         "average_elapsed_ms": round(elapsed / len(rows), 1) if rows else None,
+        "latency_ms": {
+            "p50": percentile(elapsed_values, 50),
+            "p95": percentile(elapsed_values, 95),
+            "max": elapsed_values[-1] if elapsed_values else None,
+        },
+        "latency_by_command": latency_by_command,
+        "invalid_reasons": dict(sorted(invalid_reasons.items())),
         "provenance_complete": sum(
-            bool(row.get("provenance", {}).get("identity_complete")) for row in rows
+            bool(
+                isinstance(row.get("provenance"), dict)
+                and row["provenance"].get("identity_complete") is True
+            )
+            for row in rows
         ),
         "claim_boundary": "Local lifecycle observations only; no provider, token, cost, or productivity claim.",
     }

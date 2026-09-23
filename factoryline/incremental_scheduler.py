@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import tempfile
 from typing import Any
 
@@ -48,19 +48,45 @@ def _paths(
     normalized = []
     for raw in paths:
         path = raw.replace("\\", "/").strip()
+        windows_path = PureWindowsPath(path)
+        parts = path.split("/")
         if (
             not path
-            or path.startswith("/")
-            or path == "."
-            or "/../" in f"/{path}/"
-            or path.startswith("../")
-            or path.endswith("/..")
+            or "\x00" in path
+            or windows_path.drive
+            or windows_path.root
+            or all(part in {"", "."} for part in parts)
+            or any(part == ".." for part in parts)
         ):
             raise SchedulerError(
                 "E_SCHEDULE_PATHS", f"{field} contains an unsafe path: {raw}"
             )
-        normalized.append(path.lstrip("./"))
+        normalized.append("/".join(part for part in parts if part not in {"", "."}))
     return sorted(set(normalized))
+
+
+def paths_intersect(left: str, right: str) -> bool:
+    """Conservatively match equal/ancestor paths across Windows and POSIX.
+
+    Comparison is case-insensitive to avoid stale proof reuse when a manifest
+    moves between case-sensitive and case-insensitive filesystems. This may
+    rerun extra gates for case-distinct POSIX names, never skip them.
+    """
+    a = tuple(
+        part.casefold()
+        for part in left.replace("\\", "/").strip("/").split("/")
+        if part and part != "."
+    )
+    b = tuple(
+        part.casefold()
+        for part in right.replace("\\", "/").strip("/").split("/")
+        if part and part != "."
+    )
+    return bool(a and b) and (
+        a == b
+        or (len(a) < len(b) and b[: len(a)] == a)
+        or (len(b) < len(a) and a[: len(b)] == b)
+    )
 
 
 def _validate_gate(gate: object, index: int, ids: set[str]) -> dict[str, Any]:
@@ -217,25 +243,8 @@ def _route_gate(
         }
     changed = manifest["changed_paths"]
 
-    def intersects(left: str, right: str) -> bool:
-        a = tuple(
-            part
-            for part in left.replace("\\", "/").strip("/").split("/")
-            if part and part != "."
-        )
-        b = tuple(
-            part
-            for part in right.replace("\\", "/").strip("/").split("/")
-            if part and part != "."
-        )
-        return bool(a and b) and (
-            a == b
-            or (len(a) < len(b) and b[: len(a)] == a)
-            or (len(b) < len(a) and a[: len(b)] == b)
-        )
-
     if any(
-        intersects(changed_path, dependency_path)
+        paths_intersect(changed_path, dependency_path)
         for changed_path in changed
         for dependency_path in closure
     ):

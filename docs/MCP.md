@@ -1,8 +1,9 @@
 # Local MCP proof-context server
 
-Code Factory exposes its existing local Graph Ops facts through a small,
-stdio-only MCP server. It gives an agent exact delivery-state context without
-creating a second graph model or granting any authority.
+Code Factory exposes its existing local Graph Ops facts through a read-only
+MCP server. Stdio remains the simplest default. An opt-in Streamable HTTP
+adapter supports bounded stateless requests on loopback for local clients that
+need HTTP transport; it does not create a hosted service or grant authority.
 
 ```powershell
 factory mcp status --root . --json
@@ -10,10 +11,63 @@ factory mcp config --client generic --root .my-mvp --json
 factory mcp serve --root .my-mvp
 ```
 
-The server accepts newline-delimited JSON-RPC on standard input and writes
-responses only to standard output. It does not use HTTP, SSE, OAuth, network
-egress, credentials, connector grants, process execution, approval, publishing,
+The stdio server accepts newline-delimited JSON-RPC on standard input and
+writes responses only to standard output. It does not use network egress,
+credentials, connector grants, process execution, approval, publishing,
 deployment, signing, or messaging.
+
+## Optional Streamable HTTP (local only)
+
+The HTTP adapter implements the request-scoped JSON-response path for protocol
+version `2026-07-28`. It binds only to `127.0.0.1`, requires a local bearer
+guard by default, validates `Origin`, protocol metadata, and mirrored
+method/name headers, and caps request bodies at 65,536 bytes. The default
+rejects requests with an `Origin`; browser clients must be explicitly
+allow-listed. It advertises only tools and resources and does not implement
+SSE, `subscriptions/listen`, an OAuth authorization server, remote hosting, or
+A2A task methods.
+
+```powershell
+$env:FACTORY_MCP_HTTP_TOKEN = [guid]::NewGuid().ToString('N')
+factory mcp serve-http --root C:\work\my-mvp
+```
+
+An optional OIDC resource-server mode verifies RS256 access tokens against a
+configured issuer, audience, HTTPS JWKS URL, exact tenant claim, and required
+group claim. It reuses CF's bounded JWKS cache and token verifier and requires
+the optional `hosted` extra (`pip install factoryline-code-factory[hosted]`).
+The client obtains its token from its identity provider; CF does not issue or
+refresh tokens and does not implement OAuth discovery, authorization-code, or
+client-credentials flows. Identity-provider outages fail closed with HTTP 503;
+invalid tokens or tenant/group mismatches are rejected. Authorization is a
+coarse group-and-tenant gate for this local read-only endpoint, not per-user
+resource authorization or a substitute for OS isolation. The service remains
+loopback-only in OIDC mode. This is token verification for a locally provisioned
+client, not a complete MCP OAuth authorization integration: CF does not expose
+Protected Resource Metadata or implement OAuth challenge/discovery, token
+acquisition, scopes, or user-specific authorization context.
+
+```powershell
+$env:FACTORY_MCP_OIDC_ISSUER = 'https://id.example/issuer'
+$env:FACTORY_MCP_OIDC_AUDIENCE = 'code-factory-local'
+$env:FACTORY_MCP_OIDC_JWKS_URL = 'https://id.example/.well-known/jwks.json'
+$env:FACTORY_MCP_OIDC_TENANT_ID = 'team-123'
+$env:FACTORY_MCP_OIDC_REQUIRED_GROUP = 'factory-reviewers'
+factory mcp serve-http --auth-mode oidc --root C:\work\my-mvp
+```
+
+Use `--allow-origin` only for an exact browser origin you intentionally trust.
+The server prints its local endpoint to stderr; the token is never printed.
+The HTTP process is single-threaded and each POST is independent. No session,
+cursor, server replay state, or write capability is retained.
+
+## Validate a declared A2A Agent Card
+
+`factory agent card-audit path\to\agent-card.json --json` validates the
+structure and internal endpoint, transport, skills, and security references
+of an imported A2A v0.3 Agent Card. This does not fetch the endpoint, prove its
+publisher identity, validate runtime behavior, or call the agent. It must not
+be presented as an A2A server implementation or trust decision.
 
 ## Connect a local MCP client
 
@@ -141,7 +195,7 @@ network transport, or mutation authority.
 | `factory.proof_reuse` | Fails closed until a complete explicit proof request can establish a disposition | Read only |
 | `factory.context_efficiency_status` | Bounded context-packet/cache metadata and estimated token budget; no provider-usage or savings claim | Read only |
 | `factory.intake_parameters_status` | Bounded intake mode, risk, budget, scope, provenance, expiry, and canonical six-lane coverage | Read only |
-| `factory.search_audit_rules` | Context-bounded search over six-lane rejection conditions and required evidence; never executes a lane | Read only |
+| `factory.search_audit_rules` | Context-bounded lexical/BM25/BM25F search over six-lane rejection conditions and required evidence; emits an optional hash-bound Jev handoff and never executes a lane | Read only |
 | `factory.proof_delta_status` | Existing retry-admission evidence; never admits, starts, or repairs a retry | Read only |
 | `factory.cdte_status` | Latest existing deterministic CDTE scan; never creates a scan record | Read only |
 | `factory.prd_grill_status` | Existing source-bound PRD Grill state for the supplied PRD | Read only |

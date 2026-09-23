@@ -61,6 +61,44 @@ known, what is missing, and the one fact-derived next action.
   visible in Graph Ops and read-only MCP. Humans retain approval; an agent
   cannot weaken intent, alter thresholds, self-approve a repair, or change a
   repository through this surface. See [Control Plane](CONTROL_PLANE.md).
+- **Adds bounded AI-native factory contracts.** Blueprint receipts provide
+  provenance-aware memory retain/recall/reflect, librarian promotion,
+  production-signal-to-intent proposals, typed model-tier team plans, and
+  explicit access profiles. They are inspectable and hash-bound, but do not
+  dispatch workers, call models, enforce a sandbox, or grant release authority.
+  Use `factory blueprint status` for the local projection.
+- **Binds the planning chain.** `factory blueprint artifact-chain build` seals
+  Intent (why), Spec (what), and Plan (how) together with changed files, work
+  order, risks, and proof commands. `verify` detects document drift without
+  executing any command or converting the receipt into approval.
+- **Keeps users informed without hidden updater authority.** The local release
+  manifest powers `factory update` and the `factory.update_status` MCP fact;
+  CF can show an `UPDATE_AVAILABLE` notice inside an IDE/client while leaving
+  download, install, restart, and provider publication explicitly human-owned.
+- **Turns task cards into an observable Kanban loop.** The deterministic
+  `factory.task_board_status` fact verifies dependency edges and projects cards
+  into triage, ready, running, review, blocked, and done lanes. It surfaces the
+  next fact-derived action and a 60-second cadence hint without dispatching a
+  worker or granting lease, merge, or release authority.
+- **Keeps handoffs faithful to the original request.** The task/handoff binding
+  checks the workflow, intent digest, and allowed-path subset before an agent's
+  work is considered connected to a task. `factory.task_handoff_status` exposes
+  the receipt read-only and rejects scope or intent drift before review.
+- **Checks the submitted candidate against that same intent.** Candidate
+  alignment binds a digest and changed-path list to the task and handoff, so an
+  agent cannot silently expand its work outside the declared scope before CF
+  review. The result is a proof receipt, not an approval.
+- **Never treats completion as proof by itself.** A task cannot enter
+  `completed` unless it carries a hash-bound evidence digest; missing evidence
+  fails closed before the board reports the work as done.
+- **Makes completion evidence accountable.** A task-evidence receipt binds the
+  verifier, candidate digest, intent, workflow, evidence kind, and outcome;
+  only a passed receipt belonging to that task can satisfy completion.
+- **Unifies the six senior controls.** A senior-control bundle requires
+  cross-lane admission, transition lineage, independent challenge evidence,
+  multi-repository coordination, retention/export evidence, and policy
+  simulation. Any missing or blocked slice keeps the bundle blocked; the MCP
+  status is read-only and remains human-reviewed.
 - **Protects the definition of done.** Coverage and completion claims require
   non-hollow tests and verifiable receipts. A fresh scaffold remains explicitly
   blocked until real evidence exists.
@@ -114,6 +152,14 @@ known, what is missing, and the one fact-derived next action.
   `factory repair candidate` rejects a textual patch that crosses that scope.
   Neither command runs an agent, estimates credits, applies a patch, or replaces
   independent verification and human review.
+- **Shortens the edit-to-feedback loop.** `factory senior live` maps changed
+  paths to affected checks, skips unrelated work, and can collect fresh replay
+  receipts in temporary workspaces. Each check returns an explicit next action,
+  with no source or release authority.
+- **Turns a failure into one repair handoff.** `factory senior fix` combines
+  original reproduction, candidate verification, negative controls, and a
+  failure brief. A green repair requires the original failure to reproduce, the
+  candidate to pass, and every negative control to remain effective.
 - **Makes release blockers visible before dispatch.** `factory release integrity`
   checks local artifact fan-in, trusted PyPI publishing, and protected
   marketplace boundaries without touching credentials or publication state.

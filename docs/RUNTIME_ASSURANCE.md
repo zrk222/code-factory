@@ -30,6 +30,14 @@ The result is either `READY_FOR_HUMAN_REVIEW` or `BLOCKED`. It is never a releas
 
 5. Review `factory runtime-audit status --root .`, Mission Control, or MCP tool `factory.runtime_audit_status`.
 
+## Failure isolation and partial evidence
+
+The runner records a failed launch or filesystem exception as an `INCOMPLETE`
+leg and continues collecting the remaining signed target/known-bad legs and
+independent lanes. It does not retry a command automatically or upgrade an
+incomplete result to a pass. This preserves useful sibling evidence while
+keeping the release decision blocked until required evidence is complete.
+
 Each lane must emit bounded JSON to its single `{artifact}` path. CF rejects duplicate JSON keys, non-finite numbers, symlink artifacts, unstable reads, oversized evidence, raw body/header/token/password/secret fields, missing observations, and unknown schema fields. `passed`, `ok`, `verdict`, and `decision` fields are ignored. CF recomputes the finding from the signed policy and observations.
 
 ## Engine adapters and evidence boundaries

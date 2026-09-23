@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.46.7"
-description = "Independent local audit for AI-built code: catch hollow tests, security, recovery, compatibility, migration, and performance gaps before review."
+version = "0.46.8"
+description = "Audit AI-built code with six evidence lanes, intent-to-proof traces, agent workflow receipts, and human-owned release gates."
 authors = [
   { name = "Richard Katz" },
   { email = "rkatz22@gmail.com" },

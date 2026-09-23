@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "schema": "factory.module-boundaries.v1",
   "defaultDomain": "core",
-  "purpose": "Discoverability map for the supported core and specialist packs. Matching is informational and does not grant execution authority.",
+  "purpose": "Discoverability map for supported core and specialist packs. Agent protocol adapters, MCP transports, and protocol projections are owned by agent-protocols-maintainers; matching is informational and grants no execution authority.",
   "domains": {
     "appforge": [
       "factoryline/appforge_*.py",
@@ -18,22 +18,52 @@
     ],
     "agent_protocols": [
       "factoryline/mcp.py",
+      "factoryline/mcp*.py",
       "factoryline/agui.py",
+      "factoryline/webmcp.py",
       "factoryline/a2a*.py",
-      "factoryline/agent_*.py"
+      "factoryline/agent_*.py",
+      "factoryline/blueprint.py",
+      "factoryline/update_notifier.py"
+    ],
+    "cli_surfaces": [
+      "factoryline/cli.py",
+      "factoryline/cli_*.py"
     ],
     "verification": [
       "factoryline/*proof*.py",
       "factoryline/*audit*.py",
       "factoryline/gauntlet.py",
       "factoryline/oracle*.py"
+    ],
+    "core": [
+      "factoryline/*.py"
     ]
   },
+  "owners": {
+    "core": "code-factory-maintainers",
+    "appforge": "appforge-maintainers",
+    "graph_ops": "graph-ops-maintainers",
+    "enterprise": "enterprise-controls-maintainers",
+    "agent_protocols": "agent-protocols-maintainers",
+    "cli_surfaces": "cli-maintainers",
+    "verification": "verification-maintainers"
+  },
+  "experimental": [
+    "factoryline/appforge_eas.py",
+    "factoryline/atomic_proof_adapter.py",
+    "factoryline/agent_proof_bridge.py"
+  ],
   "governance": {
     "new_specialist_pack_requires": [
       "an explicit domain glob",
       "an owner",
       "an executable contract test"
+    ],
+    "experimental_module_requires": [
+      "explicit opt-in",
+      "claim-boundary receipt",
+      "human release review"
     ],
     "unknown_modules": "remain core until a human-approved boundary change classifies them"
   }

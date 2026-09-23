@@ -12,12 +12,12 @@
     "captured_at": "2026-09-15"
   },
   "budgets": {
-    "max_markdown_files": 655,
-    "max_python_files": 419,
+    "max_markdown_files": 658,
+    "max_python_files": 452,
     "max_markdown_python_ratio": 1.7,
-    "max_cli_lines": 6505,
-    "max_cli_command_declarations": 484,
-    "max_core_modules": 196
+    "max_cli_lines": 4977,
+    "max_cli_command_declarations": 184,
+    "max_core_modules": 129
   },
   "review_thresholds": {
     "markdown_python_ratio": 1.5,
@@ -28,29 +28,32 @@
     "decision_id": "ARCH-BASELINE-2026-09-19-AGENTIC-DRIFT",
     "owner": "human-release-authority",
     "expires_at": "2026-12-31T23:59:59+00:00",
-    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, opt-in extended-assurance lanes, and the deterministic agentic-control drift detector while the decomposition plan remains active; re-review is required at expiry.",
+    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, typed human-gated orchestrator request routing, task board, proof-coupled intent handoffs, route traces, task completion provenance, proof-delta retry guard, lifecycle telemetry, exact-hash receipt indexing, opt-in extended-assurance lanes, deterministic agentic-control drift detector, lazily loaded audit, quality-evidence, agent, capability-pack, RevenueForge/AppForge, SaaS proof, human-governance, GitHub evidence, IDE repair/JetBrains handshake, proof artifacts, enterprise receipt, enterprise operations, verifier-plane, MCP/Junie integration, release-control, evidence-chain, PR, app-builder, target-compilation, Studio, telemetry, Grill, AI-native blueprint parser/receipt, and update-notifier boundaries while the decomposition plan remains active; re-review is required at expiry.",
     "codes": [
       "E_ARCH_CLI_LINES_GROWTH",
-      "E_ARCH_CLI_COMMAND_DECLARATIONS_GROWTH",
-      "E_ARCH_CORE_MODULES_GROWTH",
+      "E_ARCH_MARKDOWN_FILES_GROWTH",
+      "E_ARCH_PYTHON_FILES_GROWTH",
       "ARCH_CLI_MONOLITH",
       "ARCH_CLI_COMMAND_SURFACE",
-      "ARCH_CORE_SURFACE",
-      "ARCH_DOC_CODE_RATIO",
-      "ARCH_RELEASE_CHURN"
+      "ARCH_DOC_CODE_RATIO"
     ],
     "metrics": {
-      "cli_lines": 11721,
-      "cli_command_declarations": 493,
-      "core_modules": 201,
-      "markdown_python_ratio": 1.5937,
-      "release_recent_count": 20
+      "cli_lines": 4984,
+      "cli_command_declarations": 184,
+      "markdown_files": 660,
+      "markdown_python_ratio": 1.4474,
+      "python_files": 456
     }
   },
   "release": {
     "max_releases_30d": 4,
     "minimum_days_between_releases": 7,
-    "requires_changelog_entry": true
+    "exception_requires": "human-release-authority",
+    "requires_changelog_entry": true,
+    "require_train": true
+  },
+  "documentation": {
+    "require_index": true
   },
   "decomposition_plan": [
     {

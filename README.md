@@ -9,7 +9,7 @@
 
 <!-- mcp-name: io.github.zrk222/code-factory -->
 
-> **6 mandatory audit lanes. 140 coded rejection conditions. One human-owned release decision.**
+> **6 mandatory audit lanes. 143 coded rejection conditions. One human-owned release decision.**
 
 ## Your code passed. But did it pass the right tests?
 
@@ -26,6 +26,16 @@ challenges the implementation and its tests, and connects every decision to
 inspectable evidence. If evidence is missing, contradictory, stale, or based on
 a weakened rule, the result does not quietly become a pass.
 
+### 0.46.8 release preview
+
+This update connects the original request to typed agent handoffs, verification
+routes, candidate changes, fresh receipts, and the human review decision. It
+also reduces repeated context and repair work with searchable audit rules,
+exact-hash evidence reuse, bounded receipt indexing, and lazy CLI loading.
+Optional loopback-only stateless MCP HTTP joins the existing local stdio
+surface. The six audit lanes remain intact; agents still cannot approve, merge,
+publish, or deploy. See the [0.46.8 preview and channel notes](CHANGELOG.md).
+
 ### One review path, six questions
 
 | Audit lane | The practical question it answers |
@@ -37,10 +47,10 @@ a weakened rule, the result does not quietly become a pass.
 | Migration and data integrity | Can the system upgrade without losing, corrupting, or stranding data? |
 | Performance and resources | Did latency, queries, memory, connections, or other resources regress against an approved baseline? |
 
-Those lanes contain **81 lane-specific and 59 cross-cutting coded rejection
+Those lanes contain **81 lane-specific and 62 cross-cutting coded rejection
 conditions**. The [source-bound inventory](docs/AUDIT_CONDITION_INVENTORY.md)
 recomputes the total from the implementation; it is not a claim that every
-project executes 140 tests.
+project executes 143 tests.
 
 ### What the Code Factory upgrade improves
 
@@ -261,7 +271,7 @@ checks under one signed plan. Every failed lane returns the consequence,
 evidence digest, exact replay, and next repair. A six-lane pass means ready for
 human review—not approved for release.
 
-### Senior engineering controls in 0.46.7
+### Senior engineering controls
 
 When a team needs stronger evidence than a self-reported green build, use the
 [senior-engineering integration](docs/SENIOR_ENGINEERING_INTEGRATION.md):
@@ -540,6 +550,8 @@ developers can find it. This optional link only opens the repository.
 | Choose among competing repairs | [`factory proofsearch`](docs/PROOFSEARCH.md) | Hash-bound candidate rejection, mutation-tested evidence, a deterministic winner, and locked apply authority |
 | Decide what evidence to collect next | [Evidence Frontier](docs/EVIDENCE_FRONTIER.md) | A deterministic next-test hypothesis that separates repair candidates, with execution locked |
 | Admit a repair retry only with new evidence | [Proof-Delta Loop](docs/PROOF_DELTA_LOOP.md) | A changed candidate and fresh hash-bound evidence, or a deliberate no-gain halt |
+| Get fast feedback after a save | [CF Live](docs/CF_LIVE_AND_FIX.md) | Change-aware check selection, bounded replay, and the exact next action |
+| Reproduce and verify a repair | [CF Fix](docs/CF_LIVE_AND_FIX.md) | Original failure, repair candidate, and negative controls in one receipt |
 | Reconsider verified prior work safely | [Factory Continuity](docs/FACTORY_CONTINUITY.md) | Purpose-bound, expiring Decision Replay metadata with independent promotion and no private content |
 | Prove one user-visible behavior | [Factory Reality Check](docs/REALITY_CHECK.md) | Deep intent assertions, a deliberate failure case, and an optional named one-time re-run authorization |
 | Verify supplied work | [Verifier Plane](docs/VERIFIER_PLANE.md) | Independent, hash-bound evidence checks |
@@ -673,7 +685,7 @@ context reusable by a client you choose.
   optional design-quality lane and its explicit review boundaries.
 - Read [The approval signal decays when AI-written code becomes routine](docs/HABITUATION_ESSAY.md)
   for the design and limits of the habituation gate.
-- See the [0.46.7 core release notes](docs/RELEASE_NOTES_0.46.7.md), the
+- See the [0.46.8 release preview](CHANGELOG.md), the
   [grilling ladder](docs/GRILLING_LADDER.md),
   [CHANGELOG.md](CHANGELOG.md), [release channels](docs/RELEASE_CHANNELS.md), and
   [publication guide](PUBLICATION_GUIDE.md) for versioned release detail.
