@@ -274,8 +274,8 @@ def test_coderabbit_positioning_is_complementary_and_never_claims_vendor_access(
     assert "CodeRabbit and Code Factory are complementary, not interchangeable" in guide
     assert "does **not** call a CodeRabbit API" in guide.replace("\n", " ")
     assert "not trying to replace the AI reviewer" in discovery
-    assert "Use Code Factory with CodeRabbit or another AI reviewer" in readme
-    assert "does not replace human review" in readme.replace("\n", " ")
+    assert "Use Code Factory with CodeRabbit or another AI reviewer" not in readme
+    assert "docs/GITHUB_PROOF_REVIEW.md" in readme
 
 
 def test_code_audit_lane_rejects_minimal_self_hashed_receipt() -> None:

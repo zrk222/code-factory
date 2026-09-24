@@ -10,6 +10,33 @@ from typing import Any
 from .failure_guidance import explain_failure
 
 
+def emit_version(as_json: bool) -> int:
+    """Format the CLI's version response from the shared provenance receipt."""
+    from .provenance import provenance
+
+    payload = provenance()
+    print(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if as_json
+        else f"factory {payload['version']}"
+    )
+    return 0
+
+
+def cli_command(name: str) -> str:
+    """Prefer the launcher's script directory over an ambient PATH lookup."""
+    script_dirs = [
+        Path(sys.argv[0]).resolve().parent,
+        Path(sys.executable).resolve().parent,
+    ]
+    for scripts in dict.fromkeys(script_dirs):
+        for suffix in (".exe", ".cmd", ""):
+            candidate = scripts / f"{name}{suffix}"
+            if candidate.exists():
+                return str(candidate)
+    return name
+
+
 def add_parser(sub: Any) -> None:
     """Register the foundational proof and architecture command families."""
     architecture = sub.add_parser(

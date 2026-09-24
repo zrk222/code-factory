@@ -36,12 +36,12 @@ The [repository self-audit receipt](evidence/self-audit/code-factory-2026-09-24.
 records the checks run against Code Factory, including blocked and unavailable
 checks. It is local evidence for review, not an independent audit or release
 approval.
+<!-- mcp-name: io.github.zrk222/code-factory -->
 
 ## Release controls
 
 Candidate preflight requires release-cadence admission and strict architecture
-health. The current architecture findings must be resolved before a candidate
-passes. Public publishing workflows also depend on GitHub environments with a
+health. Public publishing workflows also depend on GitHub environments with a
 required reviewer who is not the workflow initiator and with self-review
 disabled. See [release channels](docs/RELEASE_CHANNELS.md) and
 [contributor guidance](CONTRIBUTING.md).
@@ -51,6 +51,10 @@ blocked while independent-review protection is incomplete.
 ## More detail
 
 - [Engineering review workflow](docs/PROOF_REVIEW_WORKFLOW.md)
+- [GitHub Proof Review](docs/GITHUB_PROOF_REVIEW.md)
+- [Commercial availability and limits](docs/COMMERCIAL_PACKAGING.md)
+- [Audit condition inventory](docs/AUDIT_CONDITION_INVENTORY.md)
 - [Runtime assurance limits](docs/RUNTIME_ASSURANCE.md)
 - [Release channels and publication evidence](docs/RELEASE_CHANNELS.md)
+- [Changelog](CHANGELOG.md)
 - [Documentation index](docs/DOCUMENTATION_INDEX.json)

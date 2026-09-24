@@ -19,7 +19,7 @@ Architect verdict: PASS
 - [x] T7 | slice=.zenodo.json | files=.zenodo.json | verify=`python -m pytest -q tests/test_publication_metadata.py` | Synchronize archive version and date.
 - [x] T8 | slice=README.md | files=README.md | verify=`python -m pytest -q tests/test_publication_metadata.py` | Synchronize the primary install surface.
 - [x] T9 | slice=CHANGELOG.md | files=CHANGELOG.md | verify=`python -m pytest -q tests/test_publication_metadata.py` | Record the 0.23.1 security patch.
-- [x] T10 | slice=docs | files=docs/RELEASE_NOTES_0.23.1.md,docs/RELEASE_CHANNELS.md | verify=`python -m pytest -q tests/test_publication_metadata.py` | Publish the bounded security notes and channels.
+- [x] T10 | slice=docs | files=docs/RELEASE_HISTORY_0.20-0.23.1.md,docs/RELEASE_CHANNELS.md | verify=`python -m pytest -q tests/test_publication_metadata.py` | Publish the bounded security notes and channels.
 - [x] T11 | slice=deploy | files=deploy/huggingface/index.html,deploy/huggingface/README.md | verify=`python -m pytest -q tests/test_huggingface_surface.py tests/test_visual_listing.py` | Synchronize hosted public surfaces.
 - [x] T12 | slice=PUBLICATION_GUIDE.md | files=PUBLICATION_GUIDE.md | verify=`python -m pytest -q tests/test_publication_metadata.py` | Synchronize publication guidance.
 - [x] T13 | slice=LAUNCH_KIT.md | files=LAUNCH_KIT.md | verify=`python -m pytest -q tests/test_publication_metadata.py` | Synchronize the launch surface.

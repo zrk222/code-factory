@@ -1,22 +1,53 @@
 name: publish
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Draft release tag to validate and publish after review
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-${{ github.event.release.tag_name }}
+  group: publish-${{ inputs.release_tag }}
   cancel-in-progress: false
 
 jobs:
+  guard:
+    name: require a draft release tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the requested release exists and remains a draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "Dispatch publication from protected main so the reviewed workflow definition is used." >&2
+            exit 1
+          }
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "RELEASE_TAG must use vMAJOR.MINOR.PATCH." >&2
+            exit 1
+          }
+          is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
+          [[ "$is_draft" == "true" ]] || {
+            echo "The requested GitHub release must exist and remain a draft until protected publication." >&2
+            exit 1
+          }
+
   validate_python:
     name: validate Python release artifacts
+    needs: [guard]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_tag }}
 
       - uses: actions/setup-python@v6
         with:
@@ -49,19 +80,22 @@ jobs:
 
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: release-python-${{ github.event.release.tag_name }}
+          name: release-python-${{ inputs.release_tag }}
           path: dist/
           if-no-files-found: error
           retention-days: 30
 
   validate_vscode:
     name: validate VS Code release artifact
+    needs: [guard]
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: editors/vscode
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_tag }}
 
       - uses: actions/setup-node@v7.0.0
         with:
@@ -82,19 +116,22 @@ jobs:
 
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: release-vscode-${{ github.event.release.tag_name }}
+          name: release-vscode-${{ inputs.release_tag }}
           path: editors/vscode/factoryline-vscode-*.vsix
           if-no-files-found: error
           retention-days: 30
 
   validate_intellij:
     name: validate JetBrains release artifact
+    needs: [guard]
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: editors/intellij
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_tag }}
 
       - uses: actions/setup-java@v5
         with:
@@ -110,14 +147,14 @@ jobs:
 
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: release-intellij-${{ github.event.release.tag_name }}
+          name: release-intellij-${{ inputs.release_tag }}
           path: editors/intellij/build/distributions/*.zip
           if-no-files-found: error
           retention-days: 30
 
   publish:
     name: publish verified release
-    needs: [validate_python, validate_vscode, validate_intellij]
+    needs: [guard, validate_python, validate_vscode, validate_intellij]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -125,20 +162,22 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_tag }}
 
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: release-python-${{ github.event.release.tag_name }}
+          name: release-python-${{ inputs.release_tag }}
           path: release-bundle/python
 
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: release-vscode-${{ github.event.release.tag_name }}
+          name: release-vscode-${{ inputs.release_tag }}
           path: release-bundle/editors
 
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: release-intellij-${{ github.event.release.tag_name }}
+          name: release-intellij-${{ inputs.release_tag }}
           path: release-bundle/editors
 
       - uses: actions/setup-python@v6
@@ -150,7 +189,7 @@ jobs:
 
       - name: Prepare source-bound release contract
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
           APPROVED_BY: ${{ github.actor }} (release workflow initiator; not independent approval)
         run: |
           set -euo pipefail
@@ -186,7 +225,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release upload "${{ github.event.release.tag_name }}"
+          gh release upload "${{ inputs.release_tag }}"
           release-bundle/python/*
           release-bundle/editors/*
           docs/assets/factoryline-logo-480.png
@@ -210,6 +249,12 @@ jobs:
           packages-dir: release-bundle/python/
           attestations: true
 
+      - name: Publish the GitHub release after protected publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
   publish_mcp_registry:
     name: publish Official MCP Registry metadata
     needs: [publish]
@@ -219,10 +264,12 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_tag }}
 
       - name: Validate release tag and MCP Registry metadata
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -269,7 +316,7 @@ jobs:
 
       - name: Wait for PyPI package and ownership marker
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"

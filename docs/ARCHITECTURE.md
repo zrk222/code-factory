@@ -53,9 +53,10 @@ Three repository contracts make that rule executable:
 
 `factory architecture health --json` validates all three contracts alongside
 the measured CLI, module, documentation, and release-cadence budgets. An
-accepted baseline debt record preserves the remaining monolith and historical
-release churn as visible, expiring review debt; it does not rename that debt
-healthy or authorize publication.
+strict health blocks any metric regression, and this repository has no
+accepted-debt waiver configured. Historical tag count remains visible, while
+prospective cadence begins at the release policy's recorded effective time.
+Neither a healthy report nor a passing preflight authorizes publication.
 
 ### AI-native blueprint contracts
 
@@ -315,11 +316,13 @@ authority source. See [Unified Graph Ops](GRAPH_OPS.md).
 ## Release-cadence guard
 
 Architecture health reports immutable tag history and projects a forward
-admission decision from `release-train.json`. The release limits and exception
-owner must match `architecture-policy.json`; missing/invalid history or a
-policy mismatch fails closed. Release-candidate preflight enforces the same
-decision with `E_RELEASE_CADENCE_BLOCKED` and includes the exact
-`next_eligible_at` timestamp. The guard never deletes, rewrites, or hides
-historical tags. No automatic exception bypass exists: a release exception
-requires a separately reviewed human-authority decision and must not be
-inferred from a healthy architecture report.
+admission decision from `release-train.json`. The limits, effective time, and
+exception owner must match `architecture-policy.json`; missing/invalid history
+or a policy mismatch fails closed. Tags before the recorded effective time
+remain reported but do not consume the prospective cadence budget. Release-
+candidate preflight enforces the same decision with
+`E_RELEASE_CADENCE_BLOCKED` and includes the exact `next_eligible_at`
+timestamp. The guard never deletes, rewrites, or hides historical tags. No
+automatic exception bypass exists: a release exception requires a separately
+reviewed human-authority decision and must not be inferred from a healthy
+architecture report.

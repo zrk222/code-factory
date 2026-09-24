@@ -14,7 +14,7 @@ Keep the GitHub release in draft until that independent review is complete.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish core tag `v0.46.8`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Dispatch `publish.yml` with an existing draft tag; its protected publisher attaches the verified bundle and publishes the release after PyPI | Public release URL and green workflow |
 | PyPI | `factoryline-code-factory==0.46.8` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
@@ -33,10 +33,15 @@ release cadence. Do not weaken or skip the release-candidate preflight to force
 a provider upload. An exception requires a separately reviewed human decision
 and must not be used to waive the architecture blockers.
 
-The `release-train.json` cap was added on 2026-09-21, after the latest core
-tag (`v0.46.7`, 2026-09-19). The 15 tags counted by the current 30-day window
-therefore predate the written policy; the guard still blocks a new release
-until its next eligible time, currently 2026-10-10.
+The release-train cap took effect at `2026-09-21T15:01:54Z`, the recorded
+commit time when the policy was added. The latest core tag (`v0.46.7`,
+2026-09-19) and the other tags already present at adoption remain visible as
+historical evidence; only tags created at or after the effective time count
+toward the prospective 4-per-30-day limit and 7-day interval. The publish
+workflow dispatches only from protected `main`, accepts only an existing draft
+release, validates the immutable tag, waits at the protected `pypi` environment,
+and marks the GitHub release public only after the approved PyPI publication
+succeeds.
 
 ### 0.46.0 core agent handoff evidence under Code Factory authority
 

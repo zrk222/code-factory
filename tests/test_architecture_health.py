@@ -33,6 +33,7 @@ def _policy(path: Path, **budgets: int | float) -> Path:
         "release": {
             "max_releases_30d": 4,
             "minimum_days_between_releases": 7,
+            "effective_at": "2026-09-01T00:00:00Z",
             "exception_requires": "human-release-authority",
             "requires_changelog_entry": False,
         },
@@ -506,6 +507,7 @@ def test_required_release_train_validates_channels_and_states(tmp_path: Path) ->
                 "cadence": {
                     "max_releases_30d": 4,
                     "minimum_days_between_releases": 7,
+                    "effective_at": "2026-09-01T00:00:00Z",
                     "exception_requires": "human-release-authority",
                     "requires_changelog_entry": True,
                 },
@@ -531,6 +533,7 @@ def test_required_release_train_validates_channels_and_states(tmp_path: Path) ->
         "cadence": {
             "max_releases_30d": 4,
             "minimum_days_between_releases": 7,
+            "effective_at": "2026-09-01T00:00:00Z",
             "exception_requires": "human-release-authority",
             "requires_changelog_entry": True,
         },
@@ -562,6 +565,35 @@ def test_release_cadence_projects_a_forward_freeze_without_rewriting_history() -
         now=datetime(2026, 10, 9, 0, 0, 0, 1, tzinfo=timezone.utc),
     )
     assert after_boundary["admission"] is True
+
+
+def test_release_cadence_starts_from_policy_adoption_without_erasing_history() -> None:
+    effective = datetime(2026, 9, 21, 15, 1, 54, tzinfo=timezone.utc)
+    releases = [
+        (f"v0.46.{index}", datetime(2026, 9, index + 1, tzinfo=timezone.utc))
+        for index in range(5)
+    ]
+
+    result = _cadence_projection(
+        releases,
+        now=datetime(2026, 9, 24, tzinfo=timezone.utc),
+        effective_at=effective,
+    )
+
+    assert result["state"] == "no_tags"
+    assert result["admission"] is True
+    assert result["recent_count"] == 0
+    assert result["pre_policy_release_count"] == 5
+    assert result["effective_at"] == "2026-09-21T15:01:54Z"
+
+    before_effective = _cadence_projection(
+        releases,
+        now=datetime(2026, 9, 21, 15, 1, 53, tzinfo=timezone.utc),
+        effective_at=effective,
+    )
+    assert before_effective["state"] == "not_yet_effective"
+    assert before_effective["admission"] is False
+    assert before_effective["next_eligible_at"] == "2026-09-21T15:01:54Z"
 
 
 def test_release_cadence_fails_closed_when_policy_and_train_diverge(

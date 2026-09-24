@@ -36,9 +36,8 @@ def collect_pytest_readiness(test_paths: list[str]) -> dict[str, int]:
     results = _Results()
     # The readiness probe runs a nested pytest session from an arbitrary
     # temporary directory, so the repository's pyproject configuration is not
-    # discovered.  Keep the async fixture scope explicit here as well; this
-    # prevents pytest-asyncio's deprecation warning without globally filtering
-    # warnings from the probe.
+    # discovered. Load pytest-asyncio explicitly when available so its config
+    # option is recognized even when plugin autoload is disabled by the caller.
     # Normalize absolute paths for Windows.  Pytest's nested invocation can
     # otherwise treat a backslash-containing drive path as a collection root
     # and walk the protected ``C:\\Documents and Settings`` junction.
@@ -49,18 +48,24 @@ def collect_pytest_readiness(test_paths: list[str]) -> dict[str, int]:
     # explicit file path.  The readiness probe only needs the named suites,
     # so a local root is both safer and deterministic.
     probe_root = str(Path(normalized_paths[0]).parent) if normalized_paths else "."
+    plugins: list[object] = [results]
+    pytest_args = [
+        "-q",
+        "--strict-markers",
+        "--strict-config",
+        "--rootdir",
+        probe_root,
+    ]
+    try:
+        import pytest_asyncio.plugin
+    except ImportError:
+        pass
+    else:
+        plugins.append(pytest_asyncio.plugin)
+        pytest_args.extend(["-o", "asyncio_default_fixture_loop_scope=function"])
     exit_code = pytest.main(
-        [
-            "-q",
-            "--strict-markers",
-            "--strict-config",
-            "--rootdir",
-            probe_root,
-            "-o",
-            "asyncio_default_fixture_loop_scope=function",
-            *normalized_paths,
-        ],
-        plugins=[results],
+        [*pytest_args, *normalized_paths],
+        plugins=plugins,
     )
     return {
         "exit_code": int(exit_code),

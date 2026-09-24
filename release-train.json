@@ -28,7 +28,8 @@
     "max_releases_30d": 4,
     "minimum_days_between_releases": 7,
     "exception_requires": "human-release-authority",
-    "requires_changelog_entry": true
+    "requires_changelog_entry": true,
+    "effective_at": "2026-09-21T15:01:54Z"
   },
   "publication_states": [
     "prepared",

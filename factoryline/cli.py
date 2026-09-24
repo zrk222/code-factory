@@ -53,29 +53,15 @@ if TYPE_CHECKING:
 
 
 def _cli_command(name: str) -> str:
-    """Prefer this launcher's script directory over an ambient PATH lookup."""
-    script_dirs = [
-        Path(sys.argv[0]).resolve().parent,
-        Path(sys.executable).resolve().parent,
-    ]
-    for scripts in dict.fromkeys(script_dirs):
-        for suffix in (".exe", ".cmd", ""):
-            candidate = scripts / f"{name}{suffix}"
-            if candidate.exists():
-                return str(candidate)
-    return name
+    from .cli_foundations import cli_command
+
+    return cli_command(name)
 
 
 def _emit_version(as_json: bool) -> int:
-    from .provenance import provenance
+    from .cli_foundations import emit_version
 
-    payload = provenance()
-    print(
-        json.dumps(payload, indent=2, sort_keys=True)
-        if as_json
-        else f"factory {payload['version']}"
-    )
-    return 0
+    return emit_version(as_json)
 
 
 def _workflow_canary(module) -> dict:

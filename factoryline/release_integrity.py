@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .release_route_integrity import release_route_checks
 
 
@@ -53,27 +55,137 @@ def _check(check_id: str, passed: bool, evidence: str) -> dict[str, Any]:
 
 
 def _fan_in_check(workflow: str) -> dict[str, Any]:
+    """Check the reviewed, draft-first publication path and its artifact fan-in."""
+    try:
+        document = yaml.load(workflow, Loader=yaml.BaseLoader)
+    except yaml.YAMLError:
+        document = None
+
+    document = document if isinstance(document, dict) else {}
+    triggers = document.get("on", {})
+    triggers = triggers if isinstance(triggers, dict) else {}
+    dispatch = triggers.get("workflow_dispatch", {})
+    dispatch = dispatch if isinstance(dispatch, dict) else {}
+    inputs = dispatch.get("inputs", {})
+    inputs = inputs if isinstance(inputs, dict) else {}
+    release_tag_input = inputs.get("release_tag", {})
+    release_tag_input = release_tag_input if isinstance(release_tag_input, dict) else {}
+
+    jobs = document.get("jobs", {})
+    jobs = jobs if isinstance(jobs, dict) else {}
     validator_names = ("validate_python", "validate_vscode", "validate_intellij")
-    validator_jobs = [_job(workflow, name) for name in validator_names]
+    validator_jobs = [jobs.get(name, {}) for name in validator_names]
     artifact_names = (
-        "release-python-${{ github.event.release.tag_name }}",
-        "release-vscode-${{ github.event.release.tag_name }}",
-        "release-intellij-${{ github.event.release.tag_name }}",
+        "release-python-${{ inputs.release_tag }}",
+        "release-vscode-${{ inputs.release_tag }}",
+        "release-intellij-${{ inputs.release_tag }}",
     )
-    publish_job = _job(workflow, "publish")
+    publish_job = jobs.get("publish", {})
+    publish_steps = publish_job.get("steps", [])
+    publish_steps = publish_steps if isinstance(publish_steps, list) else []
+    step_content = [
+        step.get("uses", step.get("run", ""))
+        for step in publish_steps
+        if isinstance(step, dict)
+    ]
+
+    def checkout_uses_requested_tag(job: Any) -> bool:
+        if not isinstance(job, dict):
+            return False
+        steps = job.get("steps", [])
+        if not isinstance(steps, list):
+            return False
+        return any(
+            isinstance(step, dict)
+            and step.get("uses") == "actions/checkout@v5"
+            and isinstance(step.get("with"), dict)
+            and step["with"].get("ref") == "${{ inputs.release_tag }}"
+            for step in steps
+        )
+
+    def validator_has_tagged_artifact(job: Any, artifact_name: str) -> bool:
+        if not isinstance(job, dict):
+            return False
+        steps = job.get("steps", [])
+        if not isinstance(steps, list):
+            return False
+        return any(
+            isinstance(step, dict)
+            and step.get("uses") == "actions/upload-artifact@v7.0.1"
+            and isinstance(step.get("with"), dict)
+            and step["with"].get("name") == artifact_name
+            for step in steps
+        )
+
+    guard = jobs.get("guard", {})
+    guard_steps = guard.get("steps", []) if isinstance(guard, dict) else []
+    guard_script = "\n".join(
+        step.get("run", "") for step in guard_steps if isinstance(step, dict)
+    )
+    publish_permissions = publish_job.get("permissions", {})
+    publish_permissions = (
+        publish_permissions if isinstance(publish_permissions, dict) else {}
+    )
+    publish_environment = publish_job.get("environment", {})
+    if isinstance(publish_environment, dict):
+        publish_environment = publish_environment.get("name", "")
+    downloaded_artifacts = [
+        step.get("with", {}).get("name")
+        for step in publish_steps
+        if isinstance(step, dict)
+        and step.get("uses") == "actions/download-artifact@v8.0.1"
+        and isinstance(step.get("with"), dict)
+    ]
+    pypi_position = next(
+        (
+            index
+            for index, content in enumerate(step_content)
+            if content == "pypa/gh-action-pypi-publish@release/v1"
+        ),
+        -1,
+    )
+    public_release_position = next(
+        (
+            index
+            for index, content in enumerate(step_content)
+            if 'gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false'
+            in content
+        ),
+        -1,
+    )
+
     passed = (
-        all(validator_jobs)
-        and all("needs:" not in job for job in validator_jobs)
-        and "needs: [validate_python, validate_vscode, validate_intellij]"
-        in publish_job
-        and all(name in workflow for name in artifact_names)
-        and "path: release-bundle/python" in publish_job
-        and publish_job.count("path: release-bundle/editors") == 2
+        set(triggers) == {"workflow_dispatch"}
+        and release_tag_input.get("required") == "true"
+        and release_tag_input.get("type") == "string"
+        and set(jobs) >= {"guard", *validator_names, "publish"}
+        and isinstance(guard, dict)
+        and '[[ "$GITHUB_REF" == "refs/heads/main" ]]' in guard_script
+        and r'[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]' in guard_script
+        and 'gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq \'.isDraft\''
+        in guard_script
+        and '[[ "$is_draft" == "true" ]]' in guard_script
+        and all(
+            isinstance(job, dict)
+            and job.get("needs") == ["guard"]
+            and checkout_uses_requested_tag(job)
+            and validator_has_tagged_artifact(job, artifact)
+            for job, artifact in zip(validator_jobs, artifact_names, strict=True)
+        )
+        and isinstance(publish_job, dict)
+        and publish_job.get("needs") == ["guard", *validator_names]
+        and publish_environment == "pypi"
+        and publish_permissions.get("contents") == "write"
+        and publish_permissions.get("id-token") == "write"
+        and checkout_uses_requested_tag(publish_job)
+        and downloaded_artifacts == list(artifact_names)
+        and pypi_position >= 0
+        and public_release_position > pypi_position
     )
     return _check(
         "RELEASE_FAN_IN_EXACT",
         passed,
-        "three independent validators with exact artifact fan-in",
+        "draft-only dispatch, immutable tag builds, exact artifact fan-in, protected PyPI publish, and delayed public release",
     )
 
 

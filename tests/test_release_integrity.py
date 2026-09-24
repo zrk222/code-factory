@@ -105,7 +105,7 @@ def test_release_integrity_rejects_missing_artifact_fan_in(tmp_path: Path) -> No
     publish = root / ".github" / "workflows" / "publish.yml"
     publish.write_text(
         publish.read_text(encoding="utf-8").replace(
-            "needs: [validate_python, validate_vscode, validate_intellij]",
+            "needs: [guard, validate_python, validate_vscode, validate_intellij]",
             "needs: validate_python",
         ),
         encoding="utf-8",
@@ -117,6 +117,41 @@ def test_release_integrity_rejects_missing_artifact_fan_in(tmp_path: Path) -> No
     assert result["marker"] == "RELEASE_INTEGRITY_FAILURE"
     assert result["failed_check_ids"] == ["RELEASE_FAN_IN_EXACT"]
     assert result["next_action"]["action"] == "repair_release_workflow"
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('[[ "$is_draft" == "true" ]]', '[[ "$is_draft" == "false" ]]'),
+        (
+            '[[ "$GITHUB_REF" == "refs/heads/main" ]]',
+            '[[ "$GITHUB_REF" == "refs/heads/feature" ]]',
+        ),
+        ("--draft=false", "--draft=true"),
+        ("workflow_dispatch:", "release:\n    types: [published]"),
+        (
+            "ref: ${{ inputs.release_tag }}",
+            "ref: ${{ github.event.release.tag_name }}",
+        ),
+        (
+            "needs: [guard, validate_python, validate_vscode, validate_intellij]",
+            "needs: [validate_python, validate_vscode, validate_intellij]",
+        ),
+    ],
+)
+def test_release_integrity_rejects_unsafe_or_unbound_publish_topology(
+    tmp_path: Path, old: str, new: str
+) -> None:
+    root = _workflow_copy(tmp_path)
+    publish = root / ".github" / "workflows" / "publish.yml"
+    original = publish.read_text(encoding="utf-8")
+    assert old in original
+    publish.write_text(original.replace(old, new, 1), encoding="utf-8")
+
+    result = release_integrity(root)
+
+    assert result["ok"] is False
+    assert result["failed_check_ids"] == ["RELEASE_FAN_IN_EXACT"]
 
 
 def test_release_integrity_rejects_late_openvsx_authorization(tmp_path: Path) -> None:
