@@ -10,28 +10,29 @@
         "health",
         "--root",
         ".",
+        "--strict",
         "--json"
       ],
-      "exit_code": 1,
+      "exit_code": 0,
       "output_excerpt": null,
       "result": {
         "accepted_baseline_debt": [],
         "accepted_debt": null,
         "accepted_regressions": [],
         "baseline_debt": [],
-        "decision": "BLOCKED",
+        "decision": "HEALTHY",
         "metrics": {
           "cli_command_declarations": 184,
-          "cli_lines": 4984,
+          "cli_lines": 4970,
           "core_modules": 128,
           "documentation_index": {
             "canonical_count": 4,
-            "coverage_patterns": 4,
+            "coverage_patterns": 5,
             "status": "valid",
             "unmatched": []
           },
-          "markdown_files": 660,
-          "markdown_python_ratio": 1.4474,
+          "markdown_files": 656,
+          "markdown_python_ratio": 1.4513,
           "module_domains": {
             "agent_protocols": 11,
             "appforge": 16,
@@ -41,9 +42,10 @@
             "graph_ops": 5,
             "verification": 39
           },
-          "python_files": 456,
+          "python_files": 452,
           "release_train": {
             "cadence": {
+              "effective_at": "2026-09-21T15:01:54Z",
               "exception_requires": "human-release-authority",
               "max_releases_30d": 4,
               "minimum_days_between_releases": 7,
@@ -53,10 +55,10 @@
             "status": "valid"
           },
           "total_factoryline_modules": 243,
-          "tracked_files": 2010,
+          "tracked_files": 2003,
           "version": "0.46.8"
         },
-        "next_action": "Stop and resolve architecture budget regressions before merge.",
+        "next_action": "Architecture budgets are within policy.",
         "policy": {
           "baseline": {
             "captured_at": "2026-09-15",
@@ -77,102 +79,91 @@
             "max_python_files": 452
           },
           "path": "<repository-root>\\architecture-policy.json",
-          "sha256": "sha256:baf66b67b8ef5f609c51487b087872f79c7b17cc4b496016cc1c2a2b0317d022"
+          "sha256": "sha256:ccd40e9c287d957c116a67990620484a03a7dc311e1f6f8538df8ce7d11c303c"
         },
-        "regressions": [
-          {
-            "blocking": true,
-            "code": "E_ARCH_MARKDOWN_FILES_GROWTH",
-            "message": "markdown_files grew to 660; policy maximum is 658.",
-            "next_action": "Remove unrelated markdown_files growth or update the reviewed policy with an architecture decision.",
-            "severity": "BLOCKER"
-          },
-          {
-            "blocking": true,
-            "code": "E_ARCH_PYTHON_FILES_GROWTH",
-            "message": "python_files grew to 456; policy maximum is 452.",
-            "next_action": "Remove unrelated python_files growth or update the reviewed policy with an architecture decision.",
-            "severity": "BLOCKER"
-          },
-          {
-            "blocking": true,
-            "code": "E_ARCH_CLI_LINES_GROWTH",
-            "message": "cli_lines grew to 4984; policy maximum is 4977.",
-            "next_action": "Remove unrelated cli_lines growth or update the reviewed policy with an architecture decision.",
-            "severity": "BLOCKER"
-          }
-        ],
+        "regressions": [],
         "release_cadence": {
-          "admission": false,
+          "admission": true,
           "available": true,
-          "cooldown_until": "2026-09-26T09:55:30Z",
-          "latest_interval_days": 0.02,
-          "latest_release_at": "2026-09-19T09:55:30Z",
-          "latest_tag": "v0.46.7",
+          "cooldown_until": null,
+          "effective_at": "2026-09-21T15:01:54Z",
+          "latest_interval_days": null,
+          "latest_release_at": null,
+          "latest_tag": null,
           "max_releases_30d": 4,
           "minimum_days_between_releases": 7,
-          "next_eligible_at": "2026-10-10T02:49:36.000001Z",
-          "reason": "15 version tags are inside the rolling 30-day budget of 4.",
-          "recent_count": 15,
+          "next_eligible_at": "2026-09-24T15:51:11.354706Z",
+          "pre_policy_release_count": 89,
+          "reason": "No version tags have been created since 2026-09-21T15:01:54+00:00; the release train is eligible.",
+          "recent_count": 0,
           "release_train_status": "valid",
-          "state": "rate_limited",
-          "window_budget_until": "2026-10-10T02:49:36.000001Z"
+          "state": "no_tags",
+          "window_budget_until": null
         },
         "root": "<repository-root>",
         "schema": "factory.architecture-health.v1"
       },
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "stdout_sha256": "b807516df0bd258c3d72150c2665fa57521f21f851d66de23b383ebdbb6b37fe"
+      "stdout_sha256": "a3a7d3a2b5bcf1c5e06a0e3131a72159c87bc279e1b180b5a33fde4970700267"
     },
     "contract_and_engine_tests": {
+      "combined_output_sha256": "fe28ac4954564a0b935bda932b3fff91f6d72d89d212a49befc7c907ae3bb939",
       "command": [
         "python",
-        "-c",
-        "import os,pytest; os.environ['PYTEST_DISABLE_PLUGIN_AUTOLOAD']='1'; raise SystemExit(pytest.main(['-q','tests/test_runtime_audit_contract.py','tests/test_runtime_audit_runner.py','tests/test_runtime_audit_lanes.py','tests/test_runtime_audit.py','tests/test_runtime_audit_surfaces.py','tests/test_runtime_audit_native_engines.py','tests/test_release_candidate.py','tests/test_release_preflight_cli.py','tests/test_architecture_health.py']))"
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "pytest_asyncio.plugin"
       ],
       "exit_code": 0,
-      "stderr_sha256": "37b8f89e20ba6935bdf54f0038321d0a4cfd5c74970556e4d008be10738be597",
-      "stdout_sha256": "6e4aabd12aa78bd64450be0a9d83c747c21567c50d38bf8311973358b78dba67",
-      "summary": "56 passed, 1 warning in 8.83s",
-      "warnings": [
-        "PytestConfigWarning: unknown asyncio_default_fixture_loop_scope option"
-      ]
+      "source_commit": "1a6f6f063b7771fd507f58d915ac21ad966f7785",
+      "summary": "1720 passed, 7 skipped in 281.49s (0:04:41)"
     },
     "independent_review_protection": {
+      "authenticated_actor_is_collaborator": true,
       "collaborator_count": 1,
       "environments": [
         {
           "can_admins_bypass": false,
           "name": "huggingface",
           "prevent_self_review": true,
-          "required_reviewer_count": 1
+          "required_reviewer_count": 1,
+          "reviewers_are_repository_collaborators": true
         },
         {
           "can_admins_bypass": false,
           "name": "jetbrains-marketplace",
           "prevent_self_review": true,
-          "required_reviewer_count": 1
+          "required_reviewer_count": 1,
+          "reviewers_are_repository_collaborators": true
         },
         {
           "can_admins_bypass": false,
           "name": "openvsx",
           "prevent_self_review": true,
-          "required_reviewer_count": 1
+          "required_reviewer_count": 1,
+          "reviewers_are_repository_collaborators": true
         },
         {
           "can_admins_bypass": false,
           "name": "pypi",
           "prevent_self_review": true,
-          "required_reviewer_count": 1
+          "required_reviewer_count": 1,
+          "reviewers_are_repository_collaborators": true
         },
         {
           "can_admins_bypass": false,
           "name": "vscode-marketplace",
           "prevent_self_review": true,
-          "required_reviewer_count": 1
+          "required_reviewer_count": 1,
+          "reviewers_are_repository_collaborators": true
         }
       ],
+      "independent_eligible_reviewer_count": 0,
       "main_branch_admin_enforcement": true,
+      "main_branch_dismiss_stale_reviews": true,
+      "main_branch_last_push_approval": true,
       "main_branch_required_approvals": 1,
       "required_environments": [
         "pypi",
@@ -184,17 +175,141 @@
       "settings_api_readable": true,
       "status": "INCOMPLETE"
     },
+    "release_integrity": {
+      "combined_output_sha256": "12100322c472c99b10052e1e6a1fb511b92a8942d67ed29d77e7cb139e2b0ca6",
+      "command": [
+        "python",
+        "-m",
+        "factoryline.cli",
+        "release",
+        "integrity",
+        "--root",
+        ".",
+        "--json"
+      ],
+      "exit_code": 0,
+      "result": {
+        "authority": {
+          "approval": false,
+          "connector": false,
+          "credential": false,
+          "deployment": false,
+          "execution": false,
+          "merge": false,
+          "messaging": false,
+          "publication": false,
+          "repair": false,
+          "signing": false
+        },
+        "checks": [
+          {
+            "evidence": "draft-only dispatch, immutable tag builds, exact artifact fan-in, protected PyPI publish, and delayed public release",
+            "id": "RELEASE_FAN_IN_EXACT",
+            "passed": true
+          },
+          {
+            "evidence": "sealed source/commit/artifact preflight is mandatory before external release upload",
+            "id": "RELEASE_CANDIDATE_PREFLIGHT_REQUIRED",
+            "passed": true
+          },
+          {
+            "evidence": "language-specific validation stays in its own job",
+            "id": "RELEASE_VALIDATION_PARTITIONED",
+            "passed": true
+          },
+          {
+            "evidence": "protected publication is authorized before candidate validation",
+            "id": "OPENVSX_AUTHORIZATION_EARLY",
+            "passed": true
+          },
+          {
+            "evidence": "protected VS Code Marketplace authorization is required before candidate validation",
+            "id": "VSCODE_MARKETPLACE_AUTHORIZATION_EARLY",
+            "passed": true
+          },
+          {
+            "evidence": "VS Code Marketplace publish verifies the sealed VSIX checksum and declared identity",
+            "id": "VSCODE_MARKETPLACE_CANDIDATE_SEALED",
+            "passed": true
+          },
+          {
+            "evidence": "protected JetBrains Marketplace authorization is required before candidate validation",
+            "id": "JETBRAINS_MARKETPLACE_AUTHORIZATION_EARLY",
+            "passed": true
+          },
+          {
+            "evidence": "every declared IntelliJ Gradle Java setup step pins Java 21",
+            "id": "JETBRAINS_JDK21_EXACT",
+            "passed": true
+          },
+          {
+            "evidence": "Hugging Face credential admission is declared before Space candidate work",
+            "id": "HUGGINGFACE_AUTHORIZATION_EARLY",
+            "passed": true
+          },
+          {
+            "evidence": "PyPI uses protected OIDC without a stored PyPI token",
+            "id": "PYPI_TRUSTED_PUBLISHING",
+            "passed": true
+          },
+          {
+            "evidence": "an occupied Marketplace binary-update slot blocks before Java or Gradle setup",
+            "id": "JETBRAINS_APPROVAL_GUARD",
+            "passed": true
+          },
+          {
+            "evidence": "supported chooser calls and Kotlin JVM-default configuration are declared",
+            "id": "INTELLIJ_COMPATIBILITY_DECLARED",
+            "passed": true
+          },
+          {
+            "evidence": "Space-card metadata is bounded before remote upload",
+            "id": "HUGGINGFACE_METADATA_PREFLIGHT",
+            "passed": true
+          },
+          {
+            "evidence": "wheel package data is explicit, source formats are allowlisted, and bytecode is excluded",
+            "id": "PYTHON_PACKAGE_DATA_EXPLICIT",
+            "passed": true
+          }
+        ],
+        "external_requirements": [
+          "Open VSX publication still requires OPENVSX_TOKEN in the protected openvsx environment.",
+          "Visual Studio Marketplace publication still requires VSCE_PAT in the protected vscode-marketplace environment.",
+          "JetBrains publication still requires JETBRAINS_MARKETPLACE_TOKEN in the protected jetbrains-marketplace environment.",
+          "JetBrains publication still requires Marketplace approval to clear before a new update.",
+          "Hugging Face Space publication still requires the configured HF_TOKEN GitHub Actions secret."
+        ],
+        "failed_check_ids": [],
+        "marker": "RELEASE_INTEGRITY_READ_ONLY",
+        "markers": [
+          "RELEASE_INTEGRITY_READ_ONLY"
+        ],
+        "next_action": {
+          "action": "review_external_publish_gates",
+          "reason": "workflow topology is complete"
+        },
+        "ok": true,
+        "root": "<repository-root>",
+        "schema": "factory.release_integrity.v1"
+      }
+    },
     "release_train_chronology": {
       "all_counted_tags_predate_policy": true,
       "cap_30d": 4,
+      "github_published_release_count_read_at_audit": 87,
+      "github_published_releases_since_policy": 0,
       "latest_core_tag": "v0.46.7",
       "latest_core_tag_at": "2026-09-19T09:55:30Z",
-      "next_eligible_at": "2026-10-10T02:49:36.000001Z",
-      "policy_introduced_at": "2026-09-21T11:01:54-04:00",
+      "policy_introduced_at": "2026-09-21T15:01:54Z",
       "policy_introduction_commit": "68ae8a5b6dd79dfb29db71da3aaa96784d248fcd",
-      "recent_tags_counted": 15
+      "release_cadence_admission": true,
+      "release_cadence_reason": "No version tags have been created since 2026-09-21T15:01:54+00:00; the release train is eligible.",
+      "repository_tags_predating_policy": 89,
+      "repository_tags_since_policy": 0
     },
     "review_audit_all": {
+      "combined_output_sha256": "7219270bf7c128ffa364a3a4af409fb72ecb3fb31458ebe76a0dddd3f7317361",
       "command": [
         "python",
         "-m",
@@ -211,9 +326,7 @@
         "code": "E_REVIEW_AUDIT_INPUT",
         "message": "Missing or escaping file: .factory/review-audits.json",
         "state": "invalid"
-      },
-      "stderr_sha256": "7219270bf7c128ffa364a3a4af409fb72ecb3fb31458ebe76a0dddd3f7317361",
-      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
     },
     "ruff_c901": {
       "command": [
@@ -228,10 +341,24 @@
       ],
       "exit_code": 1,
       "finding_count": 153,
-      "stderr": "[rtk] /!\\ No hook installed â€” run `rtk init -g` for automatic token savings\n",
-      "stdout": "153\tC901\tcomplex-structure\nFound 153 errors.\n"
+      "stderr": "",
+      "stdout": "153\tC901\tcomplex-structure\nFound 153 errors."
+    },
+    "ruff_default": {
+      "combined_output_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "command": [
+        "ruff",
+        "check",
+        ".",
+        "--output-format",
+        "concise"
+      ],
+      "exit_code": 0,
+      "state": "CLEAN",
+      "summary": "All checks passed!"
     },
     "runtime_audit_status": {
+      "combined_output_sha256": "cd203b3c5103af218e0d9771dd707f4e7eb8821d087d236e2b654b4d6df101b6",
       "command": [
         "python",
         "-m",
@@ -249,11 +376,10 @@
         "lanes": [],
         "schema": "factory.runtime-audit-status.v1",
         "state": "NOT_RUN"
-      },
-      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "stdout_sha256": "cd203b3c5103af218e0d9771dd707f4e7eb8821d087d236e2b654b4d6df101b6"
+      }
     },
     "security_evaluations": {
+      "combined_output_sha256": "474f1d4031acc76eec17b7952a92f796e857087e2f0a01bf804498618f712e63",
       "command": [
         "python",
         "-m",
@@ -376,11 +502,10 @@
         },
         "schema": "factory.security-evals.v1",
         "state": "PASS"
-      },
-      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "stdout_sha256": "474f1d4031acc76eec17b7952a92f796e857087e2f0a01bf804498618f712e63"
+      }
     },
     "security_static": {
+      "combined_output_sha256": "6bc4b3103f6a5d81a9d7614b20fd2e1d2f6d59abfdac6c8e2179d35fdbb4589e",
       "command": [
         "python",
         "-m",
@@ -395,7 +520,7 @@
       "output_excerpt": null,
       "result": {
         "action_summary": "No high-risk static security or quality patterns found.",
-        "audit_sha256": "aa7c409bb08ab331b399541483a81af6a863fd8d7b8cb1ee1c3d4962c70c0a83",
+        "audit_sha256": "09f09f59dfb11c5037139ab4f500c0378072306314f2b035fc7c3446e1540d45",
         "authority": {
           "approval": false,
           "deployment": false,
@@ -403,7 +528,7 @@
           "publication": false
         },
         "claim_boundary": "Bounded Python AST pattern scan only; not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
-        "files_scanned": 456,
+        "files_scanned": 452,
         "finding_counts": {},
         "findings": [],
         "governance": "human_controlled",
@@ -547,9 +672,9 @@
             "sha256": "6e0b0703d3a5c02b7625e8a7e522ca6405155c28e59a4f614149e0f13e281b2d"
           },
           {
-            "bytes": 35545,
+            "bytes": 37438,
             "path": "factoryline/architecture_health.py",
-            "sha256": "debf0a0163a40283b0ed987d8ee075df72997c81107a40a1acae8967076887c3"
+            "sha256": "5d4067fd43b11f04a320e99f910739a608ce9ac1e445c920a7b386738657b5b2"
           },
           {
             "bytes": 36499,
@@ -637,9 +762,9 @@
             "sha256": "599578f3edbc61435e679579509e6690b17ceccbecaf5713b9db87abe8ec0875"
           },
           {
-            "bytes": 208880,
+            "bytes": 208370,
             "path": "factoryline/cli.py",
-            "sha256": "83f346a8b4ffcbf132525205f508ae31f585ed3f0fc7fd7a9eefbcbc14f64701"
+            "sha256": "5bf03c4abcfb27d0086487b58766feb87c8edf70a7717d6c6a9f1bbc14317c4c"
           },
           {
             "bytes": 8658,
@@ -712,9 +837,9 @@
             "sha256": "0bd8b5070c5a3e3914fafaa4548c563dd65fdb06c4a6b716a59db9e292d54f3c"
           },
           {
-            "bytes": 12934,
+            "bytes": 13762,
             "path": "factoryline/cli_foundations.py",
-            "sha256": "35e82563a7e96af2807874187105dea44a842ecfc1b58bbafc35b851a3ddd303"
+            "sha256": "70d6d0fbfcfbda9bc9389be5f49f9ebf91e7d9c05828e4b795dab5bb4ee85675"
           },
           {
             "bytes": 9335,
@@ -1357,9 +1482,9 @@
             "sha256": "c48c15daca8b776b5f91ac388d2b9a5c9fb8b37c5b73f68489b7e9baf2a4e011"
           },
           {
-            "bytes": 2774,
+            "bytes": 2928,
             "path": "factoryline/pytest_readiness.py",
-            "sha256": "03f85c65a4bf733352f550c54d5adeeb68b23ad88dec09605ca5996719009cf8"
+            "sha256": "17d8c931c41cbad69f35beba4c9bcd5be9b1b571b0f3075c83185070e831302f"
           },
           {
             "bytes": 19921,
@@ -1397,9 +1522,9 @@
             "sha256": "ee81867f54db3afc72677467d8f0cd00861a80fc988ec93e2add28f15b6a6cf4"
           },
           {
-            "bytes": 13451,
+            "bytes": 17976,
             "path": "factoryline/release_integrity.py",
-            "sha256": "db979837998823bb8cc9e1c5b8240c12a32155d741a1ab9fef47ae4ed51b6a6a"
+            "sha256": "ec7fdf81e0020dd87377eebad25147172eeaf9dbcb0c0c36b6e912f0ff91d1f3"
           },
           {
             "bytes": 6529,
@@ -1682,14 +1807,14 @@
             "sha256": "ba5445cedde263be1787321e8ea689eeb12a0d9ccdbf95950b5218a98bd0713e"
           },
           {
-            "bytes": 3897,
+            "bytes": 5255,
             "path": "scripts/prooflab_e2e.py",
-            "sha256": "bb7932f9f9f5a0e71171522ec4d5054c86cdd3ca65ea5ccfa35a9742c8e25e90"
+            "sha256": "98e273262a017a982b709f676b2e2f15d6032368487d6ec48c5804deae833963"
           },
           {
-            "bytes": 5769,
+            "bytes": 6785,
             "path": "scripts/release_train_e2e.py",
-            "sha256": "5c2229f1a2cdc94b6d75075ab96c281c55687cdb75cd79f0f3f21a55b4f52b8b"
+            "sha256": "e104466595c055709da39b6381ef1121f2e1b73adbb254c6d0b9eb8d7ca02093"
           },
           {
             "bytes": 3486,
@@ -1837,9 +1962,9 @@
             "sha256": "5596bf7c9f2ae59b3ac190724b65dbc6c8811bdbc1926b5639cad46e6d10506e"
           },
           {
-            "bytes": 22417,
+            "bytes": 23633,
             "path": "tests/test_architecture_health.py",
-            "sha256": "bb250aa2794d382368eaf8bd769c1e9aac8e40aab664855e4a5f9aba42454b36"
+            "sha256": "e27ad94c97f87d28550b807dbee2d162a4f00382d6c1db7b243d318453693c08"
           },
           {
             "bytes": 5739,
@@ -1887,9 +2012,9 @@
             "sha256": "4162df7876dda1077dce0a9ea7b5e2e42307eeebfd1be2aea003954766fda836"
           },
           {
-            "bytes": 2067,
+            "bytes": 2184,
             "path": "tests/test_canonical_properties.py",
-            "sha256": "31792e8e22496543af91f1beb0c9ab607cf888e8717fcc613a1ec1093f14a219"
+            "sha256": "e287056a37c6799be6c40fd102eade54be8ac3fdec766db3af987c5bed2ec8c4"
           },
           {
             "bytes": 6833,
@@ -1922,9 +2047,9 @@
             "sha256": "8ba3f4fad54c25ced15a06774c2eac2c349fa824c60a1201982298208d9bdb7d"
           },
           {
-            "bytes": 1098,
+            "bytes": 1904,
             "path": "tests/test_cli_bootstrap.py",
-            "sha256": "6f8fef27372ca9516b270bac5c679ff1d0cc037788c01249f488fdd46e409da4"
+            "sha256": "b48d319af4edbf6969e168ecb3ce35fc280a8593acf1b72969b2c4e656ec0f3a"
           },
           {
             "bytes": 14463,
@@ -1937,9 +2062,9 @@
             "sha256": "8d03940d9dc3c9d8a884c00f033961c5cfbfde79be55b3db6ea91a1ec0541dde"
           },
           {
-            "bytes": 8880,
+            "bytes": 8941,
             "path": "tests/test_commercial_packaging.py",
-            "sha256": "5e932511dc878c9ceb7e9d31c4c76249594264ff8b02d0cec46a1412e57b8459"
+            "sha256": "51b4fba2026e639048cc649c90e2c8894138590f5a24c7fde9b1e89123b003f7"
           },
           {
             "bytes": 1287,
@@ -1982,9 +2107,9 @@
             "sha256": "c70f8a36d93f2a6d4c5654e6f7398af886e88b1bbc679a892da3ebf406093c42"
           },
           {
-            "bytes": 7269,
+            "bytes": 7386,
             "path": "tests/test_deep_audit.py",
-            "sha256": "564cf26ac9d5829b524536d6a1812b37a28b1c33a63b19e6b59e49a004d3f8dc"
+            "sha256": "85ddd41c3b29675948ed7803575c63a0ac5e6b3fa78347912d864718a12e3b94"
           },
           {
             "bytes": 8402,
@@ -1995,11 +2120,6 @@
             "bytes": 6592,
             "path": "tests/test_deep_audit_contract.py",
             "sha256": "8eed8bd0ba0491a492cc4d16ad3e78bebd4a6b731b34084b08388871574505b0"
-          },
-          {
-            "bytes": 389,
-            "path": "tests/test_deep_audit_io.py",
-            "sha256": "65b2b31056879660a54e3dd05f80b0ba872230f4a8bb4b264c25f861e14fe38d"
           },
           {
             "bytes": 4713,
@@ -2097,9 +2217,9 @@
             "sha256": "f4308e9a5edbcab411671e1fc2fbb992f7e5999e693a0b1317e4ceacd3d4fc58"
           },
           {
-            "bytes": 10350,
+            "bytes": 10333,
             "path": "tests/test_github_proof_review.py",
-            "sha256": "81c2108433d6fe659da8dd2d109b4ad424c6777faa2b60115efa42e1b12494a4"
+            "sha256": "beac42826cd5e4650ad9c8a9bc8012a497910f94e3bfcda4354d8c3a5b3fc620"
           },
           {
             "bytes": 4604,
@@ -2417,11 +2537,6 @@
             "sha256": "ad804e0bf4814e8f8237825f4c6cba2bb712ec5480fb9a034cbac54da718658f"
           },
           {
-            "bytes": 906,
-            "path": "tests/test_provenance_timeout.py",
-            "sha256": "06536d56a047d4f6b7d9214afdc2be3e35bcd03960a62e0451ef232586279fa7"
-          },
-          {
             "bytes": 7903,
             "path": "tests/test_provider_router.py",
             "sha256": "1c0571dede81b2fd27ae2f11e1f81d7efd891ee222c7b19915ef6d23d7ff4f17"
@@ -2432,9 +2547,9 @@
             "sha256": "f4a51f3ed8adf19cdfdf95f2601c9d5c3d08d5606a3015e8588f8fb0f45d306b"
           },
           {
-            "bytes": 37005,
+            "bytes": 37667,
             "path": "tests/test_publication_metadata.py",
-            "sha256": "2b26c09358610065cbeb822c77f4e17f0d9ed756f82841ad673398ed01e61fb5"
+            "sha256": "80f986224daf2cc918427d9fd812f1294b4f6c576c8c3ef1d418fc227d8625c3"
           },
           {
             "bytes": 1137,
@@ -2467,19 +2582,14 @@
             "sha256": "3a409c7b8fcdcb2a7d2b920429e7e78fbbac41bd72e127e4596e5171995a9e54"
           },
           {
-            "bytes": 13259,
+            "bytes": 14494,
             "path": "tests/test_release_integrity.py",
-            "sha256": "64c51cd854196895ccfd1320e2c4db84e02c973b7a80e1054b46f60b291c88b8"
+            "sha256": "3e0fd548fac43194b9e69fd9de75fcc14b1f60047f017b39573a2c0d08f31d23"
           },
           {
-            "bytes": 2638,
+            "bytes": 3704,
             "path": "tests/test_release_preflight_cli.py",
-            "sha256": "7c2fad1a107b1a380cbb9553ffe9a4f3ba6425c498cac1d0146fde02ad623526"
-          },
-          {
-            "bytes": 920,
-            "path": "tests/test_release_preflight_receipt.py",
-            "sha256": "f9765e6ad6451a1f0b378d85de816e20ebf264df6a2401e88bf81cc0393240f8"
+            "sha256": "274134ea76134d117bb317ebcf230f44be805b079748c1e345bdf6ed667587cf"
           },
           {
             "bytes": 12660,
@@ -2642,11 +2752,6 @@
             "sha256": "c48445203fa21fc50267af9e01edc154d43b6557f38c42def4c876e6785950a4"
           },
           {
-            "bytes": 597,
-            "path": "tests/test_support_sla.py",
-            "sha256": "a9749dde1b4e52dd0141a5bda9f7ce0f428c615b7b6123d9a12568a6f262f52c"
-          },
-          {
             "bytes": 9244,
             "path": "tests/test_target_compiler.py",
             "sha256": "474556721bb3fcab24d65d896ee71340d9a9812e5ac0c85a3409962cf59e10c7"
@@ -2693,44 +2798,45 @@
           }
         ],
         "state": "CLEAN"
-      },
-      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "stdout_sha256": "83ed888d19a4aa53e1114c3fc430a315aac0a7000c4dcadb857738293c557bce"
+      }
     }
   },
-  "generated_at": "2026-09-24T06:13:09+00:00",
+  "generated_at": "2026-09-24T15:51:10+00:00",
   "limitations": [
     "The static security scan is a bounded source-pattern scan, not a penetration test or runtime security assessment.",
-    "Runtime-audit engine tests validate the audit tooling contracts; they are not a runtime audit of Code Factory against a signed plan.",
-    "The configured review-audit tool cannot run without its human-reviewed .factory/review-audits.json input.",
-    "GitHub review protection is incomplete; a distinct eligible human reviewer must be added and required before publication.",
-    "This receipt records local and read-only settings evidence. It does not approve, merge, publish, deploy, sign, or certify the repository."
+    "Runtime-audit engine tests pass, but a signed-plan runtime audit of Code Factory itself remains NOT_RUN.",
+    "The review-audit all lane remains invalid because .factory/review-audits.json is absent; a human must define and review the policy scope.",
+    "Main-branch protection requires one approval and enforced admin rules. All five publishing environments require a reviewer and prevent self-review, but GitHub lists only the authenticated maintainer; no distinct independent reviewer was supplied.",
+    "The 89 repository version tags counted by architecture health predate the release policy effective time. No repository tags or published GitHub releases were created after that time in the audited history.",
+    "C901 reports 153 functions above Ruff's complexity threshold; C901 is not enabled in the repository's default Ruff selection and no findings were suppressed.",
+    "This receipt records local checks and read-only provider settings. It does not approve, merge, publish, deploy, sign, or certify the repository."
   ],
   "overall_state": "BLOCKED",
-  "receipt_sha256": "e9f782a6bb7d491ba6aee7ef1035bcc42dc412ddceca8f0bdce7f09ef5f0440f",
+  "receipt_sha256": "8a87a573a7588061659525e3ab89bce6e4bcad1e39bfa8fdfcabd8c7900b6a2c",
   "redactions": [
     "Absolute local checkout paths are replaced with <repository-root> in decoded CLI results.",
     "Raw CLI output hashes are computed before path redaction.",
-    "Test output is represented by its summary and hashes; workstation paths are omitted."
+    "The full test output is represented by its summary, source commit, and combined-output SHA-256."
   ],
   "repository": "https://github.com/zrk222/code-factory",
   "schema": "factory.code-factory-self-audit.v1",
-  "source_commit": "99a6271281a0007cd697447175749d3f60d615a3",
+  "source_commit": "1a6f6f063b7771fd507f58d915ac21ad966f7785",
   "summary": {
     "accepted_debt_waiver": null,
-    "architecture_blocker_codes": [
-      "E_ARCH_MARKDOWN_FILES_GROWTH",
-      "E_ARCH_PYTHON_FILES_GROWTH",
-      "E_ARCH_CLI_LINES_GROWTH"
-    ],
-    "architecture_health": "BLOCKED",
+    "architecture_blocker_codes": [],
+    "architecture_cli_lines": 4970,
+    "architecture_health": "HEALTHY",
+    "architecture_markdown_files": 656,
+    "architecture_python_files": 452,
     "complexity_findings_C901": 153,
-    "contract_and_engine_tests": "56 passed, 1 warning in 8.83s",
+    "contract_and_engine_tests": "1720 passed, 7 skipped in 281.49s (0:04:41)",
     "independent_review_protection": "INCOMPLETE",
-    "release_cadence_admission": false,
-    "release_cadence_reason": "15 version tags are inside the rolling 30-day budget of 4.",
+    "release_cadence_admission": true,
+    "release_cadence_reason": "No version tags have been created since 2026-09-21T15:01:54+00:00; the release train is eligible.",
     "release_history_predates_written_policy": true,
+    "release_integrity": "RELEASE_INTEGRITY_READ_ONLY",
     "review_audit_all_state": "invalid",
+    "ruff_default": "CLEAN",
     "runtime_audit_state": "NOT_RUN",
     "static_security_state": "CLEAN"
   },
