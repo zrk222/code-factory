@@ -33,6 +33,15 @@ def test_release_preflight_cli_writes_machine_receipt(
             "reason": "fixture cadence admitted",
         },
     )
+    monkeypatch.setattr(
+        candidate,
+        "evaluate_architecture_health",
+        lambda _root, *, strict=False: {
+            "decision": "HEALTHY",
+            "regressions": [],
+            "baseline_debt": [],
+        },
+    )
     contract = tmp_path / "contract.json"
     contract.write_text(
         json.dumps(

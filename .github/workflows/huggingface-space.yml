@@ -2,11 +2,6 @@ name: Publish Hugging Face Space
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - deploy/huggingface/**
-      - .github/workflows/huggingface-space.yml
 
 permissions:
   contents: read
@@ -14,6 +9,7 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment: huggingface
     steps:
       - name: Require Hugging Face token before candidate work
         shell: bash

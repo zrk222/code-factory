@@ -151,7 +151,7 @@ jobs:
       - name: Prepare source-bound release contract
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-          APPROVED_BY: ${{ github.actor }} (protected pypi deployment approval)
+          APPROVED_BY: ${{ github.actor }} (release workflow initiator; not independent approval)
         run: |
           set -euo pipefail
           python scripts/prepare_release_contract.py \
