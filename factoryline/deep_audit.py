@@ -510,7 +510,9 @@ def scan_deep_audit(
     )
     try:
         with tempfile.TemporaryDirectory(prefix="factory-source-") as temporary:
-            snapshot = Path(temporary) / "src"
+            # Canonicalize the trusted system temp parent (macOS /var is linked).
+            # inventory_candidate still rejects caller-supplied linked snapshots.
+            snapshot = Path(temporary).resolve(strict=True) / "src"
             snapshot.mkdir()
             inventory = inventory_candidate(root, snapshot)
             write_run_json(directory, "inventory.json", inventory)

@@ -559,10 +559,31 @@ def test_execution_rejects_parser_downgrade_and_missing_mutations(tmp_path):
         )
 
 
-def test_scan_missing_engine_is_incomplete_with_durable_progress(tmp_path, monkeypatch):
+@pytest.mark.parametrize("linked_temp", [False, True])
+def test_scan_missing_engine_is_incomplete_with_durable_progress(
+    tmp_path, monkeypatch, linked_temp
+):
     import factoryline.deep_audit as module
 
     root, manifest, pin, authorization, trust, plan, _, _ = execution_fixture(tmp_path)
+    if linked_temp:
+        from contextlib import contextmanager
+
+        target = tmp_path / "system-temp"
+        target.mkdir()
+        alias = tmp_path / "temp-alias"
+        try:
+            alias.symlink_to(target, target_is_directory=True)
+        except OSError:
+            pytest.skip("directory symlinks unavailable")
+        original = module.tempfile.TemporaryDirectory
+
+        @contextmanager
+        def temporary_directory(*args, **kwargs):
+            with original(*args, dir=alias, **kwargs) as directory:
+                yield directory
+
+        monkeypatch.setattr(module.tempfile, "TemporaryDirectory", temporary_directory)
 
     def unavailable():
         raise RuntimeAuditError("E_DOCKER_UNAVAILABLE", "fixture unavailable")
