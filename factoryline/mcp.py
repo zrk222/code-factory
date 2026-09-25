@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from collections import OrderedDict
 from copy import deepcopy
 from hashlib import sha256
+from functools import partial
 import base64
 import binascii
 import hmac
@@ -3296,22 +3297,496 @@ def serve_stdio(
     return 0
 
 
-def create_streamable_http_server(
-    root: Path | str,
-    *,
-    bearer_token: str | None = None,
-    bearer_validator: Callable[[str], bool] | None = None,
-    port: int = 8765,
-    allowed_origins: tuple[str, ...] = (),
-) -> HTTPServer:
-    """Create a loopback-only, authenticated, stateless MCP HTTP server.
+class _McpHttpHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
 
-    This intentionally implements request-scoped JSON responses only: no SSE,
-    subscription stream, session, OAuth authorization server, or remote bind is
-    advertised. Supply exactly one local bearer token or a bearer validator
-    backed by a trusted identity provider.
-    """
-    workspace = _workspace_root(root)
+    def __init__(
+        self,
+        *args,
+        workspace,
+        bearer_token,
+        bearer_validator,
+        allowed_origins,
+        **kwargs,
+    ):
+        self.workspace = workspace
+        self.bearer_token = bearer_token
+        self.bearer_validator = bearer_validator
+        self.allowed_origins = allowed_origins
+        super().__init__(*args, **kwargs)
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        """Keep transport logs disabled to avoid credential or payload disclosure."""
+        return
+
+    def _send_json(self, status: int, payload: object | None) -> None:
+        body = b"" if payload is None else _canonical(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Connection", "close")
+        if payload is not None:
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+        else:
+            self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if body:
+            self.wfile.write(body)
+
+    def _source_checks_pass(self) -> bool:
+        host_values = self.headers.get_all("Host", [])
+        origin_values = self.headers.get_all("Origin", [])
+        server_port = self.server.server_address[1]
+        allowed_hosts = {
+            f"127.0.0.1:{server_port}",
+            f"localhost:{server_port}",
+        }
+        host_valid = len(host_values) == 1 and host_values[0].lower() in allowed_hosts
+        origin_valid = len(origin_values) <= 1 and (
+            not origin_values or origin_values[0] in self.allowed_origins
+        )
+        if not host_valid or not origin_valid:
+            self._send_json(403, None)
+            return False
+        return True
+
+    def _transport_error(
+        self, status: int, request_id: object, code: int, message: str, marker: str
+    ) -> None:
+        self._send_json(status, _error(request_id, code, message, marker))
+
+    def _discard_chunked_body(self) -> bool:
+        """Drain a bounded, syntactically valid chunked body before rejection.
+
+        A rejected request with unread bytes can cause Windows TCP stacks to
+        reset the socket and hide the intended 400 response from the client.
+        Only the one unambiguous chunked framing is drained; malformed or
+        oversized framing is closed without attempting to reinterpret it.
+        """
+        max_body = _HTTP_MAX_BODY_BYTES
+        max_chunks = 256
+        max_trailers = 16_384
+        consumed = 0
+        self.connection.settimeout(2.0)
+        try:
+            for _ in range(max_chunks):
+                line = self.rfile.readline(8192)
+                if not line.endswith(b"\r\n") or len(line) > 8192:
+                    return False
+                size = self._chunk_size(line)
+                if size is None:
+                    return False
+                if size == 0:
+                    return self._discard_trailers(max_trailers)
+                if size > max_body - consumed:
+                    return False
+                chunk = self.rfile.read(size)
+                if len(chunk) != size or self.rfile.read(2) != b"\r\n":
+                    return False
+                consumed += size
+        except (OSError, TimeoutError):
+            return False
+        return False
+
+    def _discard_trailers(self, limit):
+        consumed = 0
+        while consumed <= limit:
+            trailer = self.rfile.readline(8192)
+            if not trailer.endswith(b"\r\n") or len(trailer) > 8192:
+                return False
+            consumed += len(trailer)
+            if trailer == b"\r\n":
+                return True
+        return False
+
+    @staticmethod
+    def _chunk_size(line):
+        token = line[:-2].split(b";", 1)[0]
+        if (
+            not token
+            or len(token) > 16
+            or any(char not in b"0123456789abcdefABCDEF" for char in token)
+        ):
+            return None
+        return int(token, 16)
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
+        """Reject GET requests after validating the local request origin."""
+        if not self._source_checks_pass():
+            return
+        self.send_response(405)
+        self.send_header("Allow", "POST")
+        self.send_header("Connection", "close")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+        """Validate bounded framing and identity before dispatching a read-only MCP request."""
+        if self.path != "/mcp":
+            self._send_json(404, None)
+            return
+        if not self._framing_valid():
+            return
+        content_lengths = self.headers.get_all("Content-Length", [])
+        if not self._headers_valid(content_lengths):
+            return
+        content_length = self._body_length()
+        if content_length is None:
+            return
+        parsed = self._read_rpc(content_length)
+        if parsed is None:
+            return
+        request, request_id, method, params = parsed
+        if not self._rpc_context_valid(params, request_id, method):
+            return
+        response = self._dispatch_http(request, params, method, request_id)
+        if response is None:
+            return
+        self._send_rpc_response(response)
+
+    def _send_rpc_response(self, response):
+        status = (
+            404
+            if isinstance(response, dict)
+            and isinstance(response.get("error"), dict)
+            and response["error"].get("code") == -32601
+            else 200
+        )
+        self._send_json(status, response)
+
+    def _rpc_context_valid(self, params, request_id, method):
+        # Preserve rejection order before any identity-provider I/O.
+        return (
+            self._metadata_matches(params, request_id)
+            and self._name_matches(method, params, request_id)
+            and self._authenticate_http()
+        )
+
+    def _framing_valid(self):
+        transfer_encodings = self.headers.get_all("Transfer-Encoding", [])
+        content_lengths = self.headers.get_all("Content-Length", [])
+        if transfer_encodings:
+            if (
+                len(transfer_encodings) == 1
+                and transfer_encodings[0].strip().lower() == "chunked"
+                and not content_lengths
+                and self._discard_chunked_body()
+            ):
+                self._transport_error(
+                    400,
+                    None,
+                    -32020,
+                    "Transfer-Encoding is not supported",
+                    "MCP_HTTP_HEADER_MISMATCH",
+                )
+            else:
+                # Ambiguous framing is not drained or parsed as a request.
+                self.close_connection = True
+            return False
+        return True
+
+    def _read_rpc(self, content_length):
+        try:
+            raw = self.rfile.read(content_length)
+        except (OSError, TimeoutError):
+            self.close_connection = True
+            return None
+        # Read only a bounded body before rejecting Host/Origin. Returning
+        # while request bytes remain unread can reset the response socket on
+        # Windows; validation still precedes JSON parsing and all dispatch.
+        if not self._source_checks_pass():
+            return None
+        try:
+            request = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._transport_error(
+                400, None, -32700, "invalid JSON request", "MCP_HTTP_JSON_INVALID"
+            )
+            return None
+        if not self._rpc_shape_valid(request):
+            return None
+        request_id = request["id"]
+        method = request["method"]
+        if self.headers.get("Mcp-Method") != method:
+            self._transport_error(
+                400,
+                request_id,
+                -32020,
+                "Mcp-Method does not match request body",
+                "MCP_HTTP_HEADER_MISMATCH",
+            )
+            return None
+        params = request.get("params", {})
+        if not isinstance(params, dict):
+            self._transport_error(
+                400,
+                request_id,
+                -32602,
+                "request params must be an object",
+                "MCP_HTTP_PARAMS_INVALID",
+            )
+            return None
+        return request, request_id, method, params
+
+    def _rpc_shape_valid(self, request):
+        request_id = request.get("id") if isinstance(request, dict) else None
+        if (
+            not isinstance(request, dict)
+            or request.get("jsonrpc") != "2.0"
+            or not isinstance(request.get("method"), str)
+            or "id" not in request
+        ):
+            self._transport_error(
+                400,
+                request_id,
+                -32600,
+                "a JSON-RPC request with an id is required",
+                "MCP_HTTP_REQUEST_INVALID",
+            )
+            return False
+        return True
+
+    def _dispatch_http(self, request, params, method, request_id):
+        clean_params = {key: value for key, value in params.items() if key != "_meta"}
+        clean_request = {**request, "params": clean_params}
+        if method == "server/discover":
+            result: dict[str, object] = {
+                "supportedVersions": [MCP_STREAMABLE_HTTP_VERSION],
+                "capabilities": {"tools": {}, "resources": {}},
+                "instructions": "Code Factory returns read-only local evidence. It does not run code, approve, publish, deploy, sign, message, or grant credentials.",
+                "ttlMs": 0,
+                "cacheScope": "private",
+                "resultType": "complete",
+                "_meta": {
+                    "io.modelcontextprotocol/serverInfo": {
+                        "name": MCP_SERVER_NAME,
+                        "version": __version__,
+                    }
+                },
+            }
+            response: object = _result(request_id, result)
+        else:
+            try:
+                response = dispatch(clean_request, self.workspace)
+            except Exception:
+                response = _error(
+                    request_id,
+                    -32603,
+                    "internal MCP handler error",
+                    "MCP_HTTP_INTERNAL_ERROR",
+                )
+            if response is None:
+                self._transport_error(
+                    400,
+                    request_id,
+                    -32600,
+                    "HTTP notifications are not supported by this adapter",
+                    "MCP_HTTP_NOTIFICATION_REJECTED",
+                )
+                return None
+            if "result" in response and isinstance(response["result"], dict):
+                modern_result = dict(response["result"])
+                modern_result.update(
+                    {
+                        "resultType": "complete",
+                        "ttlMs": 0,
+                        "cacheScope": "private",
+                        "_meta": {
+                            "io.modelcontextprotocol/serverInfo": {
+                                "name": MCP_SERVER_NAME,
+                                "version": __version__,
+                            }
+                        },
+                    }
+                )
+                response = {**response, "result": modern_result}
+        return response
+
+    def _authenticate_http(self):
+        authorization = self.headers.get("Authorization", "")
+        scheme, _, credential = authorization.partition(" ")
+        authenticated = False
+        if scheme.lower() == "bearer" and 1 <= len(credential) <= 16_384:
+            if self.bearer_validator is not None:
+                try:
+                    authenticated = self.bearer_validator(credential) is True
+                except McpError as exc:
+                    if exc.marker == "MCP_HTTP_AUTH_UNAVAILABLE":
+                        self._send_json(503, None)
+                        return False
+                except Exception:
+                    # Never expose identity-provider, token, or key details.
+                    self._send_json(503, None)
+                    return False
+            elif self.bearer_token is not None:
+                authenticated = hmac.compare_digest(credential, self.bearer_token)
+        if not authenticated:
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Bearer realm="code-factory-local"')
+            self.send_header("Connection", "close")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
+        return True
+
+    def _name_matches(self, method, params, request_id):
+        expected_name: object | None = None
+        if method == "tools/call":
+            expected_name = params.get("name")
+        elif method == "resources/read":
+            expected_name = params.get("uri")
+        if method in {"tools/call", "resources/read", "prompts/get"}:
+            if len(self.headers.get_all("Mcp-Name", [])) != 1:
+                self._transport_error(
+                    400,
+                    request_id,
+                    -32020,
+                    "Mcp-Name must occur exactly once",
+                    "MCP_HTTP_HEADER_MISMATCH",
+                )
+                return False
+            encoded_name = self.headers.get("Mcp-Name")
+            decoded_name = self._decode_name(encoded_name)
+            if not isinstance(expected_name, str) or decoded_name != expected_name:
+                self._transport_error(
+                    400,
+                    request_id,
+                    -32020,
+                    "Mcp-Name does not match request body",
+                    "MCP_HTTP_HEADER_MISMATCH",
+                )
+                return False
+        return True
+
+    def _metadata_matches(self, params, request_id):
+        meta = params.get("_meta")
+        if not isinstance(meta, dict) or not isinstance(
+            meta.get(_HTTP_META_CLIENT_CAPABILITIES), dict
+        ):
+            self._transport_error(
+                400,
+                request_id,
+                -32020,
+                "request metadata and clientCapabilities are required",
+                "MCP_HTTP_HEADER_MISMATCH",
+            )
+            return False
+        requested_version = meta.get(_HTTP_META_PROTOCOL_VERSION)
+        header_version = self.headers.get("MCP-Protocol-Version")
+        if not header_version or requested_version != header_version:
+            self._transport_error(
+                400,
+                request_id,
+                -32020,
+                "MCP-Protocol-Version does not match request metadata",
+                "MCP_HTTP_HEADER_MISMATCH",
+            )
+            return False
+        if header_version != MCP_STREAMABLE_HTTP_VERSION:
+            self._send_json(
+                400,
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32022,
+                        "message": "unsupported MCP protocol version",
+                        "data": {
+                            "supported": [MCP_STREAMABLE_HTTP_VERSION],
+                            "requested": header_version,
+                        },
+                    },
+                },
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _decode_name(value):
+        decoded: str | None = value
+        if (
+            isinstance(value, str)
+            and value.startswith("=?base64?")
+            and value.endswith("?=")
+        ):
+            try:
+                decoded = base64.b64decode(value[9:-2], validate=True).decode("utf-8")
+            except (binascii.Error, UnicodeDecodeError):
+                decoded = None
+        return decoded
+
+    def _headers_valid(self, content_lengths):
+        singleton_headers = (
+            "Authorization",
+            "Content-Type",
+            "MCP-Protocol-Version",
+            "Mcp-Method",
+        )
+        if any(len(self.headers.get_all(name, [])) != 1 for name in singleton_headers):
+            self._transport_error(
+                400,
+                None,
+                -32020,
+                "required transport headers must occur exactly once",
+                "MCP_HTTP_HEADER_MISMATCH",
+            )
+            return False
+        content_type = (
+            self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        )
+        if content_type != "application/json":
+            self._send_json(415, None)
+            return False
+        if len(content_lengths) != 1:
+            self._transport_error(
+                400,
+                None,
+                -32020,
+                "Content-Length must occur exactly once",
+                "MCP_HTTP_HEADER_MISMATCH",
+            )
+            return False
+        accept_header = ",".join(self.headers.get_all("Accept", []))
+        accept = {
+            value.strip().split(";", 1)[0].lower() for value in accept_header.split(",")
+        }
+        if not {"application/json", "text/event-stream"}.issubset(accept):
+            self._send_json(406, None)
+            return False
+        return True
+
+    def _body_length(self):
+        try:
+            content_length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self._transport_error(
+                400,
+                None,
+                -32020,
+                "invalid Content-Length",
+                "MCP_HTTP_HEADER_MISMATCH",
+            )
+            return None
+        if content_length < 1:
+            self._transport_error(
+                400, None, -32700, "request body is required", "MCP_HTTP_EMPTY_BODY"
+            )
+            return None
+        if content_length > _HTTP_MAX_BODY_BYTES:
+            self._transport_error(
+                413,
+                None,
+                -32600,
+                "request body exceeds the size limit",
+                "MCP_HTTP_BODY_TOO_LARGE",
+            )
+            return None
+        return content_length
+
+
+def _validate_http_options(bearer_token, bearer_validator, port, allowed_origins):
     if (bearer_token is None) == (bearer_validator is None):
         raise McpError(
             "configure exactly one bearer token or bearer validator",
@@ -3328,6 +3803,10 @@ def create_streamable_http_server(
         raise McpError(
             "bearer validator must be callable", "MCP_HTTP_AUTH_CONFIG_INVALID"
         )
+    _validate_http_address(port, allowed_origins)
+
+
+def _validate_http_address(port, allowed_origins):
     if not isinstance(port, int) or isinstance(port, bool) or not 0 <= port <= 65535:
         raise McpError("HTTP port must be between 0 and 65535", "MCP_HTTP_PORT_INVALID")
     if not all(isinstance(origin, str) and origin for origin in allowed_origins):
@@ -3335,422 +3814,33 @@ def create_streamable_http_server(
             "allowed origins must be non-empty strings", "MCP_HTTP_ORIGIN_INVALID"
         )
 
-    class Handler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.0"
 
-        def log_message(self, _format: str, *_args: object) -> None:
-            return
+def create_streamable_http_server(
+    root: Path | str,
+    *,
+    bearer_token: str | None = None,
+    bearer_validator: Callable[[str], bool] | None = None,
+    port: int = 8765,
+    allowed_origins: tuple[str, ...] = (),
+) -> HTTPServer:
+    """Create a loopback-only, authenticated, stateless MCP HTTP server.
 
-        def _send_json(self, status: int, payload: object | None) -> None:
-            body = b"" if payload is None else _canonical(payload).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Connection", "close")
-            if payload is not None:
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-            else:
-                self.send_header("Content-Length", "0")
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            if body:
-                self.wfile.write(body)
-
-        def _source_checks_pass(self) -> bool:
-            host_values = self.headers.get_all("Host", [])
-            origin_values = self.headers.get_all("Origin", [])
-            server_port = self.server.server_address[1]
-            allowed_hosts = {
-                f"127.0.0.1:{server_port}",
-                f"localhost:{server_port}",
-            }
-            host_valid = (
-                len(host_values) == 1 and host_values[0].lower() in allowed_hosts
-            )
-            origin_valid = len(origin_values) <= 1 and (
-                not origin_values or origin_values[0] in allowed_origins
-            )
-            if not host_valid or not origin_valid:
-                self._send_json(403, None)
-                return False
-            return True
-
-        def _transport_error(
-            self, status: int, request_id: object, code: int, message: str, marker: str
-        ) -> None:
-            self._send_json(status, _error(request_id, code, message, marker))
-
-        def _discard_chunked_body(self) -> bool:
-            """Drain a bounded, syntactically valid chunked body before rejection.
-
-            A rejected request with unread bytes can cause Windows TCP stacks to
-            reset the socket and hide the intended 400 response from the client.
-            Only the one unambiguous chunked framing is drained; malformed or
-            oversized framing is closed without attempting to reinterpret it.
-            """
-            max_body = _HTTP_MAX_BODY_BYTES
-            max_chunks = 256
-            max_trailers = 16_384
-            consumed = 0
-            self.connection.settimeout(2.0)
-            try:
-                for _ in range(max_chunks):
-                    line = self.rfile.readline(8192)
-                    if not line.endswith(b"\r\n") or len(line) > 8192:
-                        return False
-                    size_token = line[:-2].split(b";", 1)[0]
-                    if (
-                        not size_token
-                        or len(size_token) > 16
-                        or any(
-                            char not in b"0123456789abcdefABCDEF" for char in size_token
-                        )
-                    ):
-                        return False
-                    size = int(size_token, 16)
-                    if size == 0:
-                        trailer_bytes = 0
-                        while trailer_bytes <= max_trailers:
-                            trailer = self.rfile.readline(8192)
-                            if not trailer.endswith(b"\r\n") or len(trailer) > 8192:
-                                return False
-                            trailer_bytes += len(trailer)
-                            if trailer == b"\r\n":
-                                return True
-                        return False
-                    if size > max_body - consumed:
-                        return False
-                    chunk = self.rfile.read(size)
-                    if len(chunk) != size or self.rfile.read(2) != b"\r\n":
-                        return False
-                    consumed += size
-            except (OSError, TimeoutError):
-                return False
-            return False
-
-        def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
-            if not self._source_checks_pass():
-                return
-            self.send_response(405)
-            self.send_header("Allow", "POST")
-            self.send_header("Connection", "close")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
-            if self.path != "/mcp":
-                self._send_json(404, None)
-                return
-            transfer_encodings = self.headers.get_all("Transfer-Encoding", [])
-            content_lengths = self.headers.get_all("Content-Length", [])
-            if transfer_encodings:
-                if (
-                    len(transfer_encodings) == 1
-                    and transfer_encodings[0].strip().lower() == "chunked"
-                    and not content_lengths
-                    and self._discard_chunked_body()
-                ):
-                    self._transport_error(
-                        400,
-                        None,
-                        -32020,
-                        "Transfer-Encoding is not supported",
-                        "MCP_HTTP_HEADER_MISMATCH",
-                    )
-                else:
-                    # Ambiguous framing is not drained or parsed as a request.
-                    self.close_connection = True
-                return
-            singleton_headers = (
-                "Authorization",
-                "Content-Type",
-                "MCP-Protocol-Version",
-                "Mcp-Method",
-            )
-            if any(
-                len(self.headers.get_all(name, [])) != 1 for name in singleton_headers
-            ):
-                self._transport_error(
-                    400,
-                    None,
-                    -32020,
-                    "required transport headers must occur exactly once",
-                    "MCP_HTTP_HEADER_MISMATCH",
-                )
-                return
-            content_type = (
-                self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-            )
-            if content_type != "application/json":
-                self._send_json(415, None)
-                return
-            if len(content_lengths) != 1:
-                self._transport_error(
-                    400,
-                    None,
-                    -32020,
-                    "Content-Length must occur exactly once",
-                    "MCP_HTTP_HEADER_MISMATCH",
-                )
-                return
-            accept_header = ",".join(self.headers.get_all("Accept", []))
-            accept = {
-                value.strip().split(";", 1)[0].lower()
-                for value in accept_header.split(",")
-            }
-            if not {"application/json", "text/event-stream"}.issubset(accept):
-                self._send_json(406, None)
-                return
-            try:
-                content_length = int(self.headers.get("Content-Length", ""))
-            except ValueError:
-                self._transport_error(
-                    400,
-                    None,
-                    -32020,
-                    "invalid Content-Length",
-                    "MCP_HTTP_HEADER_MISMATCH",
-                )
-                return
-            if content_length < 1:
-                self._transport_error(
-                    400, None, -32700, "request body is required", "MCP_HTTP_EMPTY_BODY"
-                )
-                return
-            if content_length > _HTTP_MAX_BODY_BYTES:
-                self._transport_error(
-                    413,
-                    None,
-                    -32600,
-                    "request body exceeds the size limit",
-                    "MCP_HTTP_BODY_TOO_LARGE",
-                )
-                return
-            try:
-                raw = self.rfile.read(content_length)
-            except (OSError, TimeoutError):
-                self.close_connection = True
-                return
-            # Read only a bounded body before rejecting Host/Origin. Returning
-            # while request bytes remain unread can reset the response socket on
-            # Windows; validation still precedes JSON parsing and all dispatch.
-            if not self._source_checks_pass():
-                return
-            try:
-                request = json.loads(raw.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                self._transport_error(
-                    400, None, -32700, "invalid JSON request", "MCP_HTTP_JSON_INVALID"
-                )
-                return
-            request_id = request.get("id") if isinstance(request, dict) else None
-            if (
-                not isinstance(request, dict)
-                or request.get("jsonrpc") != "2.0"
-                or not isinstance(request.get("method"), str)
-                or "id" not in request
-            ):
-                self._transport_error(
-                    400,
-                    request_id,
-                    -32600,
-                    "a JSON-RPC request with an id is required",
-                    "MCP_HTTP_REQUEST_INVALID",
-                )
-                return
-            method = request["method"]
-            if self.headers.get("Mcp-Method") != method:
-                self._transport_error(
-                    400,
-                    request_id,
-                    -32020,
-                    "Mcp-Method does not match request body",
-                    "MCP_HTTP_HEADER_MISMATCH",
-                )
-                return
-            params = request.get("params", {})
-            if not isinstance(params, dict):
-                self._transport_error(
-                    400,
-                    request_id,
-                    -32602,
-                    "request params must be an object",
-                    "MCP_HTTP_PARAMS_INVALID",
-                )
-                return
-            meta = params.get("_meta")
-            if not isinstance(meta, dict) or not isinstance(
-                meta.get(_HTTP_META_CLIENT_CAPABILITIES), dict
-            ):
-                self._transport_error(
-                    400,
-                    request_id,
-                    -32020,
-                    "request metadata and clientCapabilities are required",
-                    "MCP_HTTP_HEADER_MISMATCH",
-                )
-                return
-            requested_version = meta.get(_HTTP_META_PROTOCOL_VERSION)
-            header_version = self.headers.get("MCP-Protocol-Version")
-            if not header_version or requested_version != header_version:
-                self._transport_error(
-                    400,
-                    request_id,
-                    -32020,
-                    "MCP-Protocol-Version does not match request metadata",
-                    "MCP_HTTP_HEADER_MISMATCH",
-                )
-                return
-            if header_version != MCP_STREAMABLE_HTTP_VERSION:
-                self._send_json(
-                    400,
-                    {
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "error": {
-                            "code": -32022,
-                            "message": "unsupported MCP protocol version",
-                            "data": {
-                                "supported": [MCP_STREAMABLE_HTTP_VERSION],
-                                "requested": header_version,
-                            },
-                        },
-                    },
-                )
-                return
-            expected_name: object | None = None
-            if method == "tools/call":
-                expected_name = params.get("name")
-            elif method == "resources/read":
-                expected_name = params.get("uri")
-            if method in {"tools/call", "resources/read", "prompts/get"}:
-                if len(self.headers.get_all("Mcp-Name", [])) != 1:
-                    self._transport_error(
-                        400,
-                        request_id,
-                        -32020,
-                        "Mcp-Name must occur exactly once",
-                        "MCP_HTTP_HEADER_MISMATCH",
-                    )
-                    return
-                encoded_name = self.headers.get("Mcp-Name")
-                decoded_name: str | None = encoded_name
-                if (
-                    isinstance(encoded_name, str)
-                    and encoded_name.startswith("=?base64?")
-                    and encoded_name.endswith("?=")
-                ):
-                    try:
-                        decoded_name = base64.b64decode(
-                            encoded_name[9:-2], validate=True
-                        ).decode("utf-8")
-                    except (binascii.Error, UnicodeDecodeError):
-                        decoded_name = None
-                if not isinstance(expected_name, str) or decoded_name != expected_name:
-                    self._transport_error(
-                        400,
-                        request_id,
-                        -32020,
-                        "Mcp-Name does not match request body",
-                        "MCP_HTTP_HEADER_MISMATCH",
-                    )
-                    return
-            # Authenticate only after consuming and validating the bounded body.
-            # This avoids Windows TCP resets from replying while request bytes
-            # remain unread, and prevents malformed frames triggering JWKS I/O.
-            authorization = self.headers.get("Authorization", "")
-            scheme, _, credential = authorization.partition(" ")
-            authenticated = False
-            if scheme.lower() == "bearer" and 1 <= len(credential) <= 16_384:
-                if bearer_validator is not None:
-                    try:
-                        authenticated = bearer_validator(credential) is True
-                    except McpError as exc:
-                        if exc.marker == "MCP_HTTP_AUTH_UNAVAILABLE":
-                            self._send_json(503, None)
-                            return
-                    except Exception:
-                        # Never expose identity-provider, token, or key details.
-                        self._send_json(503, None)
-                        return
-                elif bearer_token is not None:
-                    authenticated = hmac.compare_digest(credential, bearer_token)
-            if not authenticated:
-                self.send_response(401)
-                self.send_header(
-                    "WWW-Authenticate", 'Bearer realm="code-factory-local"'
-                )
-                self.send_header("Connection", "close")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-            clean_params = {
-                key: value for key, value in params.items() if key != "_meta"
-            }
-            clean_request = {**request, "params": clean_params}
-            if method == "server/discover":
-                result: dict[str, object] = {
-                    "supportedVersions": [MCP_STREAMABLE_HTTP_VERSION],
-                    "capabilities": {"tools": {}, "resources": {}},
-                    "instructions": "Code Factory returns read-only local evidence. It does not run code, approve, publish, deploy, sign, message, or grant credentials.",
-                    "ttlMs": 0,
-                    "cacheScope": "private",
-                    "resultType": "complete",
-                    "_meta": {
-                        "io.modelcontextprotocol/serverInfo": {
-                            "name": MCP_SERVER_NAME,
-                            "version": __version__,
-                        }
-                    },
-                }
-                response: object = _result(request_id, result)
-            else:
-                try:
-                    response = dispatch(clean_request, workspace)
-                except Exception:
-                    response = _error(
-                        request_id,
-                        -32603,
-                        "internal MCP handler error",
-                        "MCP_HTTP_INTERNAL_ERROR",
-                    )
-                if response is None:
-                    self._transport_error(
-                        400,
-                        request_id,
-                        -32600,
-                        "HTTP notifications are not supported by this adapter",
-                        "MCP_HTTP_NOTIFICATION_REJECTED",
-                    )
-                    return
-                if "result" in response and isinstance(response["result"], dict):
-                    modern_result = dict(response["result"])
-                    modern_result.update(
-                        {
-                            "resultType": "complete",
-                            "ttlMs": 0,
-                            "cacheScope": "private",
-                            "_meta": {
-                                "io.modelcontextprotocol/serverInfo": {
-                                    "name": MCP_SERVER_NAME,
-                                    "version": __version__,
-                                }
-                            },
-                        }
-                    )
-                    response = {**response, "result": modern_result}
-            status = (
-                404
-                if isinstance(response, dict)
-                and isinstance(response.get("error"), dict)
-                and response["error"].get("code") == -32601
-                else 200
-            )
-            self._send_json(status, response)
-
+    This intentionally implements request-scoped JSON responses only: no SSE,
+    subscription stream, session, OAuth authorization server, or remote bind is
+    advertised. Supply exactly one local bearer token or a bearer validator
+    backed by a trusted identity provider.
+    """
+    workspace = _workspace_root(root)
+    _validate_http_options(bearer_token, bearer_validator, port, allowed_origins)
     try:
-        return HTTPServer(("127.0.0.1", port), Handler)
+        handler = partial(
+            _McpHttpHandler,
+            workspace=workspace,
+            bearer_token=bearer_token,
+            bearer_validator=bearer_validator,
+            allowed_origins=allowed_origins,
+        )
+        return HTTPServer(("127.0.0.1", port), handler)
     except OSError as exc:
         raise McpError(
             f"could not bind local MCP HTTP server: {exc}", "MCP_HTTP_BIND_FAILED"

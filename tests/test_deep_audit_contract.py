@@ -891,3 +891,42 @@ def test_signed_golden_cannot_replace_positive_detection_semantics(tmp_path):
         normalize_execution_bundle(
             bundle, lane, inventory, "0" * 32, plan["obligations"]
         )
+
+
+def test_specialty_review_stages_do_not_hide_complexity():
+    import ast
+    import inspect
+    import textwrap
+    import factoryline.deep_audit_attestation as module
+
+    stages = (
+        "verify_execution_review",
+        "_review_candidate",
+        "_review_native_lanes",
+        "_review_dispositions",
+        "_review_finding",
+        "_review_provenance",
+        "_execution_document",
+        "_execution_freshness",
+        "_execution_signer",
+    )
+    for name in stages:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(getattr(module, name))))
+        complexity = 1
+        for node in ast.walk(tree):
+            if isinstance(
+                node,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.While,
+                    ast.ExceptHandler,
+                    ast.With,
+                    ast.Assert,
+                    ast.IfExp,
+                ),
+            ):
+                complexity += 1
+            elif isinstance(node, ast.BoolOp):
+                complexity += len(node.values) - 1
+        assert complexity <= 10, (name, complexity)

@@ -69,7 +69,20 @@ def _execution_document(
         schema=schema,
         trust_root_path=trust_root,
     )
-    signature = verified["signature"]
+    _execution_signer(verified["signature"], trust_value, identity, keyid)
+    if (
+        verified["payload"] != parsed
+        or _execution_bytes(path) != raw
+        or _execution_bytes(trust_root) != trust
+    ):
+        raise RuntimeAuditError(
+            "E_REVIEW_DRIFT", "signed inputs changed during verification"
+        )
+    _execution_freshness(parsed)
+    return parsed
+
+
+def _execution_signer(signature, trust_value, identity, keyid):
     if signature["identity"] != identity or signature["keyid"] != keyid:
         raise RuntimeAuditError(
             "E_REVIEW_IDENTITY", "signature is not from the pinned identity and key"
@@ -79,14 +92,9 @@ def _execution_document(
         raise RuntimeAuditError(
             "E_REVIEW_REVOKED", "signer is missing, ambiguous, or revoked"
         )
-    if (
-        verified["payload"] != parsed
-        or _execution_bytes(path) != raw
-        or _execution_bytes(trust_root) != trust
-    ):
-        raise RuntimeAuditError(
-            "E_REVIEW_DRIFT", "signed inputs changed during verification"
-        )
+
+
+def _execution_freshness(parsed):
     now = datetime.now(timezone.utc)
     issued, expires = (
         _instant(parsed.get("issued_at"), "issued_at"),
@@ -104,7 +112,6 @@ def _execution_document(
         raise RuntimeAuditError(
             "E_REVIEW_AUTHORITY", "audit evidence cannot grant release authority"
         )
-    return parsed
 
 
 def _execution_keys(plan: dict, trust_root: Path) -> None:
@@ -179,58 +186,103 @@ def verify_execution_authorization(
     return payload
 
 
-def verify_execution_review(
-    root: Path,
-    run_id: str,
-    attestation: Path,
-    invocation: Path,
-    trust_root: Path,
-    trust_root_sha256: str,
-) -> dict:
-    """Require separate specialty-review and coordinator signatures over exact evidence."""
-    directory = run_directory(root, run_id)
-    evidence = read_run_json(directory, "evidence.json")
-    plan = read_run_json(directory, "manifest.json")
-    inventory = read_run_json(directory, "inventory.json")
+def _review_dispositions(review, coordinator, inventory):
+    common = {
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "manifest_sha256",
+        "evidence_sha256",
+        "read_set_sha256",
+        "issued_at",
+        "expires_at",
+        "authority",
+        "provider",
+        "model",
+        "invocation_id",
+        "specialty",
+        "prompt_sha256",
+        "response_sha256",
+    }
+    if set(review) != common | {"decision", "findings", "coverage_gaps"}:
+        raise RuntimeAuditError(
+            "E_SPECIALTY_SCHEMA",
+            "review must include exact findings and coverage dispositions",
+        )
+    if set(coordinator) != common | {"review_payload_sha256", "read_only"}:
+        raise RuntimeAuditError("E_INVOCATION_SCHEMA", "unexpected invocation fields")
+    if review["decision"] not in {"ACCEPT", "FINDINGS", "INCOMPLETE"}:
+        raise RuntimeAuditError("E_SPECIALTY_SCHEMA", "unknown review decision")
+    if not isinstance(review["findings"], list) or len(review["findings"]) > 4096:
+        raise RuntimeAuditError(
+            "E_SPECIALTY_SCHEMA", "review findings must be a bounded list"
+        )
     if (
-        plan["trust_root_sha256"] != trust_root_sha256
-        or digest(plan) != evidence["manifest_content_sha256"]
+        not isinstance(review["coverage_gaps"], list)
+        or len(review["coverage_gaps"]) > 4096
     ):
         raise RuntimeAuditError(
-            "E_REVIEW_PLAN", "manifest or operator trust binding changed"
+            "E_SPECIALTY_SCHEMA", "review coverage gaps must be a bounded list"
         )
-    _execution_keys(plan, trust_root)
-    from .deep_audit import _scope_gaps
+    for gap in review["coverage_gaps"]:
+        require_str(gap, "coverage_gap", maximum=2048)
+    for finding in review["findings"]:
+        _review_finding(finding, inventory)
 
-    authorized = verify_execution_authorization(
-        plan,
-        evidence["manifest_sha256"],
-        directory / "authorization.json",
-        trust_root,
-        trust_root_sha256,
-    )
-    if digest(authorized) != evidence["authorization_sha256"]:
+
+def _review_finding(finding, inventory):
+    if not isinstance(finding, dict) or set(finding) != {
+        "id",
+        "severity",
+        "path",
+        "evidence",
+        "remediation",
+    }:
+        raise RuntimeAuditError("E_SPECIALTY_FINDING", "invalid specialty finding")
+    for field in ("id", "evidence", "remediation"):
+        require_str(finding[field], field, maximum=2048)
+    if finding["path"] not in {item["path"] for item in inventory["files"]} or finding[
+        "severity"
+    ] not in {"critical", "high", "medium", "low"}:
         raise RuntimeAuditError(
-            "E_REVIEW_AUTHORIZATION",
-            "execution authorization differs from the reviewed run",
+            "E_SPECIALTY_FINDING", "unbound specialty finding or severity"
         )
-    if _scope_gaps(plan, inventory):
-        raise RuntimeAuditError(
-            "E_REVIEW_COVERAGE", "source obligations are incomplete"
-        )
-    current = inventory_candidate(root)
-    if current["candidate_sha256"] != evidence["candidate_sha256"] or current["gaps"]:
-        raise RuntimeAuditError(
-            "E_REVIEW_CANDIDATE",
-            "current worktree differs from the complete reviewed candidate",
-        )
+
+
+def _review_provenance(review, coordinator, binding):
+    for payload in (review, coordinator):
+        if any(payload.get(key) != value for key, value in binding.items()):
+            raise RuntimeAuditError(
+                "E_REVIEW_BINDING",
+                "review belongs to different inputs or run; replay rejected",
+            )
+        for key in ("provider", "model", "invocation_id", "specialty"):
+            require_str(payload.get(key), key)
+        for key in ("prompt_sha256", "response_sha256"):
+            require_digest(payload.get(key), key)
+    for key in (
+        "provider",
+        "model",
+        "invocation_id",
+        "specialty",
+        "prompt_sha256",
+        "response_sha256",
+    ):
+        if review[key] != coordinator[key]:
+            raise RuntimeAuditError(
+                "E_REVIEW_INVOCATION", "review and independent invocation record differ"
+            )
     if (
-        inventory["candidate_sha256"] != evidence["candidate_sha256"]
-        or inventory["gaps"]
+        coordinator.get("review_payload_sha256") != digest(review)
+        or coordinator.get("read_only") is not True
     ):
         raise RuntimeAuditError(
-            "E_REVIEW_INVENTORY", "stored inventory is incomplete or different"
+            "E_REVIEW_PROVENANCE",
+            "trusted coordinator must bind a read-only specialty worker response",
         )
+
+
+def _review_native_lanes(plan, evidence, inventory, run_id, directory):
     from .deep_audit_sarif import normalize_execution_bundle
 
     lanes = {lane["id"]: lane for lane in plan["lanes"]}
@@ -275,6 +327,69 @@ def verify_execution_review(
                 "E_REVIEW_EXECUTION",
                 "execution facts do not establish successful bounded completion",
             )
+
+
+def _review_candidate(
+    root, plan, evidence, inventory, trust_root, trust_root_sha256, directory
+):
+    if (
+        plan["trust_root_sha256"] != trust_root_sha256
+        or digest(plan) != evidence["manifest_content_sha256"]
+    ):
+        raise RuntimeAuditError(
+            "E_REVIEW_PLAN", "manifest or operator trust binding changed"
+        )
+    _execution_keys(plan, trust_root)
+    from .deep_audit import _scope_gaps
+
+    authorized = verify_execution_authorization(
+        plan,
+        evidence["manifest_sha256"],
+        directory / "authorization.json",
+        trust_root,
+        trust_root_sha256,
+    )
+    if digest(authorized) != evidence["authorization_sha256"]:
+        raise RuntimeAuditError(
+            "E_REVIEW_AUTHORIZATION",
+            "execution authorization differs from the reviewed run",
+        )
+    if _scope_gaps(plan, inventory):
+        raise RuntimeAuditError(
+            "E_REVIEW_COVERAGE", "source obligations are incomplete"
+        )
+    current = inventory_candidate(root)
+    if current["candidate_sha256"] != evidence["candidate_sha256"] or current["gaps"]:
+        raise RuntimeAuditError(
+            "E_REVIEW_CANDIDATE",
+            "current worktree differs from the complete reviewed candidate",
+        )
+    if (
+        inventory["candidate_sha256"] != evidence["candidate_sha256"]
+        or inventory["gaps"]
+    ):
+        raise RuntimeAuditError(
+            "E_REVIEW_INVENTORY", "stored inventory is incomplete or different"
+        )
+
+
+def verify_execution_review(
+    root: Path,
+    run_id: str,
+    attestation: Path,
+    invocation: Path,
+    trust_root: Path,
+    trust_root_sha256: str,
+) -> dict:
+    """Require separate specialty-review and coordinator signatures over exact evidence."""
+    directory = run_directory(root, run_id)
+    evidence = read_run_json(directory, "evidence.json")
+    plan = read_run_json(directory, "manifest.json")
+    inventory = read_run_json(directory, "inventory.json")
+    _review_candidate(
+        root, plan, evidence, inventory, trust_root, trust_root_sha256, directory
+    )
+    _review_native_lanes(plan, evidence, inventory, run_id, directory)
     review = _execution_document(
         attestation,
         trust_root,
@@ -291,62 +406,7 @@ def verify_execution_review(
         plan["coordinator_keyid"],
         "factory.deep-review-invocation.v1",
     )
-    common = {
-        "schema",
-        "run_id",
-        "candidate_sha256",
-        "manifest_sha256",
-        "evidence_sha256",
-        "read_set_sha256",
-        "issued_at",
-        "expires_at",
-        "authority",
-        "provider",
-        "model",
-        "invocation_id",
-        "specialty",
-        "prompt_sha256",
-        "response_sha256",
-    }
-    if set(review) != common | {"decision", "findings", "coverage_gaps"}:
-        raise RuntimeAuditError(
-            "E_SPECIALTY_SCHEMA",
-            "review must include exact findings and coverage dispositions",
-        )
-    if set(coordinator) != common | {"review_payload_sha256", "read_only"}:
-        raise RuntimeAuditError("E_INVOCATION_SCHEMA", "unexpected invocation fields")
-    if review["decision"] not in {"ACCEPT", "FINDINGS", "INCOMPLETE"}:
-        raise RuntimeAuditError("E_SPECIALTY_SCHEMA", "unknown review decision")
-    if not isinstance(review["findings"], list) or len(review["findings"]) > 4096:
-        raise RuntimeAuditError(
-            "E_SPECIALTY_SCHEMA", "review findings must be a bounded list"
-        )
-    if (
-        not isinstance(review["coverage_gaps"], list)
-        or len(review["coverage_gaps"]) > 4096
-    ):
-        raise RuntimeAuditError(
-            "E_SPECIALTY_SCHEMA", "review coverage gaps must be a bounded list"
-        )
-    for gap in review["coverage_gaps"]:
-        require_str(gap, "coverage_gap", maximum=2048)
-    for finding in review["findings"]:
-        if not isinstance(finding, dict) or set(finding) != {
-            "id",
-            "severity",
-            "path",
-            "evidence",
-            "remediation",
-        }:
-            raise RuntimeAuditError("E_SPECIALTY_FINDING", "invalid specialty finding")
-        for field in ("id", "evidence", "remediation"):
-            require_str(finding[field], field, maximum=2048)
-        if finding["path"] not in {
-            item["path"] for item in inventory["files"]
-        } or finding["severity"] not in {"critical", "high", "medium", "low"}:
-            raise RuntimeAuditError(
-                "E_SPECIALTY_FINDING", "unbound specialty finding or severity"
-            )
+    _review_dispositions(review, coordinator, inventory)
     binding = {
         "run_id": run_id,
         "candidate_sha256": evidence["candidate_sha256"],
@@ -354,36 +414,7 @@ def verify_execution_review(
         "evidence_sha256": digest(evidence),
         "read_set_sha256": digest(inventory["files"]),
     }
-    for payload in (review, coordinator):
-        if any(payload.get(key) != value for key, value in binding.items()):
-            raise RuntimeAuditError(
-                "E_REVIEW_BINDING",
-                "review belongs to different inputs or run; replay rejected",
-            )
-        for key in ("provider", "model", "invocation_id", "specialty"):
-            require_str(payload.get(key), key)
-        for key in ("prompt_sha256", "response_sha256"):
-            require_digest(payload.get(key), key)
-    for key in (
-        "provider",
-        "model",
-        "invocation_id",
-        "specialty",
-        "prompt_sha256",
-        "response_sha256",
-    ):
-        if review[key] != coordinator[key]:
-            raise RuntimeAuditError(
-                "E_REVIEW_INVOCATION", "review and independent invocation record differ"
-            )
-    if (
-        coordinator.get("review_payload_sha256") != digest(review)
-        or coordinator.get("read_only") is not True
-    ):
-        raise RuntimeAuditError(
-            "E_REVIEW_PROVENANCE",
-            "trusted coordinator must bind a read-only specialty worker response",
-        )
+    _review_provenance(review, coordinator, binding)
     complete = (
         evidence.get("analysis_complete") is True
         and not evidence["gaps"]
