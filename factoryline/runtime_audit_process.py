@@ -98,6 +98,7 @@ def _drain_stream(
     stream: BinaryIO,
     overflow: threading.Event,
     streams: dict[str, tuple[str, int]],
+    capture: BinaryIO | None = None,
 ) -> None:
     """Hash one captured stream and retain only its digest and byte count."""
     digest, size = hashlib.sha256(), 0
@@ -105,8 +106,13 @@ def _drain_stream(
         while chunk := stream.read(65536):
             size += len(chunk)
             digest.update(chunk)
+            if capture is not None and size <= MAX_OUTPUT:
+                capture.write(chunk)
             if size > MAX_OUTPUT:
                 overflow.set()
+    except (OSError, ValueError):
+        # A failed evidence sink is an execution failure, not an empty clean log.
+        overflow.set()
     finally:
         streams[name] = (digest.hexdigest(), size)
         stream.close()
@@ -116,10 +122,19 @@ def _start_stream_readers(
     child: subprocess.Popen,
     overflow: threading.Event,
     streams: dict[str, tuple[str, int]],
+    capture: BinaryIO | None = None,
 ) -> list[threading.Thread]:
     threads = [
         threading.Thread(
-            target=_drain_stream, args=(name, stream, overflow, streams), daemon=True
+            target=_drain_stream,
+            args=(
+                name,
+                stream,
+                overflow,
+                streams,
+                capture if name == "stdout" else None,
+            ),
+            daemon=True,
         )
         for name, stream in (("stdout", child.stdout), ("stderr", child.stderr))
     ]
@@ -129,11 +144,17 @@ def _start_stream_readers(
 
 
 def _wait_for_exit_or_limit(
-    child: subprocess.Popen, timeout_seconds: int, overflow: threading.Event
+    child: subprocess.Popen,
+    timeout_seconds: int,
+    overflow: threading.Event,
+    cancelled: threading.Event | None = None,
 ) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while (
-        child.poll() is None and time.monotonic() < deadline and not overflow.is_set()
+        child.poll() is None
+        and time.monotonic() < deadline
+        and not overflow.is_set()
+        and not (cancelled is not None and cancelled.is_set())
     ):
         time.sleep(0.01)
     return child.poll() is None and time.monotonic() >= deadline
@@ -193,20 +214,42 @@ def _stream_facts(facts: dict, streams: dict[str, tuple[str, int]]) -> None:
 
 
 def run_bounded_command(
-    argv: list[str], cwd: Path, timeout_seconds: int, scratch: Path
+    argv: list[str],
+    cwd: Path,
+    timeout_seconds: int,
+    scratch: Path,
+    *,
+    stdout_path: Path | None = None,
+    cancelled: threading.Event | None = None,
 ) -> dict:
     """Hash streams without retaining logs; terminate on timeout/output overflow."""
     facts = _facts()
+    capture = stdout_path.open("xb") if stdout_path is not None else None
     try:
         child = _launch(argv, cwd, _environment(scratch))
     except OSError:
+        if capture is not None:
+            capture.close()
         return {**facts, "launch_error": True}
     overflow = threading.Event()
     streams: dict[str, tuple[str, int]] = {}
-    threads = _start_stream_readers(child, overflow, streams)
-    facts["timed_out"] = _wait_for_exit_or_limit(child, timeout_seconds, overflow)
-    facts["output_limit_exceeded"] = overflow.is_set()
-    cleanup_confirmed, streams_closed = _await_cleanup(child, threads)
+    threads = []
+    try:
+        threads = _start_stream_readers(child, overflow, streams, capture)
+        facts["timed_out"] = _wait_for_exit_or_limit(
+            child, timeout_seconds, overflow, cancelled
+        )
+        facts["output_limit_exceeded"] = overflow.is_set()
+        cleanup_confirmed, streams_closed = _await_cleanup(child, threads)
+    except BaseException:
+        _stop(child)
+        _await_cleanup(child, threads)
+        raise
+    finally:
+        if capture is not None:
+            capture.close()
+    if cancelled is not None:
+        facts["cancelled"] = cancelled.is_set()
     facts["cleanup_confirmed"] = _cleanup_is_confirmed(
         child, cleanup_confirmed, streams_closed
     )

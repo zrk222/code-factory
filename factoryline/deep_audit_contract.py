@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -246,3 +247,211 @@ def verify_deep_audit_plan(
         "canary_set_sha256": digest(canaries),
         "authority": "none",
     }
+
+
+EXECUTION_ENGINES = {
+    "codeql",
+    "semgrep",
+    "syft",
+    "osv",
+    "gitleaks",
+    "trivy",
+    "zap",
+    "atheris",
+    "jazzer",
+    "runtime",
+}
+EXECUTION_FAMILIES = {
+    "static",
+    "dependencies",
+    "secrets",
+    "configuration",
+    "runtime",
+    "fuzz",
+}
+ENGINE_FAMILIES = {
+    "codeql": "static",
+    "semgrep": "static",
+    "syft": "dependencies",
+    "osv": "dependencies",
+    "gitleaks": "secrets",
+    "trivy": "configuration",
+    "zap": "runtime",
+    "runtime": "runtime",
+    "atheris": "fuzz",
+    "jazzer": "fuzz",
+}
+
+
+def _execution_lane(lane: dict) -> None:
+    _keys(
+        lane,
+        "id engine family image argv report coverage challenge_report languages mode timeout_seconds memory_mib tool_version ruleset_sha256",
+    )
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", require_str(lane["id"], "lane.id")):
+        raise RuntimeAuditError("E_EXECUTION_LANE", "invalid lane identity")
+    if (
+        not isinstance(lane["engine"], str)
+        or ENGINE_FAMILIES.get(lane["engine"]) != lane["family"]
+    ):
+        raise RuntimeAuditError("E_EXECUTION_ENGINE", "unregistered engine or family")
+    image = require_str(lane["image"], "image", maximum=256)
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._/:-]*@sha256:[a-f0-9]{64}", image):
+        raise RuntimeAuditError(
+            "E_IMAGE_PIN", "container image must have an immutable SHA-256 pin"
+        )
+    argv = lane["argv"]
+    if not isinstance(argv, list) or not 1 <= len(argv) <= 128:
+        raise RuntimeAuditError("E_EXECUTION_ARGV", "expected bounded container argv")
+    for arg in argv:
+        text = require_str(arg, "argv", maximum=2048)
+        if any(ord(char) < 32 for char in text):
+            raise RuntimeAuditError("E_EXECUTION_ARGV", "control characters in argv")
+    for field in ("report", "coverage", "challenge_report"):
+        relative_path(lane[field])
+    if len({lane[field] for field in ("report", "coverage", "challenge_report")}) != 3:
+        raise RuntimeAuditError("E_EXECUTION_REPORT", "report paths must be distinct")
+    if not isinstance(lane["languages"], list) or not 1 <= len(lane["languages"]) <= 32:
+        raise RuntimeAuditError(
+            "E_EXECUTION_COVERAGE", "unique declared languages required"
+        )
+    for language in lane["languages"]:
+        require_str(language, "language", maximum=40)
+    _unique(lane["languages"])
+    require_str(lane["mode"], "mode", maximum=64)
+    if lane["family"] == "static" and lane["mode"] != "interprocedural-full":
+        raise RuntimeAuditError(
+            "E_ANALYSIS_MODE",
+            "full-depth static analysis requires interprocedural full scan",
+        )
+    if argv != [
+        "/opt/factory/bin/audit-adapter",
+        lane["engine"],
+        "--mode",
+        lane["mode"],
+    ]:
+        raise RuntimeAuditError(
+            "E_ADAPTER_TEMPLATE",
+            "only the versioned audit-adapter entrypoint is permitted",
+        )
+    require_str(lane["tool_version"], "tool_version", maximum=128)
+    require_digest(lane["ruleset_sha256"], "ruleset_sha256")
+    require_int(lane["timeout_seconds"], "timeout_seconds", minimum=1, maximum=3600)
+    require_int(lane["memory_mib"], "memory_mib", minimum=64, maximum=32768)
+
+
+def load_execution_manifest(path: Path, expected_sha256: str) -> dict:
+    """Validate the exact operator-selected execution plan; never discover it implicitly."""
+    raw = _read(Path(path))
+    if sha256_bytes(raw) != require_digest(expected_sha256, "manifest pin"):
+        raise RuntimeAuditError(
+            "E_EXECUTION_PIN", "manifest differs from the operator pin"
+        )
+    plan = strict_json(raw)
+    _keys(
+        plan,
+        "schema candidate_sha256 implementer_id implementer_keyid reviewer_identity reviewer_keyid coordinator_identity coordinator_keyid trust_root_sha256 lanes obligations",
+    )
+    if plan["schema"] != "factory.deep-execution.v1":
+        raise RuntimeAuditError("E_EXECUTION_SCHEMA", "unexpected execution schema")
+    for field in ("candidate_sha256", "trust_root_sha256"):
+        require_digest(plan[field], field)
+    for field in (
+        "implementer_id",
+        "implementer_keyid",
+        "reviewer_identity",
+        "reviewer_keyid",
+        "coordinator_identity",
+        "coordinator_keyid",
+    ):
+        require_str(plan[field], field, maximum=256)
+    if plan["implementer_id"] == plan["reviewer_identity"]:
+        raise RuntimeAuditError(
+            "E_REVIEWER_INDEPENDENCE", "reviewer identity must differ from implementer"
+        )
+    _unique(
+        [
+            plan[key]
+            for key in ("implementer_keyid", "reviewer_keyid", "coordinator_keyid")
+        ]
+    )
+    _unique(
+        [
+            plan[key]
+            for key in ("implementer_id", "reviewer_identity", "coordinator_identity")
+        ]
+    )
+    lanes = _items(plan["lanes"], 32)
+    for lane in lanes:
+        _execution_lane(lane)
+    _unique([lane["id"] for lane in lanes])
+    families = {lane["family"] for lane in lanes}
+    if families != EXECUTION_FAMILIES:
+        raise RuntimeAuditError(
+            "E_EXECUTION_SCOPE", "all six full-depth analysis families must be declared"
+        )
+    obligations = _items(plan["obligations"], 4096)
+    for obligation in obligations:
+        _keys(
+            obligation,
+            "id engine family detector_rule_id paths requirements remediation challenges",
+        )
+        require_str(obligation["id"], "obligation.id", maximum=128)
+        require_str(obligation["detector_rule_id"], "detector_rule_id", maximum=256)
+        if not any(
+            lane["engine"] == obligation["engine"]
+            and lane["family"] == obligation["family"]
+            for lane in lanes
+        ):
+            raise RuntimeAuditError(
+                "E_OBLIGATION_ENGINE", "obligation must bind a declared engine/family"
+            )
+        if obligation["family"] not in EXECUTION_FAMILIES:
+            raise RuntimeAuditError("E_OBLIGATION_FAMILY", "unknown obligation family")
+        for field in ("paths", "requirements"):
+            for path in _items(obligation[field], 50000):
+                relative_path(path)
+            _unique(obligation[field])
+        require_str(obligation["remediation"], "remediation", maximum=2048)
+        challenges = _items(obligation["challenges"], 3)
+        if any(not isinstance(item, dict) for item in challenges) or {
+            item.get("kind") for item in challenges
+        } != {"positive", "negative", "mutation"}:
+            raise RuntimeAuditError(
+                "E_CHALLENGE_SCOPE",
+                "positive, negative and mutation challenges required",
+            )
+        for challenge in challenges:
+            _keys(
+                challenge,
+                "kind fixture_path fixture_sha256 expected_report_sha256 expected_exit_code",
+            )
+            relative_path(challenge["fixture_path"])
+            require_digest(challenge["fixture_sha256"], "fixture_sha256")
+            require_digest(
+                challenge["expected_report_sha256"], "expected_report_sha256"
+            )
+            require_int(
+                challenge["expected_exit_code"],
+                "expected_exit_code",
+                minimum=0,
+                maximum=255,
+            )
+        positive = next(item for item in challenges if item["kind"] == "positive")
+        mutation = next(item for item in challenges if item["kind"] == "mutation")
+        negative = next(item for item in challenges if item["kind"] == "negative")
+        if (
+            positive["fixture_sha256"] != mutation["fixture_sha256"]
+            or positive["fixture_sha256"] == negative["fixture_sha256"]
+            or len({item["expected_report_sha256"] for item in challenges}) != 3
+        ):
+            raise RuntimeAuditError(
+                "E_HOLLOW_CHALLENGE",
+                "disabled-control mutation must produce different report evidence",
+            )
+    _unique([item["id"] for item in obligations])
+    if {item["family"] for item in obligations} != EXECUTION_FAMILIES:
+        raise RuntimeAuditError(
+            "E_OBLIGATION_SCOPE", "each analysis family requires explicit obligations"
+        )
+    return plan

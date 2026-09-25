@@ -2,6 +2,11 @@
 
 ## 0.46.9 - 2026-09-25 (release candidate; publication gated)
 
+- Add an explicit isolated deep-audit coordinator, signed execution contracts,
+  source accounting, durable progress, actionable repair queues and separately
+  attested specialty review. Native adapter provisioning and full-depth real
+  scanner validation remain incomplete; this is not security certification.
+
 - Add native Muse Code packages for automatic Code Factory/ForgeLine build
   review and three evidence-bounded Expertise business workflows. Provide a
   standalone Muse installation path for host builds without plugin commands.

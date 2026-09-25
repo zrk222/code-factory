@@ -19,6 +19,7 @@ def add_parser(sub: Any) -> None:
         help="evaluate signed analyzer evidence or read local repair guidance; never release approval",
     )
     deep_sub = deep.add_subparsers(required=True, dest="deep_cmd")
+    _add_execution_parsers(deep_sub)
     for action in ("evaluate", "status", "compare", "attestation"):
         command = deep_sub.add_parser(action)
         command.add_argument("--root", default=".")
@@ -181,6 +182,107 @@ def add_parser(sub: Any) -> None:
     fix.add_argument("--json", action="store_true")
 
 
+def _add_execution_parsers(sub: Any) -> None:
+    for action in ("inventory", "scan", "progress", "cancel", "review", "repairs"):
+        parser = sub.add_parser(
+            action, help=f"{action} explicit isolated deep-audit execution"
+        )
+        parser.add_argument("--root", default=".")
+        parser.add_argument("--json", action="store_true")
+        if action in {"progress", "cancel", "review", "repairs"}:
+            parser.add_argument("--run-id", required=True)
+        if action == "repairs":
+            parser.add_argument("--before-run")
+        if action == "scan":
+            parser.add_argument("--manifest", required=True)
+            parser.add_argument("--manifest-sha256", required=True)
+            parser.add_argument("--authorization", required=True)
+            parser.add_argument("--resume")
+            parser.add_argument(
+                "--events",
+                action="store_true",
+                help="emit NDJSON progress and final result",
+            )
+        if action in {"scan", "review"}:
+            parser.add_argument("--trust-root", required=True)
+            parser.add_argument("--trust-root-sha256", required=True)
+        if action == "review":
+            parser.add_argument("--attestation", required=True)
+            parser.add_argument("--invocation", required=True)
+
+
+def _run_execution(args: Any) -> int:
+    from .deep_audit import (
+        cancel_deep_run,
+        deep_run_status,
+        execution_repairs,
+        scan_deep_audit,
+    )
+    from .deep_audit_attestation import verify_execution_review
+    from .deep_audit_io import inventory_candidate
+
+    root = Path(args.root).resolve()
+    try:
+        if args.deep_cmd == "inventory":
+            result = inventory_candidate(root)
+        elif args.deep_cmd == "scan":
+
+            def event(value: dict) -> None:
+                print(json.dumps(value, sort_keys=True), flush=True)
+
+            result = scan_deep_audit(
+                root,
+                Path(args.manifest),
+                args.manifest_sha256,
+                authorization=Path(args.authorization),
+                trust_root=Path(args.trust_root),
+                trust_root_sha256=args.trust_root_sha256,
+                resume=args.resume,
+                emit=event if args.events else None,
+            )
+            if args.events:
+                event({"kind": "final_result", "result": result})
+                return 1
+        elif args.deep_cmd == "progress":
+            result = deep_run_status(root, args.run_id)
+        elif args.deep_cmd == "cancel":
+            result = cancel_deep_run(root, args.run_id)
+        elif args.deep_cmd == "repairs":
+            result = execution_repairs(root, args.run_id, before_run=args.before_run)
+        else:
+            result = verify_execution_review(
+                root,
+                args.run_id,
+                Path(args.attestation),
+                Path(args.invocation),
+                Path(args.trust_root),
+                args.trust_root_sha256,
+            )
+        return _emit(
+            result,
+            0
+            if result["state"]
+            in {
+                "COMPLETE",
+                "READY_FOR_HUMAN_REVIEW",
+                "CANCELLATION_REQUESTED",
+                "ALREADY_STOPPED",
+            }
+            else 1,
+        )
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return _emit(
+            {
+                "state": "INCOMPLETE",
+                "code": getattr(exc, "code", "E_DEEP_EXECUTION"),
+                "message": str(exc),
+                "authority": "none",
+                "release_approval": False,
+            },
+            2,
+        )
+
+
 def _emit(result: dict[str, Any], code: int) -> int:
     print(
         json.dumps(result, indent=2, sort_keys=True),
@@ -190,6 +292,15 @@ def _emit(result: dict[str, Any], code: int) -> int:
 
 
 def _run_deep(args: Any) -> int:
+    if args.deep_cmd in {
+        "inventory",
+        "scan",
+        "progress",
+        "cancel",
+        "review",
+        "repairs",
+    }:
+        return _run_execution(args)
     from .deep_audit import deep_audit_status, execute_deep_audit
     from .deep_audit_attestation import (
         DeepAuditAttestationError,

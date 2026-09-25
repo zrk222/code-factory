@@ -816,8 +816,9 @@ def _tool_definitions() -> list[dict[str, object]]:
         },
         {
             "name": "factory.deep_audit_status",
-            "description": "Read local deep-audit blockers and repair guidance. Self-hash only, not signer authentication or freshness. Never executes, repairs or approves.",
-            "inputSchema": no_args,
+            "description": "Read local deep-audit blockers and repair guidance; optional run_id reads isolated-run progress and repairs. Self-hash only, not signer authentication or freshness. Never executes, repairs or approves.",
+            "inputSchema": {"type": "object", "properties": {
+                "run_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"}}, "additionalProperties": False},
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
@@ -2382,8 +2383,18 @@ def _intake_parameters_status(root: Path, arguments: object) -> dict[str, object
 
 def _deep_audit_status(root: Path, arguments: object) -> dict[str, object]:
     """Read local deep audit findings without execution or approval authority."""
-    if arguments != {}:
-        raise McpError("factory.deep_audit_status accepts no arguments")
+    if not isinstance(arguments, dict) or set(arguments) - {"run_id"}:
+        raise McpError("factory.deep_audit_status accepts only optional run_id")
+    if "run_id" in arguments:
+        from .deep_audit import deep_run_status, execution_repairs
+        try:
+            run_id = arguments["run_id"]
+            if not isinstance(run_id, str):
+                raise ValueError("run_id must be a string")
+            return {"marker": "DEEP_AUDIT_MCP_READ_ONLY", "authority": "none",
+                    "status": deep_run_status(root, run_id), "repairs": execution_repairs(root, run_id)}
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise McpError("Cannot read bound deep-audit run: " + str(exc)) from exc
     return {
         "marker": "DEEP_AUDIT_MCP_READ_ONLY",
         "action_summary": "Read deep-audit blockers, consequences and repair guidance; no action ran.",

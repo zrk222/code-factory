@@ -614,7 +614,7 @@ export function buildAudit(event, dependencies = {}) {
   reports.push(compactForge(forgeResult));
   reports.push(
     'Full-depth penetration: INCOMPLETE; this hook does not execute complete cross-language/interprocedural SAST, resolved dependency and artifact scans, configuration/image analysis, fuzzing, authorized runtime/DAST, or candidate-bound specialty review. The available checks below are bounded evidence only.',
-    'Full-depth resolution: account for every executable file and runtime entry point, close each language/tool coverage gap, run the candidate-bound lanes in docs/DEEP_AUDIT_DECISIONS.md, and submit their signed reports to `factory deep-audit evaluate --plan <signed-plan.json> --trust-root <trust-root.json> --trust-root-sha256 <sha256> --root .`; do not call this lane complete until required inventory accounting is 100% and all required evidence is present.',
+    'Full-depth resolution: account for every executable file and runtime entry point, close each language/tool coverage gap, run the candidate-bound lanes in docs/DEEP_AUDIT_DECISIONS.md, and use the explicit signed `factory deep-audit scan` runner, `progress --run-id <id>`, and `repairs --run-id <id>` to retain actionable evidence. A separate signed `review --run-id <id>` verifies specialty-review provenance; do not call this lane complete until required inventory accounting is 100% and all required evidence is present.',
   );
 
   const discovery = readPrdAndSpecSources(root, gitRunner);

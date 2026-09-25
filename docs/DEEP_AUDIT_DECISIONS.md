@@ -484,3 +484,123 @@ change. Each slice must include a reproduced blind spot, a failing challenge,
 the narrow repair, regression tests, and an independently inspectable receipt.
 Until Stages A–F pass for a particular candidate and target, describe the
 output as a limited audit, not a penetration test or certification.
+
+## Isolated execution interface (0.46.9)
+
+The repository now implements the execution coordinator and strict evidence
+consumer described below. This is **not a completed enterprise scanner product**:
+validated native adapter images, real multilingual benchmark results, live
+runtime/fuzz coverage and provider marketplace approval remain unproven. The
+regression suite uses clearly identified synthetic worker output to test the
+coordinator. It must not be cited as a penetration-test receipt.
+
+### Operator sequence
+
+1. Run `factory deep-audit inventory --root <repo> --json`. Every tracked and
+   nonignored untracked file contributes bytes, mode, path and language to the
+   candidate hash. Deleted, linked, unclassified and ignored product inputs are
+   explicit gaps. Move caches outside the audited checkout; do not hide product
+   files to obtain a clean inventory. An empty repository is incomplete.
+2. Prepare an exact `factory.deep-execution.v1` manifest outside the product
+   checkout. It declares distinct implementer/reviewer/coordinator identities and
+   signing keys; a pinned local trust root; all six analysis families; immutable
+   adapter images; exact tool versions and ruleset hashes; source/requirement
+   obligations; positive, negative and disabled-control mutation fixtures. Each
+   fixture and expected report has a SHA-256 binding and expected process exit.
+   The trust root must explicitly assign each key its role. Generating three
+   local keys alone does not establish organizational independence.
+3. Have the trusted coordinator sign a fresh
+   `factory.deep-execution-authorization.v1` DSSE payload binding the raw manifest
+   hash, canonical manifest hash, candidate hash and exact adapter image map.
+   Execution documents expire within one hour. All manifest and review inputs
+   are explicit operator choices; repository text cannot authorize execution.
+4. Provision independently reviewed adapter images and start a **local Linux**
+   Docker engine. Images are never automatically pulled. Each image must expose
+   `/opt/factory/bin/audit-adapter <engine> --mode <mode>` and contain the approved
+   toolchain/rules/offline vulnerability databases. Engine registration does not
+   mean an adapter image is supplied or validated by this release.
+5. Run the explicit command (replace all placeholders with operator pins):
+
+   ```text
+   factory deep-audit scan --root <repo> --manifest <manifest.json> --manifest-sha256 <sha256> --authorization <authorization.dsse.json> --trust-root <trust.json> --trust-root-sha256 <sha256> --events
+   ```
+
+   The runner validates authorization before capture and before every lane. It
+   snapshots source outside the repository, rechecks hashes, and executes only
+   non-root containers with no network, a read-only root and source mount,
+   dropped capabilities, resource limits, bounded output and verified cleanup.
+   Runtime services and attack harnesses must run **inside that isolated image**;
+   arbitrary remote targets and host command fallback are unavailable. Docker
+   isolation is not a proof against a hostile host/kernel or same-user tampering.
+6. Consume NDJSON events during execution, or read
+   `factory deep-audit progress --root <repo> --run-id <id>` and
+   `factory deep-audit repairs --root <repo> --run-id <id>` afterward. Findings
+   include severity, source hash/path/line, trace where available, repair guidance,
+   regression expectations and rerun arguments. Gaps become actionable coverage
+   tasks. `cancel` requests bounded worker termination. `scan --resume <id>` starts
+   a fresh run of the identical manifest/candidate; it reuses **no** scanner proof.
+7. A separate specialty AI reviewer inspects exact source and scanner evidence.
+   `factory.deep-specialty-review.v1` includes decision, findings, coverage gaps,
+   source/read-set hashes, evidence hash and provider/model/prompt/response
+   identifiers. A distinct trusted coordinator signs
+   `factory.deep-review-invocation.v1` binding that read-only review invocation.
+   Run `factory deep-audit review --root <repo> --run-id <id> --attestation
+   <review.dsse.json> --invocation <invocation.dsse.json> --trust-root <trust.json>
+   --trust-root-sha256 <sha256>`.
+
+### Adapter evidence contract
+
+The runner mounts `/factory-contract.json` read-only and sets `FACTORY_CONTRACT`,
+`FACTORY_RUN_ID` and `FACTORY_CANDIDATE_SHA256`. The contract includes the exact lane,
+manifest pin, captured inventory and approved obligations. stdout must contain a
+single `factory.deep-worker.v1` JSON object with matching run/candidate IDs and
+exactly three named artifacts: native report, `factory.deep-coverage.v1`, and
+`factory.deep-challenges.v1`. Diagnostic output belongs on stderr; it is hashed,
+not printed. Native bundles are retained locally as potentially sensitive evidence
+under ignored `.factory/deep-runs/<id>`; do not commit or upload that directory.
+
+Coverage must bind exact path hashes, report digest, tool/ruleset versions,
+invocation digest, obligations, completion and absence of fallback/errors.
+Challenge observations must include actual report objects, report and fixture
+hashes and exit codes matching the coordinator-approved goldens. A `passed: true`
+boolean is insufficient. Goldens are policy-controlled expectations, not proof
+that a scanner was executed: native adapter correctness and coordinator trust
+still require independent validation. SARIF partial-scan warnings are rejected.
+Empty/error-only dependency reports cannot imply a clean resolved dependency scan.
+Unsupported native output remains incomplete until a reviewed parser supports it.
+
+### Result and integration boundaries
+
+- Scan completion remains `INCOMPLETE` pending specialty review, even if all
+  worker bundles are structurally accepted.
+- Review re-normalizes native bundles, verifies signatures/current candidate,
+  reconciles reviewer findings and gaps, and can yield `BLOCKED`, `INCOMPLETE` or
+  `READY_FOR_HUMAN_REVIEW`. It reports `COORDINATOR_ATTESTED`, without claiming a
+  signature from a model provider. High/critical findings block an ACCEPT response.
+- Every outcome retains `authority: none` and `release_approval: false`.
+- Event-chain checks detect local corruption; self-hashes are not authentication.
+  MCP `factory.deep_audit_status` accepts an optional `run_id` to expose progress
+  and repairs read-only. Its no-argument behavior is unchanged. MCP does not start
+  scanners or sign reviewer evidence.
+- Muse keeps `Full-depth penetration: incomplete`; hook inventory/AST passes
+  cannot promote it. The hook points to these explicit execution and review
+  commands. ForgeLine inventory remains separately reported.
+- Repair comparison lists introduced, remaining and disappeared findings. A
+  disappeared finding stays pending verification; suppression or a missing
+  analyzer never closes a repair.
+
+Remaining production acceptance: ship and independently validate native adapter
+images for each supported language/framework, prove extractor/build/runtime
+accounting on real positive/negative/mutated targets, validate fresh offline
+vulnerability feeds and tool licenses, run cross-platform host checks and the
+enterprise benchmark corpus, and obtain a genuine specialty-review invocation
+receipt from the separately trusted coordinator. This release does not certify
+that arbitrary code is defect-free or supply an organizational security approval.
+
+Native dependency accounting reconciles every declared input with OSV results
+and Syft component locations. Obligations bind an engine and detector rule.
+Positive challenge reports must contain the native designated detection; negative
+fixtures must differ and not detect it. A disabled-detector mutation uses the
+positive fixture and must lose that detection. Runtime/fuzz schemas require
+candidate-bound harnesses, positive engine metrics and exact line/branch accounting.
+These contracts still require validation with real native adapter images.
