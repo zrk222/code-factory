@@ -894,3 +894,35 @@ def test_extended_assurance_cli_emits_receipt_v2(tmp_path) -> None:
     payload = json.loads(run.stdout)
     assert payload["schema"] == "factory.receipt.v2"
     assert payload["ok"] is False
+
+
+def test_agent_card_private_stages_respect_complexity_limit():
+    import ast
+    import inspect
+    import textwrap
+    import factoryline.agentic_control as module
+
+    for name, value in vars(module).items():
+        if not (
+            name.startswith("_a2a_") or name == "audit_a2a_agent_card"
+        ) or not callable(value):
+            continue
+        tree = ast.parse(textwrap.dedent(inspect.getsource(value)))
+        count = 1
+        for node in ast.walk(tree):
+            if isinstance(
+                node,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.While,
+                    ast.ExceptHandler,
+                    ast.With,
+                    ast.Assert,
+                    ast.IfExp,
+                ),
+            ):
+                count += 1
+            elif isinstance(node, ast.BoolOp):
+                count += len(node.values) - 1
+        assert count <= 10, (name, count)

@@ -99,28 +99,7 @@ class AgenticControlError(ValueError):
         self.message = message
 
 
-def audit_a2a_agent_card(card: object) -> dict[str, Any]:
-    """Validate an imported A2A v0.3 AgentCard declaration without contacting it.
-
-    This is a structural and self-consistency check only. It does not prove the
-    publisher's identity, reachability, advertised behavior, or authorization.
-    """
-    if not isinstance(card, dict):
-        raise AgenticControlError(
-            "E_A2A_CARD_INPUT", "Agent Card must be a JSON object"
-        )
-    try:
-        card_digest = hashlib.sha256(_canonical(card)).hexdigest()
-    except (TypeError, ValueError, UnicodeEncodeError) as exc:
-        raise AgenticControlError(
-            "E_A2A_CARD_INPUT", "Agent Card must be JSON serializable"
-        ) from exc
-
-    findings: list[dict[str, str]] = []
-
-    def reject(code: str, message: str) -> None:
-        findings.append({"code": code, "message": message})
-
+def _a2a_required_text(card, reject):
     required_text = (
         "protocolVersion",
         "name",
@@ -132,6 +111,19 @@ def audit_a2a_agent_card(card: object) -> dict[str, Any]:
         if not isinstance(card.get(key), str) or not card[key].strip():
             reject("E_A2A_CARD_REQUIRED", f"{key} must be a non-empty string")
 
+
+def _a2a_url_allowed(parsed):
+    secure_transport = parsed.scheme == "https" or (
+        parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+    )
+    return (
+        secure_transport
+        and bool(parsed.hostname)
+        and not any((parsed.username, parsed.password, parsed.fragment))
+    )
+
+
+def _a2a_endpoint(card, reject):
     endpoint = card.get("url")
     endpoint_host = None
     if not isinstance(endpoint, str) or not endpoint.strip():
@@ -140,17 +132,7 @@ def audit_a2a_agent_card(card: object) -> dict[str, Any]:
         try:
             parsed = urlsplit(endpoint)
             endpoint_host = parsed.hostname
-            local_hosts = {"localhost", "127.0.0.1", "::1"}
-            safe_scheme = parsed.scheme == "https" or (
-                parsed.scheme == "http" and parsed.hostname in local_hosts
-            )
-            if (
-                not safe_scheme
-                or not parsed.hostname
-                or parsed.username
-                or parsed.password
-                or parsed.fragment
-            ):
+            if not _a2a_url_allowed(parsed):
                 reject(
                     "E_A2A_CARD_ENDPOINT",
                     "url must use HTTPS (or HTTP on loopback) without userinfo or a fragment",
@@ -159,6 +141,62 @@ def audit_a2a_agent_card(card: object) -> dict[str, Any]:
         except ValueError:
             reject("E_A2A_CARD_ENDPOINT", "url is not a valid endpoint URL")
 
+    return endpoint, endpoint_host
+
+
+def _a2a_interface(interface, index, known_transports, reject):
+    if not isinstance(interface, dict):
+        reject(
+            "E_A2A_CARD_INTERFACES",
+            f"additionalInterfaces[{index}] must be an object",
+        )
+        return None
+    interface_url, interface_transport = (
+        interface.get("url"),
+        interface.get("transport"),
+    )
+    if (
+        not isinstance(interface_url, str)
+        or not interface_url.strip()
+        or not isinstance(interface_transport, str)
+        or not interface_transport.strip()
+    ):
+        reject(
+            "E_A2A_CARD_INTERFACES",
+            f"additionalInterfaces[{index}] requires url and transport",
+        )
+        return None
+    if interface_transport not in known_transports:
+        reject(
+            "E_A2A_CARD_TRANSPORT",
+            f"additionalInterfaces[{index}] uses an unsupported transport",
+        )
+    try:
+        parsed_interface = urlsplit(interface_url)
+        if not _a2a_url_allowed(parsed_interface):
+            reject(
+                "E_A2A_CARD_ENDPOINT",
+                f"additionalInterfaces[{index}].url must use HTTPS (or HTTP on loopback) without userinfo or a fragment",
+            )
+        _ = parsed_interface.port
+    except ValueError:
+        reject(
+            "E_A2A_CARD_ENDPOINT",
+            f"additionalInterfaces[{index}].url is not a valid endpoint URL",
+        )
+    return interface_url, interface_transport
+
+
+def _a2a_transport_consistency(endpoint, transport, seen_interfaces, reject):
+    if isinstance(endpoint, str) and isinstance(transport, str):
+        if endpoint in seen_interfaces and seen_interfaces[endpoint] != transport:
+            reject(
+                "E_A2A_CARD_TRANSPORT_CONFLICT",
+                "url and preferredTransport conflict with additionalInterfaces",
+            )
+
+
+def _a2a_transports(card, endpoint, reject):
     transport = card.get("preferredTransport")
     known_transports = {"JSONRPC", "GRPC", "HTTP+JSON"}
     if isinstance(transport, str) and transport not in known_transports:
@@ -176,59 +214,10 @@ def audit_a2a_agent_card(card: object) -> dict[str, Any]:
         interfaces = []
     seen_interfaces: dict[str, str] = {}
     for index, interface in enumerate(interfaces):
-        if not isinstance(interface, dict):
-            reject(
-                "E_A2A_CARD_INTERFACES",
-                f"additionalInterfaces[{index}] must be an object",
-            )
+        validated = _a2a_interface(interface, index, known_transports, reject)
+        if validated is None:
             continue
-        interface_url, interface_transport = (
-            interface.get("url"),
-            interface.get("transport"),
-        )
-        if (
-            not isinstance(interface_url, str)
-            or not interface_url.strip()
-            or not isinstance(interface_transport, str)
-            or not interface_transport.strip()
-        ):
-            reject(
-                "E_A2A_CARD_INTERFACES",
-                f"additionalInterfaces[{index}] requires url and transport",
-            )
-            continue
-        if interface_transport not in known_transports:
-            reject(
-                "E_A2A_CARD_TRANSPORT",
-                f"additionalInterfaces[{index}] uses an unsupported transport",
-            )
-        try:
-            parsed_interface = urlsplit(interface_url)
-            interface_host = parsed_interface.hostname
-            local_hosts = {"localhost", "127.0.0.1", "::1"}
-            if (
-                not (
-                    parsed_interface.scheme == "https"
-                    or (
-                        parsed_interface.scheme == "http"
-                        and interface_host in local_hosts
-                    )
-                )
-                or not interface_host
-                or parsed_interface.username
-                or parsed_interface.password
-                or parsed_interface.fragment
-            ):
-                reject(
-                    "E_A2A_CARD_ENDPOINT",
-                    f"additionalInterfaces[{index}].url must use HTTPS (or HTTP on loopback) without userinfo or a fragment",
-                )
-            _ = parsed_interface.port
-        except ValueError:
-            reject(
-                "E_A2A_CARD_ENDPOINT",
-                f"additionalInterfaces[{index}].url is not a valid endpoint URL",
-            )
+        interface_url, interface_transport = validated
         previous = seen_interfaces.get(interface_url)
         if previous is not None and previous != interface_transport:
             reject(
@@ -236,13 +225,11 @@ def audit_a2a_agent_card(card: object) -> dict[str, Any]:
                 "one endpoint URL cannot declare conflicting transports",
             )
         seen_interfaces[interface_url] = interface_transport
-    if isinstance(endpoint, str) and isinstance(transport, str):
-        if endpoint in seen_interfaces and seen_interfaces[endpoint] != transport:
-            reject(
-                "E_A2A_CARD_TRANSPORT_CONFLICT",
-                "url and preferredTransport conflict with additionalInterfaces",
-            )
+    _a2a_transport_consistency(endpoint, transport, seen_interfaces, reject)
+    return transport
 
+
+def _a2a_capabilities(card, reject):
     capabilities = card.get("capabilities")
     if not isinstance(capabilities, dict):
         reject("E_A2A_CARD_REQUIRED", "capabilities must be an object")
@@ -266,6 +253,26 @@ def audit_a2a_agent_card(card: object) -> dict[str, Any]:
                 "E_A2A_CARD_MODES", f"{key} must be a non-empty array of media types"
             )
 
+
+def _a2a_skill_fields(skill, index, reject):
+    for key in ("id", "name", "description"):
+        if not isinstance(skill.get(key), str) or not skill[key].strip():
+            reject(
+                "E_A2A_CARD_SKILLS",
+                f"skills[{index}].{key} must be a non-empty string",
+            )
+    if (
+        not isinstance(skill.get("tags"), list)
+        or not skill["tags"]
+        or not all(isinstance(tag, str) and tag.strip() for tag in skill["tags"])
+    ):
+        reject(
+            "E_A2A_CARD_SKILLS",
+            f"skills[{index}].tags must be a non-empty array of strings",
+        )
+
+
+def _a2a_skills(card, reject):
     skills = card.get("skills")
     if not isinstance(skills, list) or not skills:
         reject("E_A2A_CARD_SKILLS", "skills must be a non-empty array")
@@ -275,27 +282,74 @@ def audit_a2a_agent_card(card: object) -> dict[str, Any]:
         if not isinstance(skill, dict):
             reject("E_A2A_CARD_SKILLS", f"skills[{index}] must be an object")
             continue
-        for key in ("id", "name", "description"):
-            if not isinstance(skill.get(key), str) or not skill[key].strip():
-                reject(
-                    "E_A2A_CARD_SKILLS",
-                    f"skills[{index}].{key} must be a non-empty string",
-                )
+        _a2a_skill_fields(skill, index, reject)
         skill_id = skill.get("id")
         if isinstance(skill_id, str) and skill_id in skill_ids:
             reject("E_A2A_CARD_SKILLS", f"skill id {skill_id!r} is duplicated")
         elif isinstance(skill_id, str):
             skill_ids.add(skill_id)
+    return skills
+
+
+def _a2a_security_schemes(schemes, reject):
+    known_scheme_types = ("apiKey", "http", "oauth2", "openIdConnect", "mutualTLS")
+    for scheme_name, definition in schemes.items():
         if (
-            not isinstance(skill.get("tags"), list)
-            or not skill["tags"]
-            or not all(isinstance(tag, str) and tag.strip() for tag in skill["tags"])
+            not isinstance(scheme_name, str)
+            or not scheme_name
+            or not isinstance(definition, dict)
         ):
             reject(
-                "E_A2A_CARD_SKILLS",
-                f"skills[{index}].tags must be a non-empty array of strings",
+                "E_A2A_CARD_SECURITY",
+                "securitySchemes entries must map non-empty names to objects",
             )
+            continue
+        _a2a_scheme_type(scheme_name, definition, known_scheme_types, reject)
 
+
+def _a2a_scheme_type(scheme_name, definition, known_scheme_types, reject):
+    scheme_type = definition.get("type")
+    if not isinstance(scheme_type, str) or scheme_type not in known_scheme_types:
+        reject(
+            "E_A2A_CARD_SECURITY",
+            f"securitySchemes.{scheme_name}.type is missing or unsupported",
+        )
+    elif scheme_type == "apiKey" and (
+        not isinstance(definition.get("name"), str)
+        or definition.get("in") not in ("header", "query", "cookie")
+    ):
+        reject(
+            "E_A2A_CARD_SECURITY",
+            f"securitySchemes.{scheme_name} requires an API key name and location",
+        )
+    elif scheme_type == "http" and not isinstance(definition.get("scheme"), str):
+        reject(
+            "E_A2A_CARD_SECURITY",
+            f"securitySchemes.{scheme_name} requires an HTTP scheme",
+        )
+
+
+def _a2a_security_references(security, schemes, reject):
+    for index, requirement in enumerate(security):
+        if not isinstance(requirement, dict):
+            reject("E_A2A_CARD_SECURITY", f"security[{index}] must be an object")
+            continue
+        for scheme_name, scopes in requirement.items():
+            if scheme_name not in schemes:
+                reject(
+                    "E_A2A_CARD_SECURITY",
+                    f"security[{index}] references undeclared scheme {scheme_name!r}",
+                )
+            if not isinstance(scopes, list) or not all(
+                isinstance(scope, str) for scope in scopes
+            ):
+                reject(
+                    "E_A2A_CARD_SECURITY",
+                    f"security[{index}].{scheme_name} scopes must be an array of strings",
+                )
+
+
+def _a2a_security(card, reject):
     schemes = card.get("securitySchemes", {})
     security = card.get("security", [])
     if not isinstance(schemes, dict) or not isinstance(security, list):
@@ -304,60 +358,38 @@ def audit_a2a_agent_card(card: object) -> dict[str, Any]:
             "securitySchemes must be an object and security must be an array",
         )
     else:
-        known_scheme_types = ("apiKey", "http", "oauth2", "openIdConnect", "mutualTLS")
-        for scheme_name, definition in schemes.items():
-            if (
-                not isinstance(scheme_name, str)
-                or not scheme_name
-                or not isinstance(definition, dict)
-            ):
-                reject(
-                    "E_A2A_CARD_SECURITY",
-                    "securitySchemes entries must map non-empty names to objects",
-                )
-                continue
-            scheme_type = definition.get("type")
-            if (
-                not isinstance(scheme_type, str)
-                or scheme_type not in known_scheme_types
-            ):
-                reject(
-                    "E_A2A_CARD_SECURITY",
-                    f"securitySchemes.{scheme_name}.type is missing or unsupported",
-                )
-            elif scheme_type == "apiKey" and (
-                not isinstance(definition.get("name"), str)
-                or definition.get("in") not in ("header", "query", "cookie")
-            ):
-                reject(
-                    "E_A2A_CARD_SECURITY",
-                    f"securitySchemes.{scheme_name} requires an API key name and location",
-                )
-            elif scheme_type == "http" and not isinstance(
-                definition.get("scheme"), str
-            ):
-                reject(
-                    "E_A2A_CARD_SECURITY",
-                    f"securitySchemes.{scheme_name} requires an HTTP scheme",
-                )
-        for index, requirement in enumerate(security):
-            if not isinstance(requirement, dict):
-                reject("E_A2A_CARD_SECURITY", f"security[{index}] must be an object")
-                continue
-            for scheme_name, scopes in requirement.items():
-                if scheme_name not in schemes:
-                    reject(
-                        "E_A2A_CARD_SECURITY",
-                        f"security[{index}] references undeclared scheme {scheme_name!r}",
-                    )
-                if not isinstance(scopes, list) or not all(
-                    isinstance(scope, str) for scope in scopes
-                ):
-                    reject(
-                        "E_A2A_CARD_SECURITY",
-                        f"security[{index}].{scheme_name} scopes must be an array of strings",
-                    )
+        _a2a_security_schemes(schemes, reject)
+        _a2a_security_references(security, schemes, reject)
 
+
+def audit_a2a_agent_card(card: object) -> dict[str, Any]:
+    """Validate an imported A2A v0.3 AgentCard declaration without contacting it.
+
+    This is a structural and self-consistency check only. It does not prove the
+    publisher's identity, reachability, advertised behavior, or authorization.
+    """
+    if not isinstance(card, dict):
+        raise AgenticControlError(
+            "E_A2A_CARD_INPUT", "Agent Card must be a JSON object"
+        )
+    try:
+        card_digest = hashlib.sha256(_canonical(card)).hexdigest()
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise AgenticControlError(
+            "E_A2A_CARD_INPUT", "Agent Card must be JSON serializable"
+        ) from exc
+
+    findings: list[dict[str, str]] = []
+
+    def reject(code: str, message: str) -> None:
+        findings.append({"code": code, "message": message})
+
+    _a2a_required_text(card, reject)
+    endpoint, endpoint_host = _a2a_endpoint(card, reject)
+    transport = _a2a_transports(card, endpoint, reject)
+    _a2a_capabilities(card, reject)
+    skills = _a2a_skills(card, reject)
+    _a2a_security(card, reject)
     return {
         "schema": AGENT_CARD_AUDIT_SCHEMA,
         "marker": "A2A_AGENT_CARD_AUDIT",
