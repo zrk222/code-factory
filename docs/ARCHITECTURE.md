@@ -86,18 +86,18 @@ manifest is local and explicit: CF compares versions and shows a deterministic
 `UPDATE_AVAILABLE` or `UP_TO_DATE` result, but never downloads, installs,
 restarts, contacts a provider, or publishes on a user's behalf.
 
-### Architecture budget decision addendum — 2026-09-23
+### Architecture-health result — 0.46.9 candidate
 
-The 0.46.8 release-preview working tree measures 660 Markdown files, 456 Python files, 4,984
-CLI lines, 184 command declarations, 128 core modules, and a 1.4474
-Markdown/Python ratio. The existing expiring `ARCH-BASELINE-2026-09-19-AGENTIC-DRIFT`
-acceptance already covers the active receipt-index, telemetry, MCP/Junie,
-agent-control, and assurance decomposition work. This addendum refreshes only
-that acceptance's exact measured snapshot; it does not raise any architecture
-budget, clear unrelated debt, or alter the release-cadence guard. The accepted
-surface growth remains visible and expires at the existing review date. The
-strict architecture-health command is the verification source for these
-measurements.
+On 2026-09-25, strict architecture health reports `HEALTHY` with no accepted
+baseline debt or regressions: 4,970 CLI lines, 184 command declarations, 452
+Python files, 658 Markdown files, 128 core modules, and a 1.4558
+Markdown/Python ratio. The former `ARCH-BASELINE-2026-09-19-AGENTIC-DRIFT`
+waiver is absent. The architecture policy—not this prose—is authoritative;
+rerun `factory architecture health --strict --json` after source changes.
+
+Architecture health and release-cadence admission are separate from independent
+review, external credentials, and runtime evidence. A healthy architecture
+result does not approve or publish a release.
 
 Task cards now have a deterministic board projection. `project_task_board`
 verifies each hash-bound card, rejects unknown dependencies and cycles, and

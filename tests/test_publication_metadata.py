@@ -88,10 +88,10 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert (
-        _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$")
-        == "2026-09-13"
-    )
+    citation = (ROOT / "CITATION.cff").read_text(encoding="utf-8")
+    assert not re.search(r"^date-released:", citation, re.MULTILINE)
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "0.46.9 - 2026-09-25 (release candidate; publication gated)" in changelog
 
     descriptor = json.loads((ROOT / "mcp" / "server.json").read_text(encoding="utf-8"))
     package = descriptor["packages"][0]
@@ -513,7 +513,7 @@ def test_hosted_release_and_editor_versions_are_declared():
         encoding="utf-8"
     )
 
-    assert project["version"] == "0.46.8"
+    assert project["version"] == "0.46.9"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "1.0.1"
     assert 'version = "1.0.1"' in gradle

@@ -15,7 +15,7 @@ Keep the GitHub release in draft until that independent review is complete.
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
 | GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Dispatch `publish.yml` with an existing draft tag; its protected publisher attaches the verified bundle and publishes the release after PyPI | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.46.8` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| PyPI | `factoryline-code-factory==0.46.9` candidate (not yet published) | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
@@ -28,10 +28,10 @@ artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured. Direct
 marketplace uploads require the same second-human review outside GitHub Actions.
 
-The current repository is blocked by architecture-health growth findings and
-release cadence. Do not weaken or skip the release-candidate preflight to force
-a provider upload. An exception requires a separately reviewed human decision
-and must not be used to waive the architecture blockers.
+The 0.46.9 source candidate is unpublished. Release preflight must pass strict
+architecture health and prospective cadence, and the required independent
+review and protected provider gates must be satisfied before publication. Do
+not weaken or skip release preflight to force a provider upload.
 
 The release-train cap took effect at `2026-09-21T15:01:54Z`, the recorded
 commit time when the policy was added. The latest core tag (`v0.46.7`,

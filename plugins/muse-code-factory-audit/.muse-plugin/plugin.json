@@ -22,22 +22,22 @@
         "id": "post-build-audit",
         "event": "PostToolUse",
         "command": ["node", "hooks/post-tool-use.mjs"],
-        "timeoutMs": 180000,
-        "statusMessage": "Auditing build results with Code Factory and ForgeLine"
+        "timeoutMs": 240000,
+        "statusMessage": "Running bounded Code Factory and ForgeLine checks; full-depth penetration remains incomplete"
       },
       {
         "id": "failed-build-audit",
         "event": "PostToolUseFailure",
         "command": ["node", "hooks/post-tool-use-failure.mjs"],
-        "timeoutMs": 180000,
-        "statusMessage": "Auditing the workspace after a failed build"
+        "timeoutMs": 240000,
+        "statusMessage": "Checking bounded audit results and actionable resolutions after a failed build"
       },
       {
         "id": "build-summary",
         "event": "Stop",
         "command": ["node", "hooks/stop.mjs"],
-        "timeoutMs": 5000,
-        "statusMessage": "Checking that Code Factory and ForgeLine results are reported"
+        "timeoutMs": 10000,
+        "statusMessage": "Checking final audit outcomes and required next actions"
       }
     ],
     "mcpServers": [],

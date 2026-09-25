@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.46.9 - 2026-09-25 (release candidate; publication gated)
+
+- Add native Muse Code packages for automatic Code Factory/ForgeLine build
+  review and three evidence-bounded Expertise business workflows. Provide a
+  standalone Muse installation path for host builds without plugin commands.
+- Add project-scope review routing for changed PRD/spec documents and MCP, with
+  bounded AppForge and provider-neutral SaaS proof status projections.
+- Fix nested pytest-asyncio plugin registration and retry transient Windows
+  staging-directory access denials during target promotion.
+- Keep the package and MCP descriptor at 0.46.9 for candidate validation; no
+  package, Marketplace listing, or external service is published by this entry.
+
 ## 0.46.8 - 2026-09-23 (release preview; publication gated)
 
 - Add typed, evidence-bound agent workflows that connect approved intent,

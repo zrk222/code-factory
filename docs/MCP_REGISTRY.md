@@ -13,6 +13,11 @@ write or release authority.**
 uvx --from factoryline-code-factory==0.46.8 factory mcp serve
 ```
 
+The 0.46.9 candidate package coordinate is
+`uvx --from factoryline-code-factory==0.46.9 factory mcp serve`. It is not
+published yet; keep using the 0.46.8 command above until the protected release
+gates and publication complete.
+
 The server needs a workspace root. Configure that explicit path in a client
 that supports local stdio MCP, or use the existing configuration renderer:
 
@@ -34,9 +39,9 @@ publishes, deploys, signs, sends a message, or accesses credentials.
 The source inventory also includes `factory.project_scope_review`, which reads
 bounded, workspace-relative PRD/spec Markdown and routes matching scope to the
 existing AppForge and provider-neutral SaaS proof status projections. The
-published `mcp/server.json` remains tied to the latest released package version;
-this branch's additional tool becomes available through the registry descriptor
-only after its package version is released.
+published registry entry remains on 0.46.8 until a protected 0.46.9 release
+publishes the matching candidate descriptor. This branch's additional tool is
+not available from the live registry yet.
 
 The registry descriptor has `stdio` transport only and contains no environment
 variables or remote endpoint. Your MCP client remains responsible for its own
@@ -49,13 +54,14 @@ service, add write authority, or access credentials.
 ## Muse Code plugin catalog
 
 The repository's [Claude-compatible plugin catalog](../.claude-plugin/marketplace.json)
-also includes `expertise-agent-workflows` and `code-factory-build-audit` for
-Muse Code's catalog importer. The Expertise plugin exposes three distinct
+also includes `expertise-agent-workflows` and `code-factory-build-audit`. Muse
+Code's marketplace importer accepts Claude catalogs and reads the packages'
+native `.muse-plugin/plugin.json` manifests. The Expertise plugin exposes three distinct
 MCP tools—Earnie vendor value review, Cluso account impact review, and Surely
 portfolio watch—through one Muse skill. Its local stdio router selects a
 workflow contract only; it does not access Expertise.ai or the remote agents'
-backends. Review and approve its MCP server in Muse before a new session loads
-it.
+backends. On a plugin-capable host, review and approve its MCP server and the
+build-audit hooks before relying on them in a new session.
 
 After the catalog change is available from the selected Git ref, the local
 installation flow is:
@@ -68,9 +74,22 @@ muse plugins inspect expertise-agent-workflows
 muse plugins approve expertise-agent-workflows
 ```
 
-The Muse CLI available in this authoring environment reports that plugins are
-unavailable in its build. Local installation and approval therefore remain
-unverified until a plugin-capable Muse Code build loads the catalog.
+This machine's Muse Code 1.3.0 build reports that plugin-management commands are
+unavailable. Its supported standalone extension points remain usable. Install
+the same two skills, post-build hooks, and Expertise MCP tools with:
+
+```text
+node scripts/install_muse_extensions.mjs
+muse skills list --source user
+```
+
+The installer preserves unrelated `settings.json` entries, copies managed
+runtime files under the Muse config directory, and registers a user-level stdio
+server. The post-build hook runs in Muse shell sessions; the three workflow
+tools are available to Muse sessions that load the user's MCP settings. Each
+MCP tool call still follows Muse's ordinary approval flow. Use the standalone
+path while the installed build lacks the plugin command; a plugin-capable build
+can install and review the native packages from the catalog above.
 
 This is a team-hosted Muse Code plugin catalog, not an entry in the Official
 MCP Registry and not Meta approval or a listing in the consumer Muse connector
