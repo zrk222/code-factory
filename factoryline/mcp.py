@@ -817,8 +817,13 @@ def _tool_definitions() -> list[dict[str, object]]:
         {
             "name": "factory.deep_audit_status",
             "description": "Read local deep-audit blockers and repair guidance; optional run_id reads isolated-run progress and repairs. Self-hash only, not signer authentication or freshness. Never executes, repairs or approves.",
-            "inputSchema": {"type": "object", "properties": {
-                "run_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"}}, "additionalProperties": False},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "run_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"}
+                },
+                "additionalProperties": False,
+            },
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
@@ -2387,12 +2392,17 @@ def _deep_audit_status(root: Path, arguments: object) -> dict[str, object]:
         raise McpError("factory.deep_audit_status accepts only optional run_id")
     if "run_id" in arguments:
         from .deep_audit import deep_run_status, execution_repairs
+
         try:
             run_id = arguments["run_id"]
             if not isinstance(run_id, str):
                 raise ValueError("run_id must be a string")
-            return {"marker": "DEEP_AUDIT_MCP_READ_ONLY", "authority": "none",
-                    "status": deep_run_status(root, run_id), "repairs": execution_repairs(root, run_id)}
+            return {
+                "marker": "DEEP_AUDIT_MCP_READ_ONLY",
+                "authority": "none",
+                "status": deep_run_status(root, run_id),
+                "repairs": execution_repairs(root, run_id),
+            }
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise McpError("Cannot read bound deep-audit run: " + str(exc)) from exc
     return {
@@ -2664,14 +2674,23 @@ def _proof_continuity_status(root: Path, arguments: object) -> dict[str, object]
     }
 
 
-def _read_scope_sources(root: Path, arguments: object) -> tuple[list[tuple[str, str]], int]:
+def _read_scope_sources(
+    root: Path, arguments: object
+) -> tuple[list[tuple[str, str]], int]:
     if not isinstance(arguments, dict) or set(arguments) != {"source_paths"}:
         raise McpError("factory.project_scope_review requires source_paths")
     paths = arguments["source_paths"]
     if not isinstance(paths, list) or not 1 <= len(paths) <= 12:
-        raise McpError("source_paths must contain between 1 and 12 workspace-relative paths")
-    if any(not isinstance(item, str) or not item.strip() or len(item) > 260 for item in paths):
-        raise McpError("each source path must be a non-empty string of at most 260 characters")
+        raise McpError(
+            "source_paths must contain between 1 and 12 workspace-relative paths"
+        )
+    if any(
+        not isinstance(item, str) or not item.strip() or len(item) > 260
+        for item in paths
+    ):
+        raise McpError(
+            "each source path must be a non-empty string of at most 260 characters"
+        )
     if len(set(paths)) != len(paths):
         raise McpError("source_paths must not contain duplicates")
 
@@ -2706,8 +2725,16 @@ def _read_scope_sources(root: Path, arguments: object) -> tuple[list[tuple[str, 
     return sources, total_bytes
 
 
-def _matched_scope_terms(pattern: re.Pattern[str], sources: list[tuple[str, str]]) -> list[str]:
-    return sorted({match.group(0).lower() for _, content in sources for match in pattern.finditer(content)})[:16]
+def _matched_scope_terms(
+    pattern: re.Pattern[str], sources: list[tuple[str, str]]
+) -> list[str]:
+    return sorted(
+        {
+            match.group(0).lower()
+            for _, content in sources
+            for match in pattern.finditer(content)
+        }
+    )[:16]
 
 
 def _project_scope_review(root: Path, arguments: object) -> dict[str, object]:

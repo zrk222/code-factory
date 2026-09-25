@@ -831,49 +831,63 @@ def test_execution_role_trust_cannot_be_self_declared(tmp_path):
     with pytest.raises(RuntimeAuditError, match="E_REVIEW_TRUST"):
         _execution_keys(plan, trust)
 
-@pytest.mark.parametrize('engine', ['syft', 'osv'])
+
+@pytest.mark.parametrize("engine", ["syft", "osv"])
 def test_native_dependency_reports_cannot_omit_declared_input(tmp_path, engine):
     from factoryline.deep_audit_sarif import normalize_execution_bundle
+
     _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
-    lane = next(item for item in plan['lanes'] if item['engine'] == engine)
-    bundle = execution_bundle(lane, inventory, '0'*32)
-    report = bundle['artifacts']['report.json']
-    if engine == 'syft':
-        report['artifacts'][0]['locations'].pop()
+    lane = next(item for item in plan["lanes"] if item["engine"] == engine)
+    bundle = execution_bundle(lane, inventory, "0" * 32)
+    report = bundle["artifacts"]["report.json"]
+    if engine == "syft":
+        report["artifacts"][0]["locations"].pop()
     else:
-        report['results'].pop()
-    bundle['artifacts']['coverage.json']['report_sha256'] = digest(report)
-    with pytest.raises(RuntimeAuditError, match='E_DEPENDENCY_COVERAGE'):
-        normalize_execution_bundle(bundle, lane, inventory, '0'*32, plan['obligations'])
+        report["results"].pop()
+    bundle["artifacts"]["coverage.json"]["report_sha256"] = digest(report)
+    with pytest.raises(RuntimeAuditError, match="E_DEPENDENCY_COVERAGE"):
+        normalize_execution_bundle(
+            bundle, lane, inventory, "0" * 32, plan["obligations"]
+        )
 
 
-@pytest.mark.parametrize('engine', ['runtime', 'atheris'])
-@pytest.mark.parametrize('failure', ['generic', 'zero', 'coverage'])
-def test_runtime_evidence_requires_engine_execution_and_source_depth(tmp_path, engine, failure):
+@pytest.mark.parametrize("engine", ["runtime", "atheris"])
+@pytest.mark.parametrize("failure", ["generic", "zero", "coverage"])
+def test_runtime_evidence_requires_engine_execution_and_source_depth(
+    tmp_path, engine, failure
+):
     from factoryline.deep_audit_sarif import normalize_execution_bundle
+
     _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
-    lane = next(item for item in plan['lanes'] if item['engine'] == engine)
-    bundle = execution_bundle(lane, inventory, '0'*32)
-    report = bundle['artifacts']['report.json']
-    if failure == 'generic':
-        report['schema'] = 'factory.runtime-observations.v1'
-    elif failure == 'zero':
-        report['metrics'] = {key:0 for key in report['metrics']}
+    lane = next(item for item in plan["lanes"] if item["engine"] == engine)
+    bundle = execution_bundle(lane, inventory, "0" * 32)
+    report = bundle["artifacts"]["report.json"]
+    if failure == "generic":
+        report["schema"] = "factory.runtime-observations.v1"
+    elif failure == "zero":
+        report["metrics"] = {key: 0 for key in report["metrics"]}
     else:
-        report['source_coverage']['app.py']['lines_covered'] = 0
-    bundle['artifacts']['coverage.json']['report_sha256'] = digest(report)
+        report["source_coverage"]["app.py"]["lines_covered"] = 0
+    bundle["artifacts"]["coverage.json"]["report_sha256"] = digest(report)
     with pytest.raises(RuntimeAuditError):
-        normalize_execution_bundle(bundle, lane, inventory, '0'*32, plan['obligations'])
+        normalize_execution_bundle(
+            bundle, lane, inventory, "0" * 32, plan["obligations"]
+        )
 
 
 def test_signed_golden_cannot_replace_positive_detection_semantics(tmp_path):
     from factoryline.deep_audit_sarif import normalize_execution_bundle
+
     _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
-    lane = plan['lanes'][0]
-    bundle = execution_bundle(lane, inventory, '0'*32)
-    challenge = bundle['artifacts']['challenges.json']['observations'][0]
-    challenge['report']['native_report']['runs'][0]['results'] = []
-    challenge['observation_sha256'] = digest(challenge['report'])
-    plan['obligations'][0]['challenges'][0]['expected_report_sha256'] = challenge['observation_sha256']
-    with pytest.raises(RuntimeAuditError, match='E_CHALLENGE_SEMANTICS'):
-        normalize_execution_bundle(bundle, lane, inventory, '0'*32, plan['obligations'])
+    lane = plan["lanes"][0]
+    bundle = execution_bundle(lane, inventory, "0" * 32)
+    challenge = bundle["artifacts"]["challenges.json"]["observations"][0]
+    challenge["report"]["native_report"]["runs"][0]["results"] = []
+    challenge["observation_sha256"] = digest(challenge["report"])
+    plan["obligations"][0]["challenges"][0]["expected_report_sha256"] = challenge[
+        "observation_sha256"
+    ]
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_SEMANTICS"):
+        normalize_execution_bundle(
+            bundle, lane, inventory, "0" * 32, plan["obligations"]
+        )

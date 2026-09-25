@@ -155,7 +155,6 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         for tool in inventory["result"]["tools"]
     )
 
-
     junie = _content(
         dispatch(
             {
@@ -550,7 +549,9 @@ def test_mcp_project_scope_review_routes_matching_prd_scopes_read_only(tmp_path:
     assert result["state"] == "routed"
     assert result["sources"] == ["specs/mobile-app-prd.md", "specs/saas-spec.md"]
     assert result["routes"]["appforge"]["implementation"] == "factory.appforge_status"
-    assert result["routes"]["appforge"]["status"]["marker"] == "APPFORGE_DESIGN_READ_ONLY"
+    assert (
+        result["routes"]["appforge"]["status"]["marker"] == "APPFORGE_DESIGN_READ_ONLY"
+    )
     assert result["routes"]["saasforge"]["implementation"] == (
         "factory.saas_status (provider-neutral saas_proof)"
     )
