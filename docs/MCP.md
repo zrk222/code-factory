@@ -207,6 +207,7 @@ network transport, or mutation authority.
 | `factory.revenue_status` | Current hash-verified RevenueForge receipts and fail-closed purchase, TestFlight, failure-matrix, policy-drift, and memory evidence state | Read only |
 | `factory.revenue_memory` | Exact-app, exact-journey, expiry-aware approved evidence-memory guidance; never substitutes prior evidence for the current build | Read only |
 | `factory.appforge_status` | Current hash-verified AppForge design contracts and storyboard state; never renders, approves, submits, or deploys an app | Read only |
+| `factory.project_scope_review` | Reads up to 12 workspace-relative PRD/spec Markdown files (512 KiB combined) and routes matching mobile/App Store scope to AppForge status and SaaS/identity/billing scope to provider-neutral SaaS proof status | Read only |
 | `factory.oracle_firewall_status` | Sealed source-to-decision Oracle Firewall contracts, weakening reports, independent challenge receipts, and incidents; never seals, approves, challenges, repairs, or releases work | Read only |
 | `factory.proof_continuity_status` | Repository-level source-to-obligation-to-forbidden-behavior-to-gate-to-test-to-evidence audit continuity and reopened incidents; never runs evidence collection, changes code, releases, or approves work | Read only |
 | `factory.appforge_oracle_status` | Candidate-bound AppForge Oracle authority receipts; never changes policy sources, media, reviewers, TestFlight, or App Store Connect | Read only |
@@ -223,6 +224,11 @@ network transport, or mutation authority.
 Every tool declares MCP read-only, non-destructive, idempotent, and closed-world
 hints. Root-relative path input is mandatory; absolute paths and parent
 traversal fail with JSON-RPC `-32602`.
+
+`factory.project_scope_review` reports matched keywords and status projections;
+it does not generate an AppForge design or execute SaaS proof. In this package,
+the SaaSForge route maps to `saas_proof`; no separate SaaSForge engine is
+advertised. Its result is a routing aid, not a feature gate or release decision.
 
 ### First Lap discovery
 

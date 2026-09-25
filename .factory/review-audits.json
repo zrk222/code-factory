@@ -1,0 +1,23 @@
+{
+  "schema": "factory.review-audit-policy.v1",
+  "pattern_groups": [
+    {
+      "id": "enterprise-signing-shape-and-persistence",
+      "origin": "agent_proposed",
+      "members": [
+        { "path": "factoryline/enterprise_receipts.py", "symbol": "sign_policy_bundle" },
+        { "path": "factoryline/enterprise_receipts.py", "symbol": "sign_revocations" }
+      ],
+      "required_calls": ["sign_payload", "_write_json"]
+    }
+  ],
+  "effect_rules": [
+    {
+      "id": "receipt-shape-validated-before-persist",
+      "origin": "agent_proposed",
+      "target": { "path": "factoryline/enterprise_receipts.py", "symbol": "seal_receipt_v2" },
+      "guard_call": "validate_receipt_v2",
+      "effect_call": "_write_json"
+    }
+  ]
+}

@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 
 from .app_builder import (
     app_from_prd,
@@ -109,8 +110,17 @@ def _promote_staging(staging: Path, destination: Path) -> None:
         if os.name != "nt":
             raise
         # Windows rejects directory replacement with WinError 5; the
-        # destination was removed immediately before this call.
-        os.rename(staging, destination)
+        # destination was removed immediately before this call. Antivirus and
+        # indexer scans can briefly hold a generated file open, so retry only
+        # Windows access-denied and sharing-violation errors.
+        for attempt in range(6):
+            try:
+                os.rename(staging, destination)
+                return
+            except PermissionError as error:
+                if getattr(error, "winerror", None) not in (5, 32) or attempt == 5:
+                    raise
+                time.sleep(min(0.025 * (2**attempt), 0.2))
 
 
 def _manifest(

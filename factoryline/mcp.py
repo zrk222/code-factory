@@ -138,6 +138,23 @@ _READ_ONLY_ANNOTATIONS = {
 _MAX_RECEIPT_BYTES = 262_144
 _MAX_RECEIPTS = 250
 _MAX_STATELESS_REQUEST_BYTES = 65_536
+_MAX_SCOPE_SOURCE_BYTES = 131_072
+_MAX_SCOPE_TOTAL_BYTES = 524_288
+_APPFORGE_SCOPE = re.compile(
+    r"\b(?:ios|ipados|android|swiftui|uikit|app store|play store|storekit|testflight|"
+    r"react native|flutter|native mobile app|mobile app)\b",
+    re.IGNORECASE,
+)
+_SAAS_SCOPE = re.compile(
+    r"\b(?:saas|oauth2?|oidc|identity provider|subscriptions?|entitlements?|billing|"
+    r"multi[- ]tenant|tenant|role[- ]based access|rbac|stripe|revocation)\b",
+    re.IGNORECASE,
+)
+_SAAS_DIRECT_SCOPE = re.compile(
+    r"\b(?:saas|oauth2?|oidc|identity provider|multi[- ]tenant|tenant|"
+    r"role[- ]based access|rbac|stripe|revocation)\b",
+    re.IGNORECASE,
+)
 _RECEIPT_JSON_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _RECEIPT_JSON_CACHE_LOCK = RLock()
 _RECEIPT_JSON_CACHE_LIMIT = 256
@@ -542,6 +559,25 @@ def _tool_definitions() -> list[dict[str, object]]:
             "name": "factory.appforge_status",
             "description": "Return hash-verified local AppForge design-contract status. It never creates, approves, renders, or releases a design.",
             "inputSchema": no_args,
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.project_scope_review",
+            "description": "Read PRD or spec files inside the workspace, detect AppForge and SaaS scope, and return only the matching local read-only status projections. SaaSForge routes to provider-neutral SaaS proof.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "source_paths": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1, "maxLength": 260},
+                        "minItems": 1,
+                        "maxItems": 12,
+                        "uniqueItems": True,
+                    }
+                },
+                "required": ["source_paths"],
+                "additionalProperties": False,
+            },
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
@@ -2617,6 +2653,85 @@ def _proof_continuity_status(root: Path, arguments: object) -> dict[str, object]
     }
 
 
+def _read_scope_sources(root: Path, arguments: object) -> tuple[list[tuple[str, str]], int]:
+    if not isinstance(arguments, dict) or set(arguments) != {"source_paths"}:
+        raise McpError("factory.project_scope_review requires source_paths")
+    paths = arguments["source_paths"]
+    if not isinstance(paths, list) or not 1 <= len(paths) <= 12:
+        raise McpError("source_paths must contain between 1 and 12 workspace-relative paths")
+    if any(not isinstance(item, str) or not item.strip() or len(item) > 260 for item in paths):
+        raise McpError("each source path must be a non-empty string of at most 260 characters")
+    if len(set(paths)) != len(paths):
+        raise McpError("source_paths must not contain duplicates")
+
+    sources: list[tuple[str, str]] = []
+    total_bytes = 0
+    for raw_path in paths:
+        relative = Path(raw_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise McpError("source paths must stay inside the workspace")
+        if relative.suffix.lower() not in {".md", ".markdown"}:
+            raise McpError("project scope sources must be Markdown PRD or spec files")
+        try:
+            source_path = (root / relative).resolve(strict=True)
+            source_path.relative_to(root)
+            if not source_path.is_file():
+                raise McpError("each project scope source must be a regular file")
+            content = source_path.read_bytes()
+        except ValueError as exc:
+            raise McpError("source paths must stay inside the workspace") from exc
+        except (OSError, RuntimeError) as exc:
+            raise McpError("project scope source could not be read") from exc
+        if len(content) > _MAX_SCOPE_SOURCE_BYTES:
+            raise McpError("each project scope source is limited to 131072 bytes")
+        total_bytes += len(content)
+        if total_bytes > _MAX_SCOPE_TOTAL_BYTES:
+            raise McpError("combined project scope sources are limited to 524288 bytes")
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise McpError("project scope sources must be UTF-8 Markdown") from exc
+        sources.append((source_path.relative_to(root).as_posix(), text))
+    return sources, total_bytes
+
+
+def _matched_scope_terms(pattern: re.Pattern[str], sources: list[tuple[str, str]]) -> list[str]:
+    return sorted({match.group(0).lower() for _, content in sources for match in pattern.finditer(content)})[:16]
+
+
+def _project_scope_review(root: Path, arguments: object) -> dict[str, object]:
+    sources, source_bytes = _read_scope_sources(root, arguments)
+    appforge_terms = _matched_scope_terms(_APPFORGE_SCOPE, sources)
+    saas_terms = _matched_scope_terms(_SAAS_SCOPE, sources)
+    direct_saas_terms = _matched_scope_terms(_SAAS_DIRECT_SCOPE, sources)
+    routes: dict[str, object] = {}
+    if appforge_terms:
+        routes["appforge"] = {
+            "matched_terms": appforge_terms,
+            "implementation": "factory.appforge_status",
+            "status": appforge_design_projection(root),
+        }
+    # Generic prose may mention billing without defining a SaaS product. Route
+    # on a strong identity/tenant signal, explicit SaaS language, or two distinct
+    # supporting terms such as subscription and billing.
+    if direct_saas_terms or len(saas_terms) >= 2:
+        routes["saasforge"] = {
+            "matched_terms": saas_terms,
+            "implementation": "factory.saas_status (provider-neutral saas_proof)",
+            "status": saas_proof_projection(root),
+        }
+    return {
+        "schema": "factory.project-scope-review.v1",
+        "marker": "MCP_PROJECT_SCOPE_REVIEW_READ_ONLY",
+        "state": "routed" if routes else "no_matching_scope",
+        "sources": [path for path, _ in sources],
+        "source_bytes": source_bytes,
+        "routes": routes,
+        "scope": "Deterministic keyword routing over the supplied local Markdown only. Returned AppForge and SaaS proof data are read-only status projections; no design, proof, test, provider, release, approval, or source action ran.",
+        "authority": dict(_AUTHORITY),
+    }
+
+
 def _saas_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.saas_status accepts no arguments")
@@ -2827,6 +2942,8 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_revenue_memory(root, arguments))
     if name == "factory.appforge_status":
         return _content(_appforge_status(root, arguments))
+    if name == "factory.project_scope_review":
+        return _content(_project_scope_review(root, arguments))
     if name == "factory.oracle_firewall_status":
         return _content(_oracle_firewall_status(root, arguments))
     if name == "factory.semantic_authority_status":

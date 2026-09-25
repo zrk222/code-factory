@@ -68,6 +68,7 @@ def test_mcp_status_declares_default_stdio_and_zero_authority_boundary(tmp_path:
         "factory.revenue_status",
         "factory.revenue_memory",
         "factory.appforge_status",
+        "factory.project_scope_review",
         "factory.oracle_firewall_status",
         "factory.semantic_authority_status",
         "factory.enterprise_enforcement_status",
@@ -153,6 +154,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         }
         for tool in inventory["result"]["tools"]
     )
+
 
     junie = _content(
         dispatch(
@@ -510,6 +512,91 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
         tmp_path
     )
     assert _files(tmp_path) == before
+
+
+def test_mcp_project_scope_review_routes_matching_prd_scopes_read_only(tmp_path: Path):
+    appforge_prd = tmp_path / "specs" / "mobile-app-prd.md"
+    saas_spec = tmp_path / "specs" / "saas-spec.md"
+    appforge_prd.parent.mkdir()
+    appforge_prd.write_text(
+        "# iOS mobile app requirements\nThe app uses SwiftUI and TestFlight.",
+        encoding="utf-8",
+    )
+    saas_spec.write_text(
+        "# SaaS specification\nOAuth/OIDC login, subscriptions, billing and entitlements.",
+        encoding="utf-8",
+    )
+    result = _content(
+        dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 41,
+                "method": "tools/call",
+                "params": {
+                    "name": "factory.project_scope_review",
+                    "arguments": {
+                        "source_paths": [
+                            "specs/mobile-app-prd.md",
+                            "specs/saas-spec.md",
+                        ]
+                    },
+                },
+            },
+            tmp_path,
+        )
+    )
+    assert result["schema"] == "factory.project-scope-review.v1"
+    assert result["marker"] == "MCP_PROJECT_SCOPE_REVIEW_READ_ONLY"
+    assert result["state"] == "routed"
+    assert result["sources"] == ["specs/mobile-app-prd.md", "specs/saas-spec.md"]
+    assert result["routes"]["appforge"]["implementation"] == "factory.appforge_status"
+    assert result["routes"]["appforge"]["status"]["marker"] == "APPFORGE_DESIGN_READ_ONLY"
+    assert result["routes"]["saasforge"]["implementation"] == (
+        "factory.saas_status (provider-neutral saas_proof)"
+    )
+    assert result["routes"]["saasforge"]["status"]["marker"] == "SAAS_PROOF_READ_ONLY"
+    assert all(value is False for value in result["authority"].values())
+
+
+def test_mcp_project_scope_review_does_not_route_unmatched_specs(tmp_path: Path):
+    source = tmp_path / "specs" / "generic.md"
+    source.parent.mkdir()
+    source.write_text(
+        "# Static documentation\nNo app, billing, or identity requirements.",
+        encoding="utf-8",
+    )
+    result = _content(
+        dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 42,
+                "method": "tools/call",
+                "params": {
+                    "name": "factory.project_scope_review",
+                    "arguments": {"source_paths": ["specs/generic.md"]},
+                },
+            },
+            tmp_path,
+        )
+    )
+    assert result["state"] == "no_matching_scope"
+    assert result["routes"] == {}
+
+
+def test_mcp_project_scope_review_rejects_paths_outside_workspace(tmp_path: Path):
+    response = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 43,
+            "method": "tools/call",
+            "params": {
+                "name": "factory.project_scope_review",
+                "arguments": {"source_paths": ["../outside.md"]},
+            },
+        },
+        tmp_path,
+    )
+    assert response["error"]["data"]["marker"] == "MCP_INVALID_PARAMS_REJECTED"
 
 
 def test_mcp_first_lap_status_is_integrity_checked_and_read_only(tmp_path: Path):

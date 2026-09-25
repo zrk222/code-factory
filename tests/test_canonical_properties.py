@@ -4,7 +4,7 @@ import json
 import math
 import string
 
-from hypothesis import given, strategies as st
+from hypothesis import HealthCheck, given, settings, strategies as st
 import pytest
 
 from factoryline.enterprise_receipts import EnterpriseReceiptError, canonical_json
@@ -37,6 +37,7 @@ JSON_VALUES = st.recursive(
 
 
 @given(JSON_VALUES)
+@settings(suppress_health_check=[HealthCheck.too_slow])
 def test_canonical_json_round_trip_is_byte_identical(value: object) -> None:
     first = canonical_json(value)
     parsed = json.loads(first)

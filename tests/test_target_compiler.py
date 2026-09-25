@@ -13,6 +13,33 @@ from factoryline.target_compiler import (
     create_target_from_prd,
     create_target_from_prompt,
 )
+from factoryline import target_compiler
+
+
+def test_windows_staging_promotion_retries_transient_access_denied(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    attempts = 0
+
+    def deny_replace(*_args):
+        raise PermissionError("Windows cannot replace a directory")
+
+    def transient_rename(*_args):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            error = PermissionError("Windows file scan temporarily holds staging")
+            error.winerror = 5
+            raise error
+
+    monkeypatch.setattr(target_compiler.os, "name", "nt")
+    monkeypatch.setattr(target_compiler.os, "replace", deny_replace)
+    monkeypatch.setattr(target_compiler.os, "rename", transient_rename)
+    monkeypatch.setattr(target_compiler.time, "sleep", lambda _seconds: None)
+
+    target_compiler._promote_staging(tmp_path / "staging", tmp_path / "target")
+
+    assert attempts == 2
 
 
 @pytest.mark.parametrize("target", sorted(TARGETS))
