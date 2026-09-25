@@ -489,6 +489,7 @@ def write_run_json(directory: Path, name: str, value: dict) -> None:
 
 
 def read_run_json(directory: Path, name: str) -> dict:
+    """Read bounded local run evidence and verify its integrity digest."""
     source = local_file(directory, name)
     with source.open("rb") as stream:
         raw = stream.read(LIMIT + 1)

@@ -633,6 +633,7 @@ def deep_run_status(root: Path, run_id: str) -> dict:
 
 
 def cancel_deep_run(root: Path, run_id: str) -> dict:
+    """Request cooperative cancellation of one verified local execution run."""
     from .deep_audit_io import run_directory, write_run_json
 
     directory = run_directory(root, run_id)

@@ -145,6 +145,7 @@ def verify_execution_authorization(
     trust_root: Path,
     trust_root_sha256: str,
 ) -> dict:
+    """Verify coordinator authorization over the exact pinned execution contract."""
     if plan["trust_root_sha256"] != trust_root_sha256:
         raise RuntimeAuditError(
             "E_TRUST_ROOT_PIN", "operator trust pin differs from the manifest"
