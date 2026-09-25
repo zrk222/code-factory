@@ -365,249 +365,406 @@ def add_parser(sub: Any) -> None:
     revenue_mobile_evidence.add_argument("--json", action="store_true")
 
 
+def _command_validate(args: Any, root: Path) -> dict:
+    from .revenueforge import validate_products
+
+    payload = validate_products(root, Path(args.products))
+    return payload
+
+
+def _command_build(args: Any, root: Path) -> dict:
+    from .revenueforge import build_revenue_bundle
+
+    payload = build_revenue_bundle(root, Path(args.products), Path(args.out_dir))
+    return payload
+
+
+def _command_growth_plan(args: Any, root: Path) -> dict:
+    from .revenueforge import plan_growth
+
+    payload = plan_growth(root, Path(args.products), Path(args.growth))
+    if args.out:
+        out = Path(args.out)
+        out = out.resolve() if out.is_absolute() else (root / out).resolve()
+        out.relative_to(root)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        payload = {**payload, "path": str(out)}
+    return payload
+
+
+def _command_benchmark(args: Any, root: Path) -> dict:
+    from .revenueforge import benchmark_cell
+
+    payload = benchmark_cell(
+        json.loads(Path(args.records).read_text(encoding="utf-8-sig"))
+    )
+    return payload
+
+
+def _command_replay(args: Any, root: Path) -> dict:
+    from .revenue_evidence import replay_purchase_journey
+
+    payload = replay_purchase_journey(
+        root, Path(args.products), Path(args.events), Path(args.out)
+    )
+    return payload
+
+
+def _command_testflight_sync(args: Any, root: Path) -> dict:
+    from .revenue_evidence import sync_testflight_evidence
+
+    payload = sync_testflight_evidence(root, Path(args.feedback), Path(args.out))
+    return payload
+
+
+def _command_failure_matrix(args: Any, root: Path) -> dict:
+    from .revenue_evidence import evaluate_failure_matrix
+
+    payload = evaluate_failure_matrix(
+        root, Path(args.products), Path(args.evidence), Path(args.out)
+    )
+    return payload
+
+
+def _command_policy_watch(args: Any, root: Path) -> dict:
+    from .revenue_evidence import watch_policy_drift
+
+    payload = watch_policy_drift(
+        root, Path(args.registry), Path(args.snapshot), Path(args.out)
+    )
+    return payload
+
+
+def _command_memory_promote(args: Any, root: Path) -> dict:
+    from .revenue_evidence import promote_evidence_memory
+
+    payload = promote_evidence_memory(root, Path(args.entry), Path(args.out))
+    return payload
+
+
+def _command_memory_query(args: Any, root: Path) -> dict:
+    from .revenue_evidence import query_evidence_memory
+
+    payload = query_evidence_memory(root, args.app_id, args.journey, args.at)
+    return payload
+
+
+def _command_billing_reconcile(args: Any, root: Path) -> dict:
+    from .revenue_integrity import reconcile_billing_events
+
+    payload = reconcile_billing_events(
+        root, Path(args.products), Path(args.events), Path(args.out)
+    )
+    return payload
+
+
+def _command_experiment_plan(args: Any, root: Path) -> dict:
+    from .revenue_integrity import plan_revenue_experiment
+
+    payload = plan_revenue_experiment(
+        root, Path(args.products), Path(args.experiment), Path(args.out)
+    )
+    return payload
+
+
+def _command_integrity(args: Any, root: Path) -> dict:
+    from .revenue_integrity import evaluate_revenue_integrity
+
+    payload = evaluate_revenue_integrity(
+        root,
+        Path(args.products),
+        Path(args.ledger),
+        Path(args.experiment) if args.experiment else None,
+        Path(args.baseline) if args.baseline else None,
+        Path(args.out),
+    )
+    return payload
+
+
+def _command_app_review_gate(args: Any, root: Path) -> dict:
+    from .app_review_gate import verify_app_review_readiness
+
+    payload = verify_app_review_readiness(
+        root, Path(args.contract), Path(args.evidence), Path(args.out)
+    )
+    return payload
+
+
+def _command_store_media_gate(args: Any, root: Path) -> dict:
+    from .appforge_store_media import verify_store_media
+
+    payload = verify_store_media(
+        root, Path(args.contract), Path(args.evidence), Path(args.out)
+    )
+    return payload
+
+
+def _command_quality_audit(args: Any, root: Path) -> dict:
+    from .appforge_quality_audit import verify_quality_audit
+
+    payload = verify_quality_audit(
+        root, Path(args.contract), Path(args.evidence), Path(args.out)
+    )
+    return payload
+
+
+def _command_submission_assurance(args: Any, root: Path) -> dict:
+    from .appforge_submission_assurance import verify_submission_assurance
+
+    payload = verify_submission_assurance(
+        root,
+        Path(args.contract),
+        Path(args.app_review),
+        Path(args.store_media),
+        Path(args.saas_proof),
+        Path(args.quality_audit),
+        Path(args.out),
+        Path(args.report_dir),
+        Path(args.oracle_authority) if args.oracle_authority else None,
+    )
+    return payload
+
+
+def _command_appforge_oracle(args: Any, root: Path) -> dict:
+    from .appforge_oracle import verify_appforge_oracle_authority
+
+    payload = verify_appforge_oracle_authority(
+        root, Path(args.authority), out=Path(args.out) if args.out else None
+    )
+    return payload
+
+
+def _command_device_reality_intent(args: Any, root: Path) -> dict:
+    from .appforge_device_reality import create_device_reality_intent_envelope
+    from .revenueforge import RevenueForgeError
+
+    journey_path = (
+        Path(args.journeys).resolve()
+        if Path(args.journeys).is_absolute()
+        else (root / Path(args.journeys)).resolve()
+    )
+    journey_path.relative_to(root)
+    if not journey_path.is_file() or journey_path.stat().st_size > 1048576:
+        raise RevenueForgeError(
+            "APPFORGE_DEVICE_REALITY_INPUT_UNAVAILABLE",
+            "journeys input must be a regular workspace JSON file up to 1 MiB",
+        )
+    journeys_input = json.loads(journey_path.read_text(encoding="utf-8-sig"))
+    journeys = (
+        journeys_input.get("required_journeys")
+        if isinstance(journeys_input, dict)
+        else journeys_input
+    )
+    payload = create_device_reality_intent_envelope(
+        root,
+        Path(args.oracle_authority),
+        Path(args.design_input),
+        journeys,
+        args.transport,
+        Path(args.out),
+    )
+    return payload
+
+
+def _command_device_reality_gate(args: Any, root: Path) -> dict:
+    from .appforge_device_reality import verify_device_reality
+
+    payload = verify_device_reality(
+        root, Path(args.intent_envelope), Path(args.evidence), Path(args.out)
+    )
+    return payload
+
+
+def _command_appforge_eas(args: Any, root: Path) -> dict:
+    from .appforge_eas import verify_eas_preflight
+
+    payload = verify_eas_preflight(
+        root,
+        Path(args.candidate),
+        Path(args.eas_json),
+        args.build_profile,
+        args.submit_profile,
+        out=Path(args.out) if args.out else None,
+    )
+    return payload
+
+
+def _command_appforge_rehearse(args: Any, root: Path) -> dict:
+    from .appforge_release_rehearsal import create_release_rehearsal
+
+    payload = create_release_rehearsal(
+        root,
+        Path(args.candidate),
+        Path(args.submission_assurance),
+        Path(args.profile),
+        Path(args.out),
+    )
+    return payload
+
+
+def _command_appforge_native_surface(args: Any, root: Path) -> dict:
+    from .appforge_native_surface import verify_native_surface
+
+    payload = verify_native_surface(
+        root,
+        Path(args.candidate),
+        Path(args.contract),
+        Path(args.evidence),
+        Path(args.out),
+    )
+    return payload
+
+
+def _command_appforge_surface_matrix(args: Any, root: Path) -> dict:
+    from .appforge_surface_matrix import create_surface_matrix
+
+    payload = create_surface_matrix(
+        root, Path(args.candidate), Path(args.native_surface), Path(args.out)
+    )
+    return payload
+
+
+def _command_appforge_storefront_story(args: Any, root: Path) -> dict:
+    from .appforge_storefront_story import verify_storefront_story
+
+    payload = verify_storefront_story(
+        root,
+        Path(args.candidate),
+        Path(args.store_media),
+        Path(args.contract),
+        Path(args.evidence),
+        Path(args.out),
+    )
+    return payload
+
+
+def _command_appforge_fastlane_capture(args: Any, root: Path) -> dict:
+    from .appforge_fastlane_capture import create_fastlane_capture_contract
+
+    payload = create_fastlane_capture_contract(
+        root,
+        Path(args.candidate),
+        Path(args.surface_matrix),
+        Path(args.storefront_story),
+        Path(args.contract),
+        Path(args.out),
+    )
+    return payload
+
+
+def _command_appforge_submission_integrity(args: Any, root: Path) -> dict:
+    from .appforge_submission_integrity import verify_submission_integrity
+
+    payload = verify_submission_integrity(
+        root, Path(args.candidate), Path(args.contract), Path(args.out)
+    )
+    return payload
+
+
+def _command_appforge_mobile_evidence(args: Any, root: Path) -> dict:
+    from .appforge_mobile_evidence import verify_mobile_evidence
+
+    payload = verify_mobile_evidence(
+        root,
+        Path(args.candidate),
+        Path(args.contract),
+        Path(args.evidence),
+        Path(args.out),
+    )
+    return payload
+
+
+def _command_evidence_kit(args: Any, root: Path) -> dict:
+    from .appforge_evidence_kit import create_evidence_kit
+
+    payload = create_evidence_kit(
+        root, Path(args.candidate), Path(args.design_input), Path(args.out_dir)
+    )
+    return payload
+
+
+def _command_appforge_init(args: Any, root: Path) -> dict:
+    from .appforge_evidence_kit import initialize_appforge
+
+    payload = initialize_appforge(
+        root,
+        Path(args.out_dir),
+        app_name=args.app_name,
+        bundle_identifier=args.bundle_identifier,
+        version=args.version,
+        build_number=args.build_number,
+        source_commit=args.source_commit,
+        audience=args.audience,
+        primary_job=args.primary_job,
+        desired_emotion=args.desired_emotion,
+    )
+    return payload
+
+
+def _command_appforge_status(args: Any, root: Path) -> dict:
+    from .appforge_design import appforge_design_projection
+
+    payload = appforge_design_projection(root)
+    return payload
+
+
+def _command_appforge_design(args: Any, root: Path) -> dict:
+    from .appforge_design import compile_appforge_design
+
+    payload = compile_appforge_design(root, Path(args.brief), Path(args.out_dir))
+    return payload
+
+
+_COMMANDS = {
+    "validate": _command_validate,
+    "build": _command_build,
+    "growth-plan": _command_growth_plan,
+    "benchmark": _command_benchmark,
+    "replay": _command_replay,
+    "testflight-sync": _command_testflight_sync,
+    "failure-matrix": _command_failure_matrix,
+    "policy-watch": _command_policy_watch,
+    "memory-promote": _command_memory_promote,
+    "memory-query": _command_memory_query,
+    "billing-reconcile": _command_billing_reconcile,
+    "experiment-plan": _command_experiment_plan,
+    "integrity": _command_integrity,
+    "app-review-gate": _command_app_review_gate,
+    "store-media-gate": _command_store_media_gate,
+    "quality-audit": _command_quality_audit,
+    "submission-assurance": _command_submission_assurance,
+    "appforge-oracle": _command_appforge_oracle,
+    "device-reality-intent": _command_device_reality_intent,
+    "device-reality-gate": _command_device_reality_gate,
+    "appforge-eas": _command_appforge_eas,
+    "appforge-rehearse": _command_appforge_rehearse,
+    "appforge-native-surface": _command_appforge_native_surface,
+    "appforge-surface-matrix": _command_appforge_surface_matrix,
+    "appforge-storefront-story": _command_appforge_storefront_story,
+    "appforge-fastlane-capture": _command_appforge_fastlane_capture,
+    "appforge-submission-integrity": _command_appforge_submission_integrity,
+    "appforge-mobile-evidence": _command_appforge_mobile_evidence,
+    "evidence-kit": _command_evidence_kit,
+    "appforge-init": _command_appforge_init,
+    "appforge-status": _command_appforge_status,
+    "appforge-design": _command_appforge_design,
+}
+
+
 def run(args: Any) -> int:
     """Execute one RevenueForge/AppForge command and render its receipt."""
-    from .app_review_gate import verify_app_review_readiness
-    from .appforge_design import appforge_design_projection, compile_appforge_design
-    from .appforge_device_reality import (
-        create_device_reality_intent_envelope,
-        verify_device_reality,
-    )
-    from .appforge_eas import verify_eas_preflight
-    from .appforge_evidence_kit import create_evidence_kit, initialize_appforge
-    from .appforge_fastlane_capture import create_fastlane_capture_contract
-    from .appforge_mobile_evidence import verify_mobile_evidence
-    from .appforge_native_surface import verify_native_surface
-    from .appforge_oracle import verify_appforge_oracle_authority
-    from .appforge_quality_audit import verify_quality_audit
-    from .appforge_release_rehearsal import create_release_rehearsal
-    from .appforge_store_media import StoreMediaError, verify_store_media
-    from .appforge_storefront_story import verify_storefront_story
-    from .appforge_submission_assurance import verify_submission_assurance
-    from .appforge_submission_integrity import verify_submission_integrity
-    from .appforge_surface_matrix import create_surface_matrix
-    from .revenue_evidence import (
-        evaluate_failure_matrix,
-        promote_evidence_memory,
-        query_evidence_memory,
-        replay_purchase_journey,
-        sync_testflight_evidence,
-        watch_policy_drift,
-    )
-    from .revenue_integrity import (
-        evaluate_revenue_integrity,
-        plan_revenue_experiment,
-        reconcile_billing_events,
-    )
-    from .revenueforge import (
-        RevenueForgeError,
-        benchmark_cell,
-        build_revenue_bundle,
-        plan_growth,
-        validate_products,
-    )
+    from .appforge_store_media import StoreMediaError
+    from .revenueforge import RevenueForgeError
 
     try:
         root = Path(getattr(args, "root", ".")).resolve()
-        if args.revenue_cmd == "validate":
-            payload = validate_products(root, Path(args.products))
-        elif args.revenue_cmd == "build":
-            payload = build_revenue_bundle(
-                root, Path(args.products), Path(args.out_dir)
-            )
-        elif args.revenue_cmd == "growth-plan":
-            payload = plan_growth(root, Path(args.products), Path(args.growth))
-            if args.out:
-                out = Path(args.out)
-                out = out.resolve() if out.is_absolute() else (root / out).resolve()
-                out.relative_to(root)
-                out.parent.mkdir(parents=True, exist_ok=True)
-                out.write_text(
-                    json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8",
-                )
-                payload = {**payload, "path": str(out)}
-        elif args.revenue_cmd == "benchmark":
-            payload = benchmark_cell(
-                json.loads(Path(args.records).read_text(encoding="utf-8-sig"))
-            )
-        elif args.revenue_cmd == "replay":
-            payload = replay_purchase_journey(
-                root, Path(args.products), Path(args.events), Path(args.out)
-            )
-        elif args.revenue_cmd == "testflight-sync":
-            payload = sync_testflight_evidence(
-                root, Path(args.feedback), Path(args.out)
-            )
-        elif args.revenue_cmd == "failure-matrix":
-            payload = evaluate_failure_matrix(
-                root, Path(args.products), Path(args.evidence), Path(args.out)
-            )
-        elif args.revenue_cmd == "policy-watch":
-            payload = watch_policy_drift(
-                root, Path(args.registry), Path(args.snapshot), Path(args.out)
-            )
-        elif args.revenue_cmd == "memory-promote":
-            payload = promote_evidence_memory(root, Path(args.entry), Path(args.out))
-        elif args.revenue_cmd == "memory-query":
-            payload = query_evidence_memory(root, args.app_id, args.journey, args.at)
-        elif args.revenue_cmd == "billing-reconcile":
-            payload = reconcile_billing_events(
-                root, Path(args.products), Path(args.events), Path(args.out)
-            )
-        elif args.revenue_cmd == "experiment-plan":
-            payload = plan_revenue_experiment(
-                root, Path(args.products), Path(args.experiment), Path(args.out)
-            )
-        elif args.revenue_cmd == "integrity":
-            payload = evaluate_revenue_integrity(
-                root,
-                Path(args.products),
-                Path(args.ledger),
-                Path(args.experiment) if args.experiment else None,
-                Path(args.baseline) if args.baseline else None,
-                Path(args.out),
-            )
-        elif args.revenue_cmd == "app-review-gate":
-            payload = verify_app_review_readiness(
-                root, Path(args.contract), Path(args.evidence), Path(args.out)
-            )
-        elif args.revenue_cmd == "store-media-gate":
-            payload = verify_store_media(
-                root, Path(args.contract), Path(args.evidence), Path(args.out)
-            )
-        elif args.revenue_cmd == "quality-audit":
-            payload = verify_quality_audit(
-                root, Path(args.contract), Path(args.evidence), Path(args.out)
-            )
-        elif args.revenue_cmd == "submission-assurance":
-            payload = verify_submission_assurance(
-                root,
-                Path(args.contract),
-                Path(args.app_review),
-                Path(args.store_media),
-                Path(args.saas_proof),
-                Path(args.quality_audit),
-                Path(args.out),
-                Path(args.report_dir),
-                Path(args.oracle_authority) if args.oracle_authority else None,
-            )
-        elif args.revenue_cmd == "appforge-oracle":
-            payload = verify_appforge_oracle_authority(
-                root, Path(args.authority), out=Path(args.out) if args.out else None
-            )
-        elif args.revenue_cmd == "device-reality-intent":
-            journey_path = (
-                Path(args.journeys).resolve()
-                if Path(args.journeys).is_absolute()
-                else (root / Path(args.journeys)).resolve()
-            )
-            journey_path.relative_to(root)
-            if not journey_path.is_file() or journey_path.stat().st_size > 1_048_576:
-                raise RevenueForgeError(
-                    "APPFORGE_DEVICE_REALITY_INPUT_UNAVAILABLE",
-                    "journeys input must be a regular workspace JSON file up to 1 MiB",
-                )
-            journeys_input = json.loads(journey_path.read_text(encoding="utf-8-sig"))
-            journeys = (
-                journeys_input.get("required_journeys")
-                if isinstance(journeys_input, dict)
-                else journeys_input
-            )
-            payload = create_device_reality_intent_envelope(
-                root,
-                Path(args.oracle_authority),
-                Path(args.design_input),
-                journeys,
-                args.transport,
-                Path(args.out),
-            )
-        elif args.revenue_cmd == "device-reality-gate":
-            payload = verify_device_reality(
-                root, Path(args.intent_envelope), Path(args.evidence), Path(args.out)
-            )
-        elif args.revenue_cmd == "appforge-eas":
-            payload = verify_eas_preflight(
-                root,
-                Path(args.candidate),
-                Path(args.eas_json),
-                args.build_profile,
-                args.submit_profile,
-                out=Path(args.out) if args.out else None,
-            )
-        elif args.revenue_cmd == "appforge-rehearse":
-            payload = create_release_rehearsal(
-                root,
-                Path(args.candidate),
-                Path(args.submission_assurance),
-                Path(args.profile),
-                Path(args.out),
-            )
-        elif args.revenue_cmd == "appforge-native-surface":
-            payload = verify_native_surface(
-                root,
-                Path(args.candidate),
-                Path(args.contract),
-                Path(args.evidence),
-                Path(args.out),
-            )
-        elif args.revenue_cmd == "appforge-surface-matrix":
-            payload = create_surface_matrix(
-                root, Path(args.candidate), Path(args.native_surface), Path(args.out)
-            )
-        elif args.revenue_cmd == "appforge-storefront-story":
-            payload = verify_storefront_story(
-                root,
-                Path(args.candidate),
-                Path(args.store_media),
-                Path(args.contract),
-                Path(args.evidence),
-                Path(args.out),
-            )
-        elif args.revenue_cmd == "appforge-fastlane-capture":
-            payload = create_fastlane_capture_contract(
-                root,
-                Path(args.candidate),
-                Path(args.surface_matrix),
-                Path(args.storefront_story),
-                Path(args.contract),
-                Path(args.out),
-            )
-        elif args.revenue_cmd == "appforge-submission-integrity":
-            payload = verify_submission_integrity(
-                root, Path(args.candidate), Path(args.contract), Path(args.out)
-            )
-        elif args.revenue_cmd == "appforge-mobile-evidence":
-            payload = verify_mobile_evidence(
-                root,
-                Path(args.candidate),
-                Path(args.contract),
-                Path(args.evidence),
-                Path(args.out),
-            )
-        elif args.revenue_cmd == "evidence-kit":
-            payload = create_evidence_kit(
-                root, Path(args.candidate), Path(args.design_input), Path(args.out_dir)
-            )
-        elif args.revenue_cmd == "appforge-init":
-            payload = initialize_appforge(
-                root,
-                Path(args.out_dir),
-                app_name=args.app_name,
-                bundle_identifier=args.bundle_identifier,
-                version=args.version,
-                build_number=args.build_number,
-                source_commit=args.source_commit,
-                audience=args.audience,
-                primary_job=args.primary_job,
-                desired_emotion=args.desired_emotion,
-            )
-        elif args.revenue_cmd == "appforge-status":
-            payload = appforge_design_projection(root)
-        else:
-            payload = compile_appforge_design(
-                root, Path(args.brief), Path(args.out_dir)
-            )
+        handler = _COMMANDS.get(args.revenue_cmd)
+        if handler is None:
+            raise ValueError(f"unknown revenue command: {args.revenue_cmd}")
+        payload = handler(args, root)
     except (
         RevenueForgeError,
         StoreMediaError,

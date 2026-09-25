@@ -10,6 +10,67 @@ import sys
 import yaml
 
 
+def test_revenue_dispatch_covers_exactly_registered_commands(
+    tmp_path, monkeypatch, capsys
+):
+    import argparse
+    from types import SimpleNamespace
+    from factoryline import cli_revenue
+
+    parser = argparse.ArgumentParser()
+    groups = parser.add_subparsers()
+    cli_revenue.add_parser(groups)
+    revenue = groups.choices["revenue"]
+    subcommands = next(
+        action
+        for action in revenue._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    assert set(subcommands.choices) == set(cli_revenue._COMMANDS)
+    calls = []
+    for command in subcommands.choices:
+        args = SimpleNamespace(revenue_cmd=command, root=str(tmp_path), json=True)
+
+        def handler(received, root):
+            calls.append((received, root))
+            return {"ok": True, "command": received.revenue_cmd}
+
+        monkeypatch.setitem(cli_revenue._COMMANDS, command, handler)
+        assert cli_revenue.run(args) == 0
+        assert calls[-1] == (args, tmp_path.resolve())
+        assert json.loads(capsys.readouterr().out)["command"] == command
+    args.revenue_cmd = "unknown"
+    assert cli_revenue.run(args) == 2
+    assert json.loads(capsys.readouterr().err)["code"] == "REVENUEFORGE_INPUT_INVALID"
+
+
+def test_revenue_dispatch_and_private_handlers_stay_bounded():
+    import ast
+    import inspect
+    from factoryline import cli_revenue
+
+    for function in [cli_revenue.run, *cli_revenue._COMMANDS.values()]:
+        tree = ast.parse(inspect.getsource(function))
+        count = 1
+        for node in ast.walk(tree):
+            if isinstance(
+                node,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.While,
+                    ast.ExceptHandler,
+                    ast.With,
+                    ast.Assert,
+                    ast.IfExp,
+                ),
+            ):
+                count += 1
+            elif isinstance(node, ast.BoolOp):
+                count += len(node.values) - 1
+        assert count <= 10, (function.__name__, count)
+
+
 def test_revenue_validate_and_build_cli(tmp_path: Path) -> None:
     """Validate and build a local bundle through the shipped CLI."""
     manifest = {
