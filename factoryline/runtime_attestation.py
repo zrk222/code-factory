@@ -343,21 +343,45 @@ def _validate_isolation_claim(
             "E_ISOLATION_UNPROVEN",
             "a local supervisor cannot self-attest independent isolation",
         )
-    isolation = value.get("isolation")
+    isolation = _isolation_object(value.get("isolation"))
+    backend = _validate_isolation_backend(isolation, mode)
+    proof = require_bool(isolation.get("proof"), "isolation.proof")
+    state = isolation.get("state")
+    _validate_isolation_state(mode, state, proof, require_independent)
+    return {
+        "backend": str(backend),
+        "state": str(state),
+        "proof": proof,
+        "claim_boundary": require_str(
+            isolation.get("claim_boundary"), "isolation.claim_boundary", maximum=240
+        ),
+    }
+
+
+def _isolation_object(value: Any) -> dict[str, Any]:
+    isolation = value
     if not isinstance(isolation, dict):
         raise RuntimeAttestationError("E_ISOLATION", "isolation must be an object")
     try:
         exact_keys(isolation, {"backend", "state", "proof", "claim_boundary"})
     except Exception as exc:
         raise RuntimeAttestationError("E_ISOLATION", str(exc)) from exc
+    return isolation
+
+
+def _validate_isolation_backend(isolation: dict[str, Any], mode: str) -> Any:
     backend = isolation.get("backend")
     if backend not in BACKENDS or backend not in _EXPECTED_BACKENDS[mode]:
         raise RuntimeAttestationError(
             "E_ISOLATION_BACKEND",
             "observed backend does not satisfy requested isolation",
         )
-    proof = require_bool(isolation.get("proof"), "isolation.proof")
-    state = isolation.get("state")
+    return backend
+
+
+def _validate_isolation_state(
+    mode: str, state: Any, proof: bool, require_independent: bool
+) -> None:
     if mode == _SUPERVISED_MODE and (state != "SUPERVISED_ONLY" or proof):
         raise RuntimeAttestationError(
             "E_ISOLATION_CLAIM",
@@ -372,14 +396,6 @@ def _validate_isolation_claim(
         raise RuntimeAttestationError(
             "E_ISOLATION_UNPROVEN", "an independent boundary is required"
         )
-    return {
-        "backend": str(backend),
-        "state": str(state),
-        "proof": proof,
-        "claim_boundary": require_str(
-            isolation.get("claim_boundary"), "isolation.claim_boundary", maximum=240
-        ),
-    }
 
 
 def _validate_authority_and_seal(value: dict[str, Any]) -> str:
