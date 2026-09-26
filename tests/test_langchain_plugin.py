@@ -1082,9 +1082,10 @@ def test_muse_audit_mcp_reads_current_receipt_and_rejects_changed_workspace(
     )
     oversized_result = json.loads(oversized_run.stdout)
     assert oversized_result["receiptSaved"] is False
-    assert "exceeded the reviewed 128 bytes local storage limit" in oversized_result[
-        "summary"
-    ]
+    assert (
+        "exceeded the reviewed 128 bytes local storage limit"
+        in oversized_result["summary"]
+    )
     assert call("cf_audit_status")["status"] == "unavailable"
     subprocess.run(
         ["node", str(harness)], check=True, capture_output=True, text=True, env=env
