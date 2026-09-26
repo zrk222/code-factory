@@ -147,215 +147,227 @@ def add_parser(sub: Any) -> None:
     resilience_verify.add_argument("--json", action="store_true")
 
 
-def run(args: Any) -> int:
-    """Execute one bounded review-surface command."""
-    if args.cmd == "proof-card":
-        from .adoption import (
-            AdoptionError,
-            proof_card_from_receipt,
-            record_adoption_event,
-        )
+def _handle_proof_card(args):
+    from .adoption import (
+        AdoptionError,
+        proof_card_from_receipt,
+        record_adoption_event,
+    )
 
-        workspace = Path(args.root).resolve()
-        try:
-            result = proof_card_from_receipt(
-                workspace, Path(args.receipt), Path(args.out_dir)
+    workspace = Path(args.root).resolve()
+    try:
+        result = proof_card_from_receipt(
+            workspace, Path(args.receipt), Path(args.out_dir)
+        )
+        record_adoption_event(
+            workspace,
+            "proof_card_saved",
+            evidence_sha256=result["card"]["card_sha256"],
+        )
+    except (AdoptionError, OSError) as exc:
+        code = getattr(exc, "code", "E_PROOF_CARD_FAILED")
+        error = {
+            "schema": "factory.proof-card.error.v1",
+            "code": code,
+            "message": str(exc),
+        }
+        print(
+            json.dumps(error, indent=2, sort_keys=True)
+            if args.json
+            else f"proof card failed: {code}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print("factory proof-card")
+        print("=" * 44)
+        print(f"outcome  : {result['card']['outcome']}")
+        print(f"card     : {result['paths']['svg']}")
+        print(
+            "privacy  : no commands, paths, repository name, prompts, logs, or user identity"
+        )
+    return 0
+
+
+def _handle_adoption(args):
+    from .adoption import (
+        AdoptionError,
+        adoption_status,
+        export_adoption_status,
+        record_adoption_event,
+    )
+
+    workspace = Path(args.root).resolve()
+    try:
+        if args.adoption_cmd == "record":
+            result = record_adoption_event(
+                workspace, args.milestone, evidence_sha256=args.evidence_sha256
             )
-            record_adoption_event(
+        elif args.adoption_cmd == "export":
+            result = export_adoption_status(workspace, Path(args.out))
+        else:
+            result = adoption_status(workspace)
+    except (AdoptionError, OSError) as exc:
+        code = getattr(exc, "code", "E_ADOPTION_FAILED")
+        error = {
+            "schema": "factory.adoption.error.v1",
+            "code": code,
+            "message": str(exc),
+        }
+        print(
+            json.dumps(error, indent=2, sort_keys=True)
+            if args.json
+            else f"adoption failed: {code}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print("factory adoption")
+        print("=" * 44)
+        if args.adoption_cmd == "record":
+            print(f"milestone: {result['event']['milestone']}")
+            print(f"receipt  : {result['path']}")
+        else:
+            status = result.get("status", result)
+            print(f"events   : {status['events']}")
+            print(f"first    : {status['milestones']['first_proof_completed']}")
+            print(f"returns  : {status['milestones']['seven_day_return']}")
+            print(
+                "boundary : local opt-in counts only; not users, conversion, or attribution"
+            )
+    return 0
+
+
+def _workspace_path(workspace: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else workspace / path
+
+
+def _bounded_output(
+    workspace: Path, value: str, error_type, code: str, message: str
+) -> Path:
+    output = _workspace_path(workspace, value)
+    try:
+        output.resolve().relative_to(workspace)
+    except ValueError as exc:
+        raise error_type(code, message) from exc
+    return output
+
+
+def _handle_counterexample(args):
+    from .counterexample import (
+        CounterexampleError,
+        compile_counterexample_plan,
+        verify_counterexample_plan,
+        write_counterexample_plan,
+    )
+
+    workspace = Path(args.root).resolve()
+    try:
+        if args.counterexample_cmd == "plan":
+            source = _workspace_path(workspace, args.source)
+            out = _bounded_output(
                 workspace,
-                "proof_card_saved",
-                evidence_sha256=result["card"]["card_sha256"],
+                args.out,
+                CounterexampleError,
+                "COUNTEREXAMPLE_PATH_INVALID",
+                "plan output must stay inside the workspace",
             )
-        except (AdoptionError, OSError) as exc:
-            code = getattr(exc, "code", "E_PROOF_CARD_FAILED")
-            error = {
-                "schema": "factory.proof-card.error.v1",
-                "code": code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if args.json
-                else f"proof card failed: {code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if args.json:
-            print(json.dumps(result, indent=2, sort_keys=True))
+            payload = compile_counterexample_plan(workspace, source)
+            path = write_counterexample_plan(payload, out)
+            payload = {**payload, "path": str(path.resolve())}
         else:
-            print("factory proof-card")
-            print("=" * 44)
-            print(f"outcome  : {result['card']['outcome']}")
-            print(f"card     : {result['paths']['svg']}")
-            print(
-                "privacy  : no commands, paths, repository name, prompts, logs, or user identity"
-            )
-        return 0
-
-    if args.cmd == "adoption":
-        from .adoption import (
-            AdoptionError,
-            adoption_status,
-            export_adoption_status,
-            record_adoption_event,
+            plan = _workspace_path(workspace, args.plan)
+            payload = verify_counterexample_plan(workspace, plan)
+    except CounterexampleError as exc:
+        error = {
+            "schema": "factory.counterexample.error.v1",
+            "code": exc.code,
+            "message": str(exc),
+        }
+        print(
+            json.dumps(error, indent=2, sort_keys=True)
+            if args.json
+            else f"counterexample failed: {exc.code}: {exc}",
+            file=sys.stderr,
         )
+        return 2
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print("factory counterexample")
+        print("=" * 44)
+        print(f"marker    : {payload['marker']}")
+        print(
+            f"cases     : {payload.get('facts', {}).get('case_count', payload.get('case_count', 0))}"
+        )
+        print(
+            "authority : negative-proof planning only; execution, source writes, repair, approval, and publication are locked"
+        )
+    return 0 if args.counterexample_cmd == "plan" or payload["ok"] else 1
 
-        workspace = Path(args.root).resolve()
-        try:
-            if args.adoption_cmd == "record":
-                result = record_adoption_event(
-                    workspace, args.milestone, evidence_sha256=args.evidence_sha256
-                )
-            elif args.adoption_cmd == "export":
-                result = export_adoption_status(workspace, Path(args.out))
-            else:
-                result = adoption_status(workspace)
-        except (AdoptionError, OSError) as exc:
-            code = getattr(exc, "code", "E_ADOPTION_FAILED")
-            error = {
-                "schema": "factory.adoption.error.v1",
-                "code": code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if args.json
-                else f"adoption failed: {code}: {exc}",
-                file=sys.stderr,
+
+def _handle_guardrail(args):
+    from .continuity import (
+        ContinuityError,
+        principal_from_args as continuity_principal_from_args,
+    )
+    from .guardrails import (
+        GuardrailError,
+        evaluate_guardrails,
+        verify_guardrail_evaluation,
+    )
+
+    try:
+        if args.guardrail_cmd == "evaluate":
+            principal = continuity_principal_from_args(
+                args.subject,
+                args.tenant,
+                args.roles.split(","),
+                args.purposes.split(","),
             )
-            return 2
-        if args.json:
-            print(json.dumps(result, indent=2, sort_keys=True))
+            payload = evaluate_guardrails(
+                Path(args.manifest),
+                Path(args.db),
+                principal,
+                changed_paths=args.changed,
+            )
         else:
-            print("factory adoption")
-            print("=" * 44)
-            if args.adoption_cmd == "record":
-                print(f"milestone: {result['event']['milestone']}")
-                print(f"receipt  : {result['path']}")
-            else:
-                status = result.get("status", result)
-                print(f"events   : {status['events']}")
-                print(f"first    : {status['milestones']['first_proof_completed']}")
-                print(f"returns  : {status['milestones']['seven_day_return']}")
-                print(
-                    "boundary : local opt-in counts only; not users, conversion, or attribution"
-                )
-        return 0
-
-    if args.cmd == "counterexample":
-        from .counterexample import (
-            CounterexampleError,
-            compile_counterexample_plan,
-            verify_counterexample_plan,
-            write_counterexample_plan,
+            payload = verify_guardrail_evaluation(
+                json.loads(Path(args.evaluation).read_text(encoding="utf-8"))
+            )
+    except (GuardrailError, ContinuityError, OSError, json.JSONDecodeError) as exc:
+        error = {
+            "schema": "factory.guardrail.error.v1",
+            "code": getattr(exc, "code", "GUARDRAIL_INPUT_INVALID"),
+            "message": str(exc),
+        }
+        print(
+            json.dumps(error, indent=2, sort_keys=True)
+            if args.json
+            else f"guardrail failed: {error['code']}: {exc}",
+            file=sys.stderr,
         )
-
-        workspace = Path(args.root).resolve()
-        try:
-            if args.counterexample_cmd == "plan":
-                source = Path(args.source)
-                if not source.is_absolute():
-                    source = workspace / source
-                out = Path(args.out)
-                if not out.is_absolute():
-                    out = workspace / out
-                try:
-                    out.resolve().relative_to(workspace)
-                except ValueError as exc:
-                    raise CounterexampleError(
-                        "COUNTEREXAMPLE_PATH_INVALID",
-                        "plan output must stay inside the workspace",
-                    ) from exc
-                payload = compile_counterexample_plan(workspace, source)
-                path = write_counterexample_plan(payload, out)
-                payload = {**payload, "path": str(path.resolve())}
-            else:
-                plan = Path(args.plan)
-                if not plan.is_absolute():
-                    plan = workspace / plan
-                payload = verify_counterexample_plan(workspace, plan)
-        except CounterexampleError as exc:
-            error = {
-                "schema": "factory.counterexample.error.v1",
-                "code": exc.code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if args.json
-                else f"counterexample failed: {exc.code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if args.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            print("factory counterexample")
-            print("=" * 44)
-            print(f"marker    : {payload['marker']}")
-            print(
-                f"cases     : {payload.get('facts', {}).get('case_count', payload.get('case_count', 0))}"
-            )
-            print(
-                "authority : negative-proof planning only; execution, source writes, repair, approval, and publication are locked"
-            )
-        return 0 if args.counterexample_cmd == "plan" or payload["ok"] else 1
-
-    if args.cmd == "guardrail":
-        from .continuity import (
-            ContinuityError,
-            principal_from_args as continuity_principal_from_args,
+        return 2
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print("factory guardrail")
+        print("=" * 44)
+        print(f"marker    : {payload['marker']}")
+        print(f"active    : {payload.get('facts', {}).get('active_count', 0)}")
+        print(f"withheld  : {payload.get('facts', {}).get('withheld_count', 0)}")
+        print(
+            "boundary  : only redacted promoted metadata is evaluated; memory content, edits, execution, and promotion remain unavailable"
         )
-        from .guardrails import (
-            GuardrailError,
-            evaluate_guardrails,
-            verify_guardrail_evaluation,
-        )
+    return 0
 
-        try:
-            if args.guardrail_cmd == "evaluate":
-                principal = continuity_principal_from_args(
-                    args.subject,
-                    args.tenant,
-                    args.roles.split(","),
-                    args.purposes.split(","),
-                )
-                payload = evaluate_guardrails(
-                    Path(args.manifest),
-                    Path(args.db),
-                    principal,
-                    changed_paths=args.changed,
-                )
-            else:
-                payload = verify_guardrail_evaluation(
-                    json.loads(Path(args.evaluation).read_text(encoding="utf-8"))
-                )
-        except (GuardrailError, ContinuityError, OSError, json.JSONDecodeError) as exc:
-            error = {
-                "schema": "factory.guardrail.error.v1",
-                "code": getattr(exc, "code", "GUARDRAIL_INPUT_INVALID"),
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if args.json
-                else f"guardrail failed: {error['code']}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if args.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            print("factory guardrail")
-            print("=" * 44)
-            print(f"marker    : {payload['marker']}")
-            print(f"active    : {payload.get('facts', {}).get('active_count', 0)}")
-            print(f"withheld  : {payload.get('facts', {}).get('withheld_count', 0)}")
-            print(
-                "boundary  : only redacted promoted metadata is evaluated; memory content, edits, execution, and promotion remain unavailable"
-            )
-        return 0
 
+def _handle_resilience(args):
     from .resilience import (
         ResilienceError,
         compile_temporal_resilience_plan,
@@ -366,26 +378,19 @@ def run(args: Any) -> int:
     workspace = Path(args.root).resolve()
     try:
         if args.resilience_cmd == "plan":
-            lineage = Path(args.lineage)
-            if not lineage.is_absolute():
-                lineage = workspace / lineage
-            out = Path(args.out)
-            if not out.is_absolute():
-                out = workspace / out
-            try:
-                out.resolve().relative_to(workspace)
-            except ValueError as exc:
-                raise ResilienceError(
-                    "RESILIENCE_PATH_INVALID",
-                    "plan output must stay inside the workspace",
-                ) from exc
+            lineage = _workspace_path(workspace, args.lineage)
+            out = _bounded_output(
+                workspace,
+                args.out,
+                ResilienceError,
+                "RESILIENCE_PATH_INVALID",
+                "plan output must stay inside the workspace",
+            )
             payload = compile_temporal_resilience_plan(workspace, lineage)
             path = write_temporal_resilience_plan(payload, out)
             payload = {**payload, "path": str(path.resolve())}
         else:
-            plan = Path(args.plan)
-            if not plan.is_absolute():
-                plan = workspace / plan
+            plan = _workspace_path(workspace, args.plan)
             payload = verify_temporal_resilience_plan(workspace, plan)
     except ResilienceError as exc:
         error = {
@@ -413,3 +418,15 @@ def run(args: Any) -> int:
             "authority : schedule derivation only; graph invocation, replay, checkpoint mutation, repair, and approval are locked"
         )
     return 0 if args.resilience_cmd == "plan" or payload["ok"] else 1
+
+
+def run(args: Any) -> int:
+    """Dispatch one bounded review-surface command."""
+    handlers = {
+        "proof-card": _handle_proof_card,
+        "adoption": _handle_adoption,
+        "counterexample": _handle_counterexample,
+        "guardrail": _handle_guardrail,
+    }
+    handler = handlers.get(args.cmd, _handle_resilience)
+    return handler(args)
