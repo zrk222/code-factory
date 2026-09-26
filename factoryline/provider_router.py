@@ -316,20 +316,18 @@ def _normalize_provider(value: Any, policy_ides: list[str]) -> dict[str, Any]:
     }
 
 
-def _normalize(
-    owner: str,
-    providers: list[dict[str, Any]],
-    allowed_ides: list[str],
-    max_cost_usd: float,
-    quality_floor: str,
-    routing_bias: int,
-) -> dict[str, Any]:
+def _normalize_owner(owner: str) -> str:
     owner = owner.strip() if isinstance(owner, str) else ""
     if not owner or len(owner) > 120:
         raise ProviderRouterError(
             "PROVIDER_POLICY_INVALID", "owner must contain 1-120 characters"
         )
-    ides = _ides(allowed_ides, "allowed_ides")
+    return owner
+
+
+def _normalize_providers(
+    providers: list[dict[str, Any]], ides: list[str]
+) -> list[dict[str, Any]]:
     if not isinstance(providers, list) or not 1 <= len(providers) <= MAX_PROVIDERS:
         raise ProviderRouterError(
             "PROVIDER_POLICY_INVALID", f"policy requires 1-{MAX_PROVIDERS} providers"
@@ -340,16 +338,27 @@ def _normalize(
         raise ProviderRouterError(
             "PROVIDER_POLICY_INVALID", "provider ids must be unique"
         )
+    return normalized
+
+
+def _normalize_policy_ceiling(max_cost_usd: float) -> float:
     ceiling = _price(max_cost_usd, "max_cost_usd")
     if ceiling is None or ceiling <= 0:
         raise ProviderRouterError(
             "PROVIDER_POLICY_INVALID", "max_cost_usd must be greater than zero"
         )
+    return ceiling
+
+
+def _validate_quality_floor(quality_floor: str) -> None:
     if quality_floor not in QUALITY_TIERS:
         raise ProviderRouterError(
             "PROVIDER_POLICY_INVALID",
             "quality_floor must be economy, balanced, or frontier",
         )
+
+
+def _validate_routing_bias(routing_bias: int) -> None:
     if (
         isinstance(routing_bias, bool)
         or not isinstance(routing_bias, int)
@@ -359,18 +368,41 @@ def _normalize(
             "PROVIDER_POLICY_INVALID",
             "routing_bias must be an integer from 0 through 100",
         )
+
+
+def _normalize_rails(
+    max_cost_usd: float, quality_floor: str, routing_bias: int
+) -> dict[str, Any]:
+    ceiling = _normalize_policy_ceiling(max_cost_usd)
+    _validate_quality_floor(quality_floor)
+    _validate_routing_bias(routing_bias)
+    return {
+        "max_cost_usd": ceiling,
+        "quality_floor": quality_floor,
+        "routing_bias": routing_bias,
+        "credential_transport": "environment_reference_only",
+        "provider_calls": False,
+    }
+
+
+def _normalize(
+    owner: str,
+    providers: list[dict[str, Any]],
+    allowed_ides: list[str],
+    max_cost_usd: float,
+    quality_floor: str,
+    routing_bias: int,
+) -> dict[str, Any]:
+    owner = _normalize_owner(owner)
+    ides = _ides(allowed_ides, "allowed_ides")
+    normalized = _normalize_providers(providers, ides)
+    rails = _normalize_rails(max_cost_usd, quality_floor, routing_bias)
     return {
         "schema": POLICY_SCHEMA,
         "owner": owner,
         "providers": normalized,
         "allowed_ides": ides,
-        "rails": {
-            "max_cost_usd": ceiling,
-            "quality_floor": quality_floor,
-            "routing_bias": routing_bias,
-            "credential_transport": "environment_reference_only",
-            "provider_calls": False,
-        },
+        "rails": rails,
         "markers": [
             "PROVIDER_POLICY_SECRET_FREE",
             "PROVIDER_CREDENTIAL_REFERENCE_ONLY",
@@ -497,6 +529,111 @@ def _privacy_satisfies(candidate: str, required: str) -> bool:
     return candidate in PRIVACY_CLASSES
 
 
+def _validate_projected_tokens(projected_tokens: int) -> None:
+    if (
+        isinstance(projected_tokens, bool)
+        or projected_tokens < 0
+        or projected_tokens > MAX_CONTEXT_TOKENS
+    ):
+        raise ProviderRouterError(
+            "PROVIDER_ROUTE_RAILS_ENFORCED",
+            f"projected_tokens must be from 0 through {MAX_CONTEXT_TOKENS}",
+        )
+
+
+def _validate_latency_budget(latency_budget_ms: int) -> None:
+    if (
+        isinstance(latency_budget_ms, bool)
+        or latency_budget_ms < 1
+        or latency_budget_ms > MAX_LATENCY_MS
+    ):
+        raise ProviderRouterError(
+            "PROVIDER_ROUTE_RAILS_ENFORCED",
+            f"latency_budget_ms must be from 1 through {MAX_LATENCY_MS}",
+        )
+
+
+def _validate_required_capabilities(
+    required_capabilities: list[str] | None,
+) -> None:
+    if required_capabilities is not None and (
+        not isinstance(required_capabilities, list)
+        or not all(
+            isinstance(item, str) and item.strip() for item in required_capabilities
+        )
+    ):
+        raise ProviderRouterError(
+            "PROVIDER_ROUTE_RAILS_ENFORCED",
+            "required_capabilities must be a list of non-empty strings",
+        )
+
+
+def _validate_output_contract(output_contract: str) -> None:
+    if output_contract not in OUTPUT_CONTRACTS:
+        raise ProviderRouterError(
+            "PROVIDER_ROUTE_RAILS_ENFORCED",
+            f"unsupported output contract: {output_contract}",
+        )
+
+
+def _validate_candidate_rails(
+    projected_tokens: int,
+    latency_budget_ms: int,
+    required_capabilities: list[str] | None,
+    output_contract: str,
+) -> set[str]:
+    _validate_projected_tokens(projected_tokens)
+    _validate_latency_budget(latency_budget_ms)
+    _validate_required_capabilities(required_capabilities)
+    required = set(item.strip() for item in (required_capabilities or []))
+    _validate_output_contract(output_contract)
+    return required
+
+
+def _provider_credential_present(provider: dict[str, Any]) -> bool:
+    return provider["key_env"] is None or provider["key_env"] in os.environ
+
+
+def _model_meets_route_rails(
+    model: dict[str, Any],
+    minimum_tier: int,
+    projected_tokens: int,
+    latency_budget_ms: int,
+    required: set[str],
+    privacy_class: str,
+    output_contract: str,
+) -> bool:
+    return (
+        QUALITY_TIERS.index(model["tier"]) >= minimum_tier
+        and model["max_context_tokens"] >= projected_tokens
+        and model["max_latency_ms"] <= latency_budget_ms
+        and required.issubset(model["capabilities"])
+        and _privacy_satisfies(model["privacy_class"], privacy_class)
+        and output_contract in model["output_contracts"]
+    )
+
+
+def _candidate_record(
+    provider: dict[str, Any], model: dict[str, Any], present: bool
+) -> dict[str, Any]:
+    return {
+        "provider": provider["id"],
+        "model": model["id"],
+        "tier": model["tier"],
+        "input_cost_per_million": model["input_cost_per_million"],
+        "output_cost_per_million": model["output_cost_per_million"],
+        "listed_cost_index": _model_cost(model),
+        "key_env": provider["key_env"],
+        "credential_present": present,
+        "endpoint": provider["endpoint"],
+        "max_context_tokens": model["max_context_tokens"],
+        "max_latency_ms": model["max_latency_ms"],
+        "capabilities": model["capabilities"],
+        "privacy_class": model["privacy_class"],
+        "output_contracts": model["output_contracts"],
+    }
+
+
 def _eligible_candidates(
     policy: dict[str, Any],
     ide: str,
@@ -508,72 +645,29 @@ def _eligible_candidates(
     privacy_class: str = "standard",
     output_contract: str = "json",
 ) -> list[dict[str, Any]]:
-    if (
-        isinstance(projected_tokens, bool)
-        or projected_tokens < 0
-        or projected_tokens > MAX_CONTEXT_TOKENS
-    ):
-        raise ProviderRouterError(
-            "PROVIDER_ROUTE_RAILS_ENFORCED",
-            f"projected_tokens must be from 0 through {MAX_CONTEXT_TOKENS}",
-        )
-    if (
-        isinstance(latency_budget_ms, bool)
-        or latency_budget_ms < 1
-        or latency_budget_ms > MAX_LATENCY_MS
-    ):
-        raise ProviderRouterError(
-            "PROVIDER_ROUTE_RAILS_ENFORCED",
-            f"latency_budget_ms must be from 1 through {MAX_LATENCY_MS}",
-        )
-    if required_capabilities is not None and (
-        not isinstance(required_capabilities, list)
-        or not all(
-            isinstance(item, str) and item.strip() for item in required_capabilities
-        )
-    ):
-        raise ProviderRouterError(
-            "PROVIDER_ROUTE_RAILS_ENFORCED",
-            "required_capabilities must be a list of non-empty strings",
-        )
-    required = set(item.strip() for item in (required_capabilities or []))
-    if output_contract not in OUTPUT_CONTRACTS:
-        raise ProviderRouterError(
-            "PROVIDER_ROUTE_RAILS_ENFORCED",
-            f"unsupported output contract: {output_contract}",
-        )
+    required = _validate_candidate_rails(
+        projected_tokens,
+        latency_budget_ms,
+        required_capabilities,
+        output_contract,
+    )
     candidates: list[dict[str, Any]] = []
     for provider in policy["providers"]:
-        present = provider["key_env"] is None or provider["key_env"] in os.environ
+        present = _provider_credential_present(provider)
         if ide not in provider["allowed_ides"] or not present:
             continue
         for model in provider["models"]:
-            if (
-                QUALITY_TIERS.index(model["tier"]) >= minimum_tier
-                and model["max_context_tokens"] >= projected_tokens
-                and model["max_latency_ms"] <= latency_budget_ms
-                and required.issubset(model["capabilities"])
-                and _privacy_satisfies(model["privacy_class"], privacy_class)
-                and output_contract in model["output_contracts"]
+            if not _model_meets_route_rails(
+                model,
+                minimum_tier,
+                projected_tokens,
+                latency_budget_ms,
+                required,
+                privacy_class,
+                output_contract,
             ):
-                candidates.append(
-                    {
-                        "provider": provider["id"],
-                        "model": model["id"],
-                        "tier": model["tier"],
-                        "input_cost_per_million": model["input_cost_per_million"],
-                        "output_cost_per_million": model["output_cost_per_million"],
-                        "listed_cost_index": _model_cost(model),
-                        "key_env": provider["key_env"],
-                        "credential_present": present,
-                        "endpoint": provider["endpoint"],
-                        "max_context_tokens": model["max_context_tokens"],
-                        "max_latency_ms": model["max_latency_ms"],
-                        "capabilities": model["capabilities"],
-                        "privacy_class": model["privacy_class"],
-                        "output_contracts": model["output_contracts"],
-                    }
-                )
+                continue
+            candidates.append(_candidate_record(provider, model, present))
     return candidates
 
 
@@ -621,34 +715,30 @@ def _select_candidate(
     return (cached, True) if preserve else (selected, False)
 
 
-def route_provider(
-    policy_path: Path,
-    mission_path: Path,
-    root: Path,
-    ide: str,
-    risk: str,
-    preferred_provider: str | None = None,
-    preferred_model: str | None = None,
-    cache_provider: str | None = None,
-    cache_model: str | None = None,
-    projected_tokens: int = 0,
-    projected_cost_usd: float | None = None,
-    latency_budget_ms: int = MAX_LATENCY_MS,
-    required_capabilities: list[str] | None = None,
-    privacy_class: str = "standard",
-    output_contract: str = "json",
-) -> dict:
-    """Select one policy-eligible provider/model without making a provider call."""
+def _verified_route_policy(policy_path: Path) -> dict[str, Any]:
     verification = verify_provider_policy(policy_path)
     if not verification["valid"]:
         raise ProviderRouterError(
             "PROVIDER_POLICY_INVALID", "; ".join(verification["errors"])
         )
-    policy = _load(Path(policy_path))
+    return _load(Path(policy_path))
+
+
+def _validate_route_ide(policy: dict[str, Any], ide: str) -> None:
     if ide not in SUPPORTED_IDES or ide not in policy["allowed_ides"]:
         raise ProviderRouterError(
             "PROVIDER_ROUTE_RAILS_ENFORCED", f"IDE {ide!r} is not allowed by policy"
         )
+
+
+def _mission_route_context(
+    policy: dict[str, Any],
+    mission_path: Path,
+    root: Path,
+    risk: str,
+    cache_provider: str | None,
+    cache_model: str | None,
+) -> tuple[dict[str, Any], float, dict[str, Any]]:
     status = mission_graph_status(mission_path, root)
     effective_ceiling = min(
         policy["rails"]["max_cost_usd"], status["budgets"]["max_cost_usd"]
@@ -660,6 +750,10 @@ def route_provider(
         policy["rails"]["quality_floor"],
         cache_continuity=bool(cache_provider and cache_model),
     )
+    return status, effective_ceiling, recommendation
+
+
+def _validate_projected_cost(projected_cost_usd: float | None) -> None:
     if projected_cost_usd is not None and (
         isinstance(projected_cost_usd, bool)
         or not isinstance(projected_cost_usd, (int, float))
@@ -670,6 +764,24 @@ def route_provider(
             "PROVIDER_ROUTE_RAILS_ENFORCED",
             "projected_cost_usd must be a non-negative number",
         )
+
+
+def _select_policy_candidate(
+    policy: dict[str, Any],
+    ide: str,
+    recommendation: dict[str, Any],
+    effective_ceiling: float,
+    projected_cost_usd: float | None,
+    preferred_provider: str | None,
+    preferred_model: str | None,
+    cache_provider: str | None,
+    cache_model: str | None,
+    projected_tokens: int,
+    latency_budget_ms: int,
+    required_capabilities: list[str] | None,
+    privacy_class: str,
+    output_contract: str,
+) -> tuple[dict[str, Any], bool]:
     candidates = _eligible_candidates(
         policy,
         ide,
@@ -686,12 +798,19 @@ def route_provider(
             "projected cost exceeds effective mission and policy ceiling",
         )
     candidates = _filter_preference(candidates, preferred_provider, preferred_model)
-    selected, cache_preserved = _select_candidate(
-        candidates, cache_provider, cache_model
-    )
-    public_selected = {
-        key: value for key, value in selected.items() if key != "listed_cost_index"
-    }
+    return _select_candidate(candidates, cache_provider, cache_model)
+
+
+def _route_reasons(
+    ide: str,
+    selected: dict[str, Any],
+    recommendation: dict[str, Any],
+    effective_ceiling: float,
+    latency_budget_ms: int,
+    output_contract: str,
+    privacy_class: str,
+    cache_preserved: bool,
+) -> list[str]:
     reasons = [
         f"IDE {ide} is policy-allowed",
         f"tier {selected['tier']} satisfies recommended {recommendation['tier']}",
@@ -707,6 +826,27 @@ def route_provider(
         reasons.append(
             "eligible current route preserved prompt-cache continuity without a higher listed cost"
         )
+    return reasons
+
+
+def _route_result(
+    status: dict[str, Any],
+    policy: dict[str, Any],
+    ide: str,
+    selected: dict[str, Any],
+    effective_ceiling: float,
+    projected_tokens: int,
+    projected_cost_usd: float | None,
+    latency_budget_ms: int,
+    required_capabilities: list[str] | None,
+    privacy_class: str,
+    output_contract: str,
+    cache_preserved: bool,
+    reasons: list[str],
+) -> dict[str, Any]:
+    public_selected = {
+        key: value for key, value in selected.items() if key != "listed_cost_index"
+    }
     return {
         "schema": ROUTE_SCHEMA,
         "mission_id": status["mission_id"],
@@ -738,3 +878,75 @@ def route_provider(
         ],
         "authority": "route recommendation only; external runtime supplies credentials and authorizes spend",
     }
+
+
+def route_provider(
+    policy_path: Path,
+    mission_path: Path,
+    root: Path,
+    ide: str,
+    risk: str,
+    preferred_provider: str | None = None,
+    preferred_model: str | None = None,
+    cache_provider: str | None = None,
+    cache_model: str | None = None,
+    projected_tokens: int = 0,
+    projected_cost_usd: float | None = None,
+    latency_budget_ms: int = MAX_LATENCY_MS,
+    required_capabilities: list[str] | None = None,
+    privacy_class: str = "standard",
+    output_contract: str = "json",
+) -> dict:
+    """Select one policy-eligible provider/model without making a provider call."""
+    policy = _verified_route_policy(policy_path)
+    _validate_route_ide(policy, ide)
+    status, effective_ceiling, recommendation = _mission_route_context(
+        policy,
+        mission_path,
+        root,
+        risk,
+        cache_provider,
+        cache_model,
+    )
+    _validate_projected_cost(projected_cost_usd)
+    selected, cache_preserved = _select_policy_candidate(
+        policy,
+        ide,
+        recommendation,
+        effective_ceiling,
+        projected_cost_usd,
+        preferred_provider,
+        preferred_model,
+        cache_provider,
+        cache_model,
+        projected_tokens,
+        latency_budget_ms,
+        required_capabilities,
+        privacy_class,
+        output_contract,
+    )
+    reasons = _route_reasons(
+        ide,
+        selected,
+        recommendation,
+        effective_ceiling,
+        latency_budget_ms,
+        output_contract,
+        privacy_class,
+        cache_preserved,
+    )
+    return _route_result(
+        status,
+        policy,
+        ide,
+        selected,
+        effective_ceiling,
+        projected_tokens,
+        projected_cost_usd,
+        latency_budget_ms,
+        required_capabilities,
+        privacy_class,
+        output_contract,
+        cache_preserved,
+        reasons,
+    )
