@@ -1159,6 +1159,16 @@ def _optional_mission_inputs(
             "sha256": _sha_path(context),
         }
         markers.append("REPOSITORY_CONTEXT_BOUND")
+    intake_binding = _intake_confirmation_binding(root, graph, require_intake)
+    if intake_binding is not None:
+        inputs["intake_confirmation"] = intake_binding
+        markers.append("INTAKE_CONFIRMATION_BOUND")
+    return inputs, markers
+
+
+def _intake_confirmation_binding(
+    root: Path, graph: dict[str, Any], require_intake: bool
+) -> dict[str, str] | None:
     intake = graph.get("intake")
     if intake is None:
         if require_intake:
@@ -1166,7 +1176,16 @@ def _optional_mission_inputs(
                 "INTAKE_CONFIRMATION_REQUIRED",
                 "compile the Product Graph with a verified intake confirmation before creating this mission",
             )
-        return inputs, markers
+        return None
+    value = _verified_intake_confirmation(root, intake)
+    _validate_intake_confirmation_hashes(graph, intake, value)
+    return {
+        "path": intake["path"],
+        "sha256": intake["file_sha256"],
+    }
+
+
+def _verified_intake_confirmation(root: Path, intake: Any) -> dict[str, Any]:
     if not isinstance(intake, dict) or set(intake) != {
         "path",
         "file_sha256",
@@ -1190,7 +1209,12 @@ def _optional_mission_inputs(
             "INTAKE_CONFIRMATION_INVALID",
             "; ".join(confirmation["errors"]) or "intake confirmation is invalid",
         )
-    value = confirmation["confirmation"]
+    return confirmation["confirmation"]
+
+
+def _validate_intake_confirmation_hashes(
+    graph: dict[str, Any], intake: dict[str, Any], value: dict[str, Any]
+) -> None:
     if (
         _sha_path(Path(intake["path"])) != intake["file_sha256"]
         or value.get("confirmation_sha256") != intake["confirmation_sha256"]
@@ -1205,12 +1229,6 @@ def _optional_mission_inputs(
             "INTAKE_SOURCE_MISMATCH",
             "Product Graph and intake confirmation are bound to different PRD bytes",
         )
-    inputs["intake_confirmation"] = {
-        "path": intake["path"],
-        "sha256": intake["file_sha256"],
-    }
-    markers.append("INTAKE_CONFIRMATION_BOUND")
-    return inputs, markers
 
 
 def _mission_markers(criteria: list[dict[str, Any]], extra: list[str]) -> list[str]:
@@ -1743,6 +1761,32 @@ def _browser_flow_artifacts(
         ) from exc
     evidence = _load_json(evidence_path, "factory.browser-flow.evidence.v1")
     contract = criterion["evidence_contract"]
+    errors = _browser_flow_identity_errors(evidence, mission, criterion, verifier_id)
+    clicks = evidence.get("clicks")
+    errors.extend(_browser_flow_interaction_errors(evidence, contract, clicks))
+    assertions = evidence.get("assertions")
+    errors.extend(_browser_flow_assertion_errors(assertions))
+    artifacts, artifact_errors = _resolve_browser_artifacts(
+        evidence.get("artifacts"), root
+    )
+    errors.extend(artifact_errors)
+    if errors:
+        raise ProductMissionError("BROWSER_FLOW_INVALID", "; ".join(errors))
+    return artifacts, {
+        "expected_url": evidence.get("expected_url"),
+        "observed_url": evidence.get("observed_url"),
+        "clicks": clicks,
+        "max_clicks": contract["max_clicks"],
+        "assertions": len(assertions),
+    }
+
+
+def _browser_flow_identity_errors(
+    evidence: dict[str, Any],
+    mission: dict[str, Any],
+    criterion: dict[str, Any],
+    verifier_id: str,
+) -> list[str]:
     errors = []
     if (
         evidence.get("mission_id") != mission["id"]
@@ -1755,7 +1799,13 @@ def _browser_flow_artifacts(
     observed = evidence.get("observed_url")
     if not isinstance(expected, str) or not expected or observed != expected:
         errors.append("observed URL does not exactly match the declared expected URL")
-    clicks = evidence.get("clicks")
+    return errors
+
+
+def _browser_flow_interaction_errors(
+    evidence: dict[str, Any], contract: dict[str, Any], clicks: Any
+) -> list[str]:
+    errors = []
     steps = evidence.get("steps")
     if (
         isinstance(clicks, bool)
@@ -1774,7 +1824,11 @@ def _browser_flow_artifacts(
         )
     ):
         errors.append("every counted browser interaction must have one passing step")
-    assertions = evidence.get("assertions")
+    return errors
+
+
+def _browser_flow_assertion_errors(assertions: Any) -> list[str]:
+    errors = []
     if (
         not isinstance(assertions, list)
         or not assertions
@@ -1784,7 +1838,13 @@ def _browser_flow_artifacts(
         )
     ):
         errors.append("every declared browser assertion must pass")
-    artifacts = evidence.get("artifacts")
+    return errors
+
+
+def _resolve_browser_artifacts(
+    artifacts: Any, root: Path
+) -> tuple[list[Path], list[str]]:
+    errors = []
     if not isinstance(artifacts, list) or not artifacts:
         errors.append("at least one screenshot or browser artifact is required")
         artifacts = []
@@ -1805,15 +1865,7 @@ def _browser_flow_artifacts(
             errors.append(f"browser artifact is missing: {path}")
         else:
             resolved.append(path.resolve())
-    if errors:
-        raise ProductMissionError("BROWSER_FLOW_INVALID", "; ".join(errors))
-    return resolved, {
-        "expected_url": expected,
-        "observed_url": observed,
-        "clicks": clicks,
-        "max_clicks": contract["max_clicks"],
-        "assertions": len(assertions),
-    }
+    return resolved, errors
 
 
 def _validated_completion_results(
@@ -1822,7 +1874,26 @@ def _validated_completion_results(
     criteria_by_id = {
         item["id"]: item for item in mission["completion_contract"]["criteria"]
     }
-    expected = list(criteria_by_id)
+    results = _completion_result_list(manifest)
+    _validate_completion_coverage(results, list(criteria_by_id))
+    evidence_paths: list[Path] = []
+    normalized = []
+    for item in results:
+        normalized_item, item_paths = _validated_completion_item(
+            item, criteria_by_id[item["id"]], mission, manifest, root
+        )
+        evidence_paths.extend(item_paths)
+        normalized.append(normalized_item)
+    unique = list(dict.fromkeys(path.resolve() for path in evidence_paths))
+    if len(unique) > MAX_COMPLETION_EVIDENCE:
+        raise ProductMissionError(
+            "NO_FINISH_CONTRACT",
+            f"completion evidence is limited to {MAX_COMPLETION_EVIDENCE} files",
+        )
+    return normalized, _evidence(Path(root), unique)
+
+
+def _completion_result_list(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     results = manifest.get("criteria")
     if (
         not isinstance(results, list)
@@ -1832,6 +1903,12 @@ def _validated_completion_results(
             "NO_FINISH_CONTRACT",
             f"validation must contain 1-{MAX_COMPLETION_CRITERIA} criteria",
         )
+    return results
+
+
+def _validate_completion_coverage(
+    results: list[dict[str, Any]], expected: list[str]
+) -> None:
     ids = [item.get("id") for item in results if isinstance(item, dict)]
     if (
         len(ids) != len(results)
@@ -1842,55 +1919,52 @@ def _validated_completion_results(
             "NO_FINISH_CONTRACT",
             "validation must cover every completion criterion exactly once",
         )
+
+
+def _validated_completion_item(
+    item: dict[str, Any],
+    criterion: dict[str, Any],
+    mission: dict[str, Any],
+    manifest: dict[str, Any],
+    root: Path,
+) -> tuple[dict[str, Any], list[Path]]:
     evidence_paths: list[Path] = []
-    normalized = []
-    for item in results:
-        paths = item.get("evidence")
-        if (
-            item.get("passed") is not True
-            or not isinstance(paths, list)
-            or not paths
-            or not all(isinstance(value, str) and value.strip() for value in paths)
-        ):
-            raise ProductMissionError(
-                "NO_FINISH_CONTRACT",
-                f"criterion {item.get('id')} must pass with evidence",
-            )
-        resolved = [
-            Path(value) if Path(value).is_absolute() else Path(root).resolve() / value
-            for value in paths
-        ]
-        browser_summary = None
-        if criteria_by_id[item["id"]].get("verification_kind") == "browser_control":
-            if len(resolved) != 1:
-                raise ProductMissionError(
-                    "BROWSER_FLOW_INVALID",
-                    "browser-control criteria require exactly one structured evidence receipt",
-                )
-            artifacts, browser_summary = _browser_flow_artifacts(
-                mission,
-                criteria_by_id[item["id"]],
-                resolved[0],
-                manifest["verifier_id"].strip(),
-                root,
-            )
-            evidence_paths.extend(artifacts)
-        evidence_paths.extend(resolved)
-        normalized_item = {
-            "id": item["id"],
-            "passed": True,
-            "evidence": [str(path.resolve()) for path in resolved],
-        }
-        if browser_summary is not None:
-            normalized_item["browser_flow"] = browser_summary
-        normalized.append(normalized_item)
-    unique = list(dict.fromkeys(path.resolve() for path in evidence_paths))
-    if len(unique) > MAX_COMPLETION_EVIDENCE:
+    paths = item.get("evidence")
+    if (
+        item.get("passed") is not True
+        or not isinstance(paths, list)
+        or not paths
+        or not all(isinstance(value, str) and value.strip() for value in paths)
+    ):
         raise ProductMissionError(
             "NO_FINISH_CONTRACT",
-            f"completion evidence is limited to {MAX_COMPLETION_EVIDENCE} files",
+            f"criterion {item.get('id')} must pass with evidence",
         )
-    return normalized, _evidence(Path(root), unique)
+    resolved = [
+        Path(value) if Path(value).is_absolute() else Path(root).resolve() / value
+        for value in paths
+    ]
+    browser_summary = None
+    if criterion.get("verification_kind") == "browser_control":
+        if len(resolved) != 1:
+            raise ProductMissionError(
+                "BROWSER_FLOW_INVALID",
+                "browser-control criteria require exactly one structured evidence receipt",
+            )
+        verifier_id = manifest["verifier_id"].strip()
+        artifacts, browser_summary = _browser_flow_artifacts(
+            mission, criterion, resolved[0], verifier_id, root
+        )
+        evidence_paths.extend(artifacts)
+    evidence_paths.extend(resolved)
+    normalized_item = {
+        "id": item["id"],
+        "passed": True,
+        "evidence": [str(path.resolve()) for path in resolved],
+    }
+    if browser_summary is not None:
+        normalized_item["browser_flow"] = browser_summary
+    return normalized_item, evidence_paths
 
 
 def close_mission(
@@ -2184,6 +2258,14 @@ def _validate_outcome(
     source: str | None,
     notes: str,
 ) -> None:
+    _validate_outcome_metadata(metric, evidence_class, source, notes)
+    for name, selected in (("VALUE", value), ("TARGET", target)):
+        _validate_outcome_number(name, selected)
+
+
+def _validate_outcome_metadata(
+    metric: str, evidence_class: str, source: str | None, notes: str
+) -> None:
     if evidence_class not in EVIDENCE_CLASSES:
         raise ProductMissionError(
             "EVIDENCE_CLASS_INVALID",
@@ -2199,15 +2281,17 @@ def _validate_outcome(
         raise ProductMissionError(
             "MEASURED_SOURCE_REQUIRED", "measured outcomes require a source"
         )
-    for name, selected in (("VALUE", value), ("TARGET", target)):
-        if selected is not None and (
-            isinstance(selected, bool)
-            or not isinstance(selected, (int, float))
-            or not math.isfinite(selected)
-        ):
-            raise ProductMissionError(
-                f"OUTCOME_{name}_INVALID", f"{name.lower()} must be numeric or null"
-            )
+
+
+def _validate_outcome_number(name: str, selected: float | None) -> None:
+    if selected is not None and (
+        isinstance(selected, bool)
+        or not isinstance(selected, (int, float))
+        or not math.isfinite(selected)
+    ):
+        raise ProductMissionError(
+            f"OUTCOME_{name}_INVALID", f"{name.lower()} must be numeric or null"
+        )
 
 
 def _last_outcome_sha(path: Path) -> str | None:
