@@ -41,12 +41,18 @@ approval.
 ## Release controls
 
 Candidate preflight requires release-cadence admission and strict architecture
-health. Public publishing workflows also depend on GitHub environments with a
-required reviewer who is not the workflow initiator and with self-review
-disabled. See [release channels](docs/RELEASE_CHANNELS.md) and
-[contributor guidance](CONTRIBUTING.md).
-The self-audit receipt reports the live repository settings; publication stays
-blocked while independent-review protection is incomplete.
+health. Protected main requires CI and a separate specialty AI source review;
+the coordinator records that assessment, separately from test evidence. It is
+not a second human approval. Provider publication and marketplace approval are
+separate outcomes. See [release channels](docs/RELEASE_CHANNELS.md).
+
+Architecture health checks growth budgets. The 2026-09-26 ForgeLine reassessment
+grades this checkout C (62.3/100; 162 findings), with the hard complexity gate
+still failing. This scanner uses AST branch count; the earlier deep-audit
+complexity-83 score uses a different metric, so the figures are not directly
+comparable. Its test-intent and security scores are static signals, not executed
+coverage or a security certification. Historical receipts remain snapshots.
+The repository-wide quality gate is blocked; no grade-A claim is made.
 
 ## More detail
 
