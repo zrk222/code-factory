@@ -383,51 +383,38 @@ def _pdf(path: Path, receipt: dict[str, Any]) -> None:
     document.build(story)
 
 
-def verify_submission_assurance(
-    root: Path,
-    contract_path: Path,
-    app_review_path: Path,
-    store_media_path: Path,
-    saas_proof_path: Path,
-    quality_audit_path: Path,
-    out_path: Path,
-    report_dir: Path,
-    oracle_authority_path: Path | None = None,
-) -> dict[str, Any]:
-    """Join three hash-valid, exact-candidate gates and emit final reports only when ready."""
-    workspace = Path(root).resolve()
-    contract, contract_source = _read_json(
-        workspace, contract_path, schema=CONTRACT_SCHEMA
-    )
-    candidate = _candidate(contract.get("candidate"), "contract.candidate")
-    packet = _recipient(contract)
+def _submission_gate_inputs(
+    workspace: Path,
+    candidate: dict[str, str],
+    receipt_paths: tuple[Path, Path, Path, Path],
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     audit: list[dict[str, str]] = []
     findings: list[dict[str, str]] = []
     inputs = (
         (
             "App Review readiness",
-            app_review_path,
+            receipt_paths[0],
             APP_REVIEW_SCHEMA,
             "candidate",
             ("marker", "APP_REVIEW_READY"),
         ),
         (
             "Store media truth",
-            store_media_path,
+            receipt_paths[1],
             STORE_MEDIA_SCHEMA,
             "candidate",
             ("marker", "APPFORGE_STORE_MEDIA_READY"),
         ),
         (
             "SaaS identity to entitlement",
-            saas_proof_path,
+            receipt_paths[2],
             SAAS_PROOF_SCHEMA,
             "release_candidate",
             ("verdict", "verified"),
         ),
         (
             "UX, accessibility, and full-stack audit",
-            quality_audit_path,
+            receipt_paths[3],
             QUALITY_AUDIT_SCHEMA,
             "candidate",
             ("marker", "APPFORGE_QUALITY_AUDIT_READY"),
@@ -451,10 +438,16 @@ def verify_submission_assurance(
                 "receipt_sha256": str(value["receipt_sha256"]),
             }
         )
-    configured_oracle = oracle_authority_path
-    oracle_authority_relative: str | None = None
-    oracle_authority_source_relative: str | None = None
-    if configured_oracle is None:
+    return audit, findings
+
+
+def _configured_oracle_path(
+    contract: dict[str, Any],
+    oracle_authority_path: Path | None,
+    findings: list[dict[str, str]],
+) -> Path | None:
+    configured = oracle_authority_path
+    if configured is None:
         oracle_config = contract.get("oracle_authority")
         if isinstance(oracle_config, dict) and oracle_config.get("required") is True:
             path_value = oracle_config.get("path")
@@ -467,9 +460,8 @@ def verify_submission_assurance(
                     }
                 )
             else:
-                configured_oracle = Path(path_value)
-    oracle_authority: dict[str, Any] | None = None
-    if configured_oracle is None:
+                configured = Path(path_value)
+    if configured is None:
         findings.append(
             {
                 "gate": "Oracle authority",
@@ -477,60 +469,94 @@ def verify_submission_assurance(
                 "detail": "submission assurance requires a candidate-bound Oracle authority receipt",
             }
         )
-    if configured_oracle is not None:
-        try:
-            oracle_authority = verify_appforge_oracle_authority(
-                workspace, configured_oracle, candidate=candidate
-            )
-            if not oracle_authority.get("ok"):
-                findings.extend(
-                    {
-                        "gate": "Oracle authority",
-                        "code": item.get("code", "APPFORGE_ORACLE_AUTHORITY_BLOCKED"),
-                        "detail": item.get("detail", "Oracle authority is not current"),
-                    }
-                    for item in oracle_authority.get("findings", [])
-                )
-            else:
-                oracle_path = _local(workspace, configured_oracle)
-                persisted_oracle = _persist_oracle_authority_receipt(
-                    workspace, oracle_authority
-                )
-                oracle_authority_relative = persisted_oracle.relative_to(
-                    workspace
-                ).as_posix()
-                oracle_authority_source_relative = oracle_path.relative_to(
-                    workspace
-                ).as_posix()
-                audit.append(
-                    {
-                        "name": "Oracle authority",
-                        "detail": str(oracle_authority.get("action_summary")),
-                        "receipt_path": oracle_authority_relative,
-                        "receipt_sha256": str(oracle_authority.get("receipt_sha256")),
-                    }
-                )
-        except (
-            RevenueForgeError,
-            OSError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            ValueError,
-        ) as error:
-            findings.append(
-                {
-                    "gate": "Oracle authority",
-                    "code": getattr(error, "code", "APPFORGE_ORACLE_AUTHORITY_BLOCKED"),
-                    "detail": str(error),
-                }
-            )
-    ready = not findings
-    destination = _local(workspace, out_path, exists=False)
-    if destination.exists():
-        raise RevenueForgeError(
-            "APPFORGE_ASSURANCE_OUTPUT_EXISTS",
-            "output dossier is immutable; choose a new path",
+    return configured
+
+
+def _review_oracle_authority(
+    workspace: Path,
+    configured: Path | None,
+    candidate: dict[str, str],
+    audit: list[dict[str, str]],
+    findings: list[dict[str, str]],
+) -> tuple[dict[str, Any] | None, str | None, str | None]:
+    authority: dict[str, Any] | None = None
+    authority_path: str | None = None
+    source_path: str | None = None
+    if configured is None:
+        return authority, authority_path, source_path
+    try:
+        authority = verify_appforge_oracle_authority(
+            workspace, configured, candidate=candidate
         )
+        if not authority.get("ok"):
+            _append_oracle_findings(findings, authority)
+        else:
+            authority_path, source_path = _record_oracle_authority(
+                workspace, configured, authority, audit
+            )
+    except (
+        RevenueForgeError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+    ) as error:
+        findings.append(
+            {
+                "gate": "Oracle authority",
+                "code": getattr(error, "code", "APPFORGE_ORACLE_AUTHORITY_BLOCKED"),
+                "detail": str(error),
+            }
+        )
+    return authority, authority_path, source_path
+
+
+def _append_oracle_findings(
+    findings: list[dict[str, str]], authority: dict[str, Any]
+) -> None:
+    findings.extend(
+        {
+            "gate": "Oracle authority",
+            "code": item.get("code", "APPFORGE_ORACLE_AUTHORITY_BLOCKED"),
+            "detail": item.get("detail", "Oracle authority is not current"),
+        }
+        for item in authority.get("findings", [])
+    )
+
+
+def _record_oracle_authority(
+    workspace: Path,
+    configured: Path,
+    authority: dict[str, Any],
+    audit: list[dict[str, str]],
+) -> tuple[str, str]:
+    source = _local(workspace, configured)
+    persisted = _persist_oracle_authority_receipt(workspace, authority)
+    authority_path = persisted.relative_to(workspace).as_posix()
+    source_path = source.relative_to(workspace).as_posix()
+    audit.append(
+        {
+            "name": "Oracle authority",
+            "detail": str(authority.get("action_summary")),
+            "receipt_path": authority_path,
+            "receipt_sha256": str(authority.get("receipt_sha256")),
+        }
+    )
+    return authority_path, source_path
+
+
+def _submission_core(
+    contract_source: Path,
+    candidate: dict[str, str],
+    packet: dict[str, str],
+    configured_oracle: Path | None,
+    oracle_authority: dict[str, Any] | None,
+    oracle_authority_path: str | None,
+    oracle_authority_source_path: str | None,
+    audit: list[dict[str, str]],
+    findings: list[dict[str, str]],
+) -> dict[str, Any]:
+    ready = not findings
     core: dict[str, Any] = {
         "schema": RECEIPT_SCHEMA,
         "marker": "APPFORGE_SUBMISSION_DOSSIER_READY"
@@ -543,8 +569,8 @@ def verify_submission_assurance(
         "reviewer_packet": packet,
         "oracle_authority": {
             "required": configured_oracle is not None,
-            "path": oracle_authority_relative,
-            "source_path": oracle_authority_source_relative,
+            "path": oracle_authority_path,
+            "source_path": oracle_authority_source_path,
             "source_sha256": oracle_authority.get("authority_source_sha256")
             if oracle_authority
             else None,
@@ -569,10 +595,15 @@ def verify_submission_assurance(
         "claim_boundary": "hash-bound local readiness dossier only; not App Store Connect upload state, TestFlight completion, App Review submission, Apple policy certification, or Apple approval.",
     }
     core["receipt_sha256"] = _sha(core)
-    _atomic_json(destination, core)
-    result = {**core, "path": destination.relative_to(workspace).as_posix()}
-    if not ready:
-        return result
+    return core
+
+
+def _write_submission_reports(
+    workspace: Path,
+    report_dir: Path,
+    candidate: dict[str, str],
+    receipt: dict[str, Any],
+) -> dict[str, str]:
     reports = _local(workspace, report_dir, exists=False)
     reports.mkdir(parents=True, exist_ok=True)
     stem = f"{candidate['bundle_identifier'].replace('.', '-')}-{candidate['version']}-{candidate['build_number']}-submission-assurance"
@@ -583,59 +614,119 @@ def verify_submission_assurance(
             "APPFORGE_ASSURANCE_OUTPUT_EXISTS",
             "report outputs are immutable; choose a new report directory or candidate build",
         )
-    _atomic_text(markdown, _markdown(core))
-    _pdf(pdf, core)
+    _atomic_text(markdown, _markdown(receipt))
+    _pdf(pdf, receipt)
     return {
-        **result,
-        "reports": {
-            "markdown": markdown.relative_to(workspace).as_posix(),
-            "pdf": pdf.relative_to(workspace).as_posix(),
-        },
+        "markdown": markdown.relative_to(workspace).as_posix(),
+        "pdf": pdf.relative_to(workspace).as_posix(),
     }
 
 
-def submission_assurance_projection(root: Path) -> dict[str, Any]:
-    """Read only hash-valid dossier state; reports remain evidence, not authorization."""
+def verify_submission_assurance(
+    root: Path,
+    contract_path: Path,
+    app_review_path: Path,
+    store_media_path: Path,
+    saas_proof_path: Path,
+    quality_audit_path: Path,
+    out_path: Path,
+    report_dir: Path,
+    oracle_authority_path: Path | None = None,
+) -> dict[str, Any]:
+    """Join three hash-valid, exact-candidate gates and emit final reports only when ready."""
     workspace = Path(root).resolve()
-    current: list[dict[str, Any]] = []
-    invalid: list[str] = []
-    ranked: list[tuple[int, Path]] = []
-    candidates = list(
-        (workspace / ".factory" / "appforge").rglob("submission-assurance*.json")
+    contract, contract_source = _read_json(
+        workspace, contract_path, schema=CONTRACT_SCHEMA
     )
-    truncated = len(candidates) > 1_000
+    candidate = _candidate(contract.get("candidate"), "contract.candidate")
+    packet = _recipient(contract)
+    audit, findings = _submission_gate_inputs(
+        workspace,
+        candidate,
+        (app_review_path, store_media_path, saas_proof_path, quality_audit_path),
+    )
+    configured_oracle = _configured_oracle_path(
+        contract, oracle_authority_path, findings
+    )
+    oracle_authority, oracle_authority_relative, oracle_authority_source_relative = (
+        _review_oracle_authority(
+            workspace, configured_oracle, candidate, audit, findings
+        )
+    )
+    destination = _local(workspace, out_path, exists=False)
+    if destination.exists():
+        raise RevenueForgeError(
+            "APPFORGE_ASSURANCE_OUTPUT_EXISTS",
+            "output dossier is immutable; choose a new path",
+        )
+    core = _submission_core(
+        contract_source,
+        candidate,
+        packet,
+        configured_oracle,
+        oracle_authority,
+        oracle_authority_relative,
+        oracle_authority_source_relative,
+        audit,
+        findings,
+    )
+    _atomic_json(destination, core)
+    result = {**core, "path": destination.relative_to(workspace).as_posix()}
+    if not core["ok"]:
+        return result
+    return {
+        **result,
+        "reports": _write_submission_reports(workspace, report_dir, candidate, core),
+    }
+
+
+def _projection_ranked(
+    workspace: Path, candidates: list[Path], invalid: list[str]
+) -> list[tuple[int, Path]]:
+    ranked: list[tuple[int, Path]] = []
     for path in candidates[:1_000]:
         try:
             ranked.append((path.stat().st_mtime_ns, path))
         except OSError:
             invalid.append(path.relative_to(workspace).as_posix())
+    return ranked
+
+
+def _project_receipt(workspace: Path, path: Path) -> dict[str, Any] | None:
+    if path.stat().st_size > MAX_BYTES:
+        raise ValueError("submission assurance receipt exceeds 1 MiB")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("submission assurance receipt must be an object")
+    supplied = value.pop("receipt_sha256", None)
+    if (
+        value.get("schema") != RECEIPT_SCHEMA
+        or not isinstance(supplied, str)
+        or _sha(value) != supplied
+    ):
+        return None
+    return {
+        "path": path.relative_to(workspace).as_posix(),
+        "marker": value.get("marker"),
+        "ok": value.get("ok"),
+        "candidate": value.get("candidate"),
+        "receipt_sha256": supplied,
+    }
+
+
+def _project_receipts(
+    workspace: Path, ranked: list[tuple[int, Path]], invalid: list[str]
+) -> list[dict[str, Any]]:
+    current: list[dict[str, Any]] = []
     for _mtime, path in sorted(ranked, key=lambda item: (item[0], item[1].as_posix()))[
         -100:
     ]:
         try:
-            if path.stat().st_size > MAX_BYTES:
-                raise ValueError("submission assurance receipt exceeds 1 MiB")
-            value = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(value, dict):
-                raise ValueError("submission assurance receipt must be an object")
-            supplied = value.pop("receipt_sha256", None)
-            valid = (
-                value.get("schema") == RECEIPT_SCHEMA
-                and isinstance(supplied, str)
-                and _sha(value) == supplied
-            )
-            if valid:
-                current.append(
-                    {
-                        "path": path.relative_to(workspace).as_posix(),
-                        "marker": value.get("marker"),
-                        "ok": value.get("ok"),
-                        "candidate": value.get("candidate"),
-                        "receipt_sha256": supplied,
-                    }
-                )
-            else:
+            projected = _project_receipt(workspace, path)
+            if projected is None:
                 invalid.append(path.relative_to(workspace).as_posix())
+            else:
+                current.append(projected)
         except (
             OSError,
             UnicodeDecodeError,
@@ -644,6 +735,19 @@ def submission_assurance_projection(root: Path) -> dict[str, Any]:
             ValueError,
         ):
             invalid.append(path.relative_to(workspace).as_posix())
+    return current
+
+
+def submission_assurance_projection(root: Path) -> dict[str, Any]:
+    """Read only hash-valid dossier state; reports remain evidence, not authorization."""
+    workspace = Path(root).resolve()
+    invalid: list[str] = []
+    candidates = list(
+        (workspace / ".factory" / "appforge").rglob("submission-assurance*.json")
+    )
+    truncated = len(candidates) > 1_000
+    ranked = _projection_ranked(workspace, candidates, invalid)
+    current = _project_receipts(workspace, ranked, invalid)
     if truncated:
         invalid.append(".factory/appforge/<scan-truncated>")
     return {

@@ -34,80 +34,192 @@ export default function App() {
   const [creating, setCreating] = useState(false);
   const workspaceId = access?.workspaces[0]?.workspace._id;
   const data = useQuery(api.dashboard.overview, workspaceId ? { workspaceId } : "skip");
-  const [view, setView] = useState<View>(() => {
-    const requested = new URLSearchParams(window.location.search).get("view");
-    return navigation.some(([id]) => id === requested) ? requested as View : "overview";
-  });
+  const [view, setView] = useState<View>(initialView);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
   }, [view]);
 
   if (access === undefined) {
-    return <main className="loading-screen"><div className="factory-loader"><span /><span /><span /></div><p>Connecting to the Convex control plane…</p></main>;
+    return <LoadingScreen message="Connecting to the Convex control plane…" />;
   }
 
   if (!workspaceId) {
-    return <main className="setup-screen" data-testid="workspace-bootstrap"><p className="eyebrow">Authenticated · no workspace</p><h1>Create your first governed workspace.</h1><p>Your verified account becomes the owner of a new tenant-scoped workspace. Other customers cannot discover or access it.</p><button className="button primary" disabled={creating} onClick={() => { setCreating(true); void ensureDemo({}).finally(() => setCreating(false)); }}>{creating ? "Creating…" : "Create my workspace"}</button></main>;
+    return <WorkspaceSetup creating={creating} onCreate={() => {
+      setCreating(true);
+      void ensureDemo({}).finally(() => setCreating(false));
+    }} />;
   }
 
   if (data === undefined) {
-    return <main className="loading-screen"><div className="factory-loader"><span /><span /><span /></div><p>Loading the authorized workspace…</p></main>;
+    return <LoadingScreen message="Loading the authorized workspace…" />;
   }
 
   if (data === null) {
-    return <main className="loading-screen"><div className="factory-loader"><span /><span /><span /></div><p>Preparing the Factory Lab workspace…</p></main>;
+    return <LoadingScreen message="Preparing the Factory Lab workspace…" />;
   }
 
   const pending = data.approvals.filter((approval) => approval.status === "pending").length;
-  const latestRun = data.runs[0];
-  const passedGates = latestRun?.gates.filter((gate) => gate.status === "passed").length ?? 0;
-  const totalSpend = data.runs.reduce((sum, run) => sum + run.actualCostCents, 0);
 
   function navigate(next: View) {
     setView(next);
     setMobileNavOpen(false);
   }
 
-  return (
-    <div className="app-shell">
-      <aside className={`sidebar ${mobileNavOpen ? "open" : ""}`}>
-        <div className="brand-lockup"><span className="brand-mark"><Boxes size={24} /></span><div><strong>AGENT OVEN</strong><small>BY CODE FACTORY</small></div><button className="mobile-close" onClick={() => setMobileNavOpen(false)} aria-label="Close navigation"><X size={20} /></button></div>
-        <div className="workspace-switcher"><span>FL</span><div><strong>{data.workspace.name}</strong><small>PR Assurance · Pilot</small></div><ChevronRight size={16} /></div>
-        <nav aria-label="Product navigation">
-          <p className="nav-label">Control room</p>
-          {navigation.map(([id, label, Icon]) => <button key={id} className={view === id ? "active" : ""} onClick={() => navigate(id)}><Icon size={18} /><span>{label}</span>{id === "runs" && pending > 0 && <em>{pending}</em>}</button>)}
-        </nav>
-        <div className="sidebar-proof"><ShieldCheck size={20} /><div><strong>Trust boundary active</strong><p>Memory informs. Policy authorizes.</p></div></div>
-        <div className="sidebar-footer"><span className="avatar"><ShieldCheck size={16} /></span><div><strong>Verified session</strong><small>Identity by Clerk</small></div></div>
-      </aside>
-
-      <div className="app-body">
-        <header className="topbar">
-          <button className="mobile-menu" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation"><Menu size={21} /></button>
-          <div className="deployment-state"><span className="pulse" /><strong>Local Convex</strong><span>Realtime control plane</span></div>
-          <div className="topbar-actions"><span className="prototype-pill">Prototype · unsigned receipts</span><button className="icon-button" aria-label="Notifications"><Bell size={18} />{pending > 0 && <i />}</button><UserButton /></div>
-        </header>
-
-        <main className="main-content">
-          {view === "overview" && <Overview data={data} pending={pending} passedGates={passedGates} totalSpend={totalSpend} onNavigate={navigate} />}
-          {view === "exchange" && <AgentExchangePanel workspaceId={workspaceId} />}
-          {view === "builder" && data.agentSpec && <AgentBuilder agentSpec={data.agentSpec} blueprint={data.blueprint} blueprintVersions={data.blueprintVersions} executionJobs={data.executionJobs} runtimeAdapters={data.runtimeAdapters} routes={data.routes} memories={data.memoryLedger} connectors={data.knowledgeConnectors} creditAccount={data.creditAccount} inferenceBinding={data.inferenceBinding} />}
-          {view === "runs" && <RunPanel runs={data.runs} />}
-          {view === "evidence" && <EvidencePanel receipts={data.receipts} auditEvents={data.auditEvents} />}
-          {view === "memory" && data.agentSpec && <MemoryPanel agentSpec={data.agentSpec} memories={data.memories} ledger={data.memoryLedger} exported={data.memoryExport} />}
-          {view === "releases" && data.agentSpec && <ReleaseSafetyPanel agentSpec={data.agentSpec} releases={data.releases} incidents={data.incidents} />}
-          {view === "settings" && data.agentSpec && data.agentSpecExport && <OperationsPanel workspace={data.workspace} agentSpec={data.agentSpec} versions={data.versions} connections={data.providerConnections} creditAccount={data.creditAccount} creditTransactions={data.creditTransactions} creditPlans={data.creditPlans} inferenceBinding={data.inferenceBinding} executionJobs={data.executionJobs} backups={data.backupSnapshots} restoreDrills={data.restoreDrills} exported={data.agentSpecExport} />}
-        </main>
-      </div>
-    </div>
-  );
+  return <DashboardShell
+    data={data}
+    workspaceId={workspaceId}
+    view={view}
+    pending={pending}
+    mobileNavOpen={mobileNavOpen}
+    onNavigate={navigate}
+    onOpenMobileNav={() => setMobileNavOpen(true)}
+    onCloseMobileNav={() => setMobileNavOpen(false)}
+  />;
 }
 
 type Dashboard = NonNullable<ReturnType<typeof useQuery<typeof api.dashboard.overview>>>;
 
-function Overview({ data, pending, passedGates, totalSpend, onNavigate }: { data: Dashboard; pending: number; passedGates: number; totalSpend: number; onNavigate: (view: View) => void }) {
+function initialView(): View {
+  const requested = new URLSearchParams(window.location.search).get("view");
+  return navigation.some(([id]) => id === requested) ? requested as View : "overview";
+}
+
+function LoadingScreen({ message }: { message: string }) {
+  return <main className="loading-screen"><div className="factory-loader"><span /><span /><span /></div><p>{message}</p></main>;
+}
+
+function WorkspaceSetup({ creating, onCreate }: { creating: boolean; onCreate: () => void }) {
+  return <main className="setup-screen" data-testid="workspace-bootstrap">
+    <p className="eyebrow">Authenticated · no workspace</p>
+    <h1>Create your first governed workspace.</h1>
+    <p>Your verified account becomes the owner of a new tenant-scoped workspace. Other customers cannot discover or access it.</p>
+    <button className="button primary" disabled={creating} onClick={onCreate}>
+      {creating ? "Creating…" : "Create my workspace"}
+    </button>
+  </main>;
+}
+
+function DashboardShell({
+  data,
+  workspaceId,
+  view,
+  pending,
+  mobileNavOpen,
+  onNavigate,
+  onOpenMobileNav,
+  onCloseMobileNav,
+}: {
+  data: Dashboard;
+  workspaceId: Dashboard["workspace"]["_id"];
+  view: View;
+  pending: number;
+  mobileNavOpen: boolean;
+  onNavigate: (next: View) => void;
+  onOpenMobileNav: () => void;
+  onCloseMobileNav: () => void;
+}) {
+  return <div className="app-shell">
+    <NavigationSidebar
+      workspaceName={data.workspace.name}
+      view={view}
+      pending={pending}
+      mobileNavOpen={mobileNavOpen}
+      onNavigate={onNavigate}
+      onClose={onCloseMobileNav}
+    />
+    <div className="app-body">
+      <Topbar pending={pending} onOpenMobileNav={onOpenMobileNav} />
+      <main className="main-content">
+        <DashboardRoutes data={data} workspaceId={workspaceId} view={view} pending={pending} onNavigate={onNavigate} />
+      </main>
+    </div>
+  </div>;
+}
+
+function NavigationSidebar({
+  workspaceName,
+  view,
+  pending,
+  mobileNavOpen,
+  onNavigate,
+  onClose,
+}: {
+  workspaceName: string;
+  view: View;
+  pending: number;
+  mobileNavOpen: boolean;
+  onNavigate: (next: View) => void;
+  onClose: () => void;
+}) {
+  return <aside className={`sidebar ${mobileNavOpen ? "open" : ""}`}>
+    <div className="brand-lockup"><span className="brand-mark"><Boxes size={24} /></span><div><strong>AGENT OVEN</strong><small>BY CODE FACTORY</small></div><button className="mobile-close" onClick={onClose} aria-label="Close navigation"><X size={20} /></button></div>
+    <div className="workspace-switcher"><span>FL</span><div><strong>{workspaceName}</strong><small>PR Assurance · Pilot</small></div><ChevronRight size={16} /></div>
+    <nav aria-label="Product navigation">
+      <p className="nav-label">Control room</p>
+      {navigation.map(([id, label, Icon]) => <button key={id} className={view === id ? "active" : ""} onClick={() => onNavigate(id)}><Icon size={18} /><span>{label}</span>{id === "runs" && pending > 0 && <em>{pending}</em>}</button>)}
+    </nav>
+    <div className="sidebar-proof"><ShieldCheck size={20} /><div><strong>Trust boundary active</strong><p>Memory informs. Policy authorizes.</p></div></div>
+    <div className="sidebar-footer"><span className="avatar"><ShieldCheck size={16} /></span><div><strong>Verified session</strong><small>Identity by Clerk</small></div></div>
+  </aside>;
+}
+
+function Topbar({ pending, onOpenMobileNav }: { pending: number; onOpenMobileNav: () => void }) {
+  return <header className="topbar">
+    <button className="mobile-menu" onClick={onOpenMobileNav} aria-label="Open navigation"><Menu size={21} /></button>
+    <div className="deployment-state"><span className="pulse" /><strong>Local Convex</strong><span>Realtime control plane</span></div>
+    <div className="topbar-actions"><span className="prototype-pill">Prototype · unsigned receipts</span><button className="icon-button" aria-label="Notifications"><Bell size={18} />{pending > 0 && <i />}</button><UserButton /></div>
+  </header>;
+}
+
+function DashboardRoutes({ data, workspaceId, view, pending, onNavigate }: {
+  data: Dashboard;
+  workspaceId: Dashboard["workspace"]["_id"];
+  view: View;
+  pending: number;
+  onNavigate: (next: View) => void;
+}) {
+  switch (view) {
+    case "overview": return <Overview data={data} pending={pending} onNavigate={onNavigate} />;
+    case "exchange": return <AgentExchangePanel workspaceId={workspaceId} />;
+    case "builder": return <BuilderRoute data={data} />;
+    case "runs": return <RunPanel runs={data.runs} />;
+    case "evidence": return <EvidencePanel receipts={data.receipts} auditEvents={data.auditEvents} />;
+    case "memory": return <MemoryRoute data={data} />;
+    case "releases": return <ReleaseRoute data={data} />;
+    case "settings": return <SettingsRoute data={data} />;
+    default: return null;
+  }
+}
+
+function BuilderRoute({ data }: { data: Dashboard }) {
+  const { agentSpec } = data;
+  if (!agentSpec) return null;
+  return <AgentBuilder agentSpec={agentSpec} blueprint={data.blueprint} blueprintVersions={data.blueprintVersions} executionJobs={data.executionJobs} runtimeAdapters={data.runtimeAdapters} routes={data.routes} memories={data.memoryLedger} connectors={data.knowledgeConnectors} creditAccount={data.creditAccount} inferenceBinding={data.inferenceBinding} />;
+}
+
+function MemoryRoute({ data }: { data: Dashboard }) {
+  const { agentSpec } = data;
+  if (!agentSpec) return null;
+  return <MemoryPanel agentSpec={agentSpec} memories={data.memories} ledger={data.memoryLedger} exported={data.memoryExport} />;
+}
+
+function ReleaseRoute({ data }: { data: Dashboard }) {
+  const { agentSpec } = data;
+  if (!agentSpec) return null;
+  return <ReleaseSafetyPanel agentSpec={agentSpec} releases={data.releases} incidents={data.incidents} />;
+}
+
+function SettingsRoute({ data }: { data: Dashboard }) {
+  const { agentSpec, agentSpecExport } = data;
+  if (!agentSpec || !agentSpecExport) return null;
+  return <OperationsPanel workspace={data.workspace} agentSpec={agentSpec} versions={data.versions} connections={data.providerConnections} creditAccount={data.creditAccount} creditTransactions={data.creditTransactions} creditPlans={data.creditPlans} inferenceBinding={data.inferenceBinding} executionJobs={data.executionJobs} backups={data.backupSnapshots} restoreDrills={data.restoreDrills} exported={agentSpecExport} />;
+}
+
+function Overview({ data, pending, onNavigate }: { data: Dashboard; pending: number; onNavigate: (view: View) => void }) {
   const latestRun = data.runs[0];
+  const passedGates = latestRun?.gates.filter((gate) => gate.status === "passed").length ?? 0;
+  const totalSpend = data.runs.reduce((sum, run) => sum + run.actualCostCents, 0);
   const metrics = [
     ["Proof coverage", latestRun ? `${passedGates}/${latestRun.gates.length}` : "—", "Latest run gates", CircleGauge, "green"],
     ["Human decisions", String(pending), "Awaiting review", ShieldCheck, "orange"],

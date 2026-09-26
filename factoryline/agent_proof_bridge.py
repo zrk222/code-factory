@@ -219,27 +219,14 @@ def _source_preconditions(
     return sorted(result, key=lambda item: item["path"])
 
 
-def _workflow(value: object) -> dict[str, Any]:
-    entry = _exact(
-        value,
-        {"id", "definition_sha256", "topology_sha256", "nodes", "edges"},
-        "workflow",
-    )
-    if (
-        not isinstance(entry["nodes"], list)
-        or not 1 <= len(entry["nodes"]) <= MAX_ITEMS
-    ):
+def _workflow_nodes(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_ITEMS:
         raise AgentProofBridgeError(
             "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
             "workflow.nodes must contain 1-64 stages",
         )
-    if not isinstance(entry["edges"], list) or len(entry["edges"]) > MAX_ITEMS * 2:
-        raise AgentProofBridgeError(
-            "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
-            "workflow.edges must contain 0-128 links",
-        )
     nodes = []
-    for index, raw in enumerate(entry["nodes"]):
+    for index, raw in enumerate(value):
         node = _exact(raw, {"id", "kind"}, f"workflow.nodes[{index}]")
         if node["kind"] not in _NODE_KINDS:
             raise AgentProofBridgeError(
@@ -257,34 +244,42 @@ def _workflow(value: object) -> dict[str, Any]:
             "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
             "workflow node identities must be unique",
         )
-    ids = {node["id"] for node in nodes}
-    edges = []
-    for index, raw in enumerate(entry["edges"]):
-        edge = _exact(raw, {"from", "to"}, f"workflow.edges[{index}]")
-        source, target = (
-            _identifier(edge["from"], f"workflow.edges[{index}].from"),
-            _identifier(edge["to"], f"workflow.edges[{index}].to"),
+    return sorted(nodes, key=lambda node: node["id"])
+
+
+def _workflow_edges(value: object, node_ids: set[str]) -> list[dict[str, str]]:
+    if not isinstance(value, list) or len(value) > MAX_ITEMS * 2:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
+            "workflow.edges must contain 0-128 links",
         )
-        if source not in ids or target not in ids or source == target:
+    edges = []
+    for index, raw in enumerate(value):
+        edge = _exact(raw, {"from", "to"}, f"workflow.edges[{index}]")
+        source = _identifier(edge["from"], f"workflow.edges[{index}].from")
+        target = _identifier(edge["to"], f"workflow.edges[{index}].to")
+        if source not in node_ids or target not in node_ids or source == target:
             raise AgentProofBridgeError(
                 "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
                 "workflow edges must join distinct declared stages",
             )
         edges.append({"from": source, "to": target})
-    pairs = {(edge["from"], edge["to"]) for edge in edges}
-    if len(pairs) != len(edges):
+    if len({(edge["from"], edge["to"]) for edge in edges}) != len(edges):
         raise AgentProofBridgeError(
             "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED", "workflow edges must be unique"
         )
-    incoming = {identifier: 0 for identifier in ids}
-    children: dict[str, list[str]] = {identifier: [] for identifier in ids}
-    for source, target in pairs:
+    return sorted(edges, key=lambda edge: (edge["from"], edge["to"]))
+
+
+def _assert_acyclic(node_ids: set[str], edges: list[dict[str, str]]) -> None:
+    incoming = {identifier: 0 for identifier in node_ids}
+    children: dict[str, list[str]] = {identifier: [] for identifier in node_ids}
+    for edge in edges:
+        source, target = edge["from"], edge["to"]
         incoming[target] += 1
         children[source].append(target)
-    ready, visited = (
-        sorted(identifier for identifier, count in incoming.items() if count == 0),
-        0,
-    )
+    ready = sorted(identifier for identifier, count in incoming.items() if count == 0)
+    visited = 0
     while ready:
         source = ready.pop(0)
         visited += 1
@@ -292,12 +287,22 @@ def _workflow(value: object) -> dict[str, Any]:
             incoming[target] -= 1
             if incoming[target] == 0:
                 ready.append(target)
-    if visited != len(ids):
+    if visited != len(node_ids):
         raise AgentProofBridgeError(
             "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED", "workflow topology must be acyclic"
         )
-    nodes.sort(key=lambda node: node["id"])
-    edges.sort(key=lambda edge: (edge["from"], edge["to"]))
+
+
+def _workflow(value: object) -> dict[str, Any]:
+    entry = _exact(
+        value,
+        {"id", "definition_sha256", "topology_sha256", "nodes", "edges"},
+        "workflow",
+    )
+    nodes = _workflow_nodes(entry["nodes"])
+    node_ids = {node["id"] for node in nodes}
+    edges = _workflow_edges(entry["edges"], node_ids)
+    _assert_acyclic(node_ids, edges)
     topology = _sha({"nodes": nodes, "edges": edges})
     if _digest(entry["topology_sha256"], "workflow.topology_sha256") != topology:
         raise AgentProofBridgeError(
@@ -315,6 +320,78 @@ def _workflow(value: object) -> dict[str, Any]:
     }
 
 
+def _validate_evidence_pair_paths(
+    entry: dict[str, Any], index: int
+) -> tuple[str, str, str, str]:
+    before = _digest(entry["before_sha256"], f"evidence_pairs[{index}].before_sha256")
+    after = _digest(entry["after_sha256"], f"evidence_pairs[{index}].after_sha256")
+    if before == after:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
+            "before and after evidence must not share one digest",
+        )
+    before_path = _path(entry["before_path"], f"evidence_pairs[{index}].before_path")
+    after_path = _path(entry["after_path"], f"evidence_pairs[{index}].after_path")
+    if before_path == after_path:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
+            "before and after evidence must use distinct artifacts",
+        )
+    return before, after, before_path, after_path
+
+
+def _verify_evidence_artifact(artifact: Path, digest: str) -> None:
+    if artifact.stat().st_size > MAX_EVIDENCE_BYTES:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED", "evidence artifact exceeds 10 MiB"
+        )
+    if hashlib.sha256(artifact.read_bytes()).hexdigest() != digest:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
+            "evidence artifact bytes do not match their declared digest",
+        )
+
+
+def _evidence_pair(root: Path, raw: object, index: int) -> dict[str, str]:
+    entry = _exact(
+        raw,
+        {
+            "id",
+            "kind",
+            "before_path",
+            "after_path",
+            "before_sha256",
+            "after_sha256",
+            "claim_sha256",
+        },
+        f"evidence_pairs[{index}]",
+    )
+    if entry["kind"] not in _EVIDENCE_KINDS:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED", "evidence kind is unsupported"
+        )
+    before, after, before_path, after_path = _validate_evidence_pair_paths(entry, index)
+    before_artifact = _inside(
+        root, before_path, f"evidence_pairs[{index}].before_path", exists=True
+    )
+    after_artifact = _inside(
+        root, after_path, f"evidence_pairs[{index}].after_path", exists=True
+    )
+    _verify_evidence_artifact(before_artifact, before)
+    _verify_evidence_artifact(after_artifact, after)
+    return {
+        "id": _identifier(entry["id"], f"evidence_pairs[{index}].id"),
+        "kind": entry["kind"],
+        "before_path": before_path,
+        "after_path": after_path,
+        "before_sha256": before,
+        "after_sha256": after,
+        "claim_sha256": _digest(
+            entry["claim_sha256"], f"evidence_pairs[{index}].claim_sha256"
+        ),
+    }
+
+
 def _evidence(root: Path, value: object, visual: bool) -> list[dict[str, str]]:
     """Bind compact before/after artifacts instead of accepting bare hashes."""
     if not isinstance(value, list) or not 1 <= len(value) <= MAX_ITEMS:
@@ -322,77 +399,7 @@ def _evidence(root: Path, value: object, visual: bool) -> list[dict[str, str]]:
             "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
             "evidence_pairs must contain 1-64 proof pairs",
         )
-    result = []
-    for index, raw in enumerate(value):
-        entry = _exact(
-            raw,
-            {
-                "id",
-                "kind",
-                "before_path",
-                "after_path",
-                "before_sha256",
-                "after_sha256",
-                "claim_sha256",
-            },
-            f"evidence_pairs[{index}]",
-        )
-        if entry["kind"] not in _EVIDENCE_KINDS:
-            raise AgentProofBridgeError(
-                "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED", "evidence kind is unsupported"
-            )
-        before, after = (
-            _digest(entry["before_sha256"], f"evidence_pairs[{index}].before_sha256"),
-            _digest(entry["after_sha256"], f"evidence_pairs[{index}].after_sha256"),
-        )
-        if before == after:
-            raise AgentProofBridgeError(
-                "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
-                "before and after evidence must not share one digest",
-            )
-        before_path = _path(
-            entry["before_path"], f"evidence_pairs[{index}].before_path"
-        )
-        after_path = _path(entry["after_path"], f"evidence_pairs[{index}].after_path")
-        if before_path == after_path:
-            raise AgentProofBridgeError(
-                "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
-                "before and after evidence must use distinct artifacts",
-            )
-        before_artifact = _inside(
-            root, before_path, f"evidence_pairs[{index}].before_path", exists=True
-        )
-        after_artifact = _inside(
-            root, after_path, f"evidence_pairs[{index}].after_path", exists=True
-        )
-        if (
-            before_artifact.stat().st_size > MAX_EVIDENCE_BYTES
-            or after_artifact.stat().st_size > MAX_EVIDENCE_BYTES
-        ):
-            raise AgentProofBridgeError(
-                "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED", "evidence artifact exceeds 10 MiB"
-            )
-        if (
-            hashlib.sha256(before_artifact.read_bytes()).hexdigest() != before
-            or hashlib.sha256(after_artifact.read_bytes()).hexdigest() != after
-        ):
-            raise AgentProofBridgeError(
-                "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
-                "evidence artifact bytes do not match their declared digest",
-            )
-        result.append(
-            {
-                "id": _identifier(entry["id"], f"evidence_pairs[{index}].id"),
-                "kind": entry["kind"],
-                "before_path": before_path,
-                "after_path": after_path,
-                "before_sha256": before,
-                "after_sha256": after,
-                "claim_sha256": _digest(
-                    entry["claim_sha256"], f"evidence_pairs[{index}].claim_sha256"
-                ),
-            }
-        )
+    result = [_evidence_pair(root, raw, index) for index, raw in enumerate(value)]
     if len({item["id"] for item in result}) != len(result):
         raise AgentProofBridgeError(
             "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED",
@@ -406,9 +413,9 @@ def _evidence(root: Path, value: object, visual: bool) -> list[dict[str, str]]:
     return sorted(result, key=lambda item: item["id"])
 
 
-def _provider_receipt(provider: str, value: object) -> dict[str, Any]:
+def _provider_profiles() -> dict[str, set[str]]:
     common = {"session_id", "runtime_sha256", "tool_manifest_sha256"}
-    profiles = {
+    return {
         "eve": common
         | {
             "workflow_id",
@@ -437,8 +444,10 @@ def _provider_receipt(provider: str, value: object) -> dict[str, Any]:
         },
         "generic": common,
     }
-    entry = _exact(value, profiles[provider], "provider_receipt")
-    result: dict[str, Any] = {
+
+
+def _provider_common(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
         "session_id": _identifier(entry["session_id"], "provider_receipt.session_id"),
         "runtime_sha256": _digest(
             entry["runtime_sha256"], "provider_receipt.runtime_sha256"
@@ -447,121 +456,123 @@ def _provider_receipt(provider: str, value: object) -> dict[str, Any]:
             entry["tool_manifest_sha256"], "provider_receipt.tool_manifest_sha256"
         ),
     }
-    if provider == "eve":
-        if not isinstance(
-            entry["deployment_commit_sha"], str
-        ) or not _GIT_SHA.fullmatch(entry["deployment_commit_sha"]):
+
+
+def _eve_profile(entry: dict[str, Any]) -> dict[str, Any]:
+    commit = entry["deployment_commit_sha"]
+    if not isinstance(commit, str) or not _GIT_SHA.fullmatch(commit):
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_PROVIDER_PROFILE",
+            "Eve deployment_commit_sha must be a lowercase Git SHA",
+        )
+    return {
+        "workflow_id": _identifier(
+            entry["workflow_id"], "provider_receipt.workflow_id"
+        ),
+        "checkpoint_id": _identifier(
+            entry["checkpoint_id"], "provider_receipt.checkpoint_id"
+        ),
+        "checkpoint_sha256": _digest(
+            entry["checkpoint_sha256"], "provider_receipt.checkpoint_sha256"
+        ),
+        "deployment_commit_sha": commit,
+    }
+
+
+def _junie_profile(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        field: _digest(entry[field], f"provider_receipt.{field}")
+        for field in ("mission_sha256", "action_policy_sha256", "change_list_sha256")
+    }
+
+
+def _grok_build_profile(entry: dict[str, Any]) -> dict[str, Any]:
+    if entry["mode"] not in {"headless", "interactive"}:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_PROVIDER_PROFILE",
+            "Grok Build mode must be headless or interactive",
+        )
+    return {
+        "stream_sha256": _digest(
+            entry["stream_sha256"], "provider_receipt.stream_sha256"
+        ),
+        "mode": entry["mode"],
+        "permission_policy_sha256": _digest(
+            entry["permission_policy_sha256"],
+            "provider_receipt.permission_policy_sha256",
+        ),
+    }
+
+
+def _validated_commit_shas(entry: dict[str, Any], label: str) -> dict[str, str]:
+    commits = {}
+    for field in ("base_commit_sha", "head_commit_sha"):
+        value = entry[field]
+        if not isinstance(value, str) or not _GIT_SHA.fullmatch(value):
             raise AgentProofBridgeError(
                 "E_AGENT_BRIDGE_PROVIDER_PROFILE",
-                "Eve deployment_commit_sha must be a lowercase Git SHA",
+                f"{label} {field} must be a lowercase Git SHA",
             )
-        result.update(
-            {
-                "workflow_id": _identifier(
-                    entry["workflow_id"], "provider_receipt.workflow_id"
-                ),
-                "checkpoint_id": _identifier(
-                    entry["checkpoint_id"], "provider_receipt.checkpoint_id"
-                ),
-                "checkpoint_sha256": _digest(
-                    entry["checkpoint_sha256"], "provider_receipt.checkpoint_sha256"
-                ),
-                "deployment_commit_sha": entry["deployment_commit_sha"],
-            }
+        commits[field] = value
+    return commits
+
+
+def _coderabbit_profile(entry: dict[str, Any]) -> dict[str, Any]:
+    if entry["review_mode"] != "agent":
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_PROVIDER_PROFILE",
+            "CodeRabbit review_mode must be agent for structured review evidence",
         )
-    elif provider == "junie":
-        result.update(
-            {
-                "mission_sha256": _digest(
-                    entry["mission_sha256"], "provider_receipt.mission_sha256"
-                ),
-                "action_policy_sha256": _digest(
-                    entry["action_policy_sha256"],
-                    "provider_receipt.action_policy_sha256",
-                ),
-                "change_list_sha256": _digest(
-                    entry["change_list_sha256"], "provider_receipt.change_list_sha256"
-                ),
-            }
+    count = entry["finding_count"]
+    if not isinstance(count, int) or not 0 <= count <= 10_000:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_PROVIDER_PROFILE",
+            "CodeRabbit finding_count must be an integer between 0 and 10000",
         )
-    elif provider == "grok_build":
-        if entry["mode"] not in {"headless", "interactive"}:
-            raise AgentProofBridgeError(
-                "E_AGENT_BRIDGE_PROVIDER_PROFILE",
-                "Grok Build mode must be headless or interactive",
-            )
-        result.update(
-            {
-                "stream_sha256": _digest(
-                    entry["stream_sha256"], "provider_receipt.stream_sha256"
-                ),
-                "mode": entry["mode"],
-                "permission_policy_sha256": _digest(
-                    entry["permission_policy_sha256"],
-                    "provider_receipt.permission_policy_sha256",
-                ),
-            }
-        )
-    elif provider == "coderabbit":
-        if entry["review_mode"] != "agent":
-            raise AgentProofBridgeError(
-                "E_AGENT_BRIDGE_PROVIDER_PROFILE",
-                "CodeRabbit review_mode must be agent for structured review evidence",
-            )
-        if (
-            not isinstance(entry["finding_count"], int)
-            or not 0 <= entry["finding_count"] <= 10_000
-        ):
-            raise AgentProofBridgeError(
-                "E_AGENT_BRIDGE_PROVIDER_PROFILE",
-                "CodeRabbit finding_count must be an integer between 0 and 10000",
-            )
-        for field in ("base_commit_sha", "head_commit_sha"):
-            if not isinstance(entry[field], str) or not _GIT_SHA.fullmatch(
-                entry[field]
-            ):
-                raise AgentProofBridgeError(
-                    "E_AGENT_BRIDGE_PROVIDER_PROFILE",
-                    f"CodeRabbit {field} must be a lowercase Git SHA",
-                )
-        result.update(
-            {
-                "review_output_sha256": _digest(
-                    entry["review_output_sha256"],
-                    "provider_receipt.review_output_sha256",
-                ),
-                "review_mode": "agent",
-                "base_commit_sha": entry["base_commit_sha"],
-                "head_commit_sha": entry["head_commit_sha"],
-                "finding_count": entry["finding_count"],
-            }
-        )
-    elif provider == "devin":
-        for field in ("base_commit_sha", "head_commit_sha"):
-            if not isinstance(entry[field], str) or not _GIT_SHA.fullmatch(
-                entry[field]
-            ):
-                raise AgentProofBridgeError(
-                    "E_AGENT_BRIDGE_PROVIDER_PROFILE",
-                    f"Devin {field} must be a lowercase Git SHA",
-                )
-        result.update(
-            {
-                "task_sha256": _digest(
-                    entry["task_sha256"], "provider_receipt.task_sha256"
-                ),
-                "result_sha256": _digest(
-                    entry["result_sha256"], "provider_receipt.result_sha256"
-                ),
-                "base_commit_sha": entry["base_commit_sha"],
-                "head_commit_sha": entry["head_commit_sha"],
-                "permission_profile_sha256": _digest(
-                    entry["permission_profile_sha256"],
-                    "provider_receipt.permission_profile_sha256",
-                ),
-            }
-        )
-    return result
+    commits = _validated_commit_shas(entry, "CodeRabbit")
+    return {
+        "review_output_sha256": _digest(
+            entry["review_output_sha256"], "provider_receipt.review_output_sha256"
+        ),
+        "review_mode": "agent",
+        **commits,
+        "finding_count": count,
+    }
+
+
+def _devin_profile(entry: dict[str, Any]) -> dict[str, Any]:
+    commits = _validated_commit_shas(entry, "Devin")
+    return {
+        "task_sha256": _digest(entry["task_sha256"], "provider_receipt.task_sha256"),
+        "result_sha256": _digest(
+            entry["result_sha256"], "provider_receipt.result_sha256"
+        ),
+        **commits,
+        "permission_profile_sha256": _digest(
+            entry["permission_profile_sha256"],
+            "provider_receipt.permission_profile_sha256",
+        ),
+    }
+
+
+def _provider_details(provider: str, entry: dict[str, Any]) -> dict[str, Any]:
+    validators = {
+        "eve": _eve_profile,
+        "junie": _junie_profile,
+        "grok_build": _grok_build_profile,
+        "coderabbit": _coderabbit_profile,
+        "devin": _devin_profile,
+        "generic": lambda _entry: {},
+    }
+    return validators[provider](entry)
+
+
+def _provider_receipt(provider: str, value: object) -> dict[str, Any]:
+    entry = _exact(value, _provider_profiles()[provider], "provider_receipt")
+    return {
+        **_provider_common(entry),
+        **_provider_details(provider, entry),
+    }
 
 
 def _write(path: Path, payload: dict[str, Any]) -> None:
@@ -605,17 +616,7 @@ def _read_receipt(root: Path, path: Path) -> tuple[dict[str, Any], Path]:
     return value, target
 
 
-def _resume(
-    root: Path,
-    value: object,
-    run_id: str,
-    workflow: dict[str, Any],
-    provider: str,
-    profile: dict[str, Any],
-    contract_sha256: str,
-) -> dict[str, str] | None:
-    if value is None:
-        return None
+def _resume_entry(root: Path, value: object) -> tuple[dict[str, Any], dict[str, Any]]:
     entry = _exact(
         value,
         {
@@ -630,15 +631,27 @@ def _resume(
     prior, _ = _read_receipt(
         root, Path(_path(entry["prior_receipt"], "resume.prior_receipt"))
     )
-    if (
-        prior.get("run", {}).get("id")
-        != _identifier(entry["prior_run_id"], "resume.prior_run_id")
-        or prior.get("run", {}).get("id") == run_id
-    ):
+    return entry, prior
+
+
+def _validate_prior_run(
+    prior: dict[str, Any], entry: dict[str, Any], run_id: str
+) -> None:
+    prior_id = prior.get("run", {}).get("id")
+    requested_id = _identifier(entry["prior_run_id"], "resume.prior_run_id")
+    if prior_id != requested_id or prior_id == run_id:
         raise AgentProofBridgeError(
             "E_AGENT_BRIDGE_RESUME_DIVERGENCE",
             "resume must name a distinct matching prior run",
         )
+
+
+def _validate_prior_bindings(
+    prior: dict[str, Any],
+    provider: str,
+    workflow: dict[str, Any],
+    contract_sha256: str,
+) -> None:
     if (
         prior.get("provider") != provider
         or prior.get("workflow", {}).get("topology_sha256")
@@ -649,9 +662,15 @@ def _resume(
             "E_AGENT_BRIDGE_RESUME_DIVERGENCE",
             "provider, workflow, or Oracle binding diverges on resume",
         )
-    checkpoint = _identifier(entry["checkpoint_id"], "resume.checkpoint_id")
-    checkpoint_sha = _digest(entry["checkpoint_sha256"], "resume.checkpoint_sha256")
-    prior_profile = prior.get("provider_receipt", {})
+
+
+def _validate_resume_checkpoint(
+    provider: str,
+    checkpoint: str,
+    checkpoint_sha: str,
+    profile: dict[str, Any],
+    prior_profile: dict[str, Any],
+) -> None:
     if provider == "eve" and (
         checkpoint != profile.get("checkpoint_id")
         or checkpoint_sha != profile.get("checkpoint_sha256")
@@ -668,6 +687,11 @@ def _resume(
             "E_AGENT_BRIDGE_RESUME_DIVERGENCE",
             "Eve checkpoint differs from the prior receipt",
         )
+
+
+def _validate_prior_profile(
+    entry: dict[str, Any], prior_profile: dict[str, Any]
+) -> None:
     prior_digest = _digest(
         entry["provider_receipt_sha256"], "resume.provider_receipt_sha256"
     )
@@ -675,6 +699,29 @@ def _resume(
         raise AgentProofBridgeError(
             "E_AGENT_BRIDGE_RESUME_DIVERGENCE", "prior provider profile digest differs"
         )
+
+
+def _resume(
+    root: Path,
+    value: object,
+    run_id: str,
+    workflow: dict[str, Any],
+    provider: str,
+    profile: dict[str, Any],
+    contract_sha256: str,
+) -> dict[str, str] | None:
+    if value is None:
+        return None
+    entry, prior = _resume_entry(root, value)
+    _validate_prior_run(prior, entry, run_id)
+    _validate_prior_bindings(prior, provider, workflow, contract_sha256)
+    checkpoint = _identifier(entry["checkpoint_id"], "resume.checkpoint_id")
+    checkpoint_sha = _digest(entry["checkpoint_sha256"], "resume.checkpoint_sha256")
+    prior_profile = prior.get("provider_receipt", {})
+    _validate_resume_checkpoint(
+        provider, checkpoint, checkpoint_sha, profile, prior_profile
+    )
+    _validate_prior_profile(entry, prior_profile)
     return {
         "prior_receipt": _path(entry["prior_receipt"], "resume.prior_receipt"),
         "prior_run_id": prior["run"]["id"],
@@ -684,11 +731,7 @@ def _resume(
     }
 
 
-def import_agent_proof(
-    root: Path, envelope_path: Path, out: Path | None = None
-) -> dict[str, Any]:
-    """Bind one provider-neutral coding-agent export to a sealed Oracle Contract."""
-    workspace = Path(root).resolve()
+def _load_envelope(workspace: Path, envelope_path: Path) -> tuple[Path, dict[str, Any]]:
     source = _inside(workspace, envelope_path.as_posix(), "envelope", exists=True)
     if source.stat().st_size > MAX_BYTES:
         raise AgentProofBridgeError(
@@ -701,6 +744,10 @@ def import_agent_proof(
         raise AgentProofBridgeError(
             "E_AGENT_BRIDGE_SCHEMA", "envelope must be canonical UTF-8 JSON"
         ) from exc
+    return source, envelope
+
+
+def _envelope_entry(envelope: object) -> dict[str, Any]:
     allowed = {
         "schema",
         "envelope_id",
@@ -736,7 +783,11 @@ def import_agent_proof(
             "E_AGENT_BRIDGE_SCHEMA",
             "envelope schema, provider, or status is unsupported",
         )
-    provider, run_id = entry["provider"], _identifier(entry["run_id"], "run_id")
+    return entry
+
+
+def _run_metadata(entry: dict[str, Any]) -> dict[str, str]:
+    run_id = _identifier(entry["run_id"], "run_id")
     if (
         entry.get("autonomy") not in _AUTONOMY
         or entry.get("isolation") not in _ISOLATION
@@ -753,12 +804,27 @@ def import_agent_proof(
         raise AgentProofBridgeError(
             "E_AGENT_BRIDGE_SCHEMA", "surface must be visual or nonvisual"
         )
+    return {
+        "provider": entry["provider"],
+        "run_id": run_id,
+        "autonomy": entry["autonomy"],
+        "isolation": entry["isolation"],
+        "surface": entry["surface"],
+    }
+
+
+def _agent_identity(entry: dict[str, Any]) -> dict[str, Any]:
     try:
-        agent = normalize_agent_identity(entry["agent"], "agent")
+        return normalize_agent_identity(entry["agent"], "agent")
     except AgentLicenseError as exc:
         raise AgentProofBridgeError(
             "E_AGENT_BRIDGE_PROVIDER_PROFILE", str(exc)
         ) from exc
+
+
+def _oracle_scope(
+    workspace: Path, entry: dict[str, Any]
+) -> tuple[str, str, dict[str, Any], list[str], list[str]]:
     oracle = _exact(entry["oracle"], {"contract_path", "contract_sha256"}, "oracle")
     contract_path = _path(oracle["contract_path"], "oracle.contract_path")
     contract_sha = _digest(oracle["contract_sha256"], "oracle.contract_sha256")
@@ -778,66 +844,80 @@ def import_agent_proof(
             "E_AGENT_BRIDGE_SCOPE_ESCAPE",
             "declared agent scope is outside the sealed Oracle scope",
         )
+    return contract_path, contract_sha, checked_contract, scope, contract_scope
+
+
+def _semantic_binding(
+    workspace: Path, entry: dict[str, Any], agent: dict[str, Any], scope: list[str]
+) -> dict[str, Any]:
     try:
-        semantic = (
-            {
+        if entry.get("semantic_authority") is None:
+            return {
                 "bound": False,
                 "claim_boundary": "No semantic authority binding was supplied; this provider envelope remains Oracle-bound evidence only.",
             }
-            if entry.get("semantic_authority") is None
-            else {
-                "bound": True,
-                **verify_semantic_binding(
-                    workspace, entry["semantic_authority"], agent, scope
-                ),
-            }
-        )
+        return {
+            "bound": True,
+            **verify_semantic_binding(
+                workspace, entry["semantic_authority"], agent, scope
+            ),
+        }
     except SemanticAuthorityError as exc:
         raise AgentProofBridgeError(
             "E_AGENT_BRIDGE_SEMANTIC_AUTHORITY", str(exc)
         ) from exc
-    preconditions = _source_preconditions(
-        workspace, entry["source_preconditions"], contract_scope
-    )
+
+
+def _intake_binding(
+    workspace: Path,
+    entry: dict[str, Any],
+    scope: list[str],
+    preconditions: list[dict[str, str]],
+) -> dict[str, str] | None:
     intake = entry.get("intake_parameters")
-    if intake is not None:
-        intake = _exact(intake, {"path", "parameter_sha256"}, "intake_parameters")
-        intake_path = _path(intake["path"], "intake_parameters.path")
-        intake_digest = _digest(
-            intake["parameter_sha256"], "intake_parameters.parameter_sha256"
-        )
-        binding = verify_intake_binding(
-            workspace,
-            Path(intake_path),
-            scope_paths=sorted({*scope, *(item["path"] for item in preconditions)}),
-            mode=entry["autonomy"],
-            binding_sha256=intake_digest,
-        )
-        if not binding.get("ok"):
-            first = (
-                binding.get("errors")
-                or [
-                    {
-                        "code": "E_INTAKE_PARAMETER_DRIFT",
-                        "detail": "intake binding failed",
-                    }
-                ]
-            )[0]
-            raise AgentProofBridgeError(
-                str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")),
-                str(first.get("detail", "intake binding failed")),
-            )
-        intake = {"path": intake_path, "parameter_sha256": intake_digest}
-    workflow = _workflow(entry["workflow"])
-    evidence = _evidence(
-        workspace, entry["evidence_pairs"], entry["surface"] == "visual"
+    if intake is None:
+        return None
+    intake = _exact(intake, {"path", "parameter_sha256"}, "intake_parameters")
+    intake_path = _path(intake["path"], "intake_parameters.path")
+    intake_digest = _digest(
+        intake["parameter_sha256"], "intake_parameters.parameter_sha256"
     )
-    profile = _provider_receipt(provider, entry["provider_receipt"])
+    binding = verify_intake_binding(
+        workspace,
+        Path(intake_path),
+        scope_paths=sorted({*scope, *(item["path"] for item in preconditions)}),
+        mode=entry["autonomy"],
+        binding_sha256=intake_digest,
+    )
+    if not binding.get("ok"):
+        first = (
+            binding.get("errors")
+            or [
+                {
+                    "code": "E_INTAKE_PARAMETER_DRIFT",
+                    "detail": "intake binding failed",
+                }
+            ]
+        )[0]
+        raise AgentProofBridgeError(
+            str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")),
+            str(first.get("detail", "intake binding failed")),
+        )
+    return {"path": intake_path, "parameter_sha256": intake_digest}
+
+
+def _admission_decision(
+    workspace: Path,
+    contract_path: str,
+    autonomy: str,
+    scope: list[str],
+    preconditions: list[dict[str, str]],
+) -> dict[str, Any]:
     try:
-        admission = admission_oracle_decision(
+        return admission_oracle_decision(
             workspace,
             Path(contract_path),
-            entry["autonomy"],
+            autonomy,
             sorted({*scope, *(item["path"] for item in preconditions)}),
         )
     except OracleFirewallError as exc:
@@ -847,16 +927,27 @@ def import_agent_proof(
             else "E_AGENT_BRIDGE_UNBOUND_INTENT"
         )
         raise AgentProofBridgeError(code, str(exc)) from exc
-    resume = _resume(
-        workspace,
-        entry.get("resume"),
-        run_id,
-        workflow,
-        provider,
-        profile,
-        contract_sha,
-    )
-    core = {
+
+
+def _receipt_core(
+    workspace: Path,
+    source: Path,
+    entry: dict[str, Any],
+    metadata: dict[str, str],
+    agent: dict[str, Any],
+    contract_sha: str,
+    checked_contract: dict[str, Any],
+    semantic: dict[str, Any],
+    scope: list[str],
+    preconditions: list[dict[str, str]],
+    intake: dict[str, str] | None,
+    workflow: dict[str, Any],
+    evidence: list[dict[str, str]],
+    profile: dict[str, Any],
+    admission: dict[str, Any],
+    resume: dict[str, str] | None,
+) -> dict[str, Any]:
+    return {
         "schema": RECEIPT_SCHEMA,
         "marker": BOUND_MARKER,
         "imported_at": _now(),
@@ -865,12 +956,12 @@ def import_agent_proof(
             "path": source.relative_to(workspace).as_posix(),
             "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         },
-        "provider": provider,
-        "run": {"id": run_id, "status": entry["status"]},
+        "provider": metadata["provider"],
+        "run": {"id": metadata["run_id"], "status": entry["status"]},
         "agent": agent,
-        "autonomy": entry["autonomy"],
+        "autonomy": metadata["autonomy"],
         "isolation": {
-            "declared_mode": entry["isolation"],
+            "declared_mode": metadata["isolation"],
             "verified": False,
             "claim_boundary": "A declared host boundary is not sandbox, identity, or provider-runtime proof.",
         },
@@ -881,7 +972,7 @@ def import_agent_proof(
         },
         "semantic_authority": semantic,
         "scope_paths": scope,
-        "surface": entry["surface"],
+        "surface": metadata["surface"],
         "workflow": workflow,
         "source_preconditions": preconditions,
         **({"intake_parameters": intake} if intake is not None else {}),
@@ -891,6 +982,15 @@ def import_agent_proof(
         "authority": dict(AUTHORITY),
         "claim_boundary": "Local validation of a team-supplied provider export. It does not contact Eve, Junie, Grok Build, Vercel, an IDE, or a model; authenticate the agent; prove a sandbox or external run; view prompts, source bodies, URLs, credentials, or tool output; execute, approve, repair, deploy, publish, sign, or release work.",
     }
+
+
+def _write_agent_receipt(
+    workspace: Path,
+    out: Path | None,
+    provider: str,
+    run_id: str,
+    core: dict[str, Any],
+) -> dict[str, Any]:
     receipt = {**core, "receipt_sha256": _sha(core)}
     destination = (
         Path(out)
@@ -909,91 +1009,142 @@ def import_agent_proof(
     return {**receipt, "path": target.relative_to(workspace).as_posix()}
 
 
+def import_agent_proof(
+    root: Path, envelope_path: Path, out: Path | None = None
+) -> dict[str, Any]:
+    """Bind one provider-neutral coding-agent export to a sealed Oracle Contract."""
+    workspace = Path(root).resolve()
+    source, envelope = _load_envelope(workspace, envelope_path)
+    entry = _envelope_entry(envelope)
+    metadata = _run_metadata(entry)
+    provider, run_id = metadata["provider"], metadata["run_id"]
+    agent = _agent_identity(entry)
+    contract_path, contract_sha, checked_contract, scope, contract_scope = (
+        _oracle_scope(workspace, entry)
+    )
+    semantic = _semantic_binding(workspace, entry, agent, scope)
+    preconditions = _source_preconditions(
+        workspace, entry["source_preconditions"], contract_scope
+    )
+    intake = _intake_binding(workspace, entry, scope, preconditions)
+    workflow = _workflow(entry["workflow"])
+    evidence = _evidence(
+        workspace, entry["evidence_pairs"], metadata["surface"] == "visual"
+    )
+    profile = _provider_receipt(provider, entry["provider_receipt"])
+    admission = _admission_decision(
+        workspace, contract_path, metadata["autonomy"], scope, preconditions
+    )
+    resume = _resume(
+        workspace,
+        entry.get("resume"),
+        run_id,
+        workflow,
+        provider,
+        profile,
+        contract_sha,
+    )
+    core = _receipt_core(
+        workspace,
+        source,
+        entry,
+        metadata,
+        agent,
+        contract_sha,
+        checked_contract,
+        semantic,
+        scope,
+        preconditions,
+        intake,
+        workflow,
+        evidence,
+        profile,
+        admission,
+        resume,
+    )
+    return _write_agent_receipt(workspace, out, provider, run_id, core)
+
+
+def _invalid_receipt(reason: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "marker": "AGENT_PROOF_RECEIPT_INVALID",
+        "reason": reason,
+        "authority": dict(AUTHORITY),
+    }
+
+
+def _oracle_receipt_error(workspace: Path, receipt: dict[str, Any]) -> str | None:
+    oracle = receipt.get("oracle", {})
+    if not isinstance(oracle, dict) or not isinstance(oracle.get("path"), str):
+        return "oracle_missing"
+    current = verify_oracle_contract(workspace, Path(oracle["path"]))
+    contract = current.get("contract", {})
+    if not current.get("ok") or contract.get("contract_sha256") != oracle.get(
+        "contract_sha256"
+    ):
+        return "oracle_binding_stale"
+    return None
+
+
+def _semantic_receipt_error(workspace: Path, receipt: dict[str, Any]) -> str | None:
+    semantic = receipt.get("semantic_authority")
+    if not isinstance(semantic, dict) or semantic.get("bound") is not True:
+        return None
+    binding = {
+        key: semantic.get(key)
+        for key in ("lease_path", "lease_sha256", "action_id", "action", "context_urn")
+    }
+    try:
+        verify_semantic_binding(
+            workspace, binding, receipt.get("agent"), receipt.get("scope_paths")
+        )
+    except SemanticAuthorityError:
+        return "semantic_authority_stale"
+    return None
+
+
+def _intake_receipt_scope(receipt: dict[str, Any]) -> list[str]:
+    paths = set(receipt.get("scope_paths") or [])
+    for item in receipt.get("source_preconditions", []):
+        if isinstance(item, dict) and isinstance(item.get("path"), str):
+            paths.add(item["path"])
+    return sorted(paths)
+
+
+def _intake_receipt_error(workspace: Path, receipt: dict[str, Any]) -> str | None:
+    intake = receipt.get("intake_parameters")
+    if intake is None:
+        return None
+    if not isinstance(intake, dict) or set(intake) != {"path", "parameter_sha256"}:
+        return "intake_binding_invalid"
+    binding = verify_intake_binding(
+        workspace,
+        Path(str(intake.get("path"))),
+        scope_paths=_intake_receipt_scope(receipt),
+        mode=receipt.get("autonomy"),
+        binding_sha256=intake.get("parameter_sha256"),
+    )
+    if binding.get("ok"):
+        return None
+    first = (binding.get("errors") or [{"code": "E_INTAKE_PARAMETER_DRIFT"}])[0]
+    return str(first.get("code", "E_INTAKE_PARAMETER_DRIFT"))
+
+
 def verify_agent_proof(root: Path, receipt_path: Path) -> dict[str, Any]:
     """Verify a receipt digest and its current Oracle binding without a provider call."""
     workspace = Path(root).resolve()
     try:
         receipt, target = _read_receipt(workspace, receipt_path)
-        oracle = receipt.get("oracle", {})
-        if not isinstance(oracle, dict) or not isinstance(oracle.get("path"), str):
-            return {
-                "ok": False,
-                "marker": "AGENT_PROOF_RECEIPT_INVALID",
-                "reason": "oracle_missing",
-                "authority": dict(AUTHORITY),
-            }
-        current = verify_oracle_contract(workspace, Path(oracle["path"]))
-        if not current.get("ok") or current.get("contract", {}).get(
-            "contract_sha256"
-        ) != oracle.get("contract_sha256"):
-            return {
-                "ok": False,
-                "marker": "AGENT_PROOF_RECEIPT_INVALID",
-                "reason": "oracle_binding_stale",
-                "authority": dict(AUTHORITY),
-            }
-        semantic = receipt.get("semantic_authority")
-        if isinstance(semantic, dict) and semantic.get("bound") is True:
-            binding = {
-                key: semantic.get(key)
-                for key in (
-                    "lease_path",
-                    "lease_sha256",
-                    "action_id",
-                    "action",
-                    "context_urn",
-                )
-            }
-            try:
-                verify_semantic_binding(
-                    workspace, binding, receipt.get("agent"), receipt.get("scope_paths")
-                )
-            except SemanticAuthorityError:
-                return {
-                    "ok": False,
-                    "marker": "AGENT_PROOF_RECEIPT_INVALID",
-                    "reason": "semantic_authority_stale",
-                    "authority": dict(AUTHORITY),
-                }
-        intake = receipt.get("intake_parameters")
-        if intake is not None:
-            if not isinstance(intake, dict) or set(intake) != {
-                "path",
-                "parameter_sha256",
-            }:
-                return {
-                    "ok": False,
-                    "marker": "AGENT_PROOF_RECEIPT_INVALID",
-                    "reason": "intake_binding_invalid",
-                    "authority": dict(AUTHORITY),
-                }
-            binding = verify_intake_binding(
-                workspace,
-                Path(str(intake.get("path"))),
-                scope_paths=sorted(
-                    {
-                        *(receipt.get("scope_paths") or []),
-                        *(
-                            item.get("path")
-                            for item in receipt.get("source_preconditions", [])
-                            if isinstance(item, dict)
-                            and isinstance(item.get("path"), str)
-                        ),
-                    }
-                ),
-                mode=receipt.get("autonomy"),
-                binding_sha256=intake.get("parameter_sha256"),
-            )
-            if not binding.get("ok"):
-                first = (
-                    binding.get("errors") or [{"code": "E_INTAKE_PARAMETER_DRIFT"}]
-                )[0]
-                return {
-                    "ok": False,
-                    "marker": "AGENT_PROOF_RECEIPT_INVALID",
-                    "reason": str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")),
-                    "authority": dict(AUTHORITY),
-                }
+        error = _oracle_receipt_error(workspace, receipt)
+        if error is not None:
+            return _invalid_receipt(error)
+        error = _semantic_receipt_error(workspace, receipt)
+        if error is not None:
+            return _invalid_receipt(error)
+        error = _intake_receipt_error(workspace, receipt)
+        if error is not None:
+            return _invalid_receipt(error)
         return {
             "ok": True,
             "marker": "AGENT_PROOF_RECEIPT_VALID",
@@ -1002,12 +1153,7 @@ def verify_agent_proof(root: Path, receipt_path: Path) -> dict[str, Any]:
             "authority": dict(AUTHORITY),
         }
     except AgentProofBridgeError as exc:
-        return {
-            "ok": False,
-            "marker": "AGENT_PROOF_RECEIPT_INVALID",
-            "reason": exc.code,
-            "authority": dict(AUTHORITY),
-        }
+        return _invalid_receipt(exc.code)
 
 
 def agent_proof_projection(root: Path) -> dict[str, Any]:
