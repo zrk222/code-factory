@@ -191,55 +191,59 @@ def _scan_archive(path: Path) -> list[tuple[str, bytes]]:
     lowered = path.name.lower()
     if not lowered.endswith(ARTIFACT_SUFFIXES):
         return []
-    members: list[tuple[str, bytes]] = []
     try:
         if lowered.endswith((".whl", ".vsix", ".zip")):
-            with zipfile.ZipFile(path) as archive:
-                total = 0
-                for info in archive.infolist():
-                    name = info.filename.replace("\\", "/")
-                    if name.startswith("/") or any(
-                        part in {"", ".", ".."} for part in name.split("/")
-                    ):
-                        raise SupplyChainError(
-                            "E_ARCHIVE_PATH", f"unsafe archive member {name}"
-                        )
-                    if info.is_dir():
-                        continue
-                    total += info.file_size
-                    if total > MAX_ARCHIVE_BYTES:
-                        raise SupplyChainError(
-                            "E_ARCHIVE_SIZE",
-                            f"archive contents exceed {MAX_ARCHIVE_BYTES} bytes",
-                        )
-                    members.append((name, archive.read(info)))
-        else:
-            with tarfile.open(path, mode="r:*") as archive:
-                total = 0
-                for info in archive.getmembers():
-                    name = info.name.replace("\\", "/")
-                    if name.startswith("/") or any(
-                        part in {"", ".", ".."} for part in name.split("/")
-                    ):
-                        raise SupplyChainError(
-                            "E_ARCHIVE_PATH", f"unsafe archive member {name}"
-                        )
-                    if not info.isfile():
-                        continue
-                    total += info.size
-                    if total > MAX_ARCHIVE_BYTES:
-                        raise SupplyChainError(
-                            "E_ARCHIVE_SIZE",
-                            f"archive contents exceed {MAX_ARCHIVE_BYTES} bytes",
-                        )
-                    stream = archive.extractfile(info)
-                    members.append((name, stream.read() if stream is not None else b""))
+            return _scan_zip_archive(path)
+        return _scan_tar_archive(path)
     except SupplyChainError:
         raise
     except (OSError, EOFError, tarfile.TarError, zipfile.BadZipFile) as exc:
         raise SupplyChainError(
             "E_ARCHIVE_INVALID", f"{path.name} cannot be inspected: {exc}"
         ) from exc
+
+
+def _safe_archive_member_name(raw_name: str) -> str:
+    name = raw_name.replace("\\", "/")
+    if name.startswith("/") or any(part in {"", ".", ".."} for part in name.split("/")):
+        raise SupplyChainError("E_ARCHIVE_PATH", f"unsafe archive member {name}")
+    return name
+
+
+def _scan_zip_archive(path: Path) -> list[tuple[str, bytes]]:
+    members: list[tuple[str, bytes]] = []
+    with zipfile.ZipFile(path) as archive:
+        total = 0
+        for info in archive.infolist():
+            name = _safe_archive_member_name(info.filename)
+            if info.is_dir():
+                continue
+            total += info.file_size
+            if total > MAX_ARCHIVE_BYTES:
+                raise SupplyChainError(
+                    "E_ARCHIVE_SIZE",
+                    f"archive contents exceed {MAX_ARCHIVE_BYTES} bytes",
+                )
+            members.append((name, archive.read(info)))
+    return members
+
+
+def _scan_tar_archive(path: Path) -> list[tuple[str, bytes]]:
+    members: list[tuple[str, bytes]] = []
+    with tarfile.open(path, mode="r:*") as archive:
+        total = 0
+        for info in archive.getmembers():
+            name = _safe_archive_member_name(info.name)
+            if not info.isfile():
+                continue
+            total += info.size
+            if total > MAX_ARCHIVE_BYTES:
+                raise SupplyChainError(
+                    "E_ARCHIVE_SIZE",
+                    f"archive contents exceed {MAX_ARCHIVE_BYTES} bytes",
+                )
+            stream = archive.extractfile(info)
+            members.append((name, stream.read() if stream is not None else b""))
     return members
 
 
@@ -391,65 +395,110 @@ def _validate_policy(
         raise SupplyChainError(
             "E_EXCEPTION_POLICY", "VEX exceptions are missing or too large"
         )
-    unresolved_keys = set(unresolved_items)
-    unresolved_key_counts = {
-        key: unresolved_items.count(key) for key in unresolved_keys
-    }
-    exception_keys: set[tuple[str, str, str]] = set()
-    for index, exception in enumerate(exceptions):
-        item = _assert_exact(
-            exception,
-            {"id", "vulnerability", "component", "severity", "expires_at", "reason"},
-            f"vex_policy.exceptions[{index}]",
-        )
-        exception_id = require_str(item["id"], f"exception[{index}].id")
-        vulnerability = require_str(
-            item["vulnerability"], f"exception[{index}].vulnerability"
-        )
-        component = require_str(item["component"], f"exception[{index}].component")
-        if item["severity"] not in SEVERITIES:
-            raise SupplyChainError(
-                "E_VEX_SEVERITY_UNKNOWN",
-                f"exception {exception_id} has unsupported severity",
-            )
-        severity = item["severity"]
-        if _timestamp(item["expires_at"], f"exception[{index}].expires_at") <= now:
-            raise SupplyChainError(
-                "E_EXCEPTION_EXPIRED", f"VEX exception {exception_id} is expired"
-            )
-        require_str(item["reason"], f"exception[{index}].reason", maximum=1024)
-        key = (vulnerability, component, severity)
-        if key in exception_keys:
-            raise SupplyChainError(
-                "E_EXCEPTION_DUPLICATE",
-                f"VEX exception {exception_id} duplicates an existing exception",
-            )
-        if key not in unresolved_keys:
-            raise SupplyChainError(
-                "E_EXCEPTION_UNMATCHED",
-                f"VEX exception {exception_id} does not match an unresolved finding",
-            )
-        if unresolved_key_counts[key] != 1:
-            raise SupplyChainError(
-                "E_EXCEPTION_AMBIGUOUS",
-                f"VEX exception {exception_id} matches multiple unresolved findings",
-            )
-        exception_keys.add(key)
+    exception_keys = _validated_vex_exceptions(exceptions, now, unresolved_items)
     effective = dict(unresolved)
     for _, _, severity in exception_keys:
         effective[severity] -= 1
-    for severity in SEVERITIES:
-        if effective[severity] > normalized_thresholds[severity]:
-            raise SupplyChainError(
-                "E_VULNERABILITY_THRESHOLD",
-                f"{severity} unresolved count exceeds policy after exceptions",
-            )
+    _validate_vulnerability_thresholds(effective, normalized_thresholds)
     return {
         "max_unresolved": normalized_thresholds,
         "exception_count": len(exceptions),
         "excepted_count": len(exception_keys),
         "unresolved_after_exceptions": effective,
     }
+
+
+def _validated_vex_exceptions(
+    exceptions: list[Any],
+    now: datetime,
+    unresolved_items: list[tuple[str, str, str]],
+) -> set[tuple[str, str, str]]:
+    unresolved_keys = set(unresolved_items)
+    unresolved_key_counts = {
+        key: unresolved_items.count(key) for key in unresolved_keys
+    }
+    exception_keys: set[tuple[str, str, str]] = set()
+    for index, exception in enumerate(exceptions):
+        _validate_vex_exception(
+            exception,
+            index,
+            now,
+            unresolved_keys,
+            unresolved_key_counts,
+            exception_keys,
+        )
+    return exception_keys
+
+
+def _validate_vex_exception(
+    exception: Any,
+    index: int,
+    now: datetime,
+    unresolved_keys: set[tuple[str, str, str]],
+    unresolved_key_counts: dict[tuple[str, str, str], int],
+    exception_keys: set[tuple[str, str, str]],
+) -> None:
+    item = _assert_exact(
+        exception,
+        {"id", "vulnerability", "component", "severity", "expires_at", "reason"},
+        f"vex_policy.exceptions[{index}]",
+    )
+    exception_id = require_str(item["id"], f"exception[{index}].id")
+    vulnerability = require_str(
+        item["vulnerability"], f"exception[{index}].vulnerability"
+    )
+    component = require_str(item["component"], f"exception[{index}].component")
+    if item["severity"] not in SEVERITIES:
+        raise SupplyChainError(
+            "E_VEX_SEVERITY_UNKNOWN",
+            f"exception {exception_id} has unsupported severity",
+        )
+    severity = item["severity"]
+    if _timestamp(item["expires_at"], f"exception[{index}].expires_at") <= now:
+        raise SupplyChainError(
+            "E_EXCEPTION_EXPIRED", f"VEX exception {exception_id} is expired"
+        )
+    require_str(item["reason"], f"exception[{index}].reason", maximum=1024)
+    key = (vulnerability, component, severity)
+    _validate_vex_exception_match(
+        key, exception_id, unresolved_keys, unresolved_key_counts, exception_keys
+    )
+    exception_keys.add(key)
+
+
+def _validate_vex_exception_match(
+    key: tuple[str, str, str],
+    exception_id: str,
+    unresolved_keys: set[tuple[str, str, str]],
+    unresolved_key_counts: dict[tuple[str, str, str], int],
+    exception_keys: set[tuple[str, str, str]],
+) -> None:
+    if key in exception_keys:
+        raise SupplyChainError(
+            "E_EXCEPTION_DUPLICATE",
+            f"VEX exception {exception_id} duplicates an existing exception",
+        )
+    if key not in unresolved_keys:
+        raise SupplyChainError(
+            "E_EXCEPTION_UNMATCHED",
+            f"VEX exception {exception_id} does not match an unresolved finding",
+        )
+    if unresolved_key_counts[key] != 1:
+        raise SupplyChainError(
+            "E_EXCEPTION_AMBIGUOUS",
+            f"VEX exception {exception_id} matches multiple unresolved findings",
+        )
+
+
+def _validate_vulnerability_thresholds(
+    effective: dict[str, int], normalized_thresholds: dict[str, int]
+) -> None:
+    for severity in SEVERITIES:
+        if effective[severity] > normalized_thresholds[severity]:
+            raise SupplyChainError(
+                "E_VULNERABILITY_THRESHOLD",
+                f"{severity} unresolved count exceeds policy after exceptions",
+            )
 
 
 def _validate_licenses(value: Any, now: datetime) -> dict[str, Any]:
@@ -463,6 +512,19 @@ def _validate_licenses(value: Any, now: datetime) -> dict[str, Any]:
     exceptions = policy["exceptions"]
     if not isinstance(exceptions, list) or len(exceptions) > MAX_COMPONENTS:
         raise SupplyChainError("E_LICENSE_EXCEPTIONS", "license exceptions are invalid")
+    active = _active_license_exceptions(exceptions, now)
+    denied = _count_unapproved_licenses(entries, active)
+    return {
+        "policy_sha256": policy_digest,
+        "entry_count": len(entries),
+        "exception_count": len(exceptions),
+        "unapproved_count": denied,
+    }
+
+
+def _active_license_exceptions(
+    exceptions: list[Any], now: datetime
+) -> set[tuple[str, str]]:
     active: set[tuple[str, str]] = set()
     for index, item in enumerate(exceptions):
         row = _assert_exact(
@@ -484,6 +546,10 @@ def _validate_licenses(value: Any, now: datetime) -> dict[str, Any]:
                 "E_EXCEPTION_EXPIRED", f"license exception {row['id']} is expired"
             )
         require_str(row["reason"], "license exception reason", maximum=1024)
+    return active
+
+
+def _count_unapproved_licenses(entries: list[Any], active: set[tuple[str, str]]) -> int:
     denied = 0
     for index, item in enumerate(entries):
         row = _assert_exact(
@@ -502,12 +568,7 @@ def _validate_licenses(value: Any, now: datetime) -> dict[str, Any]:
                 raise SupplyChainError(
                     "E_LICENSE_POLICY", f"{component} has unapproved {status} license"
                 )
-    return {
-        "policy_sha256": policy_digest,
-        "entry_count": len(entries),
-        "exception_count": len(exceptions),
-        "unapproved_count": denied,
-    }
+    return denied
 
 
 def _validate_build(root: Path, value: Any, now: datetime) -> dict[str, Any]:
