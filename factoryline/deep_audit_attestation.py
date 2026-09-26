@@ -537,6 +537,20 @@ def _verified_document(path: Path, trust_root: Path) -> dict[str, Any]:
 def _validate_payload(
     payload: dict[str, Any], receipt: dict[str, Any], claimed_receipt: str
 ) -> tuple[dict, dict, datetime, datetime]:
+    _validate_payload_header(payload, receipt, claimed_receipt)
+    verifier = _validate_verifier(payload["verifier"], receipt)
+    observations = _validate_observations(payload["observations"], receipt)
+    return (
+        verifier,
+        observations,
+        _instant(payload["issued_at"], "issued_at"),
+        _instant(payload["expires_at"], "expires_at"),
+    )
+
+
+def _validate_payload_header(
+    payload: dict[str, Any], receipt: dict[str, Any], claimed_receipt: str
+) -> None:
     required = {
         "schema",
         "attestation_id",
@@ -569,7 +583,9 @@ def _validate_payload(
                 "E_DEEP_ATTESTATION_BINDING", f"{field} differs from the signed receipt"
             )
 
-    verifier = _exact(payload["verifier"], {"id", "version", "independent"}, "verifier")
+
+def _validate_verifier(value: object, receipt: dict[str, Any]) -> dict[str, Any]:
+    verifier = _exact(value, {"id", "version", "independent"}, "verifier")
     verifier_id = _text(verifier["id"], "verifier.id")
     _text(verifier["version"], "verifier.version")
     try:
@@ -582,10 +598,11 @@ def _validate_payload(
             "E_DEEP_ATTESTATION_INDEPENDENCE",
             "verifier must be independent of every analyzer",
         )
+    return verifier
 
-    observations = _exact(
-        payload["observations"], {"report_hashes", "canary_hashes"}, "observations"
-    )
+
+def _validate_observations(value: object, receipt: dict[str, Any]) -> dict[str, Any]:
+    observations = _exact(value, {"report_hashes", "canary_hashes"}, "observations")
     for field in ("report_hashes", "canary_hashes"):
         observed = observations[field]
         expected = receipt[field]
@@ -596,49 +613,30 @@ def _validate_payload(
                 "E_DEEP_ATTESTATION_BINDING",
                 f"{field} coverage differs from the receipt",
             )
-        for key, value in observed.items():
-            _text(key, f"{field} analyzer id")
-            if _digest(value, f"{field}.{key}") != _digest(
-                expected[key], f"receipt.{field}.{key}"
-            ):
-                _fail(
-                    "E_DEEP_ATTESTATION_BINDING",
-                    f"{field}.{key} differs from the receipt",
-                )
+        _validate_observation_hashes(field, observed, expected)
+    return observations
 
-    return (
-        verifier,
-        observations,
-        _instant(payload["issued_at"], "issued_at"),
-        _instant(payload["expires_at"], "expires_at"),
-    )
+
+def _validate_observation_hashes(
+    field: str, observed: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    for key, value in observed.items():
+        _text(key, f"{field} analyzer id")
+        if _digest(value, f"{field}.{key}") != _digest(
+            expected[key], f"receipt.{field}.{key}"
+        ):
+            _fail(
+                "E_DEEP_ATTESTATION_BINDING",
+                f"{field}.{key} differs from the receipt",
+            )
 
 
 def _freshness(
     issued: datetime, expires: datetime, now: datetime | None, max_age_seconds: int
 ) -> dict[str, Any]:
-    try:
-        max_age = require_int(
-            max_age_seconds, "max_age_seconds", minimum=1, maximum=MAX_VALIDITY_SECONDS
-        )
-    except RuntimeAuditError as exc:
-        _fail(
-            "E_DEEP_ATTESTATION_FRESHNESS",
-            "max_age_seconds is outside the bounded window",
-        )
-        raise AssertionError from exc
-    if expires <= issued or (expires - issued).total_seconds() > MAX_VALIDITY_SECONDS:
-        _fail(
-            "E_DEEP_ATTESTATION_FRESHNESS",
-            "attestation validity exceeds the 24-hour bound",
-        )
-    actual = datetime.now(timezone.utc)
-    supplied = actual if now is None else now
-    if not isinstance(supplied, datetime):
-        _fail("E_DEEP_ATTESTATION_FRESHNESS", "now must be a datetime")
-    if supplied.tzinfo is None or supplied.utcoffset() is None:
-        _fail("E_DEEP_ATTESTATION_FRESHNESS", "now must include a timezone")
-    current = max(actual, supplied.astimezone(timezone.utc))
+    max_age = _max_attestation_age(max_age_seconds)
+    _validate_attestation_window(issued, expires)
+    current = _freshness_current_time(now)
     if issued > current or current >= expires:
         _fail("E_DEEP_ATTESTATION_FRESHNESS", "attestation is future-dated or expired")
     age = (current - issued).total_seconds()
@@ -653,6 +651,37 @@ def _freshness(
         "age_seconds": int(age),
         "max_age_seconds": max_age,
     }
+
+
+def _max_attestation_age(max_age_seconds: int) -> int:
+    try:
+        return require_int(
+            max_age_seconds, "max_age_seconds", minimum=1, maximum=MAX_VALIDITY_SECONDS
+        )
+    except RuntimeAuditError as exc:
+        _fail(
+            "E_DEEP_ATTESTATION_FRESHNESS",
+            "max_age_seconds is outside the bounded window",
+        )
+        raise AssertionError from exc
+
+
+def _validate_attestation_window(issued: datetime, expires: datetime) -> None:
+    if expires <= issued or (expires - issued).total_seconds() > MAX_VALIDITY_SECONDS:
+        _fail(
+            "E_DEEP_ATTESTATION_FRESHNESS",
+            "attestation validity exceeds the 24-hour bound",
+        )
+
+
+def _freshness_current_time(now: datetime | None) -> datetime:
+    actual = datetime.now(timezone.utc)
+    supplied = actual if now is None else now
+    if not isinstance(supplied, datetime):
+        _fail("E_DEEP_ATTESTATION_FRESHNESS", "now must be a datetime")
+    if supplied.tzinfo is None or supplied.utcoffset() is None:
+        _fail("E_DEEP_ATTESTATION_FRESHNESS", "now must include a timezone")
+    return max(actual, supplied.astimezone(timezone.utc))
 
 
 def verify_deep_audit_attestation(
