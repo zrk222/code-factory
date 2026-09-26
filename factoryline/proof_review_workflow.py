@@ -314,26 +314,39 @@ def _event_policy_violations(
 ) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
     tool = event.get("tool")
-    tool_rejected = tool is not None and (
-        not isinstance(tool, str)
-        or tool in forbidden_tools
-        or (allowed_tools and tool not in allowed_tools)
-    )
-    if tool_rejected:
+    if tool is not None and _tool_policy_rejected(tool, allowed_tools, forbidden_tools):
         findings.append({"kind": "tool_policy", "event": str(index)})
     path = event.get("path")
-    unsafe_path = isinstance(path, str) and (
-        Path(path).is_absolute() or ".." in Path(path).parts
+    if path is not None and _path_scope_rejected(path, allowed_paths):
+        findings.append({"kind": "scope_escape", "event": str(index)})
+    return findings
+
+
+def _tool_policy_rejected(
+    tool: Any, allowed_tools: set[str], forbidden_tools: set[str]
+) -> bool:
+    return (
+        not isinstance(tool, str)
+        or tool in forbidden_tools
+        or bool(allowed_tools and tool not in allowed_tools)
     )
-    path_allowed = isinstance(path, str) and any(
+
+
+def _path_scope_rejected(path: Any, allowed_paths: list[str]) -> bool:
+    if not isinstance(path, str) or _unsafe_scope_path(path):
+        return True
+    return not _path_is_allowed(path, allowed_paths)
+
+
+def _unsafe_scope_path(path: str) -> bool:
+    return Path(path).is_absolute() or ".." in Path(path).parts
+
+
+def _path_is_allowed(path: str, allowed_paths: list[str]) -> bool:
+    return any(
         path == prefix or path.startswith(prefix.rstrip("/") + "/")
         for prefix in allowed_paths
     )
-    if path is not None and (
-        not isinstance(path, str) or unsafe_path or not path_allowed
-    ):
-        findings.append({"kind": "scope_escape", "event": str(index)})
-    return findings
 
 
 def _ordered_events_present(observed: list[str], required: list[str]) -> bool:
@@ -471,6 +484,95 @@ def verify_trajectory(root: Path, trajectory_path: Path) -> dict[str, Any]:
     }
 
 
+def _quick_review_contract(
+    workspace: Path,
+    review_id: str,
+    contract_path: Path,
+    intake_parameters_path: Path | None,
+    require_intake: bool,
+) -> tuple[dict[str, Any], Path, str]:
+    if not _ID.fullmatch(review_id):
+        raise ProofReviewError(
+            "PROOF_REVIEW_ID_INVALID", "review id must be a lowercase identifier"
+        )
+    contract_check = verify_intent_contract(workspace, contract_path)
+    if not contract_check.get("ok"):
+        raise ProofReviewError(
+            "INTENT_CONTRACT_NOT_CURRENT",
+            "intent contract must verify against current source bytes",
+        )
+    if intake_parameters_path is None and require_intake:
+        raise ProofReviewError(
+            "E_INTAKE_BINDING_REQUIRED",
+            "strict proof review requires an authoritative intake-parameter envelope",
+        )
+    return _load(workspace, contract_path, "intent contract")
+
+
+def _quick_review_trajectory(
+    workspace: Path,
+    continuous: dict[str, Any],
+    trajectory_path: Path | None,
+) -> tuple[dict[str, Any] | None, str, dict[str, Any]]:
+    trajectory: dict[str, Any] | None = None
+    route = continuous["route"]
+    next_action = dict(continuous["next_action"])
+    if trajectory_path is None:
+        return trajectory, route, next_action
+    trajectory_check = verify_trajectory(workspace, trajectory_path)
+    trajectory_value, trajectory_file, trajectory_relative = _load(
+        workspace, trajectory_path, "trajectory proof"
+    )
+    trajectory = {
+        "path": trajectory_relative,
+        "sha256": sha256(trajectory_file.read_bytes()).hexdigest(),
+        "trajectory_sha256": trajectory_value.get("trajectory_sha256"),
+        "passed": trajectory_check.get("passed")
+        if trajectory_check.get("ok")
+        else False,
+    }
+    if not trajectory_check.get("ok") or trajectory_check.get("passed") is not True:
+        route = "human_required"
+        next_action = {
+            "action": "inspect_agent_trajectory",
+            "reason": "The agent trajectory is invalid, stale, or failed its independent policy audit.",
+        }
+    return trajectory, route, next_action
+
+
+def _quick_review_intake_binding(
+    workspace: Path,
+    intake_parameters_path: Path | None,
+    changed: list[str],
+) -> dict[str, str] | None:
+    if intake_parameters_path is None:
+        return None
+    binding_check = verify_intake_binding(
+        workspace, intake_parameters_path, scope_paths=changed
+    )
+    if not binding_check.get("ok"):
+        first = (
+            binding_check.get("errors")
+            or [
+                {
+                    "code": "E_INTAKE_PARAMETER_DRIFT",
+                    "detail": "intake binding failed",
+                }
+            ]
+        )[0]
+        raise ProofReviewError(
+            str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")),
+            str(first.get("detail", "intake binding failed")),
+        )
+    return {
+        "path": Path(intake_parameters_path)
+        .resolve()
+        .relative_to(workspace)
+        .as_posix(),
+        "parameter_sha256": str(binding_check.get("parameter_sha256")),
+    }
+
+
 def create_quick_review(
     root: Path,
     review_id: str,
@@ -488,23 +590,12 @@ def create_quick_review(
 ) -> dict[str, Any]:
     """Join current intent, change, session, repair, and trajectory evidence into one review route."""
     workspace = _workspace(root)
-    if not _ID.fullmatch(review_id):
-        raise ProofReviewError(
-            "PROOF_REVIEW_ID_INVALID", "review id must be a lowercase identifier"
-        )
-    contract_check = verify_intent_contract(workspace, contract_path)
-    if not contract_check.get("ok"):
-        raise ProofReviewError(
-            "INTENT_CONTRACT_NOT_CURRENT",
-            "intent contract must verify against current source bytes",
-        )
-    if intake_parameters_path is None and require_intake:
-        raise ProofReviewError(
-            "E_INTAKE_BINDING_REQUIRED",
-            "strict proof review requires an authoritative intake-parameter envelope",
-        )
-    contract, contract_file, contract_relative = _load(
-        workspace, contract_path, "intent contract"
+    contract, contract_file, contract_relative = _quick_review_contract(
+        workspace,
+        review_id,
+        contract_path,
+        intake_parameters_path,
+        require_intake,
     )
     continuous = assess_continuous_proof(
         workspace,
@@ -517,54 +608,12 @@ def create_quick_review(
         repair_patch_path=repair_patch_path,
         prior_receipt_path=prior_receipt_path,
     )
-    trajectory: dict[str, Any] | None = None
-    route = continuous["route"]
-    next_action = dict(continuous["next_action"])
-    if trajectory_path is not None:
-        trajectory_check = verify_trajectory(workspace, trajectory_path)
-        trajectory_value, trajectory_file, trajectory_relative = _load(
-            workspace, trajectory_path, "trajectory proof"
-        )
-        trajectory = {
-            "path": trajectory_relative,
-            "sha256": sha256(trajectory_file.read_bytes()).hexdigest(),
-            "trajectory_sha256": trajectory_value.get("trajectory_sha256"),
-            "passed": trajectory_check.get("passed")
-            if trajectory_check.get("ok")
-            else False,
-        }
-        if not trajectory_check.get("ok") or trajectory_check.get("passed") is not True:
-            route = "human_required"
-            next_action = {
-                "action": "inspect_agent_trajectory",
-                "reason": "The agent trajectory is invalid, stale, or failed its independent policy audit.",
-            }
-    intake_binding: dict[str, str] | None = None
-    if intake_parameters_path is not None:
-        binding_check = verify_intake_binding(
-            workspace, intake_parameters_path, scope_paths=changed
-        )
-        if not binding_check.get("ok"):
-            first = (
-                binding_check.get("errors")
-                or [
-                    {
-                        "code": "E_INTAKE_PARAMETER_DRIFT",
-                        "detail": "intake binding failed",
-                    }
-                ]
-            )[0]
-            raise ProofReviewError(
-                str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")),
-                str(first.get("detail", "intake binding failed")),
-            )
-        intake_binding = {
-            "path": Path(intake_parameters_path)
-            .resolve()
-            .relative_to(workspace)
-            .as_posix(),
-            "parameter_sha256": str(binding_check.get("parameter_sha256")),
-        }
+    trajectory, route, next_action = _quick_review_trajectory(
+        workspace, continuous, trajectory_path
+    )
+    intake_binding = _quick_review_intake_binding(
+        workspace, intake_parameters_path, changed
+    )
     continuous_path = Path(continuous["artifacts"]["json"])
     core = {
         "schema": REVIEW_SCHEMA,
@@ -603,6 +652,18 @@ def create_quick_review(
 
 
 def _review_binding_failure(workspace: Path, value: dict[str, Any]) -> str | None:
+    failure = _primary_review_binding_failure(workspace, value)
+    if failure is not None:
+        return failure
+    failure = _trajectory_binding_failure(workspace, value.get("trajectory"))
+    if failure is not None:
+        return failure
+    return _intake_review_binding_failure(workspace, value)
+
+
+def _primary_review_binding_failure(
+    workspace: Path, value: dict[str, Any]
+) -> str | None:
     contract = value.get("intent_contract")
     continuous = value.get("continuous_proof")
     if not isinstance(contract, dict) or not isinstance(continuous, dict):
@@ -617,7 +678,10 @@ def _review_binding_failure(workspace: Path, value: dict[str, Any]) -> str | Non
         "ok"
     ):
         return "continuous_proof"
-    trajectory = value.get("trajectory")
+    return None
+
+
+def _trajectory_binding_failure(workspace: Path, trajectory: Any) -> str | None:
     if trajectory is not None and not isinstance(trajectory, dict):
         return "trajectory"
     if isinstance(trajectory, dict) and (
@@ -625,6 +689,11 @@ def _review_binding_failure(workspace: Path, value: dict[str, Any]) -> str | Non
         or not verify_trajectory(workspace, Path(trajectory.get("path", ""))).get("ok")
     ):
         return "trajectory"
+
+
+def _intake_review_binding_failure(
+    workspace: Path, value: dict[str, Any]
+) -> str | None:
     intake = value.get("intake_parameters")
     if intake is not None:
         if not isinstance(intake, dict) or set(intake) != {"path", "parameter_sha256"}:
