@@ -276,7 +276,11 @@ def _label(value: object, fallback: str) -> str:
     return value.strip()[:240] if isinstance(value, str) and value.strip() else fallback
 
 
-def _latest_run(root: Path) -> tuple[str, str] | None:
+def _is_reparse_point(info: Any) -> bool:
+    return bool(getattr(info, "st_file_attributes", 0) & 0x400)
+
+
+def _history_directory(root: Path) -> Path | None:
     directory = root
     for part in (".factory", "deep-runs"):
         directory /= part
@@ -284,39 +288,44 @@ def _latest_run(root: Path) -> tuple[str, str] | None:
             info = directory.lstat()
         except FileNotFoundError:
             return None
-        if (
-            not stat.S_ISDIR(info.st_mode)
-            or getattr(info, "st_file_attributes", 0) & 0x400
-        ):
+        if not stat.S_ISDIR(info.st_mode) or _is_reparse_point(info):
             raise ValueError("linked or invalid deep-run history")
+    return directory
+
+
+def _valid_run_directory(path: Path, info: Any) -> bool:
+    valid_name = len(path.name) == 32 and all(
+        char in "0123456789abcdef" for char in path.name
+    )
+    return valid_name and stat.S_ISDIR(info.st_mode) and not _is_reparse_point(info)
+
+
+def _run_entry(path: Path) -> tuple[int, str, str]:
+    info = path.lstat()
+    if not _valid_run_directory(path, info):
+        raise ValueError("invalid deep-run entry")
+    state_info = (path / "state.json").lstat()
+    if not stat.S_ISREG(state_info.st_mode) or _is_reparse_point(state_info):
+        raise ValueError("invalid deep-run state")
+    source = f".factory/deep-runs/{path.name}/state.json"
+    return state_info.st_mtime_ns, path.name, source
+
+
+def _latest_run(root: Path) -> tuple[str, str] | None:
+    directory = _history_directory(root)
+    if directory is None:
+        return None
     entries = list(islice(directory.iterdir(), 129))
     if len(entries) > 128:
         raise ValueError("deep-run history exceeds inspection bound")
-    runs: list[tuple[int, str, str]] = []
-    for path in entries:
-        info = path.lstat()
-        if (
-            len(path.name) != 32
-            or any(char not in "0123456789abcdef" for char in path.name)
-            or not stat.S_ISDIR(info.st_mode)
-            or getattr(info, "st_file_attributes", 0) & 0x400
-        ):
-            raise ValueError("invalid deep-run entry")
-        state_info = (path / "state.json").lstat()
-        if (
-            not stat.S_ISREG(state_info.st_mode)
-            or getattr(state_info, "st_file_attributes", 0) & 0x400
-        ):
-            raise ValueError("invalid deep-run state")
-        source = f".factory/deep-runs/{path.name}/state.json"
-        runs.append((state_info.st_mtime_ns, path.name, source))
+    runs = [_run_entry(path) for path in entries]
     if not runs:
         return None
     _, run_id, source = max(runs)
     return run_id, source
 
 
-def _run_details(run: dict[str, Any]) -> dict[str, Any]:
+def _run_lists(run: dict[str, Any]) -> tuple[list[Any], list[Any]]:
     lanes, gaps = run.get("lanes"), run.get("gaps")
     if (
         not isinstance(lanes, list)
@@ -325,70 +334,102 @@ def _run_details(run: dict[str, Any]) -> dict[str, Any]:
         or len(gaps) > 256
     ):
         raise ValueError("deep-run summary exceeds UI inspection bound")
-    lane_summaries: list[dict[str, Any]] = []
-    coverage_gaps: list[dict[str, Any]] = []
-    repairs: list[dict[str, Any]] = []
-    finding_count = 0
-    coverage_gap_count = 0
+    return lanes, gaps
+
+
+def _top_level_gaps(gaps: list[Any], coverage: list[dict[str, Any]]) -> int:
     for gap in gaps:
         if not isinstance(gap, dict):
             raise ValueError("invalid deep-run coverage gap")
-        coverage_gap_count += 1
-        if len(coverage_gaps) < 20:
-            coverage_gaps.append(
+        if len(coverage) < 20:
+            coverage.append(
                 {
                     "code": _label(gap.get("code"), "UNKNOWN_GAP"),
                     "path": _label(gap.get("path"), "."),
                     "action": _label(gap.get("action"), "Inspect the run and retry."),
                 }
             )
+    return len(gaps)
+
+
+def _lane_values(lane: Any) -> tuple[str, str, list[Any], list[Any]]:
+    if (
+        not isinstance(lane, dict)
+        or not isinstance(lane.get("findings"), list)
+        or not isinstance(lane.get("gaps"), list)
+    ):
+        raise ValueError("invalid deep-run lane")
+    return (
+        _label(lane.get("lane_id"), "unknown"),
+        _label(lane.get("state"), "INCOMPLETE"),
+        lane["findings"],
+        lane["gaps"],
+    )
+
+
+def _lane_summary(
+    lane_id: str, state: str, findings: list[Any], gaps: list[Any]
+) -> dict[str, Any]:
+    return {
+        "lane_id": lane_id,
+        "state": state,
+        "finding_count": len(findings),
+        "gaps": [_label(code, "UNKNOWN_GAP") for code in gaps[:20]],
+    }
+
+
+def _lane_coverage_gaps(
+    gaps: list[Any], lane_id: str, coverage: list[dict[str, Any]]
+) -> int:
+    for code in gaps:
+        if len(coverage) < 20:
+            coverage.append(
+                {
+                    "code": _label(code, "UNKNOWN_GAP"),
+                    "path": lane_id,
+                    "action": "Resolve the analyzer prerequisite and rerun the signed scan.",
+                }
+            )
+    return len(gaps)
+
+
+def _repair_task(finding: Any) -> dict[str, Any]:
+    if not isinstance(finding, dict):
+        raise ValueError("invalid deep-run finding")
+    return {
+        "finding_id": _label(finding.get("finding_id"), "unknown"),
+        "rule_id": _label(finding.get("rule_id"), "unknown"),
+        "severity": _label(finding.get("severity"), "unknown"),
+        "path": _label(finding.get("path"), "unknown"),
+        "line": finding.get("line") if type(finding.get("line")) is int else None,
+        "source_sha256": finding.get("source_sha256"),
+        "remediation": _label(
+            finding.get("remediation"), "Inspect and repair this finding."
+        ),
+    }
+
+
+def _append_repair_tasks(findings: list[Any], repairs: list[dict[str, Any]]) -> None:
+    for finding in findings:
+        if not isinstance(finding, dict):
+            raise ValueError("invalid deep-run finding")
+        if len(repairs) < 20:
+            repairs.append(_repair_task(finding))
+
+
+def _run_details(run: dict[str, Any]) -> dict[str, Any]:
+    lanes, gaps = _run_lists(run)
+    lane_summaries: list[dict[str, Any]] = []
+    coverage_gaps: list[dict[str, Any]] = []
+    repairs: list[dict[str, Any]] = []
+    coverage_gap_count = _top_level_gaps(gaps, coverage_gaps)
+    finding_count = 0
     for lane in lanes:
-        if (
-            not isinstance(lane, dict)
-            or not isinstance(lane.get("findings"), list)
-            or not isinstance(lane.get("gaps"), list)
-        ):
-            raise ValueError("invalid deep-run lane")
-        lane_id = _label(lane.get("lane_id"), "unknown")
-        lane_summaries.append(
-            {
-                "lane_id": lane_id,
-                "state": _label(lane.get("state"), "INCOMPLETE"),
-                "finding_count": len(lane["findings"]),
-                "gaps": [_label(code, "UNKNOWN_GAP") for code in lane["gaps"][:20]],
-            }
-        )
-        coverage_gap_count += len(lane["gaps"])
-        for code in lane["gaps"]:
-            if len(coverage_gaps) < 20:
-                coverage_gaps.append(
-                    {
-                        "code": _label(code, "UNKNOWN_GAP"),
-                        "path": lane_id,
-                        "action": "Resolve the analyzer prerequisite and rerun the signed scan.",
-                    }
-                )
-        finding_count += len(lane["findings"])
-        for finding in lane["findings"]:
-            if not isinstance(finding, dict):
-                raise ValueError("invalid deep-run finding")
-            if len(repairs) < 20:
-                repairs.append(
-                    {
-                        "finding_id": _label(finding.get("finding_id"), "unknown"),
-                        "rule_id": _label(finding.get("rule_id"), "unknown"),
-                        "severity": _label(finding.get("severity"), "unknown"),
-                        "path": _label(finding.get("path"), "unknown"),
-                        "line": finding.get("line")
-                        if type(finding.get("line")) is int
-                        else None,
-                        "source_sha256": finding.get("source_sha256"),
-                        "remediation": _label(
-                            finding.get("remediation"),
-                            "Inspect and repair this finding.",
-                        ),
-                    }
-                )
+        lane_id, state, findings, lane_gaps = _lane_values(lane)
+        lane_summaries.append(_lane_summary(lane_id, state, findings, lane_gaps))
+        coverage_gap_count += _lane_coverage_gaps(lane_gaps, lane_id, coverage_gaps)
+        finding_count += len(findings)
+        _append_repair_tasks(findings, repairs)
     return {
         "lanes": lane_summaries,
         "coverage_gaps": coverage_gaps,
@@ -526,23 +567,30 @@ def _line(value: object) -> int | None:
     return line if line > 0 else None
 
 
-def _case(element: ElementTree.Element, suite_name: str) -> dict:
+def _case_result(
+    element: ElementTree.Element,
+) -> tuple[str, ElementTree.Element | None]:
     markers = {_local_tag(child.tag): child for child in element}
     if "error" in markers:
-        status, result = "error", markers["error"]
+        return "error", markers["error"]
     elif "failure" in markers:
-        status, result = "failed", markers["failure"]
+        return "failed", markers["failure"]
     elif "skipped" in markers:
-        status, result = "skipped", markers["skipped"]
-    else:
-        declared_status = str(element.get("status") or "passed").lower()
-        if declared_status not in {"passed", "failed", "error", "skipped"}:
-            raise _UnknownTestStatus
-        status = declared_status
-        result = None
-    failure_summary = None
-    if result is not None:
-        failure_summary = _bounded(result.get("message") or result.text, 400) or None
+        return "skipped", markers["skipped"]
+    declared_status = str(element.get("status") or "passed").lower()
+    if declared_status not in {"passed", "failed", "error", "skipped"}:
+        raise _UnknownTestStatus
+    return declared_status, None
+
+
+def _case_failure_summary(result: ElementTree.Element | None) -> str | None:
+    if result is None:
+        return None
+    return _bounded(result.get("message") or result.text, 400) or None
+
+
+def _case(element: ElementTree.Element, suite_name: str) -> dict:
+    status, result = _case_result(element)
     return {
         "suite": _bounded(element.get("classname") or suite_name, 240),
         "name": _bounded(element.get("name"), 300),
@@ -550,7 +598,7 @@ def _case(element: ElementTree.Element, suite_name: str) -> dict:
         "file": _bounded(element.get("file"), 500) or None,
         "line": _line(element.get("line")),
         "duration_seconds": _duration(element.get("time")),
-        "failure_summary": failure_summary,
+        "failure_summary": _case_failure_summary(result),
     }
 
 

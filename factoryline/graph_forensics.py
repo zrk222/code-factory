@@ -568,6 +568,121 @@ def _step_fingerprint(step: dict[str, Any]) -> str:
     )
 
 
+def _read_anomalies(
+    step: dict[str, Any], latest: dict[str, int], findings: list[dict[str, Any]]
+) -> None:
+    for read in step["reads"]:
+        expected = latest.get(read["key"], read["version"])
+        if read["version"] < expected:
+            findings.append(
+                {
+                    "code": "STALE_READ",
+                    "severity": "critical",
+                    "sequence": step["sequence"],
+                    "node_id": step["node_id"],
+                    "state_key": read["key"],
+                    "observed_version": read["version"],
+                    "latest_version": expected,
+                }
+            )
+
+
+def _write_anomalies(
+    step: dict[str, Any],
+    latest: dict[str, int],
+    writers: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]],
+    findings: list[dict[str, Any]],
+) -> None:
+    for write in step["writes"]:
+        writers[write["key"]].append((step, write))
+        expected = latest.get(write["key"], write["previous_version"])
+        if write["previous_version"] < expected:
+            findings.append(
+                {
+                    "code": "STALE_WRITE",
+                    "severity": "critical",
+                    "sequence": step["sequence"],
+                    "node_id": step["node_id"],
+                    "state_key": write["key"],
+                    "observed_version": write["previous_version"],
+                    "latest_version": expected,
+                }
+            )
+
+
+def _effect_anomalies(
+    step: dict[str, Any],
+    effects: dict[str, tuple[str, int]],
+    findings: list[dict[str, Any]],
+) -> None:
+    for effect in step["side_effects"]:
+        previous = effects.get(effect["effect_id"])
+        if previous and effect["status"] == "completed":
+            findings.append(
+                {
+                    "code": "DUPLICATE_SIDE_EFFECT",
+                    "severity": "critical",
+                    "sequence": step["sequence"],
+                    "node_id": step["node_id"],
+                    "effect_id": effect["effect_id"],
+                    "first_sequence": previous[1],
+                    "idempotency_key_changed": previous[0] != effect["idempotency_key"],
+                }
+            )
+        effects.setdefault(
+            effect["effect_id"], (effect["idempotency_key"], step["sequence"])
+        )
+
+
+def _step_anomalies(
+    step: dict[str, Any],
+    latest: dict[str, int],
+    effects: dict[str, tuple[str, int]],
+    writers: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]],
+    findings: list[dict[str, Any]],
+) -> None:
+    _read_anomalies(step, latest, findings)
+    _write_anomalies(step, latest, writers, findings)
+    _effect_anomalies(step, effects, findings)
+
+
+def _parallel_write_anomalies(
+    superstep: int,
+    writers: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]],
+    latest: dict[str, int],
+    findings: list[dict[str, Any]],
+) -> None:
+    for key, entries in sorted(writers.items()):
+        if len(entries) > 1:
+            reducers = {write.get("reducer") for _, write in entries}
+            modes = {write["mode"] for _, write in entries}
+            if modes != {"reduce"} or len(reducers) != 1 or None in reducers:
+                findings.append(
+                    {
+                        "code": "PARALLEL_WRITE_CONFLICT",
+                        "severity": "critical",
+                        "superstep": superstep,
+                        "state_key": key,
+                        "writers": sorted(step["node_id"] for step, _ in entries),
+                        "reducers": sorted(str(item) for item in reducers),
+                    }
+                )
+        latest[key] = max(write["version"] for _, write in entries)
+
+
+def _superstep_anomalies(
+    superstep: int,
+    group: list[dict[str, Any]],
+    latest: dict[str, int],
+    effects: dict[str, tuple[str, int]],
+    findings: list[dict[str, Any]],
+) -> None:
+    writers: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = defaultdict(list)
+    for step in group:
+        _step_anomalies(step, latest, effects, writers, findings)
+    _parallel_write_anomalies(superstep, writers, latest, findings)
+
+
 def _anomalies(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     latest: dict[str, int] = {}
@@ -576,74 +691,9 @@ def _anomalies(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for step in steps:
         by_superstep[step["superstep"]].append(step)
     for superstep in sorted(by_superstep):
-        group = by_superstep[superstep]
-        writers: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = defaultdict(
-            list
+        _superstep_anomalies(
+            superstep, by_superstep[superstep], latest, effects, findings
         )
-        for step in group:
-            for read in step["reads"]:
-                expected = latest.get(read["key"], read["version"])
-                if read["version"] < expected:
-                    findings.append(
-                        {
-                            "code": "STALE_READ",
-                            "severity": "critical",
-                            "sequence": step["sequence"],
-                            "node_id": step["node_id"],
-                            "state_key": read["key"],
-                            "observed_version": read["version"],
-                            "latest_version": expected,
-                        }
-                    )
-            for write in step["writes"]:
-                writers[write["key"]].append((step, write))
-                expected = latest.get(write["key"], write["previous_version"])
-                if write["previous_version"] < expected:
-                    findings.append(
-                        {
-                            "code": "STALE_WRITE",
-                            "severity": "critical",
-                            "sequence": step["sequence"],
-                            "node_id": step["node_id"],
-                            "state_key": write["key"],
-                            "observed_version": write["previous_version"],
-                            "latest_version": expected,
-                        }
-                    )
-            for effect in step["side_effects"]:
-                previous = effects.get(effect["effect_id"])
-                if previous and effect["status"] == "completed":
-                    findings.append(
-                        {
-                            "code": "DUPLICATE_SIDE_EFFECT",
-                            "severity": "critical",
-                            "sequence": step["sequence"],
-                            "node_id": step["node_id"],
-                            "effect_id": effect["effect_id"],
-                            "first_sequence": previous[1],
-                            "idempotency_key_changed": previous[0]
-                            != effect["idempotency_key"],
-                        }
-                    )
-                effects.setdefault(
-                    effect["effect_id"], (effect["idempotency_key"], step["sequence"])
-                )
-        for key, entries in sorted(writers.items()):
-            if len(entries) > 1:
-                reducers = {write.get("reducer") for _, write in entries}
-                modes = {write["mode"] for _, write in entries}
-                if modes != {"reduce"} or len(reducers) != 1 or None in reducers:
-                    findings.append(
-                        {
-                            "code": "PARALLEL_WRITE_CONFLICT",
-                            "severity": "critical",
-                            "superstep": superstep,
-                            "state_key": key,
-                            "writers": sorted(step["node_id"] for step, _ in entries),
-                            "reducers": sorted(str(item) for item in reducers),
-                        }
-                    )
-            latest[key] = max(write["version"] for _, write in entries)
     return sorted(
         findings,
         key=lambda item: (
