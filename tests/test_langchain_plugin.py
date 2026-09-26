@@ -212,7 +212,7 @@ def test_muse_build_hook_runs_both_audits_and_routes_changed_prd_specs(
 ) -> None:
     package = ROOT / "plugins" / "muse-code-factory-audit"
     project = tmp_path / "project"
-    (project / ".git").mkdir(parents=True)
+    project.mkdir()
     (project / ".factory").mkdir()
     (project / ".factory" / "review-audits.json").write_text("{}", encoding="utf-8")
     (project / "specs").mkdir()
@@ -245,6 +245,10 @@ def test_muse_build_hook_runs_both_audits_and_routes_changed_prd_specs(
     (project / "..specs" / "mobile-prd.md").write_text(
         "# Mobile PRD\niOS native app requirements.", encoding="utf-8"
     )
+    for args in (["init", "-q"], ["config", "user.name", "Audit Test"],
+                 ["config", "user.email", "audit@example.invalid"],
+                 ["add", "."], ["commit", "-qm", "initial"]):
+        subprocess.run(["git", *args], cwd=project, check=True, capture_output=True)
     runner = r"""
 import { pathToFileURL } from 'node:url';
 const { buildAudit } = await import(pathToFileURL(process.env.AUDIT_HOOK_MODULE));
@@ -986,18 +990,20 @@ def test_muse_audit_mcp_reads_current_receipt_and_rejects_changed_workspace(
     harness = tmp_path / "make-receipt.mjs"
     harness.write_text(
         "import {buildAudit} from '" + hook.resolve().as_uri() + "';\n"
-        "const answer={exitCode:0,stdout:JSON.stringify({state:'CLEAN',files_scanned:1}),stderr:''};\n"
+        "const findings=Array.from({length:7},(_,index)=>({code:'SECURITY_RULE_'+index,severity:'HIGH',path:'app.py',line:index+1,message:'Review finding '+index}));\n"
+        "const answer={exitCode:0,stdout:JSON.stringify({state:'BLOCKED',files_scanned:1,findings}),stderr:''};\n"
+        "const clean={exitCode:0,stdout:JSON.stringify({state:'CLEAN',files_scanned:1}),stderr:''};\n"
         "buildAudit({hook_event_name:'PostToolUse',session_id:'s',turn_id:'t',cwd:process.env.WORKSPACE,tool_input:{}},"
-        "{trigger:'on_demand',runRtk:()=>answer,runForge:()=>({exitCode:0,stdout:JSON.stringify({passed:true}),stderr:''}),"
+        "{trigger:'on_demand',runRtk:(args)=>args[1]==='audit'?answer:clean,runForge:()=>({exitCode:0,stdout:JSON.stringify({passed:true}),stderr:''}),"
         "runGit:()=>({items:[],ok:false}),emit:()=>{}});\n",
         encoding="utf-8",
     )
     env = {**os.environ, "MUSE_PLUGIN_DATA_DIR": str(data_dir), "WORKSPACE": str(workspace)}
     subprocess.run(["node", str(harness)], check=True, capture_output=True, text=True, env=env)
 
-    def call(name: str) -> dict[str, object]:
+    def call(name: str, **arguments: int) -> dict[str, object]:
         request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
-            "name": name, "arguments": {"workspace": str(workspace)}}}
+            "name": name, "arguments": {"workspace": str(workspace), **arguments}}}
         process = subprocess.run(["node", str(server)], input=json.dumps(request) + "\n",
                                  capture_output=True, text=True, check=True, timeout=10, env=env)
         return json.loads(process.stdout)["result"]["structuredContent"]
@@ -1005,8 +1011,85 @@ def test_muse_audit_mcp_reads_current_receipt_and_rejects_changed_workspace(
     status = call("cf_audit_status")
     assert status["status"] == "current"
     assert status["outcomes"]["deepPenetration"] == "incomplete"
-    assert call("cf_audit_findings")["status"] == "current"
+    first_page = call("cf_audit_findings", offset=0, limit=3)
+    assert first_page["status"] == "current"
+    assert first_page["pagination"]["reported"] == 7
+    assert first_page["pagination"]["captured"] == 7
+    assert first_page["pagination"]["hasMore"] is True
+    assert [item["line"] for item in first_page["findings"]] == [1, 2, 3]
+    second_page = call("cf_audit_findings", offset=3, limit=3)
+    assert [item["line"] for item in second_page["findings"]] == [4, 5, 6]
+    assert [item["line"] for item in call("cf_audit_findings", offset=6)["findings"]] == [7]
     assert call("cf_audit_coverage")["status"] == "current"
     assert call("cf_pr_review_brief")["status"] == "current"
     (workspace / "app.py").write_text("print('two')\n", encoding="utf-8")
     assert call("cf_audit_status")["status"] == "stale_or_invalid"
+
+    changed_during_audit = tmp_path / "changed-during-audit.mjs"
+    changed_during_audit.write_text(
+        "import {writeFileSync} from 'node:fs';\n"
+        "import {buildAudit} from '" + hook.resolve().as_uri() + "';\n"
+        "const emitted=[]; let mutated=false;\n"
+        "const clean={exitCode:0,stdout:JSON.stringify({state:'CLEAN'}),stderr:''};\n"
+        "const result=buildAudit({hook_event_name:'PostToolUse',session_id:'s2',turn_id:'t2',cwd:process.env.WORKSPACE,tool_input:{}},"
+        "{trigger:'on_demand',runRtk:()=>{if(!mutated){writeFileSync(process.env.WORKSPACE+'/app.py',\"print('three')\\n\");mutated=true;}return clean;},"
+        "runForge:()=>({exitCode:0,stdout:JSON.stringify({passed:true}),stderr:''}),"
+        "runGit:()=>({items:[],ok:false}),emit:(value)=>emitted.push(value)});\n"
+        "process.stdout.write(JSON.stringify({result,emitted}));\n",
+        encoding="utf-8",
+    )
+    process = subprocess.run(["node", str(changed_during_audit)], check=True,
+                             capture_output=True, text=True, env=env)
+    drift = json.loads(process.stdout)
+    assert drift["result"]["receiptSaved"] is False
+    assert "Workspace source consistency: INCOMPLETE" in drift["result"]["summary"]
+    assert "changed while the scans were running" in drift["result"]["summary"]
+    assert "Code Factory: incomplete; ForgeLine: incomplete; AppForge: incomplete" in drift["result"]["summary"]
+    assert call("cf_audit_status")["status"] == "stale_or_invalid"
+
+
+def test_muse_hook_caps_stdout_but_keeps_full_structured_receipt(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / ".factory").mkdir(parents=True)
+    (workspace / ".factory" / "review-audits.json").write_text("{}", encoding="utf-8")
+    (workspace / "specs").mkdir()
+    (workspace / "specs" / "mobile-saas-prd.md").write_text(
+        "# Mobile SaaS PRD\nBuild an iOS app with tenant billing.", encoding="utf-8"
+    )
+    for args in (["init", "-q"], ["config", "user.name", "Audit Test"],
+                 ["config", "user.email", "audit@example.invalid"],
+                 ["add", "."], ["commit", "-qm", "initial"]):
+        subprocess.run(["git", *args], cwd=workspace, check=True, capture_output=True)
+    hook = ROOT / "plugins" / "muse-code-factory-audit" / "hooks" / "audit.mjs"
+    harness = tmp_path / "large-hook-result.mjs"
+    harness.write_text(
+        "import {buildAudit} from '" + hook.resolve().as_uri() + "';\n"
+        "const findings=Array.from({length:7},(_,index)=>({code:'RULE_'+index,severity:'HIGH',path:'src/'+('p'.repeat(210))+'.py',line:index+1,message:'M'.repeat(400)}));\n"
+        "const factory={exitCode:0,stdout:JSON.stringify({state:'BLOCKED',findings}),stderr:''};\n"
+        "const forge={exitCode:0,stdout:JSON.stringify({grade:'F',passed:false,findings,parser_unsupported:Array.from({length:25},(_,index)=>'PARSER_UNSUPPORTED: '+index+' '+'x'.repeat(300))}),stderr:''};\n"
+        "const runGit=(_root,args)=>{if(args[0]==='symbolic-ref')return ['origin/main'];if(args[0]==='rev-parse')return ['origin/main'];if(args[0]==='diff'&&args[1]==='--name-only')return ['specs/mobile-saas-prd.md'];return [];};\n"
+        "const emitted=[];\n"
+        "const result=buildAudit({hook_event_name:'PostToolUse',session_id:'large',turn_id:'large',cwd:process.env.WORKSPACE,tool_input:{command:'npm run build'}},"
+        "{runGit,runRtk:()=>factory,runForge:()=>forge,emit:(value)=>emitted.push(value)});\n"
+        "process.stdout.write(JSON.stringify({result,output:emitted[0],wireBytes:Buffer.byteLength(JSON.stringify(emitted[0])+'\\n','utf8')}));\n",
+        encoding="utf-8",
+    )
+    data_dir = tmp_path / "plugin-data"
+    env = {**os.environ, "MUSE_PLUGIN_DATA_DIR": str(data_dir), "WORKSPACE": str(workspace)}
+    process = subprocess.run(["node", str(harness)], check=True, capture_output=True,
+                             text=True, timeout=10, env=env)
+    payload = json.loads(process.stdout)
+    context = payload["output"]["hookSpecificOutput"]["additionalContext"]
+    assert payload["result"]["receiptSaved"] is True
+    assert payload["wireBytes"] <= 16 * 1024
+    assert "[TRUNCATED:" in context
+    assert "Code Factory: findings; ForgeLine: incomplete" in context
+    assert len(payload["result"]["summary"]) > len(context)
+    receipt_path = (data_dir / "cf-build-audit" / "receipts"
+                    / f"{hashlib.sha256(str(workspace.resolve()).encode()).hexdigest()}.json")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["summary"] == payload["result"]["summary"]
+    assert receipt["findings"]["total"] == 35
+    assert len(receipt["findings"]["rows"]) == 35
