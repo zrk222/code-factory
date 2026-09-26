@@ -79,22 +79,9 @@ def _mcp2_failed_lanes(blockers: list[dict[str, Any]]) -> list[dict[str, str]]:
     return findings
 
 
-def release_gate_completed(
-    card: dict[str, Any],
+def _human_release_values(
     human_input: Any,
-    *,
-    tool_call_id: str | None = None,
-    proof_card_hash: str | None = None,
-) -> dict[str, Any]:
-    """Return a deterministic local receipt for a validated human decision.
-
-    This is the safe second leg of the stateless MRT interaction. It binds the
-    decision to the exact proof-card challenge and fails closed on debt or
-    binding mismatches. It never persists state or performs a release action.
-    """
-    challenge = release_gate_input_required(card)
-    expected_tool_call_id = challenge["toolCallId"]
-    expected_proof_card_hash = challenge["context"]["proofCardHash"]
+) -> tuple[str, str, str, list[str]]:
     if not isinstance(human_input, dict):
         raise McpMrtError("human_input must be an object")
     allowed = {"decision", "reviewerIdentity", "reviewerNotes", "acknowledgedProofDebt"}
@@ -111,10 +98,10 @@ def release_gate_completed(
     reviewer = _require_mcp2_string(
         human_input.get("reviewerIdentity"), "reviewerIdentity", max_length=256
     )
-    notes_value = human_input.get("reviewerNotes", "")
-    if notes_value is None:
-        notes_value = ""
-    if not isinstance(notes_value, str) or len(notes_value) > 4000:
+    notes = human_input.get("reviewerNotes", "")
+    if notes is None:
+        notes = ""
+    if not isinstance(notes, str) or len(notes) > 4000:
         raise McpMrtError("reviewerNotes must be a string of at most 4000 characters")
     acknowledged_value = human_input.get("acknowledgedProofDebt", [])
     if not isinstance(acknowledged_value, list) or len(acknowledged_value) > 50:
@@ -127,8 +114,15 @@ def release_gate_completed(
     ]
     if len(set(acknowledged)) != len(acknowledged):
         raise McpMrtError("acknowledgedProofDebt must not contain duplicates")
-    # MRT is stateless: the second leg must carry both bindings from the
-    # original challenge.
+    return decision, reviewer, notes, acknowledged
+
+
+def _validate_release_binding(
+    tool_call_id: str | None,
+    proof_card_hash: str | None,
+    expected_tool_call_id: str,
+    expected_proof_card_hash: str,
+) -> None:
     if tool_call_id is None or proof_card_hash is None:
         raise McpMrtError(
             "tool_call_id and proof_card_hash are required for the stateless second leg",
@@ -144,22 +138,31 @@ def release_gate_completed(
             "proofCardHash does not match the proof-card contents",
             "MCP2_RELEASE_GATE_BINDING_MISMATCH",
         )
+
+
+def _missing_proof_debt(
+    challenge: dict[str, Any], acknowledged: list[str]
+) -> list[str]:
     debt = challenge["context"].get("proofDebt", [])
     if not isinstance(debt, list):
-        debt = []
-    missing_debt = [str(item) for item in debt if str(item) not in acknowledged]
-    if decision == "APPROVE_RELEASE" and missing_debt:
-        raise McpMrtError(
-            "APPROVE_RELEASE requires acknowledgement of every unresolved proof-debt code: "
-            + ", ".join(missing_debt),
-            "MCP2_RELEASE_DEBT_UNACKNOWLEDGED",
-        )
+        return []
+    return [str(item) for item in debt if str(item) not in acknowledged]
+
+
+def _completed_release_receipt(
+    expected_tool_call_id: str,
+    expected_proof_card_hash: str,
+    decision: str,
+    reviewer: str,
+    notes: str,
+    acknowledged: list[str],
+) -> dict[str, Any]:
     receipt_input = {
         "toolCallId": expected_tool_call_id,
         "proofCardHash": expected_proof_card_hash,
         "decision": decision,
         "reviewerIdentity": reviewer,
-        "reviewerNotes": notes_value.strip(),
+        "reviewerNotes": notes.strip(),
         "acknowledgedProofDebt": acknowledged,
     }
     receipt_hash = "sha256:" + _sha(receipt_input)
@@ -192,6 +195,48 @@ def release_gate_completed(
         "proofCardHash": expected_proof_card_hash,
         "acknowledgedProofDebt": acknowledged,
     }
+
+
+def release_gate_completed(
+    card: dict[str, Any],
+    human_input: Any,
+    *,
+    tool_call_id: str | None = None,
+    proof_card_hash: str | None = None,
+) -> dict[str, Any]:
+    """Return a deterministic local receipt for a validated human decision.
+
+    This is the safe second leg of the stateless MRT interaction. It binds the
+    decision to the exact proof-card challenge and fails closed on debt or
+    binding mismatches. It never persists state or performs a release action.
+    """
+    challenge = release_gate_input_required(card)
+    expected_tool_call_id = challenge["toolCallId"]
+    expected_proof_card_hash = challenge["context"]["proofCardHash"]
+    decision, reviewer, notes, acknowledged = _human_release_values(human_input)
+    # MRT is stateless: the second leg must carry both bindings from the
+    # original challenge.
+    _validate_release_binding(
+        tool_call_id,
+        proof_card_hash,
+        expected_tool_call_id,
+        expected_proof_card_hash,
+    )
+    missing_debt = _missing_proof_debt(challenge, acknowledged)
+    if decision == "APPROVE_RELEASE" and missing_debt:
+        raise McpMrtError(
+            "APPROVE_RELEASE requires acknowledgement of every unresolved proof-debt code: "
+            + ", ".join(missing_debt),
+            "MCP2_RELEASE_DEBT_UNACKNOWLEDGED",
+        )
+    return _completed_release_receipt(
+        expected_tool_call_id,
+        expected_proof_card_hash,
+        decision,
+        reviewer,
+        notes,
+        acknowledged,
+    )
 
 
 def evaluate_release_gate(
