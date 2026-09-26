@@ -116,6 +116,166 @@ def add_parser(sub: Any) -> None:
     runner_admission.add_argument("--out", required=True)
 
 
+def _read_json(path: str | Path) -> Any:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _signed_result(out: str | Path, signed: dict[str, Any]) -> dict[str, str]:
+    return {
+        "schema": "factory.enterprise.result.v1",
+        "verdict": "SIGNED",
+        "path": str(Path(out).resolve()),
+        "payload_type": signed["payloadType"],
+    }
+
+
+def _run_receipt_command(
+    a: Any,
+    *,
+    generate_key_material: Any,
+    seal_receipt_v2: Any,
+    verify_receipt_v2: Any,
+    sign_policy_bundle: Any,
+    sign_revocations: Any,
+) -> tuple[bool, Any]:
+    """Run one command from the Receipt v2 command family."""
+    if a.enterprise_cmd == "keygen":
+        result = generate_key_material(
+            out_dir=Path(a.out_dir),
+            keyid=a.keyid,
+            identity=a.identity,
+            issuer=a.issuer,
+        )
+        return True, result
+    if a.enterprise_cmd == "receipt-seal":
+        signed = seal_receipt_v2(
+            _read_json(a.payload),
+            private_key_path=Path(a.private_key),
+            keyid=a.keyid,
+            identity=a.identity,
+            issuer=a.issuer,
+            out=Path(a.out),
+        )
+        return True, _signed_result(a.out, signed)
+    if a.enterprise_cmd == "verify":
+        result = verify_receipt_v2(
+            Path(a.envelope),
+            trust_root_path=Path(a.trust_root),
+            policy_bundle_path=Path(a.policy_bundle) if a.policy_bundle else None,
+            revocations_path=Path(a.revocations) if a.revocations else None,
+            require_revocations=a.require_revocations,
+            max_revocation_age_seconds=a.max_revocation_age,
+        )
+        return True, result
+    if a.enterprise_cmd == "policy-sign":
+        signed = sign_policy_bundle(
+            _read_json(a.policy),
+            private_key_path=Path(a.private_key),
+            keyid=a.keyid,
+            identity=a.identity,
+            issuer=a.issuer,
+            out=Path(a.out),
+        )
+        return True, _signed_result(a.out, signed)
+    if a.enterprise_cmd == "revocations-sign":
+        signed = sign_revocations(
+            _read_json(a.entries),
+            private_key_path=Path(a.private_key),
+            keyid=a.keyid,
+            identity=a.identity,
+            issuer=a.issuer,
+            out=Path(a.out),
+        )
+        return True, _signed_result(a.out, signed)
+    return False, None
+
+
+def _run_enforcement_seal_command(
+    a: Any,
+    *,
+    sign_workload_identity: Any,
+    sign_enforcement_policy: Any,
+    sign_workload_revocations: Any,
+) -> tuple[bool, Any]:
+    """Run one command that signs an enforcement reference artifact."""
+    if a.enterprise_cmd == "workload-identity-seal":
+        signed = sign_workload_identity(
+            _read_json(a.payload),
+            private_key_path=Path(a.private_key),
+            keyid=a.keyid,
+            identity=a.identity,
+            issuer=a.issuer,
+            out=Path(a.out),
+        )
+        return True, _signed_result(a.out, signed)
+    if a.enterprise_cmd == "enforcement-policy-seal":
+        signed = sign_enforcement_policy(
+            _read_json(a.payload),
+            private_key_path=Path(a.private_key),
+            keyid=a.keyid,
+            identity=a.identity,
+            issuer=a.issuer,
+            out=Path(a.out),
+        )
+        return True, _signed_result(a.out, signed)
+    if a.enterprise_cmd == "workload-revocations-seal":
+        signed = sign_workload_revocations(
+            _read_json(a.entries),
+            private_key_path=Path(a.private_key),
+            keyid=a.keyid,
+            identity=a.identity,
+            issuer=a.issuer,
+            out=Path(a.out),
+        )
+        return True, _signed_result(a.out, signed)
+    return False, None
+
+
+def _dispatch_enterprise_command(a: Any, engines: dict[str, Any]) -> Any:
+    """Dispatch commands across separately bounded enterprise engine families."""
+    matched, result = _run_receipt_command(
+        a,
+        generate_key_material=engines["generate_key_material"],
+        seal_receipt_v2=engines["seal_receipt_v2"],
+        verify_receipt_v2=engines["verify_receipt_v2"],
+        sign_policy_bundle=engines["sign_policy_bundle"],
+        sign_revocations=engines["sign_revocations"],
+    )
+    if matched:
+        return result
+    matched, result = _run_enforcement_seal_command(
+        a,
+        sign_workload_identity=engines["sign_workload_identity"],
+        sign_enforcement_policy=engines["sign_enforcement_policy"],
+        sign_workload_revocations=engines["sign_workload_revocations"],
+    )
+    if matched:
+        return result
+    if a.enterprise_cmd == "runner-admission-seal":
+        return engines["prepare_runner_admission"](
+            Path(a.root), Path(a.payload), Path(a.out)
+        )
+    return engines["record_enterprise_decision"](
+        Path(a.root),
+        _read_json(a.request),
+        Path(a.out),
+        workload_identity_path=Path(a.workload_identity),
+        policy_path=Path(a.policy),
+        trust_root_path=Path(a.trust_root),
+        revocations_path=Path(a.workload_revocations)
+        if a.workload_revocations
+        else None,
+    )
+
+
+def _enterprise_error(
+    exc: Exception, engine_errors: tuple[type[Exception], ...]
+) -> dict[str, str]:
+    if isinstance(exc, engine_errors):
+        return {"code": exc.code, "message": exc.message}
+    return {"code": "E_INPUT", "message": str(exc)}
+
+
 def run(args: Any) -> int:
     """Execute one enterprise command and render its deterministic receipt."""
     a = args
@@ -140,156 +300,27 @@ def run(args: Any) -> int:
             prepare_runner_admission,
         )
 
-        try:
-            if a.enterprise_cmd == "keygen":
-                result = generate_key_material(
-                    out_dir=Path(a.out_dir),
-                    keyid=a.keyid,
-                    identity=a.identity,
-                    issuer=a.issuer,
-                )
-            elif a.enterprise_cmd == "receipt-seal":
-                payload = json.loads(Path(a.payload).read_text(encoding="utf-8"))
-                result = seal_receipt_v2(
-                    payload,
-                    private_key_path=Path(a.private_key),
-                    keyid=a.keyid,
-                    identity=a.identity,
-                    issuer=a.issuer,
-                    out=Path(a.out),
-                )
-                result = {
-                    "schema": "factory.enterprise.result.v1",
-                    "verdict": "SIGNED",
-                    "path": str(Path(a.out).resolve()),
-                    "payload_type": result["payloadType"],
-                }
-            elif a.enterprise_cmd == "verify":
-                result = verify_receipt_v2(
-                    Path(a.envelope),
-                    trust_root_path=Path(a.trust_root),
-                    policy_bundle_path=Path(a.policy_bundle)
-                    if a.policy_bundle
-                    else None,
-                    revocations_path=Path(a.revocations) if a.revocations else None,
-                    require_revocations=a.require_revocations,
-                    max_revocation_age_seconds=a.max_revocation_age,
-                )
-            elif a.enterprise_cmd == "policy-sign":
-                policy_payload = json.loads(Path(a.policy).read_text(encoding="utf-8"))
-                signed = sign_policy_bundle(
-                    policy_payload,
-                    private_key_path=Path(a.private_key),
-                    keyid=a.keyid,
-                    identity=a.identity,
-                    issuer=a.issuer,
-                    out=Path(a.out),
-                )
-                result = {
-                    "schema": "factory.enterprise.result.v1",
-                    "verdict": "SIGNED",
-                    "path": str(Path(a.out).resolve()),
-                    "payload_type": signed["payloadType"],
-                }
-            elif a.enterprise_cmd == "revocations-sign":
-                entries = json.loads(Path(a.entries).read_text(encoding="utf-8"))
-                signed = sign_revocations(
-                    entries,
-                    private_key_path=Path(a.private_key),
-                    keyid=a.keyid,
-                    identity=a.identity,
-                    issuer=a.issuer,
-                    out=Path(a.out),
-                )
-                result = {
-                    "schema": "factory.enterprise.result.v1",
-                    "verdict": "SIGNED",
-                    "path": str(Path(a.out).resolve()),
-                    "payload_type": signed["payloadType"],
-                }
-            elif a.enterprise_cmd == "workload-identity-seal":
-                payload = json.loads(Path(a.payload).read_text(encoding="utf-8"))
-                signed = sign_workload_identity(
-                    payload,
-                    private_key_path=Path(a.private_key),
-                    keyid=a.keyid,
-                    identity=a.identity,
-                    issuer=a.issuer,
-                    out=Path(a.out),
-                )
-                result = {
-                    "schema": "factory.enterprise.result.v1",
-                    "verdict": "SIGNED",
-                    "path": str(Path(a.out).resolve()),
-                    "payload_type": signed["payloadType"],
-                }
-            elif a.enterprise_cmd == "enforcement-policy-seal":
-                payload = json.loads(Path(a.payload).read_text(encoding="utf-8"))
-                signed = sign_enforcement_policy(
-                    payload,
-                    private_key_path=Path(a.private_key),
-                    keyid=a.keyid,
-                    identity=a.identity,
-                    issuer=a.issuer,
-                    out=Path(a.out),
-                )
-                result = {
-                    "schema": "factory.enterprise.result.v1",
-                    "verdict": "SIGNED",
-                    "path": str(Path(a.out).resolve()),
-                    "payload_type": signed["payloadType"],
-                }
-            elif a.enterprise_cmd == "workload-revocations-seal":
-                entries = json.loads(Path(a.entries).read_text(encoding="utf-8"))
-                signed = sign_workload_revocations(
-                    entries,
-                    private_key_path=Path(a.private_key),
-                    keyid=a.keyid,
-                    identity=a.identity,
-                    issuer=a.issuer,
-                    out=Path(a.out),
-                )
-                result = {
-                    "schema": "factory.enterprise.result.v1",
-                    "verdict": "SIGNED",
-                    "path": str(Path(a.out).resolve()),
-                    "payload_type": signed["payloadType"],
-                }
-            elif a.enterprise_cmd == "runner-admission-seal":
-                result = prepare_runner_admission(
-                    Path(a.root), Path(a.payload), Path(a.out)
-                )
-            else:
-                request = json.loads(Path(a.request).read_text(encoding="utf-8"))
-                result = record_enterprise_decision(
-                    Path(a.root),
-                    request,
-                    Path(a.out),
-                    workload_identity_path=Path(a.workload_identity),
-                    policy_path=Path(a.policy),
-                    trust_root_path=Path(a.trust_root),
-                    revocations_path=Path(a.workload_revocations)
-                    if a.workload_revocations
-                    else None,
-                )
-        except (
+        engine_errors = (
             EnterpriseReceiptError,
             EnterpriseEnforcementError,
             EnterpriseRunnerAdmissionError,
-            json.JSONDecodeError,
-            OSError,
-        ) as exc:
-            if isinstance(
-                exc,
-                (
-                    EnterpriseReceiptError,
-                    EnterpriseEnforcementError,
-                    EnterpriseRunnerAdmissionError,
-                ),
-            ):
-                error = {"code": exc.code, "message": exc.message}
-            else:
-                error = {"code": "E_INPUT", "message": str(exc)}
+        )
+        engines = {
+            "generate_key_material": generate_key_material,
+            "seal_receipt_v2": seal_receipt_v2,
+            "verify_receipt_v2": verify_receipt_v2,
+            "sign_policy_bundle": sign_policy_bundle,
+            "sign_revocations": sign_revocations,
+            "sign_workload_identity": sign_workload_identity,
+            "sign_enforcement_policy": sign_enforcement_policy,
+            "sign_workload_revocations": sign_workload_revocations,
+            "prepare_runner_admission": prepare_runner_admission,
+            "record_enterprise_decision": record_enterprise_decision,
+        }
+        try:
+            result = _dispatch_enterprise_command(a, engines)
+        except (*engine_errors, json.JSONDecodeError, OSError) as exc:
+            error = _enterprise_error(exc, engine_errors)
             print(
                 json.dumps(
                     {
