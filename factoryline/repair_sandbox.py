@@ -334,31 +334,42 @@ def _scope_baseline(item: object, seen: set[str]) -> dict[str, Any]:
             "REPAIR_SCOPE_INVALID", "scope paths must not repeat a path"
         )
     seen.add(relative)
-    expected = {
+    expected = _baseline_payload(item, relative)
+    _validate_baseline_payload(expected)
+    return expected
+
+
+def _baseline_payload(item: dict[str, Any], relative: str) -> dict[str, Any]:
+    return {
         "path": relative,
         "exists": item.get("exists"),
         "size_bytes": item.get("size_bytes"),
         "sha256": item.get("sha256"),
     }
-    valid_size = (
-        not isinstance(expected["size_bytes"], bool)
-        and isinstance(expected["size_bytes"], int)
-        and expected["size_bytes"] >= 0
-    )
-    valid_present = not expected["exists"] or isinstance(expected["sha256"], str)
-    valid_missing = expected["exists"] or (
+
+
+def _valid_baseline_size(value: object) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
+
+
+def _valid_baseline_presence(expected: dict[str, Any]) -> bool:
+    present = not expected["exists"] or isinstance(expected["sha256"], str)
+    missing = expected["exists"] or (
         expected["sha256"] is None and expected["size_bytes"] == 0
     )
-    if (
-        not isinstance(expected["exists"], bool)
-        or not valid_size
-        or not valid_present
-        or not valid_missing
-    ):
+    return present and missing
+
+
+def _validate_baseline_payload(expected: dict[str, Any]) -> None:
+    valid = (
+        isinstance(expected["exists"], bool)
+        and _valid_baseline_size(expected["size_bytes"])
+        and _valid_baseline_presence(expected)
+    )
+    if not valid:
         raise RepairSandboxError(
             "REPAIR_SCOPE_INVALID", "scope path baseline is malformed"
         )
-    return expected
 
 
 def _verify_scope_paths(workspace: Path, paths: object) -> None:
@@ -563,7 +574,7 @@ def _patch_header_path(value: str, prefix: str) -> str | None:
     )
 
 
-def _candidate_patch_paths(patch: Path) -> list[str]:
+def _patch_text(patch: Path) -> list[str]:
     data = patch.read_bytes()
     if not data or len(data) > MAX_PATCH_BYTES:
         raise RepairSandboxError(
@@ -576,44 +587,67 @@ def _candidate_patch_paths(patch: Path) -> list[str]:
         raise RepairSandboxError(
             "REPAIR_PATCH_UNSUPPORTED", "candidate patch must be UTF-8 text"
         ) from exc
-    paths: set[str] = set()
-    headers = 0
-    for line in lines:
-        if line.startswith(
-            ("diff --combined ", "diff --cc ", "GIT binary patch", "Binary files ")
-        ):
-            raise RepairSandboxError(
-                "REPAIR_PATCH_UNSUPPORTED",
-                "combined or binary patches are not supported by the first candidate protocol",
-            )
-        if line.startswith("diff --git "):
-            parts = line[len("diff --git ") :].split(" ")
-            if len(parts) != 2:
-                raise RepairSandboxError(
-                    "REPAIR_PATCH_UNSUPPORTED",
-                    "candidate patch must use exactly two unquoted Git diff paths",
-                )
-            paths.add(_patch_path(parts[0]))
-            paths.add(_patch_path(parts[1]))
-            headers += 1
-        elif line.startswith("--- "):
-            path = _patch_header_path(line[4:].strip(), "a")
-            if path is not None:
-                paths.add(path)
-        elif line.startswith("+++ "):
-            path = _patch_header_path(line[4:].strip(), "b")
-            if path is not None:
-                paths.add(path)
-        elif line.startswith("rename from ") or line.startswith("rename to "):
-            paths.add(
-                _relative_path(line.split(" ", 2)[2], code="REPAIR_PATCH_UNSUPPORTED")
-            )
+    return lines
+
+
+def _reject_unsupported_patch_line(line: str) -> None:
+    if line.startswith(
+        ("diff --combined ", "diff --cc ", "GIT binary patch", "Binary files ")
+    ):
+        raise RepairSandboxError(
+            "REPAIR_PATCH_UNSUPPORTED",
+            "combined or binary patches are not supported by the first candidate protocol",
+        )
+
+
+def _add_git_diff_paths(line: str, paths: set[str]) -> None:
+    parts = line[len("diff --git ") :].split(" ")
+    if len(parts) != 2:
+        raise RepairSandboxError(
+            "REPAIR_PATCH_UNSUPPORTED",
+            "candidate patch must use exactly two unquoted Git diff paths",
+        )
+    paths.add(_patch_path(parts[0]))
+    paths.add(_patch_path(parts[1]))
+
+
+def _add_file_header_path(line: str, prefix: str, paths: set[str]) -> None:
+    path = _patch_header_path(line[4:].strip(), prefix)
+    if path is not None:
+        paths.add(path)
+
+
+def _patch_line_paths(line: str, paths: set[str]) -> int:
+    _reject_unsupported_patch_line(line)
+    if line.startswith("diff --git "):
+        _add_git_diff_paths(line, paths)
+        return 1
+    if line.startswith("--- "):
+        _add_file_header_path(line, "a", paths)
+    elif line.startswith("+++ "):
+        _add_file_header_path(line, "b", paths)
+    elif line.startswith(("rename from ", "rename to ")):
+        path = _relative_path(line.split(" ", 2)[2], code="REPAIR_PATCH_UNSUPPORTED")
+        paths.add(path)
+    return 0
+
+
+def _validate_patch_path_summary(headers: int, paths: set[str]) -> list[str]:
     if headers == 0 or not paths:
         raise RepairSandboxError(
             "REPAIR_PATCH_INVALID",
             "candidate patch must contain at least one Git diff header",
         )
     return sorted(paths)
+
+
+def _candidate_patch_paths(patch: Path) -> list[str]:
+    lines = _patch_text(patch)
+    paths: set[str] = set()
+    headers = 0
+    for line in lines:
+        headers += _patch_line_paths(line, paths)
+    return _validate_patch_path_summary(headers, paths)
 
 
 def inspect_repair_candidate(
@@ -747,6 +781,114 @@ def write_repair_candidate_artifacts(
     }
 
 
+def _execution_digest(value: object, label: str) -> None:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", f"{label} must be a SHA-256 digest"
+        )
+
+
+def _validate_execution_identity(
+    scope_sha256: str, runner_id: str, isolation_level: str
+) -> None:
+    if not re.fullmatch(r"[0-9a-f]{64}", scope_sha256):
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "scope_sha256 must be a SHA-256 digest"
+        )
+    if not isinstance(runner_id, str) or not runner_id.strip() or len(runner_id) > 160:
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "runner_id is required and bounded"
+        )
+    if isolation_level not in _ISOLATION_LEVELS:
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "isolation_level is unsupported"
+        )
+
+
+def _validate_execution_environment(
+    runtime_digest: str,
+    toolchain_digest: str,
+    network_policy: str,
+    teardown_status: str,
+    executed: bool,
+) -> None:
+    for digest, label in (
+        (runtime_digest, "runtime_digest"),
+        (toolchain_digest, "toolchain_digest"),
+    ):
+        _execution_digest(digest, label)
+    if network_policy not in {"none", "restricted", "unrestricted", "unknown"}:
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "network_policy is unsupported"
+        )
+    if teardown_status not in {"complete", "incomplete", "unknown"}:
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "teardown_status is unsupported"
+        )
+    if not isinstance(executed, bool):
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", "executed must be boolean"
+        )
+
+
+def _sorted_execution_digests(values: list[str]) -> list[str]:
+    return sorted(set(values))
+
+
+def _validate_execution_digests(values: list[str], label: str) -> None:
+    if any(
+        not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+        for value in values
+    ):
+        raise RepairSandboxError(
+            "SANDBOX_EXECUTION_INVALID", f"{label} must contain SHA-256 digests"
+        )
+
+
+def _execution_status(
+    executed: bool, isolation_level: str, teardown_status: str
+) -> str:
+    if executed and isolation_level == "UNENFORCED":
+        return "UNENFORCED"
+    if executed and teardown_status != "complete":
+        return "REVIEW_REQUIRED"
+    if executed:
+        return "OBSERVED"
+    return "DECLARED_ONLY"
+
+
+def _sandbox_execution_core(
+    scope_sha256: str,
+    runner_id: str,
+    isolation_level: str,
+    runtime_digest: str,
+    toolchain_digest: str,
+    network_policy: str,
+    input_digests: list[str],
+    output_digests: list[str],
+    teardown_status: str,
+    executed: bool,
+    observed_at: str,
+) -> dict[str, Any]:
+    return {
+        "schema": SANDBOX_EXECUTION_SCHEMA,
+        "scope_sha256": scope_sha256,
+        "runner_id": runner_id.strip(),
+        "isolation_level": isolation_level,
+        "runtime_digest": runtime_digest,
+        "toolchain_digest": toolchain_digest,
+        "network_policy": network_policy,
+        "input_digests": input_digests,
+        "output_digests": output_digests,
+        "teardown_status": teardown_status,
+        "executed": executed,
+        "status": _execution_status(executed, isolation_level, teardown_status),
+        "observed_at": observed_at.strip() if isinstance(observed_at, str) else "",
+        "authority": dict(_AUTHORITY),
+        "claim_boundary": "External runner observation only; this receipt does not create isolation, execute work, approve release, or prove provider identity.",
+    }
+
+
 def create_sandbox_execution_receipt(
     scope_sha256: str,
     *,
@@ -766,82 +908,32 @@ def create_sandbox_execution_receipt(
     This is deliberately an observation boundary: FactoryLine does not start a
     runner, create a container, or infer that a local process was isolated.
     """
-    if not re.fullmatch(r"[0-9a-f]{64}", scope_sha256):
-        raise RepairSandboxError(
-            "SANDBOX_EXECUTION_INVALID", "scope_sha256 must be a SHA-256 digest"
-        )
-    if not isinstance(runner_id, str) or not runner_id.strip() or len(runner_id) > 160:
-        raise RepairSandboxError(
-            "SANDBOX_EXECUTION_INVALID", "runner_id is required and bounded"
-        )
-    if isolation_level not in _ISOLATION_LEVELS:
-        raise RepairSandboxError(
-            "SANDBOX_EXECUTION_INVALID", "isolation_level is unsupported"
-        )
-    for digest, label in (
-        (runtime_digest, "runtime_digest"),
-        (toolchain_digest, "toolchain_digest"),
-    ):
-        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise RepairSandboxError(
-                "SANDBOX_EXECUTION_INVALID", f"{label} must be a SHA-256 digest"
-            )
-    if network_policy not in {"none", "restricted", "unrestricted", "unknown"}:
-        raise RepairSandboxError(
-            "SANDBOX_EXECUTION_INVALID", "network_policy is unsupported"
-        )
-    if teardown_status not in {"complete", "incomplete", "unknown"}:
-        raise RepairSandboxError(
-            "SANDBOX_EXECUTION_INVALID", "teardown_status is unsupported"
-        )
-    if not isinstance(executed, bool):
-        raise RepairSandboxError(
-            "SANDBOX_EXECUTION_INVALID", "executed must be boolean"
-        )
-    normalized_inputs = sorted(set(input_digests))
-    normalized_outputs = sorted(set(output_digests))
-    for values, label in (
-        (normalized_inputs, "input_digests"),
-        (normalized_outputs, "output_digests"),
-    ):
-        if any(
-            not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
-            for value in values
-        ):
-            raise RepairSandboxError(
-                "SANDBOX_EXECUTION_INVALID", f"{label} must contain SHA-256 digests"
-            )
-    if executed and isolation_level == "UNENFORCED":
-        status = "UNENFORCED"
-    elif executed and teardown_status != "complete":
-        status = "REVIEW_REQUIRED"
-    elif executed:
-        status = "OBSERVED"
-    else:
-        status = "DECLARED_ONLY"
-    core = {
-        "schema": SANDBOX_EXECUTION_SCHEMA,
-        "scope_sha256": scope_sha256,
-        "runner_id": runner_id.strip(),
-        "isolation_level": isolation_level,
-        "runtime_digest": runtime_digest,
-        "toolchain_digest": toolchain_digest,
-        "network_policy": network_policy,
-        "input_digests": normalized_inputs,
-        "output_digests": normalized_outputs,
-        "teardown_status": teardown_status,
-        "executed": executed,
-        "status": status,
-        "observed_at": observed_at.strip() if isinstance(observed_at, str) else "",
-        "authority": dict(_AUTHORITY),
-        "claim_boundary": "External runner observation only; this receipt does not create isolation, execute work, approve release, or prove provider identity.",
-    }
+    _validate_execution_identity(scope_sha256, runner_id, isolation_level)
+    _validate_execution_environment(
+        runtime_digest, toolchain_digest, network_policy, teardown_status, executed
+    )
+    normalized_inputs = _sorted_execution_digests(input_digests)
+    normalized_outputs = _sorted_execution_digests(output_digests)
+    _validate_execution_digests(normalized_inputs, "input_digests")
+    _validate_execution_digests(normalized_outputs, "output_digests")
+    core = _sandbox_execution_core(
+        scope_sha256,
+        runner_id,
+        isolation_level,
+        runtime_digest,
+        toolchain_digest,
+        network_policy,
+        normalized_inputs,
+        normalized_outputs,
+        teardown_status,
+        executed,
+        observed_at,
+    )
     digest = sha256(_canonical(core)).hexdigest()
     return {**core, "receipt_sha256": digest, "marker": "SANDBOX_EXECUTION_OBSERVED"}
 
 
-def verify_sandbox_execution_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
-    """Verify runner observation integrity and keep isolation claims explicit."""
+def _sandbox_receipt_envelope(receipt: object) -> dict[str, Any]:
     if (
         not isinstance(receipt, dict)
         or receipt.get("schema") != SANDBOX_EXECUTION_SCHEMA
@@ -853,30 +945,43 @@ def verify_sandbox_execution_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
         raise RepairSandboxError(
             "SANDBOX_EXECUTION_INVALID", "receipt marker is invalid"
         )
-    core = {
+    return {
         key: value
         for key, value in receipt.items()
         if key not in {"receipt_sha256", "marker"}
     }
+
+
+def _validate_sandbox_receipt_digest(
+    receipt: dict[str, Any], core: dict[str, Any]
+) -> None:
     if receipt.get("receipt_sha256") != sha256(_canonical(core)).hexdigest():
         raise RepairSandboxError(
             "SANDBOX_EXECUTION_TAMPERED", "receipt digest does not match contents"
         )
+
+
+def _validate_sandbox_authority(core: dict[str, Any]) -> None:
     if not isinstance(core.get("authority"), dict) or any(
         value is not False for value in core["authority"].values()
     ):
         raise RepairSandboxError(
             "SANDBOX_EXECUTION_AUTHORITY", "receipt cannot grant authority"
         )
-    expected = (
-        "UNENFORCED"
-        if core["executed"] and core["isolation_level"] == "UNENFORCED"
-        else "REVIEW_REQUIRED"
-        if core["executed"] and core["teardown_status"] != "complete"
-        else "OBSERVED"
-        if core["executed"]
-        else "DECLARED_ONLY"
+
+
+def _expected_sandbox_status(core: dict[str, Any]) -> str:
+    return _execution_status(
+        core["executed"], core["isolation_level"], core["teardown_status"]
     )
+
+
+def verify_sandbox_execution_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Verify runner observation integrity and keep isolation claims explicit."""
+    core = _sandbox_receipt_envelope(receipt)
+    _validate_sandbox_receipt_digest(receipt, core)
+    _validate_sandbox_authority(core)
+    expected = _expected_sandbox_status(core)
     if core.get("status") != expected:
         raise RepairSandboxError(
             "SANDBOX_EXECUTION_TAMPERED", "receipt status does not match observations"
