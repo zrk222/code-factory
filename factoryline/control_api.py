@@ -81,6 +81,136 @@ class ControlPlaneAPI:
     def __init__(self, db_path: Path):
         self.store = EvidenceStore(Path(db_path))
 
+    def _health_route(
+        self, method: str, path: list[str], start_response: Callable
+    ) -> list[bytes] | None:
+        if method != "GET" or path != ["healthz"]:
+            return None
+        return _finish(
+            start_response,
+            "200 OK",
+            {"schema": "factory.control-plane.health.v1", "ok": True},
+        )
+
+    def _evidence_route(
+        self,
+        method: str,
+        path: list[str],
+        principal: Principal,
+        environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes] | None:
+        if method == "POST" and path == ["v1", "evidence"]:
+            return _finish(
+                start_response, "201 Created", self.store.put(principal, _body(environ))
+            )
+        if method == "GET" and len(path) == 3 and path[2] != "":
+            return _finish(
+                start_response,
+                "200 OK",
+                self.store.get(principal, principal.tenant_id, path[2]),
+            )
+        if method == "GET" and path == ["v1", "evidence"]:
+            return _finish(
+                start_response,
+                "200 OK",
+                {
+                    "schema": "factory.evidence.list.v1",
+                    "tenant_id": principal.tenant_id,
+                    "records": self.store.list(principal, principal.tenant_id),
+                },
+            )
+        return None
+
+    def _approval_route(
+        self,
+        method: str,
+        path: list[str],
+        principal: Principal,
+        environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes] | None:
+        if method == "POST" and len(path) == 4 and path[2] == "approvals":
+            body = _body(environ)
+            return _finish(
+                start_response,
+                "201 Created",
+                self.store.request_approval(
+                    principal,
+                    principal.tenant_id,
+                    path[3],
+                    str(body.get("reason", "")),
+                ),
+            )
+        if (
+            method == "POST"
+            and len(path) == 5
+            and path[2] == "approvals"
+            and path[4] == "decision"
+        ):
+            body = _body(environ)
+            return _finish(
+                start_response,
+                "200 OK",
+                self.store.decide_approval(
+                    principal,
+                    principal.tenant_id,
+                    path[3],
+                    str(body.get("decision", "")),
+                    str(body.get("reason", "")),
+                ),
+            )
+        return None
+
+    def _audit_route(
+        self,
+        method: str,
+        path: list[str],
+        principal: Principal,
+        _environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes] | None:
+        if method != "GET" or path != ["v1", "audit"]:
+            return None
+        return _finish(
+            start_response,
+            "200 OK",
+            self.store.verify_audit(principal, principal.tenant_id),
+        )
+
+    def _dispatch(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes]:
+        health = self._health_route(method, path, start_response)
+        if health is not None:
+            return health
+        if len(path) < 2 or path[0] != "v1" or path[1] not in {"evidence", "audit"}:
+            raise ControlPlaneError("E_NOT_FOUND", "route not found")
+        principal = _principal(environ)
+        for handler in (self._evidence_route, self._approval_route, self._audit_route):
+            response = handler(method, path, principal, environ, start_response)
+            if response is not None:
+                return response
+        raise ControlPlaneError("E_NOT_FOUND", "route not found")
+
+    def _error_response(
+        self, exc: ControlPlaneError, start_response: Callable
+    ) -> list[bytes]:
+        status = _control_status(exc.code)
+        return _finish(
+            start_response,
+            status,
+            {
+                "schema": "factory.control-plane.result.v1",
+                "verdict": "ERROR",
+                "error": {"code": exc.code, "message": exc.message},
+            },
+        )
+
     def __call__(
         self, environ: dict[str, Any], start_response: Callable
     ) -> list[bytes]:
@@ -91,91 +221,17 @@ class ControlPlaneAPI:
             if part
         ]
         try:
-            if method == "GET" and path == ["healthz"]:
-                return _finish(
-                    start_response,
-                    "200 OK",
-                    {"schema": "factory.control-plane.health.v1", "ok": True},
-                )
-            if len(path) < 2 or path[0] != "v1" or path[1] not in {"evidence", "audit"}:
-                raise ControlPlaneError("E_NOT_FOUND", "route not found")
-            principal = _principal(environ)
-            if method == "POST" and path == ["v1", "evidence"]:
-                return _finish(
-                    start_response,
-                    "201 Created",
-                    self.store.put(principal, _body(environ)),
-                )
-            if method == "GET" and len(path) == 3 and path[2] != "":
-                return _finish(
-                    start_response,
-                    "200 OK",
-                    self.store.get(principal, principal.tenant_id, path[2]),
-                )
-            if method == "GET" and path == ["v1", "evidence"]:
-                return _finish(
-                    start_response,
-                    "200 OK",
-                    {
-                        "schema": "factory.evidence.list.v1",
-                        "tenant_id": principal.tenant_id,
-                        "records": self.store.list(principal, principal.tenant_id),
-                    },
-                )
-            if method == "POST" and len(path) == 4 and path[2] == "approvals":
-                body = _body(environ)
-                return _finish(
-                    start_response,
-                    "201 Created",
-                    self.store.request_approval(
-                        principal,
-                        principal.tenant_id,
-                        path[3],
-                        str(body.get("reason", "")),
-                    ),
-                )
-            if (
-                method == "POST"
-                and len(path) == 5
-                and path[2] == "approvals"
-                and path[4] == "decision"
-            ):
-                body = _body(environ)
-                return _finish(
-                    start_response,
-                    "200 OK",
-                    self.store.decide_approval(
-                        principal,
-                        principal.tenant_id,
-                        path[3],
-                        str(body.get("decision", "")),
-                        str(body.get("reason", "")),
-                    ),
-                )
-            if method == "GET" and path == ["v1", "audit"]:
-                return _finish(
-                    start_response,
-                    "200 OK",
-                    self.store.verify_audit(principal, principal.tenant_id),
-                )
-            raise ControlPlaneError("E_NOT_FOUND", "route not found")
+            return self._dispatch(method, path, environ, start_response)
         except ControlPlaneError as exc:
-            status = (
-                "404 Not Found"
-                if exc.code == "E_NOT_FOUND"
-                else "403 Forbidden"
-                if exc.code in {"E_ACTION_DENIED", "E_TENANT_BOUNDARY"}
-                else "400 Bad Request"
-            )
-            return _finish(
-                start_response,
-                status,
-                {
-                    "schema": "factory.control-plane.result.v1",
-                    "verdict": "ERROR",
-                    "error": {"code": exc.code, "message": exc.message},
-                },
-            )
+            return self._error_response(exc, start_response)
+
+
+def _control_status(code: str) -> str:
+    if code == "E_NOT_FOUND":
+        return "404 Not Found"
+    if code in {"E_ACTION_DENIED", "E_TENANT_BOUNDARY"}:
+        return "403 Forbidden"
+    return "400 Bad Request"
 
 
 def create_app(db_path: Path) -> ControlPlaneAPI:
