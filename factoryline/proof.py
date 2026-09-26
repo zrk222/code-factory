@@ -207,64 +207,79 @@ def load_trace(path: Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def verify_trace(trace_path: Path, *, root: Path | None = None) -> dict:
-    """Verify trace hash chain, receipt hashes, artifact hashes, and H=0 boundary."""
-    trace_path = Path(trace_path)
-    trace = load_trace(trace_path)
-    trace_root = Path(root or trace.get("root") or trace_path.parent)
+def _stage_order_errors(node: dict, previous_order: int) -> tuple[int, list[str]]:
     errors: list[str] = []
-    if trace.get("schema") != TRACE_SCHEMA:
-        errors.append(f"unsupported trace schema: {trace.get('schema')!r}")
-    if not trace.get("nodes"):
-        errors.append("trace contains no proof nodes")
+    canonical_order = _stage_order(node["module"], node["stage"])[0]
+    if node.get("order") != canonical_order:
+        errors.append(f"stage order mismatch: {node['module']}:{node['stage']}")
+    if canonical_order < previous_order:
+        errors.append(f"stage order regression: {node['module']}:{node['stage']}")
+    return canonical_order, errors
+
+
+def _resolved_trace_path(root: Path, value: str) -> Path:
+    path = Path(value)
+    if not path.is_absolute():
+        return root / path
+    return path
+
+
+def _verify_artifact_paths(root: Path, node: dict) -> list[str]:
+    errors: list[str] = []
+    for artifact in node.get("artifacts", []):
+        path = _resolved_trace_path(root, artifact["path"])
+        if not path.exists():
+            errors.append(f"missing artifact: {artifact['path']}")
+        elif _sha256_file(path) != artifact.get("sha256"):
+            errors.append(f"artifact hash mismatch: {artifact['path']}")
+    return errors
+
+
+def _verify_receipt_path(root: Path, node: dict) -> tuple[bool, list[str]]:
+    path = _resolved_trace_path(root, node["receipt_path"])
+    if not path.exists():
+        return False, [f"missing receipt: {node['receipt_path']}"]
+    if _sha256_file(path) != node.get("receipt_sha256"):
+        return True, [f"receipt hash mismatch: {node['receipt_path']}"]
+    return True, []
+
+
+def _node_core(node: dict, previous_hash: str) -> dict:
+    return {
+        "module": node["module"],
+        "stage": node["stage"],
+        "ok": node["ok"],
+        "receipt_path": node["receipt_path"],
+        "receipt_sha256": node["receipt_sha256"],
+        "artifacts": node.get("artifacts", []),
+        "previous_hash": previous_hash,
+    }
+
+
+def _verify_trace_nodes(trace: dict, trace_root: Path) -> tuple[list[str], str]:
+    errors: list[str] = []
     previous_hash = "0" * 64
     previous_order = -1
-
     for node in trace.get("nodes", []):
-        canonical_order = _stage_order(node["module"], node["stage"])[0]
-        if node.get("order") != canonical_order:
-            errors.append(f"stage order mismatch: {node['module']}:{node['stage']}")
-        if canonical_order < previous_order:
-            errors.append(f"stage order regression: {node['module']}:{node['stage']}")
+        canonical_order, order_errors = _stage_order_errors(node, previous_order)
+        errors.extend(order_errors)
         previous_order = canonical_order
-
-        receipt_path = Path(node["receipt_path"])
-        if not receipt_path.is_absolute():
-            receipt_path = trace_root / receipt_path
-        if not receipt_path.exists():
-            errors.append(f"missing receipt: {node['receipt_path']}")
+        receipt_exists, receipt_errors = _verify_receipt_path(trace_root, node)
+        errors.extend(receipt_errors)
+        if not receipt_exists:
             continue
-        receipt_hash = _sha256_file(receipt_path)
-        if receipt_hash != node.get("receipt_sha256"):
-            errors.append(f"receipt hash mismatch: {node['receipt_path']}")
-
-        for artifact in node.get("artifacts", []):
-            artifact_path = Path(artifact["path"])
-            if not artifact_path.is_absolute():
-                artifact_path = trace_root / artifact_path
-            if not artifact_path.exists():
-                errors.append(f"missing artifact: {artifact['path']}")
-                continue
-            if _sha256_file(artifact_path) != artifact.get("sha256"):
-                errors.append(f"artifact hash mismatch: {artifact['path']}")
-
-        node_core = {
-            "module": node["module"],
-            "stage": node["stage"],
-            "ok": node["ok"],
-            "receipt_path": node["receipt_path"],
-            "receipt_sha256": node["receipt_sha256"],
-            "artifacts": node.get("artifacts", []),
-            "previous_hash": previous_hash,
-        }
-        node_hash = _sha256_bytes(_canonical(node_core))
+        errors.extend(_verify_artifact_paths(trace_root, node))
+        node_hash = _sha256_bytes(_canonical(_node_core(node, previous_hash)))
         if node_hash != node.get("node_sha256"):
             errors.append(f"node hash mismatch: {node['module']}:{node['stage']}")
         previous_hash = node_hash
+    return errors, previous_hash
 
+
+def _trace_digest_errors(trace: dict, previous_hash: str) -> list[str]:
+    errors: list[str] = []
     if previous_hash != trace.get("chain_head"):
         errors.append("chain head mismatch")
-
     trace_core = {
         key: value
         for key, value in trace.items()
@@ -272,12 +287,19 @@ def verify_trace(trace_path: Path, *, root: Path | None = None) -> dict:
     }
     if _sha256_bytes(_canonical(trace_core)) != trace.get("trace_sha256"):
         errors.append("trace hash mismatch")
+    return errors
 
-    try:
-        assert_build_metadata_locations(trace_root)
-    except ValueError as exc:
-        errors.append(f"H=0 boundary violation: {exc}")
 
+def _trace_structure_errors(trace: dict) -> list[str]:
+    errors: list[str] = []
+    if trace.get("schema") != TRACE_SCHEMA:
+        errors.append(f"unsupported trace schema: {trace.get('schema')!r}")
+    if not trace.get("nodes"):
+        errors.append("trace contains no proof nodes")
+    return errors
+
+
+def _trace_result(trace_path: Path, trace: dict, errors: list[str]) -> dict:
     return {
         "trace": str(trace_path),
         "feature": trace.get("feature"),
@@ -287,6 +309,24 @@ def verify_trace(trace_path: Path, *, root: Path | None = None) -> dict:
         "trace_sha256": trace.get("trace_sha256"),
         "nodes_verified": len(trace.get("nodes", [])) if not errors else None,
     }
+
+
+def verify_trace(trace_path: Path, *, root: Path | None = None) -> dict:
+    """Verify trace hash chain, receipt hashes, artifact hashes, and H=0 boundary."""
+    trace_path = Path(trace_path)
+    trace = load_trace(trace_path)
+    trace_root = Path(root or trace.get("root") or trace_path.parent)
+    errors = _trace_structure_errors(trace)
+    node_errors, previous_hash = _verify_trace_nodes(trace, trace_root)
+    errors.extend(node_errors)
+    errors.extend(_trace_digest_errors(trace, previous_hash))
+
+    try:
+        assert_build_metadata_locations(trace_root)
+    except ValueError as exc:
+        errors.append(f"H=0 boundary violation: {exc}")
+
+    return _trace_result(trace_path, trace, errors)
 
 
 def risk_for_paths(paths: Iterable[str]) -> dict:
