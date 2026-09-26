@@ -265,12 +265,24 @@ def _threshold_weakens(old: dict[str, Any], new: dict[str, Any]) -> bool:
     previous, candidate = _threshold(old), _threshold(new)
     if previous is None and candidate is None:
         return False
-    if (
-        previous is None
-        or candidate is None
-        or previous.get("operator") != candidate.get("operator")
-    ):
+    if not _compatible_thresholds(previous, candidate):
         return True
+    return _numeric_threshold_weakens(previous, candidate)
+
+
+def _compatible_thresholds(
+    previous: dict[str, Any] | None, candidate: dict[str, Any] | None
+) -> bool:
+    return (
+        previous is not None
+        and candidate is not None
+        and previous.get("operator") == candidate.get("operator")
+    )
+
+
+def _numeric_threshold_weakens(
+    previous: dict[str, Any], candidate: dict[str, Any]
+) -> bool:
     try:
         left, right = float(previous["value"]), float(candidate["value"])
     except (TypeError, ValueError):
@@ -308,6 +320,219 @@ def _pack_status(provenance: dict[str, Any], approval: dict[str, Any] | None) ->
     )
 
 
+def _policy_header(
+    raw: dict[str, Any], path: str
+) -> tuple[str, str, dict[str, Any], str, dict[str, Any] | None]:
+    _require(
+        raw.get("schema") == PACK_SCHEMA,
+        "E_INVALID_PACK",
+        f"{path} must use {PACK_SCHEMA}",
+    )
+    pack_id, version = (
+        str(raw.get("pack_id", "")).strip(),
+        str(raw.get("version", "")).strip(),
+    )
+    _require(pack_id and version, "E_INVALID_PACK", "pack_id and version are required")
+    provenance = _provenance(raw.get("provenance"))
+    author = str((raw.get("authorship") or {}).get("author", "")).strip()
+    _require(author, "E_INVALID_PACK", "authorship.author is required")
+    approval = (
+        _approval(raw.get("approval"), author=author)
+        if provenance["kind"] in ENFORCING_PROVENANCE
+        else None
+    )
+    return pack_id, version, provenance, author, approval
+
+
+def _policy_local_controls(
+    raw: dict[str, Any], provenance: dict[str, Any], pack_id: str
+) -> list[dict[str, Any]]:
+    values = raw.get("controls", [])
+    _require(
+        isinstance(values, list) and len(values) <= 500,
+        "E_INVALID_PACK",
+        "controls must be a list of at most 500",
+    )
+    controls = [
+        _validate_control(item, provenance["kind"], pack_id=pack_id) for item in values
+    ]
+    ids = [item["id"] for item in controls]
+    _require(len(ids) == len(set(ids)), "E_INVALID_PACK", "control ids must be unique")
+    return controls
+
+
+def _parent_reference(raw: Any) -> tuple[str, str]:
+    _require(isinstance(raw, dict), "E_INVALID_PARENT", "parent must be an object")
+    path, expected = (
+        str(raw.get("path", "")).strip(),
+        str(raw.get("sha256", "")).strip(),
+    )
+    _require(
+        path and expected, "E_INVALID_PARENT", "parent path and sha256 are required"
+    )
+    _hash_field(expected, "parent.sha256")
+    return path, expected
+
+
+def _load_bound_parent(
+    workspace: Path,
+    source: Path,
+    path: str,
+    expected: str,
+    seen: tuple[str, ...],
+    depth: int,
+) -> tuple[dict[str, Any], Path]:
+    parent_file = _rooted(workspace, (source.parent / path).resolve())
+    parent = load_policy_pack(
+        workspace,
+        _rel(workspace, parent_file),
+        _seen=seen + (source.as_posix(),),
+        _depth=depth + 1,
+    )
+    actual = _sha_bytes(parent_file.read_bytes())
+    _require(
+        actual == expected,
+        "E_PARENT_HASH_MISMATCH",
+        f"parent hash mismatch for {path}",
+        details={"expected": expected, "actual": actual},
+    )
+    return parent, parent_file
+
+
+def _parent_control_map(
+    parent: dict[str, Any] | None,
+) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    merged, inherited = {}, []
+    if parent:
+        for item in parent["controls"]:
+            merged[item["id"]] = item
+            inherited.append(item["id"])
+    return merged, inherited
+
+
+def _policy_parent(
+    workspace: Path,
+    source: Path,
+    raw: dict[str, Any],
+    seen: tuple[str, ...],
+    depth: int,
+) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]], list[str]]:
+    parent_raw = raw.get("parent")
+    if parent_raw is None:
+        return None, {}, []
+    path, expected = _parent_reference(parent_raw)
+    parent, _ = _load_bound_parent(workspace, source, path, expected, seen, depth)
+    merged, inherited = _parent_control_map(parent)
+    return parent, merged, inherited
+
+
+def _merge_policy_controls(
+    controls: list[dict[str, Any]], merged: dict[str, dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    for item in controls:
+        previous = merged.get(item["id"])
+        if previous:
+            _reject_weakening(previous, item)
+        merged[item["id"]] = item
+    return merged
+
+
+def _reject_weakening(previous: dict[str, Any], candidate: dict[str, Any]) -> None:
+    issues = _weakening(previous, candidate)
+    if not issues:
+        return
+    code = (
+        "E_CONTROL_WEAKENING"
+        if any("removed" not in issue for issue in issues)
+        else "E_CONTROL_DELETED"
+    )
+    raise ControlsError(
+        code,
+        f"{candidate['id']} cannot weaken inherited control: {', '.join(issues)}",
+        details={"control_id": candidate["id"], "changes": issues},
+    )
+
+
+def _validate_parent_removals(
+    raw: dict[str, Any], parent_raw: Any, inherited: list[str]
+) -> None:
+    if parent_raw is None:
+        _require(
+            not raw.get("remove_controls"),
+            "E_CONTROL_DELETED",
+            "remove_controls requires an inherited parent",
+        )
+        return
+    removals = raw.get("remove_controls", [])
+    _require(
+        isinstance(removals, list), "E_INVALID_PACK", "remove_controls must be a list"
+    )
+    deleted = sorted(set(str(item) for item in removals) & set(inherited))
+    _require(
+        not deleted,
+        "E_CONTROL_DELETED",
+        f"inherited controls cannot be deleted: {', '.join(deleted)}",
+        details={"control_ids": deleted},
+    )
+
+
+def _validate_inherited_retention(
+    inherited: list[str], merged: dict[str, dict[str, Any]]
+) -> None:
+    _require(
+        set(inherited).issubset(set(merged)),
+        "E_CONTROL_DELETED",
+        "an inherited control was deleted",
+    )
+
+
+def _policy_pack_result(
+    workspace: Path,
+    source: Path,
+    pack_id: str,
+    version: str,
+    provenance: dict[str, Any],
+    author: str,
+    approval: dict[str, Any] | None,
+    parent: dict[str, Any] | None,
+    inherited: list[str],
+    controls: list[dict[str, Any]],
+    raw: dict[str, Any],
+) -> dict[str, Any]:
+    raw_digest = _sha_bytes(source.read_bytes())
+    effective = {
+        "schema": PACK_SCHEMA,
+        "pack_id": pack_id,
+        "version": version,
+        "controls": controls,
+    }
+    return {
+        "schema": PACK_SCHEMA,
+        "pack_id": pack_id,
+        "version": version,
+        "path": _rel(workspace, source),
+        "policy_sha256": raw_digest,
+        "effective_sha256": _sha(effective),
+        "provenance": provenance,
+        "authorship": {"author": author},
+        "approval": approval,
+        "status": _pack_status(provenance, approval),
+        "parent": {
+            "path": parent["path"],
+            "effective_sha256": parent["effective_sha256"],
+        }
+        if parent
+        else None,
+        "inherited_control_ids": inherited,
+        "controls": controls,
+        "exception_policy": {
+            "max_ttl_days": int(
+                (raw.get("exception_policy") or {}).get("max_ttl_days", 30)
+            )
+        },
+    }
+
+
 def load_policy_pack(
     root: Path | str = ".",
     path: str = "controls/policy-pack.json",
@@ -324,149 +549,27 @@ def load_policy_pack(
         key not in _seen, "E_INHERITANCE_CYCLE", f"policy inheritance cycle at {path}"
     )
     raw = _load_json(source)
-    _require(
-        raw.get("schema") == PACK_SCHEMA,
-        "E_INVALID_PACK",
-        f"{path} must use {PACK_SCHEMA}",
-    )
-    pack_id, version = (
-        str(raw.get("pack_id", "")).strip(),
-        str(raw.get("version", "")).strip(),
-    )
-    _require(pack_id and version, "E_INVALID_PACK", "pack_id and version are required")
-    top_provenance = _provenance(raw.get("provenance"))
-    author = str((raw.get("authorship") or {}).get("author", "")).strip()
-    _require(author, "E_INVALID_PACK", "authorship.author is required")
-    # Proposed/observed packs are intentionally non-blocking; their approval
-    # fields are ignored until a human/trusted successor is authored.
-    approval = (
-        _approval(raw.get("approval"), author=author)
-        if top_provenance["kind"] in ENFORCING_PROVENANCE
-        else None
-    )
-    controls_raw = raw.get("controls", [])
-    _require(
-        isinstance(controls_raw, list) and len(controls_raw) <= 500,
-        "E_INVALID_PACK",
-        "controls must be a list of at most 500",
-    )
-    local_controls = [
-        _validate_control(item, top_provenance["kind"], pack_id=pack_id)
-        for item in controls_raw
-    ]
-    local_ids = [item["id"] for item in local_controls]
-    _require(
-        len(local_ids) == len(set(local_ids)),
-        "E_INVALID_PACK",
-        "control ids must be unique",
-    )
+    pack_id, version, provenance, author, approval = _policy_header(raw, path)
+    local_controls = _policy_local_controls(raw, provenance, pack_id)
     parent_raw = raw.get("parent")
-    parent: dict[str, Any] | None = None
-    merged: dict[str, dict[str, Any]] = {}
-    inherited_ids: list[str] = []
-    if parent_raw is not None:
-        _require(
-            isinstance(parent_raw, dict), "E_INVALID_PARENT", "parent must be an object"
-        )
-        parent_path = str(parent_raw.get("path", "")).strip()
-        expected = str(parent_raw.get("sha256", "")).strip()
-        _require(
-            parent_path and expected,
-            "E_INVALID_PARENT",
-            "parent path and sha256 are required",
-        )
-        _hash_field(expected, "parent.sha256")
-        parent_file = _rooted(workspace, (source.parent / parent_path).resolve())
-        parent = load_policy_pack(
-            workspace,
-            _rel(workspace, parent_file),
-            _seen=_seen + (key,),
-            _depth=_depth + 1,
-        )
-        actual = _sha_bytes(parent_file.read_bytes())
-        _require(
-            actual == expected,
-            "E_PARENT_HASH_MISMATCH",
-            f"parent hash mismatch for {parent_path}",
-            details={"expected": expected, "actual": actual},
-        )
-        for item in parent["controls"]:
-            merged[item["id"]] = item
-            inherited_ids.append(item["id"])
-        removals = raw.get("remove_controls", [])
-        _require(
-            isinstance(removals, list),
-            "E_INVALID_PACK",
-            "remove_controls must be a list",
-        )
-        deleted = sorted(set(str(item) for item in removals) & set(inherited_ids))
-        _require(
-            not deleted,
-            "E_CONTROL_DELETED",
-            f"inherited controls cannot be deleted: {', '.join(deleted)}",
-            details={"control_ids": deleted},
-        )
-    for item in local_controls:
-        previous = merged.get(item["id"])
-        if previous:
-            issues = _weakening(previous, item)
-            if issues:
-                code = (
-                    "E_CONTROL_WEAKENING"
-                    if any("removed" not in issue for issue in issues)
-                    else "E_CONTROL_DELETED"
-                )
-                raise ControlsError(
-                    code,
-                    f"{item['id']} cannot weaken inherited control: {', '.join(issues)}",
-                    details={"control_id": item["id"], "changes": issues},
-                )
-        merged[item["id"]] = item
-    _require(
-        set(inherited_ids).issubset(set(merged)),
-        "E_CONTROL_DELETED",
-        "an inherited control was deleted",
+    parent, merged, inherited = _policy_parent(workspace, source, raw, _seen, _depth)
+    _validate_parent_removals(raw, parent_raw, inherited)
+    merged = _merge_policy_controls(local_controls, merged)
+    _validate_inherited_retention(inherited, merged)
+    effective_controls = [merged[item] for item in sorted(merged)]
+    return _policy_pack_result(
+        workspace,
+        source,
+        pack_id,
+        version,
+        provenance,
+        author,
+        approval,
+        parent,
+        inherited,
+        effective_controls,
+        raw,
     )
-    if parent_raw is None:
-        _require(
-            not raw.get("remove_controls"),
-            "E_CONTROL_DELETED",
-            "remove_controls requires an inherited parent",
-        )
-    effective_controls = [merged[key] for key in sorted(merged)]
-    raw_digest = _sha_bytes(source.read_bytes())
-    effective = {
-        "schema": PACK_SCHEMA,
-        "pack_id": pack_id,
-        "version": version,
-        "controls": effective_controls,
-    }
-    effective_digest = _sha(effective)
-    return {
-        "schema": PACK_SCHEMA,
-        "pack_id": pack_id,
-        "version": version,
-        "path": _rel(workspace, source),
-        "policy_sha256": raw_digest,
-        "effective_sha256": effective_digest,
-        "provenance": top_provenance,
-        "authorship": {"author": author},
-        "approval": approval,
-        "status": _pack_status(top_provenance, approval),
-        "parent": {
-            "path": parent["path"],
-            "effective_sha256": parent["effective_sha256"],
-        }
-        if parent
-        else None,
-        "inherited_control_ids": inherited_ids,
-        "controls": effective_controls,
-        "exception_policy": {
-            "max_ttl_days": int(
-                (raw.get("exception_policy") or {}).get("max_ttl_days", 30)
-            )
-        },
-    }
 
 
 def _receipt(root: Path, path: str) -> dict[str, Any]:
@@ -626,130 +729,151 @@ def create_exception(
     return value
 
 
-def evaluate_controls(
-    root: Path | str = ".",
-    policy_path: str = "controls/policy-pack.json",
-    *,
-    evidence_paths: Iterable[str] = (),
-    baseline: dict[str, Any] | None = None,
-    event: dict[str, Any] | None = None,
-    exception_paths: Iterable[str] = (),
-    repo_id: str | None = None,
-) -> dict[str, Any]:
-    """Evaluate policy controls against immutable receipts without executing code."""
-    workspace = Path(root).resolve()
-    pack = load_policy_pack(workspace, policy_path)
-    event_value = {
+def _control_event(event: dict[str, Any] | None) -> dict[str, Any]:
+    value = {
         "kind": "working_tree",
         "actor": "local",
         "commit": None,
         "changed_paths": [],
     }
     if event:
-        event_value.update(event)
+        value.update(event)
     _require(
-        event_value["kind"] in EVENT_KINDS,
+        value["kind"] in EVENT_KINDS,
         "E_INVALID_EVENT",
         f"event kind must be one of {sorted(EVENT_KINDS)}",
     )
     _require(
-        isinstance(event_value.get("changed_paths", []), list),
+        isinstance(value.get("changed_paths", []), list),
         "E_INVALID_EVENT",
         "changed_paths must be a list",
     )
-    receipts: dict[str, dict[str, Any]] = {}
-    evidence_errors: list[dict[str, Any]] = []
+    return value
+
+
+def _control_evidence(
+    workspace: Path, evidence_paths: Iterable[str]
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    receipts, errors = {}, []
     for path in evidence_paths:
         try:
             item = _receipt(workspace, path)
             receipts[item["control_id"]] = item
         except ControlsError as exc:
-            evidence_errors.append(
-                {"path": path, "code": exc.code, "message": str(exc)}
-            )
-    exceptions = _exception_files(workspace, exception_paths)
-    drift_findings: list[dict[str, Any]] = []
-    if baseline:
-        if baseline.get("effective_sha256") != pack["effective_sha256"]:
-            drift_findings.append(
-                {
-                    "code": "E_POLICY_DRIFT",
-                    "before": baseline.get("effective_sha256"),
-                    "after": pack["effective_sha256"],
-                    "event": event_value["kind"],
-                }
-            )
-        if (
-            baseline.get("policy_sha256")
-            and baseline.get("policy_sha256") != pack["policy_sha256"]
-        ):
-            drift_findings.append(
-                {
-                    "code": "E_POLICY_SOURCE_DRIFT",
-                    "before": baseline.get("policy_sha256"),
-                    "after": pack["policy_sha256"],
-                }
-            )
-    controls: list[dict[str, Any]] = []
-    for control in pack["controls"]:
-        cid = control["id"]
-        provenance = control["provenance"]
-        enforced = (
-            pack["status"] == "ENFORCED" and provenance["kind"] in ENFORCING_PROVENANCE
+            errors.append({"path": path, "code": exc.code, "message": str(exc)})
+    return receipts, errors
+
+
+def _policy_drift(
+    baseline: dict[str, Any] | None, pack: dict[str, Any], event: dict[str, Any]
+) -> list[dict[str, Any]]:
+    findings = []
+    if not baseline:
+        return findings
+    if baseline.get("effective_sha256") != pack["effective_sha256"]:
+        findings.append(
+            {
+                "code": "E_POLICY_DRIFT",
+                "before": baseline.get("effective_sha256"),
+                "after": pack["effective_sha256"],
+                "event": event["kind"],
+            }
         )
-        entry: dict[str, Any] = {
-            "id": cid,
-            "title": control["title"],
-            "severity": control["severity"],
-            "provenance": provenance,
-            "enforced": enforced,
-            "required_evidence": control["required_evidence"],
-            "remediation": control["remediation"],
-            "forbidden_behavior": control["forbidden_behavior"],
-            "gate": control["gate"],
-            "test": control["test"],
-        }
-        exception = exceptions.get(cid)
-        if exception and exception.get("expired"):
-            entry.update(
-                status="BLOCKED",
-                blocker={
-                    "code": "E_EXCEPTION_EXPIRED",
-                    "message": "exception has expired",
-                },
-            )
-        elif exception:
-            entry.update(
-                status="EXEMPT",
-                exception_id=exception["exception_id"],
-                exception_scope=exception["scope"],
-            )
-        elif cid in receipts:
-            entry.update(status="PASSED", receipt=receipts[cid])
-        elif enforced:
-            entry.update(
-                status="MISSING_EVIDENCE",
-                blocker={
-                    "code": "E_MISSING_EVIDENCE",
-                    "message": "a fresh independent receipt is required",
-                },
-            )
-        else:
-            entry.update(
-                status="ADVISORY",
-                advisory_reason="provenance or approval is not blocking",
-            )
-        controls.append(entry)
-    for item in evidence_errors:
-        drift_findings.append(item)
-    if drift_findings and pack["status"] == "ENFORCED":
-        for item in controls:
-            if item["status"] == "PASSED":
-                item["status"] = "BLOCKED"
-                item["blocker"] = {
-                    "code": item.get("blocker", {}).get("code", "E_POLICY_DRIFT"),
-                    "message": "policy or evidence drift must be reviewed",
-                }
+    if (
+        baseline.get("policy_sha256")
+        and baseline.get("policy_sha256") != pack["policy_sha256"]
+    ):
+        findings.append(
+            {
+                "code": "E_POLICY_SOURCE_DRIFT",
+                "before": baseline.get("policy_sha256"),
+                "after": pack["policy_sha256"],
+            }
+        )
+    return findings
+
+
+def _control_entry(
+    control: dict[str, Any],
+    pack: dict[str, Any],
+    receipts: dict[str, dict[str, Any]],
+    exceptions: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    cid, provenance = control["id"], control["provenance"]
+    enforced = (
+        pack["status"] == "ENFORCED" and provenance["kind"] in ENFORCING_PROVENANCE
+    )
+    entry = {
+        "id": cid,
+        "title": control["title"],
+        "severity": control["severity"],
+        "provenance": provenance,
+        "enforced": enforced,
+        "required_evidence": control["required_evidence"],
+        "remediation": control["remediation"],
+        "forbidden_behavior": control["forbidden_behavior"],
+        "gate": control["gate"],
+        "test": control["test"],
+    }
+    exception = exceptions.get(cid)
+    if exception and exception.get("expired"):
+        entry.update(
+            status="BLOCKED",
+            blocker={"code": "E_EXCEPTION_EXPIRED", "message": "exception has expired"},
+        )
+    elif exception:
+        entry.update(
+            status="EXEMPT",
+            exception_id=exception["exception_id"],
+            exception_scope=exception["scope"],
+        )
+    elif cid in receipts:
+        entry.update(status="PASSED", receipt=receipts[cid])
+    elif enforced:
+        entry.update(
+            status="MISSING_EVIDENCE",
+            blocker={
+                "code": "E_MISSING_EVIDENCE",
+                "message": "a fresh independent receipt is required",
+            },
+        )
+    else:
+        entry.update(
+            status="ADVISORY", advisory_reason="provenance or approval is not blocking"
+        )
+    return entry
+
+
+def _control_entries(
+    pack: dict[str, Any],
+    receipts: dict[str, dict[str, Any]],
+    exceptions: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        _control_entry(control, pack, receipts, exceptions)
+        for control in pack["controls"]
+    ]
+
+
+def _apply_evidence_drift(
+    controls: list[dict[str, Any]],
+    drift_findings: list[dict[str, Any]],
+    pack: dict[str, Any],
+) -> None:
+    if not drift_findings or pack["status"] != "ENFORCED":
+        return
+    for item in controls:
+        if item["status"] == "PASSED":
+            item["status"] = "BLOCKED"
+            item["blocker"] = {
+                "code": item.get("blocker", {}).get("code", "E_POLICY_DRIFT"),
+                "message": "policy or evidence drift must be reviewed",
+            }
+
+
+def _control_coverage_and_action(
+    controls: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, Any]]:
     blockers = [
         item for item in controls if item["status"] in {"BLOCKED", "MISSING_EVIDENCE"}
     ]
@@ -762,22 +886,37 @@ def evaluate_controls(
         "blocked": len(blockers),
     }
     first = sorted(blockers, key=lambda item: item["id"])[0] if blockers else None
-    next_action = (
-        {
+    action = _control_next_action(first)
+    return blockers, coverage, action
+
+
+def _control_next_action(first: dict[str, Any] | None) -> dict[str, Any]:
+    if first is None:
+        return {
             "action": "review_human_release",
             "reason": "all enforced controls have fresh evidence",
         }
-        if first is None
-        else {
-            "action": f"provide_evidence:{first['id']}",
-            "reason": first.get("blocker", {}).get("message", first["remediation"]),
-            "control_id": first["id"],
-            "remediation": first["remediation"],
-        }
-    )
-    evaluation = {
+    return {
+        "action": f"provide_evidence:{first['id']}",
+        "reason": first.get("blocker", {}).get("message", first["remediation"]),
+        "control_id": first["id"],
+        "remediation": first["remediation"],
+    }
+
+
+def _control_evaluation_payload(
+    pack: dict[str, Any],
+    event: dict[str, Any],
+    controls: list[dict[str, Any]],
+    coverage: dict[str, int],
+    blockers: list[dict[str, Any]],
+    drift_findings: list[dict[str, Any]],
+    next_action: dict[str, Any],
+    repo_id: str | None,
+) -> dict[str, Any]:
+    return {
         "schema": EVALUATION_SCHEMA,
-        "evaluation_id": f"eval-{_sha({'policy': pack['effective_sha256'], 'event': event_value, 'controls': [(item['id'], item['status']) for item in controls]})[:16]}",
+        "evaluation_id": f"eval-{_sha({'policy': pack['effective_sha256'], 'event': event, 'controls': [(item['id'], item['status']) for item in controls]})[:16]}",
         "repo_id": repo_id,
         "policy": {
             key: pack[key]
@@ -792,7 +931,7 @@ def evaluate_controls(
                 "inherited_control_ids",
             )
         },
-        "event": event_value,
+        "event": event,
         "controls": controls,
         "coverage": coverage,
         "drift": {
@@ -813,6 +952,39 @@ def evaluate_controls(
         },
         "evaluated_at": _iso(_now()),
     }
+
+
+def evaluate_controls(
+    root: Path | str = ".",
+    policy_path: str = "controls/policy-pack.json",
+    *,
+    evidence_paths: Iterable[str] = (),
+    baseline: dict[str, Any] | None = None,
+    event: dict[str, Any] | None = None,
+    exception_paths: Iterable[str] = (),
+    repo_id: str | None = None,
+) -> dict[str, Any]:
+    """Evaluate policy controls against immutable receipts without executing code."""
+    workspace = Path(root).resolve()
+    pack = load_policy_pack(workspace, policy_path)
+    event_value = _control_event(event)
+    receipts, evidence_errors = _control_evidence(workspace, evidence_paths)
+    exceptions = _exception_files(workspace, exception_paths)
+    drift_findings = _policy_drift(baseline, pack, event_value)
+    controls = _control_entries(pack, receipts, exceptions)
+    drift_findings.extend(evidence_errors)
+    _apply_evidence_drift(controls, drift_findings, pack)
+    blockers, coverage, next_action = _control_coverage_and_action(controls)
+    evaluation = _control_evaluation_payload(
+        pack,
+        event_value,
+        controls,
+        coverage,
+        blockers,
+        drift_findings,
+        next_action,
+        repo_id,
+    )
     evaluation["evaluation_sha256"] = _sha(evaluation)
     return evaluation
 
