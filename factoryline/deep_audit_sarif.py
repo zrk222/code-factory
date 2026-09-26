@@ -117,6 +117,92 @@ def _resolution(rule: str) -> str:
     return "Inspect the rule and source trace, establish a reproducer, and repair the violated invariant without weakening its guard."
 
 
+def _sarif_analyzer(run, lane):
+    driver = _object(_object(run.get("tool")).get("driver"))
+    analyzer = {"driver": driver.get("name"), "version": driver.get("version")}
+    require_str(analyzer["driver"], "driver")
+    require_str(analyzer["version"], "version")
+    names = {
+        "codeql": {"codeql"},
+        "semgrep": {"semgrep", "semgrep oss"},
+        "gitleaks": {"gitleaks"},
+        "trivy": {"trivy"},
+    }
+    if (
+        analyzer["driver"].lower() not in names[lane["engine"]]
+        or analyzer["version"] != lane["tool_version"]
+    ):
+        raise RuntimeAuditError(
+            "E_ANALYZER_MISMATCH",
+            "native driver/version differs from the pinned adapter",
+        )
+    return driver, analyzer
+
+
+def _check_invocations(run):
+    for invocation in run["invocations"]:
+        for key in ("toolExecutionNotifications", "toolConfigurationNotifications"):
+            if any(
+                item.get("level", "warning") in {"warning", "error"}
+                for item in invocation.get(key, [])
+            ):
+                raise RuntimeAuditError(
+                    "E_ANALYZER_INCOMPLETE",
+                    "unclassified analyzer warning or error prevents full coverage",
+                )
+
+
+def _severity(score, default):
+    if score is None:
+        return default
+    try:
+        numeric = float(score)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeAuditError("E_SEVERITY", "invalid security severity") from exc
+    if not 0 <= numeric <= 10:
+        raise RuntimeAuditError("E_SEVERITY", "invalid security severity")
+    if numeric >= 9:
+        return "critical"
+    if numeric >= 7:
+        return "high"
+    if numeric >= 4:
+        return "medium"
+    return "low"
+
+
+def _sarif_result_finding(result, rules, lane, sources):
+    if result.get("kind", "fail") in {"pass", "notApplicable", "informational"}:
+        return None
+    location = _location(_list(result.get("locations"), 1, 10)[0], sources)
+    score = (
+        rules.get(result["ruleId"], {}).get("properties", {}).get("security-severity")
+    )
+    return _execution_finding(
+        lane,
+        result["ruleId"],
+        location["path"],
+        location["start_line"],
+        _severity(score, result.get("level", "warning")),
+        sources,
+        flows=_flows(result, sources),
+        suppressed=bool(result.get("suppressions")),
+    )
+
+
+def _sarif_run_findings(run, lane, sources):
+    driver, analyzer = _sarif_analyzer(run, lane)
+    _completed(run, analyzer)
+    _check_invocations(run)
+    results = _list(run.get("results"), 0, 20_000)
+    _check_rule_indices(run, results)
+    rules = {item["id"]: item for item in driver.get("rules", [])}
+    return [
+        finding
+        for result in results
+        if (finding := _sarif_result_finding(result, rules, lane, sources)) is not None
+    ]
+
+
 def _execution_sarif(report: dict, lane: dict, sources: dict) -> list:
     # Rule defaults are normalized on a copy; native hashes bind original bytes.
     report = deepcopy(report)
@@ -124,78 +210,7 @@ def _execution_sarif(report: dict, lane: dict, sources: dict) -> list:
         raise RuntimeAuditError("E_SARIF_VERSION", "SARIF 2.1.0 required")
     findings = []
     for run in _list(report.get("runs"), 1, 16):
-        driver = _object(_object(run.get("tool")).get("driver"))
-        analyzer = {"driver": driver.get("name"), "version": driver.get("version")}
-        require_str(analyzer["driver"], "driver")
-        require_str(analyzer["version"], "version")
-        names = {
-            "codeql": {"codeql"},
-            "semgrep": {"semgrep", "semgrep oss"},
-            "gitleaks": {"gitleaks"},
-            "trivy": {"trivy"},
-        }
-        if (
-            analyzer["driver"].lower() not in names[lane["engine"]]
-            or analyzer["version"] != lane["tool_version"]
-        ):
-            raise RuntimeAuditError(
-                "E_ANALYZER_MISMATCH",
-                "native driver/version differs from the pinned adapter",
-            )
-        _completed(run, analyzer)
-        for invocation in run["invocations"]:
-            for key in ("toolExecutionNotifications", "toolConfigurationNotifications"):
-                if any(
-                    item.get("level", "warning") in {"warning", "error"}
-                    for item in invocation.get(key, [])
-                ):
-                    raise RuntimeAuditError(
-                        "E_ANALYZER_INCOMPLETE",
-                        "unclassified analyzer warning or error prevents full coverage",
-                    )
-        results = _list(run.get("results"), 0, 20_000)
-        _check_rule_indices(run, results)
-        rules = {item["id"]: item for item in driver.get("rules", [])}
-        for result in results:
-            if result.get("kind", "fail") in {"pass", "notApplicable", "informational"}:
-                continue
-            location = _location(_list(result.get("locations"), 1, 10)[0], sources)
-            severity = result.get("level", "warning")
-            score = (
-                rules.get(result["ruleId"], {})
-                .get("properties", {})
-                .get("security-severity")
-            )
-            if score is not None:
-                try:
-                    numeric = float(score)
-                    if not 0 <= numeric <= 10:
-                        raise ValueError
-                    severity = (
-                        "critical"
-                        if numeric >= 9
-                        else "high"
-                        if numeric >= 7
-                        else "medium"
-                        if numeric >= 4
-                        else "low"
-                    )
-                except (ValueError, TypeError) as exc:
-                    raise RuntimeAuditError(
-                        "E_SEVERITY", "invalid security severity"
-                    ) from exc
-            findings.append(
-                _execution_finding(
-                    lane,
-                    result["ruleId"],
-                    location["path"],
-                    location["start_line"],
-                    severity,
-                    sources,
-                    flows=_flows(result, sources),
-                    suppressed=bool(result.get("suppressions")),
-                )
-            )
+        findings.extend(_sarif_run_findings(run, lane, sources))
     return findings
 
 
@@ -222,7 +237,7 @@ def _execution_osv(report: dict, lane: dict, sources: dict) -> list:
     return findings
 
 
-def _execution_runtime(report: dict, lane: dict, sources: dict) -> list:
+def _validate_runtime_report(report, lane):
     if (
         report.get("schema") != f"factory.deep-{lane['engine']}-observations.v1"
         or report.get("engine") != lane["engine"]
@@ -233,7 +248,10 @@ def _execution_runtime(report: dict, lane: dict, sources: dict) -> list:
         raise RuntimeAuditError(
             "E_RUNTIME_REPORT", "engine-specific completed runtime evidence required"
         )
-    harness = _object(report.get("harness"))
+    return _object(report.get("harness")), _object(report.get("metrics"))
+
+
+def _validate_runtime_harness(harness, sources):
     if (
         harness.get("path") not in sources
         or harness.get("sha256") != sources[harness["path"]]
@@ -241,7 +259,9 @@ def _execution_runtime(report: dict, lane: dict, sources: dict) -> list:
         raise RuntimeAuditError(
             "E_HARNESS_BINDING", "harness must bind candidate source"
         )
-    metrics = _object(report.get("metrics"))
+
+
+def _validate_runtime_metrics(metrics, lane):
     keys = (
         ("executions", "coverage_edges", "corpus_size")
         if lane["family"] == "fuzz"
@@ -251,6 +271,12 @@ def _execution_runtime(report: dict, lane: dict, sources: dict) -> list:
     )
     for key in keys:
         require_int(metrics.get(key), key, minimum=1, maximum=10**12)
+
+
+def _execution_runtime(report: dict, lane: dict, sources: dict) -> list:
+    harness, metrics = _validate_runtime_report(report, lane)
+    _validate_runtime_harness(harness, sources)
+    _validate_runtime_metrics(metrics, lane)
     return [
         _execution_finding(
             lane,
@@ -264,53 +290,65 @@ def _execution_runtime(report: dict, lane: dict, sources: dict) -> list:
     ]
 
 
+def _native_osv_accounting(report, required):
+    paths = [item["source"]["path"] for item in report["results"]]
+    if len(set(paths)) != len(paths) or set(paths) != set(required):
+        raise RuntimeAuditError(
+            "E_DEPENDENCY_COVERAGE",
+            "native OSV results must account for every input exactly once",
+        )
+
+
+def _native_syft_accounting(report, required):
+    paths = {
+        item["path"].removeprefix("/src/")
+        for artifact in report["artifacts"]
+        for item in artifact["locations"]
+    }
+    if paths != set(required):
+        raise RuntimeAuditError(
+            "E_DEPENDENCY_COVERAGE",
+            "native SBOM locations must account for every dependency input",
+        )
+
+
+def _native_runtime_accounting(report, required):
+    coverage = _object(report.get("source_coverage"))
+    if set(coverage) != set(required):
+        raise RuntimeAuditError(
+            "E_RUNTIME_COVERAGE",
+            "runtime coverage must account for every declared source",
+        )
+    for path, source_hash in required.items():
+        _runtime_source_accounting(_object(coverage[path]), source_hash)
+
+
+def _runtime_source_accounting(item, source_hash):
+    if item.get("sha256") != source_hash:
+        raise RuntimeAuditError("E_RUNTIME_COVERAGE", "runtime source bytes differ")
+    for kind in ("lines", "branches"):
+        total = require_int(
+            item.get(f"{kind}_total"),
+            kind,
+            minimum=1 if kind == "lines" else 0,
+            maximum=10**9,
+        )
+        if (
+            type(item.get(f"{kind}_covered")) is not int
+            or item[f"{kind}_covered"] != total
+        ):
+            raise RuntimeAuditError(
+                "E_RUNTIME_COVERAGE", "uncovered runtime lines or branches remain"
+            )
+
+
 def _native_accounting(report: dict, lane: dict, required: dict) -> None:
     if lane["engine"] == "osv":
-        paths = [item["source"]["path"] for item in report["results"]]
-        if len(set(paths)) != len(paths) or set(paths) != set(required):
-            raise RuntimeAuditError(
-                "E_DEPENDENCY_COVERAGE",
-                "native OSV results must account for every input exactly once",
-            )
-    elif lane["engine"] == "syft":
-        paths = {
-            item["path"].removeprefix("/src/")
-            for artifact in report["artifacts"]
-            for item in artifact["locations"]
-        }
-        if paths != set(required):
-            raise RuntimeAuditError(
-                "E_DEPENDENCY_COVERAGE",
-                "native SBOM locations must account for every dependency input",
-            )
-    elif lane["family"] in {"runtime", "fuzz"}:
-        coverage = _object(report.get("source_coverage"))
-        if set(coverage) != set(required):
-            raise RuntimeAuditError(
-                "E_RUNTIME_COVERAGE",
-                "runtime coverage must account for every declared source",
-            )
-        for path, source_hash in required.items():
-            item = _object(coverage[path])
-            if item.get("sha256") != source_hash:
-                raise RuntimeAuditError(
-                    "E_RUNTIME_COVERAGE", "runtime source bytes differ"
-                )
-            for kind in ("lines", "branches"):
-                total = require_int(
-                    item.get(f"{kind}_total"),
-                    kind,
-                    minimum=1 if kind == "lines" else 0,
-                    maximum=10**9,
-                )
-                if (
-                    type(item.get(f"{kind}_covered")) is not int
-                    or item[f"{kind}_covered"] != total
-                ):
-                    raise RuntimeAuditError(
-                        "E_RUNTIME_COVERAGE",
-                        "uncovered runtime lines or branches remain",
-                    )
+        return _native_osv_accounting(report, required)
+    if lane["engine"] == "syft":
+        return _native_syft_accounting(report, required)
+    if lane["family"] in {"runtime", "fuzz"}:
+        return _native_runtime_accounting(report, required)
 
 
 def _challenge_semantics(
@@ -339,6 +377,37 @@ def _challenge_semantics(
         )
 
 
+def _execution_syft(report, lane, sources):
+    artifacts = _list(report.get("artifacts"), 1, 50_000)
+    descriptor = _object(report.get("descriptor"))
+    require_str(descriptor.get("version"), "syft.version")
+    if (
+        descriptor.get("name") != "syft"
+        or descriptor["version"] != lane["tool_version"]
+        or report.get("errors")
+        or report.get("error")
+    ):
+        raise RuntimeAuditError("E_SBOM", "native Syft JSON required")
+    require_str(_object(report.get("schema")).get("version"), "schema.version")
+    source = _object(report.get("source"))
+    if source.get("type") != "directory" or source.get("target") != "/src":
+        raise RuntimeAuditError(
+            "E_SBOM_SOURCE", "SBOM must describe the mounted source snapshot"
+        )
+    for artifact in artifacts:
+        _validate_syft_artifact(artifact, sources)
+    return []  # SBOM enumeration never substitutes for an OSV vulnerability lane.
+
+
+def _validate_syft_artifact(artifact, sources):
+    for key in ("id", "name", "version", "type"):
+        require_str(artifact.get(key), f"artifact.{key}")
+    for location in _list(artifact.get("locations"), 1, 128):
+        name = require_str(location.get("path"), "artifact.path").removeprefix("/src/")
+        if relative_path(name) not in sources:
+            raise RuntimeAuditError("E_SBOM_SOURCE", "component location is unbound")
+
+
 def _native_execution_report(report: dict, lane: dict, sources: dict) -> list:
     engine = lane["engine"]
     if engine in {"codeql", "semgrep", "gitleaks", "trivy"}:
@@ -346,43 +415,13 @@ def _native_execution_report(report: dict, lane: dict, sources: dict) -> list:
     if engine == "osv":
         return _execution_osv(report, lane, sources)
     if engine == "syft":
-        artifacts = _list(report.get("artifacts"), 1, 50_000)
-        require_str(_object(report.get("descriptor")).get("version"), "syft.version")
-        if (
-            _object(report.get("descriptor")).get("name") != "syft"
-            or report["descriptor"]["version"] != lane["tool_version"]
-            or report.get("errors")
-            or report.get("error")
-        ):
-            raise RuntimeAuditError("E_SBOM", "native Syft JSON required")
-        require_str(_object(report.get("schema")).get("version"), "schema.version")
-        source = _object(report.get("source"))
-        if source.get("type") != "directory" or source.get("target") != "/src":
-            raise RuntimeAuditError(
-                "E_SBOM_SOURCE", "SBOM must describe the mounted source snapshot"
-            )
-        for artifact in artifacts:
-            for key in ("id", "name", "version", "type"):
-                require_str(artifact.get(key), f"artifact.{key}")
-            locations = _list(artifact.get("locations"), 1, 128)
-            for location in locations:
-                name = require_str(location.get("path"), "artifact.path").removeprefix(
-                    "/src/"
-                )
-                if relative_path(name) not in sources:
-                    raise RuntimeAuditError(
-                        "E_SBOM_SOURCE", "component location is unbound"
-                    )
-        return []  # SBOM enumeration never substitutes for an OSV vulnerability lane.
+        return _execution_syft(report, lane, sources)
     # ZAP/fuzz/harness adapters must map observations to candidate source paths.
     # Raw URL-only ZAP output is not source-depth coverage.
     return _execution_runtime(report, lane, sources)
 
 
-def normalize_execution_bundle(
-    bundle: dict, lane: dict, inventory: dict, run_id: str, obligations: list
-) -> dict:
-    """Check bounded worker evidence. Coverage remains an independently reviewed claim."""
+def _worker_artifacts(bundle, lane, inventory, run_id):
     if (
         set(bundle) != {"schema", "run_id", "candidate_sha256", "artifacts"}
         or bundle["schema"] != "factory.deep-worker.v1"
@@ -404,18 +443,23 @@ def normalize_execution_bundle(
     coverage = _object(artifacts[lane["coverage"]])
     challenges = _object(artifacts[lane["challenge_report"]])
     sources = {item["path"]: item["sha256"] for item in inventory["files"]}
-    findings = _native_execution_report(report, lane, sources)
-    gaps = []
-    if lane["engine"] == "gitleaks":
-        # Gitleaks SARIF lists findings, not every file actually scanned. Adapter
-        # coverage.sources cannot establish native input accounting on its own.
-        gaps.append("SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE")
-    required = {
+    return report, coverage, challenges, sources
+
+
+def _required_sources(inventory, lane):
+    return {
         item["path"]: item["sha256"]
         for item in inventory["files"]
         if item["language"] in lane["languages"]
     }
-    _native_accounting(report, lane, required)
+
+
+def _coverage_source_gaps(report, coverage, lane, required):
+    gaps = (
+        ["SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE"]
+        if lane["engine"] == "gitleaks"
+        else []
+    )
     if (
         not required
         or coverage.get("schema") != "factory.deep-coverage.v1"
@@ -428,6 +472,11 @@ def normalize_execution_bundle(
         gaps.append("ANALYSIS_MODE_DOWNGRADE")
     if coverage.get("report_sha256") != digest(report):
         gaps.append("COVERAGE_REPORT_DRIFT")
+    return gaps
+
+
+def _coverage_tool_gaps(coverage, lane):
+    gaps = []
     for key in ("tool_version", "ruleset_sha256", "invocation_sha256"):
         if key == "tool_version":
             require_str(coverage.get(key), key)
@@ -438,29 +487,73 @@ def normalize_execution_bundle(
         or coverage["ruleset_sha256"] != lane["ruleset_sha256"]
     ):
         gaps.append("TOOLCHAIN_DRIFT")
-    expected = {
+    return gaps
+
+
+def _coverage_gaps(report, coverage, lane, required, obligations):
+    _native_accounting(report, lane, required)
+    gaps = _coverage_source_gaps(report, coverage, lane, required)
+    gaps.extend(_coverage_tool_gaps(coverage, lane))
+    expected = _covered_obligation_ids(obligations, lane, required)
+    observed = _list(coverage.get("obligations"), 0, 4096)
+    if _obligation_coverage_missing(observed, expected):
+        gaps.append("OBLIGATION_COVERAGE_MISSING")
+    return gaps, expected, observed
+
+
+def _covered_obligation_ids(obligations, lane, required):
+    return {
         item["id"]
         for item in obligations
         if item["family"] == lane["family"]
         and item["engine"] == lane["engine"]
         and set(item["paths"]) <= set(required)
     }
-    observed = _list(coverage.get("obligations"), 0, 4096)
-    if (
+
+
+def _obligation_coverage_missing(observed, expected):
+    return (
         any(not isinstance(item, str) for item in observed)
         or set(observed) != expected
         or not expected
-    ):
-        gaps.append("OBLIGATION_COVERAGE_MISSING")
-    if challenges.get("schema") != "factory.deep-challenges.v1":
-        raise RuntimeAuditError("E_CHALLENGE_SCHEMA", "expected challenge observations")
-    seen = set()
-    approved = {
-        (item["id"], challenge["kind"]): challenge
+    )
+
+
+def _approved_challenges(obligations, expected):
+    return {
+        (item["id"], challenge["kind"]): (challenge, item)
         for item in obligations
         if item["id"] in expected
         for challenge in item["challenges"]
     }
+
+
+def _challenge_gap(challenge, identity, approved, lane, sources):
+    for key in ("fixture_sha256", "observation_sha256"):
+        require_digest(challenge.get(key), key)
+    bound_item = approved.get(identity)
+    report_evidence = _object(challenge.get("report"))
+    report_digest = digest(report_evidence)
+    if bound_item is None:
+        return True
+    bound, obligation = bound_item
+    _challenge_semantics(report_evidence, lane, bound, obligation, identity[1], sources)
+    return (
+        challenge["fixture_sha256"] != bound["fixture_sha256"]
+        or sources.get(bound["fixture_path"]) != bound["fixture_sha256"]
+        or report_digest != challenge["observation_sha256"]
+        or report_digest != bound["expected_report_sha256"]
+        or type(challenge.get("exit_code")) is not int
+        or challenge["exit_code"] != bound["expected_exit_code"]
+    )
+
+
+def _challenge_gaps(challenges, lane, sources, obligations, expected):
+    if challenges.get("schema") != "factory.deep-challenges.v1":
+        raise RuntimeAuditError("E_CHALLENGE_SCHEMA", "expected challenge observations")
+    seen = set()
+    approved = _approved_challenges(obligations, expected)
+    gaps = []
     for challenge in _list(challenges.get("observations"), 0, 8192):
         identity = (
             require_str(challenge.get("obligation_id"), "obligation"),
@@ -469,32 +562,31 @@ def normalize_execution_bundle(
         if identity in seen:
             raise RuntimeAuditError("E_CHALLENGE_DUPLICATE", "duplicate challenge")
         seen.add(identity)
-        for key in ("fixture_sha256", "observation_sha256"):
-            require_digest(challenge.get(key), key)
-        bound = approved.get(identity)
-        report_evidence = _object(challenge.get("report"))
-        report_digest = digest(report_evidence)
-        if bound is not None:
-            obligation = next(item for item in obligations if item["id"] == identity[0])
-            _challenge_semantics(
-                report_evidence, lane, bound, obligation, identity[1], sources
-            )
-        if (
-            bound is None
-            or challenge["fixture_sha256"] != bound["fixture_sha256"]
-            or sources.get(bound["fixture_path"]) != bound["fixture_sha256"]
-            or report_digest != challenge["observation_sha256"]
-            or report_digest != bound["expected_report_sha256"]
-            or type(challenge.get("exit_code")) is not int
-            or challenge["exit_code"] != bound["expected_exit_code"]
-        ):
+        if _challenge_gap(challenge, identity, approved, lane, sources):
             gaps.append("CHALLENGE_FAILED")
-    if seen != {
+    required = {
         (identity, kind)
         for identity in expected
         for kind in ("positive", "negative", "mutation")
-    }:
+    }
+    if seen != required:
         gaps.append("CHALLENGE_COVERAGE_MISSING")
+    return gaps
+
+
+def normalize_execution_bundle(
+    bundle: dict, lane: dict, inventory: dict, run_id: str, obligations: list
+) -> dict:
+    """Check bounded worker evidence. Coverage remains an independently reviewed claim."""
+    report, coverage, challenges, sources = _worker_artifacts(
+        bundle, lane, inventory, run_id
+    )
+    required = _required_sources(inventory, lane)
+    findings = _native_execution_report(report, lane, sources)
+    gaps, expected, observed = _coverage_gaps(
+        report, coverage, lane, required, obligations
+    )
+    gaps.extend(_challenge_gaps(challenges, lane, sources, obligations, expected))
     return {
         "lane_id": lane["id"],
         "engine": lane["engine"],

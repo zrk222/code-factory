@@ -96,22 +96,129 @@ def add_parser(sub: Any) -> None:
     extended.add_argument("--json", action="store_true")
 
 
-def run(args: Any) -> dict[str, Any]:
-    """Execute one selected agent command after the parser has resolved it."""
-    if args.agent_cmd in {"contract", "attestation"}:
-        from .agent_contract import (
-            validate_agent_contract,
-            validate_verifier_attestation,
-        )
+def _run_contract_command(args: Any) -> dict[str, Any]:
+    from .agent_contract import (
+        validate_agent_contract,
+        validate_verifier_attestation,
+    )
 
-        if args.agent_cmd == "contract":
-            return validate_agent_contract(Path(args.manifest))
-        return validate_verifier_attestation(
-            Path(args.receipt),
-            mission_digest=args.mission_digest,
-            contract_digest=args.contract_digest,
-        )
+    if args.agent_cmd == "contract":
+        return validate_agent_contract(Path(args.manifest))
+    return validate_verifier_attestation(
+        Path(args.receipt),
+        mission_digest=args.mission_digest,
+        contract_digest=args.contract_digest,
+    )
 
+
+def _write_json_result(result: dict[str, Any], output: str | Path) -> None:
+    destination = Path(output)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def _read_agentic_json(
+    path: str | Path,
+    *,
+    encoding: str,
+    error_type: type[Exception],
+    error_code: str,
+    error_message: str,
+) -> Any:
+    try:
+        return json.loads(Path(path).read_text(encoding=encoding))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise error_type(error_code, error_message) from exc
+
+
+def _run_plan_command(args: Any, create_orchestrator_plan: Any) -> dict[str, Any]:
+    request = json.loads(Path(args.request).read_text(encoding="utf-8"))
+    result = create_orchestrator_plan(request)
+    if args.out:
+        _write_json_result(result, args.out)
+    return result
+
+
+def _run_route_audit(
+    args: Any, error_type: type[Exception], audit_model_route_policy: Any
+) -> dict[str, Any]:
+    route_receipt = _read_agentic_json(
+        args.receipt,
+        encoding="utf-8",
+        error_type=error_type,
+        error_code="E_MODEL_ROUTE_INPUT",
+        error_message="route receipt could not be read as JSON",
+    )
+    if not isinstance(route_receipt, dict):
+        raise error_type("E_MODEL_ROUTE_INPUT", "route receipt must be a JSON object")
+    return audit_model_route_policy(route_receipt)
+
+
+def _run_card_audit(
+    args: Any, error_type: type[Exception], audit_a2a_agent_card: Any
+) -> dict[str, Any]:
+    card = _read_agentic_json(
+        args.card,
+        encoding="utf-8-sig",
+        error_type=error_type,
+        error_code="E_A2A_CARD_INPUT",
+        error_message="Agent Card file could not be read as UTF-8 JSON",
+    )
+    return audit_a2a_agent_card(card)
+
+
+def _run_drift_command(
+    args: Any,
+    error_type: type[Exception],
+    agentic_control_projection: Any,
+    compare_agentic_control_drift: Any,
+    verify_agentic_control_drift: Any,
+) -> dict[str, Any]:
+    if args.verify:
+        receipt = json.loads(Path(args.verify).read_text(encoding="utf-8"))
+        return verify_agentic_control_drift(receipt)
+    if not args.baseline:
+        raise error_type(
+            "E_AGENTIC_DRIFT_INPUT",
+            "baseline projection is required unless --verify is used",
+        )
+    baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
+    current = (
+        json.loads(Path(args.current).read_text(encoding="utf-8"))
+        if args.current
+        else agentic_control_projection(Path(args.root))
+    )
+    result = compare_agentic_control_drift(baseline, current)
+    if args.out:
+        _write_json_result(result, args.out)
+    return result
+
+
+def _run_extended_command(
+    args: Any, build_receipt: Any, verify_receipt: Any
+) -> dict[str, Any]:
+    if args.verify:
+        receipt = json.loads(Path(args.verify).read_text(encoding="utf-8"))
+        return verify_receipt(receipt)
+    evidence = (
+        json.loads(Path(args.evidence).read_text(encoding="utf-8"))
+        if args.evidence
+        else {}
+    )
+    return build_receipt(
+        args.feature,
+        extended_assurance=args.extended_assurance,
+        evidence=evidence,
+        required_lanes=args.required_lane,
+        tenant_id=args.tenant_id,
+        run_id=args.run_id,
+        timestamp=args.timestamp,
+    )
+
+
+def _run_agentic_control_command(args: Any) -> dict[str, Any]:
     from .agentic_control import (
         AgenticControlError,
         agentic_control_projection,
@@ -128,16 +235,7 @@ def run(args: Any) -> dict[str, Any]:
     if args.agent_cmd == "control":
         return agentic_control_projection(Path(args.root))
     if args.agent_cmd == "plan":
-        result = create_orchestrator_plan(
-            json.loads(Path(args.request).read_text(encoding="utf-8"))
-        )
-        if args.out:
-            destination = Path(args.out)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(
-                json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-            )
-        return result
+        return _run_plan_command(args, create_orchestrator_plan)
     if args.agent_cmd == "route":
         return route_model(
             args.task_class,
@@ -146,64 +244,24 @@ def run(args: Any) -> dict[str, Any]:
             token_budget=args.token_budget,
         )
     if args.agent_cmd == "route-audit":
-        try:
-            route_receipt = json.loads(Path(args.receipt).read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise AgenticControlError(
-                "E_MODEL_ROUTE_INPUT", "route receipt could not be read as JSON"
-            ) from exc
-        if not isinstance(route_receipt, dict):
-            raise AgenticControlError(
-                "E_MODEL_ROUTE_INPUT", "route receipt must be a JSON object"
-            )
-        return audit_model_route_policy(route_receipt)
+        return _run_route_audit(args, AgenticControlError, audit_model_route_policy)
     if args.agent_cmd == "card-audit":
-        try:
-            card = json.loads(Path(args.card).read_text(encoding="utf-8-sig"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise AgenticControlError(
-                "E_A2A_CARD_INPUT", "Agent Card file could not be read as UTF-8 JSON"
-            ) from exc
-        return audit_a2a_agent_card(card)
+        return _run_card_audit(args, AgenticControlError, audit_a2a_agent_card)
     if args.agent_cmd == "drift":
-        if args.verify:
-            return verify_agentic_control_drift(
-                json.loads(Path(args.verify).read_text(encoding="utf-8"))
-            )
-        if not args.baseline:
-            raise AgenticControlError(
-                "E_AGENTIC_DRIFT_INPUT",
-                "baseline projection is required unless --verify is used",
-            )
-        baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
-        current = (
-            json.loads(Path(args.current).read_text(encoding="utf-8"))
-            if args.current
-            else agentic_control_projection(Path(args.root))
+        return _run_drift_command(
+            args,
+            AgenticControlError,
+            agentic_control_projection,
+            compare_agentic_control_drift,
+            verify_agentic_control_drift,
         )
-        result = compare_agentic_control_drift(baseline, current)
-        if args.out:
-            destination = Path(args.out)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(
-                json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-            )
-        return result
-    if args.verify:
-        return verify_extended_assurance_receipt(
-            json.loads(Path(args.verify).read_text(encoding="utf-8"))
-        )
-    evidence = (
-        json.loads(Path(args.evidence).read_text(encoding="utf-8"))
-        if args.evidence
-        else {}
+    return _run_extended_command(
+        args, build_extended_assurance_receipt, verify_extended_assurance_receipt
     )
-    return build_extended_assurance_receipt(
-        args.feature,
-        extended_assurance=args.extended_assurance,
-        evidence=evidence,
-        required_lanes=args.required_lane,
-        tenant_id=args.tenant_id,
-        run_id=args.run_id,
-        timestamp=args.timestamp,
-    )
+
+
+def run(args: Any) -> dict[str, Any]:
+    """Execute one selected agent command after the parser has resolved it."""
+    if args.agent_cmd in {"contract", "attestation"}:
+        return _run_contract_command(args)
+    return _run_agentic_control_command(args)

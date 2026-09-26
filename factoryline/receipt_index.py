@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 from collections import OrderedDict
+from functools import partial
 from itertools import chain
 from threading import RLock
 from typing import Any, Iterable
@@ -49,17 +50,7 @@ def _directory_snapshot(
     relatives = under_prefixes or ("receipts", ".factory", "traces")
     for relative in relatives:
         base = workspace / relative
-        if not base.is_dir():
-            # Watch the nearest existing parent so creating the requested
-            # ledger directory invalidates this scoped path-set cache.
-            parent = base.parent
-            while parent != workspace and not parent.is_dir():
-                parent = parent.parent
-            directories = (parent,)
-        else:
-            directories = chain(
-                (base,), (item for item in base.rglob("*") if item.is_dir())
-            )
+        directories = _watched_directories(workspace, base)
         for directory in directories:
             if directory.is_symlink():
                 continue
@@ -76,6 +67,27 @@ def _directory_snapshot(
             break
     rows.sort(key=lambda item: item["path"])
     return rows, truncated
+
+
+def _watched_directories(workspace: Path, base: Path):
+    if base.is_dir():
+        return chain((base,), (item for item in base.rglob("*") if item.is_dir()))
+    parent = base.parent
+    while parent != workspace and not parent.is_dir():
+        parent = parent.parent
+    return (parent,)
+
+
+def _candidate_file(path: Path, workspace: Path, exclusions: set[str], suffixes):
+    if path.is_symlink() or not path.is_file():
+        return False
+    if path.suffix.lower() not in {".json", ".jsonl"}:
+        return False
+    if suffixes is not None and path.suffix.lower() not in suffixes:
+        return False
+    if path.name == "receipt-index.json":
+        return False
+    return path.relative_to(workspace).as_posix() not in exclusions
 
 
 def _candidate_paths(
@@ -100,21 +112,54 @@ def _candidate_paths(
             continue
         if directory.is_dir():
             for path in directory.rglob("*"):
-                if (
-                    not path.is_symlink()
-                    and path.is_file()
-                    and path.suffix.lower() in {".json", ".jsonl"}
-                    and (suffixes is None or path.suffix.lower() in suffixes)
-                ):
-                    if path.name == "receipt-index.json":
-                        continue
-                    if path.relative_to(workspace).as_posix() in exclusions:
-                        continue
+                if _candidate_file(path, workspace, exclusions, suffixes):
                     paths.append(path)
                     if len(paths) >= max_scan_files:
                         truncated = True
                         return sorted(set(paths)), truncated
     return sorted(set(paths)), truncated
+
+
+def _validate_index_limits(hot_days, max_files, max_scan_files):
+    if isinstance(hot_days, bool) or not isinstance(hot_days, int) or hot_days < 0:
+        raise ValueError("hot_days must be a non-negative integer")
+    return _validate_path_limits(max_files, max_scan_files)
+
+
+def _index_entries(workspace, paths, cutoff):
+    entries: list[dict[str, Any]] = []
+    duplicate_groups: dict[str, list[str]] = {}
+    for path in paths:
+        try:
+            stat = path.stat()
+            digest = _sha_bytes(path)
+        except OSError:
+            continue
+        relative = path.relative_to(workspace).as_posix()
+        modified = datetime.fromtimestamp(stat.st_mtime, timezone.utc)
+        entries.append(
+            {
+                "path": relative,
+                "bytes": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+                "sha256": digest,
+                "modified_at": modified.isoformat(),
+                "temperature": "hot" if modified >= cutoff else "cold",
+            }
+        )
+        duplicate_groups.setdefault(digest, []).append(relative)
+    entries.sort(
+        key=lambda item: (
+            item["temperature"] == "hot",
+            item["modified_at"],
+            item["path"],
+        ),
+        reverse=True,
+    )
+    duplicates = {
+        key: value for key, value in duplicate_groups.items() if len(value) > 1
+    }
+    return entries, duplicates
 
 
 def build_receipt_index(
@@ -126,57 +171,16 @@ def build_receipt_index(
     _exclude_paths: set[str] | None = None,
 ) -> dict[str, Any]:
     """Build an index and retention plan without deleting or moving evidence."""
-    if isinstance(hot_days, bool) or not isinstance(hot_days, int) or hot_days < 0:
-        raise ValueError("hot_days must be a non-negative integer")
-    if isinstance(max_files, bool) or not isinstance(max_files, int) or max_files < 1:
-        raise ValueError("max_files must be a positive integer")
-    if max_scan_files is None:
-        max_scan_files = max(max_files * 4, max_files)
-    if (
-        isinstance(max_scan_files, bool)
-        or not isinstance(max_scan_files, int)
-        or max_scan_files < max_files
-    ):
-        raise ValueError("max_scan_files must be an integer at least max_files")
+    max_scan_files = _validate_index_limits(hot_days, max_files, max_scan_files)
     workspace = Path(root).resolve()
     cutoff = datetime.now(timezone.utc) - timedelta(days=hot_days)
-    entries: list[dict[str, Any]] = []
-    duplicate_groups: dict[str, list[str]] = {}
     candidate_paths, scan_truncated = _candidate_paths(
         workspace,
         max_scan_files=max_scan_files,
         exclude_paths=_exclude_paths,
     )
-    for path in candidate_paths:
-        try:
-            stat = path.stat()
-            digest = _sha_bytes(path)
-        except OSError:
-            continue
-        relative = path.relative_to(workspace).as_posix()
-        modified = datetime.fromtimestamp(stat.st_mtime, timezone.utc)
-        entry = {
-            "path": relative,
-            "bytes": int(stat.st_size),
-            "mtime_ns": int(stat.st_mtime_ns),
-            "sha256": digest,
-            "modified_at": modified.isoformat(),
-            "temperature": "hot" if modified >= cutoff else "cold",
-        }
-        entries.append(entry)
-        duplicate_groups.setdefault(digest, []).append(relative)
-    entries.sort(
-        key=lambda item: (
-            item["temperature"] == "hot",
-            item["modified_at"],
-            item["path"],
-        ),
-        reverse=True,
-    )
+    entries, duplicate_groups = _index_entries(workspace, candidate_paths, cutoff)
     over_limit = max(0, len(entries) - max_files)
-    duplicate_groups = {
-        digest: paths for digest, paths in duplicate_groups.items() if len(paths) > 1
-    }
     directories, directory_scan_truncated = _directory_snapshot(workspace)
     return {
         "schema": SCHEMA,
@@ -267,53 +271,55 @@ def _snapshot_matches(
     ):
         return False
     workspace = Path(root).resolve()
-    for row in directories:
-        if not isinstance(row, dict) or set(row) != {"path", "mtime_ns"}:
-            return False
-        relative = row.get("path")
-        if not isinstance(relative, str):
-            return False
-        path = Path(relative)
-        if path.is_absolute() or ".." in path.parts:
-            return False
-        candidate = workspace / path
-        try:
-            candidate.relative_to(workspace)
-            if (
-                not candidate.is_dir()
-                or int(candidate.stat().st_mtime_ns) != row["mtime_ns"]
-            ):
-                return False
-        except (OSError, TypeError, ValueError):
-            return False
-    for row in entries:
-        if not isinstance(row, dict):
-            return False
-        relative = row.get("path")
-        if not isinstance(relative, str):
-            return False
-        path = Path(relative)
-        if (
-            path.is_absolute()
-            or ".." in path.parts
-            or path.name == "receipt-index.json"
-        ):
-            return False
-        if not validate_file_metadata:
-            continue
-        candidate = (workspace / path).resolve()
-        try:
-            candidate.relative_to(workspace)
-            stat = candidate.stat()
-        except (OSError, ValueError):
-            return False
-        if (
-            not candidate.is_file()
-            or int(stat.st_size) != row.get("bytes")
-            or int(stat.st_mtime_ns) != row.get("mtime_ns")
-        ):
-            return False
-    return True
+    return all(_directory_row_matches(workspace, row) for row in directories) and all(
+        _file_row_matches(workspace, row, validate_file_metadata) for row in entries
+    )
+
+
+def _safe_relative(raw):
+    if not isinstance(raw, str):
+        return None
+    path = Path(raw)
+    if path.is_absolute() or ".." in path.parts:
+        return None
+    return path
+
+
+def _directory_row_matches(workspace, row):
+    if not isinstance(row, dict) or set(row) != {"path", "mtime_ns"}:
+        return False
+    path = _safe_relative(row.get("path"))
+    if path is None:
+        return False
+    candidate = workspace / path
+    try:
+        candidate.relative_to(workspace)
+        return (
+            candidate.is_dir() and int(candidate.stat().st_mtime_ns) == row["mtime_ns"]
+        )
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _file_row_matches(workspace, row, validate_file_metadata):
+    if not isinstance(row, dict):
+        return False
+    path = _safe_relative(row.get("path"))
+    if path is None or path.name == "receipt-index.json":
+        return False
+    if not validate_file_metadata:
+        return True
+    candidate = (workspace / path).resolve()
+    try:
+        candidate.relative_to(workspace)
+        stat = candidate.stat()
+    except (OSError, ValueError):
+        return False
+    return (
+        candidate.is_file()
+        and int(stat.st_size) == row.get("bytes")
+        and int(stat.st_mtime_ns) == row.get("mtime_ns")
+    )
 
 
 def _indexed_payload(
@@ -341,6 +347,144 @@ def _indexed_payload(
     )
 
 
+def _validate_path_limits(max_files: int, max_scan_files: int | None) -> int:
+    if isinstance(max_files, bool) or not isinstance(max_files, int) or max_files < 1:
+        raise ValueError("max_files must be a positive integer")
+    scan_limit = (
+        max(max_files * 4, max_files) if max_scan_files is None else max_scan_files
+    )
+    if (
+        isinstance(scan_limit, bool)
+        or not isinstance(scan_limit, int)
+        or scan_limit < max_files
+    ):
+        raise ValueError("max_scan_files must be an integer at least max_files")
+    return scan_limit
+
+
+def _normalize_suffix_filter(suffixes: set[str] | None) -> set[str] | None:
+    if suffixes is None:
+        return None
+    valid = isinstance(suffixes, set) and all(
+        isinstance(item, str) and item.startswith(".") and len(item) <= 16
+        for item in suffixes
+    )
+    if not valid:
+        raise ValueError("suffixes must be a set of dotted extensions")
+    return {item.lower() for item in suffixes}
+
+
+def _normalize_prefix_filter(workspace: Path, under) -> tuple[str, ...] | None:
+    if under is None:
+        return None
+    raw_prefixes = [under] if isinstance(under, (Path, str)) else list(under)
+    normalized = []
+    for raw in raw_prefixes:
+        raw_path = Path(raw)
+        if raw_path.is_absolute() or ".." in raw_path.parts:
+            raise ValueError("under must contain safe workspace-relative directories")
+        prefix = (workspace / raw_path).resolve()
+        try:
+            prefix.relative_to(workspace)
+        except ValueError as exc:
+            raise ValueError("under must remain inside the workspace") from exc
+        normalized.append(prefix.relative_to(workspace).as_posix().rstrip("/"))
+    if not normalized:
+        raise ValueError("under must not be empty")
+    return tuple(normalized)
+
+
+def _select_entries(entries, max_files, suffixes, prefixes):
+    output = []
+    for item in entries:
+        relative = item.get("path")
+        if not isinstance(relative, str):
+            continue
+        if suffixes is not None and Path(relative).suffix.lower() not in suffixes:
+            continue
+        if prefixes is not None and not any(
+            relative.startswith(prefix + "/") for prefix in prefixes
+        ):
+            continue
+        output.append(item)
+    return output[:max_files]
+
+
+def _cache_key(workspace, suffixes, prefixes):
+    return "|".join(
+        (
+            str(workspace),
+            ",".join(sorted(suffixes or set())),
+            ",".join(prefixes or ()),
+        )
+    )
+
+
+def _stat_entries(workspace, candidates):
+    entries = []
+    for candidate in candidates:
+        try:
+            stat = candidate.stat()
+        except OSError:
+            continue
+        entries.append(
+            {
+                "path": candidate.relative_to(workspace).as_posix(),
+                "bytes": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+            }
+        )
+    entries.sort(key=lambda item: (item["mtime_ns"], item["path"]), reverse=True)
+    return entries
+
+
+def _cache_receipt_paths(key, workspace, validate_file_metadata, select):
+    with _PATH_CACHE_LOCK:
+        cached = _PATH_CACHE.get(key)
+        if cached is None or not _snapshot_matches(
+            workspace, cached, validate_file_metadata=validate_file_metadata
+        ):
+            return None
+        _PATH_CACHE.move_to_end(key)
+        return [workspace / item["path"] for item in select(cached["entries"])]
+
+
+def _store_path_snapshot(key, snapshot):
+    if (
+        snapshot["counts"]["scan_truncated"]
+        or snapshot["counts"]["directory_scan_truncated"]
+    ):
+        return
+    _PATH_CACHE[key] = snapshot
+    _PATH_CACHE.move_to_end(key)
+    while len(_PATH_CACHE) > _PATH_CACHE_ROOTS:
+        _PATH_CACHE.popitem(last=False)
+
+
+def _scan_receipt_paths(workspace, max_scan_files, suffixes, prefixes, key):
+    with _PATH_CACHE_LOCK:
+        candidates, truncated = _candidate_paths(
+            workspace,
+            max_scan_files=max_scan_files,
+            under_prefixes=prefixes,
+            suffixes=suffixes,
+        )
+        entries = _stat_entries(workspace, candidates)
+        directories, directory_truncated = _directory_snapshot(
+            workspace, under_prefixes=prefixes
+        )
+        snapshot = {
+            "counts": {
+                "scan_truncated": truncated,
+                "directory_scan_truncated": directory_truncated,
+            },
+            "entries": entries,
+            "directory_snapshot": directories,
+        }
+        _store_path_snapshot(key, snapshot)
+        return entries
+
+
 def indexed_receipt_paths(
     root: Path,
     *,
@@ -361,121 +505,25 @@ def indexed_receipt_paths(
     additions/removals without statting every file.
     """
     workspace = Path(root).resolve()
-    if isinstance(max_files, bool) or not isinstance(max_files, int) or max_files < 1:
-        raise ValueError("max_files must be a positive integer")
-    if max_scan_files is None:
-        max_scan_files = max(max_files * 4, max_files)
-    if (
-        isinstance(max_scan_files, bool)
-        or not isinstance(max_scan_files, int)
-        or max_scan_files < max_files
-    ):
-        raise ValueError("max_scan_files must be an integer at least max_files")
-
-    normalized_suffixes: set[str] | None = None
-    if suffixes is not None:
-        if not isinstance(suffixes, set) or any(
-            not isinstance(item, str) or not item.startswith(".") or len(item) > 16
-            for item in suffixes
-        ):
-            raise ValueError("suffixes must be a set of dotted extensions")
-        normalized_suffixes = {item.lower() for item in suffixes}
-
-    relative_prefixes: tuple[str, ...] | None = None
-    if under is not None:
-        raw_prefixes = [under] if isinstance(under, (Path, str)) else list(under)
-        normalized_prefixes: list[str] = []
-        for raw in raw_prefixes:
-            raw_prefix = Path(raw)
-            if raw_prefix.is_absolute() or ".." in raw_prefix.parts:
-                raise ValueError(
-                    "under must contain safe workspace-relative directories"
-                )
-            prefix = (workspace / raw_prefix).resolve()
-            try:
-                prefix.relative_to(workspace)
-            except ValueError as exc:
-                raise ValueError("under must remain inside the workspace") from exc
-            normalized_prefixes.append(
-                prefix.relative_to(workspace).as_posix().rstrip("/")
-            )
-        if not normalized_prefixes:
-            raise ValueError("under must not be empty")
-        relative_prefixes = tuple(normalized_prefixes)
-
-    def selected(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        output = []
-        for item in entries:
-            relative = item.get("path")
-            if not isinstance(relative, str):
-                continue
-            if (
-                normalized_suffixes is not None
-                and Path(relative).suffix.lower() not in normalized_suffixes
-            ):
-                continue
-            if relative_prefixes is not None and not any(
-                relative.startswith(prefix + "/") for prefix in relative_prefixes
-            ):
-                continue
-            output.append(item)
-        return output[:max_files]
-
+    max_scan_files = _validate_path_limits(max_files, max_scan_files)
+    normalized_suffixes = _normalize_suffix_filter(suffixes)
+    relative_prefixes = _normalize_prefix_filter(workspace, under)
     if not isinstance(validate_file_metadata, bool):
         raise ValueError("validate_file_metadata must be a boolean")
+    select = partial(
+        _select_entries,
+        max_files=max_files,
+        suffixes=normalized_suffixes,
+        prefixes=relative_prefixes,
+    )
     indexed = _indexed_payload(workspace, validate_file_metadata=validate_file_metadata)
     if indexed is not None:
-        return [workspace / item["path"] for item in selected(indexed["entries"])]
-
-    key = "|".join(
-        (
-            str(workspace),
-            ",".join(sorted(normalized_suffixes or set())),
-            ",".join(relative_prefixes or ()),
-        )
+        return [workspace / item["path"] for item in select(indexed["entries"])]
+    key = _cache_key(workspace, normalized_suffixes, relative_prefixes)
+    cached = _cache_receipt_paths(key, workspace, validate_file_metadata, select)
+    if cached is not None:
+        return cached
+    entries = _scan_receipt_paths(
+        workspace, max_scan_files, normalized_suffixes, relative_prefixes, key
     )
-    with _PATH_CACHE_LOCK:
-        cached = _PATH_CACHE.get(key)
-        if cached is not None and _snapshot_matches(
-            workspace, cached, validate_file_metadata=validate_file_metadata
-        ):
-            _PATH_CACHE.move_to_end(key)
-            return [workspace / item["path"] for item in selected(cached["entries"])]
-
-        candidates, truncated = _candidate_paths(
-            workspace,
-            max_scan_files=max_scan_files,
-            under_prefixes=relative_prefixes,
-            suffixes=normalized_suffixes,
-        )
-        entries = []
-        for candidate in candidates:
-            try:
-                stat = candidate.stat()
-            except OSError:
-                continue
-            entries.append(
-                {
-                    "path": candidate.relative_to(workspace).as_posix(),
-                    "bytes": int(stat.st_size),
-                    "mtime_ns": int(stat.st_mtime_ns),
-                }
-            )
-        entries.sort(key=lambda item: (item["mtime_ns"], item["path"]), reverse=True)
-        directories, directory_truncated = _directory_snapshot(
-            workspace, under_prefixes=relative_prefixes
-        )
-        snapshot = {
-            "counts": {
-                "scan_truncated": truncated,
-                "directory_scan_truncated": directory_truncated,
-            },
-            "entries": entries,
-            "directory_snapshot": directories,
-        }
-        if not truncated and not directory_truncated:
-            _PATH_CACHE[key] = snapshot
-            _PATH_CACHE.move_to_end(key)
-            while len(_PATH_CACHE) > _PATH_CACHE_ROOTS:
-                _PATH_CACHE.popitem(last=False)
-        return [workspace / item["path"] for item in selected(entries)]
+    return [workspace / item["path"] for item in select(entries)]

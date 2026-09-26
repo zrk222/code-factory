@@ -279,13 +279,8 @@ def validate_agent_contract(value: Path | dict[str, Any]) -> dict[str, Any]:
     return {**core, "contract_digest": digest, "markers": [CONTRACT_MARKER]}
 
 
-def validate_verifier_attestation(
-    value: Path | dict[str, Any],
-    *,
-    mission_digest: str | None = None,
-    contract_digest: str | None = None,
-) -> dict[str, Any]:
-    """Validate a fresh creator/verifier adapter receipt with a context wall."""
+def _load_verifier_attestation(value: Path | dict[str, Any]) -> dict[str, Any]:
+    """Read an attestation and reject malformed JSON or a non-object payload."""
     if isinstance(value, (str, Path)):
         try:
             value = json.loads(Path(value).read_text(encoding="utf-8-sig"))
@@ -297,23 +292,11 @@ def validate_verifier_attestation(
         raise AgentContractError(
             "VERIFIER_ATTESTATION_INVALID", "attestation must be a JSON object"
         )
-    allowed = {
-        "schema",
-        "mission_digest",
-        "contract_digest",
-        "creator_id",
-        "verifier_id",
-        "verifier_context",
-        "fresh_session",
-        "context_wall",
-        "evidence_digest",
-        "adapter_id",
-    }
-    _exact_keys(value, allowed, "attestation")
-    if value.get("schema") != ATTESTATION_SCHEMA:
-        raise AgentContractError(
-            "VERIFIER_ATTESTATION_INVALID", f"schema must be {ATTESTATION_SCHEMA}"
-        )
+    return value
+
+
+def _validate_attestation_context(value: dict[str, Any]) -> tuple[str, str, list[str]]:
+    """Enforce identity separation and the verifier's isolated context wall."""
     creator = _text(value.get("creator_id"), "creator_id", max_len=96)
     verifier = _text(value.get("verifier_id"), "verifier_id", max_len=96)
     if creator == verifier:
@@ -336,6 +319,35 @@ def validate_verifier_attestation(
             "VERIFIER_CONTEXT_WALL",
             "verifier context contains forbidden creator traces",
         )
+    return creator, verifier, context
+
+
+def validate_verifier_attestation(
+    value: Path | dict[str, Any],
+    *,
+    mission_digest: str | None = None,
+    contract_digest: str | None = None,
+) -> dict[str, Any]:
+    """Validate a fresh creator/verifier adapter receipt with a context wall."""
+    value = _load_verifier_attestation(value)
+    allowed = {
+        "schema",
+        "mission_digest",
+        "contract_digest",
+        "creator_id",
+        "verifier_id",
+        "verifier_context",
+        "fresh_session",
+        "context_wall",
+        "evidence_digest",
+        "adapter_id",
+    }
+    _exact_keys(value, allowed, "attestation")
+    if value.get("schema") != ATTESTATION_SCHEMA:
+        raise AgentContractError(
+            "VERIFIER_ATTESTATION_INVALID", f"schema must be {ATTESTATION_SCHEMA}"
+        )
+    creator, verifier, context = _validate_attestation_context(value)
     mission = _digest(value.get("mission_digest"), "mission_digest")
     contract = _digest(value.get("contract_digest"), "contract_digest")
     if mission_digest is not None and mission != mission_digest:

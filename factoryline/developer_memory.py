@@ -228,9 +228,9 @@ def _action(
     }
 
 
-def _actions_from_review(
+def _review_action_context(
     review: dict[str, Any], team: dict[str, Any]
-) -> list[dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str | None, list[str]]:
     impact = review.get("impact") if isinstance(review.get("impact"), dict) else {}
     coverage = (
         review.get("coverage") if isinstance(review.get("coverage"), dict) else {}
@@ -244,105 +244,137 @@ def _actions_from_review(
     contributor_ids = list(
         (team.get("changed_path_attribution") or {}).get("contributor_seat_ids") or []
     )
-    actions: list[dict[str, Any]] = []
-    unmatched = (
-        impact.get("unmatched_changed_paths")
-        if isinstance(impact.get("unmatched_changed_paths"), list)
-        else []
-    )
-    for path in unmatched:
-        if not isinstance(path, str):
-            continue
-        actions.append(
-            _action(
-                action_id=f"scope-gap:{path}",
-                kind="bind_changed_path_to_proof",
-                severity="blocking",
-                title="Bind this change to a proof",
-                what_changed=path,
-                why_it_matters="No declared Graph Ops proof-input edge covers this changed path.",
-                do_this_next="Declare the path as a proof input, then request a fresh Diff-to-Proof review.",
-                review_sha256=review_sha256,
-                contributor_seat_ids=contributor_ids,
-                changed_path=path,
-            )
+    return impact, coverage, risk, review_sha256, contributor_ids
+
+
+def _scope_gap_actions(
+    impact: dict[str, Any], review_sha256: str | None, contributor_ids: list[str]
+) -> list[dict[str, Any]]:
+    unmatched = impact.get("unmatched_changed_paths")
+    if not isinstance(unmatched, list):
+        return []
+    return [
+        _action(
+            action_id=f"scope-gap:{path}",
+            kind="bind_changed_path_to_proof",
+            severity="blocking",
+            title="Bind this change to a proof",
+            what_changed=path,
+            why_it_matters="No declared Graph Ops proof-input edge covers this changed path.",
+            do_this_next="Declare the path as a proof input, then request a fresh Diff-to-Proof review.",
+            review_sha256=review_sha256,
+            contributor_seat_ids=contributor_ids,
+            changed_path=path,
         )
-    reruns = (
-        impact.get("rerun_proofs")
-        if isinstance(impact.get("rerun_proofs"), list)
-        else []
-    )
+        for path in unmatched
+        if isinstance(path, str)
+    ]
+
+
+def _stale_proof_actions(
+    impact: dict[str, Any], review_sha256: str | None, contributor_ids: list[str]
+) -> list[dict[str, Any]]:
+    reruns = impact.get("rerun_proofs")
+    if not isinstance(reruns, list):
+        return []
+    actions: list[dict[str, Any]] = []
     for proof in reruns:
         if not isinstance(proof, dict) or not isinstance(proof.get("proof_id"), str):
             continue
         gates = proof.get("gates") if isinstance(proof.get("gates"), list) else []
+        proof_id = proof["proof_id"]
         actions.append(
             _action(
-                action_id=f"stale-proof:{proof['proof_id']}",
+                action_id=f"stale-proof:{proof_id}",
                 kind="rerun_stale_proof",
                 severity="required",
                 title="Rerun a stale proof",
-                what_changed=f"Declared input changed after proof {proof['proof_id']} was recorded.",
+                what_changed=f"Declared input changed after proof {proof_id} was recorded.",
                 why_it_matters="A green result from older inputs is not evidence for this current change.",
                 do_this_next="Run the declared proof through its normal approved workflow; this brief does not execute it.",
                 review_sha256=review_sha256,
                 contributor_seat_ids=contributor_ids,
-                proof_id=proof["proof_id"],
+                proof_id=proof_id,
                 gates=gates,
             )
         )
-    if coverage.get("ok") is False:
-        uncovered = (
-            coverage.get("uncovered")
-            if isinstance(coverage.get("uncovered"), list)
-            else []
-        )
-        actions.append(
-            _action(
-                action_id="coverage-gap",
-                kind="complete_requirement_coverage",
-                severity="required",
-                title="Close declared requirement coverage",
-                what_changed=f"{len(uncovered)} requirement coverage gap(s) remain.",
-                why_it_matters="Coverage gaps prevent a reviewer from tracing the changed behavior to evidence.",
-                do_this_next="Bind the missing requirement(s) to an explicit slice, mission, and proof before approval.",
-                review_sha256=review_sha256,
-                contributor_seat_ids=contributor_ids,
-                requirement_ids=uncovered,
-            )
-        )
-    stages = (
-        risk.get("rerun_stages") if isinstance(risk.get("rerun_stages"), list) else []
+    return actions
+
+
+def _coverage_gap_action(
+    coverage: dict[str, Any], review_sha256: str | None, contributor_ids: list[str]
+) -> dict[str, Any] | None:
+    if coverage.get("ok") is not False:
+        return None
+    uncovered = coverage.get("uncovered")
+    if not isinstance(uncovered, list):
+        uncovered = []
+    return _action(
+        action_id="coverage-gap",
+        kind="complete_requirement_coverage",
+        severity="required",
+        title="Close declared requirement coverage",
+        what_changed=f"{len(uncovered)} requirement coverage gap(s) remain.",
+        why_it_matters="Coverage gaps prevent a reviewer from tracing the changed behavior to evidence.",
+        do_this_next="Bind the missing requirement(s) to an explicit slice, mission, and proof before approval.",
+        review_sha256=review_sha256,
+        contributor_seat_ids=contributor_ids,
+        requirement_ids=uncovered,
     )
-    if stages:
-        actions.append(
-            _action(
-                action_id="risk-plan",
-                kind="review_rerun_plan",
-                severity="review",
-                title="Review the policy-selected rerun plan",
-                what_changed=f"{len(stages)} validation stage(s) are recommended by current risk policy.",
-                why_it_matters="The policy plan is a recommendation, not evidence that the stages ran.",
-                do_this_next="Review the ordered validation plan and approve execution through the normal human-controlled flow.",
-                review_sha256=review_sha256,
-                contributor_seat_ids=contributor_ids,
-                rerun_stages=stages,
-            )
-        )
+
+
+def _risk_plan_action(
+    risk: dict[str, Any], review_sha256: str | None, contributor_ids: list[str]
+) -> dict[str, Any] | None:
+    stages = risk.get("rerun_stages")
+    if not isinstance(stages, list) or not stages:
+        return None
+    return _action(
+        action_id="risk-plan",
+        kind="review_rerun_plan",
+        severity="review",
+        title="Review the policy-selected rerun plan",
+        what_changed=f"{len(stages)} validation stage(s) are recommended by current risk policy.",
+        why_it_matters="The policy plan is a recommendation, not evidence that the stages ran.",
+        do_this_next="Review the ordered validation plan and approve execution through the normal human-controlled flow.",
+        review_sha256=review_sha256,
+        contributor_seat_ids=contributor_ids,
+        rerun_stages=stages,
+    )
+
+
+def _review_packet_action(
+    review_sha256: str | None, contributor_ids: list[str]
+) -> dict[str, Any]:
+    return _action(
+        action_id="review-packet",
+        kind="review_packet",
+        severity="ready",
+        title="Prepare the human review packet",
+        what_changed="No declared proof, coverage, or policy gap was found in the available local inputs.",
+        why_it_matters="This is not a claim that quality or release readiness has been proven.",
+        do_this_next="Review the evidence packet with a named human reviewer before any consequential action.",
+        review_sha256=review_sha256,
+        contributor_seat_ids=contributor_ids,
+    )
+
+
+def _actions_from_review(
+    review: dict[str, Any], team: dict[str, Any]
+) -> list[dict[str, Any]]:
+    impact, coverage, risk, review_sha256, contributor_ids = _review_action_context(
+        review, team
+    )
+    actions = _scope_gap_actions(impact, review_sha256, contributor_ids)
+    actions.extend(_stale_proof_actions(impact, review_sha256, contributor_ids))
+    for action in (
+        _coverage_gap_action(coverage, review_sha256, contributor_ids),
+        _risk_plan_action(risk, review_sha256, contributor_ids),
+    ):
+        if action is not None:
+            actions.append(action)
     if not actions:
-        actions.append(
-            _action(
-                action_id="review-packet",
-                kind="review_packet",
-                severity="ready",
-                title="Prepare the human review packet",
-                what_changed="No declared proof, coverage, or policy gap was found in the available local inputs.",
-                why_it_matters="This is not a claim that quality or release readiness has been proven.",
-                do_this_next="Review the evidence packet with a named human reviewer before any consequential action.",
-                review_sha256=review_sha256,
-                contributor_seat_ids=contributor_ids,
-            )
-        )
+        actions.append(_review_packet_action(review_sha256, contributor_ids))
     return actions[:MAX_ACTIONS]
 
 

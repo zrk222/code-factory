@@ -28,6 +28,7 @@ from .continuation import ContinuationError, continue_assembly, discover_feature
 from .run_metrics import public_metrics
 from .savings import SavingsError, public_savings_report, record_savings_pair
 from .graph_ops import graph_ops_html, graph_ops_snapshot
+from .deep_audit_loop import read_junit_report
 from .graph_authorization import (
     GraphAuthorizationError,
     create_graph_authorization,
@@ -298,6 +299,48 @@ def _receipt_comparison(root: Path) -> dict[str, Any]:
     }
 
 
+def _run_feature(ordered: list[Any]) -> str | None:
+    return next((item.feature for item in reversed(ordered) if item.feature), None)
+
+
+def _run_cost(ordered: list[Any]) -> float | None:
+    if not all(item.cost_usd is not None for item in ordered):
+        return None
+    return sum(item.cost_usd or 0 for item in ordered)
+
+
+def _run_outcome(observed: list[str], failed_stages: int) -> str:
+    if observed:
+        return observed[-1]
+    return "failed_stage_observed" if failed_stages else "stages_recorded"
+
+
+def _summarize_run(run_id: str, stages: list[Any]) -> dict[str, Any]:
+    ordered = sorted(stages, key=lambda item: item.recorded_at or "")
+    latest = ordered[-1]
+    token_qualities = sorted(
+        {item.token_quality or item.usage_quality for item in ordered}
+    )
+    cost_qualities = sorted({item.cost_quality for item in ordered})
+    observed_outcomes = [item.outcome_status for item in ordered if item.outcome_status]
+    failed_stages = sum(not item.ok for item in ordered)
+    return {
+        "run_id": run_id,
+        "feature": _run_feature(ordered),
+        "first_recorded_at": ordered[0].recorded_at or None,
+        "last_recorded_at": latest.recorded_at or None,
+        "stages_recorded": len(ordered),
+        "failed_stages": failed_stages,
+        "wall_ms": sum(item.wall_ms for item in ordered),
+        "model_calls": sum(item.model_calls for item in ordered),
+        "tokens": sum(item.tokens_in + item.tokens_out for item in ordered),
+        "token_quality": token_qualities,
+        "cost_usd": _run_cost(ordered),
+        "cost_quality": cost_qualities,
+        "outcome": _run_outcome(observed_outcomes, failed_stages),
+    }
+
+
 def _recent_run_stats(root: Path, *, limit: int = 8) -> list[dict[str, Any]]:
     """Return observed, append-only run history without inferring unrecorded outcomes.
 
@@ -310,46 +353,7 @@ def _recent_run_stats(root: Path, *, limit: int = 8) -> list[dict[str, Any]]:
         if stage.run_id:
             groups.setdefault(stage.run_id, []).append(stage)
 
-    def summary(run_id: str, stages: list[Any]) -> dict[str, Any]:
-        ordered = sorted(stages, key=lambda item: item.recorded_at or "")
-        latest = ordered[-1]
-        token_qualities = sorted(
-            {item.token_quality or item.usage_quality for item in ordered}
-        )
-        cost_qualities = sorted({item.cost_quality for item in ordered})
-        observed_outcomes = [
-            item.outcome_status for item in ordered if item.outcome_status
-        ]
-        failed_stages = sum(not item.ok for item in ordered)
-        return {
-            "run_id": run_id,
-            "feature": next(
-                (item.feature for item in reversed(ordered) if item.feature), None
-            ),
-            "first_recorded_at": ordered[0].recorded_at or None,
-            "last_recorded_at": latest.recorded_at or None,
-            "stages_recorded": len(ordered),
-            "failed_stages": failed_stages,
-            "wall_ms": sum(item.wall_ms for item in ordered),
-            "model_calls": sum(item.model_calls for item in ordered),
-            "tokens": sum(item.tokens_in + item.tokens_out for item in ordered),
-            "token_quality": token_qualities,
-            "cost_usd": (
-                sum(item.cost_usd or 0 for item in ordered)
-                if all(item.cost_usd is not None for item in ordered)
-                else None
-            ),
-            "cost_quality": cost_qualities,
-            "outcome": (
-                observed_outcomes[-1]
-                if observed_outcomes
-                else "failed_stage_observed"
-                if failed_stages
-                else "stages_recorded"
-            ),
-        }
-
-    rows = [summary(run_id, stages) for run_id, stages in groups.items()]
+    rows = [_summarize_run(run_id, stages) for run_id, stages in groups.items()]
     rows.sort(key=lambda item: item["last_recorded_at"] or "", reverse=True)
     return rows[:limit]
 
@@ -958,6 +962,7 @@ class _StudioHandler(BaseHTTPRequestHandler):
                 developer_memory_snapshot
             ),
             "/api/graph-ops": lambda: self._serve_token_json(self._graph_ops_payload),
+            "/api/test-report": lambda: self._serve_token_json(read_junit_report),
         }
         return api_routes.get(self.path)
 

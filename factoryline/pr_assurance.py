@@ -268,23 +268,45 @@ def _validate_oidc_claims(
     current: int,
     clock_skew_seconds: int,
 ) -> None:
+    _validate_issuer(claims, expected_issuer)
+    _validate_audience(claims, expected_audience)
+    _validate_time_claims(claims, current, clock_skew_seconds)
+    _validate_required_claims(claims)
+    _validate_groups_claim(claims)
+
+
+def _validate_issuer(claims: dict[str, Any], expected_issuer: str) -> None:
     if claims.get("iss") != expected_issuer:
         raise PRAssuranceError(
             "E_OIDC_ISSUER", "OIDC issuer does not match the pinned issuer"
         )
+
+
+def _validate_audience(claims: dict[str, Any], expected_audience: str) -> None:
     audience = claims.get("aud")
     audiences = [audience] if isinstance(audience, str) else audience
     if not isinstance(audiences, list) or expected_audience not in audiences:
         raise PRAssuranceError(
             "E_OIDC_AUDIENCE", "OIDC audience does not contain the pinned audience"
         )
+
+
+def _validate_time_claims(
+    claims: dict[str, Any], current: int, clock_skew_seconds: int
+) -> None:
     if _integer_claim(claims, "exp") < current - clock_skew_seconds:
         raise PRAssuranceError("E_OIDC_EXPIRED", "OIDC token has expired")
     if "nbf" in claims and _integer_claim(claims, "nbf") > current + clock_skew_seconds:
         raise PRAssuranceError("E_OIDC_PREMATURE", "OIDC token is not active yet")
+
+
+def _validate_required_claims(claims: dict[str, Any]) -> None:
     for required in ("sub", "tenant_id", "jti"):
         if not isinstance(claims.get(required), str) or not claims[required].strip():
             raise PRAssuranceError("E_OIDC_CLAIM", f"OIDC {required} is required")
+
+
+def _validate_groups_claim(claims: dict[str, Any]) -> None:
     groups = claims.get("groups")
     if not isinstance(groups, list) or not all(
         isinstance(group, str) for group in groups

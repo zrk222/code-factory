@@ -184,33 +184,10 @@ def recall_observations(
     """Recall bounded facts with keyword, entity/tag, and temporal ordering."""
     if not isinstance(limit, int) or not 1 <= limit <= MAX_OBSERVATIONS:
         raise BlueprintError("E_BLUEPRINT_LIMIT", "limit must be between 1 and 500")
-    project_filter = (
-        project.strip() if isinstance(project, str) and project.strip() else None
+    project_filter, query_terms, tag_filter = _recall_filters(project, query, tags)
+    matches, invalid = _matching_observations(
+        observations, project_filter, query_terms, tag_filter
     )
-    query_terms = (
-        [term.casefold() for term in query.split() if term.strip()]
-        if isinstance(query, str)
-        else []
-    )
-    tag_filter = set(_list(tags, "tags"))
-    matches: list[dict[str, Any]] = []
-    invalid = 0
-    for item in observations:
-        try:
-            value = _verify(item, MEMORY_SCHEMA, "memory_sha256")
-        except BlueprintError:
-            invalid += 1
-            continue
-        haystack = " ".join(
-            [value["subject"], value["summary"], *value["entities"], *value["tags"]]
-        ).casefold()
-        if project_filter and value["project"] != project_filter:
-            continue
-        if query_terms and not all(term in haystack for term in query_terms):
-            continue
-        if tag_filter and not tag_filter.issubset(set(value["tags"])):
-            continue
-        matches.append(value)
     matches.sort(
         key=lambda item: (item["observed_at"], item["memory_sha256"]), reverse=True
     )
@@ -228,6 +205,56 @@ def recall_observations(
         "authority": {"execute": False, "promote": False, "approve": False},
         "claim_boundary": "Recall is retrieval guidance only; it never mutates intent or proves the current implementation.",
     }
+
+
+def _recall_filters(
+    project: str | None, query: str | None, tags: Iterable[object]
+) -> tuple[str | None, list[str], set[str]]:
+    project_filter = (
+        project.strip() if isinstance(project, str) and project.strip() else None
+    )
+    query_terms = (
+        [term.casefold() for term in query.split() if term.strip()]
+        if isinstance(query, str)
+        else []
+    )
+    tag_filter = set(_list(tags, "tags"))
+    return project_filter, query_terms, tag_filter
+
+
+def _observation_matches(
+    value: dict[str, Any],
+    project_filter: str | None,
+    query_terms: list[str],
+    tag_filter: set[str],
+) -> bool:
+    haystack = " ".join(
+        [value["subject"], value["summary"], *value["entities"], *value["tags"]]
+    ).casefold()
+    return not (
+        (project_filter and value["project"] != project_filter)
+        or (query_terms and not all(term in haystack for term in query_terms))
+        or (tag_filter and not tag_filter.issubset(set(value["tags"])))
+    )
+
+
+def _matching_observations(
+    observations: Iterable[dict[str, Any]],
+    project_filter: str | None,
+    query_terms: list[str],
+    tag_filter: set[str],
+) -> tuple[list[dict[str, Any]], int]:
+    matches: list[dict[str, Any]] = []
+    invalid = 0
+    for item in observations:
+        try:
+            value = _verify(item, MEMORY_SCHEMA, "memory_sha256")
+        except BlueprintError:
+            invalid += 1
+            continue
+        if _observation_matches(value, project_filter, query_terms, tag_filter):
+            matches.append(value)
+    return matches, invalid
 
 
 def reflect_observations(observations: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -376,6 +403,30 @@ def team_plan(
     """Compile typed bot/subagent tasks without dispatching a worker."""
     plan_id = _text(plan_id, "plan_id", 120)
     _digest(intent_digest, "intent_digest")
+    _validate_poll_interval(poll_interval_seconds)
+    worker_rows, worker_ids = _worker_plan_rows(workers)
+    task_rows, task_ids = _task_plan_rows(tasks, worker_ids)
+    _validate_task_dependencies(task_rows, task_ids)
+    core = {
+        "schema": TEAM_SCHEMA,
+        "plan_id": plan_id,
+        "intent_digest": intent_digest,
+        "workers": sorted(worker_rows, key=lambda item: item["id"]),
+        "tasks": sorted(task_rows, key=lambda item: item["id"]),
+        "poll_interval_seconds": poll_interval_seconds,
+        "dispatcher": {"mode": "declarative", "started": False, "last_poll": None},
+        "authority": {
+            "dispatch": False,
+            "execute": False,
+            "merge": False,
+            "approve": False,
+        },
+        "claim_boundary": "Typed plan only; no dispatcher, worker, model, branch, or merge action ran.",
+    }
+    return _seal(core, "plan_sha256")
+
+
+def _validate_poll_interval(poll_interval_seconds: int) -> None:
     if (
         not isinstance(poll_interval_seconds, int)
         or not 5 <= poll_interval_seconds <= 3600
@@ -383,6 +434,11 @@ def team_plan(
         raise BlueprintError(
             "E_BLUEPRINT_POLL", "poll_interval_seconds must be between 5 and 3600"
         )
+
+
+def _worker_plan_rows(
+    workers: Iterable[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], set[str]]:
     worker_rows: list[dict[str, Any]] = []
     worker_ids: set[str] = set()
     for worker in workers:
@@ -403,6 +459,12 @@ def team_plan(
                 "tools": _list(worker.get("tools", []), "worker.tools", 40),
             }
         )
+    return worker_rows, worker_ids
+
+
+def _task_plan_rows(
+    tasks: Iterable[dict[str, Any]], worker_ids: set[str]
+) -> tuple[list[dict[str, Any]], set[str]]:
     task_rows: list[dict[str, Any]] = []
     task_ids: set[str] = set()
     for task in tasks:
@@ -425,26 +487,14 @@ def team_plan(
                 "acceptance": _text(task.get("acceptance"), "task.acceptance", 240),
             }
         )
-    known = task_ids
-    if any(dep not in known for task in task_rows for dep in task["dependencies"]):
+    return task_rows, task_ids
+
+
+def _validate_task_dependencies(
+    task_rows: list[dict[str, Any]], task_ids: set[str]
+) -> None:
+    if any(dep not in task_ids for task in task_rows for dep in task["dependencies"]):
         raise BlueprintError("E_BLUEPRINT_TASK", "task dependency is not declared")
-    core = {
-        "schema": TEAM_SCHEMA,
-        "plan_id": plan_id,
-        "intent_digest": intent_digest,
-        "workers": sorted(worker_rows, key=lambda item: item["id"]),
-        "tasks": sorted(task_rows, key=lambda item: item["id"]),
-        "poll_interval_seconds": poll_interval_seconds,
-        "dispatcher": {"mode": "declarative", "started": False, "last_poll": None},
-        "authority": {
-            "dispatch": False,
-            "execute": False,
-            "merge": False,
-            "approve": False,
-        },
-        "claim_boundary": "Typed plan only; no dispatcher, worker, model, branch, or merge action ran.",
-    }
-    return _seal(core, "plan_sha256")
 
 
 def build_artifact_chain(

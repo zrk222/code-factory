@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import factoryline.codex_metadata as codex_metadata
 from factoryline.cli import main
 from factoryline.codex_metadata import (
     MAX_FILE_BYTES,
@@ -56,6 +57,70 @@ def test_bound_terminal_records_are_verified_and_authority_free(tmp_path: Path):
         "billing": False,
     }
     assert all(len(item["sha256"]) == 64 for item in result["files"])
+    assert all(item["records"] == 2 for item in result["files"])
+
+
+def test_record_audit_walks_nested_values_once(monkeypatch, tmp_path: Path):
+    calls = 0
+    depth = 0
+    original = codex_metadata._walk_pairs
+
+    def counted_walk(value, prefix="record"):
+        nonlocal calls, depth
+        if depth == 0:
+            calls += 1
+        depth += 1
+        try:
+            yield from original(value, prefix)
+        finally:
+            depth -= 1
+
+    monkeypatch.setattr(codex_metadata, "_walk_pairs", counted_walk)
+    result = codex_metadata._audit_record(
+        tmp_path,
+        "claim.json",
+        "record.claim",
+        {
+            "status": "complete",
+            "provider": "github",
+            "provider_receipt": {"sha256": "a" * 64},
+            "intent_id": "REQ-1",
+        },
+    )
+
+    assert calls == 1
+    assert result == []
+
+
+def test_jsonl_receipt_reuses_terminal_sibling_state_lookup(
+    tmp_path: Path, monkeypatch
+):
+    mission = tmp_path / ".forge" / "mission"
+    mission.mkdir(parents=True)
+    state = mission / "state.json"
+    state.write_text(json.dumps({"state": "complete"}), encoding="utf-8")
+    receipt = mission / "receipts.jsonl"
+    receipt.write_text(
+        "".join(
+            json.dumps({"status": "complete", "h": f"{index:x}" * 12}) + "\n"
+            for index in range(1, 4)
+        ),
+        encoding="utf-8",
+    )
+    calls = 0
+    original = codex_metadata._terminal_state_file
+
+    def counted_state_check(workspace: Path, relative: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return original(workspace, relative)
+
+    monkeypatch.setattr(codex_metadata, "_terminal_state_file", counted_state_check)
+    result = audit_metadata(tmp_path, [receipt], scope="all")
+
+    assert calls == 1
+    assert result["files"][0]["records"] == 3
+    assert {item["scope"] for item in result["findings"]} == {"archive"}
 
 
 def test_unbound_success_and_self_attested_gate_fail_closed(tmp_path: Path):

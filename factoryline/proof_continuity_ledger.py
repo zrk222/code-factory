@@ -304,6 +304,18 @@ def _obligations(
             "PROOF_CONTINUITY_CHAIN_INVALID",
             "obligations must contain 1 through 128 source-to-evidence chains",
         )
+    rows = []
+    for index, raw in enumerate(value):
+        row = _normalize_obligation(raw, index)
+        _validate_obligation_references(row, grouped, sources, evidence)
+        _validate_obligation_provenance(row, grouped, sources)
+        rows.append(row)
+    _validate_unique_obligation_ids(rows)
+    _validate_critical_obligation_coverage(rows, grouped)
+    return sorted(rows, key=lambda item: item["id"])
+
+
+def _normalize_obligation(raw: object, index: int) -> dict[str, str]:
     expected = {
         "id",
         "source_id",
@@ -313,51 +325,69 @@ def _obligations(
         "test_id",
         "evidence_id",
     }
-    rows: list[dict[str, str]] = []
-    for index, raw in enumerate(value):
-        if not isinstance(raw, dict) or set(raw) != expected:
-            raise ProofContinuityError(
-                "PROOF_CONTINUITY_CHAIN_INVALID",
-                "every obligation must have the complete source-to-evidence chain",
-            )
-        row = {
-            key: _id(raw.get(key), f"obligations[{index}].{key}") for key in expected
-        }
-        bindings = (
-            ("source_id", sources),
-            ("requirement_id", grouped["requirements"]),
-            ("forbidden_behavior_id", grouped["forbidden_behaviors"]),
-            ("gate_id", grouped["gates"]),
-            ("test_id", grouped["tests"]),
-            ("evidence_id", evidence),
+    if not isinstance(raw, dict) or set(raw) != expected:
+        raise ProofContinuityError(
+            "PROOF_CONTINUITY_CHAIN_INVALID",
+            "every obligation must have the complete source-to-evidence chain",
         )
-        if any(row[key] not in available for key, available in bindings):
-            raise ProofContinuityError(
-                "PROOF_CONTINUITY_CHAIN_INVALID",
-                "obligation references an unavailable source, rule, or evidence receipt",
-            )
-        source = sources[row["source_id"]]
-        rules = (
-            grouped["requirements"][row["requirement_id"]],
-            grouped["forbidden_behaviors"][row["forbidden_behavior_id"]],
-            grouped["gates"][row["gate_id"]],
-            grouped["tests"][row["test_id"]],
+    return {key: _id(raw.get(key), f"obligations[{index}].{key}") for key in expected}
+
+
+def _validate_obligation_references(
+    row: dict[str, str],
+    grouped: dict[str, dict[str, dict[str, Any]]],
+    sources: dict[str, dict[str, Any]],
+    evidence: dict[str, dict[str, str]],
+) -> None:
+    bindings = (
+        ("source_id", sources),
+        ("requirement_id", grouped["requirements"]),
+        ("forbidden_behavior_id", grouped["forbidden_behaviors"]),
+        ("gate_id", grouped["gates"]),
+        ("test_id", grouped["tests"]),
+        ("evidence_id", evidence),
+    )
+    if any(row[key] not in available for key, available in bindings):
+        raise ProofContinuityError(
+            "PROOF_CONTINUITY_CHAIN_INVALID",
+            "obligation references an unavailable source, rule, or evidence receipt",
         )
-        if source.get("origin") not in _PROVENANCE or any(
-            rule.get("source_id") != row["source_id"]
-            or rule.get("origin") not in _PROVENANCE
-            or rule.get("effect") not in {"blocking", "release"}
-            for rule in rules
-        ):
-            raise ProofContinuityError(
-                "PROOF_CONTINUITY_PROVENANCE_INVALID",
-                "only human-confirmed or trusted-source blocking/release rules may enter the continuity chain",
-            )
-        rows.append(row)
+
+
+def _validate_obligation_provenance(
+    row: dict[str, str],
+    grouped: dict[str, dict[str, dict[str, Any]]],
+    sources: dict[str, dict[str, Any]],
+) -> None:
+    source = sources[row["source_id"]]
+    rules = (
+        grouped["requirements"][row["requirement_id"]],
+        grouped["forbidden_behaviors"][row["forbidden_behavior_id"]],
+        grouped["gates"][row["gate_id"]],
+        grouped["tests"][row["test_id"]],
+    )
+    if source.get("origin") not in _PROVENANCE or any(
+        rule.get("source_id") != row["source_id"]
+        or rule.get("origin") not in _PROVENANCE
+        or rule.get("effect") not in {"blocking", "release"}
+        for rule in rules
+    ):
+        raise ProofContinuityError(
+            "PROOF_CONTINUITY_PROVENANCE_INVALID",
+            "only human-confirmed or trusted-source blocking/release rules may enter the continuity chain",
+        )
+
+
+def _validate_unique_obligation_ids(rows: list[dict[str, str]]) -> None:
     if len({item["id"] for item in rows}) != len(rows):
         raise ProofContinuityError(
             "PROOF_CONTINUITY_CHAIN_INVALID", "obligation identifiers must be unique"
         )
+
+
+def _validate_critical_obligation_coverage(
+    rows: list[dict[str, str]], grouped: dict[str, dict[str, dict[str, Any]]]
+) -> None:
     for field, group in (
         ("requirement_id", "requirements"),
         ("forbidden_behavior_id", "forbidden_behaviors"),
@@ -375,7 +405,6 @@ def _obligations(
                 "PROOF_CONTINUITY_CHAIN_INCOMPLETE",
                 f"every critical {group} rule must appear in an obligation chain",
             )
-    return sorted(rows, key=lambda item: item["id"])
 
 
 def seal_proof_continuity(root: Path, input_path: Path, out: Path) -> dict[str, Any]:
@@ -681,6 +710,11 @@ def record_proof_continuity_observation(
     return {**receipt, "path": destination.relative_to(workspace).as_posix()}
 
 
+def _projection_mapping(value: dict[str, Any], field: str) -> dict[str, Any]:
+    mapping = value.get(field)
+    return mapping if isinstance(mapping, dict) else {}
+
+
 def _projection_item(workspace: Path, path: Path, schema: str) -> dict[str, Any] | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -691,9 +725,9 @@ def _projection_item(workspace: Path, path: Path, schema: str) -> dict[str, Any]
         required_marker is not None and value.get("marker") != required_marker
     ):
         return None
-    oracle = value.get("oracle") if isinstance(value.get("oracle"), dict) else {}
-    contract = value.get("contract") if isinstance(value.get("contract"), dict) else {}
-    incident = value.get("incident") if isinstance(value.get("incident"), dict) else {}
+    oracle = _projection_mapping(value, "oracle")
+    contract = _projection_mapping(value, "contract")
+    incident = _projection_mapping(value, "incident")
     return {
         "path": path.relative_to(workspace).as_posix(),
         "marker": value.get("marker"),

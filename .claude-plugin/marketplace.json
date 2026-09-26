@@ -28,7 +28,7 @@
     {
       "name": "code-factory-build-audit",
       "source": "./plugins/muse-code-factory-audit",
-      "description": "Native Muse Code build audits with PRD/spec-driven AppForge and SaaS proof routing.",
+      "description": "Muse Code audit hooks and on-demand MCP tools for Code Factory, ForgeLine, PRD/spec-driven AppForge and SaaS proof routing.",
       "author": {
         "name": "Richard Katz",
         "email": "rkatz22@gmail.com"

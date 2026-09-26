@@ -323,9 +323,7 @@ def _receipt_outcome(receipt: dict[str, Any]) -> bool | None:
     return None
 
 
-def _candidate(
-    root: Path, raw: object, authorized: set[str], seen: set[str]
-) -> dict[str, Any]:
+def _candidate_identity(raw: object, seen: set[str]) -> tuple[dict[str, Any], str]:
     if not isinstance(raw, dict):
         raise ProofSearchError(
             "PROOFSEARCH_CANDIDATE_INVALID", "candidate must be an object"
@@ -336,6 +334,12 @@ def _candidate(
             "PROOFSEARCH_CANDIDATE_DUPLICATE", f"duplicate candidate_id: {candidate_id}"
         )
     seen.add(candidate_id)
+    return raw, candidate_id
+
+
+def _candidate_patch(
+    root: Path, raw: dict[str, Any], candidate_id: str
+) -> dict[str, str]:
     patch = raw.get("patch")
     if not isinstance(patch, dict):
         raise ProofSearchError(
@@ -344,6 +348,10 @@ def _candidate(
     patch_path = _relative(patch.get("path"), f"{candidate_id}.patch.path")
     patch_sha = _sha(patch.get("sha256"), f"{candidate_id}.patch.sha256")
     _path_sha(root, patch_path, patch_sha, f"{candidate_id}.patch")
+    return {"path": patch_path, "sha256": patch_sha}
+
+
+def _candidate_paths(raw: dict[str, Any], candidate_id: str) -> list[str]:
     paths = sorted(
         {
             _relative(item, f"{candidate_id}.changed_path")
@@ -355,6 +363,12 @@ def _candidate(
             "PROOFSEARCH_CANDIDATE_INVALID",
             f"{candidate_id}.changed_paths must contain 1 through {MAX_PATHS} items",
         )
+    return paths
+
+
+def _candidate_proofs(
+    root: Path, raw: dict[str, Any], candidate_id: str
+) -> list[dict[str, Any]]:
     raw_proofs = raw.get("proofs")
     if (
         not isinstance(raw_proofs, list)
@@ -365,7 +379,10 @@ def _candidate(
             "PROOFSEARCH_CANDIDATE_INVALID",
             f"{candidate_id}.proofs must contain 1 through {MAX_PROOFS} items",
         )
-    proofs = [_proof(root, item, offset) for offset, item in enumerate(raw_proofs)]
+    return [_proof(root, item, offset) for offset, item in enumerate(raw_proofs)]
+
+
+def _candidate_mutation(raw: dict[str, Any], candidate_id: str) -> dict[str, int]:
     mutation = raw.get("mutation")
     if not isinstance(mutation, dict):
         raise ProofSearchError(
@@ -374,6 +391,10 @@ def _candidate(
         )
     killed = _integer(mutation.get("killed"), f"{candidate_id}.mutation.killed", 100000)
     total = _integer(mutation.get("total"), f"{candidate_id}.mutation.total", 100000)
+    return {"killed": killed, "total": total}
+
+
+def _candidate_guardrails(raw: dict[str, Any], candidate_id: str) -> dict[str, bool]:
     guardrails = raw.get("guardrails")
     if (
         not isinstance(guardrails, dict)
@@ -384,6 +405,10 @@ def _candidate(
             "PROOFSEARCH_CANDIDATE_INVALID",
             f"{candidate_id}.guardrails must contain three boolean fields",
         )
+    return guardrails
+
+
+def _candidate_proof_reasons(proofs: list[dict[str, Any]]) -> list[str]:
     reasons: list[str] = []
     if any(item["receipt_passed"] is None for item in proofs):
         reasons.append("PROOF_RECEIPT_OUTCOME_UNVERIFIABLE")
@@ -395,7 +420,17 @@ def _candidate(
         reasons.append("PROOF_RECEIPT_STATUS_MISMATCH")
     if any(item["required"] and item["status"] != "passed" for item in proofs):
         reasons.append("REQUIRED_PROOF_FAILED")
-    if total < 1 or killed != total:
+    return reasons
+
+
+def _candidate_safety_reasons(
+    mutation: dict[str, int],
+    paths: list[str],
+    authorized: set[str],
+    guardrails: dict[str, bool],
+) -> list[str]:
+    reasons: list[str] = []
+    if mutation["total"] < 1 or mutation["killed"] != mutation["total"]:
         reasons.append("HOLLOW_CANDIDATE_TESTS")
     if not set(paths).issubset(authorized):
         reasons.append("CANDIDATE_SCOPE_ESCAPE")
@@ -405,18 +440,43 @@ def _candidate(
         reasons.append("ERROR_SUPPRESSION_DECLARED")
     if guardrails["expands_scope"]:
         reasons.append("SCOPE_EXPANSION_DECLARED")
+    return reasons
+
+
+def _candidate_reasons(
+    proofs: list[dict[str, Any]],
+    mutation: dict[str, int],
+    paths: list[str],
+    authorized: set[str],
+    guardrails: dict[str, bool],
+) -> list[str]:
+    reasons = _candidate_proof_reasons(proofs)
+    reasons.extend(_candidate_safety_reasons(mutation, paths, authorized, guardrails))
+    return reasons
+
+
+def _candidate(
+    root: Path, raw: object, authorized: set[str], seen: set[str]
+) -> dict[str, Any]:
+    candidate, candidate_id = _candidate_identity(raw, seen)
+    patch = _candidate_patch(root, candidate, candidate_id)
+    paths = _candidate_paths(candidate, candidate_id)
+    proofs = _candidate_proofs(root, candidate, candidate_id)
+    mutation = _candidate_mutation(candidate, candidate_id)
+    guardrails = _candidate_guardrails(candidate, candidate_id)
+    reasons = _candidate_reasons(proofs, mutation, paths, authorized, guardrails)
     return {
         "candidate_id": candidate_id,
-        "patch": {"path": patch_path, "sha256": patch_sha},
+        "patch": patch,
         "changed_paths": paths,
         "proofs": proofs,
-        "mutation": {"killed": killed, "total": total},
+        "mutation": mutation,
         "guardrails": guardrails,
         "risk_score": _integer(
-            raw.get("risk_score"), f"{candidate_id}.risk_score", 100
+            candidate.get("risk_score"), f"{candidate_id}.risk_score", 100
         ),
         "changed_lines": _integer(
-            raw.get("changed_lines"), f"{candidate_id}.changed_lines", 1000000
+            candidate.get("changed_lines"), f"{candidate_id}.changed_lines", 1000000
         ),
         "eligible": not reasons,
         "reasons": sorted(reasons),

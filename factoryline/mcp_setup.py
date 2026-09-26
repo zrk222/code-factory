@@ -141,56 +141,59 @@ def mcp_connection_config(
     return payload
 
 
-def install_project_mcp_config(
-    root: Path | str, client: str, confirmation: str
-) -> dict[str, object]:
-    """Merge one secret-free project MCP entry after exact human confirmation."""
-    workspace = _workspace(root)
+def _validated_install_client(client: str) -> str:
     normalized = client.strip().lower() if isinstance(client, str) else ""
     if normalized not in {"junie", "copilot"}:
         raise McpSetupError(
             "project installation supports only Junie or Copilot", "MCP_CLIENT_REJECTED"
         )
+    return normalized
+
+
+def _require_install_confirmation(normalized: str, confirmation: str) -> None:
     expected_confirmation = f"INSTALL {normalized.title()} MCP"
     if confirmation != expected_confirmation:
         raise McpSetupError(
             f"confirmation must equal {expected_confirmation}",
             "MCP_SETUP_CONFIRMATION_REQUIRED",
         )
-    if normalized == "copilot":
-        target = workspace / ".github/agents/factoryline-proof.agent.md"
-        encoded = _copilot_agent(workspace).encode("utf-8")
-        if target.exists() and target.read_bytes() != encoded:
-            raise McpSetupError(
-                "existing FactoryLine Copilot agent differs; no overwrite was performed",
-                "MCP_SETUP_CONFLICT",
-            )
-        if not target.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            temporary = target.with_name(f".{target.name}.tmp")
-            temporary.write_bytes(encoded)
-            temporary.replace(target)
-            state = "installed"
-        else:
-            state = "already_current"
-        return {
-            "schema": "factory.mcp.install.v1",
-            "marker": "FACTORY_COPILOT_MCP_INSTALLED",
-            "state": state,
-            "client": "copilot",
-            "target": target.relative_to(workspace).as_posix(),
-            "file_sha256": sha256(encoded).hexdigest(),
-            "connection": {"command": "factory", "args": _command(workspace)[1:]},
-            "authority": {
-                "agent_start": False,
-                "credential": False,
-                "network": False,
-                "approval": False,
-            },
-            "next_action": "Open Copilot Chat in JetBrains, choose Configure Agents, select the workspace FactoryLine Proof agent, and review its MCP tools before use.",
-        }
-    target = workspace / ".junie/mcp/mcp.json"
-    expected = _json_config(workspace)["mcpServers"]["code-factory"]
+
+
+def _install_copilot_agent(workspace: Path) -> dict[str, object]:
+    target = workspace / ".github/agents/factoryline-proof.agent.md"
+    encoded = _copilot_agent(workspace).encode("utf-8")
+    if target.exists() and target.read_bytes() != encoded:
+        raise McpSetupError(
+            "existing FactoryLine Copilot agent differs; no overwrite was performed",
+            "MCP_SETUP_CONFLICT",
+        )
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.tmp")
+        temporary.write_bytes(encoded)
+        temporary.replace(target)
+        state = "installed"
+    else:
+        state = "already_current"
+    return {
+        "schema": "factory.mcp.install.v1",
+        "marker": "FACTORY_COPILOT_MCP_INSTALLED",
+        "state": state,
+        "client": "copilot",
+        "target": target.relative_to(workspace).as_posix(),
+        "file_sha256": sha256(encoded).hexdigest(),
+        "connection": {"command": "factory", "args": _command(workspace)[1:]},
+        "authority": {
+            "agent_start": False,
+            "credential": False,
+            "network": False,
+            "approval": False,
+        },
+        "next_action": "Open Copilot Chat in JetBrains, choose Configure Agents, select the workspace FactoryLine Proof agent, and review its MCP tools before use.",
+    }
+
+
+def _read_junie_config(target: Path) -> dict[str, object]:
     current: dict[str, object] = {}
     if target.exists():
         try:
@@ -210,6 +213,12 @@ def install_project_mcp_config(
                 "MCP_SETUP_CONFLICT",
             )
         current = loaded
+    return current
+
+
+def _merged_junie_config(
+    current: dict[str, object], expected: dict[str, object]
+) -> bytes:
     servers = dict(current.get("mcpServers", {}))
     existing = servers.get("code-factory")
     if existing is not None and existing != expected:
@@ -219,18 +228,25 @@ def install_project_mcp_config(
         )
     servers["code-factory"] = expected
     result = {"mcpServers": servers}
-    encoded = (
+    return (
         json.dumps(result, indent=2, sort_keys=True, ensure_ascii=False).encode("utf-8")
         + b"\n"
     )
+
+
+def _write_junie_config(target: Path, encoded: bytes) -> str:
     if not target.exists() or target.read_bytes() != encoded:
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_name(f".{target.name}.tmp")
         temporary.write_bytes(encoded)
         temporary.replace(target)
-        state = "installed"
-    else:
-        state = "already_current"
+        return "installed"
+    return "already_current"
+
+
+def _junie_installation_receipt(
+    workspace: Path, target: Path, encoded: bytes, state: str
+) -> dict[str, object]:
     return {
         "schema": "factory.mcp.install.v1",
         "marker": "FACTORY_JUNIE_MCP_INSTALLED",
@@ -247,3 +263,24 @@ def install_project_mcp_config(
         },
         "next_action": "Enable custom MCP servers in JetBrains AI Assistant, confirm code-factory is active, then ask Junie for factory.junie_taxonomy before requesting a scoped factory.agent_proof_mission.",
     }
+
+
+def _install_junie_config(workspace: Path) -> dict[str, object]:
+    target = workspace / ".junie/mcp/mcp.json"
+    expected = _json_config(workspace)["mcpServers"]["code-factory"]
+    current = _read_junie_config(target)
+    encoded = _merged_junie_config(current, expected)
+    state = _write_junie_config(target, encoded)
+    return _junie_installation_receipt(workspace, target, encoded, state)
+
+
+def install_project_mcp_config(
+    root: Path | str, client: str, confirmation: str
+) -> dict[str, object]:
+    """Merge one secret-free project MCP entry after exact human confirmation."""
+    workspace = _workspace(root)
+    normalized = _validated_install_client(client)
+    _require_install_confirmation(normalized, confirmation)
+    if normalized == "copilot":
+        return _install_copilot_agent(workspace)
+    return _install_junie_config(workspace)

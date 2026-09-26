@@ -93,6 +93,14 @@ def _stable_file_read(path: Path, *, label: str) -> tuple[dict[str, int], str]:
             "PROOF_INPUT_MISSING", f"{label} path is not a regular file: {candidate}"
         )
     before = _identity_from_stat(link_stat)
+    closed, digest = _read_open_file(candidate, before, label)
+    _verify_file_after_read(candidate, before, closed, label)
+    return before, digest
+
+
+def _read_open_file(
+    candidate: Path, before: dict[str, int], label: str
+) -> tuple[dict[str, int], str]:
     digest = hashlib.sha256()
     try:
         with candidate.open("rb") as handle:
@@ -118,6 +126,12 @@ def _stable_file_read(path: Path, *, label: str) -> tuple[dict[str, int], str]:
         raise ProofReuseError(
             "PROOF_REUSE_BLOCKED", f"{label} could not be read stably: {error}"
         ) from error
+    return closed, digest.hexdigest()
+
+
+def _verify_file_after_read(
+    candidate: Path, before: dict[str, int], closed: dict[str, int], label: str
+) -> None:
     if closed != before:
         raise ProofReuseError(
             "PROOF_REUSE_BLOCKED",
@@ -140,7 +154,6 @@ def _stable_file_read(path: Path, *, label: str) -> tuple[dict[str, int], str]:
             "PROOF_REUSE_BLOCKED",
             f"{label} file identity changed during read: {candidate}",
         )
-    return before, digest.hexdigest()
 
 
 def _sha_file(path: Path) -> str:
@@ -360,40 +373,43 @@ def _verify_rows(root: Path, payload: dict[str, Any], field: str) -> list[str]:
         if not isinstance(row, dict):
             errors.append(f"{field}: artifact row must be an object")
             continue
-        try:
-            raw_path = row.get("path")
-            if isinstance(raw_path, str) and _path_has_symlink(Path(root), raw_path):
-                raise ProofReuseError(
-                    "PROOF_REUSE_BLOCKED",
-                    f"{field} path traverses a symlink: {raw_path}",
-                )
-            relative, candidate = _relative_file(Path(root), row.get("path"), field)
-            expected_identity = row.get("identity")
-            if not isinstance(expected_identity, dict):
-                raise ProofReuseError(
-                    "PROOF_REUSE_BLOCKED", f"{field} identity is missing: {relative}"
-                )
-            identity, digest = _stable_file_read(candidate, label=field)
-            if identity != expected_identity:
-                raise ProofReuseError(
-                    "PROOF_REUSE_BLOCKED", f"{field} file identity changed: {relative}"
-                )
-            if digest != row.get("sha256"):
-                raise ProofReuseError(
-                    "PROOF_REUSE_BLOCKED", f"{field} digest changed: {relative}"
-                )
-        except ProofReuseError as error:
-            if error.code == "PROOF_REUSE_BLOCKED":
-                errors.append(f"PROOF_REUSE_BLOCKED: {error}")
-            else:
-                errors.append(f"{field}: {error}")
-            continue
-        except (TypeError, ValueError) as error:
-            errors.append(f"{field}: {error}")
-            continue
-        if relative != row.get("path"):
-            errors.append(f"{field} path mismatch: {relative}")
+        error = _verify_row(Path(root), row, field)
+        if error:
+            errors.append(error)
     return errors
+
+
+def _verify_row(root: Path, row: dict[str, Any], field: str) -> str | None:
+    try:
+        raw_path = row.get("path")
+        if isinstance(raw_path, str) and _path_has_symlink(root, raw_path):
+            raise ProofReuseError(
+                "PROOF_REUSE_BLOCKED", f"{field} path traverses a symlink: {raw_path}"
+            )
+        relative, candidate = _relative_file(root, row.get("path"), field)
+        expected_identity = row.get("identity")
+        if not isinstance(expected_identity, dict):
+            raise ProofReuseError(
+                "PROOF_REUSE_BLOCKED", f"{field} identity is missing: {relative}"
+            )
+        identity, digest = _stable_file_read(candidate, label=field)
+        if identity != expected_identity:
+            raise ProofReuseError(
+                "PROOF_REUSE_BLOCKED", f"{field} file identity changed: {relative}"
+            )
+        if digest != row.get("sha256"):
+            raise ProofReuseError(
+                "PROOF_REUSE_BLOCKED", f"{field} digest changed: {relative}"
+            )
+    except ProofReuseError as error:
+        if error.code == "PROOF_REUSE_BLOCKED":
+            return f"PROOF_REUSE_BLOCKED: {error}"
+        return f"{field}: {error}"
+    except (TypeError, ValueError) as error:
+        return f"{field}: {error}"
+    if relative != row.get("path"):
+        return f"{field} path mismatch: {relative}"
+    return None
 
 
 def _receipt_facts(payload: dict[str, Any]) -> dict[str, Any]:
@@ -538,6 +554,18 @@ def _route_gate(
         )
         markers.append("PROOF_IRRELEVANT_CHANGE")
         return _finish_route(item, markers, started)
+    return _route_receipt(root, proof, relevance, auto_savings, item, markers, started)
+
+
+def _route_receipt(
+    root: Path,
+    proof: str,
+    relevance: bool | None,
+    auto_savings: bool,
+    item: dict[str, Any],
+    markers: list[str],
+    started: int,
+) -> dict[str, Any]:
     receipt_path = _proof_directory(root) / f"{proof}.json"
     verification = (
         verify_proof_receipt(root, receipt_path) if receipt_path.exists() else None
@@ -648,6 +676,48 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _copy_challenge_artifacts(
+    root: Path, challenge_root: Path, payload: dict[str, Any]
+) -> None:
+    for field in ("inputs", "outputs"):
+        for row in payload.get(field, []):
+            relative, source = _relative_file(root, row["path"], field)
+            destination = challenge_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+
+
+def _rebind_challenge_receipt(
+    payload: dict[str, Any], challenge_root: Path
+) -> dict[str, Any]:
+    # The challenge copy has different filesystem identities. Rebind only
+    # those identities while preserving the receipt's other signed facts.
+    challenged = json.loads(json.dumps(payload))
+    for field in ("inputs", "outputs"):
+        for row in challenged.get(field, []):
+            copied = challenge_root / row["path"]
+            identity, digest = _stable_file_read(copied, label=field)
+            row["identity"] = identity
+            row["sha256"] = digest
+    challenged["proof_key"] = _proof_key(_receipt_facts(challenged))
+    challenged_core = {
+        key: value for key, value in challenged.items() if key != "receipt_sha256"
+    }
+    challenged["receipt_sha256"] = _sha_bytes(_canonical(challenged_core))
+    return challenged
+
+
+def _mutate_challenge(
+    challenge_root: Path, receipt_path: Path, rows: list[Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    baseline = verify_proof_receipt(challenge_root, receipt_path)
+    first_row = next(iter(rows))
+    target = challenge_root / first_row["path"]
+    target.write_bytes(target.read_bytes() + b"\nproof-mutation")
+    mutated = verify_proof_receipt(challenge_root, receipt_path)
+    return baseline, mutated
+
+
 def challenge_proof_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:
     """Prove one isolated input mutation invalidates the receipt."""
     payload = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
@@ -658,34 +728,11 @@ def challenge_proof_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:
         )
     with tempfile.TemporaryDirectory() as temporary:
         challenge_root = Path(temporary)
-        for field in ("inputs", "outputs"):
-            for row in payload.get(field, []):
-                relative, source = _relative_file(Path(root), row["path"], field)
-                destination = challenge_root / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, destination)
-        # The challenge copy has different filesystem identities. Rebind only
-        # those identities in an in-memory receipt while preserving all other
-        # signed facts, so the control baseline is still verified exactly.
-        challenged = json.loads(json.dumps(payload))
-        for field in ("inputs", "outputs"):
-            for row in challenged.get(field, []):
-                copied = challenge_root / row["path"]
-                identity, digest = _stable_file_read(copied, label=field)
-                row["identity"] = identity
-                row["sha256"] = digest
-        challenged["proof_key"] = _proof_key(_receipt_facts(challenged))
-        challenged_core = {
-            key: value for key, value in challenged.items() if key != "receipt_sha256"
-        }
-        challenged["receipt_sha256"] = _sha_bytes(_canonical(challenged_core))
+        _copy_challenge_artifacts(Path(root), challenge_root, payload)
+        challenged = _rebind_challenge_receipt(payload, challenge_root)
         challenged_receipt = challenge_root / "challenge-receipt.json"
         challenged_receipt.write_text(json.dumps(challenged), encoding="utf-8")
-        baseline = verify_proof_receipt(challenge_root, challenged_receipt)
-        first_row = next(iter(rows))
-        target = challenge_root / first_row["path"]
-        target.write_bytes(target.read_bytes() + b"\nproof-mutation")
-        mutated = verify_proof_receipt(challenge_root, challenged_receipt)
+        baseline, mutated = _mutate_challenge(challenge_root, challenged_receipt, rows)
     passed = baseline["valid"] and not mutated["valid"]
     return {
         "schema": "factory.proof-challenge.v1",

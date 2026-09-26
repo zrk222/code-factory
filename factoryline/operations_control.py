@@ -246,9 +246,9 @@ def _under(prefixes: list[str], path: str) -> bool:
     )
 
 
-def _validate_manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
+def _manifest_relative_path(root: Path, source: Path) -> str:
     try:
-        relative = (
+        return (
             source.resolve().relative_to(root).as_posix()
             if source.is_absolute()
             else _path(str(source), "manifest")
@@ -257,21 +257,9 @@ def _validate_manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
         raise OperationsControlError(
             "E_OPS_CONTROL_PATH", "manifest must remain beneath the workspace"
         ) from exc
-    value, source_sha = _read_json(root, relative, "manifest")
-    fields = {
-        "schema",
-        "id",
-        "work_kind",
-        "base",
-        "scope_paths",
-        "isolation",
-        "reproduction",
-        "change_envelope",
-        "evidence",
-        "architecture",
-        "coordination",
-    }
-    entry = _exact(value, fields, "manifest")
+
+
+def _validate_manifest_header(entry: dict[str, Any]) -> None:
     if entry["schema"] != MANIFEST_SCHEMA:
         raise OperationsControlError(
             "E_OPS_CONTROL_SCHEMA", f"schema must be {MANIFEST_SCHEMA}"
@@ -285,9 +273,11 @@ def _validate_manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
         raise OperationsControlError(
             "E_OPS_CONTROL_SCHEMA", "base must be a non-empty Git revision"
         )
-    scopes = _paths(entry["scope_paths"], "scope_paths", minimum=1)
+
+
+def _validate_isolation(value: object) -> dict[str, Any]:
     isolation = _exact(
-        entry["isolation"],
+        value,
         {"expected_branch", "expected_base_sha", "require_clean"},
         "isolation",
     )
@@ -300,8 +290,12 @@ def _validate_manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
             "E_OPS_CONTROL_SCHEMA", "isolation branch and clean fields are invalid"
         )
     _git_sha(isolation["expected_base_sha"], "isolation.expected_base_sha")
+    return isolation
+
+
+def _validate_reproduction_manifest(value: object) -> dict[str, Any]:
     reproduction = _exact(
-        entry["reproduction"],
+        value,
         {
             "failure_capsule",
             "execution_receipt",
@@ -328,8 +322,12 @@ def _validate_manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
         raise OperationsControlError(
             "E_OPS_CONTROL_SCHEMA", "reproduction.max_attempts must be at least one"
         )
+    return reproduction
+
+
+def _validate_change_envelope(value: object) -> dict[str, Any]:
     envelope = _exact(
-        entry["change_envelope"],
+        value,
         {"purpose", "max_changed_files", "max_changed_lines"},
         "change_envelope",
     )
@@ -347,7 +345,11 @@ def _validate_manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
                 "E_OPS_CONTROL_SCHEMA",
                 f"change_envelope.{name} must be a positive integer",
             )
-    evidence = _exact(entry["evidence"], {"task_kind", "tier", "artifacts"}, "evidence")
+    return envelope
+
+
+def _validate_evidence(value: object) -> dict[str, Any]:
+    evidence = _exact(value, {"task_kind", "tier", "artifacts"}, "evidence")
     if (
         evidence["task_kind"] not in {"logic", "visual", "interaction"}
         or evidence["tier"] not in _TIERS
@@ -355,9 +357,15 @@ def _validate_manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
         raise OperationsControlError(
             "E_OPS_CONTROL_SCHEMA", "evidence task_kind or tier is unsupported"
         )
-    artifacts = _paths(evidence["artifacts"], "evidence.artifacts", minimum=1)
+    return {
+        **evidence,
+        "artifacts": _paths(evidence["artifacts"], "evidence.artifacts", minimum=1),
+    }
+
+
+def _validate_architecture(value: object) -> dict[str, Any]:
     architecture = _exact(
-        entry["architecture"],
+        value,
         {"core_paths", "interface_paths", "core_check_receipts"},
         "architecture",
     )
@@ -370,46 +378,81 @@ def _validate_manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
             "E_OPS_CONTROL_SCHEMA",
             "architecture core and interface paths must not overlap",
         )
-    core_checks = _paths(
-        architecture["core_check_receipts"], "architecture.core_check_receipts"
+    return {
+        "core_paths": core,
+        "interface_paths": interface,
+        "core_check_receipts": _paths(
+            architecture["core_check_receipts"],
+            "architecture.core_check_receipts",
+        ),
+    }
+
+
+def _normalize_repository(item: object, index: int) -> dict[str, Any]:
+    repo = _exact(
+        item,
+        {"id", "path", "expected_head_sha", "dependencies"},
+        f"coordination.repositories[{index}]",
     )
-    coordination = _exact(entry["coordination"], {"repositories"}, "coordination")
-    repositories = coordination["repositories"]
-    if not isinstance(repositories, list) or not 1 <= len(repositories) <= 32:
+    return {
+        "id": _identifier(repo["id"], "repository id"),
+        "path": _path(repo["path"], "repository path"),
+        "expected_head_sha": _git_sha(
+            repo["expected_head_sha"], "repository expected_head_sha"
+        ),
+        "dependencies": sorted(
+            {_identifier(dep, "repository dependency") for dep in repo["dependencies"]}
+        ),
+    }
+
+
+def _validate_repositories(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 32:
         raise OperationsControlError(
             "E_OPS_CONTROL_SCHEMA",
             "coordination.repositories must contain 1-32 entries",
         )
-    normalized_repos = []
-    for index, item in enumerate(repositories):
-        repo = _exact(
-            item,
-            {"id", "path", "expected_head_sha", "dependencies"},
-            f"coordination.repositories[{index}]",
-        )
-        normalized_repos.append(
-            {
-                "id": _identifier(repo["id"], "repository id"),
-                "path": _path(repo["path"], "repository path"),
-                "expected_head_sha": _git_sha(
-                    repo["expected_head_sha"], "repository expected_head_sha"
-                ),
-                "dependencies": sorted(
-                    {
-                        _identifier(dep, "repository dependency")
-                        for dep in repo["dependencies"]
-                    }
-                ),
-            }
-        )
-    ids = {item["id"] for item in normalized_repos}
-    if len(ids) != len(normalized_repos) or any(
-        dep not in ids for item in normalized_repos for dep in item["dependencies"]
+    repositories = [
+        _normalize_repository(item, index) for index, item in enumerate(value)
+    ]
+    ids = {item["id"] for item in repositories}
+    if len(ids) != len(repositories) or any(
+        dependency not in ids
+        for item in repositories
+        for dependency in item["dependencies"]
     ):
         raise OperationsControlError(
             "E_OPS_CONTROL_SCHEMA",
             "coordination repository IDs and dependencies must be unique and declared",
         )
+    return repositories
+
+
+def _validate_manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
+    relative = _manifest_relative_path(root, source)
+    value, source_sha = _read_json(root, relative, "manifest")
+    fields = {
+        "schema",
+        "id",
+        "work_kind",
+        "base",
+        "scope_paths",
+        "isolation",
+        "reproduction",
+        "change_envelope",
+        "evidence",
+        "architecture",
+        "coordination",
+    }
+    entry = _exact(value, fields, "manifest")
+    _validate_manifest_header(entry)
+    scopes = _paths(entry["scope_paths"], "scope_paths", minimum=1)
+    isolation = _validate_isolation(entry["isolation"])
+    reproduction = _validate_reproduction_manifest(entry["reproduction"])
+    envelope = _validate_change_envelope(entry["change_envelope"])
+    evidence = _validate_evidence(entry["evidence"])
+    architecture = _validate_architecture(entry["architecture"])
+    coordination = _exact(entry["coordination"], {"repositories"}, "coordination")
     return {
         "id": entry["id"],
         "work_kind": entry["work_kind"],
@@ -418,13 +461,11 @@ def _validate_manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
         "isolation": isolation,
         "reproduction": reproduction,
         "change_envelope": envelope,
-        "evidence": {**evidence, "artifacts": artifacts},
-        "architecture": {
-            "core_paths": core,
-            "interface_paths": interface,
-            "core_check_receipts": core_checks,
+        "evidence": evidence,
+        "architecture": architecture,
+        "coordination": {
+            "repositories": _validate_repositories(coordination["repositories"])
         },
-        "coordination": {"repositories": normalized_repos},
         "path": relative,
     }, source_sha
 
@@ -436,10 +477,9 @@ def _artifact_facts(root: Path, paths: list[str]) -> list[dict[str, str]]:
     ]
 
 
-def _reproduction(
-    root: Path, value: dict[str, Any], work_kind: str
-) -> tuple[dict[str, Any], list[str]]:
-    blockers: list[str] = []
+def _reproduction_observations(
+    root: Path, value: dict[str, Any]
+) -> tuple[str, bool, str, bool]:
     capsule, capsule_sha = _read_json(root, value["failure_capsule"], "failure capsule")
     receipt, receipt_sha = _read_json(
         root, value["execution_receipt"], "reproduction execution receipt"
@@ -457,6 +497,16 @@ def _reproduction(
         )
     except (E2EProofError, TypeError, ValueError):
         receipt_ok = False
+    return capsule_sha, capsule_ok, receipt_sha, receipt_ok
+
+
+def _reproduction(
+    root: Path, value: dict[str, Any], work_kind: str
+) -> tuple[dict[str, Any], list[str]]:
+    blockers: list[str] = []
+    capsule_sha, capsule_ok, receipt_sha, receipt_ok = _reproduction_observations(
+        root, value
+    )
     budget_ok = (
         value["attempts_used"] <= value["max_attempts"]
         and value["observed_tokens"] <= value["token_budget"]
@@ -497,13 +547,9 @@ def _tier_ok(task_kind: str, tier: str) -> bool:
     }[task_kind].__contains__(tier)
 
 
-def assess_operations_control(
-    root: Path, manifest_path: Path, out: Path | None = None
-) -> dict[str, Any]:
-    """Write a local operational-readiness receipt without dispatching any work."""
-    workspace = Path(root).resolve()
-    manifest, manifest_sha = _validate_manifest(workspace, manifest_path)
-    git = _git_facts(workspace, manifest["base"])
+def _change_control_facts(
+    manifest: dict[str, Any], git: dict[str, Any]
+) -> tuple[list[str], list[dict[str, Any]], int, list[str]]:
     blockers: list[str] = []
     isolation = manifest["isolation"]
     if git["branch"] != isolation["expected_branch"]:
@@ -525,10 +571,13 @@ def assess_operations_control(
         blockers.append("CHANGE_ENVELOPE_FILE_LIMIT")
     if measured_lines > envelope["max_changed_lines"] or binary_paths:
         blockers.append("CHANGE_ENVELOPE_LINE_LIMIT")
-    reproduction, repro_blockers = _reproduction(
-        workspace, manifest["reproduction"], manifest["work_kind"]
-    )
-    blockers.extend(repro_blockers)
+    return blockers, changed, measured_lines, binary_paths
+
+
+def _evidence_architecture_facts(
+    workspace: Path, manifest: dict[str, Any], paths: list[str]
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    blockers: list[str] = []
     evidence = manifest["evidence"]
     evidence_ok = _tier_ok(evidence["task_kind"], evidence["tier"])
     if not evidence_ok:
@@ -551,18 +600,75 @@ def assess_operations_control(
         blockers.append("CORE_CHECK_RECEIPT_MISSING")
     if unclassified:
         blockers.append("ARCHITECTURE_ZONE_UNCLASSIFIED")
-    repositories = []
-    for item in manifest["coordination"]["repositories"]:
+    evidence_facts = {
+        "task_kind": evidence["task_kind"],
+        "tier": evidence["tier"],
+        "tier_sufficient": evidence_ok,
+        "artifacts": artifacts,
+    }
+    architecture_facts = {
+        "core_changed": core_changed,
+        "interface_changed": interface_changed,
+        "unclassified_changed": unclassified,
+        "core_check_receipts": checks,
+    }
+    return evidence_facts, architecture_facts, blockers
+
+
+def _coordination_facts(
+    workspace: Path, repositories: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    current_repositories = []
+    blockers: list[str] = []
+    for item in repositories:
         repo_path = _inside(workspace, item["path"], directory=True)
         try:
             actual = _git(repo_path, "rev-parse", "HEAD")
             valid = actual == item["expected_head_sha"]
         except OperationsControlError:
             actual, valid = None, False
-        repositories.append({**item, "actual_head_sha": actual, "current": valid})
+        current_repositories.append(
+            {**item, "actual_head_sha": actual, "current": valid}
+        )
         if not valid:
             blockers.append("COORDINATION_REPOSITORY_DRIFT")
-    core = {
+    return current_repositories, blockers
+
+
+def _next_action(blockers: list[str]) -> dict[str, str]:
+    reproduction_needs_review = any(item.startswith("REPRO_") for item in blockers)
+    if reproduction_needs_review:
+        return {
+            "action": "human_shepherd_review",
+            "reason": "A reproduction budget or observation needs human review.",
+        }
+    if blockers:
+        return {
+            "action": "repair_operations_contract",
+            "reason": "One or more operational preconditions are unproven.",
+        }
+    return {
+        "action": "review_evidence_packet",
+        "reason": "All declared local operational controls are currently satisfied; merge and execution authority remain external.",
+    }
+
+
+def _operations_control_core(
+    manifest: dict[str, Any],
+    manifest_sha: str,
+    git: dict[str, Any],
+    blockers: list[str],
+    reproduction: dict[str, Any],
+    changed: list[dict[str, Any]],
+    measured_lines: int,
+    binary_paths: list[str],
+    evidence: dict[str, Any],
+    architecture: dict[str, Any],
+    repositories: list[dict[str, Any]],
+) -> dict[str, Any]:
+    isolation = manifest["isolation"]
+    envelope = manifest["change_envelope"]
+    return {
         "schema": RECEIPT_SCHEMA,
         "marker": "OPS_CONTROL_READY" if not blockers else "OPS_CONTROL_BLOCKED",
         "manifest": {
@@ -600,38 +706,25 @@ def assess_operations_control(
                 "binary_paths": binary_paths,
             },
         },
-        "evidence": {
-            "task_kind": evidence["task_kind"],
-            "tier": evidence["tier"],
-            "tier_sufficient": evidence_ok,
-            "artifacts": artifacts,
-        },
-        "architecture": {
-            "core_changed": core_changed,
-            "interface_changed": interface_changed,
-            "unclassified_changed": unclassified,
-            "core_check_receipts": checks,
-        },
+        "evidence": evidence,
+        "architecture": architecture,
         "coordination": {"repositories": repositories},
         "blockers": sorted(set(blockers)),
-        "next_action": {
-            "action": "human_shepherd_review"
-            if any(item.startswith("REPRO_") for item in blockers)
-            else "repair_operations_contract"
-            if blockers
-            else "review_evidence_packet",
-            "reason": "A reproduction budget or observation needs human review."
-            if any(item.startswith("REPRO_") for item in blockers)
-            else "One or more operational preconditions are unproven."
-            if blockers
-            else "All declared local operational controls are currently satisfied; merge and execution authority remain external.",
-        },
+        "next_action": _next_action(blockers),
         "authority": dict(AUTHORITY),
         "scope_limits": [
             "This receipt never creates a worktree, runs a reproduction, starts an agent, dispatches a task, repairs code, merges, publishes, deploys, sends a message, or accesses credentials.",
             "Observed token and attempt values are supplied evidence; Code Factory preserves them as declared measurements and does not infer hidden model usage.",
         ],
     }
+
+
+def _write_operations_control_receipt(
+    workspace: Path,
+    manifest: dict[str, Any],
+    core: dict[str, Any],
+    out: Path | None,
+) -> dict[str, Any]:
     # Timestamp is part of the immutable receipt, not projection-only metadata.
     # Otherwise an attacker can alter the apparent issuance time without
     # invalidating the local receipt hash.
@@ -666,6 +759,45 @@ def assess_operations_control(
         if os.path.exists(temporary):
             os.unlink(temporary)
     return {**receipt, "path": target_relative}
+
+
+def assess_operations_control(
+    root: Path, manifest_path: Path, out: Path | None = None
+) -> dict[str, Any]:
+    """Write a local operational-readiness receipt without dispatching any work."""
+    workspace = Path(root).resolve()
+    manifest, manifest_sha = _validate_manifest(workspace, manifest_path)
+    git = _git_facts(workspace, manifest["base"])
+    blockers, changed, measured_lines, binary_paths = _change_control_facts(
+        manifest, git
+    )
+    reproduction, repro_blockers = _reproduction(
+        workspace, manifest["reproduction"], manifest["work_kind"]
+    )
+    blockers.extend(repro_blockers)
+    paths = [item["path"] for item in changed]
+    evidence, architecture, evidence_blockers = _evidence_architecture_facts(
+        workspace, manifest, paths
+    )
+    blockers.extend(evidence_blockers)
+    repositories, coordination_blockers = _coordination_facts(
+        workspace, manifest["coordination"]["repositories"]
+    )
+    blockers.extend(coordination_blockers)
+    core = _operations_control_core(
+        manifest,
+        manifest_sha,
+        git,
+        blockers,
+        reproduction,
+        changed,
+        measured_lines,
+        binary_paths,
+        evidence,
+        architecture,
+        repositories,
+    )
+    return _write_operations_control_receipt(workspace, manifest, core, out)
 
 
 def operations_control_projection(root: Path) -> dict[str, Any]:

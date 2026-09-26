@@ -182,6 +182,25 @@ def _resume_windows_process(child: subprocess.Popen) -> tuple[bool, str | None]:
     return True, None
 
 
+def _proc_group_member(entry: Path, pgid: int) -> tuple[int | None, bool]:
+    if not entry.name.isdigit():
+        return None, True
+    try:
+        text = (entry / "stat").read_text(encoding="ascii")
+        close = text.rfind(")")
+        if close < 0:
+            return None, False
+        fields = text[close + 2 :].split()
+        # After the comm field: state, ppid, pgrp, session, ...
+        if len(fields) < 3:
+            return None, False
+        if int(fields[2]) != pgid or fields[0] == "Z":
+            return None, True
+        return int(entry.name), True
+    except (OSError, UnicodeDecodeError, ValueError, IndexError):
+        return None, False
+
+
 def _posix_group_members(pgid: int) -> set[int] | None:
     """Return live PIDs in *pgid*, or ``None`` when enumeration is unavailable."""
     proc = Path("/proc")
@@ -192,25 +211,13 @@ def _posix_group_members(pgid: int) -> set[int] | None:
     except OSError:
         return None
     members: set[int] = set()
-    complete = True
     for entry in entries:
-        if not entry.name.isdigit():
-            continue
-        try:
-            text = (entry / "stat").read_text(encoding="ascii")
-            close = text.rfind(")")
-            if close < 0:
-                complete = False
-                continue
-            fields = text[close + 2 :].split()
-            # After the comm field: state, ppid, pgrp, session, ...
-            if len(fields) < 3 or int(fields[2]) != pgid:
-                continue
-            if fields[0] != "Z":
-                members.add(int(entry.name))
-        except (OSError, UnicodeDecodeError, ValueError, IndexError):
-            complete = False
-    return members if complete else None
+        pid, complete = _proc_group_member(entry, pgid)
+        if not complete:
+            return None
+        if pid is not None:
+            members.add(pid)
+    return members
 
 
 def _posix_group_status(pgid: int) -> bool | None:
@@ -227,6 +234,26 @@ def _posix_group_status(pgid: int) -> bool | None:
     except OSError as error:
         return True if error.errno == errno.ESRCH else None
     return False
+
+
+def _parse_posix_processes(output: str) -> dict[int, _PosixProcess] | None:
+    observed: dict[int, _PosixProcess] = {}
+    try:
+        for line in output.splitlines():
+            fields = line.split(maxsplit=3)
+            if len(fields) != 4:
+                return None
+            pid, ppid, pgid = (int(value) for value in fields[:3])
+            # Linux can report pgid=0 for host-owned processes (for example
+            # PID 1 in a container).  Those rows are still valid lineage
+            # observations; rejecting the entire snapshot would disable
+            # escaped-descendant detection for the invocation we care about.
+            if pid <= 0 or ppid < 0 or pgid < 0 or not fields[3]:
+                return None
+            observed[pid] = _PosixProcess(pid, ppid, pgid, fields[3])
+    except ValueError:
+        return None
+    return observed
 
 
 def _posix_processes() -> dict[int, _PosixProcess] | None:
@@ -249,23 +276,38 @@ def _posix_processes() -> dict[int, _PosixProcess] | None:
         return None
     if result.returncode != 0:
         return None
-    observed: dict[int, _PosixProcess] = {}
-    try:
-        for line in result.stdout.splitlines():
-            fields = line.split(maxsplit=3)
-            if len(fields) != 4:
-                return None
-            pid, ppid, pgid = (int(value) for value in fields[:3])
-            # Linux can report pgid=0 for host-owned processes (for example
-            # PID 1 in a container).  Those rows are still valid lineage
-            # observations; rejecting the entire snapshot would disable
-            # escaped-descendant detection for the invocation we care about.
-            if pid <= 0 or ppid < 0 or pgid < 0 or not fields[3]:
-                return None
-            observed[pid] = _PosixProcess(pid, ppid, pgid, fields[3])
-    except ValueError:
-        return None
-    return observed
+    return _parse_posix_processes(result.stdout)
+
+
+def _known_descendants(
+    child_pid: int,
+    processes: dict[int, _PosixProcess],
+    observed_descendants: dict[int, str],
+) -> set[int]:
+    known = {child_pid}
+    for pid, identity in observed_descendants.items():
+        item = processes.get(pid)
+        if item is not None and item.identity == identity:
+            known.add(pid)
+    return known
+
+
+def _observe_process_tree(
+    processes: dict[int, _PosixProcess],
+    known: set[int],
+    observed_descendants: dict[int, str],
+) -> None:
+    while True:
+        additions = [
+            item
+            for item in processes.values()
+            if item.pid not in known and item.ppid in known
+        ]
+        if not additions:
+            return
+        for item in additions:
+            observed_descendants[item.pid] = item.identity
+            known.add(item.pid)
 
 
 def _observe_descendants(
@@ -282,24 +324,8 @@ def _observe_descendants(
     processes = _posix_processes()
     if processes is None:
         return
-    known = {child.pid}
-    # Existing observations may expose a grandchild in the next sample even if
-    # its direct parent has already been reaped from the original process tree.
-    for pid, identity in unit.observed_descendants.items():
-        item = processes.get(pid)
-        if item is not None and item.identity == identity:
-            known.add(pid)
-    while True:
-        additions = [
-            item
-            for item in processes.values()
-            if item.pid not in known and item.ppid in known
-        ]
-        if not additions:
-            return
-        for item in additions:
-            unit.observed_descendants[item.pid] = item.identity
-            known.add(item.pid)
+    known = _known_descendants(child.pid, processes, unit.observed_descendants)
+    _observe_process_tree(processes, known, unit.observed_descendants)
 
 
 def _escaped_descendant_status(unit: _CleanupUnit) -> bool | None:

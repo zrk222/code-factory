@@ -318,16 +318,7 @@ def _local_file_hashes(
     return bound
 
 
-def validate_junie_contribution(
-    root: Path | str, declaration: object
-) -> dict[str, object]:
-    """Validate a Junie-declared FactoryLine contribution without persisting it.
-
-    The result gives visible, falsifiable credit for the named FactoryLine
-    tools and cited local artifacts.  It deliberately cannot attest to
-    Junie's internal reasoning or independently observe its MCP calls.
-    """
-    workspace = _workspace(root)
+def _contribution_declaration(declaration: object) -> dict[str, object]:
     if not isinstance(declaration, dict):
         raise JunieTaxonomyError(
             "contribution must be an object", "JUNIE_CONTRIBUTION_INPUT_REJECTED"
@@ -346,6 +337,12 @@ def validate_junie_contribution(
             "contribution must contain only the documented required arguments",
             "JUNIE_CONTRIBUTION_INPUT_REJECTED",
         )
+    return declaration
+
+
+def _contribution_taxonomy_digest(
+    workspace: Path, declaration: dict[str, object]
+) -> str:
     taxonomy = junie_taxonomy(workspace)
     taxonomy_sha256 = declaration["taxonomy_sha256"]
     if (
@@ -356,23 +353,37 @@ def validate_junie_contribution(
             "taxonomy_sha256 must match the current factory.junie_taxonomy result",
             "JUNIE_CONTRIBUTION_TAXONOMY_MISMATCH",
         )
+    return taxonomy_sha256
+
+
+def _contribution_tools(declaration: dict[str, object]) -> list[str]:
     tools = _string_list(
         declaration["tools_called"], "tools_called", maximum=58, allow_empty=False
     )
-    known_tools = set(_all_tools())
-    unknown_tools = sorted(set(tools) - known_tools)
+    unknown_tools = sorted(set(tools) - set(_all_tools()))
     if unknown_tools:
         raise JunieTaxonomyError(
             f"tools_called contains unknown FactoryLine tools: {', '.join(unknown_tools)}",
             "JUNIE_CONTRIBUTION_TOOL_REJECTED",
         )
+    return tools
+
+
+def _contribution_paths(
+    workspace: Path, declaration: dict[str, object]
+) -> tuple[list[str], list[str]]:
     evidence_paths = _canonical_path_list(
         workspace, declaration["evidence_paths"], "evidence_paths", maximum=32
     )
     changed_paths = _canonical_path_list(
         workspace, declaration["changed_paths"], "changed_paths", maximum=200
     )
-    raw_rationales = declaration["change_rationales"]
+    return evidence_paths, changed_paths
+
+
+def _contribution_rationales(
+    workspace: Path, raw_rationales: object, changed_paths: list[str]
+) -> dict[str, str]:
     if not isinstance(raw_rationales, dict) or not all(
         isinstance(path, str)
         and isinstance(rationale, str)
@@ -399,6 +410,10 @@ def validate_junie_contribution(
             "change_rationales must cover exactly the declared changed_paths",
             "JUNIE_CONTRIBUTION_RATIONALE_REJECTED",
         )
+    return rationales
+
+
+def _contribution_summary(declaration: dict[str, object]) -> tuple[str, list[str]]:
     contribution = declaration["contribution"]
     if (
         not isinstance(contribution, str)
@@ -409,8 +424,18 @@ def validate_junie_contribution(
             "JUNIE_CONTRIBUTION_INPUT_REJECTED",
         )
     unknowns = _string_list(declaration["unknowns"], "unknowns", maximum=32)
-    evidence = _local_file_hashes(workspace, evidence_paths, "evidence_paths")
-    changes = _local_file_hashes(workspace, changed_paths, "changed_paths")
+    return contribution.strip(), unknowns
+
+
+def _contribution_result(
+    taxonomy_sha256: str,
+    tools: list[str],
+    evidence: list[dict[str, str]],
+    changes: list[dict[str, str]],
+    rationales: dict[str, str],
+    contribution: str,
+    unknowns: list[str],
+) -> dict[str, object]:
     evidence_label = (
         f"{len(evidence)} cited local evidence file(s) hash-verified"
         if evidence
@@ -429,7 +454,7 @@ def validate_junie_contribution(
         "change_cards": [
             {**change, "rationale": rationales[change["path"]]} for change in changes
         ],
-        "contribution": contribution.strip(),
+        "contribution": contribution,
         "unknowns": unknowns,
         "review_lens": {
             "sequence": "source → obligation → forbidden behavior → gate → test → evidence → decision",
@@ -438,6 +463,37 @@ def validate_junie_contribution(
         "claim_boundary": "This validates only the supplied FactoryLine tool names and hashes of cited local files. It cannot authenticate Junie, observe its reasoning or MCP calls, prove a test ran, or approve the change.",
         "authority": dict(_AUTHORITY),
     }
+
+
+def validate_junie_contribution(
+    root: Path | str, declaration: object
+) -> dict[str, object]:
+    """Validate a Junie-declared FactoryLine contribution without persisting it.
+
+    The result gives visible, falsifiable credit for the named FactoryLine
+    tools and cited local artifacts.  It deliberately cannot attest to
+    Junie's internal reasoning or independently observe its MCP calls.
+    """
+    workspace = _workspace(root)
+    declaration = _contribution_declaration(declaration)
+    taxonomy_sha256 = _contribution_taxonomy_digest(workspace, declaration)
+    tools = _contribution_tools(declaration)
+    evidence_paths, changed_paths = _contribution_paths(workspace, declaration)
+    rationales = _contribution_rationales(
+        workspace, declaration["change_rationales"], changed_paths
+    )
+    contribution, unknowns = _contribution_summary(declaration)
+    evidence = _local_file_hashes(workspace, evidence_paths, "evidence_paths")
+    changes = _local_file_hashes(workspace, changed_paths, "changed_paths")
+    return _contribution_result(
+        taxonomy_sha256,
+        tools,
+        evidence,
+        changes,
+        rationales,
+        contribution,
+        unknowns,
+    )
 
 
 def junie_taxonomy(root: Path | str) -> dict[str, object]:

@@ -124,198 +124,247 @@ def add_parser(sub: Any) -> None:
     combine_seal.add_argument("--json", action="store_true")
 
 
-def run(args: Any) -> int:
-    """Execute one license or Combine command."""
-    if args.cmd == "license":
-        from .agent_license import (
-            AgentLicenseError,
-            derive_license,
-            issue_license,
-            record_governed_run,
-            seal_license,
-            verify_license,
+def _workspace_path(
+    workspace: Path,
+    value: str,
+    error_type: type[Exception],
+    code: str,
+    message: str,
+) -> Path:
+    candidate = Path(value)
+    resolved = (
+        candidate.resolve()
+        if candidate.is_absolute()
+        else (workspace / candidate).resolve()
+    )
+    try:
+        resolved.relative_to(workspace)
+    except ValueError as exc:
+        raise error_type(code, message) from exc
+    return resolved
+
+
+def _require_workspace(root: str, error_type: type[Exception], code: str) -> Path:
+    workspace = Path(root).resolve()
+    if not workspace.is_dir():
+        raise error_type(code, "root must be an existing workspace directory")
+    return workspace
+
+
+def _license_workspace_path(workspace: Path, value: str) -> Path:
+    from .agent_license import AgentLicenseError
+
+    return _workspace_path(
+        workspace,
+        value,
+        AgentLicenseError,
+        "E_LICENSE_PATH_OUT_OF_SCOPE",
+        "path must remain inside the workspace",
+    )
+
+
+def _license_payload(args: Any) -> tuple[dict[str, Any], int]:
+    from .agent_license import (
+        derive_license,
+        issue_license,
+        record_governed_run,
+        seal_license,
+        verify_license,
+    )
+
+    if args.license_cmd == "verify":
+        payload = verify_license(Path(args.license))
+        return payload, 0 if payload["ok"] else 1
+    if args.license_cmd == "seal":
+        payload = seal_license(
+            Path(args.license),
+            private_key_path=Path(args.private_key),
+            keyid=args.keyid,
+            identity=args.identity,
+            issuer=args.issuer,
+            tenant_id=args.tenant,
+            out=Path(args.out),
         )
+        return payload, 0
+    from .agent_license import AgentLicenseError
 
-        def local_path(workspace: Path, value: str) -> Path:
-            candidate = Path(value)
-            resolved = (
-                candidate.resolve()
-                if candidate.is_absolute()
-                else (workspace / candidate).resolve()
-            )
-            try:
-                resolved.relative_to(workspace)
-            except ValueError as exc:
-                raise AgentLicenseError(
-                    "E_LICENSE_PATH_OUT_OF_SCOPE",
-                    "path must remain inside the workspace",
-                ) from exc
-            return resolved
+    workspace = _require_workspace(
+        args.root, AgentLicenseError, "E_LICENSE_PATH_OUT_OF_SCOPE"
+    )
+    if args.license_cmd == "record":
+        return _record_license(args, workspace, record_governed_run), 0
+    identity = json.loads(
+        _license_workspace_path(workspace, args.agent).read_text(encoding="utf-8-sig")
+    )
+    if args.license_cmd == "status":
+        return _license_status(workspace, identity, derive_license), 0
+    output = _license_workspace_path(workspace, args.out) if args.out else None
+    return issue_license(workspace, identity, out=output), 0
 
-        try:
-            if args.license_cmd == "verify":
-                payload = verify_license(Path(args.license))
-                code = 0 if payload["ok"] else 1
-            elif args.license_cmd == "seal":
-                payload = seal_license(
-                    Path(args.license),
-                    private_key_path=Path(args.private_key),
-                    keyid=args.keyid,
-                    identity=args.identity,
-                    issuer=args.issuer,
-                    tenant_id=args.tenant,
-                    out=Path(args.out),
-                )
-                code = 0
-            else:
-                workspace = Path(args.root).resolve()
-                if not workspace.is_dir():
-                    raise AgentLicenseError(
-                        "E_LICENSE_PATH_OUT_OF_SCOPE",
-                        "root must be an existing workspace directory",
-                    )
-                if args.license_cmd == "record":
-                    payload = record_governed_run(
-                        workspace,
-                        local_path(workspace, args.event),
-                        out_dir=local_path(workspace, args.out_dir)
-                        if args.out_dir
-                        else None,
-                    )
-                else:
-                    identity = json.loads(
-                        local_path(workspace, args.agent).read_text(
-                            encoding="utf-8-sig"
-                        )
-                    )
-                    payload = (
-                        {
-                            "marker": "AGENT_LICENSE_STATUS_READ_ONLY",
-                            "license": derive_license(workspace, identity),
-                            "authority": {
-                                "execution": False,
-                                "approval": False,
-                                "repair": False,
-                                "merge": False,
-                                "publication": False,
-                                "deployment": False,
-                                "signing": False,
-                                "messaging": False,
-                                "credential": False,
-                                "connector": False,
-                            },
-                        }
-                        if args.license_cmd == "status"
-                        else issue_license(
-                            workspace,
-                            identity,
-                            out=local_path(workspace, args.out) if args.out else None,
-                        )
-                    )
-                    code = 0
-        except (
-            AgentLicenseError,
-            OSError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-        ) as exc:
-            error = {
-                "schema": "factory.agent-license.error.v1",
-                "marker": getattr(exc, "code", "E_LICENSE_INPUT_UNREADABLE"),
-                "code": getattr(exc, "code", "E_LICENSE_INPUT_UNREADABLE"),
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if args.json
-                else f"agent license failed: {error['code']}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if args.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            print("factory license")
-            print("=" * 44)
-            if args.license_cmd == "status":
-                value = payload["license"]
-                print(f"tier      : {value['tier']}")
-                print(f"reason    : {value['reason']}")
-                print(
-                    f"evidence  : {value['evidence']['current_governed_event_count']} current governed event(s)"
-                )
-                print(f"expires   : {value['expires_at'] or 'no evidence'}")
-            else:
-                print(f"marker    : {payload['marker']}")
-            print(
-                "authority : local evidence only; no agent execution, approval, repair, merge, publication, deployment, or credential authority"
-            )
-        return code
 
-    from .combine import (
+def _record_license(args: Any, workspace: Path, record: Any) -> dict[str, Any]:
+    event = _license_workspace_path(workspace, args.event)
+    output = _license_workspace_path(workspace, args.out_dir) if args.out_dir else None
+    return record(workspace, event, out_dir=output)
+
+
+def _license_status(
+    workspace: Path, identity: dict[str, Any], derive: Any
+) -> dict[str, Any]:
+    return {
+        "marker": "AGENT_LICENSE_STATUS_READ_ONLY",
+        "license": derive(workspace, identity),
+        "authority": {
+            "execution": False,
+            "approval": False,
+            "repair": False,
+            "merge": False,
+            "publication": False,
+            "deployment": False,
+            "signing": False,
+            "messaging": False,
+            "credential": False,
+            "connector": False,
+        },
+    }
+
+
+def _print_error(args: Any, error: dict[str, str], exc: Exception, label: str) -> None:
+    rendered = (
+        json.dumps(error, indent=2, sort_keys=True)
+        if args.json
+        else f"{label} failed: {error['code']}: {exc}"
+    )
+    print(rendered, file=sys.stderr)
+
+
+def _render_license(args: Any, payload: dict[str, Any]) -> None:
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    print("factory license")
+    print("=" * 44)
+    if args.license_cmd == "status":
+        value = payload["license"]
+        print(f"tier      : {value['tier']}")
+        print(f"reason    : {value['reason']}")
+        print(
+            f"evidence  : {value['evidence']['current_governed_event_count']} current governed event(s)"
+        )
+        print(f"expires   : {value['expires_at'] or 'no evidence'}")
+    else:
+        print(f"marker    : {payload['marker']}")
+    print(
+        "authority : local evidence only; no agent execution, approval, repair, merge, publication, deployment, or credential authority"
+    )
+
+
+def _run_license(args: Any) -> int:
+    from .agent_license import AgentLicenseError
+
+    try:
+        payload, code = _license_payload(args)
+    except (
+        AgentLicenseError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as exc:
+        error = {
+            "schema": "factory.agent-license.error.v1",
+            "marker": getattr(exc, "code", "E_LICENSE_INPUT_UNREADABLE"),
+            "code": getattr(exc, "code", "E_LICENSE_INPUT_UNREADABLE"),
+            "message": str(exc),
+        }
+        _print_error(args, error, exc, "agent license")
+        return 2
+    _render_license(args, payload)
+    return code
+
+
+def _combine_workspace_path(workspace: Path, value: str) -> Path:
+    from .combine import CombineError
+
+    return _workspace_path(
+        workspace,
+        value,
         CombineError,
+        "COMBINE_PATH_OUT_OF_SCOPE",
+        "path must remain inside the workspace",
+    )
+
+
+def _combine_payload(args: Any) -> tuple[dict[str, Any], int]:
+    from .combine import (
         combine_projection,
         score_combine,
         seal_combine_scoreboard,
         seal_combine_task,
         verify_combine_scoreboard,
     )
-    from .agent_license import AgentLicenseError
 
-    def local_path(workspace: Path, value: str) -> Path:
-        candidate = Path(value)
-        resolved = (
-            candidate.resolve()
-            if candidate.is_absolute()
-            else (workspace / candidate).resolve()
+    if args.combine_cmd == "verify":
+        payload = verify_combine_scoreboard(Path(args.scoreboard))
+        return payload, 0 if payload["ok"] else 1
+    if args.combine_cmd == "seal":
+        payload = seal_combine_scoreboard(
+            Path(args.scoreboard),
+            private_key_path=Path(args.private_key),
+            keyid=args.keyid,
+            identity=args.identity,
+            issuer=args.issuer,
+            tenant_id=args.tenant,
+            out=Path(args.out),
         )
-        try:
-            resolved.relative_to(workspace)
-        except ValueError as exc:
-            raise CombineError(
-                "COMBINE_PATH_OUT_OF_SCOPE", "path must remain inside the workspace"
-            ) from exc
-        return resolved
+        return payload, 0
+    from .combine import CombineError
+
+    workspace = _require_workspace(args.root, CombineError, "COMBINE_PATH_OUT_OF_SCOPE")
+    return _combine_workspace_payload(
+        args, workspace, seal_combine_task, score_combine, combine_projection
+    ), 0
+
+
+def _combine_workspace_payload(
+    args: Any, workspace: Path, seal_task: Any, score: Any, project: Any
+) -> dict[str, Any]:
+    if args.combine_cmd == "task":
+        source = _combine_workspace_path(workspace, args.source)
+        output = _combine_workspace_path(workspace, args.out) if args.out else None
+        return seal_task(workspace, source, out=output)
+    if args.combine_cmd == "score":
+        task = _combine_workspace_path(workspace, args.task)
+        events = [_combine_workspace_path(workspace, item) for item in args.event]
+        output = _combine_workspace_path(workspace, args.out) if args.out else None
+        return score(workspace, task, event_paths=events or None, out=output)
+    return project(workspace)
+
+
+def _render_combine(args: Any, payload: dict[str, Any]) -> None:
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    print("factory combine")
+    print("=" * 44)
+    if args.combine_cmd == "status":
+        print(f"scoreboards: {len(payload['scoreboards'])}")
+    elif args.combine_cmd == "score":
+        summary = payload["scoreboard"]["summary"]
+        print(f"passed    : {summary['passed_count']}/{summary['candidate_count']}")
+        print(f"scoreboard: {payload['path']}")
+    else:
+        print(f"marker    : {payload['marker']}")
+    print(
+        "authority : completed governed evidence only; no agent execution, vendor ranking, repair, approval, merge, publication, or deployment"
+    )
+
+
+def _run_combine(args: Any) -> int:
+    from .agent_license import AgentLicenseError
+    from .combine import CombineError
 
     try:
-        if args.combine_cmd == "verify":
-            payload = verify_combine_scoreboard(Path(args.scoreboard))
-            code = 0 if payload["ok"] else 1
-        elif args.combine_cmd == "seal":
-            payload = seal_combine_scoreboard(
-                Path(args.scoreboard),
-                private_key_path=Path(args.private_key),
-                keyid=args.keyid,
-                identity=args.identity,
-                issuer=args.issuer,
-                tenant_id=args.tenant,
-                out=Path(args.out),
-            )
-            code = 0
-        else:
-            workspace = Path(args.root).resolve()
-            if not workspace.is_dir():
-                raise CombineError(
-                    "COMBINE_PATH_OUT_OF_SCOPE",
-                    "root must be an existing workspace directory",
-                )
-            if args.combine_cmd == "task":
-                payload = seal_combine_task(
-                    workspace,
-                    local_path(workspace, args.source),
-                    out=local_path(workspace, args.out) if args.out else None,
-                )
-            elif args.combine_cmd == "score":
-                payload = score_combine(
-                    workspace,
-                    local_path(workspace, args.task),
-                    event_paths=[local_path(workspace, event) for event in args.event]
-                    or None,
-                    out=local_path(workspace, args.out) if args.out else None,
-                )
-            else:
-                payload = combine_projection(workspace)
-            code = 0
+        payload, code = _combine_payload(args)
     except (
         CombineError,
         AgentLicenseError,
@@ -329,28 +378,14 @@ def run(args: Any) -> int:
             "code": getattr(exc, "code", "COMBINE_INPUT_UNREADABLE"),
             "message": str(exc),
         }
-        print(
-            json.dumps(error, indent=2, sort_keys=True)
-            if args.json
-            else f"combine failed: {error['code']}: {exc}",
-            file=sys.stderr,
-        )
+        _print_error(args, error, exc, "combine")
         return 2
-    if args.json:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        print("factory combine")
-        print("=" * 44)
-        if args.combine_cmd == "status":
-            print(f"scoreboards: {len(payload['scoreboards'])}")
-        elif args.combine_cmd == "score":
-            print(
-                f"passed    : {payload['scoreboard']['summary']['passed_count']}/{payload['scoreboard']['summary']['candidate_count']}"
-            )
-            print(f"scoreboard: {payload['path']}")
-        else:
-            print(f"marker    : {payload['marker']}")
-        print(
-            "authority : completed governed evidence only; no agent execution, vendor ranking, repair, approval, merge, publication, or deployment"
-        )
+    _render_combine(args, payload)
     return code
+
+
+def run(args: Any) -> int:
+    """Execute one license or Combine command."""
+    if args.cmd == "license":
+        return _run_license(args)
+    return _run_combine(args)

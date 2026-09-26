@@ -125,7 +125,7 @@ def sign_pack(
     }
 
 
-def _manifest_errors(manifest: dict[str, Any], root: Path) -> list[str]:
+def _manifest_structure_errors(manifest: dict[str, Any], root: Path) -> list[str]:
     errors: list[str] = []
     required = {
         "schema",
@@ -153,6 +153,11 @@ def _manifest_errors(manifest: dict[str, Any], root: Path) -> list[str]:
             errors.append(f"missing required pack path: {relative}")
     if errors:
         return errors
+    return []
+
+
+def _manifest_content_errors(manifest: dict[str, Any], root: Path) -> list[str]:
+    errors: list[str] = []
     generator = _load_json(root / "generator" / "adapter.json")
     validators = _load_json(root / "validators" / "manifest.json")
     goldens = _load_json(root / "goldens" / "manifest.json")
@@ -182,6 +187,13 @@ def _manifest_errors(manifest: dict[str, Any], root: Path) -> list[str]:
     errors.extend(_compatibility_errors(manifest.get("compatibility")))
     errors.extend(_deployment_errors(manifest.get("deployment_profiles")))
     return errors
+
+
+def _manifest_errors(manifest: dict[str, Any], root: Path) -> list[str]:
+    errors = _manifest_structure_errors(manifest, root)
+    if errors:
+        return errors
+    return _manifest_content_errors(manifest, root)
 
 
 def _compatibility_errors(value: object) -> list[str]:
@@ -508,14 +520,7 @@ def install_pack(
     }
 
 
-def compose_packs(
-    pack_roots: list[Path],
-    workspace: Path,
-    *,
-    name: str = "default",
-    force: bool = False,
-) -> dict[str, Any]:
-    """Write a hash-bound, non-executing plan for one compatible pack set."""
+def _validate_composition_request(pack_roots: list[Path], name: str) -> None:
     if not pack_roots:
         raise CapabilityPackError(
             "PACK_COMPOSITION_EMPTY", "at least one pack is required"
@@ -528,6 +533,11 @@ def compose_packs(
             "PACK_COMPOSITION_NAME_INVALID",
             "composition name must use letters, digits, dash, or underscore",
         )
+
+
+def _validated_composition_packs(
+    pack_roots: list[Path],
+) -> list[tuple[dict[str, Any], dict[str, Any], Path]]:
     selected: list[tuple[dict[str, Any], dict[str, Any], Path]] = []
     for pack_root in pack_roots:
         validation = validate_pack(Path(pack_root), verify_signature=True, mutate=True)
@@ -537,6 +547,13 @@ def compose_packs(
             )
         resolved = Path(pack_root).resolve()
         selected.append((_load_json(resolved / "pack.yaml"), validation, resolved))
+
+    return selected
+
+
+def _composition_scope(
+    selected: list[tuple[dict[str, Any], dict[str, Any], Path]],
+) -> tuple[str | None, set[str], set[str]]:
     ids = [item[0]["id"] for item in selected]
     if len(ids) != len(set(ids)):
         raise CapabilityPackError(
@@ -551,6 +568,15 @@ def compose_packs(
     kinds = {item[0]["kind"] for item in selected}
     selected_ids = set(ids)
     target_kind = str(targets[0].get("target_kind")) if targets else None
+    return target_kind, kinds, selected_ids
+
+
+def _composition_compatibility_errors(
+    selected: list[tuple[dict[str, Any], dict[str, Any], Path]],
+    kinds: set[str],
+    selected_ids: set[str],
+    target_kind: str | None,
+) -> list[str]:
     errors: list[str] = []
     for manifest, _validation, _root in selected:
         compatibility = manifest["compatibility"]
@@ -569,8 +595,14 @@ def compose_packs(
             errors.append(
                 f"{manifest['id']} is not compatible with target {target_kind}"
             )
-    if errors:
-        raise CapabilityPackError("PACK_COMPOSITION_INCOMPATIBLE", "; ".join(errors))
+    return errors
+
+
+def _composition_payload(
+    selected: list[tuple[dict[str, Any], dict[str, Any], Path]],
+    name: str,
+    target_kind: str | None,
+) -> dict[str, Any]:
     core = {
         "schema": "factory.capability_pack.composition.v1",
         "name": name,
@@ -596,7 +628,12 @@ def compose_packs(
         },
         "next_action": "Bind this reviewed composition to a Product Graph value slice before generation.",
     }
-    payload = {**core, "composition_sha256": sha256(_canonical(core)).hexdigest()}
+    return {**core, "composition_sha256": sha256(_canonical(core)).hexdigest()}
+
+
+def _persist_composition(
+    payload: dict[str, Any], workspace: Path, name: str, force: bool
+) -> Path:
     destination = (
         Path(workspace).resolve() / ".factory" / "pack-compositions" / f"{name}.json"
     )
@@ -618,6 +655,10 @@ def compose_packs(
             f"atomic composition write failed; prior composition preserved: {exc}",
             markers=["PACK_COMPOSITION_ROLLBACK_PRESERVED"],
         ) from exc
+    return destination
+
+
+def _composition_result(payload: dict[str, Any], destination: Path) -> dict[str, Any]:
     return {
         **payload,
         "path": str(destination),
@@ -629,3 +670,24 @@ def compose_packs(
             "PACK_COMPOSITION_NO_EXECUTION_AUTHORITY",
         ],
     }
+
+
+def compose_packs(
+    pack_roots: list[Path],
+    workspace: Path,
+    *,
+    name: str = "default",
+    force: bool = False,
+) -> dict[str, Any]:
+    """Write a hash-bound, non-executing plan for one compatible pack set."""
+    _validate_composition_request(pack_roots, name)
+    selected = _validated_composition_packs(pack_roots)
+    target_kind, kinds, selected_ids = _composition_scope(selected)
+    errors = _composition_compatibility_errors(
+        selected, kinds, selected_ids, target_kind
+    )
+    if errors:
+        raise CapabilityPackError("PACK_COMPOSITION_INCOMPATIBLE", "; ".join(errors))
+    payload = _composition_payload(selected, name, target_kind)
+    destination = _persist_composition(payload, workspace, name, force)
+    return _composition_result(payload, destination)

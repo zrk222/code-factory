@@ -159,6 +159,44 @@ def record_lifecycle(
     return destination
 
 
+def _cached_lifecycle_payload(raw: bytes, digest: str) -> dict[str, Any] | None:
+    with _LIFECYCLE_CACHE_LOCK:
+        value = _LIFECYCLE_CACHE.get(digest)
+        if value is not None:
+            _LIFECYCLE_CACHE.move_to_end(digest)
+    if value is None:
+        parsed = json.loads(raw.decode("utf-8-sig"))
+        value = parsed if isinstance(parsed, dict) else None
+        if value is not None and len(raw) <= _LIFECYCLE_CACHE_MAX_BYTES:
+            with _LIFECYCLE_CACHE_LOCK:
+                _LIFECYCLE_CACHE[digest] = value
+                _LIFECYCLE_CACHE.move_to_end(digest)
+                while len(_LIFECYCLE_CACHE) > _LIFECYCLE_CACHE_LIMIT:
+                    _LIFECYCLE_CACHE.popitem(last=False)
+    return value
+
+
+def _lifecycle_receipt_schema_error(value: object) -> str | None:
+    if not isinstance(value, dict) or value.get("schema") != LIFECYCLE_SCHEMA:
+        return "schema_mismatch"
+    return None
+
+
+def _lifecycle_receipt_digest_error(value: dict[str, Any]) -> str | None:
+    receipt_digest = value.get("receipt_sha256")
+    core = {key: item for key, item in value.items() if key != "receipt_sha256"}
+    if not isinstance(receipt_digest, str) or receipt_digest != _digest(core):
+        return "receipt_digest_mismatch"
+    return None
+
+
+def _lifecycle_receipt_elapsed_error(value: dict[str, Any]) -> str | None:
+    elapsed = value.get("elapsed_ms")
+    if isinstance(elapsed, bool) or not isinstance(elapsed, int) or elapsed < 0:
+        return "invalid_elapsed_ms"
+    return None
+
+
 def _read_lifecycle_receipt(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     """Read, content-cache, and validate one bounded immutable receipt."""
     try:
@@ -167,37 +205,24 @@ def _read_lifecycle_receipt(path: Path) -> tuple[dict[str, Any] | None, str | No
         if len(raw) > _LIFECYCLE_RECEIPT_MAX_BYTES:
             return None, "receipt_too_large"
         digest = hashlib.sha256(raw).hexdigest()
-        value = None
-        with _LIFECYCLE_CACHE_LOCK:
-            value = _LIFECYCLE_CACHE.get(digest)
-            if value is not None:
-                _LIFECYCLE_CACHE.move_to_end(digest)
-        if value is None:
-            parsed = json.loads(raw.decode("utf-8-sig"))
-            value = parsed if isinstance(parsed, dict) else None
-            if value is not None and len(raw) <= _LIFECYCLE_CACHE_MAX_BYTES:
-                with _LIFECYCLE_CACHE_LOCK:
-                    _LIFECYCLE_CACHE[digest] = value
-                    _LIFECYCLE_CACHE.move_to_end(digest)
-                    while len(_LIFECYCLE_CACHE) > _LIFECYCLE_CACHE_LIMIT:
-                        _LIFECYCLE_CACHE.popitem(last=False)
+        value = _cached_lifecycle_payload(raw, digest)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None, "unreadable_or_invalid_json"
-    if not isinstance(value, dict) or value.get("schema") != LIFECYCLE_SCHEMA:
-        return None, "schema_mismatch"
-    receipt_digest = value.get("receipt_sha256")
-    core = {key: item for key, item in value.items() if key != "receipt_sha256"}
-    if not isinstance(receipt_digest, str) or receipt_digest != _digest(core):
-        return None, "receipt_digest_mismatch"
-    elapsed = value.get("elapsed_ms")
-    if isinstance(elapsed, bool) or not isinstance(elapsed, int) or elapsed < 0:
-        return None, "invalid_elapsed_ms"
+    error = _lifecycle_receipt_schema_error(value)
+    if error:
+        return None, error
+    error = _lifecycle_receipt_digest_error(value)
+    if error:
+        return None, error
+    error = _lifecycle_receipt_elapsed_error(value)
+    if error:
+        return None, error
     return value, None
 
 
-def lifecycle_inventory(root: Path) -> dict[str, Any]:
-    """Aggregate lifecycle receipts without exposing command arguments."""
-    workspace = Path(root).resolve()
+def _read_lifecycle_inventory(
+    workspace: Path,
+) -> tuple[list[dict[str, Any]], int, dict[str, int], bool]:
     rows: list[dict[str, Any]] = []
     invalid = 0
     invalid_reasons: dict[str, int] = {}
@@ -224,6 +249,12 @@ def lifecycle_inventory(root: Path) -> dict[str, Any]:
                     invalid_reasons[reason] = invalid_reasons.get(reason, 0) + 1
                 elif value is not None:
                     rows.append(value)
+    return rows, invalid, invalid_reasons, scan_bounded
+
+
+def _lifecycle_counts(
+    rows: list[dict[str, Any]],
+) -> tuple[dict[str, int], dict[str, int]]:
     statuses: dict[str, int] = {}
     commands: dict[str, int] = {}
     for row in rows:
@@ -233,17 +264,22 @@ def lifecycle_inventory(root: Path) -> dict[str, Any]:
         commands[str(row.get("command_family", "unknown"))] = (
             commands.get(str(row.get("command_family", "unknown")), 0) + 1
         )
-    elapsed_values = sorted(int(row["elapsed_ms"]) for row in rows)
-    elapsed = sum(elapsed_values)
 
-    def percentile(values: list[int], percentile_value: int) -> int | None:
-        if not values:
-            return None
-        # Nearest-rank percentile is deterministic and avoids interpolation
-        # that could imply precision beyond integer-millisecond observations.
-        position = max(0, (len(values) * percentile_value + 99) // 100 - 1)
-        return values[min(position, len(values) - 1)]
+    return statuses, commands
 
+
+def _percentile(values: list[int], percentile_value: int) -> int | None:
+    if not values:
+        return None
+    # Nearest-rank percentile is deterministic and avoids interpolation
+    # that could imply precision beyond integer-millisecond observations.
+    position = max(0, (len(values) * percentile_value + 99) // 100 - 1)
+    return values[min(position, len(values) - 1)]
+
+
+def _latency_by_command(
+    rows: list[dict[str, Any]], commands: dict[str, int]
+) -> dict[str, dict[str, int | None]]:
     latency_by_command: dict[str, dict[str, int | None]] = {}
     for command in sorted(commands):
         values = sorted(
@@ -253,10 +289,24 @@ def lifecycle_inventory(root: Path) -> dict[str, Any]:
         )
         latency_by_command[command] = {
             "count": len(values),
-            "p50_ms": percentile(values, 50),
-            "p95_ms": percentile(values, 95),
+            "p50_ms": _percentile(values, 50),
+            "p95_ms": _percentile(values, 95),
             "max_ms": values[-1] if values else None,
         }
+    return latency_by_command
+
+
+def _lifecycle_inventory_result(
+    rows: list[dict[str, Any]],
+    invalid: int,
+    invalid_reasons: dict[str, int],
+    scan_bounded: bool,
+    statuses: dict[str, int],
+    commands: dict[str, int],
+) -> dict[str, Any]:
+    elapsed_values = sorted(int(row["elapsed_ms"]) for row in rows)
+    elapsed = sum(elapsed_values)
+    latency_by_command = _latency_by_command(rows, commands)
     return {
         "schema": LIFECYCLE_SCHEMA,
         "receipt_count": len(rows),
@@ -270,8 +320,8 @@ def lifecycle_inventory(root: Path) -> dict[str, Any]:
         "total_elapsed_ms": elapsed,
         "average_elapsed_ms": round(elapsed / len(rows), 1) if rows else None,
         "latency_ms": {
-            "p50": percentile(elapsed_values, 50),
-            "p95": percentile(elapsed_values, 95),
+            "p50": _percentile(elapsed_values, 50),
+            "p95": _percentile(elapsed_values, 95),
             "max": elapsed_values[-1] if elapsed_values else None,
         },
         "latency_by_command": latency_by_command,
@@ -285,3 +335,13 @@ def lifecycle_inventory(root: Path) -> dict[str, Any]:
         ),
         "claim_boundary": "Local lifecycle observations only; no provider, token, cost, or productivity claim.",
     }
+
+
+def lifecycle_inventory(root: Path) -> dict[str, Any]:
+    """Aggregate lifecycle receipts without exposing command arguments."""
+    workspace = Path(root).resolve()
+    rows, invalid, invalid_reasons, scan_bounded = _read_lifecycle_inventory(workspace)
+    statuses, commands = _lifecycle_counts(rows)
+    return _lifecycle_inventory_result(
+        rows, invalid, invalid_reasons, scan_bounded, statuses, commands
+    )

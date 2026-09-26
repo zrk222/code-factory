@@ -315,22 +315,50 @@ def _evidence_capture(
     allowed: dict[str, dict[str, str]],
     transport: str,
 ) -> tuple[dict[str, str] | None, dict[str, str] | None]:
+    error = _capture_binding_error(item, index, transport, allowed)
+    if error:
+        return None, error
+    assert isinstance(item, dict)
+    journey = str(item.get("journey") or "").strip()
+    expected = allowed[journey]
+    path, supplied, error = _capture_file(root, item, index)
+    if error:
+        return None, error
+    assert path is not None and supplied is not None
+    error = _capture_observation_error(item, index, expected)
+    if error:
+        return None, error
+    return _capture_record(root, path, supplied, journey, expected, index)
+
+
+def _capture_binding_error(
+    item: object,
+    index: int,
+    transport: str,
+    allowed: dict[str, dict[str, str]],
+) -> dict[str, str] | None:
     if not isinstance(item, dict):
-        return None, {
+        return {
             "code": "APPFORGE_DEVICE_REALITY_CAPTURE_INVALID",
             "detail": f"captures[{index}] must be an object",
         }
     journey = str(item.get("journey") or "").strip()
     if journey not in allowed:
-        return None, {
+        return {
             "code": "APPFORGE_DEVICE_REALITY_JOURNEY_UNAUTHORIZED",
             "detail": f"captures[{index}] is not a sealed required journey",
         }
     if item.get("transport") != transport:
-        return None, {
+        return {
             "code": "APPFORGE_DEVICE_REALITY_TRANSPORT_MISMATCH",
             "detail": f"captures[{index}] transport does not match supervised evidence transport",
         }
+    return None
+
+
+def _capture_file(
+    root: Path, item: dict[str, Any], index: int
+) -> tuple[Path | None, str | None, dict[str, str] | None]:
     try:
         path = _local(
             root, Path(_text(item.get("path"), f"captures[{index}].path", limit=512))
@@ -341,26 +369,46 @@ def _evidence_capture(
             )
         supplied = _digest(item.get("sha256"), f"captures[{index}].sha256")
     except RevenueForgeError as error:
-        return None, {"code": error.code, "detail": str(error)}
+        return None, None, {"code": error.code, "detail": str(error)}
     if _file_sha(path) != supplied:
-        return None, {
-            "code": "APPFORGE_DEVICE_REALITY_CAPTURE_HASH_MISMATCH",
-            "detail": f"captures[{index}] does not match its supplied digest",
-        }
-    expected = allowed[journey]
+        return (
+            None,
+            None,
+            {
+                "code": "APPFORGE_DEVICE_REALITY_CAPTURE_HASH_MISMATCH",
+                "detail": f"captures[{index}] does not match its supplied digest",
+            },
+        )
+    return path, supplied, None
+
+
+def _capture_observation_error(
+    item: dict[str, Any], index: int, expected: dict[str, str]
+) -> dict[str, str] | None:
     if (
         item.get("expected_outcome") != expected["expected_outcome"]
         or item.get("forbidden_outcome") != expected["forbidden_outcome"]
     ):
-        return None, {
+        return {
             "code": "APPFORGE_DEVICE_REALITY_OBSERVATION_UNBOUND",
             "detail": f"captures[{index}] does not preserve the sealed expected and forbidden outcomes",
         }
     if item.get("outcome") != "passed":
-        return None, {
+        return {
             "code": "APPFORGE_DEVICE_REALITY_OBSERVATION_FAILED",
             "detail": f"captures[{index}] is not a human-confirmed passing observation",
         }
+    return None
+
+
+def _capture_record(
+    root: Path,
+    path: Path,
+    supplied: str,
+    journey: str,
+    expected: dict[str, str],
+    index: int,
+) -> tuple[dict[str, str] | None, dict[str, str] | None]:
     try:
         return {
             "journey": journey,
@@ -502,25 +550,28 @@ def _current_intent_binding_findings(
     return findings
 
 
-def _supervision_and_transport(
-    envelope: dict[str, Any], evidence: dict[str, Any]
-) -> tuple[dict[str, Any] | None, str, list[dict[str, str]]]:
-    findings: list[dict[str, str]] = []
-    supervision = evidence.get("supervision")
+def _supervision_findings(
+    envelope: dict[str, Any], supervision: object
+) -> list[dict[str, str]]:
     approved = (
         isinstance(supervision, dict)
         and supervision.get("approved_by") == envelope["approved_by"]
         and supervision.get("human_present") is True
         and bool(str(supervision.get("approved_at") or "").strip())
     )
-    if not approved:
-        findings.append(
-            {
-                "code": "APPFORGE_DEVICE_REALITY_SUPERVISION_REQUIRED",
-                "detail": "a named envelope approver must confirm supervised device observation",
-            }
-        )
-    transport = evidence.get("transport")
+    if approved:
+        return []
+    return [
+        {
+            "code": "APPFORGE_DEVICE_REALITY_SUPERVISION_REQUIRED",
+            "detail": "a named envelope approver must confirm supervised device observation",
+        }
+    ]
+
+
+def _transport_findings(
+    envelope: dict[str, Any], transport: object
+) -> tuple[str, list[dict[str, str]]]:
     kind = (
         str(transport.get("kind") or "").strip() if isinstance(transport, dict) else ""
     )
@@ -530,19 +581,26 @@ def _supervision_and_transport(
         and transport.get("user_authorized") is True
     )
     if not isinstance(transport, dict):
-        findings.append(
-            {
-                "code": "APPFORGE_DEVICE_REALITY_TRANSPORT_INVALID",
-                "detail": "evidence.transport must declare an approved capture transport",
-            }
-        )
+        finding = {
+            "code": "APPFORGE_DEVICE_REALITY_TRANSPORT_INVALID",
+            "detail": "evidence.transport must declare an approved capture transport",
+        }
     elif not authorized:
-        findings.append(
-            {
-                "code": "APPFORGE_DEVICE_REALITY_TRANSPORT_UNAUTHORIZED",
-                "detail": "capture transport is not sealed and explicitly user-authorized",
-            }
-        )
+        finding = {
+            "code": "APPFORGE_DEVICE_REALITY_TRANSPORT_UNAUTHORIZED",
+            "detail": "capture transport is not sealed and explicitly user-authorized",
+        }
+    else:
+        return kind, []
+    return kind, [finding]
+
+
+def _supervision_and_transport(
+    envelope: dict[str, Any], evidence: dict[str, Any]
+) -> tuple[dict[str, Any] | None, str, list[dict[str, str]]]:
+    supervision = evidence.get("supervision")
+    kind, transport_findings = _transport_findings(envelope, evidence.get("transport"))
+    findings = _supervision_findings(envelope, supervision) + transport_findings
     return supervision if isinstance(supervision, dict) else None, kind, findings
 
 

@@ -55,7 +55,18 @@ def _vscode_marketplace_authorization_check(workflow: str) -> dict[str, Any]:
 def _vscode_marketplace_candidate_check(workflow: str) -> dict[str, Any]:
     validate = _job(workflow, "validate")
     publish = _job(workflow, "publish")
-    passed = (
+    passed = _vscode_candidate_preflight(
+        workflow, validate
+    ) and _vscode_candidate_publish(publish)
+    return _check(
+        "VSCODE_MARKETPLACE_CANDIDATE_SEALED",
+        passed,
+        "VS Code Marketplace publish verifies the sealed VSIX checksum and declared identity",
+    )
+
+
+def _vscode_candidate_preflight(workflow: str, validate: str) -> bool:
+    return (
         "release_contract:" in workflow
         and "Require the sealed candidate preflight" in validate
         and "python -m factoryline.cli release preflight" in validate
@@ -64,18 +75,18 @@ def _vscode_marketplace_candidate_check(workflow: str) -> dict[str, Any]:
         and "sha256sum" in validate
         and "publisher=zrk222" in validate
         and "extension=factoryline-vscode" in validate
-        and "sha256sum --check SHA256SUMS.txt" in publish
+    )
+
+
+def _vscode_candidate_publish(publish: str) -> bool:
+    return (
+        "sha256sum --check SHA256SUMS.txt" in publish
         and "test -f manifest.txt" in publish
         and "factoryline-vscode-*.vsix" in publish
         and "release-preflight.json" in publish
         and "grep -Fx 'publisher=zrk222' manifest.txt" in publish
         and "grep -Fx 'extension=factoryline-vscode' manifest.txt" in publish
         and "@vscode/vsce@3.9.1 publish" in publish
-    )
-    return _check(
-        "VSCODE_MARKETPLACE_CANDIDATE_SEALED",
-        passed,
-        "VS Code Marketplace publish verifies the sealed VSIX checksum and declared identity",
     )
 
 
@@ -84,7 +95,22 @@ def _jetbrains_marketplace_authorization_check(root: Path) -> dict[str, Any]:
     authorize = _job(workflow, "authorize")
     validate = _job(workflow, "validate")
     publish = _job(workflow, "publish")
-    passed = (
+    passed = _jetbrains_authorization_preflight(workflow, authorize, validate) and (
+        "scripts/verify_release_preflight.py" in publish
+        and "needs: [authorize, validate, compatibility]" in publish
+        and "release-preflight.json" in publish
+    )
+    return _check(
+        "JETBRAINS_MARKETPLACE_AUTHORIZATION_EARLY",
+        passed,
+        "protected JetBrains Marketplace authorization is required before candidate validation",
+    )
+
+
+def _jetbrains_authorization_preflight(
+    workflow: str, authorize: str, validate: str
+) -> bool:
+    return (
         "environment: jetbrains-marketplace" in authorize
         and "JETBRAINS_MARKETPLACE_TOKEN" in authorize
         and 'test -n "$PUBLISH_TOKEN"' in authorize
@@ -93,14 +119,6 @@ def _jetbrains_marketplace_authorization_check(root: Path) -> dict[str, Any]:
         and "python -m factoryline.cli release preflight" in validate
         and "--metadata-path context/PROGRESS.md" in validate
         and "scripts/verify_release_preflight.py" in validate
-        and "scripts/verify_release_preflight.py" in publish
-        and "needs: [authorize, validate, compatibility]" in publish
-        and "release-preflight.json" in publish
-    )
-    return _check(
-        "JETBRAINS_MARKETPLACE_AUTHORIZATION_EARLY",
-        passed,
-        "protected JetBrains Marketplace authorization is required before candidate validation",
     )
 
 

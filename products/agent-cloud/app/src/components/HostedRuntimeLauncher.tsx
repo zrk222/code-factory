@@ -74,7 +74,7 @@ export function HostedRuntimeLauncher({ agentSpec, blueprint, jobs, adapters }: 
       <div className="runtime-engine-grid" role="radiogroup" aria-label="Runtime engine">
         {recommended.map((item) => <button key={item.engine} type="button" role="radio" aria-checked={engine === item.engine} disabled={!item.eligible} className={engine === item.engine ? "selected" : ""} onClick={() => selectEngine(item.engine)}><span>{item.nativeAdapter ? <Sparkles size={14} /> : <CloudCog size={14} />}{item.nativeAdapter ? "Native" : "Bridge"}</span><strong>{item.label}</strong><small>{item.eligible ? item.reasons.join(" · ") || "General runtime" : item.reasons.filter((reason) => reason.startsWith("missing")).join(" · ")}</small>{engine === item.engine && <Check size={15} />}</button>)}
       </div>
-      <div className="runtime-capabilities"><span>{selectedCapability.transport}</span><span>{selectedCapability.streaming ? "Streaming" : "Batch"}</span><span>{selectedCapability.suspendResume ? "Durable resume" : "Restart on resume"}</span><span>{selectedCapability.multiAgent ? "Multi-agent" : "Single agent"}</span><span>{selectedCapability.traces ? "Trace export" : "Result proof"}</span></div>
+      <RuntimeCapabilitySummary capability={selectedCapability} />
       <div className="runtime-config-grid"><label>Configuration label<input value={label} onChange={(event) => setLabel(event.target.value)} /></label><label>Hosting<select value={environment} onChange={(event) => setEnvironment(event.target.value as typeof environment)}><option value="sandbox">Sandbox</option><option value="production">Production</option></select></label><label>Endpoint reference<input value={endpointRef} onChange={(event) => setEndpointRef(event.target.value)} /></label><label>Secret reference<input value={secretRef} onChange={(event) => setSecretRef(event.target.value)} /></label><label>Runtime target ID<input value={targetId} onChange={(event) => setTargetId(event.target.value)} /></label><button className="button secondary" disabled={busy} onClick={() => void saveAdapter()}>Save runtime configuration</button></div>
       <p className="runtime-boundary"><ShieldCheck size={14} /> References only. Agent Oven never stores resolved endpoints or bearer values. Configuration is not marked ready until a trusted worker validates the exact digest.</p>
     </div>
@@ -84,4 +84,14 @@ export function HostedRuntimeLauncher({ agentSpec, blueprint, jobs, adapters }: 
     <div className="runtime-jobs">{jobs.length === 0 ? <div><CloudCog size={20} /><strong>No hosted jobs yet</strong><small>The first digest-bound job will appear here.</small></div> : jobs.map((job) => <article key={job._id}><span className={`runtime-state ${job.status}`}>{job.status}</span><strong>{job.inputDigest}</strong><small>{job.runtimeEngine ?? "agent-oven-native"} · {job.quotedRuntimeCredits} credits · attempt {job.attemptCount}/{job.maxAttempts}{job.runtimePresetVersion ? ` · preset v${job.runtimePresetVersion}` : ""}</small><time><Clock3 size={12} /> {new Date(job.createdAt).toLocaleString()}</time>{["queued", "running", "suspended"].includes(job.status) && <button className="text-button" onClick={() => void cancel({ jobId: job._id })}><Ban size={13} /> Cancel</button>}<RuntimeJobIntelligence job={job} /></article>)}</div>
     {notice && <p className="knowledge-notice" role="status">{notice}</p>}
   </section>;
+}
+
+function RuntimeCapabilitySummary({ capability }: { capability: (typeof runtimeCapabilityRegistry)[number] }) {
+  return <div className="runtime-capabilities">
+    <span>{capability.transport}</span>
+    <span>{capability.streaming ? "Streaming" : "Batch"}</span>
+    <span>{capability.suspendResume ? "Durable resume" : "Restart on resume"}</span>
+    <span>{capability.multiAgent ? "Multi-agent" : "Single agent"}</span>
+    <span>{capability.traces ? "Trace export" : "Result proof"}</span>
+  </div>;
 }

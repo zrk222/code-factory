@@ -45,7 +45,7 @@ def _sha(value: object) -> str:
     ).hexdigest()
 
 
-def _load(root: Path, source: Path) -> dict[str, Any]:
+def _read_ontology_value(root: Path, source: Path) -> dict[str, Any]:
     relative = str(source).replace("\\", "/")
     candidate = (root / relative).resolve()
     try:
@@ -56,6 +56,91 @@ def _load(root: Path, source: Path) -> dict[str, Any]:
             "E_ONTOLOGY_SCHEMA",
             "ontology must be readable UTF-8 JSON below the workspace",
         ) from exc
+    return value
+
+
+def _valid_concept_identity(item: object, identifiers: set[str]) -> bool:
+    if not isinstance(item, dict) or set(item) != {
+        "id",
+        "definition",
+        "owner",
+        "invariants",
+    }:
+        return False
+    identifier = item["id"]
+    owner = item["owner"]
+    return (
+        isinstance(identifier, str)
+        and _ID.fullmatch(identifier) is not None
+        and identifier not in identifiers
+        and isinstance(owner, str)
+        and _ID.fullmatch(owner) is not None
+    )
+
+
+def _valid_concept_definition(item: dict[str, Any]) -> bool:
+    definition = item["definition"]
+    return (
+        isinstance(definition, str)
+        and bool(definition.strip())
+        and len(definition) <= 400
+    )
+
+
+def _valid_concept_invariants(item: dict[str, Any]) -> bool:
+    invariants = item["invariants"]
+    return (
+        isinstance(invariants, list)
+        and len(invariants) <= 16
+        and all(
+            isinstance(rule, str) and bool(rule.strip()) and len(rule) <= 240
+            for rule in invariants
+        )
+    )
+
+
+def _normalize_concept(
+    item: object, index: int, identifiers: set[str]
+) -> dict[str, Any]:
+    if (
+        not _valid_concept_identity(item, identifiers)
+        or not _valid_concept_definition(item)
+        or not _valid_concept_invariants(item)
+    ):
+        raise DomainOntologyError("E_ONTOLOGY_SCHEMA", f"concepts[{index}] is invalid")
+    assert isinstance(item, dict)
+    identifiers.add(item["id"])
+    return {
+        "id": item["id"],
+        "definition": item["definition"].strip(),
+        "owner": item["owner"],
+        "invariants": sorted(item["invariants"]),
+    }
+
+
+def _normalize_relationship(
+    item: object, index: int, identifiers: set[str]
+) -> dict[str, str]:
+    if not isinstance(item, dict) or set(item) != {"subject", "predicate", "object"}:
+        raise DomainOntologyError(
+            "E_ONTOLOGY_SCHEMA", f"relationships[{index}] is invalid"
+        )
+    if item["subject"] not in identifiers or item["object"] not in identifiers:
+        raise DomainOntologyError(
+            "E_ONTOLOGY_SCHEMA", f"relationships[{index}] is invalid"
+        )
+    if item["predicate"] not in _RELATIONS:
+        raise DomainOntologyError(
+            "E_ONTOLOGY_SCHEMA", f"relationships[{index}] is invalid"
+        )
+    return {
+        "subject": item["subject"],
+        "predicate": item["predicate"],
+        "object": item["object"],
+    }
+
+
+def _ontology_parts(value: object) -> tuple[str, list[Any], list[Any]]:
     if (
         not isinstance(value, dict)
         or set(value) != {"schema", "id", "concepts", "relationships"}
@@ -64,72 +149,35 @@ def _load(root: Path, source: Path) -> dict[str, Any]:
         raise DomainOntologyError(
             "E_ONTOLOGY_SCHEMA", f"ontology must use exact {SCHEMA} fields"
         )
-    if not isinstance(value["id"], str) or not _ID.fullmatch(value["id"]):
+    ontology_id = value["id"]
+    if not isinstance(ontology_id, str) or not _ID.fullmatch(ontology_id):
         raise DomainOntologyError("E_ONTOLOGY_SCHEMA", "ontology id must be safe")
     concepts = value["concepts"]
     if not isinstance(concepts, list) or not 1 <= len(concepts) <= 128:
         raise DomainOntologyError(
             "E_ONTOLOGY_SCHEMA", "concepts must contain 1-128 entries"
         )
-    normalized = []
-    identifiers = set()
-    for index, item in enumerate(concepts):
-        if (
-            not isinstance(item, dict)
-            or set(item) != {"id", "definition", "owner", "invariants"}
-            or not isinstance(item["id"], str)
-            or not _ID.fullmatch(item["id"])
-            or item["id"] in identifiers
-            or not isinstance(item["definition"], str)
-            or not item["definition"].strip()
-            or len(item["definition"]) > 400
-            or not isinstance(item["owner"], str)
-            or not _ID.fullmatch(item["owner"])
-            or not isinstance(item["invariants"], list)
-            or len(item["invariants"]) > 16
-            or any(
-                not isinstance(rule, str) or not rule.strip() or len(rule) > 240
-                for rule in item["invariants"]
-            )
-        ):
-            raise DomainOntologyError(
-                "E_ONTOLOGY_SCHEMA", f"concepts[{index}] is invalid"
-            )
-        identifiers.add(item["id"])
-        normalized.append(
-            {
-                "id": item["id"],
-                "definition": item["definition"].strip(),
-                "owner": item["owner"],
-                "invariants": sorted(item["invariants"]),
-            }
-        )
-    relations = value["relationships"]
-    if not isinstance(relations, list) or len(relations) > 256:
+    relationships = value["relationships"]
+    if not isinstance(relationships, list) or len(relationships) > 256:
         raise DomainOntologyError(
             "E_ONTOLOGY_SCHEMA", "relationships must contain at most 256 entries"
         )
+    return ontology_id, concepts, relationships
+
+
+def _load(root: Path, source: Path) -> dict[str, Any]:
+    ontology_id, concepts, relations = _ontology_parts(
+        _read_ontology_value(root, source)
+    )
+    normalized = []
+    identifiers = set()
+    for index, item in enumerate(concepts):
+        normalized.append(_normalize_concept(item, index, identifiers))
     normalized_relations = []
     for index, item in enumerate(relations):
-        if (
-            not isinstance(item, dict)
-            or set(item) != {"subject", "predicate", "object"}
-            or item["subject"] not in identifiers
-            or item["object"] not in identifiers
-            or item["predicate"] not in _RELATIONS
-        ):
-            raise DomainOntologyError(
-                "E_ONTOLOGY_SCHEMA", f"relationships[{index}] is invalid"
-            )
-        normalized_relations.append(
-            {
-                "subject": item["subject"],
-                "predicate": item["predicate"],
-                "object": item["object"],
-            }
-        )
+        normalized_relations.append(_normalize_relationship(item, index, identifiers))
     return {
-        "id": value["id"],
+        "id": ontology_id,
         "concepts": sorted(normalized, key=lambda item: item["id"]),
         "relationships": sorted(
             normalized_relations,

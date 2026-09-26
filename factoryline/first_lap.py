@@ -316,56 +316,42 @@ def initialize_first_lap(
     }
 
 
-def first_lap_status(root: Path) -> dict[str, Any]:
-    """Read the local First Lap contract and verify its generated files.
+def _uninitialized_status(required: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        "schema": RECEIPT_SCHEMA,
+        "marker": "FIRST_LAP_NOT_INITIALIZED",
+        "state": "NOT_INITIALIZED",
+        "required_paths": list(required),
+        "next_actions": [
+            "factory first-lap init --root .",
+            "factory first-lap calibrate <cases.json> --root .",
+        ],
+        "authority": {
+            "execution": False,
+            "release": False,
+            "merge": False,
+            "publication": False,
+            "deployment": False,
+            "signing": False,
+        },
+        "claim_boundary": "No First Lap contract was found; no code, test, holdout, provider, or release claim is made.",
+    }
 
-    This is deliberately a projection, not a verifier runner: it checks the
-    immutable initialization receipt and the three human-readable artifacts,
-    but never executes a journey, opens the holdout, or changes workspace
-    state.  Agents and IDEs can therefore use it as their first discovery call
-    without receiving execution or release authority.
-    """
-    workspace = Path(root).resolve()
-    if not workspace.is_dir():
-        raise FirstLapError("E_FIRST_LAP_ROOT", "root must be an existing directory")
-    receipt_path = workspace / ".factory" / "first-lap" / "init.json"
-    required = (
-        "MISSION.md",
-        "END-TO-END.md",
-        "HOLDOUT.md",
-        ".factory/holdouts/HOLDOUT.md",
-    )
-    if not receipt_path.is_file():
-        return {
-            "schema": RECEIPT_SCHEMA,
-            "marker": "FIRST_LAP_NOT_INITIALIZED",
-            "state": "NOT_INITIALIZED",
-            "required_paths": list(required),
-            "next_actions": [
-                "factory first-lap init --root .",
-                "factory first-lap calibrate <cases.json> --root .",
-            ],
-            "authority": {
-                "execution": False,
-                "release": False,
-                "merge": False,
-                "publication": False,
-                "deployment": False,
-                "signing": False,
-            },
-            "claim_boundary": "No First Lap contract was found; no code, test, holdout, provider, or release claim is made.",
-        }
-    try:
-        receipt = _json(receipt_path)
-    except FirstLapError as exc:
-        return {
-            "schema": RECEIPT_SCHEMA,
-            "marker": "FIRST_LAP_STATUS_BLOCKED",
-            "state": "BLOCKED",
-            "code": exc.code,
-            "message": str(exc),
-            "authority": "none",
-        }
+
+def _blocked_status(exc: FirstLapError) -> dict[str, Any]:
+    return {
+        "schema": RECEIPT_SCHEMA,
+        "marker": "FIRST_LAP_STATUS_BLOCKED",
+        "state": "BLOCKED",
+        "code": exc.code,
+        "message": str(exc),
+        "authority": "none",
+    }
+
+
+def _status_artifacts(
+    workspace: Path, receipt: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[str]]:
     artifact_status: list[dict[str, Any]] = []
     stale: list[str] = []
     for item in receipt.get("artifacts", []):
@@ -386,8 +372,31 @@ def first_lap_status(root: Path) -> dict[str, Any]:
         artifact_status.append({"path": relative, "state": state, "sha256": actual})
         if state != "VERIFIED":
             stale.append(relative)
+    return artifact_status, stale
+
+
+def _status_next_actions(state: str) -> list[str]:
+    if state == "INITIALIZED":
+        return [
+            "factory first-lap calibrate <cases.json> --root .",
+            "factory first-lap holdout <boundary.json> --root .",
+            "factory first-lap observe <events.json>",
+            "factory first-lap verify --calibration <calibration.json> --holdout <holdout.json> --observed <observed.json> --root .",
+        ]
+    return [
+        "Restore or re-initialize only the generated First Lap files, then re-check this status."
+    ]
+
+
+def _initialized_status(
+    workspace: Path,
+    receipt_path: Path,
+    receipt: dict[str, Any],
+    artifact_status: list[dict[str, Any]],
+    stale: list[str],
+) -> dict[str, Any]:
     state = "INITIALIZED" if not stale else "BLOCKED"
-    result: dict[str, Any] = {
+    return {
         "schema": RECEIPT_SCHEMA,
         "marker": "FIRST_LAP_INITIALIZED"
         if state == "INITIALIZED"
@@ -400,16 +409,7 @@ def first_lap_status(root: Path) -> dict[str, Any]:
         "holdout_count": receipt.get("holdout_count"),
         "artifacts": artifact_status,
         "stale_paths": stale,
-        "next_actions": [
-            "factory first-lap calibrate <cases.json> --root .",
-            "factory first-lap holdout <boundary.json> --root .",
-            "factory first-lap observe <events.json>",
-            "factory first-lap verify --calibration <calibration.json> --holdout <holdout.json> --observed <observed.json> --root .",
-        ]
-        if state == "INITIALIZED"
-        else [
-            "Restore or re-initialize only the generated First Lap files, then re-check this status."
-        ],
+        "next_actions": _status_next_actions(state),
         "authority": {
             "execution": False,
             "release": False,
@@ -420,7 +420,122 @@ def first_lap_status(root: Path) -> dict[str, Any]:
         },
         "claim_boundary": "Initialization and file-integrity metadata only; calibration, holdout isolation, observed execution, code correctness, store approval, and production readiness remain unproven.",
     }
+
+
+def first_lap_status(root: Path) -> dict[str, Any]:
+    """Read First Lap initialization metadata without running verifiers."""
+    workspace = Path(root).resolve()
+    if not workspace.is_dir():
+        raise FirstLapError("E_FIRST_LAP_ROOT", "root must be an existing directory")
+    receipt_path = workspace / ".factory" / "first-lap" / "init.json"
+    required = (
+        "MISSION.md",
+        "END-TO-END.md",
+        "HOLDOUT.md",
+        ".factory/holdouts/HOLDOUT.md",
+    )
+    if not receipt_path.is_file():
+        return _uninitialized_status(required)
+    try:
+        receipt = _json(receipt_path)
+    except FirstLapError as exc:
+        return _blocked_status(exc)
+    artifact_status, stale = _status_artifacts(workspace, receipt)
+    return _initialized_status(workspace, receipt_path, receipt, artifact_status, stale)
+
+
+def _calibration_required(expected: dict[str, Any]) -> dict[str, list[str]]:
+    return {
+        key: sorted(value) if isinstance(value, set) else [value]
+        for key, value in expected.items()
+    }
+
+
+def _calibration_blocked(
+    code: str,
+    *,
+    failed_case: str | None = None,
+    observed: dict[str, str] | None = None,
+    required: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "schema": CALIBRATION_SCHEMA,
+        "marker": "VERIFIER_ACTIVATION_BLOCKED",
+        "state": "BLOCKED",
+        "code": code,
+    }
+    if failed_case is not None:
+        result["failed_case"] = failed_case
+    if observed is not None:
+        result["observed"] = observed
+    if required is not None:
+        result["required"] = required
+    result["authority"] = "none"
     return result
+
+
+def _calibration_status(value: object, name: str) -> str:
+    status = value.get("status") if isinstance(value, dict) else value
+    if not isinstance(status, str):
+        raise FirstLapError(
+            "E_CALIBRATION_INCOMPLETE", f"missing calibration status: {name}"
+        )
+    return status.strip().lower()
+
+
+def _strict_calibration_metadata(
+    name: str,
+    value: object,
+    candidate_hashes: set[str],
+    contract_hashes: set[str],
+) -> tuple[dict[str, str] | None, str | None]:
+    if (
+        not isinstance(value, dict)
+        or not _is_sha256(value.get("candidate_hash"))
+        or not _is_sha256(value.get("contract_sha256"))
+        or not _is_sha256(value.get("evidence_sha256"))
+    ):
+        return None, name
+    candidate_hash = value["candidate_hash"].lower()
+    contract_hash = value["contract_sha256"].lower()
+    if candidate_hash in candidate_hashes:
+        return None, name
+    candidate_hashes.add(candidate_hash)
+    contract_hashes.add(contract_hash)
+    return {
+        "candidate_hash": candidate_hash,
+        "contract_sha256": contract_hash,
+        "evidence_sha256": value["evidence_sha256"].lower(),
+        "validator_id": _text(
+            value.get("validator_id", "unknown"), "validator_id", 128
+        ),
+    }, None
+
+
+def _calibration_core(
+    observed: dict[str, str],
+    required: dict[str, list[str]],
+    metadata: dict[str, dict[str, str]],
+    contract_hashes: set[str],
+    strict: bool,
+) -> dict[str, Any]:
+    core: dict[str, Any] = {
+        "schema": CALIBRATION_SCHEMA,
+        "marker": "VERIFIER_CALIBRATED",
+        "state": "CALIBRATED",
+        "observed": observed,
+        "required": required,
+        "authority": "none",
+    }
+    if strict:
+        core.update(
+            {
+                "identity_bound": True,
+                "contract_sha256": next(iter(contract_hashes)),
+                "cases": metadata,
+            }
+        )
+    return core
 
 
 def verify_verifier_calibration(
@@ -448,92 +563,35 @@ def verify_verifier_calibration(
     contract_hashes: set[str] = set()
     for name, acceptable in expected.items():
         value = cases.get(name)
-        status = value.get("status") if isinstance(value, dict) else value
-        if not isinstance(status, str):
-            raise FirstLapError(
-                "E_CALIBRATION_INCOMPLETE", f"missing calibration status: {name}"
-            )
-        normalized = status.strip().lower()
+        normalized = _calibration_status(value, name)
         observed[name] = normalized
         if normalized not in (
             acceptable if isinstance(acceptable, set) else {acceptable}
         ):
-            return {
-                "schema": CALIBRATION_SCHEMA,
-                "marker": "VERIFIER_ACTIVATION_BLOCKED",
-                "state": "BLOCKED",
-                "code": "E_CALIBRATION_FAILED",
-                "failed_case": name,
-                "observed": observed,
-                "required": {
-                    key: sorted(value) if isinstance(value, set) else [value]
-                    for key, value in expected.items()
-                },
-                "authority": "none",
-            }
+            return _calibration_blocked(
+                "E_CALIBRATION_FAILED",
+                failed_case=name,
+                observed=observed,
+                required=_calibration_required(expected),
+            )
         if strict:
-            if (
-                not isinstance(value, dict)
-                or not _is_sha256(value.get("candidate_hash"))
-                or not _is_sha256(value.get("contract_sha256"))
-                or not _is_sha256(value.get("evidence_sha256"))
-            ):
-                return {
-                    "schema": CALIBRATION_SCHEMA,
-                    "marker": "VERIFIER_ACTIVATION_BLOCKED",
-                    "state": "BLOCKED",
-                    "code": "E_CALIBRATION_IDENTITY",
-                    "failed_case": name,
-                    "authority": "none",
-                }
-            candidate_hash = value["candidate_hash"].lower()
-            contract_hash = value["contract_sha256"].lower()
-            if candidate_hash in candidate_hashes:
-                return {
-                    "schema": CALIBRATION_SCHEMA,
-                    "marker": "VERIFIER_ACTIVATION_BLOCKED",
-                    "state": "BLOCKED",
-                    "code": "E_CALIBRATION_IDENTITY",
-                    "failed_case": name,
-                    "authority": "none",
-                }
-            candidate_hashes.add(candidate_hash)
-            contract_hashes.add(contract_hash)
-            metadata[name] = {
-                "candidate_hash": candidate_hash,
-                "contract_sha256": contract_hash,
-                "evidence_sha256": value["evidence_sha256"].lower(),
-                "validator_id": _text(
-                    value.get("validator_id", "unknown"), "validator_id", 128
-                ),
-            }
+            case_metadata, failure = _strict_calibration_metadata(
+                name, value, candidate_hashes, contract_hashes
+            )
+            if failure:
+                return _calibration_blocked(
+                    "E_CALIBRATION_IDENTITY", failed_case=failure
+                )
+            metadata[name] = case_metadata or {}
     if strict and len(contract_hashes) != 1:
-        return {
-            "schema": CALIBRATION_SCHEMA,
-            "marker": "VERIFIER_ACTIVATION_BLOCKED",
-            "state": "BLOCKED",
-            "code": "E_CALIBRATION_CONTRACT",
-            "authority": "none",
-        }
-    core = {
-        "schema": CALIBRATION_SCHEMA,
-        "marker": "VERIFIER_CALIBRATED",
-        "state": "CALIBRATED",
-        "observed": observed,
-        "required": {
-            key: sorted(value) if isinstance(value, set) else [value]
-            for key, value in expected.items()
-        },
-        "authority": "none",
-    }
-    if strict:
-        core.update(
-            {
-                "identity_bound": True,
-                "contract_sha256": next(iter(contract_hashes)),
-                "cases": metadata,
-            }
-        )
+        return _calibration_blocked("E_CALIBRATION_CONTRACT")
+    core = _calibration_core(
+        observed,
+        _calibration_required(expected),
+        metadata,
+        contract_hashes,
+        strict,
+    )
     return {**core, "calibration_sha256": _sha(core)}
 
 
@@ -628,10 +686,20 @@ def promote_incident(root: Path, incident: dict[str, Any]) -> dict[str, Any]:
     return {**result, "path": path.relative_to(Path(root).resolve()).as_posix()}
 
 
-def verify_promoted_incident_gates(root: Path) -> dict[str, Any]:
-    """Verify every promoted incident receipt before activation."""
-    workspace = Path(root).resolve()
-    directory = workspace / ".factory" / "incidents" / "promoted"
+def _promoted_receipt_valid(receipt: dict[str, Any]) -> bool:
+    body = {key: value for key, value in receipt.items() if key != "promotion_sha256"}
+    gate = receipt.get("gate")
+    return (
+        receipt.get("schema") == PROMOTED_SCHEMA
+        and _is_sha256(receipt.get("promotion_sha256"))
+        and _sha(body) == receipt.get("promotion_sha256")
+        and isinstance(gate, dict)
+        and gate.get("required") is True
+        and gate.get("human_approval") is True
+    )
+
+
+def _promoted_receipt_names(directory: Path) -> tuple[list[str], list[str]]:
     invalid: list[str] = []
     verified: list[str] = []
     if directory.is_dir():
@@ -641,21 +709,15 @@ def verify_promoted_incident_gates(root: Path) -> dict[str, Any]:
             except FirstLapError:
                 invalid.append(path.name)
                 continue
-            body = {
-                key: value
-                for key, value in receipt.items()
-                if key != "promotion_sha256"
-            }
-            gate = receipt.get("gate")
-            valid = (
-                receipt.get("schema") == PROMOTED_SCHEMA
-                and _is_sha256(receipt.get("promotion_sha256"))
-                and _sha(body) == receipt.get("promotion_sha256")
-                and isinstance(gate, dict)
-                and gate.get("required") is True
-                and gate.get("human_approval") is True
-            )
-            (verified if valid else invalid).append(path.name)
+            destination = verified if _promoted_receipt_valid(receipt) else invalid
+            destination.append(path.name)
+    return verified, invalid
+
+
+def verify_promoted_incident_gates(root: Path) -> dict[str, Any]:
+    """Verify every promoted incident receipt before activation."""
+    directory = Path(root).resolve() / ".factory" / "incidents" / "promoted"
+    verified, invalid = _promoted_receipt_names(directory)
     result = {
         "schema": "factory.incident-gates.v1",
         "state": "VERIFIED" if not invalid else "BLOCKED",
@@ -668,20 +730,21 @@ def verify_promoted_incident_gates(root: Path) -> dict[str, Any]:
     return {**result, "digest": _sha(result)}
 
 
-def verify_holdout_boundary(
-    root: Path, holdout: dict[str, Any], *, strict: bool = False
-) -> dict[str, Any]:
-    """Verify verifier-only holdout metadata and fail closed on builder access."""
-    workspace = Path(root).resolve()
-    if not isinstance(holdout, dict):
-        raise FirstLapError("E_HOLDOUT_SCHEMA", "holdout boundary must be an object")
-    path_value = holdout.get("path")
+def _holdout_target(workspace: Path, path_value: object) -> tuple[Path, str, bool]:
     if not isinstance(path_value, str) or not path_value.strip():
         raise FirstLapError("E_HOLDOUT_SCHEMA", "holdout path is required")
     resolved = Path(path_value)
     if not resolved.is_absolute():
         resolved = workspace / resolved
     resolved = resolved.resolve()
+    try:
+        relative = resolved.relative_to(workspace).as_posix()
+        return resolved, relative, True
+    except ValueError:
+        return resolved, str(resolved), False
+
+
+def _holdout_accessed(holdout: dict[str, Any]) -> list[str]:
     accessed = holdout.get("builder_accessed_paths", [])
     if not isinstance(accessed, list) or any(
         not isinstance(item, str) for item in accessed
@@ -689,72 +752,78 @@ def verify_holdout_boundary(
         raise FirstLapError(
             "E_HOLDOUT_SCHEMA", "builder_accessed_paths must be a string list"
         )
-    contaminated = bool(accessed)
-    try:
-        relative = resolved.relative_to(workspace).as_posix()
-        in_workspace = True
-    except ValueError:
-        relative = str(resolved)
-        in_workspace = False
-    if not resolved.is_file():
-        return {
-            "schema": HOLDOUT_SCHEMA,
-            "marker": "HOLDOUT_BOUNDARY_BLOCKED",
-            "state": "BLOCKED",
-            "code": "E_HOLDOUT_UNAVAILABLE",
-            "path": relative,
-            "authority": "none",
-        }
+    return accessed
+
+
+def _holdout_blocked(code: str, relative: str, **details: Any) -> dict[str, Any]:
+    marker = (
+        "HOLDOUT_CONTAMINATED"
+        if code == "E_HOLDOUT_BUILDER_ACCESS"
+        else "HOLDOUT_BOUNDARY_BLOCKED"
+    )
+    return {
+        "schema": HOLDOUT_SCHEMA,
+        "marker": marker,
+        "state": "BLOCKED",
+        "code": code,
+        "path": relative,
+        **details,
+        "authority": "none",
+    }
+
+
+def _holdout_availability(resolved: Path, relative: str) -> dict[str, Any] | None:
+    if resolved.is_file():
+        return None
+    return _holdout_blocked("E_HOLDOUT_UNAVAILABLE", relative)
+
+
+def _holdout_digest(
+    resolved: Path, holdout: dict[str, Any], relative: str
+) -> tuple[str | None, dict[str, Any] | None]:
     expected = holdout.get("sha256")
     actual = _file_sha(resolved)
     if not isinstance(expected, str) or expected.lower() != actual:
-        return {
-            "schema": HOLDOUT_SCHEMA,
-            "marker": "HOLDOUT_BOUNDARY_BLOCKED",
-            "state": "BLOCKED",
-            "code": "E_HOLDOUT_STALE",
-            "path": relative,
-            "expected_sha256": expected,
-            "actual_sha256": actual,
-            "authority": "none",
-        }
-    if contaminated:
-        return {
-            "schema": HOLDOUT_SCHEMA,
-            "marker": "HOLDOUT_CONTAMINATED",
-            "state": "BLOCKED",
-            "code": "E_HOLDOUT_BUILDER_ACCESS",
-            "path": relative,
-            "builder_accessed_paths": accessed,
-            "authority": "none",
-        }
+        return None, _holdout_blocked(
+            "E_HOLDOUT_STALE",
+            relative,
+            expected_sha256=expected,
+            actual_sha256=actual,
+        )
+    return actual, None
+
+
+def _holdout_contamination(accessed: list[str], relative: str) -> dict[str, Any] | None:
+    if not accessed:
+        return None
+    return _holdout_blocked(
+        "E_HOLDOUT_BUILDER_ACCESS", relative, builder_accessed_paths=accessed
+    )
+
+
+def _holdout_isolation(
+    holdout: dict[str, Any], relative: str, in_workspace: bool, strict: bool
+) -> dict[str, Any] | None:
     if strict and (holdout.get("isolation") != "external" or in_workspace):
-        return {
-            "schema": HOLDOUT_SCHEMA,
-            "marker": "HOLDOUT_BOUNDARY_BLOCKED",
-            "state": "BLOCKED",
-            "code": "E_HOLDOUT_ISOLATION",
-            "path": relative,
-            "authority": "none",
-        }
+        return _holdout_blocked("E_HOLDOUT_ISOLATION", relative)
+    return None
+
+
+def _holdout_identity(
+    holdout: dict[str, Any], relative: str, strict: bool
+) -> dict[str, Any] | None:
     if strict and not _is_sha256(holdout.get("sha256")):
-        return {
-            "schema": HOLDOUT_SCHEMA,
-            "marker": "HOLDOUT_BOUNDARY_BLOCKED",
-            "state": "BLOCKED",
-            "code": "E_HOLDOUT_IDENTITY",
-            "path": relative,
-            "authority": "none",
-        }
+        return _holdout_blocked("E_HOLDOUT_IDENTITY", relative)
+    return None
+
+
+def _holdout_scope(relative: str, in_workspace: bool) -> dict[str, Any] | None:
     if in_workspace and not relative.startswith(".factory/holdouts/"):
-        return {
-            "schema": HOLDOUT_SCHEMA,
-            "marker": "HOLDOUT_BOUNDARY_BLOCKED",
-            "state": "BLOCKED",
-            "code": "E_HOLDOUT_SCOPE",
-            "path": relative,
-            "authority": "none",
-        }
+        return _holdout_blocked("E_HOLDOUT_SCOPE", relative)
+    return None
+
+
+def _holdout_verified(relative: str, actual: str, in_workspace: bool) -> dict[str, Any]:
     core = {
         "schema": HOLDOUT_SCHEMA,
         "marker": "HOLDOUT_BOUNDARY_VERIFIED",
@@ -769,109 +838,168 @@ def verify_holdout_boundary(
     return {**core, "boundary_sha256": _sha(core)}
 
 
-def verify_observed_first_lap(
-    events: Iterable[dict[str, Any]], *, strict: bool = False
+def _verify_holdout_target(
+    holdout: dict[str, Any],
+    resolved: Path,
+    relative: str,
+    in_workspace: bool,
+    strict: bool,
 ) -> dict[str, Any]:
-    """Require exactly one ordered, human-observed lifecycle."""
-    rows = list(events)
+    unavailable = _holdout_availability(resolved, relative)
+    if unavailable:
+        return unavailable
+    actual, stale = _holdout_digest(resolved, holdout, relative)
+    if stale:
+        return stale
+    accessed = holdout.get("builder_accessed_paths", [])
+    contaminated = _holdout_contamination(accessed, relative)
+    if contaminated:
+        return contaminated
+    for failure in (
+        _holdout_isolation(holdout, relative, in_workspace, strict),
+        _holdout_identity(holdout, relative, strict),
+        _holdout_scope(relative, in_workspace),
+    ):
+        if failure:
+            return failure
+    return _holdout_verified(relative, actual or "", in_workspace)
+
+
+def verify_holdout_boundary(
+    root: Path, holdout: dict[str, Any], *, strict: bool = False
+) -> dict[str, Any]:
+    """Verify verifier-only holdout metadata and fail closed on builder access."""
+    workspace = Path(root).resolve()
+    if not isinstance(holdout, dict):
+        raise FirstLapError("E_HOLDOUT_SCHEMA", "holdout boundary must be an object")
+    resolved, relative, in_workspace = _holdout_target(workspace, holdout.get("path"))
+    _holdout_accessed(holdout)
+    return _verify_holdout_target(holdout, resolved, relative, in_workspace, strict)
+
+
+def _observation_blocked(
+    code: str,
+    *,
+    observed_phases: list[Any] | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "schema": OBSERVED_SCHEMA,
+        "marker": "FIRST_LAP_OBSERVATION_BLOCKED",
+        "state": "BLOCKED",
+        "code": code,
+    }
+    if observed_phases is not None:
+        result["observed_phases"] = observed_phases
+        result["required_phases"] = list(PHASES)
+    result["authority"] = "none"
+    return result
+
+
+def _observation_phases(rows: list[Any]) -> list[Any] | None:
     names = [row.get("phase") if isinstance(row, dict) else None for row in rows]
     if names != list(PHASES):
-        return {
-            "schema": OBSERVED_SCHEMA,
-            "marker": "FIRST_LAP_OBSERVATION_BLOCKED",
-            "state": "BLOCKED",
-            "code": "E_FIRST_LAP_SEQUENCE",
-            "observed_phases": names,
-            "required_phases": list(PHASES),
-            "authority": "none",
-        }
-    if any(not _is_sha256(row.get("evidence_sha256")) for row in rows):
-        return {
-            "schema": OBSERVED_SCHEMA,
-            "marker": "FIRST_LAP_OBSERVATION_BLOCKED",
-            "state": "BLOCKED",
-            "code": "E_FIRST_LAP_EVIDENCE",
-            "authority": "none",
-        }
-    if strict:
-        run_ids = {row.get("run_id") for row in rows}
+        return names
+    return None
+
+
+def _observation_evidence_missing(rows: list[dict[str, Any]]) -> bool:
+    return any(not _is_sha256(row.get("evidence_sha256")) for row in rows)
+
+
+def _strict_observation_run_invalid(rows: list[dict[str, Any]]) -> bool:
+    run_ids = {row.get("run_id") for row in rows}
+    run_id = next(iter(run_ids)) if len(run_ids) == 1 else None
+    return len(run_ids) != 1 or not isinstance(run_id, str) or not run_id.strip()
+
+
+def _strict_observer_invalid(rows: list[dict[str, Any]]) -> bool:
+    for row in rows:
+        observer = row.get("observer_id")
         if (
-            len(run_ids) != 1
-            or not isinstance(next(iter(run_ids)), str)
-            or not next(iter(run_ids)).strip()
+            not isinstance(observer, str)
+            or not observer.strip()
+            or observer.strip().lower() in {"agent", "automation", "unknown"}
+            or not _is_iso8601(row.get("observed_at"))
+            or not isinstance(row.get("action"), str)
+            or not row["action"].strip()
         ):
-            return {
-                "schema": OBSERVED_SCHEMA,
-                "marker": "FIRST_LAP_OBSERVATION_BLOCKED",
-                "state": "BLOCKED",
-                "code": "E_FIRST_LAP_RUN_ID",
-                "authority": "none",
-            }
-        for row in rows:
-            if (
-                not isinstance(row.get("observer_id"), str)
-                or not row["observer_id"].strip()
-                or row["observer_id"].strip().lower()
-                in {"agent", "automation", "unknown"}
-                or not _is_iso8601(row.get("observed_at"))
-                or not isinstance(row.get("action"), str)
-                or not row["action"].strip()
-            ):
-                return {
-                    "schema": OBSERVED_SCHEMA,
-                    "marker": "FIRST_LAP_OBSERVATION_BLOCKED",
-                    "state": "BLOCKED",
-                    "code": "E_FIRST_LAP_OBSERVER",
-                    "authority": "none",
+            return True
+    return False
+
+
+def _observation_core(rows: list[dict[str, Any]], strict: bool) -> dict[str, Any]:
+    phases = []
+    for row in rows:
+        phase = {
+            "phase": row["phase"],
+            "evidence_sha256": row["evidence_sha256"],
+        }
+        if strict:
+            phase.update(
+                {
+                    "run_id": row["run_id"],
+                    "observer_id": row["observer_id"],
+                    "observed_at": row["observed_at"],
+                    "action": row["action"],
                 }
+            )
+        phases.append(phase)
     core = {
         "schema": OBSERVED_SCHEMA,
         "marker": "FIRST_LAP_OBSERVED",
         "state": "OBSERVED",
-        "phases": [
-            {
-                "phase": row["phase"],
-                "evidence_sha256": row["evidence_sha256"],
-                **(
-                    {
-                        "run_id": row["run_id"],
-                        "observer_id": row["observer_id"],
-                        "observed_at": row["observed_at"],
-                        "action": row["action"],
-                    }
-                    if strict
-                    else {}
-                ),
-            }
-            for row in rows
-        ],
+        "phases": phases,
         "human_observer": True,
         "authority": {"approval": False, "release": False, "autonomy_grant": False},
     }
     if strict:
         core["strict_observation"] = True
+    return core
+
+
+def verify_observed_first_lap(
+    events: Iterable[dict[str, Any]], *, strict: bool = False
+) -> dict[str, Any]:
+    """Require exactly one ordered, human-observed lifecycle."""
+    rows = list(events)
+    names = _observation_phases(rows)
+    if names is not None:
+        return _observation_blocked("E_FIRST_LAP_SEQUENCE", observed_phases=names)
+    if _observation_evidence_missing(rows):
+        return _observation_blocked("E_FIRST_LAP_EVIDENCE")
+    if strict:
+        if _strict_observation_run_invalid(rows):
+            return _observation_blocked("E_FIRST_LAP_RUN_ID")
+        if _strict_observer_invalid(rows):
+            return _observation_blocked("E_FIRST_LAP_OBSERVER")
+    core = _observation_core(rows, strict)
     return {**core, "observation_sha256": _sha(core)}
 
 
-def classify_failure(
-    kind: str,
-    *,
-    provider: str | None = None,
-    retry_after_seconds: int | None = None,
-    strict: bool = False,
-) -> dict[str, Any]:
-    """Normalize failure taxonomy; only transient provider failures retry."""
+def _validate_failure_kind(kind: str) -> str:
     normalized = _text(kind, "failure_kind", 64).lower()
     if normalized not in FAILURE_CLASSES:
         raise FirstLapError(
             "E_FAILURE_CLASS", f"unsupported failure class: {normalized}"
         )
+    return normalized
+
+
+def _validate_retry_after(retry_after_seconds: int | None) -> None:
     if retry_after_seconds is not None and (
         isinstance(retry_after_seconds, bool)
         or not isinstance(retry_after_seconds, int)
         or not 1 <= retry_after_seconds <= 3600
     ):
         raise FirstLapError("E_FAILURE_RETRY", "retry_after_seconds must be 1-3600")
+
+
+def _validate_provider_retry(
+    normalized: str,
+    provider: str | None,
+    retry_after_seconds: int | None,
+    strict: bool,
+) -> None:
     if (
         strict
         and normalized == "transient_provider_failure"
@@ -885,18 +1013,111 @@ def classify_failure(
             "E_FAILURE_PROVIDER",
             "transient provider failures require provider and bounded retry_after_seconds",
         )
-    core = {
+
+
+def _failure_core(
+    normalized: str, provider: str | None, retry_after_seconds: int | None
+) -> dict[str, Any]:
+    provider_name = (
+        provider.strip() if isinstance(provider, str) and provider.strip() else None
+    )
+    retry_allowed = normalized in RETRYABLE
+    return {
         "schema": FAILURE_SCHEMA,
         "failure_class": normalized,
-        "provider": provider.strip()
-        if isinstance(provider, str) and provider.strip()
-        else None,
-        "retry_allowed": normalized in RETRYABLE,
-        "retry_after_seconds": retry_after_seconds if normalized in RETRYABLE else None,
+        "provider": provider_name,
+        "retry_allowed": retry_allowed,
+        "retry_after_seconds": retry_after_seconds if retry_allowed else None,
         "authority": "none",
         "claim_boundary": "Classification is a retry policy hint; it does not prove provider health or product correctness.",
     }
+
+
+def classify_failure(
+    kind: str,
+    *,
+    provider: str | None = None,
+    retry_after_seconds: int | None = None,
+    strict: bool = False,
+) -> dict[str, Any]:
+    """Normalize failure taxonomy; only transient provider failures retry."""
+    normalized = _validate_failure_kind(kind)
+    _validate_retry_after(retry_after_seconds)
+    _validate_provider_retry(normalized, provider, retry_after_seconds, strict)
+    core = _failure_core(normalized, provider, retry_after_seconds)
     return {**core, "classification_sha256": _sha(core)}
+
+
+def _activation_reasons(
+    root: Path,
+    calibration: dict[str, Any],
+    holdout: dict[str, Any],
+    observed: dict[str, Any],
+    strict: bool,
+) -> list[str]:
+    reasons = []
+    if calibration.get("state") != "CALIBRATED":
+        reasons.append("verifier calibration is not complete")
+    if holdout.get("state") != "VERIFIED":
+        reasons.append("holdout boundary is not verified")
+    if observed.get("state") != "OBSERVED":
+        reasons.append("human-observed first lap is not complete")
+    if strict:
+        reasons.extend(_strict_activation_reasons(root, calibration, holdout, observed))
+    return reasons
+
+
+def _strict_activation_reasons(
+    root: Path,
+    calibration: dict[str, Any],
+    holdout: dict[str, Any],
+    observed: dict[str, Any],
+) -> list[str]:
+    reasons = []
+    if not calibration.get("identity_bound"):
+        reasons.append("calibration is not identity-bound")
+    if holdout.get("isolation") != "external":
+        reasons.append("holdout is not externally isolated")
+    if not observed.get("strict_observation"):
+        reasons.append("observation lacks a named human run record")
+    if verify_promoted_incident_gates(root).get("state") != "VERIFIED":
+        reasons.append("promoted incident regression gate is invalid")
+    return reasons
+
+
+def _activation_blocked(reasons: list[str]) -> dict[str, Any]:
+    return {
+        "schema": RECEIPT_SCHEMA,
+        "marker": "FIRST_LAP_ACTIVATION_BLOCKED",
+        "state": "BLOCKED",
+        "code": "E_FIRST_LAP_ACTIVATION",
+        "reasons": reasons,
+        "authority": "none",
+    }
+
+
+def _activation_core(
+    calibration: dict[str, Any],
+    holdout: dict[str, Any],
+    observed: dict[str, Any],
+    strict: bool,
+) -> dict[str, Any]:
+    return {
+        "schema": ACTIVATION_SCHEMA,
+        "marker": "FIRST_LAP_ACTIVATION_READY",
+        "state": "READY",
+        "calibration_sha256": calibration.get("calibration_sha256"),
+        "holdout_boundary_sha256": holdout.get("boundary_sha256"),
+        "observation_sha256": observed.get("observation_sha256"),
+        "strict": strict,
+        "authority": {
+            "autonomy": "supervised",
+            "release": False,
+            "merge": False,
+            "publication": False,
+            "deployment": False,
+        },
+    }
 
 
 def verify_activation(
@@ -915,46 +1136,10 @@ def verify_activation(
     run-specific human observation.  When ``persist`` is requested the signed
     projection is written immutably so later admission checks can re-verify it.
     """
-    reasons: list[str] = []
-    if calibration.get("state") != "CALIBRATED":
-        reasons.append("verifier calibration is not complete")
-    if holdout.get("state") != "VERIFIED":
-        reasons.append("holdout boundary is not verified")
-    if observed.get("state") != "OBSERVED":
-        reasons.append("human-observed first lap is not complete")
-    if strict and not calibration.get("identity_bound"):
-        reasons.append("calibration is not identity-bound")
-    if strict and holdout.get("isolation") != "external":
-        reasons.append("holdout is not externally isolated")
-    if strict and not observed.get("strict_observation"):
-        reasons.append("observation lacks a named human run record")
-    if strict and verify_promoted_incident_gates(root).get("state") != "VERIFIED":
-        reasons.append("promoted incident regression gate is invalid")
+    reasons = _activation_reasons(root, calibration, holdout, observed, strict)
     if reasons:
-        return {
-            "schema": RECEIPT_SCHEMA,
-            "marker": "FIRST_LAP_ACTIVATION_BLOCKED",
-            "state": "BLOCKED",
-            "code": "E_FIRST_LAP_ACTIVATION",
-            "reasons": reasons,
-            "authority": "none",
-        }
-    core = {
-        "schema": ACTIVATION_SCHEMA,
-        "marker": "FIRST_LAP_ACTIVATION_READY",
-        "state": "READY",
-        "calibration_sha256": calibration.get("calibration_sha256"),
-        "holdout_boundary_sha256": holdout.get("boundary_sha256"),
-        "observation_sha256": observed.get("observation_sha256"),
-        "strict": strict,
-        "authority": {
-            "autonomy": "supervised",
-            "release": False,
-            "merge": False,
-            "publication": False,
-            "deployment": False,
-        },
-    }
+        return _activation_blocked(reasons)
+    core = _activation_core(calibration, holdout, observed, strict)
     result = {**core, "receipt_sha256": _sha(core), "generated_at": _now()}
     if persist:
         path = Path(root).resolve() / ".factory" / "first-lap" / "activation.json"

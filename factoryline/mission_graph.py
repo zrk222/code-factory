@@ -575,39 +575,12 @@ def _verify_chain(
         (mission["id"],),
     ).fetchall()
     for stored in events:
-        try:
-            core = json.loads(stored["event_json"])
-        except json.JSONDecodeError:
-            errors.append(f"event {expected_version} JSON invalid")
+        verified = _verify_stored_event(
+            stored, expected_version, previous, last_state, errors
+        )
+        if verified is None:
             break
-        calculated = _sha_bytes(_canonical(core))
-        if (
-            stored["version"] != expected_version
-            or core.get("version") != expected_version
-        ):
-            errors.append(f"event version discontinuity at {expected_version}")
-        if core.get("previous_sha256") != previous or stored["event_sha"] != calculated:
-            errors.append(f"event hash-chain drift at {expected_version}")
-        if core.get("source_state") != last_state:
-            errors.append(f"event source-state drift at {expected_version}")
-        receipt_ref = (
-            core.get("receipt") if isinstance(core.get("receipt"), dict) else {}
-        )
-        calculated_intent = _intent(
-            core.get("event", ""),
-            core.get("actor", ""),
-            core.get("role", ""),
-            core.get("payload", {}),
-            receipt_ref.get("sha256"),
-        )
-        if stored["intent_sha"] != calculated_intent:
-            errors.append(f"event intent drift at {expected_version}")
-        if stored["receipt_path"]:
-            path = Path(stored["receipt_path"])
-            if not path.is_file() or _sha_path(path) != stored["receipt_sha"]:
-                errors.append(f"receipt drift at event {expected_version}")
-        previous = calculated
-        last_state = core.get("target_state", "")
+        previous, last_state = verified
         expected_version += 1
     if (
         row["version"] != len(events)
@@ -616,6 +589,62 @@ def _verify_chain(
     ):
         errors.append("thread head differs from event chain")
     return errors
+
+
+def _verify_stored_event(
+    stored: sqlite3.Row,
+    expected_version: int,
+    previous: str,
+    last_state: str,
+    errors: list[str],
+) -> tuple[str, Any] | None:
+    try:
+        core = json.loads(stored["event_json"])
+    except json.JSONDecodeError:
+        errors.append(f"event {expected_version} JSON invalid")
+        return None
+    calculated = _sha_bytes(_canonical(core))
+    _verify_event_bindings(
+        stored, core, calculated, expected_version, previous, last_state, errors
+    )
+    return calculated, core.get("target_state", "")
+
+
+def _verify_event_bindings(
+    stored: sqlite3.Row,
+    core: dict[str, Any],
+    calculated: str,
+    expected_version: int,
+    previous: str,
+    last_state: str,
+    errors: list[str],
+) -> None:
+    if stored["version"] != expected_version or core.get("version") != expected_version:
+        errors.append(f"event version discontinuity at {expected_version}")
+    if core.get("previous_sha256") != previous or stored["event_sha"] != calculated:
+        errors.append(f"event hash-chain drift at {expected_version}")
+    if core.get("source_state") != last_state:
+        errors.append(f"event source-state drift at {expected_version}")
+    receipt_ref = core.get("receipt") if isinstance(core.get("receipt"), dict) else {}
+    calculated_intent = _intent(
+        core.get("event", ""),
+        core.get("actor", ""),
+        core.get("role", ""),
+        core.get("payload", {}),
+        receipt_ref.get("sha256"),
+    )
+    if stored["intent_sha"] != calculated_intent:
+        errors.append(f"event intent drift at {expected_version}")
+    _verify_event_receipt(stored, expected_version, errors)
+
+
+def _verify_event_receipt(
+    stored: sqlite3.Row, expected_version: int, errors: list[str]
+) -> None:
+    if stored["receipt_path"]:
+        path = Path(stored["receipt_path"])
+        if not path.is_file() or _sha_path(path) != stored["receipt_sha"]:
+            errors.append(f"receipt drift at event {expected_version}")
 
 
 def _intent(
@@ -753,43 +782,71 @@ def _guard_retry_review(
     event: str,
     payload: dict[str, Any],
 ) -> None:
-    if event == "retry" and payload.get("fresh_context") is not True:
+    if event == "retry":
+        _guard_retry_proof_delta(connection, row, root, receipt_file, receipt, payload)
+    _guard_review_receipt_schema(event, receipt)
+    if event == "resume" and payload.get("fresh_context") is not True:
+        raise MissionGraphError(
+            "MISSION_GRAPH_FRESH_CONTEXT_REQUIRED",
+            "resume must attest fresh_context=true",
+        )
+
+
+def _guard_retry_proof_delta(
+    connection: sqlite3.Connection,
+    row: sqlite3.Row,
+    root: Path,
+    receipt_file: Path,
+    receipt: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    if payload.get("fresh_context") is not True:
         raise MissionGraphError(
             "MISSION_GRAPH_FRESH_CONTEXT_REQUIRED",
             "retry must attest fresh_context=true",
         )
-    if event == "retry":
-        if receipt.get("schema") != "factory.mission.proof-delta.v1":
-            raise MissionGraphError(
-                "MISSION_GRAPH_PROOF_DELTA_REQUIRED",
-                "retry requires a factory.mission.proof-delta.v1 receipt",
-            )
-        try:
-            proof_delta = verify_proof_delta(root, receipt_file)
-        except ProofDeltaError as exc:
-            raise MissionGraphError(
-                "MISSION_GRAPH_PROOF_DELTA_INVALID", exc.message
-            ) from exc
-        if not proof_delta["eligible"]:
-            raise MissionGraphError(
-                "MISSION_GRAPH_NO_EVIDENCE_GAIN",
-                "retry is blocked because the repair packet adds no new hash-bound evidence",
-            )
-        candidate_event, failure_event = _latest_correction_binding(
-            connection, row["thread_id"]
+    if receipt.get("schema") != "factory.mission.proof-delta.v1":
+        raise MissionGraphError(
+            "MISSION_GRAPH_PROOF_DELTA_REQUIRED",
+            "retry requires a factory.mission.proof-delta.v1 receipt",
         )
-        candidate_ref = candidate_event.get("receipt", {})
-        failure_ref = failure_event.get("receipt", {})
-        if (
-            proof_delta["prior_candidate"]["sha256"] != candidate_ref.get("sha256")
-            or proof_delta["failure"]["sha256"] != failure_ref.get("sha256")
-            or proof_delta["criterion_id"]
-            != failure_event.get("payload", {}).get("criterion_id")
-        ):
-            raise MissionGraphError(
-                "MISSION_GRAPH_PROOF_DELTA_INVALID",
-                "proof delta must bind the current candidate, failed criterion, and validation failure",
-            )
+    try:
+        proof_delta = verify_proof_delta(root, receipt_file)
+    except ProofDeltaError as exc:
+        raise MissionGraphError(
+            "MISSION_GRAPH_PROOF_DELTA_INVALID", exc.message
+        ) from exc
+    if not proof_delta["eligible"]:
+        raise MissionGraphError(
+            "MISSION_GRAPH_NO_EVIDENCE_GAIN",
+            "retry is blocked because the repair packet adds no new hash-bound evidence",
+        )
+    candidate_event, failure_event = _latest_correction_binding(
+        connection, row["thread_id"]
+    )
+    _validate_retry_binding(proof_delta, candidate_event, failure_event)
+
+
+def _validate_retry_binding(
+    proof_delta: dict[str, Any],
+    candidate_event: dict[str, Any],
+    failure_event: dict[str, Any],
+) -> None:
+    candidate_ref = candidate_event.get("receipt", {})
+    failure_ref = failure_event.get("receipt", {})
+    if (
+        proof_delta["prior_candidate"]["sha256"] != candidate_ref.get("sha256")
+        or proof_delta["failure"]["sha256"] != failure_ref.get("sha256")
+        or proof_delta["criterion_id"]
+        != failure_event.get("payload", {}).get("criterion_id")
+    ):
+        raise MissionGraphError(
+            "MISSION_GRAPH_PROOF_DELTA_INVALID",
+            "proof delta must bind the current candidate, failed criterion, and validation failure",
+        )
+
+
+def _guard_review_receipt_schema(event: str, receipt: dict[str, Any]) -> None:
     if (
         event == "pause"
         and receipt.get("schema") != "factory.mission.human-interrupt.v1"
@@ -804,11 +861,6 @@ def _guard_retry_review(
     ):
         raise MissionGraphError(
             "MISSION_GRAPH_PLAN_INVALID", "plan revision receipt schema is required"
-        )
-    if event == "resume" and payload.get("fresh_context") is not True:
-        raise MissionGraphError(
-            "MISSION_GRAPH_FRESH_CONTEXT_REQUIRED",
-            "resume must attest fresh_context=true",
         )
 
 
@@ -916,6 +968,18 @@ def _reduce_thread(
         "release_decided": "MISSION_GRAPH_RELEASE_AUTHORITY_SEPARATE",
     }
     state["marker"] = event_markers.get(event, state["marker"])
+    _reduce_thread_progress(state, row, event, actor, target)
+    _reduce_thread_receipts(state, event, receipt_file, receipt_sha)
+    return state
+
+
+def _reduce_thread_progress(
+    state: dict[str, Any],
+    row: sqlite3.Row,
+    event: str,
+    actor: str,
+    target: str,
+) -> None:
     if event == "approve" and state["attempts"] == 0:
         state.update(attempts=1, marker="MISSION_GRAPH_OWNER_DECISION_BOUND")
     if event == "candidate_ready":
@@ -934,6 +998,11 @@ def _reduce_thread(
             )
     if event == "pause":
         state["paused_from"] = row["state"]
+
+
+def _reduce_thread_receipts(
+    state: dict[str, Any], event: str, receipt_file: Path, receipt_sha: str
+) -> None:
     receipt_ref = json.dumps(
         {"path": str(receipt_file), "sha256": receipt_sha}, sort_keys=True
     )
@@ -943,7 +1012,6 @@ def _reduce_thread(
         state.update(creator_id=None, verifier_id=None)
     if event == "context_refreshed":
         state["context_json"] = receipt_ref
-    return state
 
 
 def apply_mission_event(

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -29,6 +30,16 @@ _AUTHORITY = {
 }
 
 
+@dataclass
+class _CycleState:
+    index: int = 0
+    indexes: dict[str, int] = field(default_factory=dict)
+    lowlinks: dict[str, int] = field(default_factory=dict)
+    stack: list[str] = field(default_factory=list)
+    on_stack: set[str] = field(default_factory=set)
+    components: list[list[str]] = field(default_factory=list)
+
+
 def _canonical(value: object) -> bytes:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
@@ -39,18 +50,17 @@ def _sha(value: object) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
 
 
-def _dependency_graph(
-    snapshot: dict[str, Any],
-) -> tuple[list[str], dict[str, list[str]], dict[str, dict[str, Any]]]:
-    raw_nodes = snapshot.get("nodes")
-    raw_edges = snapshot.get("edges")
-    if not isinstance(raw_nodes, list) or not isinstance(raw_edges, list):
-        return [], {}, {}
-    nodes = {
+def _graph_nodes(raw_nodes: list[Any]) -> dict[str, dict[str, Any]]:
+    return {
         item["id"]: item
         for item in raw_nodes
         if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]
     }
+
+
+def _dependency_successors(
+    nodes: dict[str, dict[str, Any]], raw_edges: list[Any]
+) -> tuple[list[str], dict[str, list[str]]]:
     related = {
         node_id for node_id, node in nodes.items() if node.get("kind") == "slice"
     }
@@ -68,54 +78,68 @@ def _dependency_graph(
             related.update({source, target})
             successors[source].add(target)
     ordered = sorted(related)
+    normalized = {
+        node_id: sorted(successors.get(node_id, set())) for node_id in ordered
+    }
+    return ordered, normalized
+
+
+def _dependency_graph(
+    snapshot: dict[str, Any],
+) -> tuple[list[str], dict[str, list[str]], dict[str, dict[str, Any]]]:
+    raw_nodes = snapshot.get("nodes")
+    raw_edges = snapshot.get("edges")
+    if not isinstance(raw_nodes, list) or not isinstance(raw_edges, list):
+        return [], {}, {}
+    nodes = _graph_nodes(raw_nodes)
+    ordered, successors = _dependency_successors(nodes, raw_edges)
     return (
         ordered,
-        {node_id: sorted(successors.get(node_id, set())) for node_id in ordered},
+        successors,
         nodes,
     )
+
+
+def _visit_cycle_component(
+    node_id: str, successors: dict[str, list[str]], state: _CycleState
+) -> None:
+    index = state.index
+    state.index += 1
+    state.indexes[node_id] = index
+    state.lowlinks[node_id] = index
+    state.stack.append(node_id)
+    state.on_stack.add(node_id)
+    for child in successors[node_id]:
+        if child not in state.indexes:
+            _visit_cycle_component(child, successors, state)
+            state.lowlinks[node_id] = min(
+                state.lowlinks[node_id], state.lowlinks[child]
+            )
+        elif child in state.on_stack:
+            state.lowlinks[node_id] = min(state.lowlinks[node_id], state.indexes[child])
+    if state.lowlinks[node_id] != state.indexes[node_id]:
+        return
+    component: list[str] = []
+    while state.stack:
+        member = state.stack.pop()
+        state.on_stack.remove(member)
+        component.append(member)
+        if member == node_id:
+            break
+    component.sort()
+    if len(component) > 1 or node_id in successors[node_id]:
+        state.components.append(component)
 
 
 def _cycle_components(
     nodes: list[str], successors: dict[str, list[str]]
 ) -> list[list[str]]:
     """Return lexical strongly connected components with at least one cycle."""
-    index = 0
-    indexes: dict[str, int] = {}
-    lowlinks: dict[str, int] = {}
-    stack: list[str] = []
-    on_stack: set[str] = set()
-    components: list[list[str]] = []
-
-    def visit(node_id: str) -> None:
-        nonlocal index
-        indexes[node_id] = index
-        lowlinks[node_id] = index
-        index += 1
-        stack.append(node_id)
-        on_stack.add(node_id)
-        for child in successors[node_id]:
-            if child not in indexes:
-                visit(child)
-                lowlinks[node_id] = min(lowlinks[node_id], lowlinks[child])
-            elif child in on_stack:
-                lowlinks[node_id] = min(lowlinks[node_id], indexes[child])
-        if lowlinks[node_id] != indexes[node_id]:
-            return
-        component: list[str] = []
-        while stack:
-            member = stack.pop()
-            on_stack.remove(member)
-            component.append(member)
-            if member == node_id:
-                break
-        component.sort()
-        if len(component) > 1 or node_id in successors[node_id]:
-            components.append(component)
-
+    state = _CycleState()
     for node_id in nodes:
-        if node_id not in indexes:
-            visit(node_id)
-    return sorted(components, key=lambda component: tuple(component))
+        if node_id not in state.indexes:
+            _visit_cycle_component(node_id, successors, state)
+    return sorted(state.components, key=lambda component: tuple(component))
 
 
 def _topological_order(nodes: list[str], successors: dict[str, list[str]]) -> list[str]:

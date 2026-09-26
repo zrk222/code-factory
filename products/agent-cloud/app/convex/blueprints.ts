@@ -1,4 +1,6 @@
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { requireWorkspaceRole } from "./access";
 import { assertIntegerRange, assertText, receiptFingerprint } from "./domain";
@@ -15,6 +17,18 @@ const runtimeEngine = v.union(v.literal("agent-oven-native"), v.literal("langgra
 const inferenceAccess = v.union(v.literal("agent-oven-api"), v.literal("byok"));
 const flow = v.union(v.literal("sequential"), v.literal("parallel"), v.literal("branch"), v.literal("loop"));
 const step = v.object({ id: v.string(), label: v.string(), kind: stepKind, connectorProvider: v.optional(v.string()), humanGate: v.boolean(), flow: v.optional(flow), dependsOn: v.optional(v.array(v.string())), conditionRef: v.optional(v.string()), maxIterations: v.optional(v.number()) });
+
+async function assertBlueprintConnectorsReady(ctx: MutationCtx, blueprint: Doc<"agentBlueprints">) {
+  const connectors = await ctx.db.query("knowledgeConnectors").withIndex("by_workspace_status", (q) => q.eq("workspaceId", blueprint.workspaceId)).collect();
+  const missingConnector = blueprint.steps.some((item) => item.connectorProvider && !connectors.some((connector) => connector.provider === item.connectorProvider && connector.status === "ready"));
+  if (missingConnector) throw new Error("E_BLUEPRINT_CONNECTOR_NOT_READY");
+}
+
+async function assertBlueprintRuntimeReady(ctx: MutationCtx, blueprint: Doc<"agentBlueprints">) {
+  if (!blueprint.runtimeEngine || blueprint.runtimeEngine === "agent-oven-native") return;
+  const adapter = await ctx.db.query("runtimeAdapters").withIndex("by_agent_engine", (q) => q.eq("agentSpecId", blueprint.agentSpecId).eq("engine", blueprint.runtimeEngine as "langgraph" | "mastra")).unique();
+  if (!adapter || adapter.status !== "ready") throw new Error("E_BLUEPRINT_RUNTIME_ADAPTER_NOT_READY");
+}
 
 /** Saves an editable blueprint head and appends an immutable canonical version. */
 export const save = mutation({
@@ -77,12 +91,8 @@ export const activate = mutation({
     await requireWorkspaceRole(ctx, blueprint.workspaceId, "admin");
     const creditReservation = await ctx.db.get(args.creditReservationId);
     if (!creditReservation || creditReservation.blueprintId !== blueprint._id || creditReservation.workspaceId !== blueprint.workspaceId || creditReservation.state !== "settled") throw new Error("E_BLUEPRINT_CREDITS_NOT_SETTLED");
-    const connectors = await ctx.db.query("knowledgeConnectors").withIndex("by_workspace_status", (q) => q.eq("workspaceId", blueprint.workspaceId)).collect();
-    if (blueprint.steps.some((item) => item.connectorProvider && !connectors.some((connector) => connector.provider === item.connectorProvider && connector.status === "ready"))) throw new Error("E_BLUEPRINT_CONNECTOR_NOT_READY");
-    if (blueprint.runtimeEngine && blueprint.runtimeEngine !== "agent-oven-native") {
-      const adapter = await ctx.db.query("runtimeAdapters").withIndex("by_agent_engine", (q) => q.eq("agentSpecId", blueprint.agentSpecId).eq("engine", blueprint.runtimeEngine as "langgraph" | "mastra")).unique();
-      if (!adapter || adapter.status !== "ready") throw new Error("E_BLUEPRINT_RUNTIME_ADAPTER_NOT_READY");
-    }
+    await assertBlueprintConnectorsReady(ctx, blueprint);
+    await assertBlueprintRuntimeReady(ctx, blueprint);
     const now = Date.now();
     await ctx.db.patch(blueprint._id, { status: "active", updatedAt: now });
     const previous = await ctx.db.query("receipts").withIndex("by_workspace_created", (q) => q.eq("workspaceId", blueprint.workspaceId)).order("desc").first();

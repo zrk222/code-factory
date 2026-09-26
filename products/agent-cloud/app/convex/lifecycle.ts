@@ -126,6 +126,118 @@ export const rollbackAgentSpec = mutation({
   },
 });
 
+type LifecycleAction = "pause" | "resume" | "revoke";
+type LifecycleCounts = { closedRuns: number; closedApprovals: number };
+
+function validateLifecycleTransition(spec: Doc<"agentSpecs">, action: LifecycleAction) {
+  if (spec.status === "revoked" && action === "resume") throw new Error("E_AGENT_REVOKED");
+  if (spec.status === "revoked") throw new Error("E_AGENT_REVOKED");
+  if (action === "resume" && spec.status !== "suspended") throw new Error("E_INVALID_LIFECYCLE_TRANSITION");
+  if (action === "pause" && spec.status !== "active") throw new Error("E_INVALID_LIFECYCLE_TRANSITION");
+}
+
+function lifecycleStatus(action: LifecycleAction) {
+  return action === "resume" ? "active" : action === "pause" ? "suspended" : "revoked";
+}
+
+async function closeAwaitingApprovalRun(
+  ctx: MutationCtx,
+  run: Doc<"runs">,
+  actor: string,
+  action: LifecycleAction,
+  reason: string,
+  now: number,
+) {
+  await ctx.db.patch(run._id, { status: "blocked", completedAt: now });
+  const approval = await ctx.db.query("approvals").withIndex("by_run", (q) => q.eq("runId", run._id)).unique();
+  if (approval?.status !== "pending") return 0;
+  await ctx.db.patch(approval._id, {
+    status: "rejected",
+    decidedBy: actor,
+    decidedAt: now,
+    rationale: `Lifecycle ${action}: ${reason}`,
+  });
+  return 1;
+}
+
+async function closeLifecycleWork(
+  ctx: MutationCtx,
+  spec: Doc<"agentSpecs">,
+  actor: string,
+  action: LifecycleAction,
+  reason: string,
+  now: number,
+): Promise<LifecycleCounts> {
+  if (action === "resume") return { closedRuns: 0, closedApprovals: 0 };
+  const runs = await ctx.db
+    .query("runs")
+    .withIndex("by_agent_started", (q) => q.eq("agentSpecId", spec._id))
+    .collect();
+  let closedApprovals = 0;
+  let closedRuns = 0;
+  for (const run of runs.filter((item) => item.status === "awaiting-approval")) {
+    closedRuns += 1;
+    closedApprovals += await closeAwaitingApprovalRun(ctx, run, actor, action, reason, now);
+  }
+  return { closedRuns, closedApprovals };
+}
+
+async function recordLifecycleReceipt(
+  ctx: MutationCtx,
+  spec: Doc<"agentSpecs">,
+  action: LifecycleAction,
+  reason: string,
+  nextStatus: ReturnType<typeof lifecycleStatus>,
+  now: number,
+) {
+  await ctx.db.patch(spec._id, { status: nextStatus, updatedAt: now });
+  const previous = await ctx.db
+    .query("receipts")
+    .withIndex("by_workspace_created", (q) => q.eq("workspaceId", spec.workspaceId))
+    .order("desc")
+    .first();
+  const fingerprint = receiptFingerprint([String(spec._id), action, reason, String(now)]);
+  await ctx.db.insert("receipts", {
+    workspaceId: spec.workspaceId,
+    agentSpecId: spec._id,
+    type: "agent-lifecycle",
+    event: `agent.${action}`,
+    fingerprint,
+    previousFingerprint: previous?.fingerprint,
+    signatureState: "unsigned",
+    createdAt: now,
+  });
+  return fingerprint;
+}
+
+async function recordLifecycleAudit(
+  ctx: MutationCtx,
+  spec: Doc<"agentSpecs">,
+  actor: string,
+  action: LifecycleAction,
+  reason: string,
+  counts: LifecycleCounts,
+  now: number,
+) {
+  await ctx.db.insert("auditEvents", {
+    workspaceId: spec.workspaceId,
+    actor,
+    event: `agent.${action}`,
+    targetType: "agentSpec",
+    targetId: String(spec._id),
+    detail: `${reason} Closed ${counts.closedRuns} run(s) and ${counts.closedApprovals} approval(s).`,
+    createdAt: now,
+  });
+}
+
+function lifecycleMarker(action: LifecycleAction) {
+  return action === "pause"
+    ? "AGENT_EMERGENCY_STOPPED"
+    : action === "resume"
+      ? "AGENT_RESUMED"
+      : "AGENT_PERMANENTLY_REVOKED";
+}
+
 export const setLifecycle = mutation({
   args: {
     agentSpecId: v.id("agentSpecs"),
@@ -137,67 +249,13 @@ export const setLifecycle = mutation({
     if (!spec) throw new Error("E_AGENT_SPEC_NOT_FOUND");
     const authorized = await requireWorkspaceRole(ctx, spec.workspaceId, "admin");
     const reason = assertText(args.reason, "lifecycle_reason", 500);
-    if (spec.status === "revoked" && args.action === "resume") throw new Error("E_AGENT_REVOKED");
-    if (spec.status === "revoked") throw new Error("E_AGENT_REVOKED");
-    if (args.action === "resume" && spec.status !== "suspended") throw new Error("E_INVALID_LIFECYCLE_TRANSITION");
-    if (args.action === "pause" && spec.status !== "active") throw new Error("E_INVALID_LIFECYCLE_TRANSITION");
-
-    const nextStatus = args.action === "resume" ? "active" : args.action === "pause" ? "suspended" : "revoked";
+    validateLifecycleTransition(spec, args.action);
+    const nextStatus = lifecycleStatus(args.action);
     const now = Date.now();
-    let closedRuns = 0;
-    let closedApprovals = 0;
-    if (args.action !== "resume") {
-      const runs = await ctx.db
-        .query("runs")
-        .withIndex("by_agent_started", (q) => q.eq("agentSpecId", spec._id))
-        .collect();
-      for (const run of runs.filter((item) => item.status === "awaiting-approval")) {
-        await ctx.db.patch(run._id, { status: "blocked", completedAt: now });
-        closedRuns += 1;
-        const approval = await ctx.db.query("approvals").withIndex("by_run", (q) => q.eq("runId", run._id)).unique();
-        if (approval?.status === "pending") {
-          await ctx.db.patch(approval._id, {
-            status: "rejected",
-            decidedBy: authorized.tokenIdentifier,
-            decidedAt: now,
-            rationale: `Lifecycle ${args.action}: ${reason}`,
-          });
-          closedApprovals += 1;
-        }
-      }
-    }
-    await ctx.db.patch(spec._id, { status: nextStatus, updatedAt: now });
-    const previous = await ctx.db
-      .query("receipts")
-      .withIndex("by_workspace_created", (q) => q.eq("workspaceId", spec.workspaceId))
-      .order("desc")
-      .first();
-    const fingerprint = receiptFingerprint([String(spec._id), args.action, reason, String(now)]);
-    await ctx.db.insert("receipts", {
-      workspaceId: spec.workspaceId,
-      agentSpecId: spec._id,
-      type: "agent-lifecycle",
-      event: `agent.${args.action}`,
-      fingerprint,
-      previousFingerprint: previous?.fingerprint,
-      signatureState: "unsigned",
-      createdAt: now,
-    });
-    await ctx.db.insert("auditEvents", {
-      workspaceId: spec.workspaceId,
-      actor: authorized.tokenIdentifier,
-      event: `agent.${args.action}`,
-      targetType: "agentSpec",
-      targetId: String(spec._id),
-      detail: `${reason} Closed ${closedRuns} run(s) and ${closedApprovals} approval(s).`,
-      createdAt: now,
-    });
-    const marker = args.action === "pause"
-      ? "AGENT_EMERGENCY_STOPPED"
-      : args.action === "resume"
-        ? "AGENT_RESUMED"
-        : "AGENT_PERMANENTLY_REVOKED";
-    return { marker, actionMarker: "LIFECYCLE_ACTION_ALLOWED" as const, status: nextStatus, closedRuns, closedApprovals, fingerprint };
+    const counts = await closeLifecycleWork(ctx, spec, authorized.tokenIdentifier, args.action, reason, now);
+    const fingerprint = await recordLifecycleReceipt(ctx, spec, args.action, reason, nextStatus, now);
+    await recordLifecycleAudit(ctx, spec, authorized.tokenIdentifier, args.action, reason, counts, now);
+    return { marker: lifecycleMarker(args.action), actionMarker: "LIFECYCLE_ACTION_ALLOWED" as const, status: nextStatus, ...counts, fingerprint };
   },
 });
 

@@ -29,6 +29,10 @@ try {
         throw 'No Node runtime passed the multiline TypeScript/TSX compiler probe. Provision TypeScript and a native Node runtime; no audit grade was produced.'
     }
     $env:PATH = (Split-Path $selected -Parent) + [System.IO.Path]::PathSeparator + $originalPath
+    $forgeProvenance = (& forge --version --json | Out-String) | ConvertFrom-Json
+    if ($forgeProvenance.source_commit -ne '858f7adad86068c203d9a6c5b4b3be0c375c46b3') {
+        throw "ForgeLine source $($forgeProvenance.source_commit) lacks the reviewed syntax and Python-fixture fixes; no audit grade was produced. Install the corrected source commit before rerunning."
+    }
     $output = & forge qa --repo-wide --root $repoRoot
     $auditExit = $LASTEXITCODE
     if ($auditExit -ne 0) { throw "ForgeLine command failed with exit $auditExit" }
@@ -42,6 +46,7 @@ try {
         report = $reportFile
         node = $selected
         typescript = $parsed.version
+        forge_source_commit = $forgeProvenance.source_commit
         scope = $audit.metrics.scope.kind
         limits = 'ForgeLine static inventory and name-based test-intent metrics; not runtime coverage or security certification.'
     } | ConvertTo-Json

@@ -154,9 +154,9 @@ def _read(root: Path, relative: str) -> tuple[dict[str, Any], str]:
     return value, _file_sha(path)
 
 
-def _event(root: Path, source: Path) -> tuple[dict[str, Any], str]:
+def _event_relative_path(root: Path, source: Path) -> str:
     try:
-        relative = (
+        return (
             source.resolve().relative_to(root).as_posix()
             if source.is_absolute()
             else _relative(str(source), "event path")
@@ -165,7 +165,9 @@ def _event(root: Path, source: Path) -> tuple[dict[str, Any], str]:
         raise LifecycleLedgerError(
             "E_LIFECYCLE_PATH", "event path escapes the workspace"
         ) from exc
-    value, digest = _read(root, relative)
+
+
+def _validate_event_envelope(value: dict[str, Any]) -> None:
     fields = {
         "schema",
         "event_id",
@@ -182,6 +184,9 @@ def _event(root: Path, source: Path) -> tuple[dict[str, Any], str]:
         raise LifecycleLedgerError(
             "E_LIFECYCLE_SCHEMA", f"event must use exact {EVENT_SCHEMA} fields"
         )
+
+
+def _event_position(value: dict[str, Any]) -> tuple[int, str]:
     sequence = value["sequence"]
     if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 1:
         raise LifecycleLedgerError(
@@ -190,6 +195,10 @@ def _event(root: Path, source: Path) -> tuple[dict[str, Any], str]:
     event = value["event"]
     if event not in _EVENTS:
         raise LifecycleLedgerError("E_LIFECYCLE_SCHEMA", "event is unsupported")
+    return sequence, event
+
+
+def _event_actor(value: dict[str, Any]) -> dict[str, Any]:
     actor = value["actor"]
     if (
         not isinstance(actor, dict)
@@ -199,6 +208,10 @@ def _event(root: Path, source: Path) -> tuple[dict[str, Any], str]:
         raise LifecycleLedgerError(
             "E_LIFECYCLE_SCHEMA", "actor must declare human, agent, or system identity"
         )
+    return actor
+
+
+def _event_oracle(root: Path, value: dict[str, Any]) -> dict[str, str]:
     oracle = value["oracle"]
     if not isinstance(oracle, dict) or set(oracle) != {
         "contract_path",
@@ -218,6 +231,10 @@ def _event(root: Path, source: Path) -> tuple[dict[str, Any], str]:
         raise LifecycleLedgerError(
             "E_LIFECYCLE_ORACLE", "event must bind the current sealed Oracle Contract"
         )
+    return {"contract_path": contract_path, "contract_sha256": contract_sha}
+
+
+def _event_session_trace(value: dict[str, Any]) -> dict[str, str]:
     session_trace = value["session_trace"]
     if not isinstance(session_trace, dict) or set(session_trace) != {
         "session_id",
@@ -233,7 +250,7 @@ def _event(root: Path, source: Path) -> tuple[dict[str, Any], str]:
         raise LifecycleLedgerError(
             "E_LIFECYCLE_SCHEMA", "session_trace.stage is unsupported"
         )
-    normalized_trace = {
+    return {
         "session_id": _identifier(
             session_trace["session_id"], "session_trace.session_id"
         ),
@@ -246,12 +263,15 @@ def _event(root: Path, source: Path) -> tuple[dict[str, Any], str]:
             session_trace["output_sha256"], "session_trace.output_sha256"
         ),
     }
+
+
+def _event_evidence(root: Path, value: dict[str, Any]) -> list[dict[str, str]]:
     evidence = value["evidence"]
     if not isinstance(evidence, list) or len(evidence) > 32:
         raise LifecycleLedgerError(
             "E_LIFECYCLE_SCHEMA", "evidence must contain at most 32 files"
         )
-    normalized_evidence = []
+    normalized = []
     for index, item in enumerate(evidence):
         if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
             raise LifecycleLedgerError(
@@ -264,23 +284,49 @@ def _event(root: Path, source: Path) -> tuple[dict[str, Any], str]:
             raise LifecycleLedgerError(
                 "E_LIFECYCLE_EVIDENCE", f"evidence[{index}] does not match local bytes"
             )
-        normalized_evidence.append({"path": evidence_path, "sha256": expected})
-    if len({item["path"] for item in normalized_evidence}) != len(normalized_evidence):
+        normalized.append({"path": evidence_path, "sha256": expected})
+    if len({item["path"] for item in normalized}) != len(normalized):
         raise LifecycleLedgerError(
             "E_LIFECYCLE_SCHEMA", "evidence paths must be unique"
         )
+    return sorted(normalized, key=lambda item: item["path"])
+
+
+def _event_previous_receipt(value: dict[str, Any]) -> str | None:
     previous = value["previous_receipt_sha256"]
-    if previous is not None:
-        previous = _hash(previous, "previous_receipt_sha256")
+    return _hash(previous, "previous_receipt_sha256") if previous is not None else None
+
+
+def _event_identity(
+    value: dict[str, Any], actor: dict[str, Any]
+) -> tuple[str, str, dict[str, str]]:
+    return (
+        _identifier(value["event_id"], "event_id"),
+        _identifier(value["run_id"], "run_id"),
+        {"kind": actor["kind"], "id": _identifier(actor["id"], "actor.id")},
+    )
+
+
+def _event(root: Path, source: Path) -> tuple[dict[str, Any], str]:
+    relative = _event_relative_path(root, source)
+    value, digest = _read(root, relative)
+    _validate_event_envelope(value)
+    sequence, event = _event_position(value)
+    actor = _event_actor(value)
+    oracle = _event_oracle(root, value)
+    session_trace = _event_session_trace(value)
+    evidence = _event_evidence(root, value)
+    previous = _event_previous_receipt(value)
+    event_id, run_id, normalized_actor = _event_identity(value, actor)
     return {
-        "event_id": _identifier(value["event_id"], "event_id"),
-        "run_id": _identifier(value["run_id"], "run_id"),
+        "event_id": event_id,
+        "run_id": run_id,
         "sequence": sequence,
         "event": event,
-        "actor": {"kind": actor["kind"], "id": _identifier(actor["id"], "actor.id")},
-        "oracle": {"contract_path": contract_path, "contract_sha256": contract_sha},
-        "session_trace": normalized_trace,
-        "evidence": sorted(normalized_evidence, key=lambda item: item["path"]),
+        "actor": normalized_actor,
+        "oracle": oracle,
+        "session_trace": session_trace,
+        "evidence": evidence,
         "previous_receipt_sha256": previous,
         "source_path": relative,
         "source_sha256": digest,
@@ -307,13 +353,9 @@ def _prior(root: Path, run_id: str) -> list[dict[str, Any]]:
     return sorted(result, key=lambda item: item.get("sequence", 0))
 
 
-def record_lifecycle_event(
-    root: Path, event_path: Path, out: Path | None = None
-) -> dict[str, Any]:
-    """Append one Oracle-bound, hash-linked local session lifecycle receipt."""
-    workspace = Path(root).resolve()
-    event, _ = _event(workspace, event_path)
-    prior = _prior(workspace, event["run_id"])
+def _validate_event_continuity(
+    event: dict[str, Any], prior: list[dict[str, Any]]
+) -> None:
     if prior:
         last = prior[-1]
         if (
@@ -337,19 +379,11 @@ def record_lifecycle_event(
             "E_LIFECYCLE_CONTINUITY",
             "a new run must begin with sequence 1 created and no predecessor",
         )
-    core = {
-        "schema": RECEIPT_SCHEMA,
-        "marker": "LIFECYCLE_EVENT_RECORDED",
-        **event,
-        "session_trace_sha256": _sha(event["session_trace"]),
-        "authority": dict(AUTHORITY),
-        "scope_limits": [
-            "A lifecycle event is local declared evidence, not proof of provider identity, actual execution, sandboxing, or model usage.",
-            "Recording an event never dispatches work, resumes a run, approves a change, or contacts a connector.",
-        ],
-        "created_at": _now(),
-    }
-    receipt = {**core, "receipt_sha256": _sha(core)}
+
+
+def _lifecycle_receipt_target(
+    workspace: Path, event: dict[str, Any], out: Path | None
+) -> tuple[str, Path]:
     default = (
         RECEIPT_DIR / f"{event['run_id']}-{event['sequence']:04d}.json"
     ).as_posix()
@@ -360,6 +394,10 @@ def record_lifecycle_event(
         )
     target = _inside(workspace, target_relative)
     target.parent.mkdir(parents=True, exist_ok=True)
+    return target_relative, target
+
+
+def _write_lifecycle_receipt(target: Path, receipt: dict[str, Any]) -> None:
     try:
         descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
@@ -373,6 +411,31 @@ def record_lifecycle_event(
             "E_LIFECYCLE_EXISTS",
             "lifecycle receipt path is immutable; choose a new run or sequence",
         ) from exc
+
+
+def record_lifecycle_event(
+    root: Path, event_path: Path, out: Path | None = None
+) -> dict[str, Any]:
+    """Append one Oracle-bound, hash-linked local session lifecycle receipt."""
+    workspace = Path(root).resolve()
+    event, _ = _event(workspace, event_path)
+    prior = _prior(workspace, event["run_id"])
+    _validate_event_continuity(event, prior)
+    core = {
+        "schema": RECEIPT_SCHEMA,
+        "marker": "LIFECYCLE_EVENT_RECORDED",
+        **event,
+        "session_trace_sha256": _sha(event["session_trace"]),
+        "authority": dict(AUTHORITY),
+        "scope_limits": [
+            "A lifecycle event is local declared evidence, not proof of provider identity, actual execution, sandboxing, or model usage.",
+            "Recording an event never dispatches work, resumes a run, approves a change, or contacts a connector.",
+        ],
+        "created_at": _now(),
+    }
+    receipt = {**core, "receipt_sha256": _sha(core)}
+    target_relative, target = _lifecycle_receipt_target(workspace, event, out)
+    _write_lifecycle_receipt(target, receipt)
     return {**receipt, "path": target_relative}
 
 

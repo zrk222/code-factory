@@ -147,41 +147,51 @@ def add_parser(sub: Any) -> None:
     ops_receipts.add_argument("--json", action="store_true")
 
 
-def run(args: Any) -> int:
-    """Execute one operations command and render its deterministic receipt."""
-    from .codex_metadata import MetadataAuditError, write_metadata_audit
+_FAILED = object()
+_INPUT_ERRORS = (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError)
+
+
+def _guard(operation: Any) -> Any:
+    """Render a fail-closed error receipt for expected input and I/O failures."""
+    try:
+        return operation()
+    except _INPUT_ERRORS as exc:
+        error = {
+            "schema": "factory.enterprise-ops.error.v1",
+            "marker": "EOPS_FAIL_CLOSED",
+            "status": "failed",
+            "code": getattr(exc, "code", "E_OPS_INPUT"),
+            "message": getattr(exc, "message", str(exc)),
+        }
+        print(json.dumps(error, indent=2, sort_keys=True), file=sys.stderr)
+        return _FAILED
+
+
+def _lifecycle_result(args: Any) -> Any:
+    """Run workspace setup, status, identity, or evidence commands."""
     from .enterprise_ops import (
-        EnterpriseOpsError,
-        evaluate_required_checks,
-        evaluate_sla,
-        export_evidence,
-        export_otel,
         initialize_workspace,
-        outcome_summary,
         provision_identity,
         put_evidence,
-        record_outcome,
-        run_proof,
-        verify_workspace,
         workspace_status,
     )
-    from .policy_compiler import PolicyCompileError, write_compiled_policy
-    from .receipt_index import write_receipt_index
 
-    try:
-        root = Path(args.root)
-        if args.ops_cmd == "init":
-            result = initialize_workspace(
+    root = Path(args.root)
+    if args.ops_cmd == "init":
+        return _guard(
+            lambda: initialize_workspace(
                 root,
                 args.tenant,
                 args.owner,
                 retention_days=args.retention_days,
                 force=args.force,
             )
-        elif args.ops_cmd == "status":
-            result = workspace_status(root)
-        elif args.ops_cmd == "identity":
-            result = provision_identity(
+        )
+    if args.ops_cmd == "status":
+        return _guard(lambda: workspace_status(root))
+    if args.ops_cmd == "identity":
+        return _guard(
+            lambda: provision_identity(
                 root,
                 args.tenant,
                 args.subject,
@@ -189,31 +199,54 @@ def run(args: Any) -> int:
                 actor=args.actor,
                 status=args.status,
             )
-        elif args.ops_cmd == "evidence":
-            payload = json.loads(Path(args.payload).read_text(encoding="utf-8"))
-            result = put_evidence(
-                root, args.tenant, args.subject, payload, evidence_id=args.evidence_id
-            )
-        elif args.ops_cmd == "export":
-            result = export_evidence(root, Path(args.out))
-        elif args.ops_cmd == "run":
-            command = (
-                json.loads(args.command_json) if args.command_json else args.command
-            )
-            result = run_proof(
+        )
+    return _guard(
+        lambda: put_evidence(
+            root,
+            args.tenant,
+            args.subject,
+            json.loads(Path(args.payload).read_text(encoding="utf-8")),
+            evidence_id=args.evidence_id,
+        )
+    )
+
+
+def _execution_result(args: Any) -> Any:
+    """Run evidence export, proof execution, or required-check evaluation."""
+    from .enterprise_ops import evaluate_required_checks, export_evidence, run_proof
+
+    root = Path(args.root)
+    if args.ops_cmd == "export":
+        return _guard(lambda: export_evidence(root, Path(args.out)))
+    if args.ops_cmd == "run":
+        return _guard(
+            lambda: run_proof(
                 root,
-                command,
+                json.loads(args.command_json) if args.command_json else args.command,
                 backend=args.backend,
                 timeout_seconds=args.timeout_seconds,
                 output_limit=args.output_limit,
                 allow_process_boundary=args.allow_process_boundary,
             )
-        elif args.ops_cmd == "checks":
-            result = evaluate_required_checks(
-                root, args.changed, proof_receipts=args.proof
-            )
-        elif args.ops_cmd == "outcome":
-            result = record_outcome(
+        )
+    return _guard(
+        lambda: evaluate_required_checks(root, args.changed, proof_receipts=args.proof)
+    )
+
+
+def _outcome_result(args: Any) -> Any:
+    """Run outcome recording, summaries, telemetry export, or SLA evaluation."""
+    from .enterprise_ops import (
+        evaluate_sla,
+        export_otel,
+        outcome_summary,
+        record_outcome,
+    )
+
+    root = Path(args.root)
+    if args.ops_cmd == "outcome":
+        return _guard(
+            lambda: record_outcome(
                 root,
                 args.tenant,
                 args.subject,
@@ -225,65 +258,94 @@ def run(args: Any) -> int:
                 incident=args.incident,
                 rollback=args.rollback,
             )
-        elif args.ops_cmd == "summary":
-            result = outcome_summary(root)
-        elif args.ops_cmd == "otel":
-            result = export_otel(root, Path(args.out))
-        elif args.ops_cmd == "sla":
-            result = evaluate_sla(
-                root,
-                Path(args.manifest) if args.manifest else None,
-                out=Path(args.out) if args.out else None,
-            )
-        elif args.ops_cmd == "policy":
-            result = write_compiled_policy(
-                root, Path(args.policy), Path(args.out) if args.out else None
-            )
-        elif args.ops_cmd == "metadata":
-            selected = [Path(item) for item in args.path] if args.path else None
-            result = write_metadata_audit(
-                root, selected, Path(args.out) if args.out else None, scope=args.scope
-            )
-        elif args.ops_cmd == "receipts":
-            result = write_receipt_index(
-                root,
-                Path(args.out) if args.out else None,
-                hot_days=args.hot_days,
-                max_files=args.max_files,
-            )
-        else:
-            result = verify_workspace(root)
-    except (
-        EnterpriseOpsError,
-        PolicyCompileError,
-        MetadataAuditError,
-        OSError,
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-        ValueError,
-    ) as exc:
-        error = {
-            "schema": "factory.enterprise-ops.error.v1",
-            "marker": "EOPS_FAIL_CLOSED",
-            "status": "failed",
-            "code": getattr(exc, "code", "E_OPS_INPUT"),
-            "message": getattr(exc, "message", str(exc)),
-        }
-        print(json.dumps(error, indent=2, sort_keys=True), file=sys.stderr)
+        )
+    if args.ops_cmd == "summary":
+        return _guard(lambda: outcome_summary(root))
+    if args.ops_cmd == "otel":
+        return _guard(lambda: export_otel(root, Path(args.out)))
+    manifest = Path(args.manifest) if args.manifest else None
+    output = Path(args.out) if args.out else None
+    return _guard(lambda: evaluate_sla(root, manifest, out=output))
+
+
+def _policy_result(args: Any) -> Any:
+    """Compile policy rules into a local deterministic manifest."""
+    from .policy_compiler import write_compiled_policy
+
+    output = Path(args.out) if args.out else None
+    return _guard(
+        lambda: write_compiled_policy(Path(args.root), Path(args.policy), output)
+    )
+
+
+def _metadata_result(args: Any) -> Any:
+    """Audit selected Codex or workflow metadata."""
+    from .codex_metadata import write_metadata_audit
+
+    selected = [Path(item) for item in args.path] if args.path else None
+    output = Path(args.out) if args.out else None
+    return _guard(
+        lambda: write_metadata_audit(
+            Path(args.root), selected, output, scope=args.scope
+        )
+    )
+
+
+def _receipt_result(args: Any) -> Any:
+    """Build a non-destructive receipt retention index."""
+    from .receipt_index import write_receipt_index
+
+    output = Path(args.out) if args.out else None
+    return _guard(
+        lambda: write_receipt_index(
+            Path(args.root), output, hot_days=args.hot_days, max_files=args.max_files
+        )
+    )
+
+
+def _verify_result(args: Any) -> Any:
+    """Verify an operations workspace when no explicit action is selected."""
+    from .enterprise_ops import verify_workspace
+
+    return _guard(lambda: verify_workspace(Path(args.root)))
+
+
+def _dispatch(args: Any) -> Any:
+    """Route the command to its lazily imported execution family."""
+    if args.ops_cmd in {"init", "status", "identity", "evidence"}:
+        return _lifecycle_result(args)
+    if args.ops_cmd in {"export", "run", "checks"}:
+        return _execution_result(args)
+    if args.ops_cmd in {"outcome", "summary", "otel", "sla"}:
+        return _outcome_result(args)
+    if args.ops_cmd == "policy":
+        return _policy_result(args)
+    if args.ops_cmd == "metadata":
+        return _metadata_result(args)
+    if args.ops_cmd == "receipts":
+        return _receipt_result(args)
+    return _verify_result(args)
+
+
+def _exit_code(command: str, result: dict[str, Any]) -> int:
+    """Apply the existing command-specific readiness exit rules."""
+    expected = {
+        "run": ("status", "passed"),
+        "checks": ("decision", "READY_FOR_HUMAN_REVIEW"),
+        "sla": ("status", "READY_FOR_CONTRACT"),
+        "policy": ("status", "COMPILED"),
+        "metadata": ("status", "VERIFIED"),
+    }
+    if command in {"summary", "otel", "export"}:
+        return 0 if result.get("integrity", {}).get("valid", True) else 1
+    key, value = expected.get(command, (None, None))
+    return 0 if key is None or result.get(key) == value else 1
+
+
+def run(args: Any) -> int:
+    """Execute one operations command and render its deterministic receipt."""
+    result = _dispatch(args)
+    if result is _FAILED:
         return 2
     print(json.dumps(result, indent=2, sort_keys=True))
-    if args.ops_cmd == "run":
-        return 0 if result.get("status") == "passed" else 1
-    if args.ops_cmd == "checks":
-        return 0 if result.get("decision") == "READY_FOR_HUMAN_REVIEW" else 1
-    if args.ops_cmd == "sla":
-        return 0 if result.get("status") == "READY_FOR_CONTRACT" else 1
-    if args.ops_cmd == "policy":
-        return 0 if result.get("status") == "COMPILED" else 1
-    if args.ops_cmd == "metadata":
-        return 0 if result.get("status") == "VERIFIED" else 1
-    if args.ops_cmd == "receipts":
-        return 0
-    if args.ops_cmd in {"summary", "otel", "export"}:
-        return 0 if result.get("integrity", {}).get("valid", True) else 1
-    return 0
+    return _exit_code(args.ops_cmd, result)

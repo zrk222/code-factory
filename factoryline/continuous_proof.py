@@ -88,31 +88,57 @@ def _sha(value: object) -> str:
     return sha256(_canonical(value)).hexdigest()
 
 
-def _receipt_integrity(value: dict[str, Any]) -> bool:
-    digest = value.get("receipt_sha256")
-    core = {key: item for key, item in value.items() if key != "receipt_sha256"}
+def _receipt_identity_valid(value: dict[str, Any]) -> bool:
+    workflow_id = value.get("workflow_id")
     return (
         set(value) == _RECEIPT_KEYS
         and value.get("schema") == CONTINUOUS_PROOF_SCHEMA
         and value.get("marker") == "CONTINUOUS_PROOF_RECORDED"
-        and isinstance(value.get("workflow_id"), str)
-        and _ID.fullmatch(value["workflow_id"]) is not None
+        and isinstance(workflow_id, str)
+        and _ID.fullmatch(workflow_id) is not None
         and isinstance(value.get("recorded_at"), str)
-        and isinstance(value.get("changed_paths"), list)
+    )
+
+
+def _receipt_inputs_valid(value: dict[str, Any]) -> bool:
+    return (
+        isinstance(value.get("changed_paths"), list)
         and isinstance(value.get("changed_bindings"), list)
         and isinstance(value.get("change_review"), dict)
         and isinstance(value.get("session"), dict)
         and isinstance(value.get("repair"), dict)
         and (value.get("prior") is None or isinstance(value.get("prior"), dict))
-        and isinstance(value.get("repair_reverified"), bool)
+    )
+
+
+def _receipt_decision_valid(value: dict[str, Any]) -> bool:
+    return (
+        isinstance(value.get("repair_reverified"), bool)
         and value.get("route") in _ROUTES
         and isinstance(value.get("next_action"), dict)
         and value.get("final_approval") is False
         and value.get("authority") == _AUTHORITY
         and isinstance(value.get("claim_limits"), list)
-        and isinstance(digest, str)
-        and re.fullmatch(r"[a-f0-9]{64}", digest) is not None
-        and digest == _sha(core)
+    )
+
+
+def _receipt_evidence_valid(value: dict[str, Any]) -> bool:
+    return _receipt_inputs_valid(value) and _receipt_decision_valid(value)
+
+
+def _receipt_digest_valid(value: dict[str, Any]) -> bool:
+    digest = value.get("receipt_sha256")
+    if not isinstance(digest, str) or re.fullmatch(r"[a-f0-9]{64}", digest) is None:
+        return False
+    core = {key: item for key, item in value.items() if key != "receipt_sha256"}
+    return digest == _sha(core)
+
+
+def _receipt_integrity(value: dict[str, Any]) -> bool:
+    return (
+        _receipt_identity_valid(value)
+        and _receipt_evidence_valid(value)
+        and _receipt_digest_valid(value)
     )
 
 
@@ -270,12 +296,7 @@ def _repair_evidence(
     }
 
 
-def _prior_evidence(workspace: Path, prior_path: Path | None) -> dict[str, Any] | None:
-    if prior_path is None:
-        return None
-    path, relative = _workspace_file(
-        workspace, prior_path, "prior continuous-proof receipt"
-    )
+def _verified_prior_value(workspace: Path, path: Path) -> dict[str, Any]:
     value = _load_json(path, "CONTINUOUS_PROOF_PRIOR_INVALID")
     if not _receipt_integrity(value):
         raise ContinuousProofError(
@@ -292,6 +313,10 @@ def _prior_evidence(workspace: Path, prior_path: Path | None) -> dict[str, Any] 
             "CONTINUOUS_PROOF_PRIOR_INVALID",
             "prior continuous-proof receipt must verify against current bound evidence",
         )
+    return value
+
+
+def _prior_touched_paths(value: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     repair = value.get("repair")
     if (
         value.get("route") != "reverification_required"
@@ -311,6 +336,17 @@ def _prior_evidence(workspace: Path, prior_path: Path | None) -> dict[str, Any] 
         raise ContinuousProofError(
             "CONTINUOUS_PROOF_PRIOR_INVALID", "prior repair touched paths are invalid"
         )
+    return repair, touched
+
+
+def _prior_evidence(workspace: Path, prior_path: Path | None) -> dict[str, Any] | None:
+    if prior_path is None:
+        return None
+    path, relative = _workspace_file(
+        workspace, prior_path, "prior continuous-proof receipt"
+    )
+    value = _verified_prior_value(workspace, path)
+    repair, touched = _prior_touched_paths(value)
     return {
         "path": relative,
         "sha256": _file_sha(path),
@@ -321,15 +357,7 @@ def _prior_evidence(workspace: Path, prior_path: Path | None) -> dict[str, Any] 
     }
 
 
-def _post_repair_matches(
-    workspace: Path, session: dict[str, Any], repair: dict[str, Any], phase: str
-) -> bool:
-    if (
-        phase != "post_repair"
-        or session["state"] != "verified_passed"
-        or repair["state"] != "candidate_scoped_prior"
-    ):
-        return False
+def _session_result(workspace: Path, session: dict[str, Any]) -> dict[str, Any] | None:
     session_value = _load_json(
         workspace / session["binding"]["path"], "CONTINUOUS_PROOF_SESSION_INVALID"
     )
@@ -337,26 +365,160 @@ def _post_repair_matches(
     if not isinstance(result_binding, dict) or not isinstance(
         result_binding.get("path"), str
     ):
-        return False
+        return None
     result_path = (workspace / result_binding["path"]).resolve()
     try:
         result_path.relative_to(workspace)
     except ValueError:
-        return False
-    result = _load_json(result_path, "CONTINUOUS_PROOF_SESSION_INVALID")
+        return None
+    return _load_json(result_path, "CONTINUOUS_PROOF_SESSION_INVALID")
+
+
+def _repair_delta_map(result: dict[str, Any]) -> dict[str, Any] | None:
     deltas = result.get("workspace_delta")
     if not isinstance(deltas, list):
-        return False
-    after = {
+        return None
+    return {
         item.get("path"): item.get("after_sha256")
         for item in deltas
         if isinstance(item, dict)
     }
-    for relative in repair["touched_paths"]:
+
+
+def _repair_paths_match(
+    workspace: Path, touched_paths: list[str], after: dict[str, Any]
+) -> bool:
+    for relative in touched_paths:
         current = _changed_binding(workspace, relative)
         if not current["exists"] or after.get(relative) != current["sha256"]:
             return False
     return True
+
+
+def _post_repair_matches(
+    workspace: Path, session: dict[str, Any], repair: dict[str, Any], phase: str
+) -> bool:
+    if phase != "post_repair" or session["state"] != "verified_passed":
+        return False
+    if repair["state"] != "candidate_scoped_prior":
+        return False
+    result = _session_result(workspace, session)
+    if result is None:
+        return False
+    after = _repair_delta_map(result)
+    if after is None:
+        return False
+    return _repair_paths_match(workspace, repair["touched_paths"], after)
+
+
+def _validate_assessment_request(workflow_id: str, session_phase: str) -> None:
+    if not _ID.fullmatch(workflow_id):
+        raise ContinuousProofError(
+            "CONTINUOUS_PROOF_ID_INVALID", "workflow_id must be a lowercase identifier"
+        )
+    if session_phase not in {"change", "post_repair"}:
+        raise ContinuousProofError(
+            "CONTINUOUS_PROOF_PHASE_INVALID",
+            "session_phase must be change or post_repair",
+        )
+
+
+def _change_review(workspace: Path, changed: list[str]) -> dict[str, Any]:
+    from .change_review import ChangeReviewError, review_change
+
+    try:
+        return review_change(workspace, changed=changed)
+    except ChangeReviewError as exc:
+        raise ContinuousProofError(exc.code, str(exc)) from exc
+
+
+def _prior_repair(
+    review: dict[str, Any], repair: dict[str, Any], prior: dict[str, Any] | None
+) -> dict[str, Any]:
+    if prior is None:
+        return repair
+    if repair["state"] != "not_requested":
+        raise ContinuousProofError(
+            "CONTINUOUS_PROOF_REPAIR_CONFLICT",
+            "a follow-up prior receipt cannot be combined with a new repair candidate",
+        )
+    prior_repair = {
+        "state": "candidate_scoped_prior",
+        "scope": None,
+        "patch": None,
+        "candidate_sha256": prior["candidate_sha256"],
+        "touched_paths": prior["touched_paths"],
+    }
+    if not set(prior_repair["touched_paths"]).issubset(review["changed_paths"]):
+        raise ContinuousProofError(
+            "CONTINUOUS_PROOF_REPAIR_PATH_MISMATCH",
+            "follow-up changed paths must include every prior repair path",
+        )
+    return prior_repair
+
+
+def _proof_destination(workspace: Path, workflow_id: str, out_dir: Path | None) -> Path:
+    if out_dir:
+        candidate = Path(out_dir)
+        destination = (
+            candidate if candidate.is_absolute() else workspace / candidate
+        ).resolve()
+    else:
+        destination = workspace / ".factory" / "continuous-proof" / workflow_id
+    try:
+        destination.relative_to(workspace)
+    except ValueError as exc:
+        raise ContinuousProofError(
+            "CONTINUOUS_PROOF_PATH_REJECTED",
+            "output directory must stay inside the workspace",
+        ) from exc
+    return destination
+
+
+def _proof_core(
+    workflow_id: str,
+    instant: datetime,
+    intent: dict[str, Any],
+    review: dict[str, Any],
+    changed_bindings: list[dict[str, Any]],
+    session: dict[str, Any],
+    repair: dict[str, Any],
+    prior: dict[str, Any] | None,
+    repair_reverified: bool,
+    route: str,
+    next_action: dict[str, str],
+) -> dict[str, Any]:
+    return {
+        "schema": CONTINUOUS_PROOF_SCHEMA,
+        "marker": "CONTINUOUS_PROOF_RECORDED",
+        "workflow_id": workflow_id,
+        "recorded_at": instant.astimezone(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "intent": intent,
+        "changed_paths": review["changed_paths"],
+        "changed_bindings": changed_bindings,
+        "change_review": {
+            "review_sha256": review["review_sha256"],
+            "findings": [
+                {"kind": item["kind"], "severity": item["severity"]}
+                for item in review["findings"]
+            ],
+            "next_action": review["next_action"],
+        },
+        "session": session,
+        "repair": repair,
+        "prior": prior,
+        "repair_reverified": repair_reverified,
+        "route": route,
+        "next_action": next_action,
+        "final_approval": False,
+        "authority": dict(_AUTHORITY),
+        "claim_limits": [
+            "One record is not one unique user.",
+            "No time, token, cost, quality, productivity, release, or compliance outcome is claimed.",
+        ],
+    }
 
 
 def _route(
@@ -472,21 +634,8 @@ def assess_continuous_proof(
 ) -> dict[str, Any]:
     """Assess current local evidence and atomically write one unified record."""
     workspace = _workspace(root)
-    if not _ID.fullmatch(workflow_id):
-        raise ContinuousProofError(
-            "CONTINUOUS_PROOF_ID_INVALID", "workflow_id must be a lowercase identifier"
-        )
-    if session_phase not in {"change", "post_repair"}:
-        raise ContinuousProofError(
-            "CONTINUOUS_PROOF_PHASE_INVALID",
-            "session_phase must be change or post_repair",
-        )
-    from .change_review import ChangeReviewError, review_change
-
-    try:
-        review = review_change(workspace, changed=changed)
-    except ChangeReviewError as exc:
-        raise ContinuousProofError(exc.code, str(exc)) from exc
+    _validate_assessment_request(workflow_id, session_phase)
+    review = _change_review(workspace, changed)
     intent = _binding(workspace, intent_path, "intent artifact")
     changed_bindings = [
         _changed_binding(workspace, item) for item in review["changed_paths"]
@@ -495,24 +644,7 @@ def assess_continuous_proof(
     session["phase"] = session_phase
     repair = _repair_evidence(workspace, repair_scope_path, repair_patch_path)
     prior = _prior_evidence(workspace, prior_receipt_path)
-    if prior is not None:
-        if repair["state"] != "not_requested":
-            raise ContinuousProofError(
-                "CONTINUOUS_PROOF_REPAIR_CONFLICT",
-                "a follow-up prior receipt cannot be combined with a new repair candidate",
-            )
-        repair = {
-            "state": "candidate_scoped_prior",
-            "scope": None,
-            "patch": None,
-            "candidate_sha256": prior["candidate_sha256"],
-            "touched_paths": prior["touched_paths"],
-        }
-        if not set(repair["touched_paths"]).issubset(review["changed_paths"]):
-            raise ContinuousProofError(
-                "CONTINUOUS_PROOF_REPAIR_PATH_MISMATCH",
-                "follow-up changed paths must include every prior repair path",
-            )
+    repair = _prior_repair(review, repair, prior)
     repair_reverified = _post_repair_matches(workspace, session, repair, session_phase)
     route, next_action = _route(review, session, repair, repair_reverified)
     instant = recorded_at or datetime.now(timezone.utc)
@@ -520,52 +652,21 @@ def assess_continuous_proof(
         raise ContinuousProofError(
             "CONTINUOUS_PROOF_TIME_INVALID", "recorded_at must include a timezone"
         )
-    core = {
-        "schema": CONTINUOUS_PROOF_SCHEMA,
-        "marker": "CONTINUOUS_PROOF_RECORDED",
-        "workflow_id": workflow_id,
-        "recorded_at": instant.astimezone(timezone.utc)
-        .isoformat()
-        .replace("+00:00", "Z"),
-        "intent": intent,
-        "changed_paths": review["changed_paths"],
-        "changed_bindings": changed_bindings,
-        "change_review": {
-            "review_sha256": review["review_sha256"],
-            "findings": [
-                {"kind": item["kind"], "severity": item["severity"]}
-                for item in review["findings"]
-            ],
-            "next_action": review["next_action"],
-        },
-        "session": session,
-        "repair": repair,
-        "prior": prior,
-        "repair_reverified": repair_reverified,
-        "route": route,
-        "next_action": next_action,
-        "final_approval": False,
-        "authority": dict(_AUTHORITY),
-        "claim_limits": [
-            "One record is not one unique user.",
-            "No time, token, cost, quality, productivity, release, or compliance outcome is claimed.",
-        ],
-    }
+    core = _proof_core(
+        workflow_id,
+        instant,
+        intent,
+        review,
+        changed_bindings,
+        session,
+        repair,
+        prior,
+        repair_reverified,
+        route,
+        next_action,
+    )
     receipt = {**core, "receipt_sha256": _sha(core)}
-    if out_dir:
-        out_candidate = Path(out_dir)
-        destination = (
-            out_candidate if out_candidate.is_absolute() else workspace / out_candidate
-        ).resolve()
-    else:
-        destination = workspace / ".factory" / "continuous-proof" / workflow_id
-    try:
-        destination.relative_to(workspace)
-    except ValueError as exc:
-        raise ContinuousProofError(
-            "CONTINUOUS_PROOF_PATH_REJECTED",
-            "output directory must stay inside the workspace",
-        ) from exc
+    destination = _proof_destination(workspace, workflow_id, out_dir)
     stem = f"continuous-proof-{receipt['receipt_sha256'][:12]}"
     paths = {
         "json": destination / f"{stem}.json",
@@ -578,43 +679,30 @@ def assess_continuous_proof(
     return {**receipt, "artifacts": {name: str(path) for name, path in paths.items()}}
 
 
-def verify_continuous_proof(root: Path, receipt_path: Path) -> dict[str, Any]:
-    """Verify receipt integrity and every bound local byte without writing."""
-    workspace = _workspace(root)
-    path, relative = _workspace_file(
-        workspace, receipt_path, "continuous-proof receipt"
-    )
-    value = _load_json(path, "CONTINUOUS_PROOF_INVALID")
-    digest = value.get("receipt_sha256")
-    if not _receipt_integrity(value):
-        return {
-            "schema": CONTINUOUS_PROOF_SCHEMA,
-            "marker": "CONTINUOUS_PROOF_INVALID",
-            "ok": False,
-            "path": relative,
-            "reason": "receipt_digest",
-        }
+def _proof_check_failure(
+    relative: str, reason: str, marker: str = "CONTINUOUS_PROOF_INVALID"
+) -> dict[str, Any]:
+    return {
+        "schema": CONTINUOUS_PROOF_SCHEMA,
+        "marker": marker,
+        "ok": False,
+        "path": relative,
+        "reason": reason,
+    }
+
+
+def _proof_bindings(
+    value: dict[str, Any],
+) -> tuple[list[tuple[str, Any]] | None, str | None]:
     if not isinstance(value.get("intent"), dict) or not isinstance(
         value.get("changed_bindings"), list
     ):
-        return {
-            "schema": CONTINUOUS_PROOF_SCHEMA,
-            "marker": "CONTINUOUS_PROOF_INVALID",
-            "ok": False,
-            "path": relative,
-            "reason": "required_fields",
-        }
+        return None, "required_fields"
     bindings: list[tuple[str, dict[str, Any]]] = [("intent", value["intent"])]
     for name in ("session", "repair"):
         evidence = value.get(name)
         if not isinstance(evidence, dict):
-            return {
-                "schema": CONTINUOUS_PROOF_SCHEMA,
-                "marker": "CONTINUOUS_PROOF_INVALID",
-                "ok": False,
-                "path": relative,
-                "reason": name,
-            }
+            return None, name
     session_binding = value["session"].get("binding")
     if session_binding:
         bindings.append(("session", session_binding))
@@ -624,51 +712,41 @@ def verify_continuous_proof(root: Path, receipt_path: Path) -> dict[str, Any]:
             bindings.append((f"repair_{name}", binding))
     if value.get("prior"):
         bindings.append(("prior", value["prior"]))
-    for name, binding in bindings:
-        if (
-            not isinstance(binding, dict)
-            or not isinstance(binding.get("path"), str)
-            or not isinstance(binding.get("sha256"), str)
-        ):
-            return {
-                "schema": CONTINUOUS_PROOF_SCHEMA,
-                "marker": "CONTINUOUS_PROOF_INVALID",
-                "ok": False,
-                "path": relative,
-                "reason": f"{name}_binding",
-            }
-        candidate = (workspace / binding["path"]).resolve()
-        try:
-            candidate.relative_to(workspace)
-        except ValueError:
-            return {
-                "schema": CONTINUOUS_PROOF_SCHEMA,
-                "marker": "CONTINUOUS_PROOF_INVALID",
-                "ok": False,
-                "path": relative,
-                "reason": f"{name}_path",
-            }
-        if not candidate.is_file() or _file_sha(candidate) != binding["sha256"]:
-            return {
-                "schema": CONTINUOUS_PROOF_SCHEMA,
-                "marker": "CONTINUOUS_PROOF_STALE",
-                "ok": False,
-                "path": relative,
-                "reason": name,
-            }
-    current = [
+    return bindings, None
+
+
+def _verify_proof_binding(
+    workspace: Path, relative: str, name: str, binding: object
+) -> dict[str, Any] | None:
+    if (
+        not isinstance(binding, dict)
+        or not isinstance(binding.get("path"), str)
+        or not isinstance(binding.get("sha256"), str)
+    ):
+        return _proof_check_failure(relative, f"{name}_binding")
+    candidate = (workspace / binding["path"]).resolve()
+    try:
+        candidate.relative_to(workspace)
+    except ValueError:
+        return _proof_check_failure(relative, f"{name}_path")
+    if not candidate.is_file() or _file_sha(candidate) != binding["sha256"]:
+        return _proof_check_failure(relative, name, "CONTINUOUS_PROOF_STALE")
+    return None
+
+
+def _changed_bindings_current(
+    workspace: Path, value: dict[str, Any]
+) -> list[dict[str, Any]]:
+    return [
         _changed_binding(workspace, item["path"])
         for item in value.get("changed_bindings", [])
         if isinstance(item, dict) and isinstance(item.get("path"), str)
     ]
-    if current != value.get("changed_bindings"):
-        return {
-            "schema": CONTINUOUS_PROOF_SCHEMA,
-            "marker": "CONTINUOUS_PROOF_STALE",
-            "ok": False,
-            "path": relative,
-            "reason": "changed_bytes",
-        }
+
+
+def _verified_proof_result(
+    relative: str, value: dict[str, Any], digest: str
+) -> dict[str, Any]:
     return {
         "schema": CONTINUOUS_PROOF_SCHEMA,
         "marker": "CONTINUOUS_PROOF_VERIFIED",
@@ -679,6 +757,29 @@ def verify_continuous_proof(root: Path, receipt_path: Path) -> dict[str, Any]:
         "recorded_at": value["recorded_at"],
         "route": value["route"],
     }
+
+
+def verify_continuous_proof(root: Path, receipt_path: Path) -> dict[str, Any]:
+    """Verify receipt integrity and every bound local byte without writing."""
+    workspace = _workspace(root)
+    path, relative = _workspace_file(
+        workspace, receipt_path, "continuous-proof receipt"
+    )
+    value = _load_json(path, "CONTINUOUS_PROOF_INVALID")
+    digest = value.get("receipt_sha256")
+    if not _receipt_integrity(value):
+        return _proof_check_failure(relative, "receipt_digest")
+    bindings, error = _proof_bindings(value)
+    if error:
+        return _proof_check_failure(relative, error)
+    for name, binding in bindings or []:
+        failure = _verify_proof_binding(workspace, relative, name, binding)
+        if failure:
+            return failure
+    current = _changed_bindings_current(workspace, value)
+    if current != value.get("changed_bindings"):
+        return _proof_check_failure(relative, "changed_bytes", "CONTINUOUS_PROOF_STALE")
+    return _verified_proof_result(relative, value, digest)
 
 
 def continuous_proof_history(root: Path) -> dict[str, Any]:

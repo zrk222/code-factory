@@ -483,6 +483,240 @@ class HostedPRAssuranceAPI:
     def __init__(self, service: HostedPRAssuranceService):
         self.service = service
 
+    def _dispatch_request(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes]:
+        for handler in (
+            self._read_route,
+            self._delivery_route,
+            self._tenant_admin_route,
+        ):
+            response = handler(method, path, environ, start_response)
+            if response is not None:
+                return response
+        raise PRAssuranceError("E_NOT_FOUND", "hosted route not found")
+
+    def _read_route(
+        self,
+        method: str,
+        path: list[str],
+        _environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes] | None:
+        if method == "GET" and path == ["healthz"]:
+            return _finish(start_response, "200 OK", self.service.health())
+        if method == "GET" and path == ["readyz"]:
+            return _finish(start_response, "200 OK", self.service.ready())
+        if method == "GET" and path == ["console"]:
+            if not self.service.console_html:
+                raise PRAssuranceError("E_NOT_FOUND", "operator console is unavailable")
+            return _finish_html(start_response, self.service.console_html)
+        return None
+
+    def _delivery_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes] | None:
+        for handler in (
+            self._webhook_route,
+            self._approval_route,
+            self._installation_callback_route,
+            self._tenant_create_route,
+        ):
+            response = handler(method, path, environ, start_response)
+            if response is not None:
+                return response
+        return None
+
+    def _webhook_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes] | None:
+        if method != "POST" or path != ["v1", "github", "webhooks"]:
+            return None
+        body = _read_body(environ, MAX_WEBHOOK_BYTES)
+        headers = {
+            "X-Hub-Signature-256": str(environ.get("HTTP_X_HUB_SIGNATURE_256", "")),
+            "X-GitHub-Event": str(environ.get("HTTP_X_GITHUB_EVENT", "")),
+            "X-GitHub-Delivery": str(environ.get("HTTP_X_GITHUB_DELIVERY", "")),
+        }
+        return _finish(
+            start_response, "202 Accepted", self.service.ingest(body, headers)
+        )
+
+    def _approval_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes] | None:
+        if (
+            method != "POST"
+            or len(path) != 4
+            or path[:2] != ["v1", "approvals"]
+            or path[3] != "decision"
+        ):
+            return None
+        return _finish(
+            start_response,
+            "202 Accepted",
+            self.service.decide(path[2], _bearer(environ), _json_body(environ)),
+        )
+
+    def _installation_callback_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes] | None:
+        if method != "POST" or path != [
+            "v1",
+            "github",
+            "installations",
+            "callback",
+        ]:
+            return None
+        return _finish(
+            start_response,
+            "201 Created",
+            self.service.bind_installation(_json_body(environ)),
+        )
+
+    def _tenant_create_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes] | None:
+        if method != "POST" or path != ["v1", "admin", "tenants"]:
+            return None
+        return _finish(
+            start_response,
+            "201 Created",
+            self.service.create_tenant(_bearer(environ), _json_body(environ)),
+        )
+
+    def _tenant_admin_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes] | None:
+        if len(path) < 4 or path[:3] != ["v1", "admin", "tenants"]:
+            return None
+        tenant_id = path[3]
+        for handler in (
+            self._tenant_identity_route,
+            self._tenant_roles_route,
+            self._tenant_secret_route,
+            self._tenant_installation_state_route,
+            self._tenant_overview_route,
+        ):
+            response = handler(method, path, environ, start_response, tenant_id)
+            if response is not None:
+                return response
+        return None
+
+    def _tenant_identity_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+        tenant_id: str,
+    ) -> list[bytes] | None:
+        if method != "PUT" or len(path) != 5 or path[4] != "identity":
+            return None
+        return _finish(
+            start_response,
+            "200 OK",
+            self.service.configure_identity(
+                _bearer(environ), tenant_id, _json_body(environ)
+            ),
+        )
+
+    def _tenant_roles_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+        tenant_id: str,
+    ) -> list[bytes] | None:
+        if method != "PUT" or len(path) != 5 or path[4] != "roles":
+            return None
+        return _finish(
+            start_response,
+            "200 OK",
+            self.service.replace_roles(
+                _bearer(environ), tenant_id, _json_body(environ)
+            ),
+        )
+
+    def _tenant_secret_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+        tenant_id: str,
+    ) -> list[bytes] | None:
+        if method != "PUT" or len(path) != 6 or path[4] != "secrets":
+            return None
+        return _finish(
+            start_response,
+            "200 OK",
+            self.service.set_secret_reference(
+                _bearer(environ), tenant_id, path[5], _json_body(environ)
+            ),
+        )
+
+    def _tenant_installation_state_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+        tenant_id: str,
+    ) -> list[bytes] | None:
+        if method != "POST" or len(path) != 5 or path[4] != "installation-state":
+            return None
+        return _finish(
+            start_response,
+            "201 Created",
+            self.service.issue_installation_state(_bearer(environ), tenant_id),
+        )
+
+    def _tenant_overview_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+        tenant_id: str,
+    ) -> list[bytes] | None:
+        if method != "GET" or len(path) != 5 or path[4] != "overview":
+            return None
+        return _finish(
+            start_response,
+            "200 OK",
+            self.service.overview(_bearer(environ), tenant_id),
+        )
+
     def __call__(
         self, environ: dict[str, Any], start_response: Callable
     ) -> list[bytes]:
@@ -493,115 +727,26 @@ class HostedPRAssuranceAPI:
             if part
         ]
         try:
-            if method == "GET" and path == ["healthz"]:
-                return _finish(start_response, "200 OK", self.service.health())
-            if method == "GET" and path == ["readyz"]:
-                return _finish(start_response, "200 OK", self.service.ready())
-            if method == "GET" and path == ["console"]:
-                if not self.service.console_html:
-                    raise PRAssuranceError(
-                        "E_NOT_FOUND", "operator console is unavailable"
-                    )
-                return _finish_html(start_response, self.service.console_html)
-            if method == "POST" and path == ["v1", "github", "webhooks"]:
-                body = _read_body(environ, MAX_WEBHOOK_BYTES)
-                headers = {
-                    "X-Hub-Signature-256": str(
-                        environ.get("HTTP_X_HUB_SIGNATURE_256", "")
-                    ),
-                    "X-GitHub-Event": str(environ.get("HTTP_X_GITHUB_EVENT", "")),
-                    "X-GitHub-Delivery": str(environ.get("HTTP_X_GITHUB_DELIVERY", "")),
-                }
-                return _finish(
-                    start_response, "202 Accepted", self.service.ingest(body, headers)
-                )
-            if (
-                method == "POST"
-                and len(path) == 4
-                and path[:2] == ["v1", "approvals"]
-                and path[3] == "decision"
-            ):
-                return _finish(
-                    start_response,
-                    "202 Accepted",
-                    self.service.decide(path[2], _bearer(environ), _json_body(environ)),
-                )
-            if method == "POST" and path == [
-                "v1",
-                "github",
-                "installations",
-                "callback",
-            ]:
-                return _finish(
-                    start_response,
-                    "201 Created",
-                    self.service.bind_installation(_json_body(environ)),
-                )
-            if method == "POST" and path == ["v1", "admin", "tenants"]:
-                return _finish(
-                    start_response,
-                    "201 Created",
-                    self.service.create_tenant(_bearer(environ), _json_body(environ)),
-                )
-            if len(path) >= 4 and path[:3] == ["v1", "admin", "tenants"]:
-                tenant_id = path[3]
-                if method == "PUT" and len(path) == 5 and path[4] == "identity":
-                    return _finish(
-                        start_response,
-                        "200 OK",
-                        self.service.configure_identity(
-                            _bearer(environ), tenant_id, _json_body(environ)
-                        ),
-                    )
-                if method == "PUT" and len(path) == 5 and path[4] == "roles":
-                    return _finish(
-                        start_response,
-                        "200 OK",
-                        self.service.replace_roles(
-                            _bearer(environ), tenant_id, _json_body(environ)
-                        ),
-                    )
-                if method == "PUT" and len(path) == 6 and path[4] == "secrets":
-                    return _finish(
-                        start_response,
-                        "200 OK",
-                        self.service.set_secret_reference(
-                            _bearer(environ), tenant_id, path[5], _json_body(environ)
-                        ),
-                    )
-                if (
-                    method == "POST"
-                    and len(path) == 5
-                    and path[4] == "installation-state"
-                ):
-                    return _finish(
-                        start_response,
-                        "201 Created",
-                        self.service.issue_installation_state(
-                            _bearer(environ), tenant_id
-                        ),
-                    )
-                if method == "GET" and len(path) == 5 and path[4] == "overview":
-                    return _finish(
-                        start_response,
-                        "200 OK",
-                        self.service.overview(_bearer(environ), tenant_id),
-                    )
-            raise PRAssuranceError("E_NOT_FOUND", "hosted route not found")
+            return self._dispatch_request(method, path, environ, start_response)
         except PRAssuranceError as exc:
-            status = _status_for(exc.code)
-            self.service._emit(
-                "request.rejected", error_code=exc.code, status=status.split()[0]
-            )
-            return _finish(
-                start_response,
-                status,
-                {
-                    "schema": "factory.hosted.result.v1",
-                    "verdict": "ERROR",
-                    "error": {"code": exc.code, "message": exc.message},
-                },
-            )
+            return self._error_response(exc, start_response)
+
+    def _error_response(
+        self, exc: PRAssuranceError, start_response: Callable
+    ) -> list[bytes]:
+        status = _status_for(exc.code)
+        self.service._emit(
+            "request.rejected", error_code=exc.code, status=status.split()[0]
+        )
+        return _finish(
+            start_response,
+            status,
+            {
+                "schema": "factory.hosted.result.v1",
+                "verdict": "ERROR",
+                "error": {"code": exc.code, "message": exc.message},
+            },
+        )
 
 
 def _status_for(code: str) -> str:

@@ -165,14 +165,7 @@ def _reject_secrets(value: Any, path: str = "request", depth: int = 0) -> None:
         )
 
 
-def _relative(
-    root: Path,
-    raw: Any,
-    field: str,
-    *,
-    exists: bool = True,
-    allow_absolute: bool = False,
-) -> tuple[Path, str]:
+def _relative_form(raw: Any, field: str, allow_absolute: bool) -> tuple[Path, bool]:
     if isinstance(raw, (Path, os.PathLike)):
         raw = os.fspath(raw)
     value = _text(raw, field, maximum=512).replace("\\", "/")
@@ -185,8 +178,12 @@ def _relative(
             "INTAKE_PARAMETERS_PATH_BOUNDARY",
             f"{field} must be a safe workspace-relative path",
         )
-    workspace = root.resolve()
-    candidate = candidate_raw if absolute else workspace.joinpath(candidate_raw)
+    return candidate_raw, absolute
+
+
+def _check_relative_ancestors(
+    workspace: Path, candidate_raw: Path, absolute: bool, field: str
+) -> None:
     ancestor = workspace
     for part in candidate_raw.parts if not absolute else ():
         ancestor = ancestor / part
@@ -194,6 +191,20 @@ def _relative(
             raise IntakeParametersError(
                 "INTAKE_PARAMETERS_PATH_BOUNDARY", f"{field} may not traverse a symlink"
             )
+
+
+def _relative(
+    root: Path,
+    raw: Any,
+    field: str,
+    *,
+    exists: bool = True,
+    allow_absolute: bool = False,
+) -> tuple[Path, str]:
+    candidate_raw, absolute = _relative_form(raw, field, allow_absolute)
+    workspace = root.resolve()
+    candidate = candidate_raw if absolute else workspace.joinpath(candidate_raw)
+    _check_relative_ancestors(workspace, candidate_raw, absolute, field)
     try:
         resolved = candidate.resolve(strict=False)
         resolved.relative_to(workspace)
@@ -301,31 +312,67 @@ def _validate_confirmation(
     return path, relative, confirmation, check["confirmation"]
 
 
-def _validate_request(root: Path, request: Any) -> dict[str, Any]:
-    if not isinstance(request, dict) or set(request) != REQUEST_KEYS:
+def _validated_scope(root: Path, scope: Any) -> list[str]:
+    if not isinstance(scope, list) or not 1 <= len(scope) <= MAX_SCOPE_PATHS:
         raise IntakeParametersError(
-            "INTAKE_PARAMETERS_REQUEST_FIELDS", "request has missing or unknown fields"
+            "INTAKE_PARAMETERS_SCOPE_INVALID",
+            f"scope_paths must contain 1..{MAX_SCOPE_PATHS} paths",
         )
-    _reject_secrets(request)
-    if request.get("schema") != REQUEST_SCHEMA:
+    normalized_scope: list[str] = []
+    for index, raw in enumerate(scope):
+        _, relative = _relative(root, raw, f"scope_paths[{index}]", exists=False)
+        if relative in normalized_scope:
+            raise IntakeParametersError(
+                "INTAKE_PARAMETERS_SCOPE_INVALID", f"duplicate scope path: {relative}"
+            )
+        normalized_scope.append(relative)
+    return normalized_scope
+
+
+def _validated_provenance(provenance: Any) -> dict[str, dict[str, str]]:
+    if not isinstance(provenance, dict) or set(provenance) != set(PARAMETER_KEYS):
         raise IntakeParametersError(
-            "INTAKE_PARAMETERS_SCHEMA", f"expected {REQUEST_SCHEMA}"
+            "INTAKE_PARAMETERS_PROVENANCE_INVALID",
+            "provenance must cover every parameter group",
         )
-    _, confirmation_relative, _, confirmation = _validate_confirmation(
-        root, request["intake_confirmation"]
-    )
-    parameters = request.get("parameters")
-    if not isinstance(parameters, dict) or set(parameters) != set(PARAMETER_KEYS):
-        raise IntakeParametersError(
-            "INTAKE_PARAMETERS_FIELDS",
-            "parameters must contain the exact operating fields",
-        )
-    mode = parameters.get("mode")
-    risk = parameters.get("risk")
-    if mode not in MODES or risk not in RISKS:
-        raise IntakeParametersError(
-            "INTAKE_PARAMETERS_FIELDS", "mode or risk is unsupported"
-        )
+    normalized: dict[str, dict[str, str]] = {}
+    for key in PARAMETER_KEYS:
+        item = provenance[key]
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"origin", "source"}
+            or item.get("origin") not in ORIGINS
+        ):
+            raise IntakeParametersError(
+                "INTAKE_PARAMETERS_PROVENANCE_INVALID",
+                f"provenance for {key} is invalid",
+            )
+        normalized[key] = {
+            "origin": item["origin"],
+            "source": _text(
+                item["source"], f"provenance.{key}.source", minimum=2, maximum=240
+            ),
+        }
+    return normalized
+
+
+def _check_autonomous_mode(
+    mode: str, external: str, provenance: dict[str, dict[str, str]]
+) -> None:
+    if mode == "autonomous":
+        non_authoritative = [
+            key
+            for key, item in provenance.items()
+            if item["origin"] not in AUTHORITATIVE_ORIGINS
+        ]
+        if external != "local_only" or non_authoritative:
+            raise IntakeParametersError(
+                "INTAKE_PARAMETERS_AUTONOMY_REJECTED",
+                "autonomous mode requires local_only effects and authoritative mode/scope/budget provenance",
+            )
+
+
+def _validated_budgets(parameters: dict[str, Any]) -> dict[str, int | float]:
     budgets = parameters.get("budgets")
     if not isinstance(budgets, dict) or set(budgets) != set(BUDGET_KEYS):
         raise IntakeParametersError(
@@ -358,28 +405,19 @@ def _validate_request(root: Path, request: Any) -> dict[str, Any]:
             budgets["max_cost_usd"], "max_cost_usd", 0, MISSION_MAXIMA["max_cost_usd"]
         ),
     }
-    scope = parameters.get("scope_paths")
-    if not isinstance(scope, list) or not 1 <= len(scope) <= MAX_SCOPE_PATHS:
-        raise IntakeParametersError(
-            "INTAKE_PARAMETERS_SCOPE_INVALID",
-            f"scope_paths must contain 1..{MAX_SCOPE_PATHS} paths",
-        )
-    normalized_scope: list[str] = []
-    for index, raw in enumerate(scope):
-        _, relative = _relative(root, raw, f"scope_paths[{index}]", exists=False)
-        if relative in normalized_scope:
-            raise IntakeParametersError(
-                "INTAKE_PARAMETERS_SCOPE_INVALID", f"duplicate scope path: {relative}"
-            )
-        normalized_scope.append(relative)
-    lanes = parameters.get("required_lanes")
+    return normalized_budgets
+
+
+def _validated_lanes(lanes: Any) -> list[str]:
     if lanes != list(REQUIRED_AUDIT_LANES) and lanes != sorted(REQUIRED_AUDIT_LANES):
         raise IntakeParametersError(
             "INTAKE_PARAMETERS_LANES_INVALID",
             "required_lanes must contain the complete canonical six-lane audit set",
         )
-    normalized_lanes = list(REQUIRED_AUDIT_LANES)
-    external = parameters.get("external_effects")
+    return list(REQUIRED_AUDIT_LANES)
+
+
+def _validated_external(external: Any, confirmation: dict[str, Any]) -> str:
     if external not in EXTERNAL_EFFECTS:
         raise IntakeParametersError(
             "INTAKE_PARAMETERS_FIELDS",
@@ -391,44 +429,43 @@ def _validate_request(root: Path, request: Any) -> dict[str, Any]:
             "INTAKE_PARAMETERS_EXTERNAL_EFFECTS_MISMATCH",
             "external_effects must match the verified human confirmation",
         )
-    provenance = request.get("provenance")
-    if not isinstance(provenance, dict) or set(provenance) != set(PARAMETER_KEYS):
+    return external
+
+
+def _validate_request(root: Path, request: Any) -> dict[str, Any]:
+    if not isinstance(request, dict) or set(request) != REQUEST_KEYS:
         raise IntakeParametersError(
-            "INTAKE_PARAMETERS_PROVENANCE_INVALID",
-            "provenance must cover every parameter group",
+            "INTAKE_PARAMETERS_REQUEST_FIELDS", "request has missing or unknown fields"
         )
-    normalized_provenance: dict[str, dict[str, str]] = {}
-    for key in PARAMETER_KEYS:
-        item = provenance[key]
-        if (
-            not isinstance(item, dict)
-            or set(item) != {"origin", "source"}
-            or item.get("origin") not in ORIGINS
-        ):
-            raise IntakeParametersError(
-                "INTAKE_PARAMETERS_PROVENANCE_INVALID",
-                f"provenance for {key} is invalid",
-            )
-        normalized_provenance[key] = {
-            "origin": item["origin"],
-            "source": _text(
-                item["source"], f"provenance.{key}.source", minimum=2, maximum=240
-            ),
-        }
+    _reject_secrets(request)
+    if request.get("schema") != REQUEST_SCHEMA:
+        raise IntakeParametersError(
+            "INTAKE_PARAMETERS_SCHEMA", f"expected {REQUEST_SCHEMA}"
+        )
+    _, confirmation_relative, _, confirmation = _validate_confirmation(
+        root, request["intake_confirmation"]
+    )
+    parameters = request.get("parameters")
+    if not isinstance(parameters, dict) or set(parameters) != set(PARAMETER_KEYS):
+        raise IntakeParametersError(
+            "INTAKE_PARAMETERS_FIELDS",
+            "parameters must contain the exact operating fields",
+        )
+    mode = parameters.get("mode")
+    risk = parameters.get("risk")
+    if mode not in MODES or risk not in RISKS:
+        raise IntakeParametersError(
+            "INTAKE_PARAMETERS_FIELDS", "mode or risk is unsupported"
+        )
+    normalized_budgets = _validated_budgets(parameters)
+    normalized_scope = _validated_scope(root, parameters.get("scope_paths"))
+    normalized_lanes = _validated_lanes(parameters.get("required_lanes"))
+    external = _validated_external(parameters.get("external_effects"), confirmation)
+    normalized_provenance = _validated_provenance(request.get("provenance"))
     approved_by = _text(request.get("approved_by"), "approved_by")
     rationale = _text(request.get("rationale"), "rationale", minimum=8)
     expires_at, _ = _parse_expiry(request.get("expires_at"))
-    if mode == "autonomous":
-        non_authoritative = [
-            key
-            for key, item in normalized_provenance.items()
-            if item["origin"] not in AUTHORITATIVE_ORIGINS
-        ]
-        if external != "local_only" or non_authoritative:
-            raise IntakeParametersError(
-                "INTAKE_PARAMETERS_AUTONOMY_REJECTED",
-                "autonomous mode requires local_only effects and authoritative mode/scope/budget provenance",
-            )
+    _check_autonomous_mode(mode, external, normalized_provenance)
     authoritative = [
         key
         for key, item in normalized_provenance.items()
@@ -578,11 +615,7 @@ def _load_receipt(root: Path, receipt_path: Path) -> tuple[Path, str, dict[str, 
     return path, relative, receipt
 
 
-def verify_intake_parameters(root: Path, receipt_path: Path) -> dict[str, Any]:
-    """Verify envelope integrity, confirmation binding, provenance and expiry."""
-    workspace = Path(root).resolve()
-    path, relative, receipt = _load_receipt(workspace, receipt_path)
-    errors: list[str] = []
+def _check_receipt_integrity(receipt: dict[str, Any], errors: list[str]) -> Any:
     digest = receipt.get("parameter_sha256")
     if (
         not isinstance(digest, str)
@@ -602,52 +635,75 @@ def verify_intake_parameters(root: Path, receipt_path: Path) -> dict[str, Any]:
         errors.append("receipt ordering metadata integrity mismatch")
     if receipt.get("authority") != AUTHORITY:
         errors.append("authority boundary invalid")
+    return sealed_at
+
+
+def _check_receipt_sources(
+    workspace: Path, receipt: dict[str, Any], errors: list[str]
+) -> dict[str, Any]:
+    intake_path, _, _, confirmation = _validate_confirmation(
+        workspace, receipt.get("intake", {}).get("path")
+    )
+    if receipt.get("intake", {}).get("confirmation_sha256") != confirmation.get(
+        "confirmation_sha256"
+    ):
+        errors.append("confirmation hash mismatch")
+    request_path, _, request = _read_json(
+        workspace, receipt.get("request", {}).get("path"), "request"
+    )
+    if (
+        receipt.get("request", {}).get("sha256")
+        != hashlib.sha256(request_path.read_bytes()).hexdigest()
+    ):
+        errors.append("request source drift")
+    normalized = _validate_request(workspace, request)
+    if normalized["parameters"] != receipt.get("parameters") or normalized[
+        "provenance"
+    ] != receipt.get("provenance"):
+        errors.append("parameter semantic drift")
+    if normalized["confirmation_sha256"] != receipt.get("intake", {}).get(
+        "confirmation_sha256"
+    ):
+        errors.append("confirmation binding drift")
+    return normalized
+
+
+def _check_receipt_status(
+    receipt: dict[str, Any],
+    sealed_at: Any,
+    normalized: dict[str, Any],
+    errors: list[str],
+) -> None:
+    _parse_expiry(receipt.get("expires_at"))
+    if not isinstance(sealed_at, str):
+        errors.append("sealed_at is missing")
+    else:
+        try:
+            parsed_sealed_at = datetime.fromisoformat(sealed_at.replace("Z", "+00:00"))
+            if parsed_sealed_at.tzinfo is None:
+                errors.append("sealed_at must include a timezone")
+            else:
+                parsed_sealed_at.astimezone(timezone.utc)
+        except (ValueError, OverflowError):
+            errors.append("sealed_at is not a representable RFC3339 timestamp")
+    if receipt.get("status") not in {"READY", "REVIEW_REQUIRED"}:
+        errors.append("status invalid")
+    expected_status = (
+        "READY" if not normalized["advisory_parameters"] else "REVIEW_REQUIRED"
+    )
+    if receipt.get("status") != expected_status:
+        errors.append("status does not match provenance")
+
+
+def verify_intake_parameters(root: Path, receipt_path: Path) -> dict[str, Any]:
+    """Verify envelope integrity, confirmation binding, provenance and expiry."""
+    workspace = Path(root).resolve()
+    path, relative, receipt = _load_receipt(workspace, receipt_path)
+    errors: list[str] = []
+    sealed_at = _check_receipt_integrity(receipt, errors)
     try:
-        intake_path, _, _, confirmation = _validate_confirmation(
-            workspace, receipt.get("intake", {}).get("path")
-        )
-        if receipt.get("intake", {}).get("confirmation_sha256") != confirmation.get(
-            "confirmation_sha256"
-        ):
-            errors.append("confirmation hash mismatch")
-        request_path, _, request = _read_json(
-            workspace, receipt.get("request", {}).get("path"), "request"
-        )
-        if (
-            receipt.get("request", {}).get("sha256")
-            != hashlib.sha256(request_path.read_bytes()).hexdigest()
-        ):
-            errors.append("request source drift")
-        normalized = _validate_request(workspace, request)
-        if normalized["parameters"] != receipt.get("parameters") or normalized[
-            "provenance"
-        ] != receipt.get("provenance"):
-            errors.append("parameter semantic drift")
-        if normalized["confirmation_sha256"] != receipt.get("intake", {}).get(
-            "confirmation_sha256"
-        ):
-            errors.append("confirmation binding drift")
-        _parse_expiry(receipt.get("expires_at"))
-        if not isinstance(sealed_at, str):
-            errors.append("sealed_at is missing")
-        else:
-            try:
-                parsed_sealed_at = datetime.fromisoformat(
-                    sealed_at.replace("Z", "+00:00")
-                )
-                if parsed_sealed_at.tzinfo is None:
-                    errors.append("sealed_at must include a timezone")
-                else:
-                    parsed_sealed_at.astimezone(timezone.utc)
-            except (ValueError, OverflowError):
-                errors.append("sealed_at is not a representable RFC3339 timestamp")
-        if receipt.get("status") not in {"READY", "REVIEW_REQUIRED"}:
-            errors.append("status invalid")
-        expected_status = (
-            "READY" if not normalized["advisory_parameters"] else "REVIEW_REQUIRED"
-        )
-        if receipt.get("status") != expected_status:
-            errors.append("status does not match provenance")
+        normalized = _check_receipt_sources(workspace, receipt, errors)
+        _check_receipt_status(receipt, sealed_at, normalized, errors)
     except IntakeParametersError as exc:
         errors.append(f"{exc.code}: {exc.message}")
     except (OSError, TypeError, AttributeError) as exc:
@@ -674,6 +730,212 @@ def verify_intake_parameters(root: Path, receipt_path: Path) -> dict[str, Any]:
         "authority": AUTHORITY,
         "claim_boundary": "Verification is local and read-only; it never authorizes execution or provider actions.",
     }
+
+
+def _check_binding_digest(binding_sha256, receipt, errors, checks, fail) -> None:
+    if binding_sha256 is not None:
+        if not isinstance(binding_sha256, str) or not _DIGEST.fullmatch(binding_sha256):
+            fail(
+                "E_INTAKE_BINDING_INVALID",
+                "binding parameter_sha256 must be a lowercase SHA-256 digest",
+            )
+        elif binding_sha256 != receipt.get("parameter_sha256"):
+            fail(
+                "E_INTAKE_PARAMETER_DRIFT",
+                "consumer digest does not match the sealed intake envelope",
+            )
+    checks.append(
+        {
+            "id": "INTAKE_BINDING_DIGEST",
+            "passed": not any(
+                item["code"] == "E_INTAKE_PARAMETER_DRIFT" for item in errors
+            ),
+            "evidence": receipt.get("parameter_sha256"),
+        }
+    )
+
+
+def _scope_escapes(normalized_scope: list[str], envelope_scope: Any) -> bool:
+    return (
+        isinstance(envelope_scope, list)
+        and bool(normalized_scope)
+        and any(
+            not any(
+                scope == "."
+                or item == scope
+                or item.startswith(scope.rstrip("/") + "/")
+                for scope in envelope_scope
+            )
+            for item in normalized_scope
+        )
+    )
+
+
+def _check_binding_scope(
+    workspace, parameters, scope_paths, errors, checks, fail
+) -> None:
+    envelope_scope = parameters.get("scope_paths", [])
+    if scope_paths is not None:
+        if not isinstance(scope_paths, (list, tuple)) or len(scope_paths) == 0:
+            fail(
+                "E_INTAKE_BINDING_SCOPE_ESCAPE",
+                "consumer scope must contain at least one path",
+            )
+        else:
+            normalized_scope: list[str] = []
+            for index, raw in enumerate(scope_paths):
+                try:
+                    _, relative = _relative(
+                        workspace, raw, f"binding.scope_paths[{index}]", exists=False
+                    )
+                    normalized_scope.append(relative)
+                except IntakeParametersError as exc:
+                    fail("E_INTAKE_BINDING_SCOPE_ESCAPE", exc.message)
+            if _scope_escapes(normalized_scope, envelope_scope):
+                fail(
+                    "E_INTAKE_BINDING_SCOPE_ESCAPE",
+                    "consumer scope escapes the sealed intake scope",
+                )
+            checks.append(
+                {
+                    "id": "INTAKE_BINDING_SCOPE",
+                    "passed": not any(
+                        item["code"] == "E_INTAKE_BINDING_SCOPE_ESCAPE"
+                        for item in errors
+                    ),
+                    "evidence": sorted(normalized_scope),
+                }
+            )
+
+
+def _check_binding_lanes(required_lanes, errors, checks, fail) -> None:
+    if required_lanes is not None:
+        supplied = (
+            list(required_lanes) if isinstance(required_lanes, (list, tuple)) else []
+        )
+        expected = list(REQUIRED_AUDIT_LANES)
+        if len(supplied) != len(expected) or set(supplied) != set(expected):
+            fail(
+                "E_INTAKE_BINDING_LANES_MISMATCH",
+                "consumer must retain the canonical six audit lanes",
+            )
+        checks.append(
+            {
+                "id": "INTAKE_BINDING_LANES",
+                "passed": not any(
+                    item["code"] == "E_INTAKE_BINDING_LANES_MISMATCH" for item in errors
+                ),
+                "evidence": supplied,
+            }
+        )
+
+
+def _check_one_budget(key, value, envelope_budgets, fail) -> None:
+    if (
+        key not in BUDGET_KEYS
+        or isinstance(value, bool)
+        or not isinstance(value, (int, float))
+    ):
+        fail(
+            "E_INTAKE_BINDING_BUDGET_INVALID",
+            f"unsupported or non-numeric consumer budget: {key}",
+        )
+    elif key not in envelope_budgets or value < 0 or value > envelope_budgets[key]:
+        fail(
+            "E_INTAKE_BINDING_BUDGET_INVALID",
+            f"consumer budget {key} exceeds the sealed intake cap",
+        )
+
+
+def _check_binding_budgets(parameters, budgets, errors, checks, fail) -> None:
+    envelope_budgets = (
+        parameters.get("budgets") if isinstance(parameters.get("budgets"), dict) else {}
+    )
+    if budgets is not None:
+        if not isinstance(budgets, dict):
+            fail(
+                "E_INTAKE_BINDING_BUDGET_INVALID", "consumer budgets must be an object"
+            )
+        else:
+            for key, value in budgets.items():
+                _check_one_budget(key, value, envelope_budgets, fail)
+        checks.append(
+            {
+                "id": "INTAKE_BINDING_BUDGET",
+                "passed": not any(
+                    item["code"] == "E_INTAKE_BINDING_BUDGET_INVALID" for item in errors
+                ),
+                "evidence": {key: budgets[key] for key in budgets}
+                if isinstance(budgets, dict)
+                else {},
+            }
+        )
+
+
+def _check_binding_mode(parameters, mode, errors, checks, fail) -> None:
+    if mode is not None:
+        if mode not in MODES or mode != parameters.get("mode"):
+            fail(
+                "E_INTAKE_BINDING_MODE_MISMATCH",
+                "consumer autonomy mode differs from the sealed intake mode",
+            )
+        checks.append(
+            {
+                "id": "INTAKE_BINDING_MODE",
+                "passed": not any(
+                    item["code"] == "E_INTAKE_BINDING_MODE_MISMATCH" for item in errors
+                ),
+                "evidence": mode,
+            }
+        )
+
+
+def _check_binding_external_effects(
+    parameters, external_effects, errors, checks, fail
+) -> None:
+    if external_effects is not None:
+        if (
+            external_effects not in EXTERNAL_EFFECTS
+            or external_effects != parameters.get("external_effects")
+        ):
+            fail(
+                "E_INTAKE_BINDING_EXTERNAL_EFFECTS_MISMATCH",
+                "consumer external-effects mode differs from the sealed intake decision",
+            )
+        checks.append(
+            {
+                "id": "INTAKE_BINDING_EXTERNAL_EFFECTS",
+                "passed": not any(
+                    item["code"] == "E_INTAKE_BINDING_EXTERNAL_EFFECTS_MISMATCH"
+                    for item in errors
+                ),
+                "evidence": external_effects,
+            }
+        )
+
+
+def _check_binding_expiry(receipt, expires_at, errors, checks, fail) -> None:
+    if expires_at is not None:
+        try:
+            _, candidate_expiry = _parse_expiry(expires_at)
+            _, envelope_expiry = _parse_expiry(receipt.get("expires_at"))
+            if candidate_expiry > envelope_expiry:
+                fail(
+                    "E_INTAKE_BINDING_EXPIRY_MISMATCH",
+                    "consumer validity outlives the sealed intake envelope",
+                )
+        except IntakeParametersError as exc:
+            fail("E_INTAKE_BINDING_EXPIRY_MISMATCH", exc.message)
+        checks.append(
+            {
+                "id": "INTAKE_BINDING_EXPIRY",
+                "passed": not any(
+                    item["code"] == "E_INTAKE_BINDING_EXPIRY_MISMATCH"
+                    for item in errors
+                ),
+                "evidence": expires_at,
+            }
+        )
 
 
 def verify_intake_binding(
@@ -727,189 +989,13 @@ def verify_intake_binding(
     if not isinstance(parameters, dict):
         parameters = {}
 
-    if binding_sha256 is not None:
-        if not isinstance(binding_sha256, str) or not _DIGEST.fullmatch(binding_sha256):
-            fail(
-                "E_INTAKE_BINDING_INVALID",
-                "binding parameter_sha256 must be a lowercase SHA-256 digest",
-            )
-        elif binding_sha256 != receipt.get("parameter_sha256"):
-            fail(
-                "E_INTAKE_PARAMETER_DRIFT",
-                "consumer digest does not match the sealed intake envelope",
-            )
-    checks.append(
-        {
-            "id": "INTAKE_BINDING_DIGEST",
-            "passed": not any(
-                item["code"] == "E_INTAKE_PARAMETER_DRIFT" for item in errors
-            ),
-            "evidence": receipt.get("parameter_sha256"),
-        }
-    )
-
-    envelope_scope = parameters.get("scope_paths", [])
-    if scope_paths is not None:
-        if not isinstance(scope_paths, (list, tuple)) or len(scope_paths) == 0:
-            fail(
-                "E_INTAKE_BINDING_SCOPE_ESCAPE",
-                "consumer scope must contain at least one path",
-            )
-        else:
-            normalized_scope: list[str] = []
-            for index, raw in enumerate(scope_paths):
-                try:
-                    _, relative = _relative(
-                        workspace, raw, f"binding.scope_paths[{index}]", exists=False
-                    )
-                    normalized_scope.append(relative)
-                except IntakeParametersError as exc:
-                    fail("E_INTAKE_BINDING_SCOPE_ESCAPE", exc.message)
-            if (
-                isinstance(envelope_scope, list)
-                and normalized_scope
-                and any(
-                    not any(
-                        scope == "."
-                        or item == scope
-                        or item.startswith(scope.rstrip("/") + "/")
-                        for scope in envelope_scope
-                    )
-                    for item in normalized_scope
-                )
-            ):
-                fail(
-                    "E_INTAKE_BINDING_SCOPE_ESCAPE",
-                    "consumer scope escapes the sealed intake scope",
-                )
-            checks.append(
-                {
-                    "id": "INTAKE_BINDING_SCOPE",
-                    "passed": not any(
-                        item["code"] == "E_INTAKE_BINDING_SCOPE_ESCAPE"
-                        for item in errors
-                    ),
-                    "evidence": sorted(normalized_scope),
-                }
-            )
-
-    if required_lanes is not None:
-        supplied = (
-            list(required_lanes) if isinstance(required_lanes, (list, tuple)) else []
-        )
-        expected = list(REQUIRED_AUDIT_LANES)
-        if len(supplied) != len(expected) or set(supplied) != set(expected):
-            fail(
-                "E_INTAKE_BINDING_LANES_MISMATCH",
-                "consumer must retain the canonical six audit lanes",
-            )
-        checks.append(
-            {
-                "id": "INTAKE_BINDING_LANES",
-                "passed": not any(
-                    item["code"] == "E_INTAKE_BINDING_LANES_MISMATCH" for item in errors
-                ),
-                "evidence": supplied,
-            }
-        )
-
-    envelope_budgets = (
-        parameters.get("budgets") if isinstance(parameters.get("budgets"), dict) else {}
-    )
-    if budgets is not None:
-        if not isinstance(budgets, dict):
-            fail(
-                "E_INTAKE_BINDING_BUDGET_INVALID", "consumer budgets must be an object"
-            )
-        else:
-            for key, value in budgets.items():
-                if (
-                    key not in BUDGET_KEYS
-                    or isinstance(value, bool)
-                    or not isinstance(value, (int, float))
-                ):
-                    fail(
-                        "E_INTAKE_BINDING_BUDGET_INVALID",
-                        f"unsupported or non-numeric consumer budget: {key}",
-                    )
-                elif (
-                    key not in envelope_budgets
-                    or value < 0
-                    or value > envelope_budgets[key]
-                ):
-                    fail(
-                        "E_INTAKE_BINDING_BUDGET_INVALID",
-                        f"consumer budget {key} exceeds the sealed intake cap",
-                    )
-        checks.append(
-            {
-                "id": "INTAKE_BINDING_BUDGET",
-                "passed": not any(
-                    item["code"] == "E_INTAKE_BINDING_BUDGET_INVALID" for item in errors
-                ),
-                "evidence": {key: budgets[key] for key in budgets}
-                if isinstance(budgets, dict)
-                else {},
-            }
-        )
-
-    if mode is not None:
-        if mode not in MODES or mode != parameters.get("mode"):
-            fail(
-                "E_INTAKE_BINDING_MODE_MISMATCH",
-                "consumer autonomy mode differs from the sealed intake mode",
-            )
-        checks.append(
-            {
-                "id": "INTAKE_BINDING_MODE",
-                "passed": not any(
-                    item["code"] == "E_INTAKE_BINDING_MODE_MISMATCH" for item in errors
-                ),
-                "evidence": mode,
-            }
-        )
-
-    if external_effects is not None:
-        if (
-            external_effects not in EXTERNAL_EFFECTS
-            or external_effects != parameters.get("external_effects")
-        ):
-            fail(
-                "E_INTAKE_BINDING_EXTERNAL_EFFECTS_MISMATCH",
-                "consumer external-effects mode differs from the sealed intake decision",
-            )
-        checks.append(
-            {
-                "id": "INTAKE_BINDING_EXTERNAL_EFFECTS",
-                "passed": not any(
-                    item["code"] == "E_INTAKE_BINDING_EXTERNAL_EFFECTS_MISMATCH"
-                    for item in errors
-                ),
-                "evidence": external_effects,
-            }
-        )
-
-    if expires_at is not None:
-        try:
-            _, candidate_expiry = _parse_expiry(expires_at)
-            _, envelope_expiry = _parse_expiry(receipt.get("expires_at"))
-            if candidate_expiry > envelope_expiry:
-                fail(
-                    "E_INTAKE_BINDING_EXPIRY_MISMATCH",
-                    "consumer validity outlives the sealed intake envelope",
-                )
-        except IntakeParametersError as exc:
-            fail("E_INTAKE_BINDING_EXPIRY_MISMATCH", exc.message)
-        checks.append(
-            {
-                "id": "INTAKE_BINDING_EXPIRY",
-                "passed": not any(
-                    item["code"] == "E_INTAKE_BINDING_EXPIRY_MISMATCH"
-                    for item in errors
-                ),
-                "evidence": expires_at,
-            }
-        )
+    _check_binding_digest(binding_sha256, receipt, errors, checks, fail)
+    _check_binding_scope(workspace, parameters, scope_paths, errors, checks, fail)
+    _check_binding_lanes(required_lanes, errors, checks, fail)
+    _check_binding_budgets(parameters, budgets, errors, checks, fail)
+    _check_binding_mode(parameters, mode, errors, checks, fail)
+    _check_binding_external_effects(parameters, external_effects, errors, checks, fail)
+    _check_binding_expiry(receipt, expires_at, errors, checks, fail)
 
     ok = not errors
     return {
@@ -925,12 +1011,7 @@ def verify_intake_binding(
     }
 
 
-def intake_parameters_status(root: Path) -> dict[str, Any]:
-    """Return bounded local envelope facts without changing or executing anything."""
-    workspace = Path(root).resolve()
-    rows: list[dict[str, Any]] = []
-    invalid: list[dict[str, str]] = []
-    invalid_count = 0
+def _intake_status_candidates(workspace: Path) -> list[tuple[int, Path]]:
     directory = workspace / ".factory" / "intake-parameters"
     candidates: list[tuple[int, Path]] = []
     if directory.is_dir():
@@ -944,38 +1025,63 @@ def intake_parameters_status(root: Path) -> dict[str, Any]:
                     except OSError:
                         continue
     candidates.sort(key=lambda item: (item[0], item[1].as_posix()), reverse=True)
+    return candidates
+
+
+def _intake_status_row(
+    workspace: Path, path: Path
+) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+    try:
+        check = verify_intake_parameters(workspace, path)
+        row = {
+            "path": check["path"],
+            "valid": check["valid"],
+            "state": check["state"],
+            "marker": check["marker"],
+        }
+        if check["valid"]:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            sealed_at = raw.get("sealed_at")
+            parsed = datetime.fromisoformat(str(sealed_at).replace("Z", "+00:00"))
+            row["sealed_at"] = _iso(parsed)
+            row["_sealed_at"] = parsed.astimezone(timezone.utc)
+            return row, None
+        return None, {
+            "path": check["path"],
+            "error": "; ".join(check["errors"])[:240],
+        }
+    except (IntakeParametersError, ValueError, OverflowError) as exc:
+        return None, {"path": path.relative_to(workspace).as_posix(), "error": str(exc)}
+
+
+def _intake_status_state(
+    invalid_count: int, truncated: bool, latest: dict[str, Any] | None
+) -> str:
+    if invalid_count or truncated:
+        return "BLOCKED"
+    if not latest:
+        return "MISSING"
+    if latest["state"] == "REVIEW_REQUIRED":
+        return "REVIEW_REQUIRED"
+    return "READY"
+
+
+def intake_parameters_status(root: Path) -> dict[str, Any]:
+    """Return bounded local envelope facts without changing or executing anything."""
+    workspace = Path(root).resolve()
+    rows: list[dict[str, Any]] = []
+    invalid: list[dict[str, str]] = []
+    invalid_count = 0
+    candidates = _intake_status_candidates(workspace)
     paths = [path for _, path in candidates[:MAX_SCAN_RECEIPTS]]
     for path in paths:
-        try:
-            check = verify_intake_parameters(workspace, path)
-            row = {
-                "path": check["path"],
-                "valid": check["valid"],
-                "state": check["state"],
-                "marker": check["marker"],
-            }
-            if check["valid"]:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-                sealed_at = raw.get("sealed_at")
-                parsed = datetime.fromisoformat(str(sealed_at).replace("Z", "+00:00"))
-                row["sealed_at"] = _iso(parsed)
-                row["_sealed_at"] = parsed.astimezone(timezone.utc)
-                rows.append(row)
-            if not check["valid"]:
-                invalid_count += 1
-                if len(invalid) < MAX_SCAN_RECEIPTS:
-                    invalid.append(
-                        {
-                            "path": check["path"],
-                            "error": "; ".join(check["errors"])[:240],
-                        }
-                    )
-        except (IntakeParametersError, ValueError, OverflowError) as exc:
+        row, invalid_row = _intake_status_row(workspace, path)
+        if row is not None:
+            rows.append(row)
+        if invalid_row is not None:
             invalid_count += 1
             if len(invalid) < MAX_SCAN_RECEIPTS:
-                invalid.append(
-                    {"path": path.relative_to(workspace).as_posix(), "error": str(exc)}
-                )
+                invalid.append(invalid_row)
     rows.sort(
         key=lambda row: (
             row.get("_sealed_at", datetime.min.replace(tzinfo=timezone.utc)),
@@ -986,14 +1092,7 @@ def intake_parameters_status(root: Path) -> dict[str, Any]:
     latest = rows[-1] if rows and not truncated else None
     for row in rows:
         row.pop("_sealed_at", None)
-    if invalid_count or truncated:
-        state = "BLOCKED"
-    elif not latest:
-        state = "MISSING"
-    elif latest["state"] == "REVIEW_REQUIRED":
-        state = "REVIEW_REQUIRED"
-    else:
-        state = "READY"
+    state = _intake_status_state(invalid_count, truncated, latest)
     return {
         "schema": STATUS_SCHEMA,
         "marker": "INTAKE_PARAMETERS_STATUS_READ_ONLY",

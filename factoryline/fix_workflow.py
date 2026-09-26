@@ -33,6 +33,58 @@ def _sha(value: object) -> str:
     return sha256(canonical_bytes(value)).hexdigest()
 
 
+def _original_result(comparison: dict[str, Any]) -> dict[str, Any] | None:
+    original = comparison.get("original")
+    return original if isinstance(original, dict) else None
+
+
+def _failure_brief(
+    comparison: dict[str, Any], original: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    if original is not None and comparison.get("state") == "FAIL":
+        return failure_brief(original, receipt_sha256=original.get("receipt_sha256"))
+    return None
+
+
+def _next_action(comparison: dict[str, Any], execute: bool) -> str:
+    if comparison.get("state") == "PASS":
+        return "Human review may apply the candidate patch; CF does not apply or release it."
+    if execute:
+        return "Inspect the failure brief and repair evidence, then revise the candidate or contract."
+    return "Run with --execute to reproduce the original failure and test the repair with negative controls."
+
+
+def _reproduction(original: dict[str, Any] | None, execute: bool) -> dict[str, Any]:
+    observed = bool(original and original.get("state") == "PASS") if execute else None
+    return {
+        "required": True,
+        "observed": observed,
+        "receipt_sha256": original.get("receipt_sha256") if original else None,
+    }
+
+
+def _repair_summary(comparison: dict[str, Any]) -> dict[str, Any]:
+    repaired = comparison.get("repaired")
+    candidate_receipt = (
+        repaired.get("receipt_sha256") if isinstance(repaired, dict) else None
+    )
+    return {
+        "candidate_receipt_sha256": candidate_receipt,
+        "regression_checks": comparison.get("regression_checks"),
+    }
+
+
+def _negative_controls(comparison: dict[str, Any], execute: bool) -> dict[str, Any]:
+    controls = comparison.get("negative_controls", [])
+    regression_checks = comparison.get("regression_checks") or {}
+    return {
+        "required": comparison.get("negative_controls_required", len(controls)),
+        "preserved": regression_checks.get("negative_controls_fail")
+        if execute
+        else None,
+    }
+
+
 def run_fix_workflow(
     root: Path,
     repair_manifest: dict[str, Any],
@@ -47,20 +99,7 @@ def run_fix_workflow(
         )
     except SeniorAssuranceError as exc:
         raise FixWorkflowError(exc.code, exc.message) from exc
-    original = (
-        comparison.get("original")
-        if isinstance(comparison.get("original"), dict)
-        else None
-    )
-    brief = None
-    if original is not None and comparison.get("state") == "FAIL":
-        brief = failure_brief(original, receipt_sha256=original.get("receipt_sha256"))
-    if comparison.get("state") == "PASS":
-        next_action = "Human review may apply the candidate patch; CF does not apply or release it."
-    elif execute:
-        next_action = "Inspect the failure brief and repair evidence, then revise the candidate or contract."
-    else:
-        next_action = "Run with --execute to reproduce the original failure and test the repair with negative controls."
+    original = _original_result(comparison)
     core = {
         "schema": SCHEMA,
         "marker": "FIX_WORKFLOW_RECEIPT",
@@ -68,35 +107,12 @@ def run_fix_workflow(
         "contract_sha256": comparison.get("contract_sha256"),
         "mode": "execute" if execute else "plan",
         "state": comparison.get("state"),
-        "reproduction": {
-            "required": True,
-            "observed": bool(original and original.get("state") == "PASS")
-            if execute
-            else None,
-            "receipt_sha256": original.get("receipt_sha256") if original else None,
-        },
-        "repair": {
-            "candidate_receipt_sha256": (comparison.get("repaired") or {}).get(
-                "receipt_sha256"
-            )
-            if isinstance(comparison.get("repaired"), dict)
-            else None,
-            "regression_checks": comparison.get("regression_checks"),
-        },
-        "negative_controls": {
-            "required": comparison.get(
-                "negative_controls_required",
-                len(comparison.get("negative_controls", [])),
-            ),
-            "preserved": (comparison.get("regression_checks") or {}).get(
-                "negative_controls_fail"
-            )
-            if execute
-            else None,
-        },
-        "failure_brief": brief,
+        "reproduction": _reproduction(original, execute),
+        "repair": _repair_summary(comparison),
+        "negative_controls": _negative_controls(comparison, execute),
+        "failure_brief": _failure_brief(comparison, original),
         "findings": comparison.get("findings", []),
-        "next_action": next_action,
+        "next_action": _next_action(comparison, execute),
         "authority": "none",
         "release_approval": False,
         "claim_boundary": "Coordinates bounded reproduction and repair evidence; it never applies patches, approves, merges, publishes, deploys, signs, or uses credentials.",

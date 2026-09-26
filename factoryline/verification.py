@@ -110,6 +110,186 @@ def _ship_intent_failure(rows: list[dict[str, Any]]) -> dict[str, str] | None:
     return None
 
 
+def _stages_by_module(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    by_module = {module: [] for module in LABELS}
+    for stage in rows:
+        by_module.setdefault(stage["module"], []).append(stage)
+    return by_module
+
+
+def _snapshot_blockers(rollup: dict[str, Any]) -> list[dict[str, str]]:
+    snapshot = rollup.get("receipt_snapshot", {})
+    blockers = []
+    if snapshot.get("truncated"):
+        blockers.append(
+            {
+                "code": "RECEIPT_SNAPSHOT_TRUNCATED",
+                "detail": "receipt scan was bounded before the complete evidence set was observed",
+            }
+        )
+    blockers.extend(
+        {"code": "RECEIPT_INVALID", "detail": f"{item['path']}: {item['reason']}"}
+        for item in snapshot.get("invalid", [])
+    )
+    return blockers
+
+
+def _module_result(
+    module: str, label: str, rows: list[dict[str, Any]], expected: frozenset[str]
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    failed = [
+        row
+        for row in rows
+        if row["status"] == "failed"
+        or (row.get("rate") is not None and row["rate"] < 1.0)
+    ]
+    passing = {row["stage"] for row in rows if row["status"] == "ok"}
+    missing = sorted(expected - passing)
+    blockers = _module_blockers(module, failed, missing)
+    status = _module_status(failed, missing, expected)
+    return {
+        "module": module,
+        "label": label,
+        "required": sorted(expected),
+        "missing": missing,
+        "status": status,
+        "stages": rows,
+    }, blockers
+
+
+def _module_blockers(
+    module: str, failed: list[dict[str, Any]], missing: list[str]
+) -> list[dict[str, str]]:
+    blockers = [
+        {
+            "code": "REQUIRED_STAGE_MISSING",
+            "detail": f"{module}:{stage} receipt is missing or non-passing",
+        }
+        for stage in missing
+    ]
+    blockers.extend(
+        {"code": "STAGE_FAILED", "detail": f"{module}:{row['stage']} is failing"}
+        for row in failed
+    )
+    return blockers
+
+
+def _module_status(
+    failed: list[dict[str, Any]], missing: list[str], expected: frozenset[str]
+) -> str:
+    if failed:
+        return "failed"
+    if missing:
+        return "incomplete"
+    return "passed" if expected else "not_applicable"
+
+
+def _module_audit(
+    by_module: dict[str, list[dict[str, Any]]], required: dict[str, frozenset[str]]
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    modules, blockers = [], []
+    for module, label in LABELS.items():
+        result, module_blockers = _module_result(
+            module, label, by_module[module], required.get(module, frozenset())
+        )
+        modules.append(result)
+        blockers.extend(module_blockers)
+    return modules, blockers
+
+
+def _stage_contract_binding_blockers(
+    module: str,
+    stage: str,
+    rows: list[dict[str, Any]],
+    expected_oracle: Any,
+    expected_policy: Any,
+) -> list[dict[str, str]]:
+    matches = [
+        row for row in rows if row.get("stage") == stage and row.get("status") == "ok"
+    ][-1:]
+    blockers = []
+    for row in matches:
+        inputs = row.get("inputs")
+        if not isinstance(inputs, dict):
+            return [
+                {
+                    "code": "RECEIPT_ORACLE_BINDING_MISSING",
+                    "detail": f"{module}:{stage} receipt inputs are not an object",
+                }
+            ]
+        if inputs.get("oracle_contract_sha256") != expected_oracle:
+            blockers.append(
+                {
+                    "code": "RECEIPT_ORACLE_BINDING_MISMATCH",
+                    "detail": f"{module}:{stage} is not bound to the current Oracle contract",
+                }
+            )
+        if inputs.get("release_contract_policy_digest") != expected_policy:
+            blockers.append(
+                {
+                    "code": "RECEIPT_POLICY_BINDING_MISMATCH",
+                    "detail": f"{module}:{stage} is not bound to the current release policy",
+                }
+            )
+    return blockers
+
+
+def _contract_binding_blockers(
+    required: dict[str, frozenset[str]],
+    by_module: dict[str, list[dict[str, Any]]],
+    release_contract: dict[str, Any],
+) -> list[dict[str, str]]:
+    blockers = []
+    oracle, policy = (
+        release_contract.get("oracle_contract_sha256"),
+        release_contract.get("policy_digest"),
+    )
+    for module, stages in required.items():
+        for stage in stages:
+            blockers.extend(
+                _stage_contract_binding_blockers(
+                    module, stage, by_module.get(module, []), oracle, policy
+                )
+            )
+    return blockers
+
+
+def _strict_release_contract(
+    workspace: Path,
+    feature: str,
+    contract_path: Path,
+    declared_stage_ids: set[str],
+    required: dict[str, frozenset[str]],
+    by_module: dict[str, list[dict[str, Any]]],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    from .release_contract import verify_release_contract
+
+    result = verify_release_contract(
+        workspace, feature, contract_path, declared_stage_ids
+    )
+    if not result.get("ok"):
+        return result, [
+            {
+                "code": str(result.get("marker", "RELEASE_CONTRACT_INVALID")),
+                "detail": str(result.get("reason", "release contract is not valid")),
+            }
+        ]
+    return result, _contract_binding_blockers(required, by_module, result)
+
+
+def _next_verify_action(
+    workspace: Path,
+    feature: str,
+    rollup: dict[str, Any],
+    blockers: list[dict[str, str]],
+) -> str:
+    if rollup.get("earliest_failing_stage"):
+        return f"factory risk-diff --root {workspace} --changed <changed-path>"
+    if blockers:
+        return f"factory assemble {feature} --root {workspace}"
+    return f"factory trace {feature} --root {workspace}"
+
+
 def verify_feature(
     root: Path,
     feature: str,
@@ -121,9 +301,7 @@ def verify_feature(
     workspace = Path(root)
     rollup = rollup_receipts(workspace, feature)
     rows = rollup["stages"]
-    by_module = {module: [] for module in LABELS}
-    for stage in rows:
-        by_module.setdefault(stage["module"], []).append(stage)
+    by_module = _stages_by_module(rows)
     contract_path = (
         release_contract_path
         or workspace / ".factory" / "release-contracts" / f"{feature}.json"
@@ -135,64 +313,9 @@ def verify_feature(
         and _release_declares(workspace, feature, contract_path, stage)
     }
     required = _required_stages(workspace, feature, rows, declared)
-    blockers: list[dict[str, str]] = []
-    snapshot = rollup.get("receipt_snapshot", {})
-    if snapshot.get("truncated"):
-        blockers.append(
-            {
-                "code": "RECEIPT_SNAPSHOT_TRUNCATED",
-                "detail": "receipt scan was bounded before the complete evidence set was observed",
-            }
-        )
-    for invalid in rollup.get("receipt_snapshot", {}).get("invalid", []):
-        blockers.append(
-            {
-                "code": "RECEIPT_INVALID",
-                "detail": f"{invalid['path']}: {invalid['reason']}",
-            }
-        )
-    modules = []
-    for module, label in LABELS.items():
-        module_rows = by_module[module]
-        failed = [
-            row
-            for row in module_rows
-            if row["status"] == "failed"
-            or (row.get("rate") is not None and row["rate"] < 1.0)
-        ]
-        expected = required.get(module, frozenset())
-        passing = {row["stage"] for row in module_rows if row["status"] == "ok"}
-        missing = sorted(expected - passing)
-        for stage in missing:
-            blockers.append(
-                {
-                    "code": "REQUIRED_STAGE_MISSING",
-                    "detail": f"{module}:{stage} receipt is missing or non-passing",
-                }
-            )
-        for row in failed:
-            blockers.append(
-                {
-                    "code": "STAGE_FAILED",
-                    "detail": f"{module}:{row['stage']} is failing",
-                }
-            )
-        modules.append(
-            {
-                "module": module,
-                "label": label,
-                "required": sorted(expected),
-                "missing": missing,
-                "status": "failed"
-                if failed
-                else "incomplete"
-                if missing
-                else "passed"
-                if expected
-                else "not_applicable",
-                "stages": module_rows,
-            }
-        )
+    blockers = _snapshot_blockers(rollup)
+    modules, module_blockers = _module_audit(by_module, required)
+    blockers.extend(module_blockers)
     intent_failure = _ship_intent_failure(rows)
     if intent_failure is not None:
         blockers.append(intent_failure)
@@ -201,70 +324,17 @@ def verify_feature(
     }
     release_contract: dict[str, Any] = {"status": "not_requested"}
     if strict_release:
-        from .release_contract import verify_release_contract
-
-        release_contract = verify_release_contract(
-            workspace, feature, contract_path, declared_stage_ids
+        release_contract, contract_blockers = _strict_release_contract(
+            workspace,
+            feature,
+            contract_path,
+            declared_stage_ids,
+            required,
+            by_module,
         )
-        if not release_contract.get("ok"):
-            blockers.append(
-                {
-                    "code": str(
-                        release_contract.get("marker", "RELEASE_CONTRACT_INVALID")
-                    ),
-                    "detail": str(
-                        release_contract.get("reason", "release contract is not valid")
-                    ),
-                }
-            )
-        else:
-            # Every selected gate receipt must carry the same sealed Oracle and
-            # policy digests.  A valid contract with empty/unbound stage files
-            # is not a release proof; it is merely a collection of green claims.
-            expected_oracle = release_contract.get("oracle_contract_sha256")
-            expected_policy = release_contract.get("policy_digest")
-            for module_name, stages in required.items():
-                for stage_name in stages:
-                    matches = [
-                        row
-                        for row in by_module.get(module_name, [])
-                        if row.get("stage") == stage_name and row.get("status") == "ok"
-                    ]
-                    for row in matches[-1:]:
-                        inputs = row.get("inputs")
-                        if not isinstance(inputs, dict):
-                            blockers.append(
-                                {
-                                    "code": "RECEIPT_ORACLE_BINDING_MISSING",
-                                    "detail": f"{module_name}:{stage_name} receipt inputs are not an object",
-                                }
-                            )
-                            continue
-                        if inputs.get("oracle_contract_sha256") != expected_oracle:
-                            blockers.append(
-                                {
-                                    "code": "RECEIPT_ORACLE_BINDING_MISMATCH",
-                                    "detail": f"{module_name}:{stage_name} is not bound to the current Oracle contract",
-                                }
-                            )
-                        if (
-                            inputs.get("release_contract_policy_digest")
-                            != expected_policy
-                        ):
-                            blockers.append(
-                                {
-                                    "code": "RECEIPT_POLICY_BINDING_MISMATCH",
-                                    "detail": f"{module_name}:{stage_name} is not bound to the current release policy",
-                                }
-                            )
-    earliest = rollup.get("earliest_failing_stage")
-    if earliest:
-        next_action = f"factory risk-diff --root {workspace} --changed <changed-path>"
-    elif blockers:
-        next_action = f"factory assemble {feature} --root {workspace}"
-    else:
-        next_action = f"factory trace {feature} --root {workspace}"
-    shippable = bool(rows) and not earliest and not blockers
+        blockers.extend(contract_blockers)
+    next_action = _next_verify_action(workspace, feature, rollup, blockers)
+    shippable = bool(rows) and not rollup.get("earliest_failing_stage") and not blockers
     return {
         "schema": "factory.verify.v2",
         "feature": feature,

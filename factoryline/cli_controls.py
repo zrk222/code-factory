@@ -136,178 +136,207 @@ def add_parser(sub: Any) -> None:
     projection.add_argument("--json", action="store_true")
 
 
+def _control_init(args: Any, store_type: Any) -> dict[str, Any]:
+    store_type(Path(args.db))
+    return {
+        "schema": "factory.control-plane.v1",
+        "verdict": "READY",
+        "db": str(Path(args.db).resolve()),
+    }
+
+
+def _control_serve(args: Any) -> int:
+    from wsgiref.simple_server import make_server
+    from .control_api import create_app
+
+    print(f"factory control API listening on http://{args.host}:{args.port}")
+    make_server(args.host, args.port, create_app(Path(args.db))).serve_forever()
+    return 0
+
+
+def _control_operation(args: Any, store: Any, principal: Any) -> dict[str, Any]:
+    if args.control_cmd == "evidence-put":
+        payload = json.loads(Path(args.payload).read_text(encoding="utf-8"))
+        return store.put(principal, payload, evidence_id=args.evidence_id)
+    if args.control_cmd == "evidence-get":
+        return store.get(principal, args.tenant, args.evidence_id)
+    if args.control_cmd == "evidence-list":
+        return {
+            "schema": "factory.evidence.list.v1",
+            "tenant_id": args.tenant,
+            "records": store.list(principal, args.tenant),
+        }
+    if args.control_cmd == "approval-request":
+        return store.request_approval(
+            principal, args.tenant, args.evidence_id, args.reason
+        )
+    if args.control_cmd == "approval-decide":
+        return store.decide_approval(
+            principal, args.tenant, args.approval_id, args.decision, args.reason
+        )
+    return store.verify_audit(principal, args.tenant)
+
+
+def _dispatch_control(args: Any, store_type: Any, principal_factory: Any) -> Any:
+    if args.control_cmd == "init":
+        return _control_init(args, store_type)
+    if args.control_cmd == "serve":
+        return _control_serve(args)
+    store = store_type(Path(args.db))
+    principal = principal_factory(args.subject, args.tenant, args.roles.split(","))
+    return _control_operation(args, store, principal)
+
+
+def _control_error(exc: Exception) -> dict[str, Any]:
+    return {
+        "schema": "factory.control-plane.result.v1",
+        "verdict": "ERROR",
+        "error": {
+            "code": getattr(exc, "code", "E_INPUT"),
+            "message": getattr(exc, "message", str(exc)),
+        },
+    }
+
+
 def _run_control(args: Any) -> int:
     from .control_plane import ControlPlaneError, EvidenceStore, principal_from_args
 
     try:
-        if args.control_cmd == "init":
-            EvidenceStore(Path(args.db))
-            result = {
-                "schema": "factory.control-plane.v1",
-                "verdict": "READY",
-                "db": str(Path(args.db).resolve()),
-            }
-        elif args.control_cmd == "serve":
-            from wsgiref.simple_server import make_server
-            from .control_api import create_app
-
-            print(f"factory control API listening on http://{args.host}:{args.port}")
-            make_server(args.host, args.port, create_app(Path(args.db))).serve_forever()
-            return 0
-        else:
-            store = EvidenceStore(Path(args.db))
-            principal = principal_from_args(
-                args.subject, args.tenant, args.roles.split(",")
-            )
-            if args.control_cmd == "evidence-put":
-                payload = json.loads(Path(args.payload).read_text(encoding="utf-8"))
-                result = store.put(principal, payload, evidence_id=args.evidence_id)
-            elif args.control_cmd == "evidence-get":
-                result = store.get(principal, args.tenant, args.evidence_id)
-            elif args.control_cmd == "evidence-list":
-                result = {
-                    "schema": "factory.evidence.list.v1",
-                    "tenant_id": args.tenant,
-                    "records": store.list(principal, args.tenant),
-                }
-            elif args.control_cmd == "approval-request":
-                result = store.request_approval(
-                    principal, args.tenant, args.evidence_id, args.reason
-                )
-            elif args.control_cmd == "approval-decide":
-                result = store.decide_approval(
-                    principal, args.tenant, args.approval_id, args.decision, args.reason
-                )
-            else:
-                result = store.verify_audit(principal, args.tenant)
+        result = _dispatch_control(args, EvidenceStore, principal_from_args)
     except (ControlPlaneError, json.JSONDecodeError, OSError) as exc:
-        print(
-            json.dumps(
-                {
-                    "schema": "factory.control-plane.result.v1",
-                    "verdict": "ERROR",
-                    "error": {
-                        "code": getattr(exc, "code", "E_INPUT"),
-                        "message": getattr(exc, "message", str(exc)),
-                    },
-                },
-                indent=2,
-            )
-        )
+        print(json.dumps(_control_error(exc), indent=2))
         return 1
+    if args.control_cmd == "serve":
+        return 0
     print(json.dumps(result, indent=2, sort_keys=True))
     if args.control_cmd == "audit-verify":
         return 0 if result["valid"] else 1
     return 0
 
 
-def _run_controls(args: Any) -> int:
-    from .continuous_controls import (
-        ControlsError,
-        continuous_controls_projection,
-        create_exception,
-        evaluate_controls,
-        fleet_coverage,
-        load_policy_pack,
-        write_control_evaluation,
-        write_controls_dossier,
-    )
+def _controls_manifest(root: Path, args: Any, api: Any) -> tuple[dict[str, Any], int]:
+    return api.load_policy_pack(root, args.policy), 0
 
-    try:
-        root = Path(args.root).resolve()
-        if args.controls_cmd == "manifest":
-            result = load_policy_pack(root, args.policy)
-            code = 0
-        elif args.controls_cmd == "evaluate":
-            baseline = (
-                json.loads((root / args.baseline).read_text(encoding="utf-8"))
-                if args.baseline
-                else None
-            )
-            evaluation = evaluate_controls(
-                root,
-                args.policy,
-                evidence_paths=args.evidence,
-                exception_paths=args.exception,
-                baseline=baseline,
-                event={
-                    "kind": args.event_kind,
-                    "actor": args.actor,
-                    "commit": args.commit,
-                    "changed_paths": args.changed,
-                },
-            )
-            stored = write_control_evaluation(root, evaluation, args.out)
-            result = {
-                "evaluation": evaluation,
-                "receipt": {"path": stored["path"], "sha256": stored["sha256"]},
-            }
-            code = 0 if evaluation["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
-        elif args.controls_cmd == "exception":
-            result = create_exception(
-                root,
-                args.policy,
-                args.control_id,
-                owner=args.owner,
-                reason=args.reason,
-                scope=args.scope,
-                ttl_days=args.ttl_days,
-                evidence_path=args.evidence,
-                author=args.author,
-                approver=args.approver,
-                out=args.out,
-            )
-            code = 0
-        elif args.controls_cmd == "dossier":
-            evaluation_path = (
-                (root / args.evaluation).resolve()
-                if not Path(args.evaluation).is_absolute()
-                else Path(args.evaluation)
-            )
-            result = write_controls_dossier(
-                root,
-                json.loads(evaluation_path.read_text(encoding="utf-8")),
-                args.out_dir,
-            )
-            code = 0
-        elif args.controls_cmd == "fleet":
-            result = fleet_coverage(root, args.manifest)
-            code = (
-                0
-                if all(not item["missing_baseline"] for item in result["repositories"])
-                else 1
-            )
-        else:
-            result = continuous_controls_projection(root)
-            code = 0 if result["invalid_count"] == 0 else 1
-    except (ControlsError, OSError, json.JSONDecodeError, ValueError) as exc:
-        result = {
-            "schema": "factory.continuous-controls.result.v1",
-            "verdict": "ERROR",
-            "error": {"code": getattr(exc, "code", "E_INPUT"), "message": str(exc)},
-        }
-        code = 1
+
+def _controls_evaluate(root: Path, args: Any, api: Any) -> tuple[dict[str, Any], int]:
+    baseline = (
+        json.loads((root / args.baseline).read_text(encoding="utf-8"))
+        if args.baseline
+        else None
+    )
+    evaluation = api.evaluate_controls(
+        root,
+        args.policy,
+        evidence_paths=args.evidence,
+        exception_paths=args.exception,
+        baseline=baseline,
+        event={
+            "kind": args.event_kind,
+            "actor": args.actor,
+            "commit": args.commit,
+            "changed_paths": args.changed,
+        },
+    )
+    stored = api.write_control_evaluation(root, evaluation, args.out)
+    result = {
+        "evaluation": evaluation,
+        "receipt": {"path": stored["path"], "sha256": stored["sha256"]},
+    }
+    code = 0 if evaluation["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
+    return result, code
+
+
+def _controls_exception(root: Path, args: Any, api: Any) -> tuple[dict[str, Any], int]:
+    result = api.create_exception(
+        root,
+        args.policy,
+        args.control_id,
+        owner=args.owner,
+        reason=args.reason,
+        scope=args.scope,
+        ttl_days=args.ttl_days,
+        evidence_path=args.evidence,
+        author=args.author,
+        approver=args.approver,
+        out=args.out,
+    )
+    return result, 0
+
+
+def _controls_dossier(root: Path, args: Any, api: Any) -> tuple[dict[str, Any], int]:
+    evaluation_path = (
+        (root / args.evaluation).resolve()
+        if not Path(args.evaluation).is_absolute()
+        else Path(args.evaluation)
+    )
+    evaluation = json.loads(evaluation_path.read_text(encoding="utf-8"))
+    return api.write_controls_dossier(root, evaluation, args.out_dir), 0
+
+
+def _controls_fleet(root: Path, args: Any, api: Any) -> tuple[dict[str, Any], int]:
+    result = api.fleet_coverage(root, args.manifest)
+    complete = all(not item["missing_baseline"] for item in result["repositories"])
+    return result, 0 if complete else 1
+
+
+def _controls_projection(
+    root: Path, _args: Any, api: Any
+) -> tuple[dict[str, Any], int]:
+    result = api.continuous_controls_projection(root)
+    return result, 0 if result["invalid_count"] == 0 else 1
+
+
+def _dispatch_controls(root: Path, args: Any, api: Any) -> tuple[dict[str, Any], int]:
+    handler = {
+        "manifest": _controls_manifest,
+        "evaluate": _controls_evaluate,
+        "exception": _controls_exception,
+        "dossier": _controls_dossier,
+        "fleet": _controls_fleet,
+    }.get(args.controls_cmd, _controls_projection)
+    return handler(root, args, api)
+
+
+def _controls_summary(args: Any, result: dict[str, Any]) -> str:
+    if args.controls_cmd == "manifest":
+        return f"policy {result['pack_id']}@{result['version']}: {result['status']} ({len(result['controls'])} controls)"
+    if args.controls_cmd == "evaluate":
+        return f"controls: {result['evaluation']['decision']} ({result['receipt']['path']})"
+    if args.controls_cmd == "dossier":
+        return f"controls dossier: {result['directory']}"
+    if args.controls_cmd == "fleet":
+        return f"fleet coverage: {len(result['repositories'])} repositories"
+    return f"controls projection: {result['evaluation_count']} evaluations"
+
+
+def _emit_controls_result(args: Any, result: dict[str, Any], code: int) -> None:
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     elif code == 0:
-        if args.controls_cmd == "manifest":
-            print(
-                f"policy {result['pack_id']}@{result['version']}: {result['status']} ({len(result['controls'])} controls)"
-            )
-        elif args.controls_cmd == "evaluate":
-            print(
-                f"controls: {result['evaluation']['decision']} ({result['receipt']['path']})"
-            )
-        elif args.controls_cmd == "dossier":
-            print(f"controls dossier: {result['directory']}")
-        elif args.controls_cmd == "fleet":
-            print(f"fleet coverage: {len(result['repositories'])} repositories")
-        else:
-            print(f"controls projection: {result['evaluation_count']} evaluations")
+        print(_controls_summary(args, result))
     else:
         print(
             json.dumps(result, indent=2, sort_keys=True), file=__import__("sys").stderr
         )
+
+
+def _controls_error(exc: Exception) -> dict[str, Any]:
+    return {
+        "schema": "factory.continuous-controls.result.v1",
+        "verdict": "ERROR",
+        "error": {"code": getattr(exc, "code", "E_INPUT"), "message": str(exc)},
+    }
+
+
+def _run_controls(args: Any) -> int:
+    from . import continuous_controls as api
+
+    try:
+        result, code = _dispatch_controls(Path(args.root).resolve(), args, api)
+    except (api.ControlsError, OSError, json.JSONDecodeError, ValueError) as exc:
+        result = _controls_error(exc)
+        code = 1
+    _emit_controls_result(args, result, code)
     return code
 
 

@@ -60,29 +60,48 @@ def retry_count(root: Path, feature: str) -> int:
     return sum(row.get("feature") == feature for row in load_run_receipts(root))
 
 
-def write_run_receipt(root: Path, payload: dict[str, Any]) -> Path:
-    """Validate and atomically persist one private continuation run receipt."""
-    usage = payload.get("usage")
+def _validate_usage_counts(usage: dict[str, Any]) -> None:
+    for key in ("model_calls", "tokens_in", "tokens_out"):
+        value = usage.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(f"usage.{key} must be a non-negative integer")
+
+
+def _validate_usage_cost(usage: dict[str, Any]) -> None:
+    cost = usage.get("cost_usd")
+    if cost is not None and (
+        not isinstance(cost, (int, float)) or isinstance(cost, bool) or cost < 0
+    ):
+        raise ValueError("usage.cost_usd must be a non-negative number or null")
+
+
+def _normalize_usage(raw_usage: Any) -> dict[str, Any]:
+    usage = raw_usage
     if usage is None:
-        usage = {
+        return {
             "quality": "unknown",
             "model_calls": None,
             "tokens_in": None,
             "tokens_out": None,
             "cost_usd": None,
         }
-    elif not isinstance(usage, dict) or usage.get("quality") != "exact":
+    if not isinstance(usage, dict) or usage.get("quality") != "exact":
         raise ValueError("usage must be absent or an exact usage object")
-    else:
-        for key in ("model_calls", "tokens_in", "tokens_out"):
-            value = usage.get(key)
-            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                raise ValueError(f"usage.{key} must be a non-negative integer")
-        cost = usage.get("cost_usd")
-        if cost is not None and (
-            not isinstance(cost, (int, float)) or isinstance(cost, bool) or cost < 0
-        ):
-            raise ValueError("usage.cost_usd must be a non-negative number or null")
+    _validate_usage_counts(usage)
+    _validate_usage_cost(usage)
+    return usage
+
+
+def _required_run_id(receipt: dict[str, Any]) -> str:
+    run_id = receipt.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        raise ValueError("run_id is required")
+    return run_id
+
+
+def write_run_receipt(root: Path, payload: dict[str, Any]) -> Path:
+    """Validate and atomically persist one private continuation run receipt."""
+    usage = _normalize_usage(payload.get("usage"))
     receipt = {
         "schema": RUN_SCHEMA,
         "marker": "ASSEMBLY_RUN_RECEIPTED",
@@ -90,9 +109,7 @@ def write_run_receipt(root: Path, payload: dict[str, Any]) -> Path:
         **payload,
         "usage": usage,
     }
-    run_id = receipt.get("run_id")
-    if not isinstance(run_id, str) or not run_id:
-        raise ValueError("run_id is required")
+    run_id = _required_run_id(receipt)
     path = _runs_dir(root) / f"{run_id}.json"
     _atomic_json(path, receipt)
     return path

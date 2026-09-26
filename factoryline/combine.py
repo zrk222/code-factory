@@ -385,126 +385,151 @@ def score_combine(
     }
 
 
+def _scoreboard_envelope(value: dict[str, Any]) -> None:
+    expected_fields = {
+        "schema",
+        "marker",
+        "scored_at",
+        "task",
+        "candidates",
+        "summary",
+        "ranking_basis",
+        "authority",
+        "scope_limits",
+        "scoreboard_sha256",
+    }
+    if (
+        set(value) != expected_fields
+        or value.get("schema") != COMBINE_SCOREBOARD_SCHEMA
+        or value.get("marker") != "COMBINE_SCOREBOARD_SCORED"
+    ):
+        raise CombineError(
+            "COMBINE_SCOREBOARD_INVALID", "unsupported scoreboard schema or fields"
+        )
+    core = {key: value[key] for key in expected_fields - {"scoreboard_sha256"}}
+    if value.get("scoreboard_sha256") != _sha(core):
+        raise CombineError("COMBINE_SCOREBOARD_INVALID", "scoreboard hash mismatch")
+    _timestamp(value.get("scored_at"), "scored_at")
+
+
+def _scoreboard_task(value: dict[str, Any]) -> dict[str, Any]:
+    task = value.get("task")
+    if (
+        not isinstance(task, dict)
+        or set(task) != {"task_id", "task_sha256", "description_sha256"}
+        or not _TASK_IDENTIFIER.fullmatch(str(task.get("task_id", "")))
+    ):
+        raise CombineError("COMBINE_SCOREBOARD_INVALID", "task binding is invalid")
+    return task
+
+
+def _candidate_identity(row: dict[str, Any], seen: set[str]) -> dict[str, Any]:
+    agent = normalize_agent_identity(row["agent"])
+    if agent["identity_sha256"] in seen:
+        raise CombineError(
+            "COMBINE_SCOREBOARD_INVALID", "candidate identities must be unique"
+        )
+    seen.add(agent["identity_sha256"])
+    return agent
+
+
+def _candidate_event_binding(event: object) -> dict[str, Any]:
+    if not isinstance(event, dict) or set(event) != {
+        "event_id",
+        "event_sha256",
+        "recorded_at",
+        "admission_packet_sha256",
+        "verification_subject",
+        "verification_receipt_sha256",
+    }:
+        raise CombineError(
+            "COMBINE_SCOREBOARD_INVALID", "candidate event binding is invalid"
+        )
+    return event
+
+
+def _candidate_result(result: object) -> dict[str, Any]:
+    if (
+        not isinstance(result, dict)
+        or set(result) != {"passed", "failure_classes", "result_receipt_sha256"}
+        or not isinstance(result["passed"], bool)
+    ):
+        raise CombineError("COMBINE_SCOREBOARD_INVALID", "candidate result is invalid")
+    failures = result["failure_classes"]
+    if not isinstance(failures, list) or any(
+        item not in {entry.value for entry in FailureClass} for item in failures
+    ):
+        raise CombineError(
+            "COMBINE_SCOREBOARD_INVALID", "candidate failure class is invalid"
+        )
+    if result["passed"] and failures:
+        raise CombineError(
+            "COMBINE_SCOREBOARD_INVALID", "passing candidate cannot have failures"
+        )
+    return {**result, "failure_classes": sorted(failures)}
+
+
+def _candidate_row(row: object, seen: set[str]) -> dict[str, Any]:
+    if not isinstance(row, dict) or set(row) != {"agent", "event", "result", "rank"}:
+        raise CombineError("COMBINE_SCOREBOARD_INVALID", "candidate row is invalid")
+    agent = _candidate_identity(row, seen)
+    event = _candidate_event_binding(row["event"])
+    result = _candidate_result(row["result"])
+    _timestamp(event["recorded_at"], "candidate.recorded_at")
+    return {
+        "agent": agent,
+        "event": event,
+        "result": result,
+    }
+
+
+def _normalized_candidates(rows: object) -> list[dict[str, Any]]:
+    if not isinstance(rows, list) or not 2 <= len(rows) <= 8:
+        raise CombineError("COMBINE_SCOREBOARD_INVALID", "candidate list is invalid")
+    seen: set[str] = set()
+    return [_candidate_row(row, seen) for row in rows]
+
+
+def _verify_candidate_ranks(
+    rows: list[dict[str, Any]], normalized: list[dict[str, Any]]
+) -> None:
+    reranked = _rank(normalized)
+    stored = [(row["agent"]["identity_sha256"], row["rank"]) for row in rows]
+    expected = [(row["agent"]["identity_sha256"], row["rank"]) for row in reranked]
+    if stored != expected:
+        raise CombineError(
+            "COMBINE_SCOREBOARD_INVALID", "candidate ranks are not deterministic"
+        )
+
+
+def _verify_scoreboard_summary(
+    value: dict[str, Any], task: dict[str, Any], normalized: list[dict[str, Any]]
+) -> None:
+    expected_summary = _scoreboard_core(
+        {
+            "task_id": task["task_id"],
+            "task_sha256": task["task_sha256"],
+            "description_sha256": task["description_sha256"],
+        },
+        normalized,
+        now=_timestamp(value["scored_at"], "scored_at"),
+    )["summary"]
+    if value.get("summary") != expected_summary:
+        raise CombineError(
+            "COMBINE_SCOREBOARD_INVALID", "scoreboard summary does not match candidates"
+        )
+
+
 def verify_combine_scoreboard(path: Path) -> dict[str, Any]:
     """Verify a Combine scoreboard completely offline from embedded proof hashes."""
     try:
         value = _load_json(Path(path), code="COMBINE_SCOREBOARD_INVALID")
-        expected_fields = {
-            "schema",
-            "marker",
-            "scored_at",
-            "task",
-            "candidates",
-            "summary",
-            "ranking_basis",
-            "authority",
-            "scope_limits",
-            "scoreboard_sha256",
-        }
-        if (
-            set(value) != expected_fields
-            or value.get("schema") != COMBINE_SCOREBOARD_SCHEMA
-            or value.get("marker") != "COMBINE_SCOREBOARD_SCORED"
-        ):
-            raise CombineError(
-                "COMBINE_SCOREBOARD_INVALID", "unsupported scoreboard schema or fields"
-            )
-        core = {key: value[key] for key in expected_fields - {"scoreboard_sha256"}}
-        if value.get("scoreboard_sha256") != _sha(core):
-            raise CombineError("COMBINE_SCOREBOARD_INVALID", "scoreboard hash mismatch")
-        _timestamp(value.get("scored_at"), "scored_at")
-        task = value.get("task")
-        if (
-            not isinstance(task, dict)
-            or set(task) != {"task_id", "task_sha256", "description_sha256"}
-            or not _TASK_IDENTIFIER.fullmatch(str(task.get("task_id", "")))
-        ):
-            raise CombineError("COMBINE_SCOREBOARD_INVALID", "task binding is invalid")
+        _scoreboard_envelope(value)
+        task = _scoreboard_task(value)
         rows = value.get("candidates")
-        if not isinstance(rows, list) or not 2 <= len(rows) <= 8:
-            raise CombineError(
-                "COMBINE_SCOREBOARD_INVALID", "candidate list is invalid"
-            )
-        normalized: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for row in rows:
-            if not isinstance(row, dict) or set(row) != {
-                "agent",
-                "event",
-                "result",
-                "rank",
-            }:
-                raise CombineError(
-                    "COMBINE_SCOREBOARD_INVALID", "candidate row is invalid"
-                )
-            agent = normalize_agent_identity(row["agent"])
-            if agent["identity_sha256"] in seen:
-                raise CombineError(
-                    "COMBINE_SCOREBOARD_INVALID", "candidate identities must be unique"
-                )
-            seen.add(agent["identity_sha256"])
-            event = row["event"]
-            result = row["result"]
-            if not isinstance(event, dict) or set(event) != {
-                "event_id",
-                "event_sha256",
-                "recorded_at",
-                "admission_packet_sha256",
-                "verification_subject",
-                "verification_receipt_sha256",
-            }:
-                raise CombineError(
-                    "COMBINE_SCOREBOARD_INVALID", "candidate event binding is invalid"
-                )
-            if (
-                not isinstance(result, dict)
-                or set(result) != {"passed", "failure_classes", "result_receipt_sha256"}
-                or not isinstance(result["passed"], bool)
-            ):
-                raise CombineError(
-                    "COMBINE_SCOREBOARD_INVALID", "candidate result is invalid"
-                )
-            failures = result["failure_classes"]
-            if not isinstance(failures, list) or any(
-                item not in {entry.value for entry in FailureClass} for item in failures
-            ):
-                raise CombineError(
-                    "COMBINE_SCOREBOARD_INVALID", "candidate failure class is invalid"
-                )
-            if result["passed"] and failures:
-                raise CombineError(
-                    "COMBINE_SCOREBOARD_INVALID",
-                    "passing candidate cannot have failures",
-                )
-            _timestamp(event["recorded_at"], "candidate.recorded_at")
-            normalized.append(
-                {
-                    "agent": agent,
-                    "event": event,
-                    "result": {**result, "failure_classes": sorted(failures)},
-                }
-            )
-        reranked = _rank(normalized)
-        if [(row["agent"]["identity_sha256"], row["rank"]) for row in rows] != [
-            (row["agent"]["identity_sha256"], row["rank"]) for row in reranked
-        ]:
-            raise CombineError(
-                "COMBINE_SCOREBOARD_INVALID", "candidate ranks are not deterministic"
-            )
-        expected_summary = _scoreboard_core(
-            {
-                "task_id": task["task_id"],
-                "task_sha256": task["task_sha256"],
-                "description_sha256": task["description_sha256"],
-            },
-            normalized,
-            now=_timestamp(value["scored_at"], "scored_at"),
-        )["summary"]
-        if value.get("summary") != expected_summary:
-            raise CombineError(
-                "COMBINE_SCOREBOARD_INVALID",
-                "scoreboard summary does not match candidates",
-            )
+        normalized = _normalized_candidates(rows)
+        _verify_candidate_ranks(rows, normalized)
+        _verify_scoreboard_summary(value, task, normalized)
     except (AgentLicenseError, CombineError) as exc:
         return {
             "schema": COMBINE_SCOREBOARD_SCHEMA,

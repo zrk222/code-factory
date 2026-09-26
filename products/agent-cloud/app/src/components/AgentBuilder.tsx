@@ -160,10 +160,7 @@ export function AgentBuilder({ agentSpec, blueprint, blueprintVersions, executio
           </div>
         </header>
         <div className="advanced-panel-body">
-          {advancedPanel === "runtime" && <GovernedRuntimePanel agentSpec={agentSpec} />}
-          {advancedPanel === "database" && <DatabaseToolPanel agentSpec={agentSpec} />}
-          {advancedPanel === "recipe" && <AgentRecipeLab agentSpec={agentSpec} />}
-          {advancedPanel === "hosted" && <HostedRuntimeLauncher agentSpec={agentSpec} blueprint={blueprint} jobs={executionJobs} adapters={runtimeAdapters} />}
+          <AdvancedAutomationPanels panel={advancedPanel} agentSpec={agentSpec} blueprint={blueprint} jobs={executionJobs} adapters={runtimeAdapters} />
         </div>
       </div>
 
@@ -198,9 +195,7 @@ export function AgentBuilder({ agentSpec, blueprint, blueprintVersions, executio
             </select></label>
             <label>Hard budget / run<div className="money-input"><span>$</span><input inputMode="decimal" value={hardBudget} onChange={(event) => setHardBudget(event.target.value)} required /></div></label>
           </div>
-          <div className="route-card">
-            <Cpu size={20} /><div><small>Active provider route</small><strong>{activeRoute ? `${activeRoute.primaryProvider} / ${activeRoute.primaryModel}` : "Not configured"}</strong><p>Fallback: {activeRoute ? `${activeRoute.fallbackProvider} / ${activeRoute.fallbackModel}` : "—"} · cache affinity on</p></div>
-          </div>
+          <ProviderRouteCard route={activeRoute} />
           <div className="validator-list">
             {agentSpec.validators.map((validator) => <span key={validator}><Check size={14} /> {validator}</span>)}
           </div>
@@ -236,6 +231,38 @@ export function AgentBuilder({ agentSpec, blueprint, blueprintVersions, executio
   );
 }
 
+function ProviderRouteCard({ route }: { route: Doc<"providerRoutes"> | undefined }) {
+  const primary = route ? `${route.primaryProvider} / ${route.primaryModel}` : "Not configured";
+  const fallback = route ? `${route.fallbackProvider} / ${route.fallbackModel}` : "—";
+  return <div className="route-card">
+    <Cpu size={20} /><div><small>Active provider route</small><strong>{primary}</strong><p>Fallback: {fallback} · cache affinity on</p></div>
+  </div>;
+}
+
+function AdvancedAutomationPanels({ panel, agentSpec, blueprint, jobs, adapters }: {
+  panel: AdvancedPanel;
+  agentSpec: Doc<"agentSpecs">;
+  blueprint: Doc<"agentBlueprints"> | null;
+  jobs: Doc<"executionJobs">[];
+  adapters: Doc<"runtimeAdapters">[];
+}) {
+  return <>
+    {panel === "runtime" && <GovernedRuntimePanel agentSpec={agentSpec} />}
+    {panel === "database" && <DatabaseToolPanel agentSpec={agentSpec} />}
+    {panel === "recipe" && <AgentRecipeLab agentSpec={agentSpec} />}
+    {panel === "hosted" && <HostedRuntimeLauncher agentSpec={agentSpec} blueprint={blueprint} jobs={jobs} adapters={adapters} />}
+  </>;
+}
+
+function nextAutomationAction(blueprint: Doc<"agentBlueprints"> | null, readyConnectors: number, inferenceReady: boolean, activeJobs: number): { label: string; panel: AdvancedPanel | null } {
+  if (!blueprint) return { label: "Save the guided blueprint", panel: null };
+  if (blueprint.status !== "active") return { label: "Buy and activate blueprint", panel: null };
+  if (readyConnectors === 0) return { label: "Connect the Knowledge Wall", panel: null };
+  if (!inferenceReady) return { label: "Finish BYOK binding", panel: "runtime" };
+  if (activeJobs === 0) return { label: "Queue a hosted run", panel: "hosted" };
+  return { label: "Monitor active automation", panel: "hosted" };
+}
+
 function AutomationCommandCenter({ blueprint, connectors, executionJobs, creditAccount, inferenceBinding, onOpenPanel }: {
   blueprint: Doc<"agentBlueprints"> | null;
   connectors: Doc<"knowledgeConnectors">[];
@@ -252,12 +279,7 @@ function AutomationCommandCenter({ blueprint, connectors, executionJobs, creditA
     { label: "Knowledge connected", ready: readyConnectors > 0, detail: readyConnectors > 0 ? `${readyConnectors} ready source${readyConnectors === 1 ? "" : "s"}` : "Connect docs, Drive, DB, or web" },
     { label: "Inference ready", ready: inferenceBinding?.status === "ready", detail: inferenceBinding ? `${inferenceBinding.mode} · ${inferenceBinding.status}` : "Bind workspace or agent key" },
   ];
-  const next = !blueprint ? { label: "Save the guided blueprint", panel: null as AdvancedPanel | null } :
-    blueprint.status !== "active" ? { label: "Buy and activate blueprint", panel: null as AdvancedPanel | null } :
-    readyConnectors === 0 ? { label: "Connect the Knowledge Wall", panel: null as AdvancedPanel | null } :
-    inferenceBinding?.status !== "ready" ? { label: "Finish BYOK binding", panel: "runtime" as AdvancedPanel } :
-    activeJobs === 0 ? { label: "Queue a hosted run", panel: "hosted" as AdvancedPanel } :
-    { label: "Monitor active automation", panel: "hosted" as AdvancedPanel };
+  const next = nextAutomationAction(blueprint, readyConnectors, inferenceBinding?.status === "ready", activeJobs);
   const creditLabel = creditAccount ? `${creditAccount.availableCredits} available · ${creditAccount.reservedCredits} reserved` : "Credit account setup required";
 
   return <section className="automation-command" aria-labelledby="automation-command-title">

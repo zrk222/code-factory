@@ -32,6 +32,17 @@ class CapabilityEvidenceError(ValueError):
 
 
 def _file(root: Path, value: object, field: str) -> dict[str, Any]:
+    relative = _relative_evidence_file(value, field)
+    path = _existing_evidence_file(root, relative, value, field)
+    content = _read_evidence_file(path, value, field)
+    return {
+        "path": relative.as_posix(),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "bytes": len(content),
+    }
+
+
+def _relative_evidence_file(value: object, field: str) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise CapabilityEvidenceError(
             "E_CAPABILITY_EVIDENCE_PATH", f"{field} must be a relative file path"
@@ -41,6 +52,12 @@ def _file(root: Path, value: object, field: str) -> dict[str, Any]:
         raise CapabilityEvidenceError(
             "E_CAPABILITY_EVIDENCE_PATH", f"{field} must stay inside the workspace"
         )
+    return relative
+
+
+def _existing_evidence_file(
+    root: Path, relative: Path, value: object, field: str
+) -> Path:
     path = (root / relative).resolve()
     try:
         path.relative_to(root)
@@ -53,6 +70,10 @@ def _file(root: Path, value: object, field: str) -> dict[str, Any]:
             "E_CAPABILITY_EVIDENCE_MISSING",
             f"{field} does not name an existing file: {value}",
         )
+    return path
+
+
+def _read_evidence_file(path: Path, value: object, field: str) -> bytes:
     with path.open("rb") as stream:
         content = stream.read(10_000_001)
     if len(content) > 10_000_000:
@@ -63,11 +84,7 @@ def _file(root: Path, value: object, field: str) -> dict[str, Any]:
         raise CapabilityEvidenceError(
             "E_CAPABILITY_EVIDENCE_HOLLOW", f"{field} is empty: {value}"
         )
-    return {
-        "path": relative.as_posix(),
-        "sha256": hashlib.sha256(content).hexdigest(),
-        "bytes": len(content),
-    }
+    return content
 
 
 def _argv(value: object, capability_id: str, tests: list[dict[str, Any]]) -> list[str]:
@@ -98,6 +115,22 @@ def _argv(value: object, capability_id: str, tests: list[dict[str, Any]]) -> lis
 
 
 def _claim(workspace: Path, item: object, index: int, seen: set[str]) -> dict[str, Any]:
+    capability_id, maturity = _claim_identity_and_maturity(item, index, seen)
+    files = _claim_files(workspace, item, capability_id)
+    argv, timeout = _claim_verification(item, capability_id, files)
+    return {
+        "id": capability_id,
+        "maturity": maturity,
+        **files,
+        "verification_declared": True,
+        "_argv": argv,
+        "_timeout": timeout,
+    }
+
+
+def _claim_identity_and_maturity(
+    item: object, index: int, seen: set[str]
+) -> tuple[str, str]:
     if not isinstance(item, dict):
         raise CapabilityEvidenceError(
             "E_CAPABILITY_EVIDENCE_SCHEMA", f"capabilities[{index}] must be an object"
@@ -114,6 +147,13 @@ def _claim(workspace: Path, item: object, index: int, seen: set[str]) -> dict[st
             "E_CAPABILITY_EVIDENCE_MATURITY",
             f"{capability_id}.maturity is not approved",
         )
+
+    return capability_id, item["maturity"]
+
+
+def _claim_files(
+    workspace: Path, item: dict[str, Any], capability_id: str
+) -> dict[str, list[dict[str, Any]]]:
     implementation, tests = item.get("implementation"), item.get("tests")
     if (
         not isinstance(implementation, list)
@@ -132,6 +172,12 @@ def _claim(workspace: Path, item: object, index: int, seen: set[str]) -> dict[st
         ],
         "tests": [_file(workspace, path, f"{capability_id}.tests") for path in tests],
     }
+    return files
+
+
+def _claim_verification(
+    item: dict[str, Any], capability_id: str, files: dict[str, Any]
+) -> tuple[list[str], int]:
     verify = item.get("verify")
     if not isinstance(verify, dict):
         raise CapabilityEvidenceError(
@@ -147,14 +193,8 @@ def _claim(workspace: Path, item: object, index: int, seen: set[str]) -> dict[st
             "E_CAPABILITY_EVIDENCE_TIMEOUT",
             f"{capability_id}.verify.timeout_seconds must be 1..300",
         )
-    return {
-        "id": capability_id,
-        "maturity": item["maturity"],
-        **files,
-        "verification_declared": True,
-        "_argv": _argv(verify.get("argv"), capability_id, files["tests"]),
-        "_timeout": timeout,
-    }
+    argv = _argv(verify.get("argv"), capability_id, files["tests"])
+    return argv, timeout
 
 
 def _execute(workspace: Path, claim: dict[str, Any]) -> dict[str, Any]:

@@ -29,13 +29,13 @@ Open an issue before changing the receipt protocol or canonical stage order.
 
 ## Independent release review
 
-Every public release requires approval by a human other than the workflow
-initiator. Repository administrators must configure a required reviewer and
-prevent self-review on each publishing environment (`pypi`, `vscode-marketplace`,
-`openvsx`, `jetbrains-marketplace`, and `huggingface`). A workflow name or an
-initiator value is not evidence that this protection is configured. Keep a
-release unpublished until a second human has reviewed the candidate and its
-receipts. Direct marketplace uploads need the same review outside Actions.
+The owner selected a separate specialty AI agent for source review. Protected
+main requires the `specialty-ai-review` status and CI. Record the agent's
+findings and their resolutions before merging; a status name alone is not
+review evidence. This is not independent human approval. Publishing requires
+the applicable quality, cadence, artifact, and provider gates documented in
+[release channels](docs/RELEASE_CHANNELS.md). A merge or local receipt does not
+authorize a marketplace upload or establish provider approval.
 
 Entries in `context/PROGRESS.md` record pipeline activity. `GATE`, `PROOF`, and
 `DONE` entries do not establish human authorship or independent review.

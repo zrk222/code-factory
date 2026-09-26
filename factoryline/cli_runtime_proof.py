@@ -85,98 +85,102 @@ def add_parser(sub: Any) -> None:
     admission_verify.add_argument("--json", action="store_true")
 
 
-def run(args: Any) -> int:
-    """Execute one runtime-proof command after parser selection."""
-    if args.cmd == "admission":
-        from .run_admission import AdmissionError, prepare_admission, verify_admission
+def _run_admission(args: Any) -> int:
+    from .run_admission import AdmissionError, prepare_admission, verify_admission
 
-        try:
-            if args.admission_cmd == "prepare":
-                result = prepare_admission(
-                    Path(args.root),
-                    Path(args.passport),
-                    Path(args.request),
-                    Path(args.out_dir) if args.out_dir else None,
-                    require_intake=args.require_intake,
-                )
-                code = 0
-            else:
-                result = verify_admission(Path(args.root), Path(args.packet))
-                code = 0 if result["verdict"] == "READY" else 1
-        except AdmissionError as exc:
-            result = {
-                "schema": "factory.run-admission.error.v1",
-                "code": exc.code,
-                "message": str(exc),
-            }
-            code = 2
-        if args.json:
-            print(json.dumps(result, indent=2, sort_keys=True))
-        elif code == 0:
-            print(f"admission: {result.get('marker', result.get('verdict'))}")
+    try:
+        if args.admission_cmd == "prepare":
+            result = prepare_admission(
+                Path(args.root),
+                Path(args.passport),
+                Path(args.request),
+                Path(args.out_dir) if args.out_dir else None,
+                require_intake=args.require_intake,
+            )
+            code = 0
         else:
-            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
-        return code
+            result = verify_admission(Path(args.root), Path(args.packet))
+            code = 0 if result["verdict"] == "READY" else 1
+    except AdmissionError as exc:
+        result = {
+            "schema": "factory.run-admission.error.v1",
+            "code": exc.code,
+            "message": str(exc),
+        }
+        code = 2
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    elif code == 0:
+        print(f"admission: {result.get('marker', result.get('verdict'))}")
+    else:
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+    return code
 
-    if args.cmd == "e2e":
-        from .e2e_proof import (
-            E2EProofError,
-            public_e2e_proof_receipt,
-            verify_e2e_proof,
-            write_e2e_proof_artifacts,
+
+def _run_e2e(args: Any) -> int:
+    from .e2e_proof import (
+        E2EProofError,
+        public_e2e_proof_receipt,
+        verify_e2e_proof,
+        write_e2e_proof_artifacts,
+    )
+
+    workspace = Path(args.root).resolve()
+    manifest = Path(args.manifest)
+    if not manifest.is_absolute():
+        manifest = workspace / manifest
+    try:
+        receipt = verify_e2e_proof(workspace, manifest)
+        artifacts = (
+            write_e2e_proof_artifacts(receipt, Path(args.out_dir))
+            if args.out_dir
+            else None
         )
+    except E2EProofError as exc:
+        error = {
+            "schema": "factory.e2e_proof.error.v1",
+            "marker": exc.code,
+            "code": exc.code,
+            "message": str(exc),
+        }
+        print(
+            json.dumps(error, indent=2, sort_keys=True)
+            if args.json
+            else f"e2e proof failed: {exc.code}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    public = public_e2e_proof_receipt(receipt)
+    if args.json:
+        output = {"receipt": public}
+        if artifacts:
+            output["artifacts"] = artifacts
+        print(json.dumps(output, indent=2, sort_keys=True))
+    else:
+        _print_e2e_summary(public, artifacts)
+    return 0 if public["ok"] else 1
 
-        workspace = Path(args.root).resolve()
-        manifest = Path(args.manifest)
-        if not manifest.is_absolute():
-            manifest = workspace / manifest
-        try:
-            receipt = verify_e2e_proof(workspace, manifest)
-            artifacts = (
-                write_e2e_proof_artifacts(receipt, Path(args.out_dir))
-                if args.out_dir
-                else None
-            )
-        except E2EProofError as exc:
-            error = {
-                "schema": "factory.e2e_proof.error.v1",
-                "marker": exc.code,
-                "code": exc.code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if args.json
-                else f"e2e proof failed: {exc.code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        public = public_e2e_proof_receipt(receipt)
-        if args.json:
-            output = {"receipt": public}
-            if artifacts:
-                output["artifacts"] = artifacts
-            print(json.dumps(output, indent=2, sort_keys=True))
-        else:
-            print("factory e2e verify")
-            print("=" * 44)
-            print(f"proof id : {public['manifest']['id']}")
-            print(
-                f"result   : {public['marker']} ({'passing' if public['ok'] else 'non-passing'})"
-            )
-            print(
-                f"positive : {public['commands']['positive']['status']} / exit {public['commands']['positive']['exit_code']}"
-            )
-            print(
-                f"negative : {public['commands']['negative']['status']} / exit {public['commands']['negative']['exit_code']}"
-            )
-            print(
-                "authority: caller-approved local test execution only; no release, deployment, credential, or egress enforcement"
-            )
-            if artifacts:
-                print(f"packet   : {artifacts['paths']['markdown']}")
-        return 0 if public["ok"] else 1
 
+def _print_e2e_summary(
+    public: dict[str, Any], artifacts: dict[str, Any] | None
+) -> None:
+    print("factory e2e verify")
+    print("=" * 44)
+    print(f"proof id : {public['manifest']['id']}")
+    print(
+        f"result   : {public['marker']} ({'passing' if public['ok'] else 'non-passing'})"
+    )
+    for label in ("positive", "negative"):
+        command = public["commands"][label]
+        print(f"{label:8} : {command['status']} / exit {command['exit_code']}")
+    print(
+        "authority: caller-approved local test execution only; no release, deployment, credential, or egress enforcement"
+    )
+    if artifacts:
+        print(f"packet   : {artifacts['paths']['markdown']}")
+
+
+def _run_reality(args: Any) -> int:
     from .reality_check import (
         RealityCheckError,
         inspect_reality_intent,
@@ -191,18 +195,7 @@ def run(args: Any) -> int:
     try:
         if args.reality_cmd == "inspect":
             inspection = inspect_reality_intent(workspace, manifest)
-            if args.json:
-                print(json.dumps(inspection, indent=2, sort_keys=True))
-            else:
-                print("factory reality inspect")
-                print("=" * 44)
-                print(f"promise  : {inspection['manifest']['behavior']['promise']}")
-                print(
-                    f"coverage : {len(inspection['positive_assertion_ids'])} positive / {len(inspection['negative_assertion_ids'])} negative assertions"
-                )
-                print(
-                    "execution: locked; this only validates the declared intent contract"
-                )
+            _print_reality_inspection(inspection, args.json)
             return 0
         receipt = run_reality_check(workspace, manifest)
         artifacts = (
@@ -224,21 +217,49 @@ def run(args: Any) -> int:
             file=sys.stderr,
         )
         return 2
-    if args.json:
+    _print_reality_result(receipt, artifacts, args.json)
+    return 0 if receipt["ok"] else 1
+
+
+def _print_reality_inspection(inspection: dict[str, Any], as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(inspection, indent=2, sort_keys=True))
+        return
+    print("factory reality inspect")
+    print("=" * 44)
+    print(f"promise  : {inspection['manifest']['behavior']['promise']}")
+    print(
+        f"coverage : {len(inspection['positive_assertion_ids'])} positive / {len(inspection['negative_assertion_ids'])} negative assertions"
+    )
+    print("execution: locked; this only validates the declared intent contract")
+
+
+def _print_reality_result(
+    receipt: dict[str, Any], artifacts: dict[str, Any] | None, as_json: bool
+) -> None:
+    if as_json:
         output = {"receipt": receipt}
         if artifacts:
             output["artifacts"] = artifacts
         print(json.dumps(output, indent=2, sort_keys=True))
-    else:
-        print("factory reality verify")
-        print("=" * 44)
-        print(f"promise  : {receipt['manifest']['behavior']['promise']}")
-        print(
-            f"result   : {receipt['marker']} ({'passing' if receipt['ok'] else 'non-passing'})"
-        )
-        print(
-            "authority: caller-approved local test execution only; no repair, merge, release, deployment, credential, or egress enforcement"
-        )
-        if artifacts:
-            print(f"packet   : {artifacts['markdown']}")
-    return 0 if receipt["ok"] else 1
+        return
+    print("factory reality verify")
+    print("=" * 44)
+    print(f"promise  : {receipt['manifest']['behavior']['promise']}")
+    print(
+        f"result   : {receipt['marker']} ({'passing' if receipt['ok'] else 'non-passing'})"
+    )
+    print(
+        "authority: caller-approved local test execution only; no repair, merge, release, deployment, credential, or egress enforcement"
+    )
+    if artifacts:
+        print(f"packet   : {artifacts['markdown']}")
+
+
+def run(args: Any) -> int:
+    """Execute one runtime-proof command after parser selection."""
+    if args.cmd == "admission":
+        return _run_admission(args)
+    if args.cmd == "e2e":
+        return _run_e2e(args)
+    return _run_reality(args)

@@ -175,7 +175,9 @@ def _atomic(path: Path, payload: dict[str, Any]) -> None:
             os.unlink(temporary)
 
 
-def _contract(value: dict[str, Any], candidate: dict[str, str]) -> dict[str, Any]:
+def _validate_contract_identity(
+    value: dict[str, Any], candidate: dict[str, str]
+) -> None:
     fields = {
         "schema",
         "candidate",
@@ -189,6 +191,9 @@ def _contract(value: dict[str, Any], candidate: dict[str, str]) -> dict[str, Any
             "APPFORGE_MOBILE_EVIDENCE_CONTRACT_INVALID",
             "contract must have exact fields and bind the exact candidate",
         )
+
+
+def _contract_platforms(value: dict[str, Any]) -> list[str]:
     platforms = value.get("platforms")
     if (
         not isinstance(platforms, list)
@@ -200,6 +205,10 @@ def _contract(value: dict[str, Any], candidate: dict[str, str]) -> dict[str, Any
             "APPFORGE_MOBILE_EVIDENCE_CONTRACT_INVALID",
             "platforms must be a unique non-empty ios/android list",
         )
+    return sorted(platforms)
+
+
+def _validate_required_checks(value: dict[str, Any]) -> None:
     required = value.get("required_checks")
     if (
         not isinstance(required, dict)
@@ -210,17 +219,9 @@ def _contract(value: dict[str, Any], candidate: dict[str, str]) -> dict[str, Any
             "APPFORGE_MOBILE_EVIDENCE_CONTRACT_INVALID",
             "every named mobile proof check must be explicitly required",
         )
-    thresholds = value.get("production_thresholds")
-    if not isinstance(thresholds, dict) or set(thresholds) != {
-        "crash_free_rate_min",
-        "anr_rate_max",
-        "hang_rate_max",
-        "startup_ms_max",
-    }:
-        raise RevenueForgeError(
-            "APPFORGE_MOBILE_EVIDENCE_CONTRACT_INVALID",
-            "production thresholds must use the fixed metric fields",
-        )
+
+
+def _numeric_thresholds(thresholds: dict[str, Any]) -> dict[str, float]:
     numeric: dict[str, float] = {}
     for key, raw in thresholds.items():
         if (
@@ -232,6 +233,22 @@ def _contract(value: dict[str, Any], candidate: dict[str, str]) -> dict[str, Any
                 "APPFORGE_MOBILE_EVIDENCE_CONTRACT_INVALID", f"{key} must be numeric"
             )
         numeric[key] = float(raw)
+    return numeric
+
+
+def _contract_thresholds(value: dict[str, Any]) -> dict[str, float]:
+    thresholds = value.get("production_thresholds")
+    if not isinstance(thresholds, dict) or set(thresholds) != {
+        "crash_free_rate_min",
+        "anr_rate_max",
+        "hang_rate_max",
+        "startup_ms_max",
+    }:
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_CONTRACT_INVALID",
+            "production thresholds must use the fixed metric fields",
+        )
+    numeric = _numeric_thresholds(thresholds)
     if not 0 <= numeric["crash_free_rate_min"] <= 100 or any(
         numeric[key] < 0 for key in ("anr_rate_max", "hang_rate_max", "startup_ms_max")
     ):
@@ -239,14 +256,114 @@ def _contract(value: dict[str, Any], candidate: dict[str, str]) -> dict[str, Any
             "APPFORGE_MOBILE_EVIDENCE_CONTRACT_INVALID",
             "production thresholds contain an invalid range",
         )
+    return numeric
+
+
+def _contract(value: dict[str, Any], candidate: dict[str, str]) -> dict[str, Any]:
+    _validate_contract_identity(value, candidate)
+    platforms = _contract_platforms(value)
+    _validate_required_checks(value)
+    numeric = _contract_thresholds(value)
     return {
         "candidate": candidate,
-        "platforms": sorted(platforms),
+        "platforms": platforms,
         "user_design_input_sha256": _digest(
             value["user_design_input_sha256"], "user_design_input_sha256"
         ),
         "required_checks": sorted(CHECKS),
         "production_thresholds": numeric,
+    }
+
+
+def _report_source(
+    root: Path, item: dict[str, Any], index: int
+) -> tuple[str, Path, str]:
+    tool = _text(item["tool"], f"reports[{index}].tool", limit=64)
+    if tool not in TOOLS:
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_TOOL_REJECTED", "tool is unsupported"
+        )
+    path = _local(
+        root, Path(_text(item["source_path"], f"reports[{index}].source_path"))
+    )
+    supplied = _digest(item["source_sha256"], f"reports[{index}].source_sha256")
+    if _file_sha(path) != supplied:
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_SOURCE_STALE",
+            "source report does not match its supplied digest",
+        )
+    return tool, path, supplied
+
+
+def _report_platforms(value: object) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or not value
+        or len(value) != len(set(value))
+        or set(value) - PLATFORMS
+    ):
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_REPORT_INVALID",
+            "report platforms are invalid",
+        )
+    return sorted(value)
+
+
+def _report_checks(value: object) -> dict[str, str]:
+    if (
+        not isinstance(value, dict)
+        or set(value) - CHECKS
+        or any(
+            status not in {PASS, "failed", "not_observed", "not_applicable"}
+            for status in value.values()
+        )
+    ):
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_REPORT_INVALID", "report checks are invalid"
+        )
+    return dict(sorted(value.items()))
+
+
+def _report_stages(value: object) -> dict[str, str]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != set(RELEASE_STAGES)
+        or any(status not in STAGE_STATES for status in value.values())
+    ):
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_REPORT_INVALID", "release stages are invalid"
+        )
+    return {key: value[key] for key in RELEASE_STAGES}
+
+
+def _report_signals(value: object) -> dict[str, float]:
+    if (
+        not isinstance(value, dict)
+        or set(value) - set(METRICS)
+        or any(
+            isinstance(signal, bool)
+            or not isinstance(signal, (int, float))
+            or not math.isfinite(float(signal))
+            for signal in value.values()
+        )
+    ):
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_REPORT_INVALID",
+            "production signals are invalid",
+        )
+    return {key: float(signal) for key, signal in sorted(value.items())}
+
+
+def _normalize_report(root: Path, item: dict[str, Any], index: int) -> dict[str, Any]:
+    tool, path, supplied = _report_source(root, item, index)
+    return {
+        "tool": tool,
+        "source_path": path.relative_to(root).as_posix(),
+        "source_sha256": supplied,
+        "platforms": _report_platforms(item["platforms"]),
+        "checks": _report_checks(item["checks"]),
+        "release_stages": _report_stages(item["release_stages"]),
+        "production_signals": _report_signals(item["production_signals"]),
     }
 
 
@@ -271,78 +388,7 @@ def _report(
             }
         ]
     try:
-        tool = _text(item["tool"], f"reports[{index}].tool", limit=64)
-        if tool not in TOOLS:
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_TOOL_REJECTED", "tool is unsupported"
-            )
-        path = _local(
-            root, Path(_text(item["source_path"], f"reports[{index}].source_path"))
-        )
-        supplied = _digest(item["source_sha256"], f"reports[{index}].source_sha256")
-        if _file_sha(path) != supplied:
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_SOURCE_STALE",
-                "source report does not match its supplied digest",
-            )
-        platforms = item["platforms"]
-        if (
-            not isinstance(platforms, list)
-            or not platforms
-            or len(platforms) != len(set(platforms))
-            or set(platforms) - PLATFORMS
-        ):
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_REPORT_INVALID",
-                "report platforms are invalid",
-            )
-        checks = item["checks"]
-        if (
-            not isinstance(checks, dict)
-            or set(checks) - CHECKS
-            or any(
-                value not in {PASS, "failed", "not_observed", "not_applicable"}
-                for value in checks.values()
-            )
-        ):
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_REPORT_INVALID", "report checks are invalid"
-            )
-        stages = item["release_stages"]
-        if (
-            not isinstance(stages, dict)
-            or set(stages) != set(RELEASE_STAGES)
-            or any(value not in STAGE_STATES for value in stages.values())
-        ):
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_REPORT_INVALID", "release stages are invalid"
-            )
-        signals = item["production_signals"]
-        if (
-            not isinstance(signals, dict)
-            or set(signals) - set(METRICS)
-            or any(
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(float(value))
-                for value in signals.values()
-            )
-        ):
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_REPORT_INVALID",
-                "production signals are invalid",
-            )
-        return {
-            "tool": tool,
-            "source_path": path.relative_to(root).as_posix(),
-            "source_sha256": supplied,
-            "platforms": sorted(platforms),
-            "checks": dict(sorted(checks.items())),
-            "release_stages": {key: stages[key] for key in RELEASE_STAGES},
-            "production_signals": {
-                key: float(value) for key, value in sorted(signals.items())
-            },
-        }, findings
+        return _normalize_report(root, item, index), findings
     except RevenueForgeError as exc:
         findings.append({"code": exc.code, "detail": str(exc)})
         return None, findings
@@ -434,106 +480,114 @@ def _platform_checks(
     return observed
 
 
-def _findings(
+def _platform_gate_findings(
+    platform: str, observed: dict[str, set[str]]
+) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    for check, statuses in sorted(observed.items()):
+        if "failed" in statuses:
+            findings.append(
+                {
+                    "code": "APPFORGE_MOBILE_EVIDENCE_CHECK_FAILED",
+                    "detail": f"{platform}:{check} has failed evidence",
+                }
+            )
+        if PASS in statuses and "failed" in statuses:
+            findings.append(
+                {
+                    "code": "APPFORGE_MOBILE_EVIDENCE_CHECK_CONFLICT",
+                    "detail": f"{platform}:{check} has conflicting passed and failed evidence",
+                }
+            )
+    for gate, required in _required_evidence([platform]).items():
+        missing = sorted(
+            check for check in required if PASS not in observed.get(check, set())
+        )
+        if missing:
+            findings.append(
+                {
+                    "code": "APPFORGE_MOBILE_EVIDENCE_GATE_INCOMPLETE",
+                    "detail": f"{platform}:{gate} lacks passed evidence for: {', '.join(missing)}",
+                }
+            )
+    return findings
+
+
+def _tool_findings(
+    platform: str, reports: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    tools = {report["tool"] for report in reports if platform in report["platforms"]}
+    findings: list[dict[str, str]] = []
+    requirements = (
+        (
+            platform == "ios" and not tools & {"xcodebuild", "xctest"},
+            "APPFORGE_MOBILE_EVIDENCE_IOS_TOOL_MISSING",
+            "iOS readiness needs an xcodebuild or XCTest source report",
+        ),
+        (
+            platform == "android" and not tools & {"android_gradle", "adb"},
+            "APPFORGE_MOBILE_EVIDENCE_ANDROID_TOOL_MISSING",
+            "Android readiness needs an Android Gradle or ADB source report",
+        ),
+        (
+            not tools & {"fastlane", "device_cloud"},
+            "APPFORGE_MOBILE_EVIDENCE_VISUAL_TRANSPORT_MISSING",
+            f"{platform} visual truth needs a Fastlane or device-cloud source report",
+        ),
+    )
+    for missing, code, detail in requirements:
+        if missing:
+            findings.append({"code": code, "detail": detail})
+    return findings
+
+
+def _stage_findings(
+    platform: str, reports: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    observed: dict[str, set[str]] = {stage: set() for stage in RELEASE_STAGES}
+    for report in reports:
+        if platform in report["platforms"]:
+            for stage, status in report["release_stages"].items():
+                observed[stage].add(status)
+    findings: list[dict[str, str]] = []
+    for stage in ("build", "signing"):
+        statuses = observed[stage]
+        if PASS not in statuses or "failed" in statuses:
+            findings.append(
+                {
+                    "code": "APPFORGE_MOBILE_EVIDENCE_RELEASE_CHAIN_INCOMPLETE",
+                    "detail": f"{platform} release stage {stage} is absent, not passed, or failed",
+                }
+            )
+    for stage, statuses in observed.items():
+        if "failed" in statuses:
+            findings.append(
+                {
+                    "code": "APPFORGE_MOBILE_EVIDENCE_RELEASE_CHAIN_FAILED",
+                    "detail": f"{platform} release stage {stage} is failed",
+                }
+            )
+    return findings
+
+
+def _production_signals(
+    reports: list[dict[str, Any]],
+) -> dict[str, dict[str, list[float]]]:
+    platforms = {platform for report in reports for platform in report["platforms"]}
+    signals = {platform: {metric: [] for metric in METRICS} for platform in platforms}
+    for report in reports:
+        for platform in report["platforms"]:
+            if platform in signals:
+                for metric, value in report["production_signals"].items():
+                    signals[platform][metric].append(value)
+    return signals
+
+
+def _production_findings(
     contract: dict[str, Any], reports: list[dict[str, Any]]
 ) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
-    for platform in contract["platforms"]:
-        observed = _platform_checks(reports, platform)
-        for check, statuses in sorted(observed.items()):
-            if "failed" in statuses:
-                findings.append(
-                    {
-                        "code": "APPFORGE_MOBILE_EVIDENCE_CHECK_FAILED",
-                        "detail": f"{platform}:{check} has failed evidence",
-                    }
-                )
-            if PASS in statuses and "failed" in statuses:
-                findings.append(
-                    {
-                        "code": "APPFORGE_MOBILE_EVIDENCE_CHECK_CONFLICT",
-                        "detail": f"{platform}:{check} has conflicting passed and failed evidence",
-                    }
-                )
-        # Common evidence must be present for each target platform; no Android
-        # pass can satisfy a missing iOS observation (or the inverse).
-        for gate, required in _required_evidence([platform]).items():
-            missing = sorted(
-                check for check in required if PASS not in observed.get(check, set())
-            )
-            if missing:
-                findings.append(
-                    {
-                        "code": "APPFORGE_MOBILE_EVIDENCE_GATE_INCOMPLETE",
-                        "detail": f"{platform}:{gate} lacks passed evidence for: {', '.join(missing)}",
-                    }
-                )
-    # Tool, release-chain, and production observations are evaluated per
-    # declared platform.  A green Android report must never satisfy an iOS
-    # gate (or vice versa), and an aggregate metric must not hide a regression
-    # in one platform behind a healthy value from another.
-    for platform in contract["platforms"]:
-        platform_tools = {
-            report["tool"] for report in reports if platform in report["platforms"]
-        }
-        if platform == "ios" and not platform_tools & {"xcodebuild", "xctest"}:
-            findings.append(
-                {
-                    "code": "APPFORGE_MOBILE_EVIDENCE_IOS_TOOL_MISSING",
-                    "detail": "iOS readiness needs an xcodebuild or XCTest source report",
-                }
-            )
-        if platform == "android" and not platform_tools & {"android_gradle", "adb"}:
-            findings.append(
-                {
-                    "code": "APPFORGE_MOBILE_EVIDENCE_ANDROID_TOOL_MISSING",
-                    "detail": "Android readiness needs an Android Gradle or ADB source report",
-                }
-            )
-        if not platform_tools & {"fastlane", "device_cloud"}:
-            findings.append(
-                {
-                    "code": "APPFORGE_MOBILE_EVIDENCE_VISUAL_TRANSPORT_MISSING",
-                    "detail": f"{platform} visual truth needs a Fastlane or device-cloud source report",
-                }
-            )
-        observed_stages: dict[str, set[str]] = {
-            stage: set() for stage in RELEASE_STAGES
-        }
-        for report in reports:
-            if platform not in report["platforms"]:
-                continue
-            for stage, status in report["release_stages"].items():
-                observed_stages[stage].add(status)
-        # Local build and signing are mandatory before a readiness receipt can
-        # be marked READY. Store/provider stages remain explicit external
-        # state; not_attempted is not misreported as an approval.
-        for stage in ("build", "signing"):
-            statuses = observed_stages[stage]
-            if PASS not in statuses or "failed" in statuses:
-                findings.append(
-                    {
-                        "code": "APPFORGE_MOBILE_EVIDENCE_RELEASE_CHAIN_INCOMPLETE",
-                        "detail": f"{platform} release stage {stage} is absent, not passed, or failed",
-                    }
-                )
-        for stage, statuses in observed_stages.items():
-            if "failed" in statuses:
-                findings.append(
-                    {
-                        "code": "APPFORGE_MOBILE_EVIDENCE_RELEASE_CHAIN_FAILED",
-                        "detail": f"{platform} release stage {stage} is failed",
-                    }
-                )
-    platform_signals: dict[str, dict[str, list[float]]] = {
-        platform: {metric: [] for metric in METRICS}
-        for platform in contract["platforms"]
-    }
-    for report in reports:
-        for platform in report["platforms"]:
-            if platform in platform_signals:
-                for metric, value in report["production_signals"].items():
-                    platform_signals[platform][metric].append(value)
+    signals_by_platform = _production_signals(reports)
     thresholds = contract["production_thresholds"]
     comparisons = {
         "crash_free_rate": (min, thresholds["crash_free_rate_min"], "below"),
@@ -541,26 +595,42 @@ def _findings(
         "hang_rate": (max, thresholds["hang_rate_max"], "above"),
         "startup_ms": (max, thresholds["startup_ms_max"], "above"),
     }
-    for platform, signals in platform_signals.items():
+    for platform in contract["platforms"]:
         for metric, (aggregate, limit, direction) in comparisons.items():
-            if not signals[metric]:
+            values = signals_by_platform.get(platform, {}).get(metric, [])
+            if not values:
                 findings.append(
                     {
                         "code": "APPFORGE_MOBILE_EVIDENCE_PRODUCTION_SIGNAL_MISSING",
                         "detail": f"{platform} production signal {metric} is missing",
                     }
                 )
-            elif (
-                aggregate(signals[metric]) < limit
-                if direction == "below"
-                else aggregate(signals[metric]) > limit
-            ):
+            elif _signal_regressed(aggregate(values), limit, direction):
                 findings.append(
                     {
                         "code": "APPFORGE_MOBILE_EVIDENCE_PRODUCTION_REGRESSION",
                         "detail": f"{platform} production signal {metric} is {direction} its sealed threshold",
                     }
                 )
+    return findings
+
+
+def _signal_regressed(value: float, limit: float, direction: str) -> bool:
+    if direction == "below":
+        return value < limit
+    return value > limit
+
+
+def _findings(
+    contract: dict[str, Any], reports: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    for platform in contract["platforms"]:
+        observed = _platform_checks(reports, platform)
+        findings.extend(_platform_gate_findings(platform, observed))
+        findings.extend(_tool_findings(platform, reports))
+        findings.extend(_stage_findings(platform, reports))
+    findings.extend(_production_findings(contract, reports))
     return findings
 
 
@@ -632,6 +702,159 @@ def verify_mobile_evidence(
     return {**result, "path": destination.relative_to(workspace).as_posix()}
 
 
+def _read_mobile_receipt(workspace: Path, receipt_path: Path) -> dict[str, Any]:
+    source = _local(workspace, receipt_path)
+    if source.stat().st_size > MAX_BYTES:
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_RECEIPT_INVALID", "receipt exceeds 1 MiB"
+        )
+    value = json.loads(source.read_text(encoding="utf-8-sig"))
+    if not isinstance(value, dict) or value.get("schema") != RECEIPT_SCHEMA:
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_RECEIPT_INVALID", "receipt schema is invalid"
+        )
+    return value
+
+
+def _receipt_digest(value: dict[str, Any]) -> str:
+    supplied = value.get("receipt_sha256")
+    payload = {key: item for key, item in value.items() if key != "receipt_sha256"}
+    if (
+        not isinstance(supplied, str)
+        or len(supplied) != 64
+        or _sha(payload) != supplied
+    ):
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_RECEIPT_INVALID", "receipt digest is invalid"
+        )
+    return supplied
+
+
+def _require_ready_receipt(value: dict[str, Any]) -> None:
+    if (
+        value.get("marker") != "APPFORGE_MOBILE_EVIDENCE_READY"
+        or value.get("ok") is not True
+    ):
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_NOT_READY",
+            "receipt is not a ready mobile-evidence result",
+        )
+
+
+def _source_binding(info: object, label: str) -> tuple[Path, str]:
+    detail = f"{label} source binding is missing"
+    if (
+        not isinstance(info, dict)
+        or not isinstance(info.get("path"), str)
+        or not isinstance(info.get("sha256"), str)
+    ):
+        raise RevenueForgeError("APPFORGE_MOBILE_EVIDENCE_RECEIPT_INVALID", detail)
+    return Path(info["path"]), info["sha256"]
+
+
+def _bound_candidate(workspace: Path, info: object, expected: object) -> dict[str, str]:
+    path, digest = _source_binding(info, "candidate")
+    candidate, source = _read_candidate(workspace, path)
+    if candidate != expected or _file_sha(source) != digest:
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_RECEIPT_STALE", "candidate source changed"
+        )
+    return candidate
+
+
+def _bound_contract(
+    workspace: Path, info: object, candidate: dict[str, str]
+) -> dict[str, Any]:
+    path, digest = _source_binding(info, "contract")
+    raw, source = _read(workspace, path, CONTRACT_SCHEMA)
+    if _file_sha(source) != digest:
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_RECEIPT_STALE", "mobile contract changed"
+        )
+    contract = _contract(raw, candidate)
+    contract["contract_sha256"] = _file_sha(source)
+    return contract
+
+
+def _bound_evidence(workspace: Path, info: object) -> tuple[dict[str, Any], Path]:
+    path, digest = _source_binding(info, "evidence")
+    evidence, source = _read(workspace, path, EVIDENCE_SCHEMA)
+    if _file_sha(source) != digest:
+        raise RevenueForgeError(
+            "APPFORGE_MOBILE_EVIDENCE_RECEIPT_STALE", "evidence input changed"
+        )
+    return evidence, source
+
+
+def _mobile_receipt_success(supplied: str, candidate: dict[str, str]) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "marker": "APPFORGE_MOBILE_EVIDENCE_READY",
+        "receipt_sha256": supplied,
+        "candidate": candidate,
+    }
+
+
+def _mobile_receipt_review(exc: Exception) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "marker": "APPFORGE_MOBILE_EVIDENCE_REVIEW_REQUIRED",
+        "reason": str(exc)[:240],
+    }
+
+
+def _rank_mobile_receipts(
+    workspace: Path,
+) -> tuple[list[tuple[int, Path]], bool, list[str]]:
+    candidates = list(
+        (workspace / ".factory" / "appforge").rglob("*mobile-evidence*.json")
+    )
+    truncated = len(candidates) > 1_000
+    ranked: list[tuple[int, Path]] = []
+    invalid: list[str] = []
+    for path in candidates[:1_000]:
+        try:
+            ranked.append((path.stat().st_mtime_ns, path))
+        except OSError:
+            invalid.append(path.relative_to(workspace).as_posix())
+    return ranked, truncated, invalid
+
+
+def _project_mobile_receipt(workspace: Path, path: Path) -> dict[str, Any] | None:
+    try:
+        if path.stat().st_size > MAX_BYTES:
+            raise ValueError("mobile evidence receipt exceeds 1 MiB")
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("mobile evidence receipt must be an object")
+        verified = verify_mobile_evidence_receipt(workspace, path)
+        if not verified.get("ok"):
+            return None
+        return {
+            "path": path.relative_to(workspace).as_posix(),
+            "marker": value.get("marker"),
+            "ok": value.get("ok"),
+            "candidate": value.get("candidate"),
+            "receipt_sha256": value.get("receipt_sha256"),
+            "finding_count": len(value.get("findings", [])),
+        }
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+        RevenueForgeError,
+    ):
+        return None
+
+
+def _projection_marker(truncated: bool, invalid: list[str]) -> str:
+    if truncated or invalid:
+        return "APPFORGE_MOBILE_EVIDENCE_REVIEW_REQUIRED"
+    return "APPFORGE_MOBILE_EVIDENCE_READ_ONLY"
+
+
 def verify_mobile_evidence_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:
     """Replay a mobile receipt against its candidate, contract, and sources.
 
@@ -642,92 +865,14 @@ def verify_mobile_evidence_receipt(root: Path, receipt_path: Path) -> dict[str, 
     """
     workspace = Path(root).resolve()
     try:
-        source = _local(workspace, receipt_path)
-        if source.stat().st_size > MAX_BYTES:
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_RECEIPT_INVALID", "receipt exceeds 1 MiB"
-            )
-        value = json.loads(source.read_text(encoding="utf-8-sig"))
-        if not isinstance(value, dict) or value.get("schema") != RECEIPT_SCHEMA:
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_RECEIPT_INVALID", "receipt schema is invalid"
-            )
-        supplied = value.get("receipt_sha256")
-        if (
-            not isinstance(supplied, str)
-            or len(supplied) != 64
-            or _sha(
-                {key: item for key, item in value.items() if key != "receipt_sha256"}
-            )
-            != supplied
-        ):
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_RECEIPT_INVALID", "receipt digest is invalid"
-            )
-        if (
-            value.get("marker") != "APPFORGE_MOBILE_EVIDENCE_READY"
-            or value.get("ok") is not True
-        ):
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_NOT_READY",
-                "receipt is not a ready mobile-evidence result",
-            )
-        candidate_info = value.get("candidate_source")
-        if (
-            not isinstance(candidate_info, dict)
-            or not isinstance(candidate_info.get("path"), str)
-            or not isinstance(candidate_info.get("sha256"), str)
-        ):
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_RECEIPT_INVALID",
-                "candidate source binding is missing",
-            )
-        candidate, candidate_source = _read_candidate(
-            workspace, Path(candidate_info["path"])
+        value = _read_mobile_receipt(workspace, receipt_path)
+        supplied = _receipt_digest(value)
+        _require_ready_receipt(value)
+        candidate = _bound_candidate(
+            workspace, value.get("candidate_source"), value.get("candidate")
         )
-        if (
-            candidate != value.get("candidate")
-            or _file_sha(candidate_source) != candidate_info["sha256"]
-        ):
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_RECEIPT_STALE", "candidate source changed"
-            )
-        contract_info = value.get("contract")
-        if (
-            not isinstance(contract_info, dict)
-            or not isinstance(contract_info.get("path"), str)
-            or not isinstance(contract_info.get("sha256"), str)
-        ):
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_RECEIPT_INVALID",
-                "contract source binding is missing",
-            )
-        raw_contract, contract_source = _read(
-            workspace, Path(contract_info["path"]), CONTRACT_SCHEMA
-        )
-        if _file_sha(contract_source) != contract_info["sha256"]:
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_RECEIPT_STALE", "mobile contract changed"
-            )
-        contract = _contract(raw_contract, candidate)
-        contract["contract_sha256"] = _file_sha(contract_source)
-        evidence_info = value.get("evidence_source")
-        if (
-            not isinstance(evidence_info, dict)
-            or not isinstance(evidence_info.get("path"), str)
-            or not isinstance(evidence_info.get("sha256"), str)
-        ):
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_RECEIPT_INVALID",
-                "evidence source binding is missing",
-            )
-        evidence, evidence_source = _read(
-            workspace, Path(evidence_info["path"]), EVIDENCE_SCHEMA
-        )
-        if _file_sha(evidence_source) != evidence_info["sha256"]:
-            raise RevenueForgeError(
-                "APPFORGE_MOBILE_EVIDENCE_RECEIPT_STALE", "evidence input changed"
-            )
+        contract = _bound_contract(workspace, value.get("contract"), candidate)
+        evidence, _source = _bound_evidence(workspace, value.get("evidence_source"))
         reports, findings = _validate_reports(contract, evidence, workspace)
         findings.extend(_findings(contract, reports))
         findings.sort(key=lambda item: (item["code"], item["detail"]))
@@ -736,12 +881,7 @@ def verify_mobile_evidence_receipt(root: Path, receipt_path: Path) -> dict[str, 
                 "APPFORGE_MOBILE_EVIDENCE_RECEIPT_STALE",
                 "replayed evidence differs from the sealed receipt",
             )
-        return {
-            "ok": True,
-            "marker": value["marker"],
-            "receipt_sha256": supplied,
-            "candidate": candidate,
-        }
+        return _mobile_receipt_success(supplied, candidate)
     except (
         RevenueForgeError,
         OSError,
@@ -750,74 +890,32 @@ def verify_mobile_evidence_receipt(root: Path, receipt_path: Path) -> dict[str, 
         TypeError,
         ValueError,
     ) as exc:
-        return {
-            "ok": False,
-            "marker": "APPFORGE_MOBILE_EVIDENCE_REVIEW_REQUIRED",
-            "reason": str(exc)[:240],
-        }
+        return _mobile_receipt_review(exc)
 
 
 def mobile_evidence_projection(root: Path) -> dict[str, Any]:
     """Read valid mobile evidence receipts without invoking tools or providers."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
-    invalid: list[str] = []
+    ranked, truncated, invalid = _rank_mobile_receipts(workspace)
     # A projection is a current-state UI, not an archive browser.  Select the
     # 100 newest stable files by observed filesystem time, then read them. A
     # file vanishing during selection is recorded as invalid instead of
     # crashing the whole projection.
-    ranked: list[tuple[int, Path]] = []
-    candidates = list(
-        (workspace / ".factory" / "appforge").rglob("*mobile-evidence*.json")
-    )
-    truncated = len(candidates) > 1_000
-    for path in candidates[:1_000]:
-        try:
-            ranked.append((path.stat().st_mtime_ns, path))
-        except OSError:
-            invalid.append(path.relative_to(workspace).as_posix())
     for _mtime, path in sorted(ranked, key=lambda item: (item[0], item[1].as_posix()))[
         -100:
     ]:
-        try:
-            if path.stat().st_size > MAX_BYTES:
-                raise ValueError("mobile evidence receipt exceeds 1 MiB")
-            value = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(value, dict):
-                raise ValueError("mobile evidence receipt must be an object")
-            verified = verify_mobile_evidence_receipt(workspace, path)
-            if verified.get("ok"):
-                current.append(
-                    {
-                        "path": path.relative_to(workspace).as_posix(),
-                        "marker": value.get("marker"),
-                        "ok": value.get("ok"),
-                        "candidate": value.get("candidate"),
-                        "receipt_sha256": value.get("receipt_sha256"),
-                        "finding_count": len(value.get("findings", [])),
-                    }
-                )
-            else:
-                invalid.append(path.relative_to(workspace).as_posix())
-        except (
-            OSError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            TypeError,
-            ValueError,
-            RevenueForgeError,
-        ):
+        projected = _project_mobile_receipt(workspace, path)
+        if projected is None:
             invalid.append(path.relative_to(workspace).as_posix())
+        else:
+            current.append(projected)
     if truncated:
         invalid.append(".factory/appforge/<scan-truncated>")
     # Any malformed/newer stale receipt invalidates the aggregate view; do not
     # surface an older READY value that could be mistaken for current state.
     latest = current[-1] if current and not invalid and not truncated else None
-    marker = (
-        "APPFORGE_MOBILE_EVIDENCE_REVIEW_REQUIRED"
-        if truncated or invalid
-        else "APPFORGE_MOBILE_EVIDENCE_READ_ONLY"
-    )
+    marker = _projection_marker(truncated, invalid)
     return {
         "schema": "factory.appforge.mobile-evidence-projection.v1",
         "marker": marker,

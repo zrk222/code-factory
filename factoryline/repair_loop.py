@@ -302,8 +302,7 @@ def _read_manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
     return value, relative
 
 
-def _manifest(root: Path, source: Path) -> dict[str, Any]:
-    value, relative = _read_manifest(root, source)
+def _validate_manifest_shape(value: dict[str, Any]) -> None:
     fields = {
         "schema",
         "id",
@@ -319,7 +318,9 @@ def _manifest(root: Path, source: Path) -> dict[str, Any]:
         raise RepairLoopError(
             "E_REPAIR_LOOP_SCHEMA", f"manifest must use exact {MANIFEST_SCHEMA} fields"
         )
-    oracle = value["oracle"]
+
+
+def _normalize_oracle(root: Path, oracle: object) -> dict[str, str]:
     if not isinstance(oracle, dict) or set(oracle) != {
         "contract_path",
         "contract_sha256",
@@ -341,22 +342,51 @@ def _manifest(root: Path, source: Path) -> dict[str, Any]:
             "E_REPAIR_LOOP_ORACLE",
             "repair loop must bind the current sealed Oracle Contract",
         )
-    issue = value["issue"]
+    return {"contract_path": contract_path, "contract_sha256": contract_sha}
+
+
+def _validate_issue_shape(issue: object) -> None:
+    if not isinstance(issue, dict) or set(issue) != {
+        "failure_code",
+        "summary",
+        "affected_obligations",
+    }:
+        raise RepairLoopError(
+            "E_REPAIR_LOOP_SCHEMA",
+            "issue must name an E_ failure, concise summary, and 1-32 obligations",
+        )
+
+
+def _validate_issue_fields(issue: dict[str, Any]) -> None:
+    if not isinstance(issue["failure_code"], str) or not issue[
+        "failure_code"
+    ].startswith("E_"):
+        raise RepairLoopError(
+            "E_REPAIR_LOOP_SCHEMA",
+            "issue must name an E_ failure, concise summary, and 1-32 obligations",
+        )
     if (
-        not isinstance(issue, dict)
-        or set(issue) != {"failure_code", "summary", "affected_obligations"}
-        or not isinstance(issue["failure_code"], str)
-        or not issue["failure_code"].startswith("E_")
-        or not isinstance(issue["summary"], str)
+        not isinstance(issue["summary"], str)
         or not issue["summary"].strip()
         or len(issue["summary"]) > 280
-        or not isinstance(issue["affected_obligations"], list)
+    ):
+        raise RepairLoopError(
+            "E_REPAIR_LOOP_SCHEMA",
+            "issue must name an E_ failure, concise summary, and 1-32 obligations",
+        )
+    if (
+        not isinstance(issue["affected_obligations"], list)
         or not 1 <= len(issue["affected_obligations"]) <= 32
     ):
         raise RepairLoopError(
             "E_REPAIR_LOOP_SCHEMA",
             "issue must name an E_ failure, concise summary, and 1-32 obligations",
         )
+
+
+def _normalize_issue(issue: object) -> dict[str, Any]:
+    _validate_issue_shape(issue)
+    _validate_issue_fields(issue)
     obligations = sorted(
         {
             _id(item, "issue.affected_obligations")
@@ -367,34 +397,59 @@ def _manifest(root: Path, source: Path) -> dict[str, Any]:
         raise RepairLoopError(
             "E_REPAIR_LOOP_SCHEMA", "issue.affected_obligations must be unique"
         )
-    consequences = value["consequences"]
+
+    return {
+        "failure_code": issue["failure_code"],
+        "summary": issue["summary"].strip(),
+        "affected_obligations": obligations,
+    }
+
+
+def _validate_consequence_shape(item: object, index: int) -> None:
+    if not isinstance(item, dict) or set(item) != {"kind", "severity", "rationale"}:
+        raise RepairLoopError(
+            "E_REPAIR_LOOP_SCHEMA", f"consequences[{index}] is invalid"
+        )
+
+
+def _normalize_consequence(item: dict[str, Any], index: int) -> dict[str, str]:
+    _validate_consequence_shape(item, index)
+    if item["kind"] not in _CONSEQUENCES:
+        raise RepairLoopError(
+            "E_REPAIR_LOOP_SCHEMA", f"consequences[{index}] is invalid"
+        )
+    if item["severity"] not in _SEVERITIES:
+        raise RepairLoopError(
+            "E_REPAIR_LOOP_SCHEMA", f"consequences[{index}] is invalid"
+        )
+    rationale = item["rationale"]
+    if not isinstance(rationale, str) or not rationale.strip() or len(rationale) > 280:
+        raise RepairLoopError(
+            "E_REPAIR_LOOP_SCHEMA", f"consequences[{index}] is invalid"
+        )
+    return {
+        "kind": item["kind"],
+        "severity": item["severity"],
+        "rationale": rationale.strip(),
+    }
+
+
+def _normalize_consequences(value: object) -> list[dict[str, str]]:
+    consequences = value
     if not isinstance(consequences, list) or not 1 <= len(consequences) <= 16:
         raise RepairLoopError(
             "E_REPAIR_LOOP_SCHEMA", "consequences must contain 1-16 items"
         )
-    normalized_consequences: list[dict[str, str]] = []
-    for index, item in enumerate(consequences):
-        if (
-            not isinstance(item, dict)
-            or set(item) != {"kind", "severity", "rationale"}
-            or item["kind"] not in _CONSEQUENCES
-            or item["severity"] not in _SEVERITIES
-            or not isinstance(item["rationale"], str)
-            or not item["rationale"].strip()
-            or len(item["rationale"]) > 280
-        ):
-            raise RepairLoopError(
-                "E_REPAIR_LOOP_SCHEMA", f"consequences[{index}] is invalid"
-            )
-        normalized_consequences.append(
-            {
-                "kind": item["kind"],
-                "severity": item["severity"],
-                "rationale": item["rationale"].strip(),
-            }
-        )
-    reproduction = _bound_failure_capsule(root, value["reproduction"])
-    repair = value["repair"]
+    normalized = [
+        _normalize_consequence(item, index) for index, item in enumerate(consequences)
+    ]
+    return sorted(
+        normalized,
+        key=lambda item: (item["severity"], item["kind"], item["rationale"]),
+    )
+
+
+def _normalize_repair_declaration(repair: object) -> tuple[object, list[str]]:
     if (
         not isinstance(repair, dict)
         or set(repair) != {"candidate", "allowed_paths"}
@@ -412,7 +467,10 @@ def _manifest(root: Path, source: Path) -> dict[str, Any]:
         raise RepairLoopError(
             "E_REPAIR_LOOP_SCHEMA", "repair.allowed_paths must be unique"
         )
-    independent = value["independent_recheck"]
+    return repair["candidate"], allowed_paths
+
+
+def _validate_independent_recheck(independent: object) -> None:
     if not isinstance(independent, dict) or set(independent) != {
         "challenge_plan",
         "positive_receipt",
@@ -421,7 +479,9 @@ def _manifest(root: Path, source: Path) -> dict[str, Any]:
         raise RepairLoopError(
             "E_REPAIR_LOOP_SCHEMA", "independent_recheck fields must be exact"
         )
-    human = value["human_review"]
+
+
+def _validate_human_review(human: object) -> None:
     if (
         not isinstance(human, dict)
         or set(human) != {"required", "reviewer"}
@@ -430,26 +490,33 @@ def _manifest(root: Path, source: Path) -> dict[str, Any]:
         raise RepairLoopError(
             "E_REPAIR_LOOP_SCHEMA", "human_review.required must remain true"
         )
+
+
+def _manifest(root: Path, source: Path) -> dict[str, Any]:
+    value, relative = _read_manifest(root, source)
+    _validate_manifest_shape(value)
+    oracle = _normalize_oracle(root, value["oracle"])
+    issue = _normalize_issue(value["issue"])
+    consequences = _normalize_consequences(value["consequences"])
+    reproduction = _bound_failure_capsule(root, value["reproduction"])
+    candidate, allowed_paths = _normalize_repair_declaration(value["repair"])
+    independent = value["independent_recheck"]
+    _validate_independent_recheck(independent)
+    human = value["human_review"]
+    _validate_human_review(human)
     return {
         "id": _id(value["id"], "id"),
-        "oracle": {"contract_path": contract_path, "contract_sha256": contract_sha},
-        "issue": {
-            "failure_code": issue["failure_code"],
-            "summary": issue["summary"].strip(),
-            "affected_obligations": obligations,
-        },
-        "consequences": sorted(
-            normalized_consequences,
-            key=lambda item: (item["severity"], item["kind"], item["rationale"]),
-        ),
+        "oracle": oracle,
+        "issue": issue,
+        "consequences": consequences,
         "reproduction": reproduction,
         "repair": {
-            "candidate": _candidate_patch(root, repair["candidate"], allowed_paths),
+            "candidate": _candidate_patch(root, candidate, allowed_paths),
             "allowed_paths": allowed_paths,
         },
         "independent_recheck": {
             "challenge_plan": _bound_challenge(
-                root, independent["challenge_plan"], contract_sha
+                root, independent["challenge_plan"], oracle["contract_sha256"]
             ),
             "positive_receipt": _bound_e2e_receipt(
                 root,

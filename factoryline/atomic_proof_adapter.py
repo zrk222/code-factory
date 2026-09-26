@@ -225,12 +225,7 @@ def _source_preconditions(
     return sorted(result, key=lambda item: item["path"])
 
 
-def _topology(value: object) -> tuple[dict[str, Any], set[tuple[str, str]]]:
-    workflow = _exact_keys(
-        value,
-        {"id", "definition_sha256", "topology_sha256", "nodes", "edges"},
-        "workflow",
-    )
+def _topology_lists(workflow: dict[str, Any]) -> tuple[list[Any], list[Any]]:
     nodes = workflow["nodes"]
     edges = workflow["edges"]
     if not isinstance(nodes, list) or not 1 <= len(nodes) <= MAX_ITEMS:
@@ -243,6 +238,10 @@ def _topology(value: object) -> tuple[dict[str, Any], set[tuple[str, str]]]:
             "E_ATOMIC_EVIDENCE_UNVERIFIED",
             "workflow.edges must contain 0-256 declared edges",
         )
+    return nodes, edges
+
+
+def _normalized_nodes(nodes: list[Any]) -> list[dict[str, str]]:
     normalized_nodes: list[dict[str, str]] = []
     for index, item in enumerate(nodes):
         entry = _exact_keys(item, {"id", "kind"}, f"workflow.nodes[{index}]")
@@ -263,6 +262,12 @@ def _topology(value: object) -> tuple[dict[str, Any], set[tuple[str, str]]]:
         raise AtomicProofAdapterError(
             "E_ATOMIC_EVIDENCE_UNVERIFIED", "workflow node identifiers must be unique"
         )
+    return normalized_nodes
+
+
+def _normalized_edges(
+    edges: list[Any], node_ids: set[str]
+) -> tuple[list[dict[str, str]], set[tuple[str, str]]]:
     normalized_edges: list[dict[str, str]] = []
     for index, item in enumerate(edges):
         entry = _exact_keys(item, {"from", "to"}, f"workflow.edges[{index}]")
@@ -279,6 +284,10 @@ def _topology(value: object) -> tuple[dict[str, Any], set[tuple[str, str]]]:
         raise AtomicProofAdapterError(
             "E_ATOMIC_EVIDENCE_UNVERIFIED", "workflow edges must be unique"
         )
+    return normalized_edges, edge_pairs
+
+
+def _is_acyclic(node_ids: set[str], edge_pairs: set[tuple[str, str]]) -> bool:
     incoming = {node: 0 for node in node_ids}
     outgoing: dict[str, list[str]] = {node: [] for node in node_ids}
     for source, target in edge_pairs:
@@ -293,10 +302,14 @@ def _topology(value: object) -> tuple[dict[str, Any], set[tuple[str, str]]]:
             incoming[target] -= 1
             if incoming[target] == 0:
                 ready.append(target)
-    if visited != len(node_ids):
-        raise AtomicProofAdapterError(
-            "E_ATOMIC_EVIDENCE_UNVERIFIED", "workflow topology must be a declared DAG"
-        )
+    return visited == len(node_ids)
+
+
+def _normalized_workflow(
+    workflow: dict[str, Any],
+    nodes: list[dict[str, str]],
+    edges: list[dict[str, str]],
+) -> dict[str, Any]:
     normalized = {
         "id": _identifier(workflow["id"], "workflow.id"),
         "definition_sha256": _hash(
@@ -305,8 +318,8 @@ def _topology(value: object) -> tuple[dict[str, Any], set[tuple[str, str]]]:
         "topology_sha256": _hash(
             workflow["topology_sha256"], "workflow.topology_sha256"
         ),
-        "nodes": sorted(normalized_nodes, key=lambda item: item["id"]),
-        "edges": sorted(normalized_edges, key=lambda item: (item["from"], item["to"])),
+        "nodes": sorted(nodes, key=lambda item: item["id"]),
+        "edges": sorted(edges, key=lambda item: (item["from"], item["to"])),
     }
     declared_digest = _sha({"nodes": normalized["nodes"], "edges": normalized["edges"]})
     if normalized["topology_sha256"] != declared_digest:
@@ -314,7 +327,120 @@ def _topology(value: object) -> tuple[dict[str, Any], set[tuple[str, str]]]:
             "E_ATOMIC_EVIDENCE_UNVERIFIED",
             "workflow.topology_sha256 must bind the declared DAG",
         )
-    return normalized, edge_pairs
+    return normalized
+
+
+def _topology(value: object) -> tuple[dict[str, Any], set[tuple[str, str]]]:
+    workflow = _exact_keys(
+        value,
+        {"id", "definition_sha256", "topology_sha256", "nodes", "edges"},
+        "workflow",
+    )
+    nodes, edges = _topology_lists(workflow)
+    normalized_nodes = _normalized_nodes(nodes)
+    node_ids = {item["id"] for item in normalized_nodes}
+    normalized_edges, edge_pairs = _normalized_edges(edges, node_ids)
+    if not _is_acyclic(node_ids, edge_pairs):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_EVIDENCE_UNVERIFIED", "workflow topology must be a declared DAG"
+        )
+    return _normalized_workflow(
+        workflow, normalized_nodes, normalized_edges
+    ), edge_pairs
+
+
+def _stage_capabilities(entry: dict[str, Any], index: int) -> list[str]:
+    capabilities = entry.get("capabilities")
+    if (
+        not isinstance(capabilities, list)
+        or not 1 <= len(capabilities) <= len(_CAPABILITIES)
+        or any(item not in _CAPABILITIES for item in capabilities)
+    ):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_EVIDENCE_UNVERIFIED",
+            f"stages[{index}].capabilities is unsupported",
+        )
+    if len(set(capabilities)) != len(capabilities):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_EVIDENCE_UNVERIFIED",
+            f"stages[{index}].capabilities must be unique",
+        )
+    return sorted(capabilities)
+
+
+def _normalize_stage(
+    root: Path,
+    item: object,
+    index: int,
+    node_kinds: dict[str, str],
+    contract_scope: list[str],
+) -> dict[str, Any]:
+    entry = _exact_keys(
+        item,
+        {
+            "id",
+            "kind",
+            "status",
+            "scope_paths",
+            "capabilities",
+            "input_sha256",
+            "output_sha256",
+            "artifact_sha256",
+            "tool_manifest_sha256",
+            "checkpoint",
+            "source_preconditions",
+        },
+        f"stages[{index}]",
+    )
+    stage_id = _identifier(entry["id"], f"stages[{index}].id")
+    kind = entry.get("kind")
+    if stage_id not in node_kinds or node_kinds[stage_id] != kind:
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_STAGE_IDENTITY_UNPROVEN",
+            f"stages[{index}] must exactly match one workflow node",
+        )
+    status = entry.get("status")
+    if status not in _STAGE_STATUS:
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_EVIDENCE_UNVERIFIED", f"stages[{index}].status is unsupported"
+        )
+    scope = _paths(entry["scope_paths"], f"stages[{index}].scope_paths")
+    if any(not _scope_allows(contract_scope, path) for path in scope):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_SCOPE_ESCAPE",
+            f"stages[{index}].scope_paths is outside the sealed Oracle scope",
+        )
+    capabilities = _stage_capabilities(entry, index)
+    checkpoint = _exact_keys(
+        entry["checkpoint"], {"id", "sha256"}, f"stages[{index}].checkpoint"
+    )
+    return {
+        "id": stage_id,
+        "kind": kind,
+        "status": status,
+        "scope_paths": scope,
+        "capabilities": capabilities,
+        "input_sha256": _hash(entry["input_sha256"], f"stages[{index}].input_sha256"),
+        "output_sha256": _hash(
+            entry["output_sha256"], f"stages[{index}].output_sha256"
+        ),
+        "artifact_sha256": _hash(
+            entry["artifact_sha256"], f"stages[{index}].artifact_sha256"
+        ),
+        "tool_manifest_sha256": _hash(
+            entry["tool_manifest_sha256"], f"stages[{index}].tool_manifest_sha256"
+        ),
+        "checkpoint": {
+            "id": _identifier(checkpoint["id"], f"stages[{index}].checkpoint.id"),
+            "sha256": _hash(checkpoint["sha256"], f"stages[{index}].checkpoint.sha256"),
+        },
+        "source_preconditions": _source_preconditions(
+            root,
+            entry["source_preconditions"],
+            f"stages[{index}].source_preconditions",
+            contract_scope,
+        ),
+    }
 
 
 def _stages(
@@ -325,93 +451,10 @@ def _stages(
             "E_ATOMIC_EVIDENCE_UNVERIFIED", "stages must contain 1-128 typed stages"
         )
     node_kinds = {item["id"]: item["kind"] for item in workflow["nodes"]}
-    normalized: list[dict[str, Any]] = []
-    for index, item in enumerate(value):
-        entry = _exact_keys(
-            item,
-            {
-                "id",
-                "kind",
-                "status",
-                "scope_paths",
-                "capabilities",
-                "input_sha256",
-                "output_sha256",
-                "artifact_sha256",
-                "tool_manifest_sha256",
-                "checkpoint",
-                "source_preconditions",
-            },
-            f"stages[{index}]",
-        )
-        stage_id = _identifier(entry["id"], f"stages[{index}].id")
-        kind = entry.get("kind")
-        if stage_id not in node_kinds or node_kinds[stage_id] != kind:
-            raise AtomicProofAdapterError(
-                "E_ATOMIC_STAGE_IDENTITY_UNPROVEN",
-                f"stages[{index}] must exactly match one workflow node",
-            )
-        status = entry.get("status")
-        if status not in _STAGE_STATUS:
-            raise AtomicProofAdapterError(
-                "E_ATOMIC_EVIDENCE_UNVERIFIED", f"stages[{index}].status is unsupported"
-            )
-        scope = _paths(entry["scope_paths"], f"stages[{index}].scope_paths")
-        if any(not _scope_allows(contract_scope, path) for path in scope):
-            raise AtomicProofAdapterError(
-                "E_ATOMIC_SCOPE_ESCAPE",
-                f"stages[{index}].scope_paths is outside the sealed Oracle scope",
-            )
-        capabilities = entry.get("capabilities")
-        if (
-            not isinstance(capabilities, list)
-            or not 1 <= len(capabilities) <= len(_CAPABILITIES)
-            or any(item not in _CAPABILITIES for item in capabilities)
-        ):
-            raise AtomicProofAdapterError(
-                "E_ATOMIC_EVIDENCE_UNVERIFIED",
-                f"stages[{index}].capabilities is unsupported",
-            )
-        if len(set(capabilities)) != len(capabilities):
-            raise AtomicProofAdapterError(
-                "E_ATOMIC_EVIDENCE_UNVERIFIED",
-                f"stages[{index}].capabilities must be unique",
-            )
-        checkpoint = _exact_keys(
-            entry["checkpoint"], {"id", "sha256"}, f"stages[{index}].checkpoint"
-        )
-        stage = {
-            "id": stage_id,
-            "kind": kind,
-            "status": status,
-            "scope_paths": scope,
-            "capabilities": sorted(capabilities),
-            "input_sha256": _hash(
-                entry["input_sha256"], f"stages[{index}].input_sha256"
-            ),
-            "output_sha256": _hash(
-                entry["output_sha256"], f"stages[{index}].output_sha256"
-            ),
-            "artifact_sha256": _hash(
-                entry["artifact_sha256"], f"stages[{index}].artifact_sha256"
-            ),
-            "tool_manifest_sha256": _hash(
-                entry["tool_manifest_sha256"], f"stages[{index}].tool_manifest_sha256"
-            ),
-            "checkpoint": {
-                "id": _identifier(checkpoint["id"], f"stages[{index}].checkpoint.id"),
-                "sha256": _hash(
-                    checkpoint["sha256"], f"stages[{index}].checkpoint.sha256"
-                ),
-            },
-            "source_preconditions": _source_preconditions(
-                root,
-                entry["source_preconditions"],
-                f"stages[{index}].source_preconditions",
-                contract_scope,
-            ),
-        }
-        normalized.append(stage)
+    normalized = [
+        _normalize_stage(root, item, index, node_kinds, contract_scope)
+        for index, item in enumerate(value)
+    ]
     stage_ids = {item["id"] for item in normalized}
     if stage_ids != set(node_kinds) or len(stage_ids) != len(normalized):
         raise AtomicProofAdapterError(
@@ -428,6 +471,129 @@ def _stages(
     return normalized, {item["id"]: item for item in normalized}
 
 
+def _handoff_route(
+    entry: dict[str, Any],
+    index: int,
+    stages: dict[str, dict[str, Any]],
+    edge_pairs: set[tuple[str, str]],
+) -> tuple[str, str, Any, list[str]]:
+    source = _identifier(entry["from_stage"], f"handoffs[{index}].from_stage")
+    target = _identifier(entry["to_stage"], f"handoffs[{index}].to_stage")
+    if (
+        source not in stages
+        or target not in stages
+        or (source, target) not in edge_pairs
+    ):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_STAGE_IDENTITY_UNPROVEN",
+            f"handoffs[{index}] must join one declared workflow edge",
+        )
+    capability = entry.get("capability")
+    if (
+        capability not in stages[source]["capabilities"]
+        or capability not in stages[target]["capabilities"]
+    ):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_STAGE_IDENTITY_UNPROVEN",
+            f"handoffs[{index}].capability is not declared by both stages",
+        )
+    scope = _paths(entry["scope_paths"], f"handoffs[{index}].scope_paths")
+    if any(
+        not _scope_allows(stages[source]["scope_paths"], candidate)
+        or not _scope_allows(stages[target]["scope_paths"], candidate)
+        for candidate in scope
+    ):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_SCOPE_ESCAPE",
+            f"handoffs[{index}].scope_paths exceeds the declared stage scopes",
+        )
+    return source, target, capability, scope
+
+
+def _handoff_bindings(
+    entry: dict[str, Any],
+    index: int,
+    source_stage: dict[str, Any],
+    contract_sha256: str,
+) -> dict[str, str]:
+    if (
+        _hash(entry["contract_sha256"], f"handoffs[{index}].contract_sha256")
+        != contract_sha256
+    ):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_UNBOUND_INTENT",
+            f"handoffs[{index}] must bind the sealed Oracle Contract",
+        )
+    expected_preconditions = _sha(source_stage["source_preconditions"])
+    if (
+        _hash(
+            entry["source_preconditions_sha256"],
+            f"handoffs[{index}].source_preconditions_sha256",
+        )
+        != expected_preconditions
+    ):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_HANDOFF_DRIFT",
+            f"handoffs[{index}] source preconditions drift from the sender stage",
+        )
+    if (
+        _hash(entry["artifact_sha256"], f"handoffs[{index}].artifact_sha256")
+        != source_stage["artifact_sha256"]
+    ):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_HANDOFF_DRIFT",
+            f"handoffs[{index}] artifact hash drifts from the sender stage",
+        )
+    if (
+        _hash(entry["tool_manifest_sha256"], f"handoffs[{index}].tool_manifest_sha256")
+        != source_stage["tool_manifest_sha256"]
+    ):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_HANDOFF_DRIFT",
+            f"handoffs[{index}] tool manifest drifts from the sender stage",
+        )
+    return {
+        "contract_sha256": contract_sha256,
+        "source_preconditions_sha256": expected_preconditions,
+        "artifact_sha256": source_stage["artifact_sha256"],
+        "tool_manifest_sha256": source_stage["tool_manifest_sha256"],
+    }
+
+
+def _normalize_handoff(
+    item: object,
+    index: int,
+    stages: dict[str, dict[str, Any]],
+    edge_pairs: set[tuple[str, str]],
+    contract_sha256: str,
+) -> dict[str, Any]:
+    entry = _exact_keys(
+        item,
+        {
+            "id",
+            "from_stage",
+            "to_stage",
+            "capability",
+            "scope_paths",
+            "contract_sha256",
+            "source_preconditions_sha256",
+            "artifact_sha256",
+            "tool_manifest_sha256",
+        },
+        f"handoffs[{index}]",
+    )
+    source, target, capability, scope = _handoff_route(entry, index, stages, edge_pairs)
+    bindings = _handoff_bindings(entry, index, stages[source], contract_sha256)
+    return {
+        "id": _identifier(entry["id"], f"handoffs[{index}].id"),
+        "from_stage": source,
+        "to_stage": target,
+        "capability": capability,
+        "scope_paths": scope,
+        **bindings,
+    }
+
+
 def _handoffs(
     value: object,
     stages: dict[str, dict[str, Any]],
@@ -439,104 +605,10 @@ def _handoffs(
             "E_ATOMIC_EVIDENCE_UNVERIFIED",
             "handoffs must contain 0-128 declared handoffs",
         )
-    normalized: list[dict[str, Any]] = []
-    for index, item in enumerate(value):
-        entry = _exact_keys(
-            item,
-            {
-                "id",
-                "from_stage",
-                "to_stage",
-                "capability",
-                "scope_paths",
-                "contract_sha256",
-                "source_preconditions_sha256",
-                "artifact_sha256",
-                "tool_manifest_sha256",
-            },
-            f"handoffs[{index}]",
-        )
-        source = _identifier(entry["from_stage"], f"handoffs[{index}].from_stage")
-        target = _identifier(entry["to_stage"], f"handoffs[{index}].to_stage")
-        if (
-            source not in stages
-            or target not in stages
-            or (source, target) not in edge_pairs
-        ):
-            raise AtomicProofAdapterError(
-                "E_ATOMIC_STAGE_IDENTITY_UNPROVEN",
-                f"handoffs[{index}] must join one declared workflow edge",
-            )
-        capability = entry.get("capability")
-        if (
-            capability not in stages[source]["capabilities"]
-            or capability not in stages[target]["capabilities"]
-        ):
-            raise AtomicProofAdapterError(
-                "E_ATOMIC_STAGE_IDENTITY_UNPROVEN",
-                f"handoffs[{index}].capability is not declared by both stages",
-            )
-        scope = _paths(entry["scope_paths"], f"handoffs[{index}].scope_paths")
-        if any(
-            not _scope_allows(stages[source]["scope_paths"], candidate)
-            or not _scope_allows(stages[target]["scope_paths"], candidate)
-            for candidate in scope
-        ):
-            raise AtomicProofAdapterError(
-                "E_ATOMIC_SCOPE_ESCAPE",
-                f"handoffs[{index}].scope_paths exceeds the declared stage scopes",
-            )
-        if (
-            _hash(entry["contract_sha256"], f"handoffs[{index}].contract_sha256")
-            != contract_sha256
-        ):
-            raise AtomicProofAdapterError(
-                "E_ATOMIC_UNBOUND_INTENT",
-                f"handoffs[{index}] must bind the sealed Oracle Contract",
-            )
-        expected_preconditions = _sha(stages[source]["source_preconditions"])
-        if (
-            _hash(
-                entry["source_preconditions_sha256"],
-                f"handoffs[{index}].source_preconditions_sha256",
-            )
-            != expected_preconditions
-        ):
-            raise AtomicProofAdapterError(
-                "E_ATOMIC_HANDOFF_DRIFT",
-                f"handoffs[{index}] source preconditions drift from the sender stage",
-            )
-        if (
-            _hash(entry["artifact_sha256"], f"handoffs[{index}].artifact_sha256")
-            != stages[source]["artifact_sha256"]
-        ):
-            raise AtomicProofAdapterError(
-                "E_ATOMIC_HANDOFF_DRIFT",
-                f"handoffs[{index}] artifact hash drifts from the sender stage",
-            )
-        if (
-            _hash(
-                entry["tool_manifest_sha256"], f"handoffs[{index}].tool_manifest_sha256"
-            )
-            != stages[source]["tool_manifest_sha256"]
-        ):
-            raise AtomicProofAdapterError(
-                "E_ATOMIC_HANDOFF_DRIFT",
-                f"handoffs[{index}] tool manifest drifts from the sender stage",
-            )
-        normalized.append(
-            {
-                "id": _identifier(entry["id"], f"handoffs[{index}].id"),
-                "from_stage": source,
-                "to_stage": target,
-                "capability": capability,
-                "scope_paths": scope,
-                "contract_sha256": contract_sha256,
-                "source_preconditions_sha256": expected_preconditions,
-                "artifact_sha256": stages[source]["artifact_sha256"],
-                "tool_manifest_sha256": stages[source]["tool_manifest_sha256"],
-            }
-        )
+    normalized = [
+        _normalize_handoff(item, index, stages, edge_pairs, contract_sha256)
+        for index, item in enumerate(value)
+    ]
     if len({item["id"] for item in normalized}) != len(normalized):
         raise AtomicProofAdapterError(
             "E_ATOMIC_STAGE_IDENTITY_UNPROVEN", "handoff identifiers must be unique"
@@ -575,16 +647,7 @@ def _read_receipt(root: Path, path: Path) -> tuple[dict[str, Any], Path]:
     return value, target
 
 
-def _resume(
-    value: object,
-    root: Path,
-    run_id: str,
-    workflow: dict[str, Any],
-    contract_sha256: str,
-    stages: dict[str, dict[str, Any]],
-) -> dict[str, str] | None:
-    if value is None:
-        return None
+def _resume_receipt(value: object, root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     resume = _exact_keys(
         value,
         {"prior_receipt", "prior_run_id", "checkpoint_id", "checkpoint_sha256"},
@@ -593,6 +656,16 @@ def _resume(
     receipt, _ = _read_receipt(
         root, Path(_path(resume["prior_receipt"], "resume.prior_receipt"))
     )
+    return resume, receipt
+
+
+def _validate_resume_binding(
+    receipt: dict[str, Any],
+    resume: dict[str, Any],
+    run_id: str,
+    workflow: dict[str, Any],
+    contract_sha256: str,
+) -> None:
     if receipt.get("run", {}).get("id") != _identifier(
         resume["prior_run_id"], "resume.prior_run_id"
     ):
@@ -616,8 +689,13 @@ def _resume(
         raise AtomicProofAdapterError(
             "E_ATOMIC_RESUME_DIVERGENCE", "resume workflow binding diverges"
         )
-    checkpoint_id = _identifier(resume["checkpoint_id"], "resume.checkpoint_id")
-    checkpoint_sha = _hash(resume["checkpoint_sha256"], "resume.checkpoint_sha256")
+
+
+def _resume_stages(
+    receipt: dict[str, Any],
+    stages: dict[str, dict[str, Any]],
+    checkpoint_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     prior_stage = next(
         (
             item
@@ -636,6 +714,12 @@ def _resume(
             "E_ATOMIC_RESUME_DIVERGENCE",
             "resume checkpoint is unavailable in the bound runs",
         )
+    return prior_stage, current_stage
+
+
+def _validate_resume_checkpoint(
+    prior_stage: dict[str, Any], current_stage: dict[str, Any], checkpoint_sha: str
+) -> None:
     if (
         prior_stage.get("checkpoint", {}).get("sha256") != checkpoint_sha
         or current_stage["checkpoint"]["sha256"] != checkpoint_sha
@@ -656,6 +740,24 @@ def _resume(
             "E_ATOMIC_RESUME_DIVERGENCE",
             "resume tool or source-precondition binding diverges",
         )
+
+
+def _resume(
+    value: object,
+    root: Path,
+    run_id: str,
+    workflow: dict[str, Any],
+    contract_sha256: str,
+    stages: dict[str, dict[str, Any]],
+) -> dict[str, str] | None:
+    if value is None:
+        return None
+    resume, receipt = _resume_receipt(value, root)
+    _validate_resume_binding(receipt, resume, run_id, workflow, contract_sha256)
+    checkpoint_id = _identifier(resume["checkpoint_id"], "resume.checkpoint_id")
+    checkpoint_sha = _hash(resume["checkpoint_sha256"], "resume.checkpoint_sha256")
+    prior_stage, current_stage = _resume_stages(receipt, stages, checkpoint_id)
+    _validate_resume_checkpoint(prior_stage, current_stage, checkpoint_sha)
     return {
         "prior_receipt": _path(resume["prior_receipt"], "resume.prior_receipt"),
         "prior_run_id": receipt["run"]["id"],
@@ -663,6 +765,39 @@ def _resume(
         "checkpoint_sha256": checkpoint_sha,
         "recovery_action": "human_reviewed_fork",
     }
+
+
+def _historical_receipt(path: Path) -> object | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def _compare_historical_handoffs(
+    value: object, workflow_id: str, expected: dict[str, dict[str, Any]]
+) -> None:
+    if not _receipt_valid(value) or value.get("workflow", {}).get("id") != workflow_id:
+        return
+    fields = (
+        "from_stage",
+        "to_stage",
+        "capability",
+        "scope_paths",
+        "contract_sha256",
+        "source_preconditions_sha256",
+        "artifact_sha256",
+        "tool_manifest_sha256",
+    )
+    for historical in value.get("handoffs", []):
+        if not isinstance(historical, dict) or historical.get("id") not in expected:
+            continue
+        current = expected[historical["id"]]
+        if any(historical.get(field) != current.get(field) for field in fields):
+            raise AtomicProofAdapterError(
+                "E_ATOMIC_HANDOFF_DRIFT",
+                f"handoff {historical['id']} diverges from a prior bound workflow receipt",
+            )
 
 
 def _handoff_history(
@@ -679,34 +814,9 @@ def _handoff_history(
             "Atomic receipt history exceeds the bounded comparison limit; archive prior receipts before importing",
         )
     for path in candidates:
-        try:
-            value = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            continue
-        if (
-            not _receipt_valid(value)
-            or value.get("workflow", {}).get("id") != workflow_id
-        ):
-            continue
-        for historical in value.get("handoffs", []):
-            if not isinstance(historical, dict) or historical.get("id") not in expected:
-                continue
-            current = expected[historical["id"]]
-            fields = (
-                "from_stage",
-                "to_stage",
-                "capability",
-                "scope_paths",
-                "contract_sha256",
-                "source_preconditions_sha256",
-                "artifact_sha256",
-                "tool_manifest_sha256",
-            )
-            if any(historical.get(field) != current.get(field) for field in fields):
-                raise AtomicProofAdapterError(
-                    "E_ATOMIC_HANDOFF_DRIFT",
-                    f"handoff {historical['id']} diverges from a prior bound workflow receipt",
-                )
+        value = _historical_receipt(path)
+        if value is not None:
+            _compare_historical_handoffs(value, workflow_id, expected)
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -728,11 +838,9 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
         raise
 
 
-def import_atomic_run(
-    root: Path, envelope_path: Path, out: Path | None = None
-) -> dict[str, Any]:
-    """Validate one Atomic mechanics envelope and write an immutable local receipt."""
-    workspace = Path(root).resolve()
+def _load_atomic_envelope(
+    workspace: Path, envelope_path: Path
+) -> tuple[Path, dict[str, Any]]:
     source = _inside(workspace, Path(envelope_path).as_posix(), "envelope", exists=True)
     if source.stat().st_size > MAX_BYTES:
         raise AtomicProofAdapterError(
@@ -764,6 +872,12 @@ def import_atomic_run(
         raise AtomicProofAdapterError(
             "E_ATOMIC_ENVELOPE_SCHEMA", f"envelope.schema must equal {ENVELOPE_SCHEMA}"
         )
+    return source, entry
+
+
+def _atomic_run_identity(
+    entry: dict[str, Any],
+) -> tuple[str, str, str, str, str, dict[str, str]]:
     run_id = _identifier(entry["run_id"], "run_id")
     envelope_id = _identifier(entry["envelope_id"], "envelope_id")
     if entry.get("status") not in _STAGE_STATUS:
@@ -787,6 +901,12 @@ def import_atomic_run(
         raise AtomicProofAdapterError(
             "E_ATOMIC_STAGE_IDENTITY_UNPROVEN", str(exc)
         ) from exc
+    return run_id, envelope_id, entry["status"], autonomy, isolation, agent
+
+
+def _oracle_binding(
+    workspace: Path, entry: dict[str, Any]
+) -> tuple[str, str, dict[str, Any]]:
     oracle = _exact_keys(
         entry["oracle"], {"contract_path", "contract_sha256"}, "oracle"
     )
@@ -802,6 +922,18 @@ def import_atomic_run(
             "E_ATOMIC_UNBOUND_INTENT",
             "Atomic envelope must bind one current sealed Oracle Contract",
         )
+    return contract_path, contract_sha256, checked_contract
+
+
+def _proof_bundle(
+    workspace: Path,
+    entry: dict[str, Any],
+    contract_path: str,
+    contract_sha256: str,
+    checked_contract: dict[str, Any],
+    autonomy: str,
+    run_id: str,
+) -> dict[str, Any]:
     workflow, edge_pairs = _topology(entry["workflow"])
     contract_scope = list(checked_contract["contract"]["scope_paths"])
     stages, stage_index = _stages(workspace, entry["stages"], workflow, contract_scope)
@@ -831,7 +963,25 @@ def import_atomic_run(
         entry.get("resume"), workspace, run_id, workflow, contract_sha256, stage_index
     )
     _handoff_history(workspace, workflow["id"], handoffs)
-    core = {
+    return {
+        "workflow": workflow,
+        "stages": stages,
+        "handoffs": handoffs,
+        "admission": admission,
+        "resume": resume,
+    }
+
+
+def _atomic_receipt_core(
+    workspace: Path,
+    source: Path,
+    identity: tuple[str, str, str, str, str, dict[str, str]],
+    checked_contract: dict[str, Any],
+    contract_sha256: str,
+    bundle: dict[str, Any],
+) -> dict[str, Any]:
+    _, envelope_id, status, _, isolation, agent = identity
+    return {
         "schema": RECEIPT_SCHEMA,
         "marker": BOUND_MARKER,
         "imported_at": _now(),
@@ -840,9 +990,9 @@ def import_atomic_run(
             "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
             "id": envelope_id,
         },
-        "run": {"id": run_id, "status": entry["status"]},
+        "run": {"id": identity[0], "status": status},
         "agent": agent,
-        "autonomy": autonomy,
+        "autonomy": identity[3],
         "isolation": {
             "declared_mode": isolation,
             "verified": False,
@@ -851,15 +1001,23 @@ def import_atomic_run(
         "oracle": {
             "path": checked_contract["path"],
             "contract_sha256": contract_sha256,
-            "admission": admission,
+            "admission": bundle["admission"],
         },
-        "workflow": workflow,
-        "stages": stages,
-        "handoffs": handoffs,
-        "resume": resume,
+        "workflow": bundle["workflow"],
+        "stages": bundle["stages"],
+        "handoffs": bundle["handoffs"],
+        "resume": bundle["resume"],
         "authority": dict(AUTHORITY),
         "claim_boundary": "Local validation of a team-supplied Atomic export. It does not import or invoke Atomic, authenticate the declared agent, prove runtime execution, verify a host sandbox, mutate a checkpoint, approve a change, or authorize release work.",
     }
+
+
+def _persist_atomic_receipt(
+    workspace: Path,
+    run_id: str,
+    core: dict[str, Any],
+    out: Path | None,
+) -> dict[str, Any]:
     receipt = {**core, "receipt_sha256": _sha(core)}
     destination = (
         Path(out)
@@ -876,6 +1034,30 @@ def import_atomic_run(
         )
     _atomic_json(target, receipt)
     return {**receipt, "path": target.relative_to(workspace).as_posix()}
+
+
+def import_atomic_run(
+    root: Path, envelope_path: Path, out: Path | None = None
+) -> dict[str, Any]:
+    """Validate one Atomic mechanics envelope and write an immutable local receipt."""
+    workspace = Path(root).resolve()
+    source, entry = _load_atomic_envelope(workspace, envelope_path)
+    identity = _atomic_run_identity(entry)
+    run_id, _, _, autonomy, _, _ = identity
+    contract_path, contract_sha256, checked_contract = _oracle_binding(workspace, entry)
+    bundle = _proof_bundle(
+        workspace,
+        entry,
+        contract_path,
+        contract_sha256,
+        checked_contract,
+        autonomy,
+        run_id,
+    )
+    core = _atomic_receipt_core(
+        workspace, source, identity, checked_contract, contract_sha256, bundle
+    )
+    return _persist_atomic_receipt(workspace, run_id, core, out)
 
 
 def verify_atomic_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:

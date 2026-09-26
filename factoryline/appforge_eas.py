@@ -124,21 +124,10 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
             os.unlink(temporary)
 
 
-def verify_eas_preflight(
-    root: Path,
-    candidate_path: Path,
-    eas_config_path: Path,
-    build_profile: str,
-    submit_profile: str,
-    *,
-    out: Path | None = None,
-) -> dict[str, Any]:
-    """Validate a candidate-bound EAS handoff without invoking Expo or Apple."""
-    workspace = Path(root).resolve()
-    candidate, candidate_source = _read_candidate(workspace, candidate_path)
-    config, source = _read_eas_config(workspace, eas_config_path)
-    build_name = _text(build_profile, "build_profile")
-    submit_name = _text(submit_profile, "submit_profile")
+def _eas_profile_findings(
+    config: dict[str, Any], build_name: str, submit_name: str
+) -> tuple[list[dict[str, str]], object]:
+    """Inspect local EAS profiles and return actionable configuration findings."""
     findings: list[dict[str, str]] = []
     secret_paths = _secret_findings(config)
     if secret_paths:
@@ -168,6 +157,25 @@ def verify_eas_preflight(
                 "detail": f"submit.{submit_name}.ios.ascAppId must be a numeric App Store Connect app id",
             }
         )
+    return findings, asc_app_id
+
+
+def verify_eas_preflight(
+    root: Path,
+    candidate_path: Path,
+    eas_config_path: Path,
+    build_profile: str,
+    submit_profile: str,
+    *,
+    out: Path | None = None,
+) -> dict[str, Any]:
+    """Validate a candidate-bound EAS handoff without invoking Expo or Apple."""
+    workspace = Path(root).resolve()
+    candidate, candidate_source = _read_candidate(workspace, candidate_path)
+    config, source = _read_eas_config(workspace, eas_config_path)
+    build_name = _text(build_profile, "build_profile")
+    submit_name = _text(submit_profile, "submit_profile")
+    findings, asc_app_id = _eas_profile_findings(config, build_name, submit_name)
     core: dict[str, Any] = {
         "schema": RECEIPT_SCHEMA,
         "marker": "APPFORGE_EAS_PREFLIGHT_READY"

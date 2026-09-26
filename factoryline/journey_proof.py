@@ -211,11 +211,9 @@ def _journey_common(value: dict[str, Any], label: str) -> None:
     _strings(value["outcomes"], f"{label}.outcomes")
 
 
-def _compile_reality_graph(
-    root: Path, declaration_path: Path, observation_path: Path, out: Path | None = None
-) -> dict[str, Any]:
-    """Compare explicit declared and observed journey sets without inference."""
-    workspace = _root(root)
+def _reality_inputs(
+    workspace: Path, declaration_path: Path, observation_path: Path
+) -> tuple[dict[str, Any], str, dict[str, Any], str]:
     declaration, declaration_sha = _load(
         workspace,
         declaration_path,
@@ -255,6 +253,17 @@ def _compile_reality_graph(
         or declaration["journey_id"] != observation["journey_id"]
     ):
         raise JourneyProofError("project_id and journey_id must match")
+    return declaration, declaration_sha, observation, observation_sha
+
+
+def _reality_rows(
+    declaration: dict[str, Any], observation: dict[str, Any]
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
     declared_states = [
         _exact(item, {"id", "requirements", "outcome"}, "declared state")
         for item in _list(declaration["states"], "states")
@@ -271,15 +280,34 @@ def _compile_reality_graph(
         _exact(item, {"id", "from", "to", "artifacts"}, "observed transition")
         for item in _list(observation["transitions"], "transitions")
     ]
-    for state in declared_states:
+    _validate_declared_states(declared_states)
+    _validate_declared_transitions(declared_transitions)
+    return declared_states, observed_states, declared_transitions, observed_transitions
+
+
+def _validate_declared_states(states: list[dict[str, Any]]) -> None:
+    for state in states:
         _strings(state["requirements"], "declared state.requirements")
         if not isinstance(state["outcome"], bool):
             raise JourneyProofError("declared state.outcome must be boolean")
-    for transition in declared_transitions:
+
+
+def _validate_declared_transitions(transitions: list[dict[str, Any]]) -> None:
+    for transition in transitions:
         _string(transition["from"], "declared transition.from")
         _string(transition["to"], "declared transition.to")
         _strings(transition["requirements"], "declared transition.requirements")
-    categories = {
+
+
+def _reality_categories(
+    declaration: dict[str, Any],
+    observation: dict[str, Any],
+    declared_states: list[dict[str, Any]],
+    observed_states: list[dict[str, Any]],
+    declared_transitions: list[dict[str, Any]],
+    observed_transitions: list[dict[str, Any]],
+) -> dict[str, tuple[list[str], list[str]]]:
+    return {
         "states": (
             _ids([item["id"] for item in declared_states], "declared states"),
             _ids([item["id"] for item in observed_states], "observed states"),
@@ -297,6 +325,11 @@ def _compile_reality_graph(
             _ids(observation["outcomes"], "observed outcomes"),
         ),
     }
+
+
+def _reality_artifacts(
+    workspace: Path, observed_transitions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     artifacts = []
     for transition_index, transition in enumerate(observed_transitions):
         _string(transition["from"], "observed transition.from")
@@ -311,6 +344,13 @@ def _compile_reality_graph(
                     f"transition[{transition_index}].artifact[{artifact_index}]",
                 )
             )
+    return artifacts
+
+
+def _reality_deltas(
+    categories: dict[str, tuple[list[str], list[str]]],
+    artifacts: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[str], bool]:
     deltas = {
         name: {
             "missing": sorted(set(declared) - set(observed)),
@@ -322,6 +362,21 @@ def _compile_reality_graph(
     equal = not stale and all(
         not delta["missing"] and not delta["unexpected"] for delta in deltas.values()
     )
+    return deltas, stale, equal
+
+
+def _write_reality_receipt(
+    workspace: Path,
+    declaration: dict[str, Any],
+    declaration_sha: str,
+    observation: dict[str, Any],
+    observation_sha: str,
+    artifacts: list[dict[str, Any]],
+    deltas: dict[str, Any],
+    stale: list[str],
+    equal: bool,
+    out: Path | None,
+) -> dict[str, Any]:
     marker = "JOURNEY_REALITY_MATCHED" if equal else "JOURNEY_REALITY_REVIEW_REQUIRED"
     result = {
         "schema": "factory.journey-reality-receipt.v1",
@@ -351,11 +406,44 @@ def _compile_reality_graph(
     )[0]
 
 
-def _create_failure_capsule(
-    root: Path, input_path: Path, out: Path | None = None
+def _compile_reality_graph(
+    root: Path, declaration_path: Path, observation_path: Path, out: Path | None = None
 ) -> dict[str, Any]:
-    """Bind one failed step and bounded adjacent evidence into JSON and Markdown."""
+    """Compare explicit declared and observed journey sets without inference."""
     workspace = _root(root)
+    declaration, declaration_sha, observation, observation_sha = _reality_inputs(
+        workspace, declaration_path, observation_path
+    )
+    declared_states, observed_states, declared_transitions, observed_transitions = (
+        _reality_rows(declaration, observation)
+    )
+    categories = _reality_categories(
+        declaration,
+        observation,
+        declared_states,
+        observed_states,
+        declared_transitions,
+        observed_transitions,
+    )
+    artifacts = _reality_artifacts(workspace, observed_transitions)
+    deltas, stale, equal = _reality_deltas(categories, artifacts)
+    return _write_reality_receipt(
+        workspace,
+        declaration,
+        declaration_sha,
+        observation,
+        observation_sha,
+        artifacts,
+        deltas,
+        stale,
+        equal,
+        out,
+    )
+
+
+def _failure_capsule_input(
+    workspace: Path, input_path: Path
+) -> tuple[dict[str, Any], str, str]:
     data, input_sha = _load(
         workspace,
         input_path,
@@ -382,6 +470,12 @@ def _create_failure_capsule(
         raise JourneyProofError(
             "classification must use the closed FailureClass taxonomy"
         )
+    return data, input_sha, classification
+
+
+def _failure_step_context(
+    data: dict[str, Any],
+) -> tuple[list[dict[str, Any]], int, list[int]]:
     steps = [
         _exact(item, {"index", "label", "status"}, "step")
         for item in _list(data["steps"], "steps", maximum=256)
@@ -406,6 +500,12 @@ def _create_failure_capsule(
     for step in context:
         _string(step["label"], "step.label")
         _string(step["status"], "step.status")
+    return context, failed_index, indexes
+
+
+def _failure_artifacts(
+    workspace: Path, data: dict[str, Any], indexes: list[int]
+) -> list[dict[str, Any]]:
     artifacts = []
     for index, raw in enumerate(_list(data["artifacts"], "artifacts", maximum=256)):
         item = _exact(raw, {"path", "sha256", "kind", "step_index"}, "artifact")
@@ -419,9 +519,27 @@ def _create_failure_capsule(
         if item["step_index"] not in indexes:
             raise JourneyProofError("artifact.step_index must name an existing step")
         artifacts.append({**verified, "step_index": item["step_index"]})
+    return artifacts
+
+
+def _failure_reproduction(data: dict[str, Any]) -> list[str]:
     argv = _strings(data["reproduction_argv"], "reproduction_argv", maximum=64)
     if not argv:
         raise JourneyProofError("reproduction_argv must not be empty")
+    return argv
+
+
+def _write_failure_capsule(
+    workspace: Path,
+    data: dict[str, Any],
+    input_sha: str,
+    classification: str,
+    failed_index: int,
+    context: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+    argv: list[str],
+    out: Path | None,
+) -> dict[str, Any]:
     result = {
         "schema": "factory.failure-capsule.v1",
         "marker": "FAILURE_CAPSULE_BOUND",
@@ -487,6 +605,28 @@ def _create_failure_capsule(
     }
 
 
+def _create_failure_capsule(
+    root: Path, input_path: Path, out: Path | None = None
+) -> dict[str, Any]:
+    """Bind one failed step and bounded adjacent evidence into JSON and Markdown."""
+    workspace = _root(root)
+    data, input_sha, classification = _failure_capsule_input(workspace, input_path)
+    context, failed_index, indexes = _failure_step_context(data)
+    artifacts = _failure_artifacts(workspace, data, indexes)
+    argv = _failure_reproduction(data)
+    return _write_failure_capsule(
+        workspace,
+        data,
+        input_sha,
+        classification,
+        failed_index,
+        context,
+        artifacts,
+        argv,
+        out,
+    )
+
+
 def _workflow_graph(
     tests: list[dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], bool]:
@@ -519,12 +659,8 @@ def _workflow_graph(
     return by_id, len(visited) == len(by_id)
 
 
-def _verify_stateful_workflow(
-    root: Path, input_path: Path, out: Path | None = None
-) -> dict[str, Any]:
-    """Prove DAG state flow and cleanup outcomes from explicit run results."""
-    workspace = _root(root)
-    data, input_sha = _load(
+def _workflow_input(workspace: Path, input_path: Path) -> tuple[dict[str, Any], str]:
+    return _load(
         workspace,
         input_path,
         "factory.stateful-workflow-input.v1",
@@ -540,6 +676,17 @@ def _verify_stateful_workflow(
             "observed_at",
         },
     )
+
+
+def _workflow_rows(
+    data: dict[str, Any],
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, dict[str, Any]],
+    bool,
+    dict[str, int],
+]:
     test_fields = {
         "id",
         "index",
@@ -581,6 +728,12 @@ def _verify_stateful_workflow(
             raise JourneyProofError("is_cleanup must be boolean")
     if len(set(indexes.values())) != len(indexes):
         raise JourneyProofError("test indexes must be unique")
+    return tests, results, by_id, acyclic, indexes
+
+
+def _workflow_result_map(
+    results: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
     result_map: dict[str, dict[str, Any]] = {}
     for item in results:
         test_id = _string(item["test_id"], "result.test_id")
@@ -600,6 +753,14 @@ def _verify_stateful_workflow(
         ):
             raise JourneyProofError("idempotency_probe_passed must be boolean or null")
         result_map[test_id] = item
+    return result_map
+
+
+def _workflow_initial_reasons(
+    by_id: dict[str, dict[str, Any]],
+    result_map: dict[str, dict[str, Any]],
+    acyclic: bool,
+) -> set[str]:
     reason_codes: set[str] = set()
     if not acyclic:
         reason_codes.add("WORKFLOW_CYCLE_DETECTED")
@@ -607,6 +768,12 @@ def _verify_stateful_workflow(
         item["status"] != "passed" for item in result_map.values()
     ):
         reason_codes.add("WORKFLOW_EXECUTION_INCOMPLETE")
+    return reason_codes
+
+
+def _workflow_producers(
+    by_id: dict[str, dict[str, Any]], result_map: dict[str, dict[str, Any]]
+) -> dict[str, list[tuple[str, str]]]:
     producers: dict[str, list[tuple[str, str]]] = {}
     for test_id, test in by_id.items():
         result = result_map.get(test_id, {})
@@ -615,6 +782,16 @@ def _verify_stateful_workflow(
                 producers.setdefault(name, []).append(
                     (test_id, result["produced"][name])
                 )
+    return producers
+
+
+def _workflow_value_edges(
+    by_id: dict[str, dict[str, Any]],
+    indexes: dict[str, int],
+    result_map: dict[str, dict[str, Any]],
+    producers: dict[str, list[tuple[str, str]]],
+    reason_codes: set[str],
+) -> list[dict[str, str]]:
     value_edges = []
     for test_id, test in by_id.items():
         consumed = result_map.get(test_id, {}).get("consumed", {})
@@ -637,6 +814,14 @@ def _verify_stateful_workflow(
                     "sha256": produced_hash,
                 }
             )
+    return value_edges
+
+
+def _workflow_declaration_reasons(
+    by_id: dict[str, dict[str, Any]],
+    result_map: dict[str, dict[str, Any]],
+    reason_codes: set[str],
+) -> None:
     for test_id, result in result_map.items():
         test = by_id[test_id]
         if set(result["produced"]) != set(test["produces"]) or set(
@@ -649,25 +834,60 @@ def _verify_stateful_workflow(
             test["cleanup_for"]
         ):
             reason_codes.add("WORKFLOW_CLEANUP_MISSING")
+
+
+def _effect_cleanup_matches(
+    effect: str,
+    test_id: str,
+    by_id: dict[str, dict[str, Any]],
+    indexes: dict[str, int],
+    result_map: dict[str, dict[str, Any]],
+) -> list[str]:
+    matches = []
+    for cleanup_id, cleanup in by_id.items():
+        if not cleanup["is_cleanup"] or effect not in cleanup["cleanup_for"]:
+            continue
+        if indexes[cleanup_id] <= indexes[test_id]:
+            continue
+        cleanup_result = result_map.get(cleanup_id, {})
+        if cleanup_result.get("status") != "passed":
+            continue
+        if effect not in cleanup_result.get("cleanup_completed", []):
+            continue
+        if cleanup_result.get("idempotency_probe_passed") is not True:
+            continue
+        matches.append(cleanup_id)
+    return matches
+
+
+def _workflow_effect_cleanup_reasons(
+    by_id: dict[str, dict[str, Any]],
+    indexes: dict[str, int],
+    result_map: dict[str, dict[str, Any]],
+    reason_codes: set[str],
+) -> None:
+    for test_id, result in result_map.items():
         for effect in result["side_effects_created"]:
-            matches = [
-                cleanup_id
-                for cleanup_id, cleanup in by_id.items()
-                if cleanup["is_cleanup"]
-                and effect in cleanup["cleanup_for"]
-                and indexes[cleanup_id] > indexes[test_id]
-                and result_map.get(cleanup_id, {}).get("status") == "passed"
-                and effect in result_map[cleanup_id]["cleanup_completed"]
-                and result_map[cleanup_id]["idempotency_probe_passed"] is True
-            ]
-            if not matches:
+            if not _effect_cleanup_matches(effect, test_id, by_id, indexes, result_map):
                 reason_codes.add("WORKFLOW_CLEANUP_MISSING")
+
+
+def _workflow_idempotency_reasons(
+    by_id: dict[str, dict[str, Any]],
+    result_map: dict[str, dict[str, Any]],
+    reason_codes: set[str],
+) -> None:
     for test_id, test in by_id.items():
         if (
             test["is_cleanup"]
             and result_map.get(test_id, {}).get("idempotency_probe_passed") is not True
         ):
             reason_codes.add("WORKFLOW_CLEANUP_IDEMPOTENCY_FAILED")
+
+
+def _workflow_validity(
+    acyclic: bool, reason_codes: set[str]
+) -> tuple[bool, bool, bool]:
     values_valid = not any(
         code.startswith("WORKFLOW_VALUE") or code == "WORKFLOW_EXECUTION_INCOMPLETE"
         for code in reason_codes
@@ -676,6 +896,21 @@ def _verify_stateful_workflow(
         code.startswith("WORKFLOW_CLEANUP") for code in reason_codes
     )
     passed = acyclic and values_valid and cleanup_valid and not reason_codes
+    return values_valid, cleanup_valid, passed
+
+
+def _write_workflow_receipt(
+    workspace: Path,
+    data: dict[str, Any],
+    input_sha: str,
+    acyclic: bool,
+    values_valid: bool,
+    cleanup_valid: bool,
+    passed: bool,
+    reason_codes: set[str],
+    value_edges: list[dict[str, str]],
+    out: Path | None,
+) -> dict[str, Any]:
     marker = "WORKFLOW_PROOF_PASSED" if passed else "WORKFLOW_PROOF_FAILED"
     receipt = {
         "schema": "factory.stateful-workflow-receipt.v1",
@@ -705,6 +940,37 @@ def _verify_stateful_workflow(
         "authority": AUTHORITY,
     }
     return _write(workspace, receipt, out, f"workflow-{input_sha[:16]}.json")[0]
+
+
+def _verify_stateful_workflow(
+    root: Path, input_path: Path, out: Path | None = None
+) -> dict[str, Any]:
+    """Prove DAG state flow and cleanup outcomes from explicit run results."""
+    workspace = _root(root)
+    data, input_sha = _workflow_input(workspace, input_path)
+    _, results, by_id, acyclic, indexes = _workflow_rows(data)
+    result_map = _workflow_result_map(results, by_id)
+    reason_codes = _workflow_initial_reasons(by_id, result_map, acyclic)
+    producers = _workflow_producers(by_id, result_map)
+    value_edges = _workflow_value_edges(
+        by_id, indexes, result_map, producers, reason_codes
+    )
+    _workflow_declaration_reasons(by_id, result_map, reason_codes)
+    _workflow_effect_cleanup_reasons(by_id, indexes, result_map, reason_codes)
+    _workflow_idempotency_reasons(by_id, result_map, reason_codes)
+    values_valid, cleanup_valid, passed = _workflow_validity(acyclic, reason_codes)
+    return _write_workflow_receipt(
+        workspace,
+        data,
+        input_sha,
+        acyclic,
+        values_valid,
+        cleanup_valid,
+        passed,
+        reason_codes,
+        value_edges,
+        out,
+    )
 
 
 def _snapshot(workspace: Path) -> dict[str, str]:
@@ -746,22 +1012,24 @@ def _run(argv: list[str], workspace: Path, timeout: int) -> dict[str, Any]:
     return run_supervised_command(argv, cwd=workspace, timeout_seconds=timeout)
 
 
-def _agent_contract(value: object, review_mode: str) -> dict[str, Any] | None:
-    if review_mode == "human_controlled":
-        if value is not None:
-            raise JourneyProofError(
-                "human_controlled mode forbids an agent command",
-                "HEALING_REVIEW_MODE_INVALID",
-            )
-        return None
-    agent = _exact(
-        value, {"identity", "argv", "max_attempts", "timeout_seconds"}, "agent"
-    )
+def _human_agent_contract(value: object) -> None:
+    if value is not None:
+        raise JourneyProofError(
+            "human_controlled mode forbids an agent command",
+            "HEALING_REVIEW_MODE_INVALID",
+        )
+
+
+def _agent_identity(agent: dict[str, Any]) -> dict[str, Any]:
     identity = _exact(
         agent["identity"], {"provider", "subject", "display_name"}, "agent.identity"
     )
     for key in identity:
         _string(identity[key], f"agent.identity.{key}")
+    return identity
+
+
+def _agent_execution_contract(agent: dict[str, Any]) -> tuple[list[str], int, int]:
     argv = _strings(agent["argv"], "agent.argv", maximum=64)
     attempts, timeout = agent["max_attempts"], agent["timeout_seconds"]
     if (
@@ -777,6 +1045,18 @@ def _agent_contract(value: object, review_mode: str) -> dict[str, Any] | None:
             "supervised_auto requires argv, max_attempts 1..3, and timeout_seconds 1..900",
             "HEALING_REVIEW_MODE_INVALID",
         )
+    return argv, attempts, timeout
+
+
+def _agent_contract(value: object, review_mode: str) -> dict[str, Any] | None:
+    if review_mode == "human_controlled":
+        _human_agent_contract(value)
+        return None
+    agent = _exact(
+        value, {"identity", "argv", "max_attempts", "timeout_seconds"}, "agent"
+    )
+    identity = _agent_identity(agent)
+    argv, attempts, timeout = _agent_execution_contract(agent)
     return {
         "identity": identity,
         "argv": argv,
@@ -798,12 +1078,9 @@ def _agent_outcome(
 ) -> tuple[str, FailureClass | None]:
     if not scope_ok:
         return "scope_escape", FailureClass.SCOPE_ESCAPE
-    if agent_result is None:
-        return "not_started", FailureClass.HOLLOW_MANIFEST
-    if agent_result and agent_result.get("timed_out"):
-        return "agent_timeout", FailureClass.RUNTIME_TIMEOUT
-    if agent_result and agent_result.get("exit_code") != 0:
-        return "agent_failed", FailureClass.RUNTIME_CRASH
+    execution = _agent_execution_outcome(agent_result)
+    if execution is not None:
+        return execution
     if positive and positive.get("exit_code") != 0:
         return "positive_failed", FailureClass.WRONG_OUTPUT
     if negative and negative.get("exit_code") == 0:
@@ -811,12 +1088,20 @@ def _agent_outcome(
     return "passed", None
 
 
-def _verify_proof_gated_healing(
-    root: Path, input_path: Path, out: Path | None = None, timeout_seconds: int = 300
-) -> dict[str, Any]:
-    """Run bounded proof commands and independently audit an optional agent attempt."""
-    workspace = _root(root)
-    data, input_sha = _load(
+def _agent_execution_outcome(
+    agent_result: dict[str, Any] | None,
+) -> tuple[str, FailureClass] | None:
+    if agent_result is None:
+        return "not_started", FailureClass.HOLLOW_MANIFEST
+    if agent_result and agent_result.get("timed_out"):
+        return "agent_timeout", FailureClass.RUNTIME_TIMEOUT
+    if agent_result and agent_result.get("exit_code") != 0:
+        return "agent_failed", FailureClass.RUNTIME_CRASH
+    return None
+
+
+def _healing_input(workspace: Path, input_path: Path) -> tuple[dict[str, Any], str]:
+    return _load(
         workspace,
         input_path,
         "factory.proof-gated-healing-input.v1",
@@ -834,6 +1119,9 @@ def _verify_proof_gated_healing(
             "negative_argv",
         },
     )
+
+
+def _healing_review_mode(data: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
     review_mode = _string(data["review_mode"], "review_mode")
     if review_mode not in {"human_controlled", "supervised_auto"}:
         raise JourneyProofError(
@@ -841,6 +1129,12 @@ def _verify_proof_gated_healing(
             "HEALING_REVIEW_MODE_INVALID",
         )
     agent = _agent_contract(data["agent"], review_mode)
+    return review_mode, agent
+
+
+def _healing_scope(
+    workspace: Path, data: dict[str, Any]
+) -> tuple[dict[str, Any], str, list[str], list[str], bool]:
     patch = _exact(data["patch"], {"path", "sha256", "changed_paths"}, "patch")
     patch_path, patch_relative = _contained(workspace, patch["path"], "patch.path")
     patch_current = _sha_file(patch_path) == _sha(patch["sha256"], "patch.sha256")
@@ -859,6 +1153,12 @@ def _verify_proof_gated_healing(
     scope_valid = patch_current and all(
         _allowed(path, allowlist) for path in declared_changed
     )
+    return patch, patch_relative, allowlist, declared_changed, scope_valid
+
+
+def _healing_semantics(
+    data: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, str], bool, set[str], set[str], bool]:
     semantic = _exact(
         data["semantic_identity"], {"before", "after"}, "semantic_identity"
     )
@@ -870,6 +1170,19 @@ def _verify_proof_gated_healing(
     coverage_before = set(_strings(data["coverage_before"], "coverage_before"))
     coverage_after = set(_strings(data["coverage_after"], "coverage_after"))
     coverage_preserved = coverage_before <= coverage_after
+    return (
+        before_anchors,
+        after_anchors,
+        semantic_valid,
+        coverage_before,
+        coverage_after,
+        coverage_preserved,
+    )
+
+
+def _healing_commands(
+    data: dict[str, Any], timeout_seconds: int
+) -> tuple[list[str], list[str]]:
     positive_argv = _strings(data["positive_argv"], "positive_argv", maximum=64)
     negative_argv = _strings(data["negative_argv"], "negative_argv", maximum=64)
     if (
@@ -882,6 +1195,18 @@ def _verify_proof_gated_healing(
         raise JourneyProofError(
             "positive and negative argv and timeout 1..900 are required"
         )
+    return positive_argv, negative_argv
+
+
+def _run_agent_attempts(
+    workspace: Path,
+    agent: dict[str, Any] | None,
+    review_mode: str,
+    scope_valid: bool,
+    semantic_valid: bool,
+    coverage_preserved: bool,
+    allowlist: list[str],
+) -> tuple[list[dict[str, Any]], list[str], bool, bool, dict[str, str], dict[str, str]]:
     attempts: list[dict[str, Any]] = []
     actual_changed: list[str] = []
     agent_scope_valid = True
@@ -913,6 +1238,24 @@ def _verify_proof_gated_healing(
             if run.get("exit_code") == 0:
                 agent_exit_zero = True
                 break
+    return (
+        attempts,
+        actual_changed,
+        agent_scope_valid,
+        agent_exit_zero,
+        first_snapshot,
+        last_snapshot,
+    )
+
+
+def _healing_precheck(
+    scope_valid: bool,
+    semantic_valid: bool,
+    coverage_preserved: bool,
+    agent_scope_valid: bool,
+    review_mode: str,
+    agent_exit_zero: bool,
+) -> bool:
     precheck = (
         scope_valid
         and semantic_valid
@@ -920,6 +1263,16 @@ def _verify_proof_gated_healing(
         and agent_scope_valid
         and (review_mode == "human_controlled" or agent_exit_zero)
     )
+    return precheck
+
+
+def _run_healing_proofs(
+    workspace: Path,
+    positive_argv: list[str],
+    negative_argv: list[str],
+    timeout_seconds: int,
+    precheck: bool,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, bool, bool]:
     positive = _run(positive_argv, workspace, timeout_seconds) if precheck else None
     negative = (
         _run(negative_argv, workspace, timeout_seconds)
@@ -928,61 +1281,136 @@ def _verify_proof_gated_healing(
     )
     positive_ok = bool(positive and positive.get("exit_code") == 0)
     negative_ok = bool(negative and negative.get("exit_code") not in {None, 0})
-    markers = {"JOURNEY_INPUT_ACCEPTED"}
-    agent_audit = None
-    audit_valid = review_mode == "human_controlled"
-    if agent is not None:
-        last_run = attempts[-1]["result"] if attempts else None
-        outcome, failure_classification = _agent_outcome(
-            agent_scope_valid, last_run, positive, negative
+    return positive, negative, positive_ok, negative_ok
+
+
+def _agent_audit_core(
+    data: dict[str, Any],
+    input_sha: str,
+    agent: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    first_snapshot: dict[str, str],
+    last_snapshot: dict[str, str],
+    actual_changed: list[str],
+    agent_scope_valid: bool,
+    positive: dict[str, Any] | None,
+    negative: dict[str, Any] | None,
+) -> dict[str, Any]:
+    last_run = attempts[-1]["result"] if attempts else None
+    outcome, failure_classification = _agent_outcome(
+        agent_scope_valid, last_run, positive, negative
+    )
+    return {
+        "schema": "factory.agent-work-audit.v1",
+        "marker": "AGENT_WORK_AUDITED",
+        "healing_id": _string(data["healing_id"], "healing_id"),
+        "agent_identity": agent["identity"],
+        "command_sha256": _digest(agent["argv"]),
+        "before_workspace_sha256": _snapshot_digest(first_snapshot),
+        "after_workspace_sha256": _snapshot_digest(last_snapshot),
+        "changed_paths": actual_changed,
+        "scope_valid": agent_scope_valid,
+        "agent_result": last_run,
+        "positive_result": positive,
+        "negative_mutation_result": negative,
+        "outcome_classification": outcome,
+        "failure_classification": failure_classification.value
+        if failure_classification
+        else None,
+        "worker_approval": False,
+        "authority": AUTHORITY,
+    }
+
+
+def _write_agent_audit(
+    workspace: Path, input_sha: str, audit_core: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        audit_receipt, _ = _write(
+            workspace, audit_core, None, f"agent-audit-{input_sha[:16]}.json"
         )
-        audit_core = {
-            "schema": "factory.agent-work-audit.v1",
-            "marker": "AGENT_WORK_AUDITED",
-            "healing_id": _string(data["healing_id"], "healing_id"),
-            "agent_identity": agent["identity"],
-            "command_sha256": _digest(agent["argv"]),
-            "before_workspace_sha256": _snapshot_digest(first_snapshot),
-            "after_workspace_sha256": _snapshot_digest(last_snapshot),
-            "changed_paths": actual_changed,
-            "scope_valid": agent_scope_valid,
-            "agent_result": last_run,
-            "positive_result": positive,
-            "negative_mutation_result": negative,
-            "outcome_classification": outcome,
-            "failure_classification": failure_classification.value
-            if failure_classification
-            else None,
-            "worker_approval": False,
-            "authority": AUTHORITY,
-        }
-        try:
-            audit_receipt, _ = _write(
-                workspace, audit_core, None, f"agent-audit-{input_sha[:16]}.json"
-            )
-        except (JourneyProofError, OSError) as error:
-            raise JourneyProofError(
-                "FactoryLine could not bind the agent work audit",
-                "HEALING_AGENT_AUDIT_FAILED",
-            ) from error
-        agent_audit = {
-            "path": audit_receipt["receipt_path"],
-            "sha256": audit_receipt["receipt_sha256"],
-            "marker": audit_receipt["marker"],
-        }
-        audit_valid = (
-            audit_receipt["marker"] == "AGENT_WORK_AUDITED"
-            and audit_receipt["authority"] == AUTHORITY
-            and audit_receipt["worker_approval"] is False
-        )
-        markers.add("AGENT_WORK_AUDITED")
+    except (JourneyProofError, OSError) as error:
+        raise JourneyProofError(
+            "FactoryLine could not bind the agent work audit",
+            "HEALING_AGENT_AUDIT_FAILED",
+        ) from error
+    return {
+        "path": audit_receipt["receipt_path"],
+        "sha256": audit_receipt["receipt_sha256"],
+        "marker": audit_receipt["marker"],
+        "authority": audit_receipt["authority"],
+        "worker_approval": audit_receipt["worker_approval"],
+    }
+
+
+def _agent_audit(
+    workspace: Path,
+    data: dict[str, Any],
+    input_sha: str,
+    review_mode: str,
+    agent: dict[str, Any] | None,
+    attempts: list[dict[str, Any]],
+    first_snapshot: dict[str, str],
+    last_snapshot: dict[str, str],
+    actual_changed: list[str],
+    agent_scope_valid: bool,
+    positive: dict[str, Any] | None,
+    negative: dict[str, Any] | None,
+    markers: set[str],
+) -> tuple[dict[str, str] | None, bool]:
+    if agent is None:
+        return None, review_mode == "human_controlled"
+    audit_core = _agent_audit_core(
+        data,
+        input_sha,
+        agent,
+        attempts,
+        first_snapshot,
+        last_snapshot,
+        actual_changed,
+        agent_scope_valid,
+        positive,
+        negative,
+    )
+    audit = _write_agent_audit(workspace, input_sha, audit_core)
+    audit_valid = (
+        audit["marker"] == "AGENT_WORK_AUDITED"
+        and audit["authority"] == AUTHORITY
+        and audit["worker_approval"] is False
+    )
+    markers.add("AGENT_WORK_AUDITED")
+    return {key: audit[key] for key in ("path", "sha256", "marker")}, audit_valid
+
+
+def _early_healing_marker(
+    markers: set[str],
+    review_mode: str,
+    scope_valid: bool,
+    semantic_valid: bool,
+    coverage_preserved: bool,
+    agent_scope_valid: bool,
+    agent_exit_zero: bool,
+) -> bool:
     if not scope_valid or not semantic_valid or not coverage_preserved:
         markers.add("HEALING_PRECHECK_REJECTED")
-    elif not agent_scope_valid:
+        return True
+    if not agent_scope_valid:
         markers.add("HEALING_AGENT_SCOPE_ESCAPE")
-    elif review_mode == "supervised_auto" and not agent_exit_zero:
+        return True
+    if review_mode == "supervised_auto" and not agent_exit_zero:
         markers.add("HEALING_AGENT_FAILED")
-    elif not audit_valid:
+        return True
+    return False
+
+
+def _proof_status_marker(
+    markers: set[str],
+    review_mode: str,
+    audit_valid: bool,
+    positive_ok: bool,
+    negative_ok: bool,
+) -> None:
+    if not audit_valid:
         markers.add("HEALING_AGENT_AUDIT_FAILED")
     elif not positive_ok:
         markers.add("HEALING_POSITIVE_FAILED")
@@ -997,23 +1425,79 @@ def _verify_proof_gated_healing(
                 else "HEALING_AUTO_AWAITING_PROMOTION",
             }
         )
-    admissible = "HEALING_PROOF_ADMISSIBLE" in markers
-    primary = (
-        "HEALING_PROOF_ADMISSIBLE"
-        if admissible
-        else next(
-            marker
-            for marker in (
-                "HEALING_PRECHECK_REJECTED",
-                "HEALING_AGENT_SCOPE_ESCAPE",
-                "HEALING_AGENT_FAILED",
-                "HEALING_AGENT_AUDIT_FAILED",
-                "HEALING_POSITIVE_FAILED",
-                "HOLLOW_HEALING_PROOF",
-            )
-            if marker in markers
+
+
+def _apply_healing_markers(
+    markers: set[str],
+    review_mode: str,
+    scope_valid: bool,
+    semantic_valid: bool,
+    coverage_preserved: bool,
+    agent_scope_valid: bool,
+    agent_exit_zero: bool,
+    audit_valid: bool,
+    positive_ok: bool,
+    negative_ok: bool,
+) -> None:
+    if _early_healing_marker(
+        markers,
+        review_mode,
+        scope_valid,
+        semantic_valid,
+        coverage_preserved,
+        agent_scope_valid,
+        agent_exit_zero,
+    ):
+        return
+    _proof_status_marker(markers, review_mode, audit_valid, positive_ok, negative_ok)
+
+
+def _primary_healing_marker(markers: set[str]) -> str:
+    if "HEALING_PROOF_ADMISSIBLE" in markers:
+        return "HEALING_PROOF_ADMISSIBLE"
+    return next(
+        marker
+        for marker in (
+            "HEALING_PRECHECK_REJECTED",
+            "HEALING_AGENT_SCOPE_ESCAPE",
+            "HEALING_AGENT_FAILED",
+            "HEALING_AGENT_AUDIT_FAILED",
+            "HEALING_POSITIVE_FAILED",
+            "HOLLOW_HEALING_PROOF",
         )
+        if marker in markers
     )
+
+
+def _write_healing_receipt(
+    workspace: Path,
+    data: dict[str, Any],
+    input_sha: str,
+    review_mode: str,
+    patch: dict[str, Any],
+    patch_relative: str,
+    declared_changed: list[str],
+    before_anchors: dict[str, str],
+    after_anchors: dict[str, str],
+    coverage_before: set[str],
+    coverage_after: set[str],
+    scope_valid: bool,
+    semantic_valid: bool,
+    coverage_preserved: bool,
+    agent_scope_valid: bool,
+    agent_exit_zero: bool,
+    audit_valid: bool,
+    positive_ok: bool,
+    negative_ok: bool,
+    attempts: list[dict[str, Any]],
+    agent_audit: dict[str, str] | None,
+    positive: dict[str, Any] | None,
+    negative: dict[str, Any] | None,
+    markers: set[str],
+    out: Path | None,
+) -> dict[str, Any]:
+    admissible = "HEALING_PROOF_ADMISSIBLE" in markers
+    primary = _primary_healing_marker(markers)
     receipt = {
         "schema": "factory.proof-gated-healing-receipt.v1",
         "marker": primary,
@@ -1054,6 +1538,109 @@ def _verify_proof_gated_healing(
     return _write(workspace, receipt, out, f"healing-{input_sha[:16]}.json")[0]
 
 
+def _verify_proof_gated_healing(
+    root: Path, input_path: Path, out: Path | None = None, timeout_seconds: int = 300
+) -> dict[str, Any]:
+    """Run bounded proof commands and independently audit an optional agent attempt."""
+    workspace = _root(root)
+    data, input_sha = _healing_input(workspace, input_path)
+    review_mode, agent = _healing_review_mode(data)
+    patch, patch_relative, allowlist, declared_changed, scope_valid = _healing_scope(
+        workspace, data
+    )
+    (
+        before_anchors,
+        after_anchors,
+        semantic_valid,
+        coverage_before,
+        coverage_after,
+        coverage_preserved,
+    ) = _healing_semantics(data)
+    positive_argv, negative_argv = _healing_commands(data, timeout_seconds)
+    (
+        attempts,
+        actual_changed,
+        agent_scope_valid,
+        agent_exit_zero,
+        first_snapshot,
+        last_snapshot,
+    ) = _run_agent_attempts(
+        workspace,
+        agent,
+        review_mode,
+        scope_valid,
+        semantic_valid,
+        coverage_preserved,
+        allowlist,
+    )
+    precheck = _healing_precheck(
+        scope_valid,
+        semantic_valid,
+        coverage_preserved,
+        agent_scope_valid,
+        review_mode,
+        agent_exit_zero,
+    )
+    positive, negative, positive_ok, negative_ok = _run_healing_proofs(
+        workspace, positive_argv, negative_argv, timeout_seconds, precheck
+    )
+    markers = {"JOURNEY_INPUT_ACCEPTED"}
+    agent_audit, audit_valid = _agent_audit(
+        workspace,
+        data,
+        input_sha,
+        review_mode,
+        agent,
+        attempts,
+        first_snapshot,
+        last_snapshot,
+        actual_changed,
+        agent_scope_valid,
+        positive,
+        negative,
+        markers,
+    )
+    _apply_healing_markers(
+        markers,
+        review_mode,
+        scope_valid,
+        semantic_valid,
+        coverage_preserved,
+        agent_scope_valid,
+        agent_exit_zero,
+        audit_valid,
+        positive_ok,
+        negative_ok,
+    )
+    return _write_healing_receipt(
+        workspace,
+        data,
+        input_sha,
+        review_mode,
+        patch,
+        patch_relative,
+        declared_changed,
+        before_anchors,
+        after_anchors,
+        coverage_before,
+        coverage_after,
+        scope_valid,
+        semantic_valid,
+        coverage_preserved,
+        agent_scope_valid,
+        agent_exit_zero,
+        audit_valid,
+        positive_ok,
+        negative_ok,
+        attempts,
+        agent_audit,
+        positive,
+        negative,
+        markers,
+        out,
+    )
+
+
 def compile_reality_graph(
     root: Path, declaration_path: Path, observation_path: Path, out: Path | None = None
 ) -> dict[str, Any]:
@@ -1068,35 +1655,7 @@ def create_failure_capsule(
     return _create_failure_capsule(root, input_path, out)
 
 
-def validate_failure_capsule(root: Path, value: object) -> dict[str, Any]:
-    """Validate an immutable, locally bound failure capsule before it is reused.
-
-    This deliberately re-checks the receipt digest *and* the current artifact
-    hashes.  A marker-shaped JSON document, or a formerly valid capsule whose
-    supporting evidence changed, is therefore not admissible as reproduction
-    evidence for another control-plane decision.
-    """
-    workspace = _root(root)
-    fields = {
-        "schema",
-        "marker",
-        "markers",
-        "project_id",
-        "journey_id",
-        "run_id",
-        "decision",
-        "classification",
-        "failed_step_index",
-        "step_context",
-        "artifacts",
-        "hypothesis",
-        "suggested_repair",
-        "reproduction_argv",
-        "bindings",
-        "authority",
-        "receipt_sha256",
-    }
-    data = _exact(value, fields, "factory.failure-capsule.v1")
+def _validate_failure_capsule_identity(data: dict[str, Any]) -> None:
     if (
         data["schema"] != "factory.failure-capsule.v1"
         or data["marker"] != "FAILURE_CAPSULE_BOUND"
@@ -1122,6 +1681,9 @@ def validate_failure_capsule(root: Path, value: object) -> dict[str, Any]:
         data["failed_step_index"], bool
     ):
         raise JourneyProofError("failure capsule failed_step_index is invalid")
+
+
+def _validate_failure_step_context(data: dict[str, Any]) -> list[int]:
     context = [
         _exact(item, {"index", "label", "status"}, "failure capsule step")
         for item in _list(data["step_context"], "step_context", maximum=3)
@@ -1138,6 +1700,12 @@ def validate_failure_capsule(root: Path, value: object) -> dict[str, Any]:
             raise JourneyProofError("failure capsule step index is invalid")
         _string(item["label"], "failure capsule step label")
         _string(item["status"], "failure capsule step status")
+    return indexes
+
+
+def _validate_failure_artifacts(
+    workspace: Path, data: dict[str, Any], indexes: list[int]
+) -> None:
     for index, artifact in enumerate(
         _list(data["artifacts"], "artifacts", maximum=256)
     ):
@@ -1161,6 +1729,9 @@ def validate_failure_capsule(root: Path, value: object) -> dict[str, Any]:
         )
         if not verified["current"]:
             raise JourneyProofError("failure capsule artifact hash is stale")
+
+
+def _validate_failure_claims(data: dict[str, Any]) -> None:
     for label in ("project_id", "journey_id", "run_id"):
         _string(data[label], f"failure capsule {label}")
     if (
@@ -1191,6 +1762,40 @@ def validate_failure_capsule(root: Path, value: object) -> dict[str, Any]:
         data["reproduction_argv"], "failure capsule reproduction_argv", maximum=64
     ):
         raise JourneyProofError("failure capsule reproduction argv is empty")
+
+
+def validate_failure_capsule(root: Path, value: object) -> dict[str, Any]:
+    """Validate an immutable, locally bound failure capsule before it is reused.
+
+    This deliberately re-checks the receipt digest *and* the current artifact
+    hashes. A marker-shaped document or stale supporting evidence is not
+    admissible as reproduction evidence for another control-plane decision.
+    """
+    workspace = _root(root)
+    fields = {
+        "schema",
+        "marker",
+        "markers",
+        "project_id",
+        "journey_id",
+        "run_id",
+        "decision",
+        "classification",
+        "failed_step_index",
+        "step_context",
+        "artifacts",
+        "hypothesis",
+        "suggested_repair",
+        "reproduction_argv",
+        "bindings",
+        "authority",
+        "receipt_sha256",
+    }
+    data = _exact(value, fields, "factory.failure-capsule.v1")
+    _validate_failure_capsule_identity(data)
+    indexes = _validate_failure_step_context(data)
+    _validate_failure_artifacts(workspace, data, indexes)
+    _validate_failure_claims(data)
     return data
 
 

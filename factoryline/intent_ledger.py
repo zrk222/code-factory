@@ -29,6 +29,19 @@ MAX_CHANGED_PATHS = 200
 MAX_TEXT = 600
 MAX_CHANGE_LIST_NAME = 160
 _PATH = re.compile(r"^[^/\\]+(?:[/\\][^/\\]+)*$")
+_RECORD_FIELDS = {
+    "schema",
+    "marker",
+    "change_list",
+    "declared_scope_paths",
+    "intent",
+    "confirmed_by",
+    "captured_at",
+    "authority",
+    "scope_limits",
+    "ledger_sha256",
+}
+_INTENT_FIELDS = {"promise", "non_goal", "failure_case"}
 
 CAPTURE_AUTHORITY = {
     "record_write": True,
@@ -177,26 +190,9 @@ def _record_core(
     }
 
 
-def validate_intent_ledger_record(value: object) -> dict[str, Any]:
-    """Validate one canonical record before projection; no filesystem access occurs."""
-    if not isinstance(value, dict):
-        raise IntentLedgerError(
-            "INTENT_LEDGER_INVALID", "Intent Ledger record must be a JSON object"
-        )
-    required = {
-        "schema",
-        "marker",
-        "change_list",
-        "declared_scope_paths",
-        "intent",
-        "confirmed_by",
-        "captured_at",
-        "authority",
-        "scope_limits",
-        "ledger_sha256",
-    }
+def _validate_record_envelope(value: dict[str, Any]) -> None:
     if (
-        set(value) != required
+        set(value) != _RECORD_FIELDS
         or value.get("schema") != INTENT_LEDGER_SCHEMA
         or value.get("marker") != "INTENT_LEDGER_CAPTURED"
     ):
@@ -204,37 +200,31 @@ def validate_intent_ledger_record(value: object) -> dict[str, Any]:
             "INTENT_LEDGER_INVALID",
             "Intent Ledger record has unsupported fields or schema",
         )
-    change_list = _change_list(value.get("change_list"))
-    paths = _paths(value.get("declared_scope_paths"))
-    intent = value.get("intent")
-    if not isinstance(intent, dict) or set(intent) != {
-        "promise",
-        "non_goal",
-        "failure_case",
-    }:
+
+
+def _normalized_record_intent(value: object) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != _INTENT_FIELDS:
         raise IntentLedgerError(
             "INTENT_LEDGER_INVALID",
             "Intent Ledger intent must contain exactly promise, non_goal, and failure_case",
         )
-    normalized_intent = {
-        field: _text(intent.get(field), f"intent.{field}")
+    normalized = {
+        field: _text(value.get(field), f"intent.{field}")
         for field in ("promise", "non_goal", "failure_case")
     }
-    _clear_intent(normalized_intent["promise"], "intent.promise")
-    _clear_intent(
-        normalized_intent["non_goal"], "intent.non_goal", require_action=False
-    )
-    _clear_intent(normalized_intent["failure_case"], "intent.failure_case")
-    confirmed_by = _text(
-        value.get("confirmed_by"), "confirmed_by", maximum=MAX_CHANGE_LIST_NAME
-    )
-    captured_at = value.get("captured_at")
-    if not isinstance(captured_at, str):
+    _clear_intent(normalized["promise"], "intent.promise")
+    _clear_intent(normalized["non_goal"], "intent.non_goal", require_action=False)
+    _clear_intent(normalized["failure_case"], "intent.failure_case")
+    return normalized
+
+
+def _captured_timestamp(value: object) -> str:
+    if not isinstance(value, str):
         raise IntentLedgerError(
             "INTENT_LEDGER_INVALID", "captured_at must be an ISO-8601 timestamp"
         )
     try:
-        parsed = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise IntentLedgerError(
             "INTENT_LEDGER_INVALID", "captured_at must be an ISO-8601 timestamp"
@@ -243,6 +233,10 @@ def validate_intent_ledger_record(value: object) -> dict[str, Any]:
         raise IntentLedgerError(
             "INTENT_LEDGER_INVALID", "captured_at must include a timezone"
         )
+    return parsed.isoformat()
+
+
+def _validate_record_authority(value: dict[str, Any]) -> None:
     if value.get("authority") != CAPTURE_AUTHORITY:
         raise IntentLedgerError(
             "INTENT_LEDGER_INVALID", "Intent Ledger authority boundary changed"
@@ -256,15 +250,9 @@ def validate_intent_ledger_record(value: object) -> dict[str, Any]:
         raise IntentLedgerError(
             "INTENT_LEDGER_INVALID", "Intent Ledger scope limits are invalid"
         )
-    core = _record_core(
-        change_list=change_list,
-        changed_paths=paths,
-        confirmed_by=confirmed_by,
-        promise=normalized_intent["promise"],
-        non_goal=normalized_intent["non_goal"],
-        failure_case=normalized_intent["failure_case"],
-        captured_at=parsed.isoformat(),
-    )
+
+
+def _validated_record_digest(value: dict[str, Any], core: dict[str, Any]) -> str:
     digest = value.get("ledger_sha256")
     if (
         not isinstance(digest, str)
@@ -275,6 +263,34 @@ def validate_intent_ledger_record(value: object) -> dict[str, Any]:
             "INTENT_LEDGER_INVALID",
             "Intent Ledger SHA-256 does not match its declared facts",
         )
+    return digest
+
+
+def validate_intent_ledger_record(value: object) -> dict[str, Any]:
+    """Validate one canonical record before projection; no filesystem access occurs."""
+    if not isinstance(value, dict):
+        raise IntentLedgerError(
+            "INTENT_LEDGER_INVALID", "Intent Ledger record must be a JSON object"
+        )
+    _validate_record_envelope(value)
+    change_list = _change_list(value.get("change_list"))
+    paths = _paths(value.get("declared_scope_paths"))
+    normalized_intent = _normalized_record_intent(value.get("intent"))
+    confirmed_by = _text(
+        value.get("confirmed_by"), "confirmed_by", maximum=MAX_CHANGE_LIST_NAME
+    )
+    captured_at = _captured_timestamp(value.get("captured_at"))
+    _validate_record_authority(value)
+    core = _record_core(
+        change_list=change_list,
+        changed_paths=paths,
+        confirmed_by=confirmed_by,
+        promise=normalized_intent["promise"],
+        non_goal=normalized_intent["non_goal"],
+        failure_case=normalized_intent["failure_case"],
+        captured_at=captured_at,
+    )
+    digest = _validated_record_digest(value, core)
     return {**core, "ledger_sha256": digest}
 
 

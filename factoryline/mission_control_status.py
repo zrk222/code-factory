@@ -121,6 +121,30 @@ def mission_control_status(root: Path) -> dict[str, Any]:
     """Summarize local evidence gates without creating a hidden control path."""
     workspace = Path(root).resolve()
     evidence = _collect_evidence(workspace)
+    blockers = _mission_control_blockers(evidence)
+    blocked = any(blockers.values())
+    human_required = _human_review_required(evidence, blocked)
+    state = _mission_control_state(blocked, human_required)
+    intake_state = evidence["intake_parameters"].get("state")
+    return {
+        "schema": SCHEMA,
+        "marker": "MISSION_CONTROL_READ_ONLY",
+        "state": state,
+        "human_control_plane": _human_control_plane(
+            state, human_required, blockers, intake_state, blocked
+        ),
+        "agent_control_plane": _agent_control_plane(),
+        "blockers": blockers,
+        "evidence": evidence,
+        "authority": dict(AUTHORITY),
+        "claim_boundary": (
+            "This is a read-only coordination view. It does not create approval, execute an agent, "
+            "repair code, alter Git, or perform any provider action."
+        ),
+    }
+
+
+def _mission_control_blockers(evidence: dict[str, Any]) -> dict[str, int]:
     oracle = evidence["oracle"]
     operations = evidence["operations"]
     lifecycle = evidence["lifecycle"]
@@ -156,81 +180,99 @@ def mission_control_status(root: Path) -> dict[str, Any]:
             intake_parameters.get("state") == "REVIEW_REQUIRED"
         ),
     }
-    blocked = any(blockers.values())
-    human_required = (
+    return blockers
+
+
+def _human_review_required(evidence: dict[str, Any], blocked: bool) -> bool:
+    lifecycle = evidence["lifecycle"]
+    repairs = evidence["repair_loops"]
+    intake_parameters = evidence["intake_parameters"]
+    return (
         blocked
         or evidence["deep_audit"].get("state") == "READY_FOR_HUMAN_REVIEW"
-        or runtime.get("state") == "READY_FOR_HUMAN_REVIEW"
+        or evidence["runtime_assurance"].get("state") == "READY_FOR_HUMAN_REVIEW"
         or int(lifecycle.get("review_required_count", 0)) > 0
         or int(repairs.get("receipt_count", 0)) > 0
         or intake_parameters.get("state") == "REVIEW_REQUIRED"
     )
-    state = (
+
+
+def _mission_control_state(blocked: bool, human_required: bool) -> str:
+    return (
         MissionControlState.BLOCKED.value
         if blocked
         else MissionControlState.REVIEW_REQUIRED.value
         if human_required
         else MissionControlState.EVIDENCE_MISSING.value
     )
+
+
+def _human_control_plane(
+    state: str,
+    human_required: bool,
+    blockers: dict[str, int],
+    intake_state: Any,
+    blocked: bool,
+) -> dict[str, Any]:
     return {
-        "schema": SCHEMA,
-        "marker": "MISSION_CONTROL_READ_ONLY",
         "state": state,
-        "human_control_plane": {
-            "state": state,
-            "review_required": human_required,
-            "can_approve_here": False,
-            "next_action": (
-                "repair_release_workflow"
-                if blockers["release_workflow_blocked"]
-                else "repair_supply_chain_attestation"
-                if blockers["supply_chain_blocked"]
-                else "repair_context_efficiency_packet"
-                if blockers["context_efficiency_blocked"]
-                else "repair_intake_parameters"
-                if blockers["intake_parameters_blocked"]
-                else "review_intake_parameters"
-                if intake_parameters.get("state") == "REVIEW_REQUIRED"
-                else "repair_evidence_chain"
-                if blocked
-                else "named_human_review"
-                if human_required
-                else "seal_intent_and_collect_local_evidence"
-            ),
-        },
-        "agent_control_plane": {
-            "state": MissionControlState.SUPERVISED_ONLY.value,
-            "may_read": [
-                "sealed_oracle_contract",
-                "operations_receipt",
-                "session_trace",
-                "repair_loop_packet",
-                "runtime_assurance_receipt",
-                "deep_audit_receipt",
-                "release_workflow_integrity",
-                "supply_chain_receipt",
-                "context_efficiency_packet",
-                "intake_parameters_envelope",
-            ],
-            "may_not": [
-                "alter_intent",
-                "weaken_threshold",
-                "authorize_repair",
-                "merge",
-                "publish",
-                "deploy",
-                "access_credentials",
-            ],
-            "handoff_rule": (
-                "A connected agent must present local hash-bound facts; missing or changed facts "
-                "return to named human review."
-            ),
-        },
-        "blockers": blockers,
-        "evidence": evidence,
-        "authority": dict(AUTHORITY),
-        "claim_boundary": (
-            "This is a read-only coordination view. It does not create approval, execute an agent, "
-            "repair code, alter Git, or perform any provider action."
+        "review_required": human_required,
+        "can_approve_here": False,
+        "next_action": _human_next_action(
+            blockers, intake_state, blocked, human_required
+        ),
+    }
+
+
+def _human_next_action(
+    blockers: dict[str, int],
+    intake_state: Any,
+    blocked: bool,
+    human_required: bool,
+) -> str:
+    if blockers["release_workflow_blocked"]:
+        return "repair_release_workflow"
+    if blockers["supply_chain_blocked"]:
+        return "repair_supply_chain_attestation"
+    if blockers["context_efficiency_blocked"]:
+        return "repair_context_efficiency_packet"
+    if blockers["intake_parameters_blocked"]:
+        return "repair_intake_parameters"
+    if intake_state == "REVIEW_REQUIRED":
+        return "review_intake_parameters"
+    if blocked:
+        return "repair_evidence_chain"
+    if human_required:
+        return "named_human_review"
+    return "seal_intent_and_collect_local_evidence"
+
+
+def _agent_control_plane() -> dict[str, Any]:
+    return {
+        "state": MissionControlState.SUPERVISED_ONLY.value,
+        "may_read": [
+            "sealed_oracle_contract",
+            "operations_receipt",
+            "session_trace",
+            "repair_loop_packet",
+            "runtime_assurance_receipt",
+            "deep_audit_receipt",
+            "release_workflow_integrity",
+            "supply_chain_receipt",
+            "context_efficiency_packet",
+            "intake_parameters_envelope",
+        ],
+        "may_not": [
+            "alter_intent",
+            "weaken_threshold",
+            "authorize_repair",
+            "merge",
+            "publish",
+            "deploy",
+            "access_credentials",
+        ],
+        "handoff_rule": (
+            "A connected agent must present local hash-bound facts; missing or changed facts "
+            "return to named human review."
         ),
     }

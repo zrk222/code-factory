@@ -343,23 +343,9 @@ def _signal_queue(root: Path) -> tuple[Path, dict[str, Any]]:
     return path, value
 
 
-def capture_signal(
-    root: Path,
-    *,
-    source: str,
-    title: str,
-    body: str,
-    authorization: str,
-    severity: int = 3,
-    external_id: str | None = None,
-    url: str | None = None,
-    observed_at: str | None = None,
-    hypotheses: Iterable[str] = (),
-    requirements: Iterable[str] = (),
-    outcomes: Iterable[str] = (),
-    acceptance: Iterable[str] = (),
-) -> dict[str, Any]:
-    """Capture supplied channel content without polling or treating it as instructions."""
+def _validate_capture_input(
+    source: str, title: str, body: str, authorization: str, severity: int
+) -> None:
     if source not in SOURCES:
         raise SignalLoopError(
             "SOURCE_INVALID", f"source must be one of {', '.join(sorted(SOURCES))}"
@@ -383,6 +369,26 @@ def capture_signal(
         raise SignalLoopError(
             "SEVERITY_INVALID", "severity must be an integer from 1 through 5"
         )
+
+
+def capture_signal(
+    root: Path,
+    *,
+    source: str,
+    title: str,
+    body: str,
+    authorization: str,
+    severity: int = 3,
+    external_id: str | None = None,
+    url: str | None = None,
+    observed_at: str | None = None,
+    hypotheses: Iterable[str] = (),
+    requirements: Iterable[str] = (),
+    outcomes: Iterable[str] = (),
+    acceptance: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Capture supplied channel content without polling or treating it as instructions."""
+    _validate_capture_input(source, title, body, authorization, severity)
     content = {
         "source": source,
         "external_id": external_id,

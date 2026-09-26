@@ -92,9 +92,9 @@ def _git(root: Path, *args: str) -> str:
     return run.stdout.strip()
 
 
-def _manifest(root: Path, source: Path) -> dict[str, Any]:
+def _manifest_relative_path(root: Path, source: Path) -> str:
     try:
-        relative = (
+        return (
             source.resolve().relative_to(root).as_posix()
             if source.is_absolute()
             else _path(str(source), "manifest")
@@ -103,15 +103,21 @@ def _manifest(root: Path, source: Path) -> dict[str, Any]:
         raise RepoCoordinationError(
             "E_REPO_COORDINATION_PATH", "manifest escapes the workspace"
         ) from exc
+
+
+def _load_manifest_json(root: Path, relative: str) -> object:
     path = (root / relative).resolve()
     try:
         path.relative_to(root)
-        value = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (ValueError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RepoCoordinationError(
             "E_REPO_COORDINATION_SCHEMA",
             "manifest must be readable UTF-8 JSON below the workspace",
         ) from exc
+
+
+def _manifest_object(value: object) -> dict[str, Any]:
     if (
         not isinstance(value, dict)
         or set(value) != {"schema", "id", "repositories"}
@@ -121,66 +127,98 @@ def _manifest(root: Path, source: Path) -> dict[str, Any]:
             "E_REPO_COORDINATION_SCHEMA",
             f"manifest must use exact {MANIFEST_SCHEMA} fields",
         )
+    return value
+
+
+def _manifest_id(value: dict[str, Any]) -> str:
     if not isinstance(value["id"], str) or not _ID.fullmatch(value["id"]):
         raise RepoCoordinationError(
             "E_REPO_COORDINATION_SCHEMA", "id must be a safe identifier"
         )
+    return value["id"]
+
+
+def _manifest_rows(value: dict[str, Any]) -> list[object]:
     rows = value["repositories"]
     if not isinstance(rows, list) or not 1 <= len(rows) <= 32:
         raise RepoCoordinationError(
             "E_REPO_COORDINATION_SCHEMA", "repositories must contain 1-32 entries"
         )
-    result = []
-    ids = set()
-    for index, row in enumerate(rows):
-        if not isinstance(row, dict) or set(row) != {
-            "id",
-            "path",
-            "expected_head_sha",
-            "depends_on",
-        }:
-            raise RepoCoordinationError(
-                "E_REPO_COORDINATION_SCHEMA",
-                f"repositories[{index}] fields must be exact",
-            )
-        identifier = row["id"]
-        if (
-            not isinstance(identifier, str)
-            or not _ID.fullmatch(identifier)
-            or identifier in ids
-        ):
-            raise RepoCoordinationError(
-                "E_REPO_COORDINATION_SCHEMA", "repository ids must be safe and unique"
-            )
-        ids.add(identifier)
-        expected = row["expected_head_sha"]
-        if not isinstance(expected, str) or not _SHA.fullmatch(expected):
-            raise RepoCoordinationError(
-                "E_REPO_COORDINATION_SCHEMA",
-                "expected_head_sha must be a 40-64 lowercase Git hash",
-            )
-        dependencies = row["depends_on"]
-        if (
-            not isinstance(dependencies, list)
-            or len(dependencies) > 31
-            or any(
-                not isinstance(item, str) or not _ID.fullmatch(item)
-                for item in dependencies
-            )
-            or len(set(dependencies)) != len(dependencies)
-        ):
-            raise RepoCoordinationError(
-                "E_REPO_COORDINATION_SCHEMA", "depends_on must contain unique safe ids"
-            )
-        result.append(
-            {
-                "id": identifier,
-                "path": _path(row["path"], "repository.path"),
-                "expected_head_sha": expected,
-                "depends_on": sorted(dependencies),
-            }
+    return rows
+
+
+def _manifest_row_shape(row: object, index: int) -> dict[str, Any]:
+    if not isinstance(row, dict) or set(row) != {
+        "id",
+        "path",
+        "expected_head_sha",
+        "depends_on",
+    }:
+        raise RepoCoordinationError(
+            "E_REPO_COORDINATION_SCHEMA",
+            f"repositories[{index}] fields must be exact",
         )
-    for row in result:
+    return row
+
+
+def _repository_id(row: dict[str, Any], ids: set[str]) -> str:
+    identifier = row["id"]
+    if (
+        not isinstance(identifier, str)
+        or not _ID.fullmatch(identifier)
+        or identifier in ids
+    ):
+        raise RepoCoordinationError(
+            "E_REPO_COORDINATION_SCHEMA", "repository ids must be safe and unique"
+        )
+    return identifier
+
+
+def _expected_repository_head(row: dict[str, Any]) -> str:
+    expected = row["expected_head_sha"]
+    if not isinstance(expected, str) or not _SHA.fullmatch(expected):
+        raise RepoCoordinationError(
+            "E_REPO_COORDINATION_SCHEMA",
+            "expected_head_sha must be a 40-64 lowercase Git hash",
+        )
+    return expected
+
+
+def _repository_dependencies(row: dict[str, Any]) -> list[str]:
+    dependencies = row["depends_on"]
+    if (
+        not isinstance(dependencies, list)
+        or len(dependencies) > 31
+        or any(
+            not isinstance(item, str) or not _ID.fullmatch(item)
+            for item in dependencies
+        )
+        or len(set(dependencies)) != len(dependencies)
+    ):
+        raise RepoCoordinationError(
+            "E_REPO_COORDINATION_SCHEMA", "depends_on must contain unique safe ids"
+        )
+    return sorted(dependencies)
+
+
+def _manifest_repository(row: object, index: int, ids: set[str]) -> dict[str, Any]:
+    values = _manifest_row_shape(row, index)
+    identifier = _repository_id(values, ids)
+    ids.add(identifier)
+    expected = _expected_repository_head(values)
+    dependencies = _repository_dependencies(values)
+    return {
+        "id": identifier,
+        "path": _path(values["path"], "repository.path"),
+        "expected_head_sha": expected,
+        "depends_on": dependencies,
+    }
+
+
+def _validate_manifest_dependencies(
+    repositories: list[dict[str, Any]], ids: set[str]
+) -> None:
+    for row in repositories:
         if row["id"] in row["depends_on"] or any(
             dependency not in ids for dependency in row["depends_on"]
         ):
@@ -188,8 +226,21 @@ def _manifest(root: Path, source: Path) -> dict[str, Any]:
                 "E_REPO_COORDINATION_SCHEMA",
                 "dependencies must name a different declared repository",
             )
+
+
+def _manifest(root: Path, source: Path) -> dict[str, Any]:
+    relative = _manifest_relative_path(root, source)
+    value = _load_manifest_json(root, relative)
+    values = _manifest_object(value)
+    identifier = _manifest_id(values)
+    rows = _manifest_rows(values)
+    result = []
+    ids = set()
+    for index, row in enumerate(rows):
+        result.append(_manifest_repository(row, index, ids))
+    _validate_manifest_dependencies(result, ids)
     return {
-        "id": value["id"],
+        "id": identifier,
         "path": relative,
         "repositories": sorted(result, key=lambda item: item["id"]),
     }

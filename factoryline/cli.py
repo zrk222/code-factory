@@ -19,7 +19,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 from functools import lru_cache
 from importlib import import_module
 
@@ -29,27 +29,6 @@ def _lazy_import(module: str, symbol: str):
     """Load command implementation symbols only when their command runs."""
     relative = f".{module}" if module else "."
     return getattr(import_module(relative, __package__), symbol)
-
-
-if TYPE_CHECKING:
-    from .capability_evidence import CapabilityEvidenceError, audit_capability_evidence
-    from .full_stack_ux_harness import (
-        FullStackUXHarnessError,
-        verify_quality_harness,
-        write_quality_harness_template,
-    )
-    from .full_stack_ux_spec import (
-        FullStackUXSpecError,
-        validate_ux_harness_spec,
-        verify_ux_harness_spec_receipt,
-    )
-    from .review_audits import (
-        ReviewAuditError,
-        audit_code,
-        audit_fingerprint,
-        security_evals,
-        security_scan,
-    )
 
 
 def _cli_command(name: str) -> str:
@@ -64,10 +43,9 @@ def _emit_version(as_json: bool) -> int:
     return emit_version(as_json)
 
 
-def _workflow_canary(module) -> dict:
-    """Run a bounded, non-mutating behavior check rather than trusting --help."""
+def _canary_version(module) -> tuple[dict | None, dict | None]:
     if not module.installed:
-        return {"ok": False, "reason": "cli not installed"}
+        return None, {"ok": False, "reason": "cli not installed"}
     try:
         version = subprocess.run(
             [_cli_command(module.cli), "--version", "--json"],
@@ -76,13 +54,17 @@ def _workflow_canary(module) -> dict:
             timeout=20,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        return {"ok": False, "reason": type(error).__name__}
+        return None, {"ok": False, "reason": type(error).__name__}
     if version.returncode != 0:
-        return {"ok": False, "reason": "version command failed"}
+        return None, {"ok": False, "reason": "version command failed"}
     try:
         payload = json.loads(version.stdout)
     except json.JSONDecodeError:
-        return {"ok": False, "reason": "version command was not JSON"}
+        return None, {"ok": False, "reason": "version command was not JSON"}
+    return payload, None
+
+
+def _canary_provenance(payload: dict) -> tuple[bool | None, dict | None]:
     required = {
         "package",
         "version",
@@ -93,88 +75,110 @@ def _workflow_canary(module) -> dict:
     }
     missing = sorted(name for name in required if not payload.get(name))
     if missing:
-        return {
+        return None, {
             "ok": False,
             "provenance_ok": False,
             "reason": f"incomplete provenance: {', '.join(missing)}",
             "provenance": payload,
         }
-    provenance_ok = bool(
-        payload.get("identity_complete") and payload.get("source_commit")
+    complete = bool(payload.get("identity_complete") and payload.get("source_commit"))
+    return complete, None
+
+
+def _run_feature_canary(
+    module, root: Path, payload: dict, provenance_ok: bool, suffix: str
+) -> dict | None:
+    source, args = (
+        (
+            "/** Recall a verified value. */\nexport function recall(id) { return id; }\n",
+            "[id]",
+        )
+        if suffix == "mjs"
+        else (
+            "/** Recall a verified value. */\nexport function recall(id: string): string { return id; }\n",
+            '["id: string"]',
+        )
     )
-    if module.name != "forgeline":
-        return {"ok": True, "provenance_ok": provenance_ok, "provenance": payload}
+    target = root / "services" / f"canary.{suffix}"
+    target.write_text(source, encoding="utf-8")
+    (root / "services" / f"canary.test.{suffix}").write_text(
+        f"import {{ recall }} from './canary.{suffix}';\nrecall('ok');\n",
+        encoding="utf-8",
+    )
+    ssat = root / f"canary-{suffix}.ssat.yaml"
+    ssat.write_text(
+        f"name: canary-{suffix}\nmodules:\n  - name: canary\n    path: services/canary.{suffix}\n    functions:\n      - name: recall\n        args: {args}\n        returns: string\ndependencies: []\ninvariants: []\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            _cli_command(module.cli),
+            "qa",
+            f"canary-{suffix}",
+            "--ssat",
+            str(ssat),
+            "--root",
+            str(root),
+            "--strict",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        return {
+            "ok": False,
+            "provenance_ok": provenance_ok,
+            "reason": f"{suffix} feature canary failed",
+            "output": (result.stdout + result.stderr)[-1000:],
+            "provenance": payload,
+        }
+    try:
+        qa = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {
+            "ok": False,
+            "provenance_ok": provenance_ok,
+            "reason": f"{suffix} feature canary was not JSON",
+            "provenance": payload,
+        }
+    if qa.get("metrics", {}).get("coverage_assessment") != "measured":
+        return {
+            "ok": False,
+            "provenance_ok": provenance_ok,
+            "reason": f"{suffix} symbols were not measured",
+            "provenance": payload,
+        }
+    return None
+
+
+def _forgeline_feature_canaries(module, payload: dict, provenance_ok: bool) -> dict:
     with tempfile.TemporaryDirectory(prefix="factory-doctor-") as directory:
         root = Path(directory)
         (root / "services").mkdir()
-        for suffix, source, args in (
-            (
-                "mjs",
-                "/** Recall a verified value. */\nexport function recall(id) { return id; }\n",
-                "[id]",
-            ),
-            (
-                "ts",
-                "/** Recall a verified value. */\nexport function recall(id: string): string { return id; }\n",
-                '["id: string"]',
-            ),
-        ):
-            target = root / "services" / f"canary.{suffix}"
-            target.write_text(source, encoding="utf-8")
-            (root / "services" / f"canary.test.{suffix}").write_text(
-                f"import {{ recall }} from './canary.{suffix}';\nrecall('ok');\n",
-                encoding="utf-8",
-            )
-            ssat = root / f"canary-{suffix}.ssat.yaml"
-            ssat.write_text(
-                f"name: canary-{suffix}\nmodules:\n  - name: canary\n    path: services/canary.{suffix}\n    functions:\n      - name: recall\n        args: {args}\n        returns: string\ndependencies: []\ninvariants: []\n",
-                encoding="utf-8",
-            )
-            result = subprocess.run(
-                [
-                    _cli_command(module.cli),
-                    "qa",
-                    f"canary-{suffix}",
-                    "--ssat",
-                    str(ssat),
-                    "--root",
-                    str(root),
-                    "--strict",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode != 0:
-                return {
-                    "ok": False,
-                    "provenance_ok": provenance_ok,
-                    "reason": f"{suffix} feature canary failed",
-                    "output": (result.stdout + result.stderr)[-1000:],
-                    "provenance": payload,
-                }
-            try:
-                qa = json.loads(result.stdout)
-            except json.JSONDecodeError:
-                return {
-                    "ok": False,
-                    "provenance_ok": provenance_ok,
-                    "reason": f"{suffix} feature canary was not JSON",
-                    "provenance": payload,
-                }
-            if qa.get("metrics", {}).get("coverage_assessment") != "measured":
-                return {
-                    "ok": False,
-                    "provenance_ok": provenance_ok,
-                    "reason": f"{suffix} symbols were not measured",
-                    "provenance": payload,
-                }
+        for suffix in ("mjs", "ts"):
+            failure = _run_feature_canary(module, root, payload, provenance_ok, suffix)
+            if failure is not None:
+                return failure
     return {
         "ok": True,
         "provenance_ok": provenance_ok,
         "provenance": payload,
         "canary": "mjs-and-ts-feature-qa",
     }
+
+
+def _workflow_canary(module) -> dict:
+    """Run a bounded, non-mutating behavior check rather than trusting --help."""
+    payload, error = _canary_version(module)
+    if error is not None:
+        return error
+    provenance_ok, error = _canary_provenance(payload)
+    if error is not None:
+        return error
+    if module.name != "forgeline":
+        return {"ok": True, "provenance_ok": provenance_ok, "provenance": payload}
+    return _forgeline_feature_canaries(module, payload, provenance_ok)
 
 
 def _home(root: Path = Path("."), as_json: bool = False) -> int:
@@ -229,7 +233,7 @@ def _home(root: Path = Path("."), as_json: bool = False) -> int:
     return 0
 
 
-def _doctor(strict: bool = False, as_json: bool = False) -> int:
+def _doctor_checks() -> tuple[list, list]:
     mods = _lazy_import("assembly", "detect")()
     checks = []
     for module in mods:
@@ -243,16 +247,12 @@ def _doctor(strict: bool = False, as_json: bool = False) -> int:
             )
             help_text = proc.stdout + proc.stderr
         workflow = _workflow_canary(module)
-        provenance = (
-            workflow.get("provenance")
-            if isinstance(workflow.get("provenance"), dict)
-            else {}
-        )
-        reported_version = (
-            provenance.get("version")
-            if isinstance(provenance.get("version"), str)
-            else None
-        )
+        provenance = workflow.get("provenance")
+        if not isinstance(provenance, dict):
+            provenance = {}
+        reported_version = provenance.get("version")
+        if not isinstance(reported_version, str):
+            reported_version = None
         check = _lazy_import("protocol", "compatibility")(
             module.name,
             _lazy_import("contract", "MODULES")[module.name],
@@ -260,62 +260,64 @@ def _doctor(strict: bool = False, as_json: bool = False) -> int:
             reported_version=reported_version,
         )
         checks.append((check, workflow))
-    if as_json:
-        installation_ok = all(item[0].ok for item in checks)
-        workflow_ok = all(item[1]["ok"] for item in checks)
-        provenance_ok = all(item[1].get("provenance_ok", False) for item in checks)
-        print(
-            json.dumps(
-                {
-                    "ok": installation_ok and workflow_ok and provenance_ok,
-                    "installation_ok": installation_ok,
-                    "workflow_ok": workflow_ok,
-                    "provenance_ok": provenance_ok,
-                    "modules": [
-                        check.__dict__
-                        | {"installation_ok": check.ok, "workflow": workflow}
-                        for check, workflow in checks
-                    ],
-                },
-                indent=2,
-            )
-        )
-        return (
-            0
-            if (installation_ok and workflow_ok and provenance_ok) or not strict
-            else 1
-        )
+    return mods, checks
 
-    print("factoryline doctor - Lego assembly compatibility\n" + "=" * 48)
-    for module, (check, workflow) in zip(mods, checks):
-        mark = (
-            "compatible"
-            if check.ok and workflow["ok"] and workflow.get("provenance_ok")
-            else "provenance-incomplete"
-            if check.ok and workflow["ok"]
-            else "missing"
-            if not check.installed
-            else "workflow-failed"
-            if check.ok
-            else "incompatible"
+
+def _doctor_json(checks: list, strict: bool) -> int:
+    installation_ok = all(item[0].ok for item in checks)
+    workflow_ok = all(item[1]["ok"] for item in checks)
+    provenance_ok = all(item[1].get("provenance_ok", False) for item in checks)
+    print(
+        json.dumps(
+            {
+                "ok": installation_ok and workflow_ok and provenance_ok,
+                "installation_ok": installation_ok,
+                "workflow_ok": workflow_ok,
+                "provenance_ok": provenance_ok,
+                "modules": [
+                    check.__dict__ | {"installation_ok": check.ok, "workflow": workflow}
+                    for check, workflow in checks
+                ],
+            },
+            indent=2,
         )
-        version = check.version or "not installed"
-        print(
-            f"  [{mark:>12}]  {module.name:<10} {version:<10} requires >= {check.minimum}"
-        )
-        if check.missing_commands:
-            print(
-                f"                 missing commands: {', '.join(check.missing_commands)}"
-            )
-        if not workflow["ok"]:
-            print(f"                 workflow: {workflow['reason']}")
-        elif not workflow.get("provenance_ok"):
-            print("                 provenance: source identity is incomplete")
-    failed = [
+    )
+    return 0 if (installation_ok and workflow_ok and provenance_ok) or not strict else 1
+
+
+def _doctor_module_mark(module: Any, check: Any, workflow: dict) -> str:
+    if check.ok and workflow["ok"] and workflow.get("provenance_ok"):
+        return "compatible"
+    if check.ok and workflow["ok"]:
+        return "provenance-incomplete"
+    if not check.installed:
+        return "missing"
+    return "workflow-failed" if check.ok else "incompatible"
+
+
+def _print_doctor_module(module: Any, check: Any, workflow: dict) -> None:
+    mark = _doctor_module_mark(module, check, workflow)
+    version = check.version or "not installed"
+    print(
+        f"  [{mark:>12}]  {module.name:<10} {version:<10} requires >= {check.minimum}"
+    )
+    if check.missing_commands:
+        print(f"                 missing commands: {', '.join(check.missing_commands)}")
+    if not workflow["ok"]:
+        print(f"                 workflow: {workflow['reason']}")
+    elif not workflow.get("provenance_ok"):
+        print("                 provenance: source identity is incomplete")
+
+
+def _doctor_failures(checks: list) -> list:
+    return [
         check
         for check, workflow in checks
         if not check.ok or not workflow["ok"] or not workflow.get("provenance_ok")
     ]
+
+
+def _print_doctor_summary(failed: list) -> None:
     if failed:
         print("\nInstall or upgrade incompatible bricks:")
         for item in failed:
@@ -324,7 +326,22 @@ def _doctor(strict: bool = False, as_json: bool = False) -> int:
         print(
             "\nAll four companion bricks plus FactoryLine satisfy the five-brick factory protocol."
         )
+
+
+def _doctor_text(mods: list, checks: list, strict: bool) -> int:
+    print("factoryline doctor - Lego assembly compatibility\n" + "=" * 48)
+    for module, (check, workflow) in zip(mods, checks):
+        _print_doctor_module(module, check, workflow)
+    failed = _doctor_failures(checks)
+    _print_doctor_summary(failed)
     return 1 if strict and failed else 0
+
+
+def _doctor(strict: bool = False, as_json: bool = False) -> int:
+    mods, checks = _doctor_checks()
+    if as_json:
+        return _doctor_json(checks, strict)
+    return _doctor_text(mods, checks, strict)
 
 
 def _plan() -> int:
@@ -354,21 +371,7 @@ def __getattr__(name: str):
     raise AttributeError(name)
 
 
-def _dispatch(argv=None) -> int:
-    """Parse FactoryLine commands, dispatch one handler, and return its process code."""
-    argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] == "--version":
-        return _emit_version("--json" in argv)
-    # A captured command may legitimately contain flags that belong to the
-    # child process.  Pull it out before argparse interprets those flags as
-    # FactoryLine options.  ``--`` remains optional for a natural CLI shape.
-    capture_command = None
-    if argv[:1] == ["meter"] and "--capture" in argv:
-        capture_index = argv.index("--capture")
-        capture_command = argv[capture_index + 1 :]
-        if capture_command[:1] == ["--"]:
-            capture_command = capture_command[1:]
-        argv = argv[:capture_index]
+def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="factory",
         description="Snap SpecLine, ForgeLine, HSF and Prestige into one assembly line.",
@@ -2115,8 +2118,64 @@ def _dispatch(argv=None) -> int:
 
     version = sub.add_parser("version", help="show package provenance")
     version.add_argument("--json", action="store_true")
-    a = p.parse_args(argv)
+    return p
 
+
+_UNHANDLED = object()
+
+
+def _dispatch_routes(a, capture_command, p):
+    for handler in (
+        _dispatch_route_group_01,
+        _dispatch_route_group_02,
+        _dispatch_route_group_03,
+        _dispatch_route_group_04,
+        _dispatch_route_group_05,
+        _dispatch_route_group_06,
+        _dispatch_route_group_07,
+        _dispatch_route_group_08,
+        _dispatch_route_group_09,
+        _dispatch_route_group_10,
+        _dispatch_route_group_11,
+        _dispatch_route_group_12,
+        _dispatch_route_group_13,
+        _dispatch_route_group_14,
+        _dispatch_route_group_15,
+        _dispatch_route_group_16,
+        _dispatch_route_group_17,
+        _dispatch_route_group_18,
+        _dispatch_route_group_19,
+        _dispatch_route_group_20,
+        _dispatch_route_group_21,
+        _dispatch_route_group_22,
+        _dispatch_route_group_23,
+        _dispatch_route_group_24,
+        _dispatch_route_group_25,
+        _dispatch_route_group_26,
+        _dispatch_route_group_27,
+        _dispatch_route_group_28,
+        _dispatch_route_group_29,
+        _dispatch_route_group_30,
+        _dispatch_route_group_31,
+        _dispatch_route_group_32,
+        _dispatch_route_group_33,
+        _dispatch_route_group_34,
+        _dispatch_route_group_35,
+        _dispatch_route_group_36,
+        _dispatch_route_group_37,
+        _dispatch_route_group_38,
+        _dispatch_route_group_39,
+        _dispatch_route_group_40,
+        _dispatch_route_group_41,
+        _dispatch_route_group_42,
+    ):
+        result = handler(a, capture_command, p)
+        if result is not _UNHANDLED:
+            return result
+    return _UNHANDLED
+
+
+def _dispatch_route_group_01(a, capture_command, p):
     if a.cmd == "ops":
         from .cli_ops import run as run_ops
 
@@ -2142,6 +2201,10 @@ def _dispatch(argv=None) -> int:
         from .cli_grill import run as run_grill
 
         return run_grill(a)
+    return _UNHANDLED
+
+
+def _dispatch_route_group_02(a, capture_command, p):
     if a.cmd == "verifier":
         from .cli_verifier import run as run_verifier
 
@@ -2150,6 +2213,10 @@ def _dispatch(argv=None) -> int:
         from .cli_telemetry import run as run_telemetry
 
         return run_telemetry(a)
+    return _UNHANDLED
+
+
+def _dispatch_route_group_03(a, capture_command, p):
     if a.cmd in {
         "prd",
         "intake",
@@ -2166,488 +2233,15 @@ def _dispatch(argv=None) -> int:
         "provider",
         "agent",
     }:
-        try:
-            if a.cmd == "prd" and a.prd_cmd == "grill":
-                result = _lazy_import("prd_grill", "grill_prd")(
-                    Path(a.prd),
-                    Path(a.root),
-                    a.mode,
-                    a.project,
-                    Path(a.out) if a.out else None,
-                    a.confirm,
-                    a.force,
-                )
-            elif a.cmd == "prd" and a.prd_cmd == "verify":
-                result = _lazy_import("prd_grill", "verify_prd_grill")(Path(a.receipt))
-            elif a.cmd == "intake" and a.intake_cmd == "grill":
-                result = _lazy_import("intake_grill", "grill_intake")(
-                    Path(a.prd),
-                    Path(a.root),
-                    a.project,
-                    Path(a.out) if a.out else None,
-                    a.force,
-                )
-            elif a.cmd == "intake" and a.intake_cmd == "confirm":
-                result = _lazy_import("intake_grill", "confirm_intake")(
-                    Path(a.root),
-                    Path(a.intake),
-                    a.framework,
-                    a.intent,
-                    a.acceptance,
-                    a.external_effects,
-                    a.approved_by,
-                    a.rationale,
-                    a.re_evaluate_when,
-                    Path(a.out) if a.out else None,
-                    a.force,
-                )
-            elif a.cmd == "intake" and a.intake_cmd == "verify":
-                result = (
-                    _lazy_import("intake_grill", "verify_intake_confirmation")(
-                        Path(a.root), Path(a.receipt)
-                    )
-                    if a.confirmation
-                    else _lazy_import("intake_grill", "verify_intake_grill")(
-                        Path(a.root), Path(a.receipt)
-                    )
-                )
-            elif (
-                a.cmd == "intake"
-                and a.intake_cmd in {"parameters", "params"}
-                and a.intake_parameters_cmd == "seal"
-            ):
-                result = _lazy_import("intake_parameters", "seal_intake_parameters")(
-                    Path(a.root),
-                    Path(a.request),
-                    Path(a.out) if a.out else None,
-                    a.force,
-                )
-            elif (
-                a.cmd == "intake"
-                and a.intake_cmd in {"parameters", "params"}
-                and a.intake_parameters_cmd == "verify"
-            ):
-                result = _lazy_import("intake_parameters", "verify_intake_parameters")(
-                    Path(a.root), Path(a.receipt)
-                )
-            elif a.cmd == "intake" and a.intake_cmd in {"parameters", "params"}:
-                result = _lazy_import("intake_parameters", "intake_parameters_status")(
-                    Path(a.root)
-                )
-            elif a.cmd == "intake":
-                result = _lazy_import("intake_grill", "intake_status")(
-                    Path(a.root), Path(a.prd) if a.prd else None
-                )
-            elif a.cmd == "agent":
-                from .cli_agent import run as run_agent
+        from .cli_domain import _UNHANDLED as domain_unhandled
+        from .cli_domain import run_workflow_family
 
-                result = run_agent(a)
-            elif a.cmd == "langgraph" and a.langgraph_cmd == "doctor":
-                result = _lazy_import("mission_graph", "langgraph_doctor")()
-            elif a.cmd == "langgraph" and a.langgraph_cmd == "init":
-                result = _lazy_import("mission_graph", "init_mission_graph")(
-                    Path(a.mission), Path(a.root)
-                )
-            elif a.cmd == "langgraph" and a.langgraph_cmd == "status":
-                result = _lazy_import("mission_graph", "mission_graph_status")(
-                    Path(a.mission), Path(a.root)
-                )
-            elif a.cmd == "langgraph" and a.langgraph_cmd == "history":
-                result = _lazy_import("mission_graph", "mission_graph_history")(
-                    Path(a.mission), Path(a.root)
-                )
-            elif a.cmd == "langgraph" and a.langgraph_cmd == "verify":
-                result = _lazy_import("mission_graph", "verify_mission_graph")(
-                    Path(a.mission), Path(a.root)
-                )
-            elif a.cmd == "langgraph" and a.langgraph_cmd == "export":
-                result = _lazy_import("mission_graph", "export_mission_graph")(
-                    Path(a.mission), Path(a.root)
-                )
-            elif a.cmd == "langgraph" and a.langgraph_cmd == "replay-verify":
-                result = _lazy_import(
-                    "langgraph_assurance", "verify_langgraph_resume_parity"
-                )(
-                    Path(a.root),
-                    a.reference,
-                    a.resumed,
-                    out=a.out,
-                )
-            elif a.cmd == "langgraph":
-                payload = (
-                    json.loads(Path(a.payload).read_text(encoding="utf-8"))
-                    if a.payload
-                    else {}
-                )
-                if not isinstance(payload, dict):
-                    raise _lazy_import("mission_graph", "MissionGraphError")(
-                        "MISSION_GRAPH_EVENT_INVALID",
-                        "payload file must contain one JSON object",
-                    )
-                result = _lazy_import("mission_graph", "apply_mission_event")(
-                    Path(a.mission),
-                    Path(a.root),
-                    a.event,
-                    a.actor,
-                    a.role,
-                    a.idempotency_key,
-                    Path(a.receipt),
-                    payload,
-                )
-            elif a.cmd == "provider" and a.provider_cmd == "init":
-                config = json.loads(Path(a.config).read_text(encoding="utf-8"))
-                if not isinstance(config, dict):
-                    raise _lazy_import("provider_router", "ProviderRouterError")(
-                        "PROVIDER_POLICY_INVALID", "config must contain one JSON object"
-                    )
-                result = _lazy_import("provider_router", "create_provider_policy")(
-                    Path(a.root),
-                    config.get("owner", ""),
-                    config.get("providers", []),
-                    config.get("allowed_ides", []),
-                    config.get("max_cost_usd"),
-                    config.get("quality_floor", "balanced"),
-                    config.get("routing_bias", 50),
-                    a.force,
-                )
-            elif a.cmd == "provider" and a.provider_cmd == "verify":
-                result = _lazy_import("provider_router", "verify_provider_policy")(
-                    Path(a.policy)
-                )
-            elif a.cmd == "provider" and a.provider_cmd == "doctor":
-                result = _lazy_import("provider_router", "provider_doctor")(
-                    Path(a.policy)
-                )
-            elif a.cmd == "provider":
-                result = _lazy_import("provider_router", "route_provider")(
-                    Path(a.policy),
-                    Path(a.mission),
-                    Path(a.root),
-                    a.ide,
-                    a.risk,
-                    a.preferred_provider,
-                    a.preferred_model,
-                    a.cache_provider,
-                    a.cache_model,
-                    a.projected_tokens,
-                    a.projected_cost_usd,
-                    a.latency_budget_ms,
-                    a.required_capability,
-                    a.privacy_class,
-                    a.output_contract,
-                )
-            elif a.cmd == "migration" and a.migration_cmd == "assess":
-                result = _lazy_import("migration", "assess_migration_readiness")(
-                    Path(a.manifest), Path(a.root), force=a.force
-                )
-            elif a.cmd == "migration":
-                result = _lazy_import("migration", "verify_migration_readiness")(
-                    Path(a.receipt)
-                )
-            elif a.cmd == "context" and a.context_cmd == "build":
-                result = _lazy_import("migration", "build_repository_context")(
-                    Path(a.root), force=a.force
-                )
-            elif a.cmd == "context":
-                result = _lazy_import("migration", "verify_repository_context")(
-                    Path(a.receipt)
-                )
-            elif a.cmd == "product" and a.product_cmd == "compile":
-                result = _lazy_import("product_missions", "compile_product_prd")(
-                    Path(a.prd),
-                    Path(a.root),
-                    a.project,
-                    a.force,
-                    Path(a.intake) if a.intake else None,
-                )
-            elif a.cmd == "product" and a.product_cmd == "verify":
-                result = _lazy_import("product_missions", "verify_product_graph")(
-                    Path(a.graph)
-                )
-            elif a.cmd == "product":
-                result = _lazy_import("product_missions", "plan_value_slices")(
-                    Path(a.graph), Path(a.root), a.max_requirements, a.force
-                )
-            elif (
-                a.cmd == "mission"
-                and a.mission_cmd == "proof-delta"
-                and a.mission_delta_cmd == "create"
-            ):
-                result = _lazy_import("proof_delta", "create_proof_delta")(
-                    Path(a.root),
-                    Path(a.mission),
-                    Path(a.prior_candidate),
-                    Path(a.repair_candidate),
-                    Path(a.failure),
-                    a.criterion,
-                    Path(a.out),
-                )
-            elif (
-                a.cmd == "mission"
-                and a.mission_cmd == "proof-delta"
-                and a.mission_delta_cmd == "verify"
-            ):
-                result = _lazy_import("proof_delta", "verify_proof_delta")(
-                    Path(a.root), Path(a.receipt)
-                )
-            elif a.cmd == "mission" and a.mission_cmd == "proof-delta":
-                result = _lazy_import("proof_delta", "proof_delta_status")(
-                    Path(a.root), a.mission_id
-                )
-            elif a.cmd == "mission" and a.mission_cmd == "create":
-                result = _lazy_import("product_missions", "create_mission")(
-                    Path(a.slices),
-                    a.slice_id,
-                    Path(a.root),
-                    a.owner,
-                    a.executor,
-                    a.force,
-                    a.max_iterations,
-                    a.max_wall_seconds,
-                    a.max_tokens,
-                    a.max_cost_usd,
-                    Path(a.readiness) if a.readiness else None,
-                    a.require_intake,
-                )
-            elif a.cmd == "mission" and a.mission_cmd == "verify":
-                result = _lazy_import("product_missions", "verify_mission")(
-                    Path(a.mission)
-                )
-            elif a.cmd == "mission" and a.mission_cmd == "close":
-                result = _lazy_import("product_missions", "close_mission")(
-                    Path(a.mission), Path(a.validation), Path(a.root), force=a.force
-                )
-            elif a.cmd == "mission" and a.mission_cmd == "verify-completion":
-                result = _lazy_import("product_missions", "verify_mission_completion")(
-                    Path(a.completion)
-                )
-            elif a.cmd == "mission":
-                result = _lazy_import("product_missions", "decide_mission")(
-                    Path(a.mission),
-                    Path(a.root),
-                    owner=a.owner,
-                    decision=a.decision,
-                    rationale=a.rationale,
-                    force=a.force,
-                )
-            elif a.cmd == "opinion" and a.opinion_cmd == "init":
-                result = _lazy_import("signal_loop", "init_opinion_dock")(
-                    Path(a.root), a.owner, force=a.force
-                )
-            elif a.cmd == "opinion" and a.opinion_cmd == "verify":
-                result = _lazy_import("signal_loop", "verify_opinion_dock")(
-                    Path(a.dock)
-                )
-            elif a.cmd == "opinion":
-                rule = json.loads(Path(a.rule_file).read_text(encoding="utf-8"))
-                result = _lazy_import("signal_loop", "correct_opinion_dock")(
-                    Path(a.dock), a.owner, rule, a.rationale
-                )
-            elif a.cmd == "signal" and a.signal_cmd == "capture":
-                body = (
-                    a.body
-                    if a.body is not None
-                    else Path(a.body_file).read_text(encoding="utf-8")
-                )
-                result = _lazy_import("signal_loop", "capture_signal")(
-                    Path(a.root),
-                    source=a.source,
-                    title=a.title,
-                    body=body,
-                    authorization=a.authorization,
-                    severity=a.severity,
-                    external_id=a.external_id,
-                    url=a.url,
-                    observed_at=a.observed_at,
-                    hypotheses=a.hypothesis,
-                    requirements=a.requirement,
-                    outcomes=a.outcome,
-                    acceptance=a.acceptance,
-                )
-            elif a.cmd == "signal" and a.signal_cmd == "triage":
-                result = _lazy_import("signal_loop", "triage_signal")(
-                    Path(a.signal), Path(a.dock), Path(a.root), force=a.force
-                )
-            elif a.cmd == "signal" and a.signal_cmd == "decide":
-                result = _lazy_import("signal_loop", "decide_triage")(
-                    Path(a.triage),
-                    Path(a.root),
-                    owner=a.owner,
-                    decision=a.decision,
-                    rationale=a.rationale,
-                    override_block=a.override_block,
-                    force=a.force,
-                )
-            elif a.cmd == "signal" and a.signal_cmd == "feedback":
-                result = _lazy_import("signal_loop", "capture_outcome_feedback")(
-                    Path(a.root),
-                    mission_id=a.mission_id,
-                    metric=a.metric,
-                    observed=a.observed,
-                    target=a.target,
-                    evidence_path=Path(a.evidence),
-                )
-            elif a.cmd == "signal":
-                result = _lazy_import("signal_loop", "promote_signal")(
-                    Path(a.decision), Path(a.root), project=a.project, force=a.force
-                )
-            elif a.cmd == "learning" and a.learning_cmd == "init":
-                milestones = json.loads(Path(a.milestones).read_text(encoding="utf-8"))
-                result = _lazy_import("learning_loop", "init_learning_task")(
-                    Path(a.root),
-                    a.task_id,
-                    a.owner,
-                    a.objective,
-                    milestones,
-                    force=a.force,
-                )
-            elif a.cmd == "learning" and a.learning_cmd == "packet":
-                result = _lazy_import("learning_loop", "build_fresh_worker_packet")(
-                    Path(a.task), a.milestone, a.worker, force=a.force
-                )
-            elif a.cmd == "learning" and a.learning_cmd == "propose":
-                instructions = json.loads(
-                    Path(a.instructions).read_text(encoding="utf-8")
-                )
-                result = _lazy_import("learning_loop", "propose_instruction_candidate")(
-                    Path(a.task),
-                    Path(a.root),
-                    a.milestone,
-                    a.worker,
-                    Path(a.outcome),
-                    instructions,
-                    force=a.force,
-                )
-            elif a.cmd == "learning" and a.learning_cmd == "validate":
-                results = json.loads(Path(a.results).read_text(encoding="utf-8"))
-                result = _lazy_import(
-                    "learning_loop", "validate_instruction_candidate"
-                )(
-                    Path(a.candidate),
-                    Path(a.root),
-                    a.validator,
-                    results,
-                    force=a.force,
-                )
-            elif a.cmd == "learning" and a.learning_cmd == "experiment":
-                space = json.loads(Path(a.space).read_text(encoding="utf-8"))
-                result = _lazy_import("learning_loop", "plan_learning_experiment")(
-                    Path(a.task),
-                    space,
-                    variant=a.variant,
-                    max_resource=a.max_resource,
-                    grace_period=a.grace_period,
-                    reduction_factor=a.reduction_factor,
-                    max_concurrent=a.max_concurrent,
-                    samples=a.samples,
-                    force=a.force,
-                )
-            elif a.cmd == "learning":
-                result = _lazy_import("learning_loop", "promote_instruction_candidate")(
-                    Path(a.validation), a.owner, force=a.force
-                )
-            elif a.cmd == "pr":
-                result = _lazy_import("product_missions", "draft_pr")(
-                    Path(a.mission),
-                    Path(a.root),
-                    [Path(item) for item in a.evidence],
-                    a.force,
-                )
-            elif a.outcome_cmd == "record":
-                result = _lazy_import("product_missions", "record_outcome")(
-                    Path(a.mission),
-                    Path(a.root),
-                    a.metric,
-                    a.value,
-                    a.target,
-                    a.evidence_class,
-                    a.source,
-                    a.notes,
-                )
-            else:
-                result = _lazy_import("product_missions", "outcome_summary")(
-                    Path(a.root), a.mission_id
-                )
-        except (
-            _lazy_import("product_missions", "ProductMissionError"),
-            _lazy_import("intake_parameters", "IntakeParametersError"),
-            _lazy_import("signal_loop", "SignalLoopError"),
-            _lazy_import("learning_loop", "LearningLoopError"),
-            _lazy_import("migration", "MigrationError"),
-            _lazy_import("mission_graph", "MissionGraphError"),
-            _lazy_import("proof_delta", "ProofDeltaError"),
-            _lazy_import("provider_router", "ProviderRouterError"),
-            _lazy_import("agent_contract", "AgentContractError"),
-            _lazy_import("agentic_control", "AgenticControlError"),
-            _lazy_import("langgraph_assurance", "LangGraphAssuranceError"),
-        ) as exc:
-            print(
-                json.dumps(
-                    {
-                        "schema": "factory.workflow_error.v1",
-                        "status": "failed",
-                        "code": exc.code,
-                        "message": exc.message,
-                        "marker": getattr(exc, "marker", "WORKFLOW_REJECTED"),
-                        "failure": getattr(
-                            exc,
-                            "guidance",
-                            _lazy_import("failure_guidance", "explain_failure")(
-                                exc.code, exc.message
-                            ),
-                        ),
-                    },
-                    indent=2,
-                ),
-                file=sys.stderr,
-            )
-            return 1
-        except (OSError, json.JSONDecodeError) as exc:
-            print(
-                json.dumps(
-                    {
-                        "schema": "factory.workflow_error.v1",
-                        "status": "failed",
-                        "code": "E_INPUT",
-                        "message": str(exc),
-                        "failure": _lazy_import("failure_guidance", "explain_failure")(
-                            "E_INPUT", str(exc)
-                        ),
-                    },
-                    indent=2,
-                ),
-                file=sys.stderr,
-            )
-            return 1
-        if a.cmd == "langgraph" and a.langgraph_cmd == "replay-verify" and a.mermaid:
-            print(result["mermaid"])
-        else:
-            print(json.dumps(result, indent=2, sort_keys=True))
-        if (
-            (a.cmd == "product" and a.product_cmd == "verify")
-            or (a.cmd == "mission" and a.mission_cmd in {"verify", "verify-completion"})
-            or (
-                a.cmd == "mission"
-                and a.mission_cmd == "proof-delta"
-                and a.mission_delta_cmd == "verify"
-            )
-            or (a.cmd == "opinion" and a.opinion_cmd == "verify")
-            or (a.cmd == "langgraph" and a.langgraph_cmd == "verify")
-            or (a.cmd == "langgraph" and a.langgraph_cmd == "replay-verify")
-            or (a.cmd == "provider" and a.provider_cmd == "verify")
-            or (
-                a.cmd == "agent"
-                and a.agent_cmd
-                in {"contract", "attestation", "route-audit", "card-audit"}
-            )
-            or (
-                a.cmd == "intake"
-                and a.intake_cmd in {"parameters", "params"}
-                and a.intake_parameters_cmd == "verify"
-            )
-        ):
-            return 0 if result.get("valid", result.get("verdict") == "VERIFIED") else 1
-        return 0
+        result = run_workflow_family(a)
+        return _UNHANDLED if result is domain_unhandled else result
+    return _UNHANDLED
+
+
+def _dispatch_route_group_04(a, capture_command, p):
     if a.cmd in {"targets", "create", "mvp"}:
         from .cli_targets import run as run_targets
 
@@ -2660,30 +2254,53 @@ def _dispatch(argv=None) -> int:
         from .cli_authority import run as run_authority
 
         return run_authority(a)
+    return _UNHANDLED
+
+
+def _atomic_action(a, root: Path) -> dict:
+    if a.atomic_cmd == "import":
+        return _lazy_import("atomic_proof_adapter", "import_atomic_run")(
+            root, Path(a.envelope), Path(a.out) if a.out else None
+        )
+    if a.atomic_cmd == "verify":
+        return _lazy_import("atomic_proof_adapter", "verify_atomic_receipt")(
+            root, Path(a.receipt)
+        )
+    if a.atomic_cmd == "template":
+        return _lazy_import("atomic_proof_adapter", "atomic_envelope_template")()
+    return _lazy_import("atomic_proof_adapter", "atomic_proof_projection")(root)
+
+
+def _atomic_exit_code(result: dict) -> int:
+    valid = result.get("ok", True) and int(result.get("invalid_count", 0)) == 0
+    return 0 if valid else 1
+
+
+def _atomic_error(exc: Exception) -> tuple[dict, int]:
+    return {
+        "schema": "factory.atomic-proof-adapter.error.v1",
+        "marker": "ATOMIC_INPUT_REJECTED",
+        "code": getattr(exc, "code", "E_ATOMIC_ENVELOPE_SCHEMA"),
+        "message": str(exc),
+    }, 2
+
+
+def _emit_atomic_result(a, result: dict, code: int) -> None:
+    if a.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(
+            json.dumps(result, indent=2, sort_keys=True),
+            file=sys.stderr if code else sys.stdout,
+        )
+
+
+def _dispatch_route_group_05(a, capture_command, p):
     if a.cmd == "atomic":
         root = Path(getattr(a, "root", ".")).resolve()
         try:
-            if a.atomic_cmd == "import":
-                result = _lazy_import("atomic_proof_adapter", "import_atomic_run")(
-                    root, Path(a.envelope), Path(a.out) if a.out else None
-                )
-            elif a.atomic_cmd == "verify":
-                result = _lazy_import("atomic_proof_adapter", "verify_atomic_receipt")(
-                    root, Path(a.receipt)
-                )
-            elif a.atomic_cmd == "template":
-                result = _lazy_import(
-                    "atomic_proof_adapter", "atomic_envelope_template"
-                )()
-            else:
-                result = _lazy_import(
-                    "atomic_proof_adapter", "atomic_proof_projection"
-                )(root)
-            code = (
-                0
-                if result.get("ok", True) and int(result.get("invalid_count", 0)) == 0
-                else 1
-            )
+            result = _atomic_action(a, root)
+            code = _atomic_exit_code(result)
         except (
             _lazy_import("atomic_proof_adapter", "AtomicProofAdapterError"),
             OSError,
@@ -2691,49 +2308,52 @@ def _dispatch(argv=None) -> int:
             json.JSONDecodeError,
             ValueError,
         ) as exc:
-            result = {
-                "schema": "factory.atomic-proof-adapter.error.v1",
-                "marker": "ATOMIC_INPUT_REJECTED",
-                "code": getattr(exc, "code", "E_ATOMIC_ENVELOPE_SCHEMA"),
-                "message": str(exc),
-            }
-            code = 2
-        if a.json:
-            print(json.dumps(result, indent=2, sort_keys=True))
-        else:
-            print(
-                json.dumps(result, indent=2, sort_keys=True),
-                file=sys.stderr if code else sys.stdout,
-            )
+            result, code = _atomic_error(exc)
+        _emit_atomic_result(a, result, code)
         return code
+    return _UNHANDLED
+
+
+def _agent_bridge_action(a, root: Path) -> dict:
+    if a.agent_bridge_cmd == "import":
+        return _lazy_import("agent_proof_bridge", "import_agent_proof")(
+            root, Path(a.envelope), Path(a.out) if a.out else None
+        )
+    if a.agent_bridge_cmd == "verify":
+        return _lazy_import("agent_proof_bridge", "verify_agent_proof")(
+            root, Path(a.receipt)
+        )
+    if a.agent_bridge_cmd == "template":
+        return _lazy_import("agent_proof_bridge", "provider_template")(a.provider)
+    if a.agent_bridge_cmd == "mission":
+        return _lazy_import("agent_proof_bridge", "agent_handoff_brief")(
+            root, Path(a.contract)
+        )
+    return _lazy_import("agent_proof_bridge", "agent_proof_projection")(root)
+
+
+def _agent_bridge_error(exc: Exception) -> tuple[dict, int]:
+    return {
+        "schema": "factory.agent-proof-bridge.error.v1",
+        "marker": "AGENT_PROOF_INPUT_REJECTED",
+        "code": getattr(exc, "code", "E_AGENT_BRIDGE_SCHEMA"),
+        "message": str(exc),
+    }, 2
+
+
+def _emit_agent_bridge_result(result: dict, code: int) -> None:
+    print(
+        json.dumps(result, indent=2, sort_keys=True),
+        file=sys.stderr if code else sys.stdout,
+    )
+
+
+def _dispatch_route_group_06(a, capture_command, p):
     if a.cmd == "agent-bridge":
         root = Path(getattr(a, "root", ".")).resolve()
         try:
-            if a.agent_bridge_cmd == "import":
-                result = _lazy_import("agent_proof_bridge", "import_agent_proof")(
-                    root, Path(a.envelope), Path(a.out) if a.out else None
-                )
-            elif a.agent_bridge_cmd == "verify":
-                result = _lazy_import("agent_proof_bridge", "verify_agent_proof")(
-                    root, Path(a.receipt)
-                )
-            elif a.agent_bridge_cmd == "template":
-                result = _lazy_import("agent_proof_bridge", "provider_template")(
-                    a.provider
-                )
-            elif a.agent_bridge_cmd == "mission":
-                result = _lazy_import("agent_proof_bridge", "agent_handoff_brief")(
-                    root, Path(a.contract)
-                )
-            else:
-                result = _lazy_import("agent_proof_bridge", "agent_proof_projection")(
-                    root
-                )
-            code = (
-                0
-                if result.get("ok", True) and int(result.get("invalid_count", 0)) == 0
-                else 1
-            )
+            result = _agent_bridge_action(a, root)
+            code = _atomic_exit_code(result)
         except (
             _lazy_import("agent_proof_bridge", "AgentProofBridgeError"),
             OSError,
@@ -2741,20 +2361,13 @@ def _dispatch(argv=None) -> int:
             json.JSONDecodeError,
             ValueError,
         ) as exc:
-            result = {
-                "schema": "factory.agent-proof-bridge.error.v1",
-                "marker": "AGENT_PROOF_INPUT_REJECTED",
-                "code": getattr(exc, "code", "E_AGENT_BRIDGE_SCHEMA"),
-                "message": str(exc),
-            }
-            code = 2
-        print(
-            json.dumps(result, indent=2, sort_keys=True)
-            if a.json
-            else json.dumps(result, indent=2, sort_keys=True),
-            file=sys.stderr if code else sys.stdout,
-        )
+            result, code = _agent_bridge_error(exc)
+        _emit_agent_bridge_result(result, code)
         return code
+    return _UNHANDLED
+
+
+def _dispatch_route_group_07(a, capture_command, p):
     if a.cmd in {
         "operations-control",
         "lifecycle",
@@ -2791,167 +2404,20 @@ def _dispatch(argv=None) -> int:
         return run_audit(a)
     # Kept unreachable for one release so old tracebacks retain their source
     # shape while the bounded command module becomes the only audit dispatch.
-    if False and a.cmd == "audit":
-        try:
-            if a.tool == "evals":
-                result = security_evals()
-                if a.json:
-                    print(json.dumps(result, indent=2, sort_keys=True))
-                else:
-                    print(
-                        f"Security evals: {result['state']} ({result['mutation_coverage']['caught']}/{result['mutation_coverage']['attempted']} adversarial rules caught)"
-                    )
-                    print(result["action_summary"])
-                return 0 if result["state"] == "PASS" else 2
-            if a.tool == "security":
-                result = security_scan(Path(a.root))
-                if a.json:
-                    print(json.dumps(result, indent=2, sort_keys=True))
-                else:
-                    print(
-                        f"Security audit: {result['state']} ({len(result['findings'])} findings)"
-                    )
-                    for item in result["findings"]:
-                        print(
-                            f"{item['severity']} {item['code']}: {item['path']}:{item['line']} — {item['message']}"
-                        )
-                    print(result["action_summary"])
-                return (
-                    0
-                    if result["state"] == "CLEAN"
-                    else 2
-                    if result["state"] == "BLOCKED"
-                    else 1
-                )
-            if a.tool == "fingerprint":
-                result = audit_fingerprint(
-                    Path(a.root),
-                    a.policy,
-                    baseline_path=Path(a.baseline) if a.baseline else None,
-                    out_path=Path(a.out) if a.out else None,
-                )
-                if a.json:
-                    print(json.dumps(result, indent=2, sort_keys=True))
-                else:
-                    print(
-                        f"Audit fingerprint: {result['state']} ({result['fingerprint_sha256']})"
-                    )
-                    print(result.get("action_summary", ""))
-                return (
-                    0
-                    if result["state"] == "CURRENT"
-                    else 1
-                    if result["state"] == "DRIFT_DETECTED"
-                    else 2
-                )
-            result = audit_code(Path(a.root), a.policy, tool=a.tool)
-        except ReviewAuditError as exc:
-            print(
-                json.dumps({"state": "invalid", "code": exc.code, "message": str(exc)}),
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            print(json.dumps(result, indent=2))
-        else:
-            print(f"Code audit: {result['state']} ({len(result['findings'])} findings)")
-            for item in result["findings"]:
-                print(
-                    f"{item['code']}: {item['target']['path']}:{item['target']['line']} — {item['message']}"
-                )
-            for item in result["results"]:
-                for gap in item.get("analysis_gaps", []):
-                    print(f"INCOMPLETE {item['rule_id']}: {gap}")
-            if result["unconfigured_tools"]:
-                print(f"Unconfigured: {', '.join(result['unconfigured_tools'])}")
-            print("Analysis only; declared policy is not authenticated approval.")
-        return 0 if result["state"] == "no_structural_findings" else 2
+
     if a.cmd == "evidence-audit":
         from .cli_quality import run_evidence
 
         return run_evidence(a)
-    if False and a.cmd == "evidence-audit":
-        try:
-            result = audit_capability_evidence(
-                Path(a.root), Path(a.manifest), execute=a.execute
-            )
-        except (CapabilityEvidenceError, OSError, json.JSONDecodeError) as exc:
-            error = {
-                "marker": "CAPABILITY_EVIDENCE_BLOCKED",
-                "code": getattr(exc, "code", "E_CAPABILITY_EVIDENCE_INPUT"),
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2) if a.json else f"{error['code']}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        print(
-            json.dumps(result, indent=2)
-            if a.json
-            else f"{result['marker']}: {len(result['claims'])} claims; {result['execution_count']} executions.\n{result['claim_boundary']}"
-        )
-        return 0 if result["ok"] else 1
+
     if a.cmd == "quality-harness":
         from .cli_quality import run_quality
 
         return run_quality(a)
-    if False and a.cmd == "quality-harness":
-        try:
-            if a.quality_cmd == "template":
-                result = write_quality_harness_template(
-                    Path(a.root), Path(a.out), ui_in_scope=a.ui
-                )
-                code = 0
-            elif a.quality_cmd == "spec-validate":
-                result = validate_ux_harness_spec(
-                    Path(a.root), Path(a.spec), out=Path(a.out) if a.out else None
-                )
-                code = 0 if result["ok"] else 1
-            elif a.quality_cmd == "spec-verify":
-                result = verify_ux_harness_spec_receipt(Path(a.root), Path(a.receipt))
-                code = 0 if result["ok"] else 1
-            else:
-                result = verify_quality_harness(
-                    Path(a.root),
-                    Path(a.manifest),
-                    out=Path(a.out) if a.out else None,
-                )
-                code = (
-                    0 if result["decision"] == "READY_FOR_HUMAN_RELEASE_REVIEW" else 1
-                )
-        except (
-            FullStackUXHarnessError,
-            FullStackUXSpecError,
-            OSError,
-            json.JSONDecodeError,
-            ValueError,
-        ) as exc:
-            result = {
-                "schema": "factory.full-stack-ux-harness.error.v1",
-                "decision": "REJECTED",
-                "code": getattr(exc, "code", "E_UX_INPUT"),
-                "message": getattr(exc, "message", str(exc)),
-                "authority": "none",
-            }
-            code = 2
-        if a.json:
-            print(
-                json.dumps(result, indent=2, sort_keys=True),
-                file=sys.stderr if code == 2 else sys.stdout,
-            )
-        elif code == 0:
-            print(f"Quality harness: {result.get('decision', 'TEMPLATE_WRITTEN')}")
-            if result.get("path"):
-                print(f"Receipt: {result['path']}")
-            elif result.get("source"):
-                print(f"Source: {result['source']}")
-        else:
-            print(
-                json.dumps(result, indent=2, sort_keys=True),
-                file=sys.stderr if code == 2 else sys.stdout,
-            )
-        return code
+    return _UNHANDLED
+
+
+def _dispatch_route_group_08(a, capture_command, p):
     if a.cmd == "guide":
         try:
             result = _lazy_import("ide_playbook", "adoption_guide")(a.journey)
@@ -2993,6 +2459,10 @@ def _dispatch(argv=None) -> int:
         from .cli_first_lap import run as run_first_lap
 
         return run_first_lap(a)
+    return _UNHANDLED
+
+
+def _dispatch_route_group_09(a, capture_command, p):
     if a.cmd == "agui":
         workspace = Path(a.root).resolve()
         try:
@@ -3071,6 +2541,10 @@ def _dispatch(argv=None) -> int:
                 "boundary : demo only; your project was not assessed and nothing was uploaded"
             )
         return 0
+    return _UNHANDLED
+
+
+def _dispatch_route_group_10(a, capture_command, p):
     if a.cmd in {"proof-card", "adoption", "counterexample", "guardrail", "resilience"}:
         from .cli_review_surfaces import run as run_review_surface
 
@@ -3083,205 +2557,245 @@ def _dispatch(argv=None) -> int:
         from .cli_wrap import run as run_wrap
 
         return run_wrap(a)
-    if a.cmd == "gauntlet":
-        workspace = Path(getattr(a, "root", ".")).resolve()
+    return _UNHANDLED
 
-        def workspace_path(value: str | None) -> Path | None:
-            if value is None:
-                return None
-            candidate = Path(value)
-            return candidate if candidate.is_absolute() else workspace / candidate
 
-        try:
-            if a.gauntlet_cmd == "draft":
-                payload = _lazy_import("gauntlet_draft", "draft_gauntlet")(
-                    workspace, a.source_id
-                )
-                code = 0
-            elif a.gauntlet_cmd == "plan":
-                proposal = _lazy_import("gauntlet", "compile_gauntlet_proposal")(
-                    workspace, workspace_path(a.source)
-                )
-                path = _lazy_import("gauntlet", "write_gauntlet_proposal")(
-                    workspace, proposal, workspace_path(a.out)
-                )
-                payload: dict[str, object] = {"proposal": proposal, "path": str(path)}
-                code = 0
-            elif a.gauntlet_cmd == "admit":
-                payload = _lazy_import("gauntlet", "admit_gauntlet")(
-                    workspace,
-                    workspace_path(a.proposal),
-                    approved_by=a.approved_by,
-                    rationale=a.rationale,
-                    confirmation=a.confirmation,
-                    valid_for_minutes=a.valid_for_minutes,
-                    out=workspace_path(a.out),
-                )
-                code = 0
-            elif a.gauntlet_cmd == "run":
-                payload = _lazy_import("gauntlet", "run_gauntlet")(
-                    workspace,
-                    workspace_path(a.proposal),
-                    workspace_path(a.admission),
-                    workspace_path(a.out),
-                )
-                code = 0 if payload["card"]["ok"] else 1
-            elif a.gauntlet_cmd == "status":
-                payload = _lazy_import("gauntlet", "gauntlet_status")(
-                    workspace, a.source_id
-                )
-                code = 0
-            elif a.gauntlet_card_cmd == "verify":
-                payload = _lazy_import("gauntlet", "verify_survival_card")(
-                    Path(a.card),
-                    envelope_path=Path(a.envelope) if a.envelope else None,
-                    trust_root_path=Path(a.trust_root) if a.trust_root else None,
-                )
-                code = 0
-            elif a.gauntlet_card_cmd == "challenge":
-                payload = _lazy_import("gauntlet", "challenge_survival_card")(
-                    Path(a.card)
-                )
-                code = 0 if payload["ok"] else 1
-            else:
-                payload = _lazy_import("gauntlet", "seal_survival_card")(
-                    Path(a.card),
-                    private_key_path=Path(a.private_key),
-                    keyid=a.keyid,
-                    identity=a.identity,
-                    issuer=a.issuer,
-                    tenant_id=a.tenant,
-                    out=Path(a.out),
-                )
-                code = 0
-        except (
-            _lazy_import("gauntlet", "GauntletError"),
-            _lazy_import("gauntlet_draft", "GauntletDraftError"),
-        ) as exc:
-            error = {
-                "schema": "factory.gauntlet.error.v1",
-                "marker": exc.code,
-                "code": exc.code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if getattr(a, "json", False)
-                else f"gauntlet failed: {exc.code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if getattr(a, "json", False):
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            print("factory gauntlet")
-            print("=" * 44)
-            if a.gauntlet_cmd == "draft":
-                print(f"draft    : {payload['path']}")
-                print(f"promises : {payload['draft']['facts']['cli_entrypoint_count']}")
-                print(
-                    "authority: static DRAFT only; no command execution, approval, admission, repair, or release"
-                )
-            elif a.gauntlet_cmd == "run":
-                card = payload["card"]
-                print(f"result   : {card['marker']}")
-                print(
-                    f"survived : {card['summary']['survived_count']}/{card['summary']['case_count']}"
-                )
-                print(f"unproven : {card['summary']['unproven_promise_count']}")
-                print(
-                    "authority: exact admitted local E2E execution only; no repair, merge, release, deployment, signing, credentials, or connectors"
-                )
-                print(f"card     : {payload['path']}")
-            elif a.gauntlet_cmd == "plan":
-                print(f"proposal : {payload['path']}")
-                print("authority: planning only; no command execution or admission")
-            elif a.gauntlet_cmd == "admit":
-                print(f"admission: {payload['path']}")
-                print(f"expires  : {payload['expires_at']}")
-                print("authority: named one-batch admission only; no command executed")
-            elif a.gauntlet_cmd == "status":
-                print(f"cards    : {len(payload['entries'])}")
-                print("authority: local read-only status")
-            else:
-                print(f"marker   : {payload['marker']}")
-                print(
-                    "authority: offline card validation or explicit optional signing only"
-                )
-        return code
-    if a.cmd == "team-pilot":
-        try:
-            if a.team_pilot_cmd == "verify":
-                receipt = json.loads(Path(a.receipt).read_text(encoding="utf-8"))
-                result = _lazy_import("team_pilot", "validate_team_pilot_receipt")(
-                    receipt
-                )
-                if a.json:
-                    print(json.dumps({"receipt": result}, indent=2, sort_keys=True))
-                else:
-                    print("factory team-pilot verify")
-                    print("=" * 44)
-                    print(f"pilot    : {result['manifest']['pilot_id']}")
-                    print(f"result   : {result['marker']}")
-                    print(
-                        "authority: owner review only; no contract, payment, entitlement, Marketplace, deployment, or service activation"
-                    )
-                return 0
-            workspace = Path(a.root).resolve()
-            manifest = Path(a.manifest)
-            if not manifest.is_absolute():
-                manifest = workspace / manifest
-            receipt = _lazy_import("team_pilot", "evaluate_team_pilot_readiness")(
-                workspace, manifest
-            )
-            artifacts = (
-                _lazy_import("team_pilot", "write_team_pilot_artifacts")(
-                    receipt, Path(a.out_dir)
-                )
-                if a.out_dir
-                else None
-            )
-        except (
-            _lazy_import("team_pilot", "TeamPilotError"),
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            OSError,
-        ) as exc:
-            code = (
-                exc.code
-                if isinstance(exc, _lazy_import("team_pilot", "TeamPilotError"))
-                else "E_TEAM_PILOT_RECEIPT_INVALID"
-            )
-            error = {
-                "schema": "factory.team-pilot.error.v1",
-                "marker": code,
-                "code": code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if a.json
-                else f"team pilot failed: {code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            output = {"receipt": receipt}
-            if artifacts:
-                output["artifacts"] = artifacts
-            print(json.dumps(output, indent=2, sort_keys=True))
-        else:
-            print("factory team-pilot readiness")
-            print("=" * 44)
-            print(f"pilot    : {receipt['manifest']['pilot_id']}")
-            print(f"partners : {receipt['manifest']['partner_count']} / 3")
-            print(f"result   : {receipt['marker']}")
-            print(
-                "authority: owner review only; no contract, payment, entitlement, Marketplace, deployment, or service activation"
-            )
-            if artifacts:
-                print(f"packet   : {artifacts['paths']['markdown']}")
-        return 0
+def _gauntlet_workspace_path(workspace: Path, value: str | None) -> Path | None:
+    if value is None:
+        return None
+    candidate = Path(value)
+    return candidate if candidate.is_absolute() else workspace / candidate
+
+
+def _gauntlet_card_action(a) -> tuple[dict, int]:
+    if a.gauntlet_card_cmd == "verify":
+        payload = _lazy_import("gauntlet", "verify_survival_card")(
+            Path(a.card),
+            envelope_path=Path(a.envelope) if a.envelope else None,
+            trust_root_path=Path(a.trust_root) if a.trust_root else None,
+        )
+        return payload, 0
+    if a.gauntlet_card_cmd == "challenge":
+        payload = _lazy_import("gauntlet", "challenge_survival_card")(Path(a.card))
+        return payload, 0 if payload["ok"] else 1
+    payload = _lazy_import("gauntlet", "seal_survival_card")(
+        Path(a.card),
+        private_key_path=Path(a.private_key),
+        keyid=a.keyid,
+        identity=a.identity,
+        issuer=a.issuer,
+        tenant_id=a.tenant,
+        out=Path(a.out),
+    )
+    return payload, 0
+
+
+def _gauntlet_action(a, workspace: Path) -> tuple[dict, int]:
+    if a.gauntlet_cmd == "draft":
+        payload = _lazy_import("gauntlet_draft", "draft_gauntlet")(
+            workspace, a.source_id
+        )
+        return payload, 0
+    if a.gauntlet_cmd == "plan":
+        proposal = _lazy_import("gauntlet", "compile_gauntlet_proposal")(
+            workspace, _gauntlet_workspace_path(workspace, a.source)
+        )
+        written = _lazy_import("gauntlet", "write_gauntlet_proposal")(
+            workspace, proposal, _gauntlet_workspace_path(workspace, a.out)
+        )
+        return {"proposal": proposal, "path": str(written)}, 0
+    if a.gauntlet_cmd == "admit":
+        payload = _lazy_import("gauntlet", "admit_gauntlet")(
+            workspace,
+            _gauntlet_workspace_path(workspace, a.proposal),
+            approved_by=a.approved_by,
+            rationale=a.rationale,
+            confirmation=a.confirmation,
+            valid_for_minutes=a.valid_for_minutes,
+            out=_gauntlet_workspace_path(workspace, a.out),
+        )
+        return payload, 0
+    if a.gauntlet_cmd == "run":
+        payload = _lazy_import("gauntlet", "run_gauntlet")(
+            workspace,
+            _gauntlet_workspace_path(workspace, a.proposal),
+            _gauntlet_workspace_path(workspace, a.admission),
+            _gauntlet_workspace_path(workspace, a.out),
+        )
+        return payload, 0 if payload["card"]["ok"] else 1
+    if a.gauntlet_cmd == "status":
+        payload = _lazy_import("gauntlet", "gauntlet_status")(workspace, a.source_id)
+        return payload, 0
+    return _gauntlet_card_action(a)
+
+
+def _gauntlet_error(a, exc: Exception) -> int:
+    error = {
+        "schema": "factory.gauntlet.error.v1",
+        "marker": exc.code,
+        "code": exc.code,
+        "message": str(exc),
+    }
+    print(
+        json.dumps(error, indent=2, sort_keys=True)
+        if getattr(a, "json", False)
+        else f"gauntlet failed: {exc.code}: {exc}",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _gauntlet_text(a, payload: dict) -> None:
+    print("factory gauntlet")
+    print("=" * 44)
+    if a.gauntlet_cmd == "draft":
+        print(f"draft    : {payload['path']}")
+        print(f"promises : {payload['draft']['facts']['cli_entrypoint_count']}")
+        print(
+            "authority: static DRAFT only; no command execution, approval, admission, repair, or release"
+        )
+        return
+    if a.gauntlet_cmd == "run":
+        card = payload["card"]
+        print(f"result   : {card['marker']}")
+        print(
+            f"survived : {card['summary']['survived_count']}/{card['summary']['case_count']}"
+        )
+        print(f"unproven : {card['summary']['unproven_promise_count']}")
+        print(
+            "authority: exact admitted local E2E execution only; no repair, merge, release, deployment, signing, credentials, or connectors"
+        )
+        print(f"card     : {payload['path']}")
+        return
+    if a.gauntlet_cmd == "plan":
+        print(f"proposal : {payload['path']}")
+        print("authority: planning only; no command execution or admission")
+        return
+    if a.gauntlet_cmd == "admit":
+        print(f"admission: {payload['path']}")
+        print(f"expires  : {payload['expires_at']}")
+        print("authority: named one-batch admission only; no command executed")
+        return
+    if a.gauntlet_cmd == "status":
+        print(f"cards    : {len(payload['entries'])}")
+        print("authority: local read-only status")
+        return
+    print(f"marker   : {payload['marker']}")
+    print("authority: offline card validation or explicit optional signing only")
+
+
+def _gauntlet_output(a, payload: dict) -> None:
+    if getattr(a, "json", False):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        _gauntlet_text(a, payload)
+
+
+def _dispatch_route_group_11(a, capture_command, p):
+    if a.cmd != "gauntlet":
+        return _UNHANDLED
+    workspace = Path(getattr(a, "root", ".")).resolve()
+    try:
+        payload, code = _gauntlet_action(a, workspace)
+    except (
+        _lazy_import("gauntlet", "GauntletError"),
+        _lazy_import("gauntlet_draft", "GauntletDraftError"),
+    ) as exc:
+        return _gauntlet_error(a, exc)
+    _gauntlet_output(a, payload)
+    return code
+
+
+def _team_pilot_verify(a) -> int:
+    receipt = json.loads(Path(a.receipt).read_text(encoding="utf-8"))
+    result = _lazy_import("team_pilot", "validate_team_pilot_receipt")(receipt)
+    if a.json:
+        print(json.dumps({"receipt": result}, indent=2, sort_keys=True))
+    else:
+        print("factory team-pilot verify")
+        print("=" * 44)
+        print(f"pilot    : {result['manifest']['pilot_id']}")
+        print(f"result   : {result['marker']}")
+        print(
+            "authority: owner review only; no contract, payment, entitlement, Marketplace, deployment, or service activation"
+        )
+    return 0
+
+
+def _team_pilot_readiness(a) -> tuple[dict, dict | None]:
+    workspace = Path(a.root).resolve()
+    manifest = Path(a.manifest)
+    if not manifest.is_absolute():
+        manifest = workspace / manifest
+    receipt = _lazy_import("team_pilot", "evaluate_team_pilot_readiness")(
+        workspace, manifest
+    )
+    artifacts = (
+        _lazy_import("team_pilot", "write_team_pilot_artifacts")(
+            receipt, Path(a.out_dir)
+        )
+        if a.out_dir
+        else None
+    )
+    return receipt, artifacts
+
+
+def _team_pilot_error(a, exc: Exception) -> int:
+    error_type = _lazy_import("team_pilot", "TeamPilotError")
+    code = exc.code if isinstance(exc, error_type) else "E_TEAM_PILOT_RECEIPT_INVALID"
+    error = {
+        "schema": "factory.team-pilot.error.v1",
+        "marker": code,
+        "code": code,
+        "message": str(exc),
+    }
+    print(
+        json.dumps(error, indent=2, sort_keys=True)
+        if a.json
+        else f"team pilot failed: {code}: {exc}",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _team_pilot_output(a, receipt: dict, artifacts: dict | None) -> None:
+    if a.json:
+        output = {"receipt": receipt}
+        if artifacts:
+            output["artifacts"] = artifacts
+        print(json.dumps(output, indent=2, sort_keys=True))
+        return
+    print("factory team-pilot readiness")
+    print("=" * 44)
+    print(f"pilot    : {receipt['manifest']['pilot_id']}")
+    print(f"partners : {receipt['manifest']['partner_count']} / 3")
+    print(f"result   : {receipt['marker']}")
+    print(
+        "authority: owner review only; no contract, payment, entitlement, Marketplace, deployment, or service activation"
+    )
+    if artifacts:
+        print(f"packet   : {artifacts['paths']['markdown']}")
+
+
+def _dispatch_route_group_12(a, capture_command, p):
+    if a.cmd != "team-pilot":
+        return _UNHANDLED
+    try:
+        if a.team_pilot_cmd == "verify":
+            return _team_pilot_verify(a)
+        receipt, artifacts = _team_pilot_readiness(a)
+    except (
+        _lazy_import("team_pilot", "TeamPilotError"),
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        OSError,
+    ) as exc:
+        return _team_pilot_error(a, exc)
+    _team_pilot_output(a, receipt, artifacts)
+    return 0
+
+
+def _dispatch_route_group_13(a, capture_command, p):
     if a.cmd == "plan":
         if a.plan_cmd is None:
             return _plan()
@@ -3332,136 +2846,175 @@ def _dispatch(argv=None) -> int:
                 "authority    : no execution, approval, merge, publication, deployment, or credential access"
             )
         return 0
+    return _UNHANDLED
+
+
+def _dispatch_route_group_14(a, capture_command, p):
     if a.cmd == "init":
         _lazy_import("contract", "ensure_layout")(Path(a.root))
         print(f"factory layout created under {Path(a.root).resolve()}")
         for sub_name in _lazy_import("contract", "LAYOUT").values():
             print(f"  {sub_name}/")
         return 0
-    if a.cmd == "release-contract":
-        workspace = Path(a.root).resolve()
-        try:
-            if a.release_contract_cmd == "template":
-                oracle_path = Path(a.oracle_contract)
-                if not oracle_path.is_absolute():
-                    oracle_path = workspace / oracle_path
-                oracle_path = oracle_path.resolve()
-                oracle_path.relative_to(workspace)
-                oracle = json.loads(oracle_path.read_text(encoding="utf-8-sig"))
-                oracle_sha = (
-                    oracle.get("contract_sha256") if isinstance(oracle, dict) else None
-                )
-                if not isinstance(oracle_sha, str) or len(oracle_sha) != 64:
-                    raise ValueError(
-                        "sealed Oracle contract must expose a 64-character contract_sha256"
-                    )
-                stages = list(
-                    a.stages
-                    or [
-                        "specline:strict",
-                        "specline:verify-validators",
-                        "specline:gate-spec",
-                        "specline:tasks",
-                        "specline:gate-plan",
-                        "forgeline:architect",
-                        "forgeline:review",
-                        "forgeline:arch-gate",
-                        "forgeline:verify-tests",
-                        "forgeline:smoke",
-                        "forgeline:ship",
-                    ]
-                )
-                evidence: dict[str, str] = {}
-                for item in a.evidence:
-                    if "=" not in item:
-                        raise ValueError("--evidence must use STAGE=PATH")
-                    key, value = item.split("=", 1)
-                    evidence[key] = value
-                oracle_relative = oracle_path.relative_to(workspace).as_posix()
-                source = _lazy_import("release_candidate", "source_snapshot")(workspace)
-                if not source.get("ok"):
-                    raise ValueError(
-                        str(source.get("reason", "core source binding is unavailable"))
-                    )
-                platform_versions = {
-                    key: value
-                    for key, value in source.get(
-                        "platform_versions", {"python": source["version"]}
-                    ).items()
-                    if isinstance(value, str) and value
-                }
-                core = {
-                    "schema": _lazy_import("release_contract", "SCHEMA"),
-                    "feature": a.feature,
-                    "oracle_contract": oracle_relative,
-                    "oracle_contract_sha256": oracle_sha,
-                    "required_stages": stages,
-                    "approved_by": a.approved_by.strip(),
-                    "candidate": {
-                        "source_version": source["version"],
-                        "source_commit": source["commit"],
-                        "artifact_versions": platform_versions,
-                    },
-                }
-                if evidence:
-                    core["evidence"] = evidence
-                payload = {
-                    **core,
-                    "policy_digest": _lazy_import("release_contract", "_sha")(core),
-                }
-                destination = Path(a.out)
-                if not destination.is_absolute():
-                    destination = workspace / destination
-                destination = destination.resolve()
-                destination.relative_to(workspace)
-                if destination.exists():
-                    raise ValueError(
-                        "release contract output already exists; choose a new path"
-                    )
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_text(
-                    json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8",
-                )
-                result = {
-                    "ok": True,
-                    "marker": "RELEASE_CONTRACT_TEMPLATE_WRITTEN",
-                    "path": destination.relative_to(workspace).as_posix(),
-                    "policy_digest": payload["policy_digest"],
-                    "claim_boundary": "Template generation only; it does not approve, execute, publish, deploy, sign, or authenticate an approver.",
-                }
-            else:
-                contract_path = Path(a.contract)
-                if not contract_path.is_absolute():
-                    contract_path = workspace / contract_path
-                value = json.loads(contract_path.read_text(encoding="utf-8-sig"))
-                required = (
-                    set(value.get("required_stages", []))
-                    if isinstance(value, dict)
-                    else set()
-                )
-                result = _lazy_import("release_contract", "verify_release_contract")(
-                    workspace, a.feature, contract_path, required
-                )
-        except (
-            OSError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            TypeError,
-            ValueError,
-        ) as exc:
-            result = {
-                "ok": False,
-                "marker": "RELEASE_CONTRACT_INVALID",
-                "reason": str(exc)[:240],
-            }
-        print(
-            json.dumps(result, indent=2, sort_keys=True)
-            if a.json
-            else f"release contract: {result.get('marker')}"
-            + (f" ({result.get('reason')})" if result.get("reason") else "")
+    return _UNHANDLED
+
+
+def _release_oracle_binding(a, workspace: Path) -> tuple[Path, str]:
+    oracle_path = Path(a.oracle_contract)
+    if not oracle_path.is_absolute():
+        oracle_path = workspace / oracle_path
+    oracle_path = oracle_path.resolve()
+    oracle_path.relative_to(workspace)
+    oracle = json.loads(oracle_path.read_text(encoding="utf-8-sig"))
+    digest = oracle.get("contract_sha256") if isinstance(oracle, dict) else None
+    if not isinstance(digest, str) or len(digest) != 64:
+        raise ValueError(
+            "sealed Oracle contract must expose a 64-character contract_sha256"
         )
-        return 0 if result.get("ok") else 1
+    return oracle_path, digest
+
+
+def _release_stages(a) -> list[str]:
+    defaults = [
+        "specline:strict",
+        "specline:verify-validators",
+        "specline:gate-spec",
+        "specline:tasks",
+        "specline:gate-plan",
+        "forgeline:architect",
+        "forgeline:review",
+        "forgeline:arch-gate",
+        "forgeline:verify-tests",
+        "forgeline:smoke",
+        "forgeline:ship",
+    ]
+    return list(a.stages or defaults)
+
+
+def _release_evidence(items: list[str]) -> dict[str, str]:
+    evidence = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError("--evidence must use STAGE=PATH")
+        key, value = item.split("=", 1)
+        evidence[key] = value
+    return evidence
+
+
+def _release_source(workspace: Path) -> tuple[dict, dict]:
+    source = _lazy_import("release_candidate", "source_snapshot")(workspace)
+    if not source.get("ok"):
+        raise ValueError(
+            str(source.get("reason", "core source binding is unavailable"))
+        )
+    versions = {
+        key: value
+        for key, value in source.get(
+            "platform_versions", {"python": source["version"]}
+        ).items()
+        if isinstance(value, str) and value
+    }
+    return source, versions
+
+
+def _release_contract_core(a, workspace: Path) -> dict:
+    oracle_path, oracle_sha = _release_oracle_binding(a, workspace)
+    source, versions = _release_source(workspace)
+    core = {
+        "schema": _lazy_import("release_contract", "SCHEMA"),
+        "feature": a.feature,
+        "oracle_contract": oracle_path.relative_to(workspace).as_posix(),
+        "oracle_contract_sha256": oracle_sha,
+        "required_stages": _release_stages(a),
+        "approved_by": a.approved_by.strip(),
+        "candidate": {
+            "source_version": source["version"],
+            "source_commit": source["commit"],
+            "artifact_versions": versions,
+        },
+    }
+    evidence = _release_evidence(a.evidence)
+    if evidence:
+        core["evidence"] = evidence
+    return core
+
+
+def _write_release_contract(a, workspace: Path, core: dict) -> dict:
+    payload = {
+        **core,
+        "policy_digest": _lazy_import("release_contract", "_sha")(core),
+    }
+    destination = Path(a.out)
+    if not destination.is_absolute():
+        destination = workspace / destination
+    destination = destination.resolve()
+    destination.relative_to(workspace)
+    if destination.exists():
+        raise ValueError("release contract output already exists; choose a new path")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return {
+        "ok": True,
+        "marker": "RELEASE_CONTRACT_TEMPLATE_WRITTEN",
+        "path": destination.relative_to(workspace).as_posix(),
+        "policy_digest": payload["policy_digest"],
+        "claim_boundary": "Template generation only; it does not approve, execute, publish, deploy, sign, or authenticate an approver.",
+    }
+
+
+def _verify_release_contract(a, workspace: Path) -> dict:
+    contract_path = Path(a.contract)
+    if not contract_path.is_absolute():
+        contract_path = workspace / contract_path
+    value = json.loads(contract_path.read_text(encoding="utf-8-sig"))
+    required = (
+        set(value.get("required_stages", [])) if isinstance(value, dict) else set()
+    )
+    return _lazy_import("release_contract", "verify_release_contract")(
+        workspace, a.feature, contract_path, required
+    )
+
+
+def _release_contract_result(a, workspace: Path) -> dict:
+    if a.release_contract_cmd == "template":
+        core = _release_contract_core(a, workspace)
+        return _write_release_contract(a, workspace, core)
+    return _verify_release_contract(a, workspace)
+
+
+def _print_release_contract(a, result: dict) -> None:
+    if a.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    suffix = f" ({result.get('reason')})" if result.get("reason") else ""
+    print(f"release contract: {result.get('marker')}{suffix}")
+
+
+def _dispatch_route_group_15(a, capture_command, p):
+    if a.cmd != "release-contract":
+        return _UNHANDLED
+    workspace = Path(a.root).resolve()
+    try:
+        result = _release_contract_result(a, workspace)
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        result = {
+            "ok": False,
+            "marker": "RELEASE_CONTRACT_INVALID",
+            "reason": str(exc)[:240],
+        }
+    _print_release_contract(a, result)
+    return 0 if result.get("ok") else 1
+
+
+def _dispatch_route_group_16(a, capture_command, p):
     if a.cmd == "assemble":
         report = _lazy_import("assembly", "assemble")(
             Path(a.root),
@@ -3473,57 +3026,73 @@ def _dispatch(argv=None) -> int:
         )
         print(json.dumps(report, indent=2))
         return 0 if "halted_at" not in report else 1
-    if a.cmd == "continue":
-        try:
-            usage = (
-                json.loads(Path(a.usage_json).read_text(encoding="utf-8"))
-                if a.usage_json
-                else None
-            )
-            report = _lazy_import("continuation", "continue_assembly")(
-                Path(a.root), a.feature, dry_run=a.dry_run, usage=usage
-            )
-        except (
-            _lazy_import("continuation", "ContinuationError"),
-            ValueError,
-            OSError,
-            json.JSONDecodeError,
-        ) as exc:
-            code = getattr(exc, "code", "CONTINUATION_INPUT_INVALID")
-            payload = {
-                "schema": "factory.assembly-continuation.error.v1",
-                "code": code,
-                "message": str(exc),
-            }
-            if isinstance(exc, _lazy_import("continuation", "ContinuationError")):
-                payload["candidates"] = exc.candidates
-            print(
-                json.dumps(payload, indent=2)
-                if a.json
-                else f"continue failed: {code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            print(json.dumps(report, indent=2))
-        else:
-            print("factory continuation")
-            print(f"feature : {report['feature']}")
-            print(f"status  : {report['status']}")
-            print(f"stages  : {len(report['stages'])}")
-            if report.get("next_action"):
-                print(f"next    : {report['next_action']['label']}")
-                if report["next_action"].get("command"):
-                    print(f"command : {report['next_action']['command']}")
-            if report.get("receipt"):
-                print(f"receipt : {report['receipt']}")
-        return (
-            3
-            if report["status"] == "waiting_for_human"
-            else 1
-            if report["status"] == "halted"
-            else 0
+    return _UNHANDLED
+
+
+def _continuation_error(a, exc: Exception) -> int:
+    code = getattr(exc, "code", "CONTINUATION_INPUT_INVALID")
+    payload = {
+        "schema": "factory.assembly-continuation.error.v1",
+        "code": code,
+        "message": str(exc),
+    }
+    error_type = _lazy_import("continuation", "ContinuationError")
+    if isinstance(exc, error_type):
+        payload["candidates"] = exc.candidates
+    print(
+        json.dumps(payload, indent=2) if a.json else f"continue failed: {code}: {exc}",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _print_continuation_report(a, report: dict) -> None:
+    if a.json:
+        print(json.dumps(report, indent=2))
+        return
+    print("factory continuation")
+    print(f"feature : {report['feature']}")
+    print(f"status  : {report['status']}")
+    print(f"stages  : {len(report['stages'])}")
+    action = report.get("next_action")
+    if action:
+        print(f"next    : {action['label']}")
+        if action.get("command"):
+            print(f"command : {action['command']}")
+    if report.get("receipt"):
+        print(f"receipt : {report['receipt']}")
+
+
+def _continuation_exit_code(report: dict) -> int:
+    if report["status"] == "waiting_for_human":
+        return 3
+    return 1 if report["status"] == "halted" else 0
+
+
+def _dispatch_route_group_17(a, capture_command, p):
+    if a.cmd != "continue":
+        return _UNHANDLED
+    try:
+        usage = (
+            json.loads(Path(a.usage_json).read_text(encoding="utf-8"))
+            if a.usage_json
+            else None
         )
+        report = _lazy_import("continuation", "continue_assembly")(
+            Path(a.root), a.feature, dry_run=a.dry_run, usage=usage
+        )
+    except (
+        _lazy_import("continuation", "ContinuationError"),
+        ValueError,
+        OSError,
+        json.JSONDecodeError,
+    ) as exc:
+        return _continuation_error(a, exc)
+    _print_continuation_report(a, report)
+    return _continuation_exit_code(report)
+
+
+def _dispatch_route_group_18(a, capture_command, p):
     if a.cmd == "metrics":
         payload = _lazy_import("run_metrics", "public_metrics")(Path(a.root))
         if a.out:
@@ -3535,97 +3104,119 @@ def _dispatch(argv=None) -> int:
         else:
             print(f"public Assembly metrics written to {Path(a.out).resolve()}")
         return 0
-    if a.cmd == "workspace":
-        try:
-            if a.workspace_cmd == "inspect":
-                root = Path(a.root)
-                payload = _lazy_import("workspace_advisor", "inspect_workspace")(root)
-                payload = dict(payload)
-                payload["artifacts"] = {}
-                if a.out_dir:
-                    artifacts = _lazy_import(
-                        "workspace_advisor", "write_workspace_advisor_artifacts"
-                    )(payload, root, Path(a.out_dir))
-                    payload["artifacts"] = {
-                        "paths": artifacts,
-                        "write_mode": "explicit_local",
-                    }
-                    payload["markers"] = [
-                        *payload["markers"],
-                        "WORKSPACE_ADVISOR_ARTIFACTS_EXPLICIT",
-                    ]
-            elif a.continuity_cmd == "baseline":
-                root = Path(a.root)
-                payload = _lazy_import(
-                    "index_continuity", "capture_continuity_baseline"
-                )(root)
-                payload = dict(payload)
-                payload["baseline_path"] = _lazy_import(
-                    "index_continuity", "write_continuity_baseline"
-                )(payload, root, Path(a.out))
-                payload["markers"] = [
-                    *payload["markers"],
-                    "INDEX_CONTINUITY_ARTIFACT_EXPLICIT",
-                ]
-            else:
-                payload = _lazy_import("index_continuity", "compare_continuity")(
-                    Path(a.root), Path(a.baseline)
-                )
-        except (
-            _lazy_import("workspace_advisor", "WorkspaceAdvisorError"),
-            _lazy_import("index_continuity", "IndexContinuityError"),
-        ) as exc:
-            is_continuity = isinstance(
-                exc, _lazy_import("index_continuity", "IndexContinuityError")
-            )
-            error = {
-                "schema": "factory.index_continuity.error.v1"
-                if is_continuity
-                else "factory.workspace_advisor.error.v1",
-                "status": "failed",
-                "code": exc.code,
-                "marker": "INDEX_CONTINUITY_REFUSED"
-                if is_continuity
-                else "WORKSPACE_ADVISOR_REFUSED",
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if a.json
-                else f"workspace command refused: {exc.code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        elif a.workspace_cmd == "continuity":
-            print("FactoryLine Index Continuity Guard")
-            print(f"scope     : {payload.get('review_scope', 'baseline captured')}")
-            print(
-                "boundary  : local structure only; no IDE, cache, index, or remote changes."
-            )
-            if payload.get("baseline_path"):
-                print(f"baseline  : {payload['baseline_path']}")
-            if payload.get("recommendation"):
-                print(f"next step : {payload['recommendation']}")
-        else:
-            scan = payload["scan"]
-            workspace = payload["workspace"]
-            print("FactoryLine Workspace Load Advisor")
-            print(
-                f"workspace : {workspace['name']} ({workspace['path_classification']})"
-            )
-            print(
-                f"observed  : {scan['files_scanned']} files, {scan['bytes_scanned']} bytes; limited={scan['scan_limited']}"
-            )
-            print(
-                "boundary  : local filesystem shape only; no IDE, cache, index, or remote changes."
-            )
-            for recommendation in payload["recommendations"]:
-                print(f"  - [{recommendation['priority']}] {recommendation['action']}")
-            if payload.get("artifacts"):
-                print(f"artifacts : {payload['artifacts']['paths']}")
-        return 0
+    return _UNHANDLED
+
+
+def _workspace_inspection(a) -> dict:
+    root = Path(a.root)
+    payload = dict(_lazy_import("workspace_advisor", "inspect_workspace")(root))
+    payload["artifacts"] = {}
+    if a.out_dir:
+        artifacts = _lazy_import(
+            "workspace_advisor", "write_workspace_advisor_artifacts"
+        )(payload, root, Path(a.out_dir))
+        payload["artifacts"] = {"paths": artifacts, "write_mode": "explicit_local"}
+        payload["markers"] = [
+            *payload["markers"],
+            "WORKSPACE_ADVISOR_ARTIFACTS_EXPLICIT",
+        ]
+    return payload
+
+
+def _workspace_continuity(a) -> dict:
+    root = Path(a.root)
+    if a.continuity_cmd == "baseline":
+        payload = dict(
+            _lazy_import("index_continuity", "capture_continuity_baseline")(root)
+        )
+        payload["baseline_path"] = _lazy_import(
+            "index_continuity", "write_continuity_baseline"
+        )(payload, root, Path(a.out))
+        payload["markers"] = [*payload["markers"], "INDEX_CONTINUITY_ARTIFACT_EXPLICIT"]
+        return payload
+    return _lazy_import("index_continuity", "compare_continuity")(
+        root, Path(a.baseline)
+    )
+
+
+def _workspace_command_error(a, exc: Exception) -> int:
+    continuity_error = _lazy_import("index_continuity", "IndexContinuityError")
+    is_continuity = isinstance(exc, continuity_error)
+    error = {
+        "schema": "factory.index_continuity.error.v1"
+        if is_continuity
+        else "factory.workspace_advisor.error.v1",
+        "status": "failed",
+        "code": exc.code,
+        "marker": "INDEX_CONTINUITY_REFUSED"
+        if is_continuity
+        else "WORKSPACE_ADVISOR_REFUSED",
+        "message": str(exc),
+    }
+    print(
+        json.dumps(error, indent=2, sort_keys=True)
+        if a.json
+        else f"workspace command refused: {exc.code}: {exc}",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _print_continuity_payload(payload: dict) -> None:
+    print("FactoryLine Index Continuity Guard")
+    print(f"scope     : {payload.get('review_scope', 'baseline captured')}")
+    print("boundary  : local structure only; no IDE, cache, index, or remote changes.")
+    if payload.get("baseline_path"):
+        print(f"baseline  : {payload['baseline_path']}")
+    if payload.get("recommendation"):
+        print(f"next step : {payload['recommendation']}")
+
+
+def _print_workspace_payload(payload: dict) -> None:
+    scan = payload["scan"]
+    workspace = payload["workspace"]
+    print("FactoryLine Workspace Load Advisor")
+    print(f"workspace : {workspace['name']} ({workspace['path_classification']})")
+    print(
+        f"observed  : {scan['files_scanned']} files, {scan['bytes_scanned']} bytes; limited={scan['scan_limited']}"
+    )
+    print(
+        "boundary  : local filesystem shape only; no IDE, cache, index, or remote changes."
+    )
+    for recommendation in payload["recommendations"]:
+        print(f"  - [{recommendation['priority']}] {recommendation['action']}")
+    if payload.get("artifacts"):
+        print(f"artifacts : {payload['artifacts']['paths']}")
+
+
+def _workspace_output(a, payload: dict) -> None:
+    if a.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    elif a.workspace_cmd == "continuity":
+        _print_continuity_payload(payload)
+    else:
+        _print_workspace_payload(payload)
+
+
+def _dispatch_route_group_19(a, capture_command, p):
+    if a.cmd != "workspace":
+        return _UNHANDLED
+    try:
+        payload = (
+            _workspace_inspection(a)
+            if a.workspace_cmd == "inspect"
+            else _workspace_continuity(a)
+        )
+    except (
+        _lazy_import("workspace_advisor", "WorkspaceAdvisorError"),
+        _lazy_import("index_continuity", "IndexContinuityError"),
+    ) as exc:
+        return _workspace_command_error(a, exc)
+    _workspace_output(a, payload)
+    return 0
+
+
+def _dispatch_route_group_20(a, capture_command, p):
     if a.cmd == "update-check":
         from .update_check import check_for_update, render
 
@@ -3634,322 +3225,413 @@ def _dispatch(argv=None) -> int:
             json.dumps(result, indent=2, sort_keys=True) if a.json else render(result)
         )
         return 0
+    return _UNHANDLED
 
-    if a.cmd == "habituation":
-        from .habituation import (
-            HabituationError,
-            blind_spot_sample,
-            evaluate_gate,
-            export_public_habituation_report,
-            public_habituation_report,
-            record_resample_outcome,
-            record_review,
+
+def _habituation_record(a, root: Path) -> int:
+    payload = _lazy_import("habituation", "record_review")(
+        root,
+        {
+            "review_id": a.review_id,
+            "reviewer": a.reviewer,
+            "author_kind": a.author_kind,
+            "review_seconds": a.review_seconds,
+            "changed_lines": a.changed_lines,
+            "inline_comments": a.inline_comments,
+            "approved": a.approved,
+        },
+        replace=a.replace,
+    )
+    print(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if a.json
+        else f"REVIEW_OBSERVED {a.review_id} scrutiny={payload['scrutiny_ratio']:.1f}s/100L"
+    )
+    return 0
+
+
+def _habituation_status(a, root: Path) -> int:
+    gate = _lazy_import("habituation", "evaluate_gate")(root, allow_block=a.allow_block)
+    if a.json:
+        print(json.dumps(gate, indent=2, sort_keys=True))
+    else:
+        print(f"HABITUATION_GATE action={gate['action']} blocking={gate['blocking']}")
+        print(
+            f"  warned={gate['reviewers_warned']} breached={gate['reviewers_breached']} "
+            f"proxy_corrected={gate['proxy_corrected_by_resampling']}"
         )
+        print(f"  {gate['reason']}")
+    return 1 if gate["blocking"] else 0
 
-        root = Path(a.root)
-        try:
-            if a.hab_cmd == "record":
-                payload = record_review(
-                    root,
-                    {
-                        "review_id": a.review_id,
-                        "reviewer": a.reviewer,
-                        "author_kind": a.author_kind,
-                        "review_seconds": a.review_seconds,
-                        "changed_lines": a.changed_lines,
-                        "inline_comments": a.inline_comments,
-                        "approved": a.approved,
-                    },
-                    replace=a.replace,
-                )
-                print(
-                    json.dumps(payload, indent=2, sort_keys=True)
-                    if a.json
-                    else f"REVIEW_OBSERVED {a.review_id} scrutiny={payload['scrutiny_ratio']:.1f}s/100L"
-                )
-                return 0
-            if a.hab_cmd == "status":
-                gate = evaluate_gate(root, allow_block=a.allow_block)
-                if a.json:
-                    print(json.dumps(gate, indent=2, sort_keys=True))
-                else:
-                    print(
-                        f"HABITUATION_GATE action={gate['action']} blocking={gate['blocking']}"
-                    )
-                    print(
-                        f"  warned={gate['reviewers_warned']} breached={gate['reviewers_breached']} "
-                        f"proxy_corrected={gate['proxy_corrected_by_resampling']}"
-                    )
-                    print(f"  {gate['reason']}")
-                return 1 if gate["blocking"] else 0
-            if a.hab_cmd == "sample":
-                payload = blind_spot_sample(root, rate=a.rate)
-                print(
-                    json.dumps(payload, indent=2, sort_keys=True)
-                    if a.json
-                    else f"BLIND_SPOT_SAMPLE_RECEIPTED selected={payload['selected_count']} "
-                    f"of {payload['eligible_low_scrutiny']} low-scrutiny approvals"
-                )
-                return 0
-            if a.hab_cmd == "resample":
-                payload = record_resample_outcome(
-                    root,
-                    a.review_id,
-                    defect_found=a.defect_found,
-                    reviewer=a.reviewer,
-                    notes=a.notes,
-                )
-                print(
-                    json.dumps(payload, indent=2, sort_keys=True)
-                    if a.json
-                    else f"RESAMPLE_OUTCOME_RECEIPTED {a.review_id} defect={payload['defect_found']}"
-                )
-                return 0
-            if a.hab_cmd == "report":
-                if a.out:
-                    path = export_public_habituation_report(
-                        root, Path(a.out), enable_defect_linkage=a.enable_defect_linkage
-                    )
-                    print(f"HABITUATION_PUBLIC_REPORT_EXPORTED {path}")
-                else:
-                    print(
-                        json.dumps(
-                            public_habituation_report(
-                                root, enable_defect_linkage=a.enable_defect_linkage
-                            ),
-                            indent=2,
-                            sort_keys=True,
-                        )
-                    )
-                return 0
-        except (HabituationError, OSError) as exc:
-            print(f"HABITUATION_REFUSED {getattr(exc, 'code', '')}: {exc}")
-            return 2
+
+def _habituation_sample(a, root: Path) -> int:
+    payload = _lazy_import("habituation", "blind_spot_sample")(root, rate=a.rate)
+    print(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if a.json
+        else f"BLIND_SPOT_SAMPLE_RECEIPTED selected={payload['selected_count']} "
+        f"of {payload['eligible_low_scrutiny']} low-scrutiny approvals"
+    )
+    return 0
+
+
+def _habituation_resample(a, root: Path) -> int:
+    payload = _lazy_import("habituation", "record_resample_outcome")(
+        root,
+        a.review_id,
+        defect_found=a.defect_found,
+        reviewer=a.reviewer,
+        notes=a.notes,
+    )
+    print(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if a.json
+        else f"RESAMPLE_OUTCOME_RECEIPTED {a.review_id} defect={payload['defect_found']}"
+    )
+    return 0
+
+
+def _habituation_report(a, root: Path) -> int:
+    if a.out:
+        path = _lazy_import("habituation", "export_public_habituation_report")(
+            root, Path(a.out), enable_defect_linkage=a.enable_defect_linkage
+        )
+        print(f"HABITUATION_PUBLIC_REPORT_EXPORTED {path}")
+        return 0
+    payload = _lazy_import("habituation", "public_habituation_report")(
+        root, enable_defect_linkage=a.enable_defect_linkage
+    )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def _habituation_action(a, root: Path) -> int:
+    actions = {
+        "record": _habituation_record,
+        "status": _habituation_status,
+        "sample": _habituation_sample,
+        "resample": _habituation_resample,
+        "report": _habituation_report,
+    }
+    action = actions.get(a.hab_cmd)
+    if action is None:
         print("usage: factory habituation {record|status|sample|resample|report}")
         return 2
+    return action(a, root)
 
-    if a.cmd == "cdte":
-        from .cdte import (
-            CDTEError,
-            draft_adr,
-            export_public_cdte_report,
-            public_cdte_report,
-            record_scan,
-            resolve_conflict,
-        )
 
-        root = Path(a.root)
-        if a.cdte_cmd == "scan":
-            try:
-                raw = json.loads(Path(a.constraints).read_text(encoding="utf-8"))
-                constraints = raw["constraints"] if isinstance(raw, dict) else raw
-                payload = record_scan(
-                    root,
-                    a.run_id,
-                    constraints,
-                    evidence=Path(a.evidence) if a.evidence else None,
-                    replace=a.replace,
-                )
-            except (
-                CDTEError,
-                OSError,
-                json.JSONDecodeError,
-                KeyError,
-                TypeError,
-            ) as exc:
-                code = getattr(exc, "code", type(exc).__name__)
-                print(f"CDTE_SCAN_REFUSED {code}: {exc}")
-                return 2
-            if a.adr:
-                for index, conflict in enumerate(payload["conflicts"], start=1):
-                    path = draft_adr(
-                        root, payload, conflict["conflict_id"], number=index
-                    )
-                    print(f"ADR_DRAFTED {path}")
-            if a.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            else:
-                print(
-                    f"CDTE_SCAN_RECEIPTED {payload['run_id']} "
-                    f"conflicts={len(payload['conflicts'])} "
-                    f"fail_closed={payload['fail_closed']}"
-                )
-                for conflict in payload["conflicts"]:
-                    analysis = conflict["incompatibility_analysis"]
-                    state = "withheld" if analysis["withheld"] else analysis["tier"]
-                    print(
-                        f"  [{conflict['severity']}] {conflict['conflict_id']} "
-                        f"{conflict['pair_id']} (analysis: {state})"
-                    )
-            # Non-zero exit so CI fails closed on a blocking contradiction.
-            return 1 if payload["fail_closed"] else 0
-        if a.cdte_cmd == "report":
-            if a.out:
-                print(
-                    f"CDTE_PUBLIC_REPORT_EXPORTED {export_public_cdte_report(root, Path(a.out))}"
-                )
-            else:
-                print(json.dumps(public_cdte_report(root), indent=2, sort_keys=True))
-            return 0
-        if a.cdte_cmd == "resolve":
-            try:
-                payload = resolve_conflict(
-                    root,
-                    a.run_id,
-                    a.conflict_id,
-                    decision=a.decision,
-                    approved_by=a.approved_by,
-                    adr_path=Path(a.adr_path) if a.adr_path else None,
-                    override=a.override,
-                    expires=a.expires,
-                )
-            except (CDTEError, OSError) as exc:
-                print(f"CDTE_RESOLUTION_REFUSED {getattr(exc, 'code', '')}: {exc}")
-                return 2
-            print(
-                json.dumps(payload, indent=2, sort_keys=True)
-                if a.json
-                else f"CDTE_RESOLUTION_RECEIPTED {a.conflict_id} by {payload['approved_by']}"
-            )
-            return 0
-        print("usage: factory cdte {scan|report|resolve}")
+def _dispatch_route_group_21(a, capture_command, p):
+    if a.cmd != "habituation":
+        return _UNHANDLED
+    from .habituation import HabituationError
+
+    try:
+        return _habituation_action(a, Path(a.root))
+    except (HabituationError, OSError) as exc:
+        print(f"HABITUATION_REFUSED {getattr(exc, 'code', '')}: {exc}")
         return 2
 
-    if a.cmd == "savings":
-        if a.savings_cmd == "record":
-            baseline = {
-                "elapsed_ms": a.baseline_elapsed_ms,
-                "tokens": a.baseline_tokens,
-                "cost_usd": a.baseline_cost_usd,
-            }
-            factory_observation = {
-                "elapsed_ms": a.factory_elapsed_ms,
-                "tokens": a.factory_tokens,
-                "cost_usd": a.factory_cost_usd,
-            }
-            try:
-                payload = _lazy_import("savings", "record_savings_pair")(
-                    Path(a.root),
-                    a.pair_id,
-                    baseline,
-                    factory_observation,
-                    equivalent_outcome=a.equivalent_outcome,
-                    evidence=Path(a.evidence) if a.evidence else None,
-                    replace=a.replace,
-                )
-            except (_lazy_import("savings", "SavingsError"), OSError) as exc:
-                code = getattr(exc, "code", "SAVINGS_INPUT_INVALID")
-                print(
-                    json.dumps({"code": code, "message": str(exc)}, indent=2)
-                    if a.json
-                    else f"savings failed: {code}: {exc}",
-                    file=sys.stderr,
-                )
-                return 2
-            if a.json:
-                print(json.dumps(payload, indent=2))
-            else:
-                values = payload["savings"]
-                print("factory paired savings")
-                print(f"pair          : {payload['pair_id']}")
-                print(f"time saved    : {values['time_saved_ms']} ms")
-                print(
-                    f"tokens saved  : {values['tokens_saved'] if values['tokens_saved'] is not None else 'unknown'}"
-                )
-                print(
-                    f"cost saved    : {values['cost_saved_usd'] if values['cost_saved_usd'] is not None else 'unknown'}"
-                )
-                print(
-                    f"productivity  : {values['productivity_gain_rate'] if values['productivity_gain_rate'] is not None else 'unknown'}"
-                )
-                print(f"receipt       : {payload['receipt']}")
-            return 0
-        if a.savings_cmd == "report":
-            payload = _lazy_import("savings", "public_savings_report")(Path(a.root))
-            if a.out:
-                _lazy_import("savings", "export_public_savings_report")(
-                    Path(a.root), Path(a.out)
-                )
-            if a.json or not a.out:
-                print(json.dumps(payload, indent=2))
-            else:
-                print(f"public savings report written to {Path(a.out).resolve()}")
-            return 0
-        p.error("savings requires record or report")
 
-    if a.cmd == "proofs":
-        try:
-            if a.proofs_cmd == "record":
-                manifest = _lazy_import("proof_reuse", "load_manifest")(
-                    Path(a.manifest)
-                )
-                gates = manifest.get("gates") if isinstance(manifest, dict) else None
-                if not isinstance(gates, list) or not gates:
-                    raise _lazy_import("proof_reuse", "ProofReuseError")(
-                        "PROOF_MANIFEST_INVALID", "manifest contains no gates"
-                    )
-                selected = [
-                    gate
-                    for gate in gates
-                    if isinstance(gate, dict)
-                    and (a.gate is None or gate.get("name") == a.gate)
-                ]
-                if len(selected) != 1:
-                    raise _lazy_import("proof_reuse", "ProofReuseError")(
-                        "PROOF_GATE_AMBIGUOUS", "select exactly one gate with --gate"
-                    )
-                payload = _lazy_import("proof_reuse", "record_proof")(
-                    Path(a.root),
-                    selected[0],
-                    elapsed_ms=a.elapsed_ms,
-                    tokens=a.tokens,
-                    replace=a.replace,
-                )
-            elif a.proofs_cmd == "plan":
-                payload = _lazy_import("proof_reuse", "plan_proofs")(
-                    Path(a.root),
-                    _lazy_import("proof_reuse", "load_manifest")(Path(a.manifest)),
-                    changed_paths=a.changed,
-                    auto_savings=a.auto_savings,
-                    out=Path(a.out) if a.out else None,
-                )
-            elif a.proofs_cmd == "verify":
-                payload = _lazy_import("proof_reuse", "verify_proof_receipt")(
-                    Path(a.root), Path(a.receipt)
-                )
-            elif a.proofs_cmd == "challenge":
-                payload = _lazy_import("proof_reuse", "challenge_proof_receipt")(
-                    Path(a.root), Path(a.receipt)
-                )
-            else:
-                p.error("proofs requires record, plan, verify, or challenge")
-        except _lazy_import("proof_reuse", "ProofReuseError") as exc:
-            failure = {
-                "schema": "factory.proof-error.v1",
-                "code": exc.code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(failure, indent=2)
-                if getattr(a, "json", False)
-                else f"proofs failed: {exc.code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if getattr(a, "json", False):
-            print(json.dumps(payload, indent=2))
-        else:
-            if a.proofs_cmd == "plan":
-                print("factory proof plan")
-                print("=" * 44)
-                for item in payload["items"]:
-                    print(f"{item['gate']}: {item['disposition']} - {item['reason']}")
-                print(f"receipt: {payload['plan']}")
-            else:
-                print(json.dumps(payload, indent=2))
-        if a.proofs_cmd in {"verify", "challenge"}:
-            return 0 if payload.get("valid", payload.get("passed", False)) else 1
+def _cdte_scan(a, root: Path, record_scan, draft_adr, error_type) -> int:
+    try:
+        raw = json.loads(Path(a.constraints).read_text(encoding="utf-8"))
+        constraints = raw["constraints"] if isinstance(raw, dict) else raw
+        payload = record_scan(
+            root,
+            a.run_id,
+            constraints,
+            evidence=Path(a.evidence) if a.evidence else None,
+            replace=a.replace,
+        )
+    except (error_type, OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        code = getattr(exc, "code", type(exc).__name__)
+        print(f"CDTE_SCAN_REFUSED {code}: {exc}")
+        return 2
+    if a.adr:
+        for index, conflict in enumerate(payload["conflicts"], start=1):
+            path = draft_adr(root, payload, conflict["conflict_id"], number=index)
+            print(f"ADR_DRAFTED {path}")
+    _print_cdte_scan(a, payload)
+    return 1 if payload["fail_closed"] else 0
+
+
+def _print_cdte_scan(a, payload: dict) -> None:
+    if a.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    print(
+        f"CDTE_SCAN_RECEIPTED {payload['run_id']} "
+        f"conflicts={len(payload['conflicts'])} "
+        f"fail_closed={payload['fail_closed']}"
+    )
+    for conflict in payload["conflicts"]:
+        analysis = conflict["incompatibility_analysis"]
+        state = "withheld" if analysis["withheld"] else analysis["tier"]
+        print(
+            f"  [{conflict['severity']}] {conflict['conflict_id']} "
+            f"{conflict['pair_id']} (analysis: {state})"
+        )
+
+
+def _cdte_report(a, root: Path, export_report, public_report) -> int:
+    if a.out:
+        path = export_report(root, Path(a.out))
+        print(f"CDTE_PUBLIC_REPORT_EXPORTED {path}")
+    else:
+        print(json.dumps(public_report(root), indent=2, sort_keys=True))
+    return 0
+
+
+def _cdte_resolve(a, root: Path, resolve_conflict, error_type) -> int:
+    try:
+        payload = resolve_conflict(
+            root,
+            a.run_id,
+            a.conflict_id,
+            decision=a.decision,
+            approved_by=a.approved_by,
+            adr_path=Path(a.adr_path) if a.adr_path else None,
+            override=a.override,
+            expires=a.expires,
+        )
+    except (error_type, OSError) as exc:
+        print(f"CDTE_RESOLUTION_REFUSED {getattr(exc, 'code', '')}: {exc}")
+        return 2
+    print(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if a.json
+        else f"CDTE_RESOLUTION_RECEIPTED {a.conflict_id} by {payload['approved_by']}"
+    )
+    return 0
+
+
+def _dispatch_route_group_22(a, capture_command, p):
+    if a.cmd != "cdte":
+        return _UNHANDLED
+    from .cdte import (
+        CDTEError,
+        draft_adr,
+        export_public_cdte_report,
+        public_cdte_report,
+        record_scan,
+        resolve_conflict,
+    )
+
+    root = Path(a.root)
+    if a.cdte_cmd == "scan":
+        return _cdte_scan(a, root, record_scan, draft_adr, CDTEError)
+    if a.cdte_cmd == "report":
+        return _cdte_report(a, root, export_public_cdte_report, public_cdte_report)
+    if a.cdte_cmd == "resolve":
+        return _cdte_resolve(a, root, resolve_conflict, CDTEError)
+    print("usage: factory cdte {scan|report|resolve}")
+    return 2
+
+
+def _savings_record_error(a, exc: Exception) -> int:
+    code = getattr(exc, "code", "SAVINGS_INPUT_INVALID")
+    print(
+        json.dumps({"code": code, "message": str(exc)}, indent=2)
+        if a.json
+        else f"savings failed: {code}: {exc}",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _print_savings_record(a, payload: dict) -> None:
+    if a.json:
+        print(json.dumps(payload, indent=2))
+        return
+    values = payload["savings"]
+    print("factory paired savings")
+    print(f"pair          : {payload['pair_id']}")
+    print(f"time saved    : {values['time_saved_ms']} ms")
+    print(
+        f"tokens saved  : {values['tokens_saved'] if values['tokens_saved'] is not None else 'unknown'}"
+    )
+    print(
+        f"cost saved    : {values['cost_saved_usd'] if values['cost_saved_usd'] is not None else 'unknown'}"
+    )
+    print(
+        f"productivity  : {values['productivity_gain_rate'] if values['productivity_gain_rate'] is not None else 'unknown'}"
+    )
+    print(f"receipt       : {payload['receipt']}")
+
+
+def _savings_record(a) -> int:
+    baseline = {
+        "elapsed_ms": a.baseline_elapsed_ms,
+        "tokens": a.baseline_tokens,
+        "cost_usd": a.baseline_cost_usd,
+    }
+    factory_observation = {
+        "elapsed_ms": a.factory_elapsed_ms,
+        "tokens": a.factory_tokens,
+        "cost_usd": a.factory_cost_usd,
+    }
+    try:
+        payload = _lazy_import("savings", "record_savings_pair")(
+            Path(a.root),
+            a.pair_id,
+            baseline,
+            factory_observation,
+            equivalent_outcome=a.equivalent_outcome,
+            evidence=Path(a.evidence) if a.evidence else None,
+            replace=a.replace,
+        )
+    except (_lazy_import("savings", "SavingsError"), OSError) as exc:
+        return _savings_record_error(a, exc)
+    _print_savings_record(a, payload)
+    return 0
+
+
+def _savings_report(a) -> int:
+    root = Path(a.root)
+    payload = _lazy_import("savings", "public_savings_report")(root)
+    if a.out:
+        _lazy_import("savings", "export_public_savings_report")(root, Path(a.out))
+    if a.json or not a.out:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"public savings report written to {Path(a.out).resolve()}")
+    return 0
+
+
+def _dispatch_route_group_23(a, capture_command, p):
+    if a.cmd != "savings":
+        return _UNHANDLED
+    if a.savings_cmd == "record":
+        return _savings_record(a)
+    if a.savings_cmd == "report":
+        return _savings_report(a)
+    p.error("savings requires record or report")
+    return 2
+
+
+def _proofs_record(a) -> dict:
+    manifest = _lazy_import("proof_reuse", "load_manifest")(Path(a.manifest))
+    gates = manifest.get("gates") if isinstance(manifest, dict) else None
+    if not isinstance(gates, list) or not gates:
+        raise _lazy_import("proof_reuse", "ProofReuseError")(
+            "PROOF_MANIFEST_INVALID", "manifest contains no gates"
+        )
+    selected = [
+        gate
+        for gate in gates
+        if isinstance(gate, dict) and (a.gate is None or gate.get("name") == a.gate)
+    ]
+    if len(selected) != 1:
+        raise _lazy_import("proof_reuse", "ProofReuseError")(
+            "PROOF_GATE_AMBIGUOUS", "select exactly one gate with --gate"
+        )
+    return _lazy_import("proof_reuse", "record_proof")(
+        Path(a.root),
+        selected[0],
+        elapsed_ms=a.elapsed_ms,
+        tokens=a.tokens,
+        replace=a.replace,
+    )
+
+
+def _proofs_result(a, p) -> dict:
+    if a.proofs_cmd == "record":
+        return _proofs_record(a)
+    if a.proofs_cmd == "plan":
+        return _lazy_import("proof_reuse", "plan_proofs")(
+            Path(a.root),
+            _lazy_import("proof_reuse", "load_manifest")(Path(a.manifest)),
+            changed_paths=a.changed,
+            auto_savings=a.auto_savings,
+            out=Path(a.out) if a.out else None,
+        )
+    if a.proofs_cmd == "verify":
+        return _lazy_import("proof_reuse", "verify_proof_receipt")(
+            Path(a.root), Path(a.receipt)
+        )
+    if a.proofs_cmd == "challenge":
+        return _lazy_import("proof_reuse", "challenge_proof_receipt")(
+            Path(a.root), Path(a.receipt)
+        )
+    p.error("proofs requires record, plan, verify, or challenge")
+    return {}
+
+
+def _proofs_error(a, exc: Exception) -> int:
+    failure = {
+        "schema": "factory.proof-error.v1",
+        "code": exc.code,
+        "message": str(exc),
+    }
+    print(
+        json.dumps(failure, indent=2)
+        if getattr(a, "json", False)
+        else f"proofs failed: {exc.code}: {exc}",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _proofs_output(a, payload: dict) -> None:
+    if getattr(a, "json", False):
+        print(json.dumps(payload, indent=2))
+        return
+    if a.proofs_cmd == "plan":
+        print("factory proof plan")
+        print("=" * 44)
+        for item in payload["items"]:
+            print(f"{item['gate']}: {item['disposition']} - {item['reason']}")
+        print(f"receipt: {payload['plan']}")
+        return
+    print(json.dumps(payload, indent=2))
+
+
+def _proofs_exit_code(a, payload: dict) -> int:
+    if a.proofs_cmd not in {"verify", "challenge"}:
         return 0
+    return 0 if payload.get("valid", payload.get("passed", False)) else 1
+
+
+def _dispatch_route_group_24(a, capture_command, p):
+    if a.cmd != "proofs":
+        return _UNHANDLED
+    try:
+        payload = _proofs_result(a, p)
+    except _lazy_import("proof_reuse", "ProofReuseError") as exc:
+        return _proofs_error(a, exc)
+    _proofs_output(a, payload)
+    return _proofs_exit_code(a, payload)
+
+
+def _verification_text(a, result: dict) -> None:
+    print("factory verification")
+    print("=" * 44)
+    for module in result["modules"]:
+        print(f"{module['label']:<8} {module['status'].upper()}")
+    decision = result["release_ready"] if a.strict_release else result["shippable"]
+    if a.strict_release and decision:
+        label = "STRICT LOCAL GATES PASS"
+    elif decision:
+        label = "LOCAL GATES PASS"
+    else:
+        label = "NOT READY"
+    print(f"FACTORY  {label}")
+    print(f"next action: {result['next_action']}")
+
+
+def _verification_output(a, result: dict) -> None:
+    if a.json:
+        print(json.dumps(result, indent=2))
+    else:
+        _verification_text(a, result)
+
+
+def _verification_exit_code(a, result: dict) -> int:
+    ready = result["release_ready"] if a.strict_release else result["shippable"]
+    return 0 if ready else 1
+
+
+def _dispatch_route_group_25(a, capture_command, p):
     if a.cmd == "verify":
         result = _lazy_import("verification", "verify_feature")(
             Path(a.root),
@@ -3959,88 +3641,87 @@ def _dispatch(argv=None) -> int:
             if a.release_contract
             else None,
         )
-        if a.json:
-            print(json.dumps(result, indent=2))
-        else:
-            print("factory verification")
-            print("=" * 44)
-            for module in result["modules"]:
-                print(f"{module['label']:<8} {module['status'].upper()}")
-            decision = (
-                result["release_ready"] if a.strict_release else result["shippable"]
-            )
-            label = (
-                "STRICT LOCAL GATES PASS"
-                if a.strict_release and decision
-                else "LOCAL GATES PASS"
-                if decision
-                else "NOT READY"
-            )
-            print(f"FACTORY  {label}")
-            print(f"next action: {result['next_action']}")
-        return (
-            0
-            if (result["release_ready"] if a.strict_release else result["shippable"])
-            else 1
-        )
-    if a.cmd == "meter":
-        if a.interval <= 0:
-            print("meter failed: --interval must be positive", file=sys.stderr)
-            return 2
-        if a.max_updates is not None and a.max_updates <= 0:
-            print("meter failed: --max-updates must be positive", file=sys.stderr)
-            return 2
-        capture_exit = 0
-        if capture_command is not None:
-            command = list(capture_command)
-            if not command:
-                print(
-                    "meter failed: --capture requires a command after --",
-                    file=sys.stderr,
-                )
-                return 2
-            started = time.monotonic()
-            try:
-                proc = subprocess.run(command, cwd=str(Path(a.root)))
-                capture_exit = proc.returncode
-            except FileNotFoundError:
-                print(
-                    f"meter capture failed: executable not found: {command[0]}",
-                    file=sys.stderr,
-                )
-                capture_exit = 127
-            elapsed_ms = round((time.monotonic() - started) * 1000)
-            from .meter import MeterLog, StageTiming
+        _verification_output(a, result)
+        return _verification_exit_code(a, result)
+    return _UNHANDLED
 
-            MeterLog(Path(a.root)).record(
-                StageTiming(
-                    module=a.module,
-                    stage=a.stage,
-                    wall_ms=elapsed_ms,
-                    model_calls=0,
-                    tokens_in=0,
-                    tokens_out=0,
-                    ok=capture_exit == 0,
-                    feature=a.feature,
-                    run_id=uuid.uuid4().hex,
-                )
-            )
-        updates = 0
-        while True:
-            snapshot = _lazy_import("meter", "live_snapshot")(
-                Path(a.root),
-                baseline_tokens_per_run=a.baseline,
-                runs_projected=a.runs,
-            )
-            if a.json:
-                print(json.dumps(snapshot, sort_keys=True))
-            else:
-                print(_lazy_import("meter", "live_summary_table")(snapshot))
-            updates += 1
-            if not a.watch or (a.max_updates is not None and updates >= a.max_updates):
-                break
-            time.sleep(a.interval)
-        return capture_exit
+
+def _validate_meter_args(a) -> bool:
+    if a.interval <= 0:
+        print("meter failed: --interval must be positive", file=sys.stderr)
+        return False
+    if a.max_updates is not None and a.max_updates <= 0:
+        print("meter failed: --max-updates must be positive", file=sys.stderr)
+        return False
+    return True
+
+
+def _capture_meter_command(a, capture_command: list[str] | None) -> int:
+    if capture_command is None:
+        return 0
+    command = list(capture_command)
+    if not command:
+        print("meter failed: --capture requires a command after --", file=sys.stderr)
+        return 2
+    started = time.monotonic()
+    try:
+        proc = subprocess.run(command, cwd=str(Path(a.root)))
+        capture_exit = proc.returncode
+    except FileNotFoundError:
+        print(
+            f"meter capture failed: executable not found: {command[0]}", file=sys.stderr
+        )
+        capture_exit = 127
+    elapsed_ms = round((time.monotonic() - started) * 1000)
+    from .meter import MeterLog, StageTiming
+
+    MeterLog(Path(a.root)).record(
+        StageTiming(
+            module=a.module,
+            stage=a.stage,
+            wall_ms=elapsed_ms,
+            model_calls=0,
+            tokens_in=0,
+            tokens_out=0,
+            ok=capture_exit == 0,
+            feature=a.feature,
+            run_id=uuid.uuid4().hex,
+        )
+    )
+    return capture_exit
+
+
+def _watch_meter(a) -> None:
+    updates = 0
+    while True:
+        snapshot = _lazy_import("meter", "live_snapshot")(
+            Path(a.root),
+            baseline_tokens_per_run=a.baseline,
+            runs_projected=a.runs,
+        )
+        if a.json:
+            print(json.dumps(snapshot, sort_keys=True))
+        else:
+            print(_lazy_import("meter", "live_summary_table")(snapshot))
+        updates += 1
+        if not a.watch or (a.max_updates is not None and updates >= a.max_updates):
+            break
+        time.sleep(a.interval)
+
+
+def _dispatch_route_group_26(a, capture_command, p):
+    if a.cmd != "meter":
+        return _UNHANDLED
+    if not _validate_meter_args(a):
+        return 2
+    capture_exit = _capture_meter_command(a, capture_command)
+    if capture_exit == 2 and capture_command == []:
+        return 2
+    _watch_meter(a)
+    return capture_exit
+
+
+def _dispatch_route_group_27(a, capture_command, p):
     if a.cmd == "rollup":
         print(
             json.dumps(
@@ -4068,6 +3749,10 @@ def _dispatch(argv=None) -> int:
                 f"earliest failure   : {trace['rollup'].get('earliest_failing_stage') or 'none'}"
             )
         return 0
+    return _UNHANDLED
+
+
+def _dispatch_route_group_28(a, capture_command, p):
     if a.cmd == "verify-trace":
         result = _lazy_import("proof", "verify_trace")(
             Path(a.trace), root=Path(a.root) if a.root else None
@@ -4083,56 +3768,75 @@ def _dispatch(argv=None) -> int:
                 for error in result["errors"]:
                     print(f"  - {error}")
         return 0 if result["valid"] else 1
-    if a.cmd == "replay":
-        trace_path = Path(a.trace)
-        trace_root = (
-            Path(a.root)
-            if a.root
-            else Path(_lazy_import("proof", "load_trace")(trace_path).get("root", "."))
+    return _UNHANDLED
+
+
+def _replay_trace_root(a, trace_path: Path) -> Path:
+    if a.root:
+        return Path(a.root)
+    trace = _lazy_import("proof", "load_trace")(trace_path)
+    return Path(trace.get("root", "."))
+
+
+def _replay_plan(a, trace_path: Path, trace_root: Path) -> dict:
+    changed = list(a.changed)
+    if a.base:
+        changed.extend(_lazy_import("proof", "git_changed_paths")(trace_root, a.base))
+    trace = _lazy_import("proof", "load_trace")(trace_path)
+    return _lazy_import("proof", "replay_plan")(trace, changed)
+
+
+def _replay_execute(a, plan: dict, trace_path: Path, trace_root: Path) -> int:
+    verification = _lazy_import("proof", "verify_trace")(trace_path, root=trace_root)
+    if not verification["valid"]:
+        print(
+            json.dumps(verification, indent=2)
+            if a.json
+            else "trace verification failed; replay refused"
         )
-        changed = list(a.changed)
-        if a.base:
-            changed.extend(
-                _lazy_import("proof", "git_changed_paths")(trace_root, a.base)
-            )
-        plan = _lazy_import("proof", "replay_plan")(
-            _lazy_import("proof", "load_trace")(trace_path), changed
+        return 1
+    result = _lazy_import("proof", "execute_replay")(plan, root=trace_root)
+    output = (
+        json.dumps(result, indent=2)
+        if a.json
+        else "\n".join(
+            f"{item['module']}:{item['stage']} {item['status']}"
+            for item in result["results"]
         )
-        if a.execute:
-            verification = _lazy_import("proof", "verify_trace")(
-                trace_path, root=trace_root
-            )
-            if not verification["valid"]:
-                print(
-                    json.dumps(verification, indent=2)
-                    if a.json
-                    else "trace verification failed; replay refused"
-                )
-                return 1
-            result = _lazy_import("proof", "execute_replay")(plan, root=trace_root)
-            print(
-                json.dumps(result, indent=2)
-                if a.json
-                else "\n".join(
-                    f"{item['module']}:{item['stage']} {item['status']}"
-                    for item in result["results"]
-                )
-            )
-            return 0 if result["ok"] else 1
-        if a.json:
-            print(json.dumps(plan, indent=2))
-        else:
-            print("factory replay plan")
-            print("=" * 44)
-            if not plan["commands"]:
-                print("no changed paths supplied; verify the trace, no replay planned")
-            for item in plan["commands"]:
-                print(f"{item['module']}:{item['stage']}")
-                for reason in item["reasons"]:
-                    print(f"  reason: {reason}")
-                if item["command"]:
-                    print(f"  run   : {item['command']}")
-        return 0
+    )
+    print(output)
+    return 0 if result["ok"] else 1
+
+
+def _replay_plan_output(a, plan: dict) -> None:
+    if a.json:
+        print(json.dumps(plan, indent=2))
+        return
+    print("factory replay plan")
+    print("=" * 44)
+    if not plan["commands"]:
+        print("no changed paths supplied; verify the trace, no replay planned")
+    for item in plan["commands"]:
+        print(f"{item['module']}:{item['stage']}")
+        for reason in item["reasons"]:
+            print(f"  reason: {reason}")
+        if item["command"]:
+            print(f"  run   : {item['command']}")
+
+
+def _dispatch_route_group_29(a, capture_command, p):
+    if a.cmd != "replay":
+        return _UNHANDLED
+    trace_path = Path(a.trace)
+    trace_root = _replay_trace_root(a, trace_path)
+    plan = _replay_plan(a, trace_path, trace_root)
+    if a.execute:
+        return _replay_execute(a, plan, trace_path, trace_root)
+    _replay_plan_output(a, plan)
+    return 0
+
+
+def _dispatch_route_group_30(a, capture_command, p):
     if a.cmd == "evidence":
         evidence = _lazy_import("proof", "public_evidence")(
             Path(a.root), a.feature, trace_path=Path(a.trace) if a.trace else None
@@ -4143,6 +3847,10 @@ def _dispatch(argv=None) -> int:
             else _lazy_import("proof", "public_evidence_text")(evidence)
         )
         return 0 if evidence["verified"] else 1
+    return _UNHANDLED
+
+
+def _dispatch_route_group_31(a, capture_command, p):
     if a.cmd == "risk-diff":
         changed = list(a.changed)
         if not changed:
@@ -4164,234 +3872,194 @@ def _dispatch(argv=None) -> int:
                 for reason in stage["reasons"]:
                     print(f"  reason: {reason}")
         return 0
-    if a.cmd == "graph":
-        from .graph_ops import graph_ops_impact, graph_ops_snapshot
+    return _UNHANDLED
 
-        if a.graph_cmd == "lineage-continuity":
-            try:
-                payload = _lazy_import("candidate_lineage", "verify_candidate_lineage")(
-                    Path(a.root), Path(a.manifest)
-                )
-            except _lazy_import("candidate_lineage", "CandidateLineageError") as exc:
-                print(
-                    json.dumps(
-                        {
-                            "schema": "factory.candidate-lineage-error.v1",
-                            "code": exc.code,
-                            "message": str(exc),
-                        },
-                        indent=2,
-                    ),
-                    file=sys.stderr,
-                )
-                return 2
-            print(
-                json.dumps(payload, indent=2, sort_keys=True)
-                if a.json
-                else "candidate lineage: verified (review only)"
+
+def _graph_lineage_error(schema: str, exc: Exception, code: str | None = None) -> int:
+    print(
+        json.dumps(
+            {
+                "schema": schema,
+                "code": code or getattr(exc, "code", "E_GRAPH_LINEAGE"),
+                "message": str(exc),
+            },
+            indent=2,
+        ),
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _graph_lineage_continuity(a) -> int:
+    try:
+        payload = _lazy_import("candidate_lineage", "verify_candidate_lineage")(
+            Path(a.root), Path(a.manifest)
+        )
+    except _lazy_import("candidate_lineage", "CandidateLineageError") as exc:
+        return _graph_lineage_error("factory.candidate-lineage-error.v1", exc)
+    print(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if a.json
+        else "candidate lineage: verified (review only)"
+    )
+    return 0
+
+
+def _graph_lineage_mission(a) -> int:
+    try:
+        payload = _lazy_import("graph_forensics", "seal_mission_graph_lineage")(
+            Path(a.mission), Path(a.root), a.run_id, Path(a.out), a.candidate_sha256
+        )
+    except (_lazy_import("graph_forensics", "GraphForensicsError"), ValueError) as exc:
+        code = getattr(exc, "code", "GRAPH_LINEAGE_HISTORY_INVALID")
+        return _graph_lineage_error("factory.graph-lineage.error.v1", exc, code)
+    print(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if a.json
+        else f"exported mission lineage: {payload['path']}"
+    )
+    return 0
+
+
+def _graph_lineage_seal(a) -> int:
+    try:
+        payload = _lazy_import("graph_forensics", "seal_graph_lineage")(
+            a.run_id, a.graph_id, Path(a.steps), Path(a.out), a.candidate_sha256
+        )
+    except _lazy_import("graph_forensics", "GraphForensicsError") as exc:
+        return _graph_lineage_error("factory.graph-lineage.error.v1", exc)
+    print(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if a.json
+        else f"sealed graph lineage: {payload['path']}"
+    )
+    return 0
+
+
+def _graph_lineage_verify(a) -> int:
+    try:
+        payload = _lazy_import("graph_forensics", "verify_graph_lineage")(
+            Path(a.lineage), a.candidate_sha256
+        )
+    except _lazy_import("graph_forensics", "GraphForensicsError") as exc:
+        return _graph_lineage_error("factory.graph-lineage.error.v1", exc)
+    if a.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"graph lineage: {'valid' if payload['valid'] else 'invalid'}")
+        for error in payload["errors"]:
+            print(f"- {error}")
+    return 0 if payload["valid"] else 1
+
+
+def _graph_forensics(a) -> int:
+    try:
+        payload = _lazy_import("graph_forensics", "graph_forensics")(
+            Path(a.baseline), Path(a.candidate)
+        )
+    except _lazy_import("graph_forensics", "GraphForensicsError") as exc:
+        return _graph_lineage_error("factory.graph-forensics.error.v1", exc)
+    if a.mermaid:
+        print(payload["mermaid"])
+    elif a.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        divergence = payload["divergence"]
+        print("factory graph forensics (read-only)")
+        print("=" * 44)
+        print(
+            f"first divergence: {divergence['candidate_node'] if divergence else 'none'}"
+        )
+        print(f"anomalies       : {len(payload['anomalies'])}")
+        print(f"recovery        : {payload['recovery_plan']['action']}")
+    return 0
+
+
+def _graph_impact(a, graph_ops_impact) -> int:
+    try:
+        payload = graph_ops_impact(Path(a.root), a.changed)
+    except ValueError as exc:
+        return _graph_lineage_error(
+            "factory.graph-impact.error.v1", exc, "CHANGED_PATH_INVALID"
+        )
+    if a.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print("factory graph impact (read-only)")
+        print("=" * 44)
+        print(f"matched proofs  : {len(payload['matched_proofs'])}")
+        print(f"rerun proofs    : {len(payload['rerun_proofs'])}")
+        print(f"verified current: {len(payload['verified_current_proofs'])}")
+        if payload["unmatched_changed_paths"]:
+            print("unmatched paths : " + ", ".join(payload["unmatched_changed_paths"]))
+    return 0
+
+
+def _graph_portfolio(a, graph_ops_snapshot) -> int:
+    durations = None
+    if a.durations:
+        try:
+            durations = json.loads(Path(a.durations).read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return _graph_lineage_error(
+                "factory.graph-portfolio.error.v1", exc, "DURATION_INPUT_INVALID"
             )
-            return 0
-        if a.graph_cmd == "lineage-mission":
-            try:
-                payload = _lazy_import("graph_forensics", "seal_mission_graph_lineage")(
-                    Path(a.mission),
-                    Path(a.root),
-                    a.run_id,
-                    Path(a.out),
-                    a.candidate_sha256,
-                )
-            except (
-                _lazy_import("graph_forensics", "GraphForensicsError"),
-                ValueError,
-            ) as exc:
-                code = (
-                    exc.code
-                    if isinstance(
-                        exc, _lazy_import("graph_forensics", "GraphForensicsError")
-                    )
-                    else "GRAPH_LINEAGE_HISTORY_INVALID"
-                )
-                print(
-                    json.dumps(
-                        {
-                            "schema": "factory.graph-lineage.error.v1",
-                            "code": code,
-                            "message": str(exc),
-                        },
-                        indent=2,
-                    ),
-                    file=sys.stderr,
-                )
-                return 2
-            print(
-                json.dumps(payload, indent=2, sort_keys=True)
-                if a.json
-                else f"exported mission lineage: {payload['path']}"
-            )
-            return 0
-        if a.graph_cmd == "lineage-seal":
-            try:
-                payload = _lazy_import("graph_forensics", "seal_graph_lineage")(
-                    a.run_id, a.graph_id, Path(a.steps), Path(a.out), a.candidate_sha256
-                )
-            except _lazy_import("graph_forensics", "GraphForensicsError") as exc:
-                print(
-                    json.dumps(
-                        {
-                            "schema": "factory.graph-lineage.error.v1",
-                            "code": exc.code,
-                            "message": str(exc),
-                        },
-                        indent=2,
-                    ),
-                    file=sys.stderr,
-                )
-                return 2
-            print(
-                json.dumps(payload, indent=2, sort_keys=True)
-                if a.json
-                else f"sealed graph lineage: {payload['path']}"
-            )
-            return 0
-        if a.graph_cmd == "lineage-verify":
-            try:
-                payload = _lazy_import("graph_forensics", "verify_graph_lineage")(
-                    Path(a.lineage), a.candidate_sha256
-                )
-            except _lazy_import("graph_forensics", "GraphForensicsError") as exc:
-                print(
-                    json.dumps(
-                        {
-                            "schema": "factory.graph-lineage.error.v1",
-                            "code": exc.code,
-                            "message": str(exc),
-                        },
-                        indent=2,
-                    ),
-                    file=sys.stderr,
-                )
-                return 2
-            if a.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            else:
-                print(f"graph lineage: {'valid' if payload['valid'] else 'invalid'}")
-                for error in payload["errors"]:
-                    print(f"- {error}")
-            return 0 if payload["valid"] else 1
-        if a.graph_cmd == "forensics":
-            try:
-                payload = _lazy_import("graph_forensics", "graph_forensics")(
-                    Path(a.baseline), Path(a.candidate)
-                )
-            except _lazy_import("graph_forensics", "GraphForensicsError") as exc:
-                print(
-                    json.dumps(
-                        {
-                            "schema": "factory.graph-forensics.error.v1",
-                            "code": exc.code,
-                            "message": str(exc),
-                        },
-                        indent=2,
-                    ),
-                    file=sys.stderr,
-                )
-                return 2
-            if a.mermaid:
-                print(payload["mermaid"])
-            elif a.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            else:
-                divergence = payload["divergence"]
-                print("factory graph forensics (read-only)")
-                print("=" * 44)
-                print(
-                    f"first divergence: {divergence['candidate_node'] if divergence else 'none'}"
-                )
-                print(f"anomalies       : {len(payload['anomalies'])}")
-                print(f"recovery        : {payload['recovery_plan']['action']}")
-            return 0
-        if a.graph_cmd == "impact":
-            try:
-                payload = graph_ops_impact(Path(a.root), a.changed)
-            except ValueError as exc:
-                print(
-                    json.dumps(
-                        {
-                            "schema": "factory.graph-impact.error.v1",
-                            "code": "CHANGED_PATH_INVALID",
-                            "message": str(exc),
-                        },
-                        indent=2,
-                    ),
-                    file=sys.stderr,
-                )
-                return 2
-            if a.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            else:
-                print("factory graph impact (read-only)")
-                print("=" * 44)
-                print(f"matched proofs  : {len(payload['matched_proofs'])}")
-                print(f"rerun proofs    : {len(payload['rerun_proofs'])}")
-                print(f"verified current: {len(payload['verified_current_proofs'])}")
-                if payload["unmatched_changed_paths"]:
-                    print(
-                        "unmatched paths : "
-                        + ", ".join(payload["unmatched_changed_paths"])
-                    )
-        elif a.graph_cmd == "portfolio":
-            durations = None
-            if a.durations:
-                try:
-                    durations = json.loads(
-                        Path(a.durations).read_text(encoding="utf-8-sig")
-                    )
-                except (OSError, json.JSONDecodeError) as exc:
-                    print(
-                        json.dumps(
-                            {
-                                "schema": "factory.graph-portfolio.error.v1",
-                                "code": "DURATION_INPUT_INVALID",
-                                "message": str(exc),
-                            },
-                            indent=2,
-                        ),
-                        file=sys.stderr,
-                    )
-                    return 2
-            payload = _lazy_import("graph_portfolio", "graph_portfolio_plan")(
-                graph_ops_snapshot(Path(a.root)), durations
-            )
-            payload = {**payload, "cli_marker": "GRAPH_PORTFOLIO_CLI_READ_ONLY"}
-            if a.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            else:
-                print("factory graph portfolio (read-only)")
-                print("=" * 44)
-                print(f"verdict      : {payload['verdict']}")
-                print(
-                    f"critical path: {' -> '.join(payload['critical_path']) or 'none'}"
-                )
-                print(f"work items   : {len(payload['workset'])}")
-                print(f"parallel wave: {len(payload.get('parallel_waves', []))}")
-            return 0 if payload["verdict"] == "READY" else 1
-        else:
-            snapshot = graph_ops_snapshot(Path(a.root))
-            if a.mermaid:
-                print(snapshot["mermaid"])
-            else:
-                payload = {**snapshot, "cli_marker": "GRAPH_OPS_CLI_READ_ONLY"}
-                if a.json:
-                    print(json.dumps(payload, indent=2, sort_keys=True))
-                else:
-                    print("factory graph ops (read-only)")
-                    print("=" * 44)
-                    print(f"nodes       : {snapshot['facts']['node_count']}")
-                    print(f"edges       : {snapshot['facts']['edge_count']}")
-                    print(f"complete    : {snapshot['complete']}")
-                    print(f"next action : {snapshot['recommendation']['action']}")
-                    print(f"reason      : {snapshot['recommendation']['reason']}")
+    payload = _lazy_import("graph_portfolio", "graph_portfolio_plan")(
+        graph_ops_snapshot(Path(a.root)), durations
+    )
+    payload = {**payload, "cli_marker": "GRAPH_PORTFOLIO_CLI_READ_ONLY"}
+    if a.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print("factory graph portfolio (read-only)")
+        print("=" * 44)
+        print(f"verdict      : {payload['verdict']}")
+        print(f"critical path: {' -> '.join(payload['critical_path']) or 'none'}")
+        print(f"work items   : {len(payload['workset'])}")
+        print(f"parallel wave: {len(payload.get('parallel_waves', []))}")
+    return 0 if payload["verdict"] == "READY" else 1
+
+
+def _graph_snapshot(a, graph_ops_snapshot) -> int:
+    snapshot = graph_ops_snapshot(Path(a.root))
+    if a.mermaid:
+        print(snapshot["mermaid"])
         return 0
+    payload = {**snapshot, "cli_marker": "GRAPH_OPS_CLI_READ_ONLY"}
+    if a.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print("factory graph ops (read-only)")
+        print("=" * 44)
+        print(f"nodes       : {snapshot['facts']['node_count']}")
+        print(f"edges       : {snapshot['facts']['edge_count']}")
+        print(f"complete    : {snapshot['complete']}")
+        print(f"next action : {snapshot['recommendation']['action']}")
+        print(f"reason      : {snapshot['recommendation']['reason']}")
+    return 0
+
+
+def _dispatch_route_group_32(a, capture_command, p):
+    if a.cmd != "graph":
+        return _UNHANDLED
+    from .graph_ops import graph_ops_impact, graph_ops_snapshot
+
+    handlers = {
+        "lineage-continuity": _graph_lineage_continuity,
+        "lineage-mission": _graph_lineage_mission,
+        "lineage-seal": _graph_lineage_seal,
+        "lineage-verify": _graph_lineage_verify,
+        "forensics": _graph_forensics,
+        "impact": lambda: _graph_impact(a, graph_ops_impact),
+        "portfolio": lambda: _graph_portfolio(a, graph_ops_snapshot),
+    }
+    handler = handlers.get(a.graph_cmd)
+    if handler is not None:
+        return handler() if a.graph_cmd in {"impact", "portfolio"} else handler(a)
+    return _graph_snapshot(a, graph_ops_snapshot)
+
+
+def _dispatch_route_group_33(a, capture_command, p):
     if a.cmd == "memory":
         from .cli_governance import run as run_governance
 
@@ -4428,6 +4096,10 @@ def _dispatch(argv=None) -> int:
         from .cli_github import run as run_github
 
         return run_github(a)
+    return _UNHANDLED
+
+
+def _dispatch_route_group_34(a, capture_command, p):
     if a.cmd == "repair":
         from .cli_ide import run as run_ide
 
@@ -4459,6 +4131,10 @@ def _dispatch(argv=None) -> int:
                     f"{item['module']}:{item['stage']} avg={item['avg_wall_ms']}ms runs={item['runs']} failed={item['failed_runs']}"
                 )
         return 0
+    return _UNHANDLED
+
+
+def _dispatch_route_group_35(a, capture_command, p):
     if a.cmd == "override":
         from .overrides import record_override
 
@@ -4511,6 +4187,10 @@ def _dispatch(argv=None) -> int:
             return 1
         print(json.dumps(result.to_dict(), indent=2))
         return 0 if result.verdict != "UNSIGNED" else 1
+    return _UNHANDLED
+
+
+def _dispatch_route_group_36(a, capture_command, p):
     if a.cmd == "verify-receipts":
         from .enterprise_receipts import EnterpriseReceiptError
         from .receipt_challenge import MUTATION_GATE_SCHEMA, verify_receipt_mutations
@@ -4550,6 +4230,10 @@ def _dispatch(argv=None) -> int:
         from .cli_controls import run as run_controls
 
         return run_controls(a)
+    return _UNHANDLED
+
+
+def _dispatch_route_group_37(a, capture_command, p):
     if a.cmd == "evidence-memory":
         from .engineering_memory import recall_engineering_memory
         from .continuity import principal_from_args, ContinuityError
@@ -4594,6 +4278,10 @@ def _dispatch(argv=None) -> int:
             return 1
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
+    return _UNHANDLED
+
+
+def _dispatch_route_group_38(a, capture_command, p):
     if a.cmd == "continuity":
         from .continuity import (
             ContinuityError,
@@ -4677,6 +4365,10 @@ def _dispatch(argv=None) -> int:
         from .cli_assurance import run as run_assurance
 
         return run_assurance(a)
+    return _UNHANDLED
+
+
+def _dispatch_route_group_39(a, capture_command, p):
     if a.cmd == "verify-policy":
         from .assurance import AssuranceError, verify_policy_command
 
@@ -4785,6 +4477,10 @@ def _dispatch(argv=None) -> int:
             )
         )
         return 0
+    return _UNHANDLED
+
+
+def _dispatch_route_group_40(a, capture_command, p):
     if a.cmd == "privacy":
         from .privacy import bbs_status, merkle_disclosure, zkvm_pilot_status
 
@@ -4854,47 +4550,79 @@ def _dispatch(argv=None) -> int:
         path.write_text(ci_template(a.feature), encoding="utf-8")
         print(f"GitHub PR-comment workflow written: {path}")
         return 0
-    if a.cmd == "loop":
-        from .loop_passport import (
-            build_loop_passport,
-            evaluate_budget,
+    return _UNHANDLED
+
+
+def _loop_action(
+    a,
+    init_loop,
+    validate_manifest,
+    build_loop_passport,
+    verify_loop_passport,
+    evaluate_budget,
+) -> tuple[dict, int]:
+    if a.loop_cmd == "init":
+        result = init_loop(Path(a.root), a.loop_id, a.owner, force=a.force)
+        return result, 0
+    if a.loop_cmd == "validate":
+        result = validate_manifest(Path(a.manifest))
+        return result, 0 if result["valid"] else 1
+    if a.loop_cmd == "passport":
+        result = build_loop_passport(Path(a.root), Path(a.manifest))
+        return result, 0 if result["verdict"] == "VERIFIED" else 1
+    if a.loop_cmd == "verify":
+        result = verify_loop_passport(Path(a.passport))
+        return result, 0 if result["valid"] else 1
+    result = evaluate_budget(Path(a.root), Path(a.manifest), Path(a.usage))
+    return result, 0 if result["ok"] else 1
+
+
+def _loop_error(exc: Exception) -> tuple[dict, int]:
+    return {
+        "schema": "factory.loop.result.v1",
+        "verdict": "ERROR",
+        "error": {"code": "E_INPUT", "message": str(exc)},
+    }, 1
+
+
+def _loop_output(a, result: dict, code: int) -> None:
+    if a.json:
+        print(json.dumps(result, indent=2))
+    elif code == 0:
+        print(f"Loop Passport: {result.get('verdict', 'WRITTEN')}")
+        for name, path in result.get("paths", {}).items():
+            print(f"  {name:<8}: {path}")
+    else:
+        print(json.dumps(result, indent=2), file=sys.stderr)
+
+
+def _dispatch_route_group_41(a, capture_command, p):
+    if a.cmd != "loop":
+        return _UNHANDLED
+    from .loop_passport import (
+        build_loop_passport,
+        evaluate_budget,
+        init_loop,
+        validate_manifest,
+        verify_loop_passport,
+    )
+
+    try:
+        result, code = _loop_action(
+            a,
             init_loop,
             validate_manifest,
+            build_loop_passport,
             verify_loop_passport,
+            evaluate_budget,
         )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        result, code = _loop_error(exc)
+    _loop_output(a, result, code)
+    return code
 
-        try:
-            if a.loop_cmd == "init":
-                result = init_loop(Path(a.root), a.loop_id, a.owner, force=a.force)
-                code = 0
-            elif a.loop_cmd == "validate":
-                result = validate_manifest(Path(a.manifest))
-                code = 0 if result["valid"] else 1
-            elif a.loop_cmd == "passport":
-                result = build_loop_passport(Path(a.root), Path(a.manifest))
-                code = 0 if result["verdict"] == "VERIFIED" else 1
-            elif a.loop_cmd == "verify":
-                result = verify_loop_passport(Path(a.passport))
-                code = 0 if result["valid"] else 1
-            else:
-                result = evaluate_budget(Path(a.root), Path(a.manifest), Path(a.usage))
-                code = 0 if result["ok"] else 1
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            result = {
-                "schema": "factory.loop.result.v1",
-                "verdict": "ERROR",
-                "error": {"code": "E_INPUT", "message": str(exc)},
-            }
-            code = 1
-        if a.json:
-            print(json.dumps(result, indent=2))
-        elif code == 0:
-            print(f"Loop Passport: {result.get('verdict', 'WRITTEN')}")
-            for name, path in result.get("paths", {}).items():
-                print(f"  {name:<8}: {path}")
-        else:
-            print(json.dumps(result, indent=2), file=sys.stderr)
-        return code
+
+def _dispatch_route_group_42(a, capture_command, p):
     if a.cmd == "passport":
         from .cli_artifacts import run as run_artifacts
 
@@ -4923,6 +4651,30 @@ def _dispatch(argv=None) -> int:
         from .cli_app import run as run_app
 
         return run_app(a)
+    return _UNHANDLED
+
+
+def _dispatch(argv=None) -> int:
+    """Parse FactoryLine commands, dispatch one handler, and return its process code."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "--version":
+        return _emit_version("--json" in argv)
+    # A captured command may legitimately contain flags that belong to the
+    # child process.  Pull it out before argparse interprets those flags as
+    # FactoryLine options.  ``--`` remains optional for a natural CLI shape.
+    capture_command = None
+    if argv[:1] == ["meter"] and "--capture" in argv:
+        capture_index = argv.index("--capture")
+        capture_command = argv[capture_index + 1 :]
+        if capture_command[:1] == ["--"]:
+            capture_command = capture_command[1:]
+        argv = argv[:capture_index]
+    p = _build_parser()
+    a = p.parse_args(argv)
+
+    result = _dispatch_routes(a, capture_command, p)
+    if result is not _UNHANDLED:
+        return result
     p.print_help()
     return 0
 

@@ -117,6 +117,91 @@ def _write(path: str, value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _read_observation_list(path: str) -> list[Any]:
+    observations = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(observations, list):
+        raise ValueError("observations must be a JSON list")
+    return observations
+
+
+def _run_memory_command(args: Any, engines: dict[str, Any]) -> tuple[bool, Any]:
+    """Run status, observation, and librarian memory commands."""
+    if args.blueprint_cmd == "status":
+        return True, engines["blueprint_projection"](Path(args.root))
+    if args.blueprint_cmd == "retain":
+        result = engines["retain_observation"](**_read(args.payload))
+        result["artifact"] = _write(args.out, result)
+        return True, result
+    if args.blueprint_cmd == "recall":
+        result = engines["recall_observations"](
+            _read_observation_list(args.observations),
+            project=args.project,
+            query=args.query,
+            tags=args.tag,
+            limit=args.limit,
+        )
+        return True, result
+    if args.blueprint_cmd == "reflect":
+        result = engines["reflect_observations"](
+            _read_observation_list(args.observations)
+        )
+        return True, result
+    if args.blueprint_cmd == "librarian":
+        result = engines["librarian_promotion"](
+            _read(args.observation),
+            reviewer=args.reviewer,
+            stage=args.stage,
+            source_digest=args.source_digest,
+            feedback=args.feedback,
+        )
+        result["artifact"] = _write(args.out, result)
+        return True, result
+    return False, None
+
+
+def _run_artifact_chain(args: Any, engines: dict[str, Any]) -> dict[str, Any]:
+    if args.artifact_cmd == "build":
+        result = engines["build_artifact_chain"](
+            intent=Path(args.intent).read_text(encoding="utf-8"),
+            spec=Path(args.spec).read_text(encoding="utf-8"),
+            plan=Path(args.plan).read_text(encoding="utf-8"),
+            author=args.author,
+            project=args.project,
+            intent_status=args.intent_status,
+            files_changed=args.files_changed,
+            work_order=args.work_order,
+            risks=args.risks,
+            proof_of_completion=args.proof_of_completion,
+        )
+        result["artifact"] = _write(args.out, result)
+        return result
+    return engines["verify_artifact_chain"](_read(args.receipt))
+
+
+def _run_contract_command(args: Any, engines: dict[str, Any]) -> Any:
+    """Run intent, access, artifact-chain, and team-plan commands."""
+    if args.blueprint_cmd == "signal-intent":
+        result = engines["signal_intent_proposal"](_read(args.signal), owner=args.owner)
+        result["artifact"] = _write(args.out, result)
+        return result
+    if args.blueprint_cmd == "access":
+        result = engines["access_profile"](**_read(args.payload))
+        result["artifact"] = _write(args.out, result)
+        return result
+    if args.blueprint_cmd == "artifact-chain":
+        return _run_artifact_chain(args, engines)
+    result = engines["team_plan"](**_read(args.payload))
+    result["artifact"] = _write(args.out, result)
+    return result
+
+
+def _dispatch_blueprint_command(args: Any, engines: dict[str, Any]) -> Any:
+    matched, result = _run_memory_command(args, engines)
+    if matched:
+        return result
+    return _run_contract_command(args, engines)
+
+
 def run(args: Any) -> int:
     """Execute a blueprint subcommand and emit deterministic JSON errors."""
     from .blueprint import (
@@ -133,68 +218,20 @@ def run(args: Any) -> int:
         verify_artifact_chain,
     )
 
+    engines = {
+        "access_profile": access_profile,
+        "build_artifact_chain": build_artifact_chain,
+        "blueprint_projection": blueprint_projection,
+        "librarian_promotion": librarian_promotion,
+        "recall_observations": recall_observations,
+        "reflect_observations": reflect_observations,
+        "retain_observation": retain_observation,
+        "signal_intent_proposal": signal_intent_proposal,
+        "team_plan": team_plan,
+        "verify_artifact_chain": verify_artifact_chain,
+    }
     try:
-        if args.blueprint_cmd == "status":
-            result = blueprint_projection(Path(args.root))
-        elif args.blueprint_cmd == "retain":
-            payload = _read(args.payload)
-            result = retain_observation(**payload)
-            result["artifact"] = _write(args.out, result)
-        elif args.blueprint_cmd == "recall":
-            observations = json.loads(
-                Path(args.observations).read_text(encoding="utf-8")
-            )
-            if not isinstance(observations, list):
-                raise ValueError("observations must be a JSON list")
-            result = recall_observations(
-                observations,
-                project=args.project,
-                query=args.query,
-                tags=args.tag,
-                limit=args.limit,
-            )
-        elif args.blueprint_cmd == "reflect":
-            observations = json.loads(
-                Path(args.observations).read_text(encoding="utf-8")
-            )
-            if not isinstance(observations, list):
-                raise ValueError("observations must be a JSON list")
-            result = reflect_observations(observations)
-        elif args.blueprint_cmd == "librarian":
-            result = librarian_promotion(
-                _read(args.observation),
-                reviewer=args.reviewer,
-                stage=args.stage,
-                source_digest=args.source_digest,
-                feedback=args.feedback,
-            )
-            result["artifact"] = _write(args.out, result)
-        elif args.blueprint_cmd == "signal-intent":
-            result = signal_intent_proposal(_read(args.signal), owner=args.owner)
-            result["artifact"] = _write(args.out, result)
-        elif args.blueprint_cmd == "access":
-            result = access_profile(**_read(args.payload))
-            result["artifact"] = _write(args.out, result)
-        elif args.blueprint_cmd == "artifact-chain":
-            if args.artifact_cmd == "build":
-                result = build_artifact_chain(
-                    intent=Path(args.intent).read_text(encoding="utf-8"),
-                    spec=Path(args.spec).read_text(encoding="utf-8"),
-                    plan=Path(args.plan).read_text(encoding="utf-8"),
-                    author=args.author,
-                    project=args.project,
-                    intent_status=args.intent_status,
-                    files_changed=args.files_changed,
-                    work_order=args.work_order,
-                    risks=args.risks,
-                    proof_of_completion=args.proof_of_completion,
-                )
-                result["artifact"] = _write(args.out, result)
-            else:
-                result = verify_artifact_chain(_read(args.receipt))
-        else:
-            result = team_plan(**_read(args.payload))
-            result["artifact"] = _write(args.out, result)
+        result = _dispatch_blueprint_command(args, engines)
     except (
         BlueprintError,
         OSError,

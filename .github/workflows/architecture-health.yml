@@ -7,6 +7,7 @@ on:
       - "architecture-boundaries.json"
       - "factoryline/**/*.py"
       - "**.md"
+      - "evidence/self-audit/**"
       - ".github/workflows/architecture-health.yml"
   push:
     branches: [main]
@@ -15,6 +16,7 @@ on:
       - "architecture-boundaries.json"
       - "factoryline/**/*.py"
       - "**.md"
+      - "evidence/self-audit/**"
       - ".github/workflows/architecture-health.yml"
 
 permissions:
@@ -37,3 +39,7 @@ jobs:
         run: python -m pip install -e .
       - name: Enforce architecture budgets
         run: python -m factoryline.cli architecture health --root . --json
+      - name: Detect historical evidence rewrites and release-review conflicts
+        env:
+          REVIEW_BASE: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
+        run: python -m factoryline.cli audit governance --root . --base "$REVIEW_BASE" --json

@@ -6,11 +6,19 @@ release-cadence admission. A blocked preflight stops automated publication; it
 does not change the state of an already published GitHub release or a manually
 uploaded artifact.
 
-Before publication, a human other than the workflow initiator must review the
-candidate and receipts. Administrators must configure required reviewers and
-prevent self-review on every named environment below. The workflow's
-`github.actor` value identifies the initiator and is not an approval receipt.
-Keep the GitHub release in draft until that independent review is complete.
+The owner selected a separate specialty AI agent as the source reviewer.
+Protected main requires the coordinator-reported `specialty-ai-review` status
+and CI; this is not independent human approval or proof of runtime safety.
+PyPI and Hugging Face environments no longer require a second human. Other
+provider gates retain their channel-specific configuration. Keep the release
+draft until applicable review, quality and publication checks are satisfied.
+
+The PR architecture job also runs `factory audit governance --base <base SHA>`.
+It blocks edits to dated self-audit JSON and the explicit conflicting
+second-human review rules that previously escaped review. Muse receipt
+freshness, policy binding, tamper resistance and on-demand lifecycle are
+checked by the adversarial plugin tests in CI. These checks are bounded and do
+not turn a source merge into release approval.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
@@ -26,12 +34,13 @@ Keep the GitHub release in draft until that independent review is complete.
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured. Direct
-marketplace uploads require the same second-human review outside GitHub Actions.
+marketplace uploads require their own provider acceptance and approval evidence.
 
 The 0.46.9 source candidate is unpublished. Release preflight must pass strict
-architecture health and prospective cadence, and the required independent
-review and protected provider gates must be satisfied before publication. Do
-not weaken or skip release preflight to force a provider upload.
+architecture health and prospective cadence; the current quality reassessment
+remains blocked on the repository-wide complexity gate. Applicable source-review
+and protected provider gates must also be satisfied before publication. Do not
+weaken or skip release preflight to force a provider upload.
 
 The release-train cap took effect at `2026-09-21T15:01:54Z`, the recorded
 commit time when the policy was added. The latest core tag (`v0.46.7`,

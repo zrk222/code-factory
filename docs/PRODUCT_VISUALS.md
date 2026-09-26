@@ -16,7 +16,28 @@ product interface.
 Use as the listing logo or product icon. It establishes identity; it does not
 claim a Marketplace approval, download count, or readiness result.
 
-## 2. FactoryLine 0.44: live operations dashboard
+## 2. Graph Ops: full lineage and forensic dashboard
+
+![Full-page local Graph Ops dashboard showing lineage runs, a forensic finding, first semantic divergence, recovery preview, guarded actions, graph lanes, and the next action](assets/marketplace/graph-ops-forensics.png)
+
+The GitHub README leads with this actual dashboard capture. It shows a bounded
+local result and a proposed recovery path whose execution remains locked.
+
+### Updated audit and individual test results
+
+![Updated Graph Ops audit results with native deep-scan, evaluated audit, six runtime lanes, and searchable individual JUnit cases](assets/marketplace/graph-ops-audit-results-0.46.9.png)
+
+This current local capture shows the new labeled audit surface and individual
+test reporting. A missing scan or signed lane result remains marked not run;
+the JUnit report is local and has no current-candidate binding.
+
+### Supplement: FactoryLine 0.44 live Assembly telemetry
+
+![Annotated local Graph Ops capture with labels for run state, telemetry, evidence actions, and the read-only boundary](assets/marketplace/graph-ops-live-annotated.png)
+
+The GitHub README includes this labeled explainer only as a supplement. The
+labels were added to the actual capture below; use the original when exact UI
+pixels are required.
 
 ![Actual FactoryLine 0.44 Graph Ops dashboard showing a waiting-for-human assembly, live telemetry, and evidence-backed next actions](assets/marketplace/factoryline-0.44-live-dashboard.png)
 

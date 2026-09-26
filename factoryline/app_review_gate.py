@@ -252,15 +252,9 @@ def _candidate(value: object, label: str) -> dict[str, str]:
     return normalized
 
 
-def verify_app_review_readiness(
-    root: Path, contract_path: Path, evidence_path: Path, out_path: Path
-) -> dict[str, Any]:
-    """Compare reviewed requirements with exact-build observations; unknown fails closed."""
-    workspace = Path(root).resolve()
-    contract, contract_source = _read_json(workspace, contract_path)
-    evidence, evidence_source = _read_json(workspace, evidence_path)
-    expected = _candidate(contract.get("candidate"), "contract.candidate")
-    observed = _candidate(evidence.get("candidate"), "evidence.candidate")
+def _review_inputs(
+    contract: dict[str, Any], evidence: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
     checks = evidence.get("checks")
     if not isinstance(checks, dict):
         raise RevenueForgeError(
@@ -272,72 +266,137 @@ def verify_app_review_readiness(
             "APP_REVIEW_APPLICABILITY_INVALID",
             "contract.applicability must classify every conditional rule",
         )
+    return checks, applicability
 
-    findings: list[dict[str, str]] = []
-    if observed != expected:
-        findings.append(
-            {
-                "code": "APP_REVIEW_BUILD_BINDING_MISMATCH",
-                "policy_area": "2.1 App Completeness",
-                "remediation": "Collect every observation again from the exact candidate declared in the reviewed contract.",
-            }
+
+def _binding_findings(
+    expected: dict[str, str], observed: dict[str, str]
+) -> list[dict[str, str]]:
+    if observed == expected:
+        return []
+    return [
+        {
+            "code": "APP_REVIEW_BUILD_BINDING_MISMATCH",
+            "policy_area": "2.1 App Completeness",
+            "remediation": "Collect every observation again from the exact candidate declared in the reviewed contract.",
+        }
+    ]
+
+
+def _unreviewed_rule(key: str, policy_area: str, remediation: str) -> dict[str, str]:
+    return {
+        "code": f"APP_REVIEW_{key.upper()}_APPLICABILITY_UNREVIEWED",
+        "policy_area": policy_area,
+        "remediation": remediation,
+    }
+
+
+def _conditional_review(
+    key: str, policy_area: str, classification: object
+) -> tuple[bool, dict[str, str] | None, dict[str, str] | None]:
+    if not isinstance(classification, dict) or classification.get("status") not in {
+        "required",
+        "not_applicable",
+    }:
+        return (
+            False,
+            None,
+            _unreviewed_rule(
+                key,
+                policy_area,
+                "Classify this conditional rule as required or not_applicable with a named reviewer and concrete rationale.",
+            ),
         )
+    reviewer = classification.get("reviewed_by")
+    rationale = classification.get("rationale")
+    if (
+        not isinstance(reviewer, str)
+        or not reviewer.strip()
+        or not isinstance(rationale, str)
+        or len(rationale.strip()) < 20
+    ):
+        return (
+            False,
+            None,
+            _unreviewed_rule(
+                key,
+                policy_area,
+                "Record a named reviewer and a rationale of at least 20 characters.",
+            ),
+        )
+    required = classification["status"] == "required"
+    if required:
+        return True, None, None
+    return (
+        False,
+        {
+            "rule": key,
+            "reviewed_by": reviewer.strip(),
+            "rationale": rationale.strip(),
+            "source": "",
+        },
+        None,
+    )
+
+
+def _review_rule(
+    rule: tuple[str, str, str, str, str],
+    checks: dict[str, Any],
+    applicability: dict[str, Any],
+) -> tuple[dict[str, str] | None, dict[str, str] | None, dict[str, str] | None]:
+    key, policy_area, mode, remediation, source = rule
+    required = mode == "always"
+    not_applicable = None
+    if mode == "conditional":
+        required, not_applicable, finding = _conditional_review(
+            key, policy_area, applicability.get(key)
+        )
+        if finding:
+            return finding, None, None
+        if not_applicable:
+            not_applicable["source"] = source
+    if not required:
+        return None, None, not_applicable
+    applied = {"rule": key, "policy_area": policy_area, "source": source}
+    if checks.get(key) is True:
+        return None, applied, not_applicable
+    return (
+        {
+            "code": f"APP_REVIEW_{key.upper()}_UNPROVEN",
+            "policy_area": policy_area,
+            "remediation": remediation,
+        },
+        applied,
+        not_applicable,
+    )
+
+
+def _review_rules(
+    checks: dict[str, Any], applicability: dict[str, Any]
+) -> tuple[list[dict[str, str]], list[dict[str, str]], list[dict[str, str]]]:
+    findings: list[dict[str, str]] = []
     applied: list[dict[str, str]] = []
     not_applicable: list[dict[str, str]] = []
-    for key, policy_area, mode, remediation, source in RULES:
-        required = mode == "always"
-        if mode == "conditional":
-            classification = applicability.get(key)
-            if not isinstance(classification, dict) or classification.get(
-                "status"
-            ) not in {"required", "not_applicable"}:
-                findings.append(
-                    {
-                        "code": f"APP_REVIEW_{key.upper()}_APPLICABILITY_UNREVIEWED",
-                        "policy_area": policy_area,
-                        "remediation": "Classify this conditional rule as required or not_applicable with a named reviewer and concrete rationale.",
-                    }
-                )
-                continue
-            reviewer = classification.get("reviewed_by")
-            rationale = classification.get("rationale")
-            if (
-                not isinstance(reviewer, str)
-                or not reviewer.strip()
-                or not isinstance(rationale, str)
-                or len(rationale.strip()) < 20
-            ):
-                findings.append(
-                    {
-                        "code": f"APP_REVIEW_{key.upper()}_APPLICABILITY_UNREVIEWED",
-                        "policy_area": policy_area,
-                        "remediation": "Record a named reviewer and a rationale of at least 20 characters.",
-                    }
-                )
-                continue
-            required = classification["status"] == "required"
-            if not required:
-                not_applicable.append(
-                    {
-                        "rule": key,
-                        "reviewed_by": reviewer.strip(),
-                        "rationale": rationale.strip(),
-                        "source": source,
-                    }
-                )
-        if required:
-            applied.append({"rule": key, "policy_area": policy_area, "source": source})
-            if checks.get(key) is not True:
-                findings.append(
-                    {
-                        "code": f"APP_REVIEW_{key.upper()}_UNPROVEN",
-                        "policy_area": policy_area,
-                        "remediation": remediation,
-                    }
-                )
+    for rule in RULES:
+        finding, applied_rule, excluded_rule = _review_rule(rule, checks, applicability)
+        if finding:
+            findings.append(finding)
+        if applied_rule:
+            applied.append(applied_rule)
+        if excluded_rule:
+            not_applicable.append(excluded_rule)
+    return findings, applied, not_applicable
 
-    destination = _local(workspace, out_path, exists=False)
-    receipt: dict[str, Any] = {
+
+def _readiness_receipt(
+    expected: dict[str, str],
+    contract_source: Path,
+    evidence_source: Path,
+    findings: list[dict[str, str]],
+    applied: list[dict[str, str]],
+    not_applicable: list[dict[str, str]],
+) -> dict[str, Any]:
+    return {
         "schema": SCHEMA,
         "marker": "APP_REVIEW_READY" if not findings else "APP_REVIEW_BLOCKED",
         "ok": not findings,
@@ -364,6 +423,30 @@ def verify_app_review_readiness(
         },
         "claim_boundary": "local, build-bound readiness evidence only; not Apple policy certification, TestFlight upload, App Review submission, or approval",
     }
+
+
+def verify_app_review_readiness(
+    root: Path, contract_path: Path, evidence_path: Path, out_path: Path
+) -> dict[str, Any]:
+    """Compare reviewed requirements with exact-build observations; unknown fails closed."""
+    workspace = Path(root).resolve()
+    contract, contract_source = _read_json(workspace, contract_path)
+    evidence, evidence_source = _read_json(workspace, evidence_path)
+    expected = _candidate(contract.get("candidate"), "contract.candidate")
+    observed = _candidate(evidence.get("candidate"), "evidence.candidate")
+    checks, applicability = _review_inputs(contract, evidence)
+    binding_findings = _binding_findings(expected, observed)
+    rule_findings, applied, not_applicable = _review_rules(checks, applicability)
+    findings = binding_findings + rule_findings
+    destination = _local(workspace, out_path, exists=False)
+    receipt = _readiness_receipt(
+        expected,
+        contract_source,
+        evidence_source,
+        findings,
+        applied,
+        not_applicable,
+    )
     return _seal(workspace, destination, receipt)
 
 

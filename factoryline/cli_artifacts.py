@@ -46,93 +46,110 @@ def add_parser(sub) -> None:
     s.add_argument("--json", action="store_true")
 
 
+def _run_attest(a) -> int:
+    from .proof import export_attestations, load_trace
+
+    outputs = export_attestations(load_trace(Path(a.trace)), out_dir=Path(a.out_dir))
+    if a.json:
+        print(json.dumps(outputs, indent=2))
+    else:
+        print("proof attestations written")
+        for name, path in outputs.items():
+            print(f"  {name}: {path}")
+    return 0
+
+
+def _run_passport(a) -> int:
+    from .passport import build_passport
+
+    try:
+        passport = build_passport(
+            Path(a.root),
+            a.feature,
+            Path(a.trace),
+            [Path(path) for path in a.challenge],
+        )
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
+        print(f"passport failed: {exc}", file=sys.stderr)
+        return 1
+    if a.json:
+        print(json.dumps(passport, indent=2))
+    else:
+        print(f"Factory Passport: {'VERIFIED' if passport['verified'] else 'BLOCKED'}")
+        for name, path in passport["paths"].items():
+            print(f"  {name:<8}: {path}")
+    return 0 if passport["verified"] else 1
+
+
+def _run_verify_passport(a) -> int:
+    from .passport import verify_passport
+
+    result = verify_passport(Path(a.passport))
+    print(
+        json.dumps(result, indent=2) if a.json else f"passport valid: {result['valid']}"
+    )
+    return 0 if result["valid"] else 1
+
+
+def _run_challenge(a) -> int:
+    from .challenge import challenge_trace
+
+    payload = challenge_trace(Path(a.trace), root=Path(a.root))
+    out = (
+        Path(a.out)
+        if a.out
+        else Path(a.root) / ".factory" / "challenges" / f"{a.feature}.json"
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    print(json.dumps(payload | {"receipt_path": str(out)}, indent=2))
+    return 0 if payload["passed"] else 1
+
+
+def _run_coverage(a) -> int:
+    from .coverage import requirement_coverage
+
+    result = requirement_coverage(Path(a.root))
+    if a.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print("factory requirement coverage")
+        print("=" * 44)
+        print(f"covered   : {len(result['covered'])}")
+        print(f"uncovered : {len(result['uncovered'])}")
+        for req_id in result["uncovered"]:
+            print(f"  - {req_id}")
+    return 0 if result["ok"] else 1
+
+
+def _run_policy(a) -> int:
+    from .optimizer import write_policy
+
+    path = write_policy(Path(a.root), force=a.force)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if a.json:
+        print(json.dumps({"path": str(path), "policy": payload}, indent=2))
+    else:
+        print(f"factory policy: {path}")
+        print(f"risk default      : {payload['risk']['default']}")
+        print(f"hollow tests      : {payload['quality']['require_hollow_tests']}")
+        print(f"hollow validators : {payload['quality']['require_hollow_validators']}")
+    return 0
+
+
+_COMMAND_RUNNERS = {
+    "attest": _run_attest,
+    "passport": _run_passport,
+    "verify-passport": _run_verify_passport,
+    "challenge": _run_challenge,
+    "coverage": _run_coverage,
+    "policy": _run_policy,
+}
+
+
 def run(a) -> int:
     """Dispatch local proof artifacts without network, merge, or deployment authority."""
-    if a.cmd == "attest":
-        from .proof import export_attestations, load_trace
-
-        outputs = export_attestations(
-            load_trace(Path(a.trace)), out_dir=Path(a.out_dir)
-        )
-        if a.json:
-            print(json.dumps(outputs, indent=2))
-        else:
-            print("proof attestations written")
-            for name, path in outputs.items():
-                print(f"  {name}: {path}")
-        return 0
-    if a.cmd == "passport":
-        from .passport import build_passport
-
-        try:
-            passport = build_passport(
-                Path(a.root),
-                a.feature,
-                Path(a.trace),
-                [Path(path) for path in a.challenge],
-            )
-        except (ValueError, OSError, json.JSONDecodeError) as exc:
-            print(f"passport failed: {exc}", file=sys.stderr)
-            return 1
-        if a.json:
-            print(json.dumps(passport, indent=2))
-        else:
-            print(
-                f"Factory Passport: {'VERIFIED' if passport['verified'] else 'BLOCKED'}"
-            )
-            for name, path in passport["paths"].items():
-                print(f"  {name:<8}: {path}")
-        return 0 if passport["verified"] else 1
-    if a.cmd == "verify-passport":
-        from .passport import verify_passport
-
-        result = verify_passport(Path(a.passport))
-        print(
-            json.dumps(result, indent=2)
-            if a.json
-            else f"passport valid: {result['valid']}"
-        )
-        return 0 if result["valid"] else 1
-    if a.cmd == "challenge":
-        from .challenge import challenge_trace
-
-        payload = challenge_trace(Path(a.trace), root=Path(a.root))
-        out = (
-            Path(a.out)
-            if a.out
-            else Path(a.root) / ".factory" / "challenges" / f"{a.feature}.json"
-        )
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        print(json.dumps(payload | {"receipt_path": str(out)}, indent=2))
-        return 0 if payload["passed"] else 1
-    if a.cmd == "coverage":
-        from .coverage import requirement_coverage
-
-        result = requirement_coverage(Path(a.root))
-        if a.json:
-            print(json.dumps(result, indent=2))
-        else:
-            print("factory requirement coverage")
-            print("=" * 44)
-            print(f"covered   : {len(result['covered'])}")
-            print(f"uncovered : {len(result['uncovered'])}")
-            for req_id in result["uncovered"]:
-                print(f"  - {req_id}")
-        return 0 if result["ok"] else 1
-    if a.cmd == "policy":
-        from .optimizer import write_policy
-
-        path = write_policy(Path(a.root), force=a.force)
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if a.json:
-            print(json.dumps({"path": str(path), "policy": payload}, indent=2))
-        else:
-            print(f"factory policy: {path}")
-            print(f"risk default      : {payload['risk']['default']}")
-            print(f"hollow tests      : {payload['quality']['require_hollow_tests']}")
-            print(
-                f"hollow validators : {payload['quality']['require_hollow_validators']}"
-            )
-        return 0
-    raise ValueError(f"unsupported artifact command: {a.cmd}")
+    handler = _COMMAND_RUNNERS.get(a.cmd)
+    if handler is None:
+        raise ValueError(f"unsupported artifact command: {a.cmd}")
+    return handler(a)

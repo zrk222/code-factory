@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { requireWorkspaceRole } from "./access";
@@ -9,6 +9,63 @@ import { assessSourceGroups, evaluateSourceState, validateAuthoritativeLocator, 
 export const sourceAuthorityCategory = v.union(v.literal("primary-law"), v.literal("official-regulator"), v.literal("official-registry"), v.literal("licensed-system-of-record"), v.literal("secondary-corroboration"));
 const sourceRole = v.union(v.literal("primary"), v.literal("fallback"), v.literal("corroboration"));
 const failureCode = v.union(v.literal("timeout"), v.literal("authentication"), v.literal("authorization"), v.literal("rate-limited"), v.literal("upstream-unavailable"), v.literal("invalid-response"), v.literal("license-unavailable"), v.literal("unknown"));
+
+type ConfigureSourceArgs = {
+  agentSpecId: Id<"agentSpecs">;
+  sourceKey: string;
+  label: string;
+  jurisdiction: string;
+  publisher: string;
+  sourceGroup: string;
+  authorityCategory: "primary-law" | "official-regulator" | "official-registry" | "licensed-system-of-record" | "secondary-corroboration";
+  sourceRole: "primary" | "fallback" | "corroboration";
+  canonicalLocator: string;
+  endpointRef?: string;
+  licenseRef?: string;
+  freshnessSloSeconds: number;
+  maximumAgeSeconds: number;
+  minimumAuthoritativeSources: number;
+  requiredForRuns: boolean;
+};
+
+type NormalizedSourceConfig = Omit<ConfigureSourceArgs, "agentSpecId">;
+
+function normalizeSourceConfiguration(args: ConfigureSourceArgs): NormalizedSourceConfig {
+  const sourceKey = assertText(args.sourceKey, "source_key", 120);
+  const label = assertText(args.label, "source_label", 120);
+  const jurisdiction = assertText(args.jurisdiction, "source_jurisdiction", 120);
+  const publisher = assertText(args.publisher, "source_publisher", 160);
+  const sourceGroup = assertText(args.sourceGroup, "source_group", 120);
+  const canonicalLocator = validateAuthoritativeLocator(args.canonicalLocator);
+  const endpointRef = args.endpointRef ? validateOpaqueSourceReference(args.endpointRef) : undefined;
+  const licenseRef = args.licenseRef ? validateOpaqueSourceReference(args.licenseRef) : undefined;
+  assertIntegerRange(args.freshnessSloSeconds, "freshness_slo_seconds", 60, 2_592_000);
+  assertIntegerRange(args.maximumAgeSeconds, "maximum_age_seconds", args.freshnessSloSeconds, 7_776_000);
+  assertIntegerRange(args.minimumAuthoritativeSources, "minimum_authoritative_sources", 1, 5);
+  if (args.authorityCategory === "secondary-corroboration" && args.sourceRole !== "corroboration") throw new Error("E_SECONDARY_SOURCE_ROLE_INVALID");
+  return { sourceKey, label, jurisdiction, publisher, sourceGroup, authorityCategory: args.authorityCategory, sourceRole: args.sourceRole, canonicalLocator, endpointRef, licenseRef, freshnessSloSeconds: args.freshnessSloSeconds, maximumAgeSeconds: args.maximumAgeSeconds, minimumAuthoritativeSources: args.minimumAuthoritativeSources, requiredForRuns: args.requiredForRuns };
+}
+
+function canonicalSourceConfiguration(config: NormalizedSourceConfig) {
+  return JSON.stringify({ authorityCategory: config.authorityCategory, canonicalLocator: config.canonicalLocator, endpointRef: config.endpointRef ?? null, freshnessSloSeconds: config.freshnessSloSeconds, jurisdiction: config.jurisdiction, label: config.label, licenseRef: config.licenseRef ?? null, maximumAgeSeconds: config.maximumAgeSeconds, minimumAuthoritativeSources: config.minimumAuthoritativeSources, publisher: config.publisher, requiredForRuns: config.requiredForRuns, sourceGroup: config.sourceGroup, sourceKey: config.sourceKey, sourceRole: config.sourceRole });
+}
+
+async function assertSourceGroupMinimum(ctx: MutationCtx, agentSpecId: Id<"agentSpecs">, config: NormalizedSourceConfig) {
+  const peers = await ctx.db.query("authoritativeSources").withIndex("by_agent_group", (q) => q.eq("agentSpecId", agentSpecId).eq("sourceGroup", config.sourceGroup)).collect();
+  const conflicting = peers.find((peer) => peer.sourceKey !== config.sourceKey && peer.minimumAuthoritativeSources !== config.minimumAuthoritativeSources);
+  if (conflicting) throw new Error("E_SOURCE_GROUP_MINIMUM_CONFLICT");
+}
+
+async function persistSourceConfiguration(ctx: MutationCtx, agent: Doc<"agentSpecs">, config: NormalizedSourceConfig, configDigest: string) {
+  const existing = await ctx.db.query("authoritativeSources").withIndex("by_agent_key", (q) => q.eq("agentSpecId", agent._id).eq("sourceKey", config.sourceKey)).unique();
+  const now = Date.now();
+  const unchanged = existing?.configDigest === configDigest;
+  const retained = unchanged ? existing : null;
+  const record = { workspaceId: agent.workspaceId, agentSpecId: agent._id, ...config, configDigest, status: retained ? retained.status : "setup-required" as const, lastObservedAt: retained?.lastObservedAt, lastSuccessfulAt: retained?.lastSuccessfulAt, lastContentDigest: retained?.lastContentDigest, consecutiveFailures: retained?.consecutiveFailures ?? 0, updatedAt: now };
+  const sourceId = existing ? (await ctx.db.patch(existing._id, record), existing._id) : await ctx.db.insert("authoritativeSources", record);
+  await ctx.db.insert("auditEvents", { workspaceId: agent.workspaceId, actor: "source-assurance@factory.local", event: "authoritative-source.configured", targetType: "authoritativeSource", targetId: String(sourceId), detail: `${config.authorityCategory} source ${config.sourceKey} configured without raw credentials; trusted-worker validation required.`, createdAt: now });
+  return { marker: "AUTHORITATIVE_SOURCE_CONFIGURED" as const, sourceId, configDigest, status: record.status };
+}
 
 /** Throws before job or credit persistence when a required authoritative group is not ready. */
 export async function assertRequiredSourcesReady(ctx: MutationCtx, agentSpecId: Id<"agentSpecs">, now: number) {
@@ -33,31 +90,11 @@ export const configure = mutation({
     const agent = await ctx.db.get(args.agentSpecId);
     if (!agent) throw new Error("E_AGENT_NOT_FOUND");
     await requireWorkspaceRole(ctx, agent.workspaceId, "admin");
-    const sourceKey = assertText(args.sourceKey, "source_key", 120);
-    const label = assertText(args.label, "source_label", 120);
-    const jurisdiction = assertText(args.jurisdiction, "source_jurisdiction", 120);
-    const publisher = assertText(args.publisher, "source_publisher", 160);
-    const sourceGroup = assertText(args.sourceGroup, "source_group", 120);
-    const canonicalLocator = validateAuthoritativeLocator(args.canonicalLocator);
-    const endpointRef = args.endpointRef ? validateOpaqueSourceReference(args.endpointRef) : undefined;
-    const licenseRef = args.licenseRef ? validateOpaqueSourceReference(args.licenseRef) : undefined;
-    assertIntegerRange(args.freshnessSloSeconds, "freshness_slo_seconds", 60, 2_592_000);
-    assertIntegerRange(args.maximumAgeSeconds, "maximum_age_seconds", args.freshnessSloSeconds, 7_776_000);
-    assertIntegerRange(args.minimumAuthoritativeSources, "minimum_authoritative_sources", 1, 5);
-    if (args.authorityCategory === "secondary-corroboration" && args.sourceRole !== "corroboration") throw new Error("E_SECONDARY_SOURCE_ROLE_INVALID");
-
-    const peers = await ctx.db.query("authoritativeSources").withIndex("by_agent_group", (q) => q.eq("agentSpecId", agent._id).eq("sourceGroup", sourceGroup)).collect();
-    const conflicting = peers.find((peer) => peer.sourceKey !== sourceKey && peer.minimumAuthoritativeSources !== args.minimumAuthoritativeSources);
-    if (conflicting) throw new Error("E_SOURCE_GROUP_MINIMUM_CONFLICT");
-    const canonical = JSON.stringify({ authorityCategory: args.authorityCategory, canonicalLocator, endpointRef: endpointRef ?? null, freshnessSloSeconds: args.freshnessSloSeconds, jurisdiction, label, licenseRef: licenseRef ?? null, maximumAgeSeconds: args.maximumAgeSeconds, minimumAuthoritativeSources: args.minimumAuthoritativeSources, publisher, requiredForRuns: args.requiredForRuns, sourceGroup, sourceKey, sourceRole: args.sourceRole });
+    const config = normalizeSourceConfiguration(args);
+    await assertSourceGroupMinimum(ctx, agent._id, config);
+    const canonical = canonicalSourceConfiguration(config);
     const configDigest = receiptFingerprint([canonical]);
-    const existing = await ctx.db.query("authoritativeSources").withIndex("by_agent_key", (q) => q.eq("agentSpecId", agent._id).eq("sourceKey", sourceKey)).unique();
-    const now = Date.now();
-    const unchanged = existing?.configDigest === configDigest;
-    const record = { workspaceId: agent.workspaceId, agentSpecId: agent._id, sourceKey, label, jurisdiction, publisher, sourceGroup, authorityCategory: args.authorityCategory, sourceRole: args.sourceRole, canonicalLocator, endpointRef, licenseRef, freshnessSloSeconds: args.freshnessSloSeconds, maximumAgeSeconds: args.maximumAgeSeconds, minimumAuthoritativeSources: args.minimumAuthoritativeSources, requiredForRuns: args.requiredForRuns, configDigest, status: unchanged && existing ? existing.status : "setup-required" as const, lastObservedAt: unchanged && existing ? existing.lastObservedAt : undefined, lastSuccessfulAt: unchanged && existing ? existing.lastSuccessfulAt : undefined, lastContentDigest: unchanged && existing ? existing.lastContentDigest : undefined, consecutiveFailures: unchanged && existing ? existing.consecutiveFailures : 0, updatedAt: now };
-    const sourceId = existing ? (await ctx.db.patch(existing._id, record), existing._id) : await ctx.db.insert("authoritativeSources", record);
-    await ctx.db.insert("auditEvents", { workspaceId: agent.workspaceId, actor: "source-assurance@factory.local", event: "authoritative-source.configured", targetType: "authoritativeSource", targetId: String(sourceId), detail: `${args.authorityCategory} source ${sourceKey} configured without raw credentials; trusted-worker validation required.`, createdAt: now });
-    return { marker: "AUTHORITATIVE_SOURCE_CONFIGURED" as const, sourceId, configDigest, status: record.status };
+    return persistSourceConfiguration(ctx, agent, config, configDigest);
   },
 });
 
@@ -88,21 +125,35 @@ export const listWorkerDefinitions = query({
 
 type ObservationInput = { sourceId: Id<"authoritativeSources">; observationKey: string; outcome: "success" | "failure"; observedAt: number; latencyMs: number; sourcePublishedAt?: number; contentDigest?: string; failureCode?: "timeout" | "authentication" | "authorization" | "rate-limited" | "upstream-unavailable" | "invalid-response" | "license-unavailable" | "unknown" };
 
+function validateObservationTimes(args: ObservationInput) {
+  if (!Number.isFinite(args.observedAt) || args.observedAt < 0) throw new Error("E_INVALID_OBSERVED_AT");
+  if (args.sourcePublishedAt !== undefined && (!Number.isFinite(args.sourcePublishedAt) || args.sourcePublishedAt < 0 || args.sourcePublishedAt > args.observedAt)) throw new Error("E_INVALID_SOURCE_PUBLISHED_AT");
+}
+
+function validateFailureCode(args: ObservationInput) {
+  if (args.outcome === "failure" && !args.failureCode) throw new Error("E_SOURCE_FAILURE_CODE_REQUIRED");
+  if (args.outcome === "success" && args.failureCode) throw new Error("E_SOURCE_FAILURE_CODE_FORBIDDEN");
+}
+
+function observationStatePatch(args: ObservationInput, consecutiveFailures: number, contentDigest: string | undefined, now: number) {
+  return args.outcome === "success"
+    ? { status: "ready" as const, lastObservedAt: args.observedAt, lastSuccessfulAt: args.observedAt, lastContentDigest: contentDigest, consecutiveFailures: 0, updatedAt: now }
+    : { lastObservedAt: args.observedAt, consecutiveFailures: consecutiveFailures + 1, updatedAt: now };
+}
+
 async function persistObservation(ctx: MutationCtx, args: ObservationInput) {
   const source = await ctx.db.get(args.sourceId);
   if (!source) throw new Error("E_AUTHORITATIVE_SOURCE_NOT_FOUND");
   const observationKey = assertText(args.observationKey, "observation_key", 160);
   assertIntegerRange(args.latencyMs, "source_latency_ms", 0, 300_000);
-  if (!Number.isFinite(args.observedAt) || args.observedAt < 0) throw new Error("E_INVALID_OBSERVED_AT");
-  if (args.sourcePublishedAt !== undefined && (!Number.isFinite(args.sourcePublishedAt) || args.sourcePublishedAt < 0 || args.sourcePublishedAt > args.observedAt)) throw new Error("E_INVALID_SOURCE_PUBLISHED_AT");
+  validateObservationTimes(args);
   const existing = await ctx.db.query("sourceObservations").withIndex("by_source_key", (q) => q.eq("sourceId", source._id).eq("observationKey", observationKey)).unique();
   if (existing) return { marker: "SOURCE_OBSERVATION_REPLAY" as const, observationId: existing._id, status: source.status };
-  if (args.outcome === "failure" && !args.failureCode) throw new Error("E_SOURCE_FAILURE_CODE_REQUIRED");
-  if (args.outcome === "success" && args.failureCode) throw new Error("E_SOURCE_FAILURE_CODE_FORBIDDEN");
+  validateFailureCode(args);
   const contentDigest = args.contentDigest ? assertText(args.contentDigest, "source_content_digest", 160) : undefined;
   const now = Date.now();
   const observationId = await ctx.db.insert("sourceObservations", { workspaceId: source.workspaceId, agentSpecId: source.agentSpecId, sourceId: source._id, observationKey, outcome: args.outcome, observedAt: args.observedAt, latencyMs: args.latencyMs, sourcePublishedAt: args.sourcePublishedAt, contentDigest, failureCode: args.failureCode, createdAt: now });
-  await ctx.db.patch(source._id, args.outcome === "success" ? { status: "ready", lastObservedAt: args.observedAt, lastSuccessfulAt: args.observedAt, lastContentDigest: contentDigest, consecutiveFailures: 0, updatedAt: now } : { lastObservedAt: args.observedAt, consecutiveFailures: source.consecutiveFailures + 1, updatedAt: now });
+  await ctx.db.patch(source._id, observationStatePatch(args, source.consecutiveFailures, contentDigest, now));
   return { marker: "SOURCE_OBSERVATION_RECORDED" as const, observationId, status: args.outcome === "success" ? "ready" as const : source.status };
 }
 

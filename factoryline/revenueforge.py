@@ -105,17 +105,7 @@ def _required_text(value: object, field: str) -> str:
     return text
 
 
-def _normalize_product(raw: object, seen: set[str]) -> dict[str, Any]:
-    if not isinstance(raw, dict):
-        raise RevenueForgeError(
-            "REVENUEFORGE_MANIFEST_INVALID", "each product must be an object"
-        )
-    product_id = _required_text(raw.get("id"), "product.id")
-    if product_id in seen:
-        raise RevenueForgeError(
-            "REVENUEFORGE_MANIFEST_INVALID", f"duplicate product id: {product_id}"
-        )
-    seen.add(product_id)
+def _product_type(raw: dict[str, Any], product_id: str) -> tuple[str, Any]:
     product_type = _required_text(raw.get("type"), f"{product_id}.type")
     if product_type not in ALLOWED_PRODUCT_TYPES:
         raise RevenueForgeError(
@@ -127,6 +117,10 @@ def _normalize_product(raw: object, seen: set[str]) -> dict[str, Any]:
             "REVENUEFORGE_MANIFEST_INVALID",
             f"{product_id}.duration must be an ISO-8601 subscription duration",
         )
+    return product_type, duration
+
+
+def _product_entitlements(raw: dict[str, Any], product_id: str) -> list[str]:
     entitlements = raw.get("entitlements")
     if (
         not isinstance(entitlements, list)
@@ -137,6 +131,10 @@ def _normalize_product(raw: object, seen: set[str]) -> dict[str, Any]:
             "REVENUEFORGE_MANIFEST_INVALID",
             f"{product_id}.entitlements must be a non-empty string list",
         )
+    return sorted(set(v.strip() for v in entitlements))
+
+
+def _product_offers(raw: dict[str, Any], product_id: str) -> list[dict[str, str]]:
     offers: list[dict[str, str]] = []
     for offer in raw.get("offers", []):
         if (
@@ -154,6 +152,23 @@ def _normalize_product(raw: object, seen: set[str]) -> dict[str, Any]:
                 "duration": offer["duration"],
             }
         )
+    return sorted(offers, key=lambda item: item["id"])
+
+
+def _normalize_product(raw: object, seen: set[str]) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise RevenueForgeError(
+            "REVENUEFORGE_MANIFEST_INVALID", "each product must be an object"
+        )
+    product_id = _required_text(raw.get("id"), "product.id")
+    if product_id in seen:
+        raise RevenueForgeError(
+            "REVENUEFORGE_MANIFEST_INVALID", f"duplicate product id: {product_id}"
+        )
+    seen.add(product_id)
+    product_type, duration = _product_type(raw, product_id)
+    entitlements = _product_entitlements(raw, product_id)
+    offers = _product_offers(raw, product_id)
     return {
         "id": product_id,
         "display_name": _required_text(
@@ -164,8 +179,8 @@ def _normalize_product(raw: object, seen: set[str]) -> dict[str, Any]:
         "group": _required_text(raw.get("group"), f"{product_id}.group")
         if product_type == "auto_renewable"
         else None,
-        "entitlements": sorted(set(v.strip() for v in entitlements)),
-        "offers": sorted(offers, key=lambda item: item["id"]),
+        "entitlements": entitlements,
+        "offers": offers,
     }
 
 

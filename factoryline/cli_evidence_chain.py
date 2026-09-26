@@ -192,214 +192,234 @@ def add_parser(sub) -> None:
     proof_review_card_verify.add_argument("--json", action="store_true")
 
 
+def _run_change(a) -> int:
+    """Handle one evidence-chain command family with lazy imports."""
+    from .change_review import (
+        ChangeReviewError,
+        review_change,
+        write_review_artifacts,
+    )
+
+    try:
+        review = review_change(
+            Path(a.root),
+            base=a.base,
+            changed=a.changed or None,
+            audit_policy=a.audit_policy,
+        )
+        if a.out_dir:
+            review["artifacts"] = write_review_artifacts(review, Path(a.out_dir))
+    except ChangeReviewError as exc:
+        payload = {
+            "schema": "factory.change_review.error.v1",
+            "marker": "DIFF_TO_PROOF_PATH_REJECTED"
+            if exc.code in {"CHANGED_PATH_INVALID", "CHANGED_PATH_LIMIT"}
+            else "DIFF_TO_PROOF_INPUT_UNAVAILABLE",
+            "code": exc.code,
+            "message": str(exc),
+        }
+        print(
+            json.dumps(payload, indent=2)
+            if a.json
+            else f"change review failed: {exc.code}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    if a.json:
+        print(json.dumps(review, indent=2, sort_keys=True))
+    else:
+        print("factory change review (analysis only)")
+        print("=" * 44)
+        print(f"changed paths: {len(review['changed_paths'])}")
+        print(f"next action : {review['next_action']['action']}")
+        print(f"findings    : {len(review['findings'])}")
+        if review.get("artifacts"):
+            print(f"packet      : {review['artifacts']['paths']['markdown']}")
+        print(
+            "authority   : no execution, merge, publication, deployment, or credential access"
+        )
+    return 0
+
+
+def _proof_ops_payload(a):
+    """Execute the selected continuous-proof operation."""
+    from .continuous_proof import (
+        assess_continuous_proof,
+        continuous_proof_history,
+        verify_continuous_proof,
+    )
+
+    if a.proof_ops_cmd == "assess":
+        return assess_continuous_proof(
+            Path(a.root),
+            a.workflow_id,
+            Path(a.intent),
+            a.changed,
+            session_path=Path(a.session) if a.session else None,
+            session_phase=a.session_phase,
+            repair_scope_path=Path(a.repair_scope) if a.repair_scope else None,
+            repair_patch_path=Path(a.repair_patch) if a.repair_patch else None,
+            prior_receipt_path=Path(a.prior_receipt) if a.prior_receipt else None,
+            out_dir=Path(a.out_dir) if a.out_dir else None,
+        )
+    if a.proof_ops_cmd == "verify":
+        return verify_continuous_proof(Path(a.root), Path(a.receipt))
+    return continuous_proof_history(Path(a.root))
+
+
+def _print_proof_ops(a, payload) -> None:
+    if a.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    elif a.proof_ops_cmd == "assess":
+        print("factory continuous proof operations")
+        print("=" * 44)
+        print(f"route       : {payload['route']}")
+        print(f"next action : {payload['next_action']['action']}")
+        print(f"receipt     : {payload['artifacts']['json']}")
+        print(
+            "authority   : no execution, patch apply, approval, merge, publication, deployment, credential, connector, or network action"
+        )
+    elif a.proof_ops_cmd == "verify":
+        print(f"{payload['marker']} {payload.get('path', '')}")
+    else:
+        print("factory continuous proof history (read-only)")
+        print("=" * 44)
+        print(f"verified records : {payload['verified_record_count']}")
+        print(f"invalid or stale : {payload['invalid_or_stale_count']}")
+        print(f"latest route     : {(payload['latest'] or {}).get('route', 'none')}")
+        print(
+            "claim boundary   : records are not unique users; no savings are inferred"
+        )
+
+
+def _run_proof_ops(a) -> int:
+    """Handle one evidence-chain command family with lazy imports."""
+    from .continuous_proof import ContinuousProofError
+
+    try:
+        payload = _proof_ops_payload(a)
+    except (ContinuousProofError, OSError) as exc:
+        error = {
+            "schema": "factory.continuous-proof.error.v1",
+            "marker": "CONTINUOUS_PROOF_REFUSED",
+            "code": getattr(exc, "code", "CONTINUOUS_PROOF_INPUT_UNAVAILABLE"),
+            "message": str(exc),
+        }
+        print(
+            json.dumps(error, indent=2, sort_keys=True)
+            if a.json
+            else f"proof-ops {a.proof_ops_cmd} refused: {error['code']}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    _print_proof_ops(a, payload)
+    if a.proof_ops_cmd == "verify" and not payload["ok"]:
+        return 1
+    return 0
+
+
+def _quick_review_payload(a, root):
+    from .proof_review_workflow import create_quick_review
+
+    return create_quick_review(
+        root,
+        a.id,
+        Path(a.contract),
+        a.changed,
+        session_path=Path(a.session) if a.session else None,
+        trajectory_path=Path(a.trajectory) if a.trajectory else None,
+        repair_scope_path=Path(a.repair_scope) if a.repair_scope else None,
+        repair_patch_path=Path(a.repair_patch) if a.repair_patch else None,
+        prior_receipt_path=Path(a.prior_receipt) if a.prior_receipt else None,
+        session_phase=a.session_phase,
+        intake_parameters_path=Path(a.intake_parameters)
+        if a.intake_parameters
+        else None,
+        require_intake=a.require_intake,
+    )
+
+
+def _proof_review_payload(a, root):
+    from .proof_review_workflow import (
+        create_intent_contract,
+        create_proof_card,
+        install_hook_pack,
+        promote_regression,
+        prove_trajectory,
+        team_proof_inbox,
+        verify_proof_card,
+        verify_quick_review,
+        verify_trajectory,
+    )
+
+    if a.proof_review_cmd == "contract":
+        return create_intent_contract(root, a.id, Path(a.draft), a.confirmed_by)
+    if a.proof_review_cmd == "quick":
+        return _quick_review_payload(a, root)
+    if a.proof_review_cmd == "verify":
+        return verify_quick_review(root, Path(a.review))
+    if a.proof_review_cmd == "hooks":
+        return install_hook_pack(root)
+    if a.proof_review_cmd == "trajectory":
+        return prove_trajectory(root, Path(a.trace), Path(a.policy), a.id)
+    if a.proof_review_cmd == "trajectory-verify":
+        return verify_trajectory(root, Path(a.trajectory))
+    if a.proof_review_cmd == "learn":
+        return promote_regression(root, Path(a.review), a.id, a.confirmed_by, a.title)
+    if a.proof_review_cmd == "inbox":
+        return team_proof_inbox(root)
+    if a.proof_review_cmd == "card":
+        return create_proof_card(root, Path(a.review), a.id)
+    return verify_proof_card(Path(a.card))
+
+
+def _run_proof_review(a) -> int:
+    """Handle one evidence-chain command family with lazy imports."""
+    from .proof_review_workflow import ProofReviewError
+
+    root = Path(getattr(a, "root", "."))
+    try:
+        payload = _proof_review_payload(a, root)
+    except (ProofReviewError, OSError) as exc:
+        error = {
+            "schema": "factory.proof-review.error.v1",
+            "marker": "PROOF_REVIEW_REFUSED",
+            "code": getattr(exc, "code", "PROOF_REVIEW_INPUT_UNAVAILABLE"),
+            "message": str(exc),
+        }
+        print(
+            json.dumps(error, indent=2, sort_keys=True)
+            if a.json
+            else f"proof-review {a.proof_review_cmd} refused: {error['code']}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    if a.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"{payload.get('marker', 'PROOF_REVIEW_OK')}")
+        if payload.get("route"):
+            print(f"route       : {payload['route']}")
+        if payload.get("artifact"):
+            print(f"artifact    : {payload['artifact']}")
+        print(
+            "authority   : human review remains required; no execution, approval, merge, publication, deployment, credential, connector, or network action"
+        )
+    if a.proof_review_cmd in {
+        "verify",
+        "trajectory-verify",
+        "card-verify",
+    } and not payload.get("ok"):
+        return 1
+    return 0
+
+
 def run(a) -> int:
     """Dispatch one evidence-chain command without performing external actions."""
     if a.cmd == "change":
-        from .change_review import (
-            ChangeReviewError,
-            review_change,
-            write_review_artifacts,
-        )
-
-        try:
-            review = review_change(
-                Path(a.root),
-                base=a.base,
-                changed=a.changed or None,
-                audit_policy=a.audit_policy,
-            )
-            if a.out_dir:
-                review["artifacts"] = write_review_artifacts(review, Path(a.out_dir))
-        except ChangeReviewError as exc:
-            payload = {
-                "schema": "factory.change_review.error.v1",
-                "marker": "DIFF_TO_PROOF_PATH_REJECTED"
-                if exc.code in {"CHANGED_PATH_INVALID", "CHANGED_PATH_LIMIT"}
-                else "DIFF_TO_PROOF_INPUT_UNAVAILABLE",
-                "code": exc.code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(payload, indent=2)
-                if a.json
-                else f"change review failed: {exc.code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            print(json.dumps(review, indent=2, sort_keys=True))
-        else:
-            print("factory change review (analysis only)")
-            print("=" * 44)
-            print(f"changed paths: {len(review['changed_paths'])}")
-            print(f"next action : {review['next_action']['action']}")
-            print(f"findings    : {len(review['findings'])}")
-            if review.get("artifacts"):
-                print(f"packet      : {review['artifacts']['paths']['markdown']}")
-            print(
-                "authority   : no execution, merge, publication, deployment, or credential access"
-            )
-        return 0
-
+        return _run_change(a)
     if a.cmd == "proof-ops":
-        from .continuous_proof import (
-            ContinuousProofError,
-            assess_continuous_proof,
-            continuous_proof_history,
-            verify_continuous_proof,
-        )
-
-        try:
-            if a.proof_ops_cmd == "assess":
-                payload = assess_continuous_proof(
-                    Path(a.root),
-                    a.workflow_id,
-                    Path(a.intent),
-                    a.changed,
-                    session_path=Path(a.session) if a.session else None,
-                    session_phase=a.session_phase,
-                    repair_scope_path=Path(a.repair_scope) if a.repair_scope else None,
-                    repair_patch_path=Path(a.repair_patch) if a.repair_patch else None,
-                    prior_receipt_path=Path(a.prior_receipt)
-                    if a.prior_receipt
-                    else None,
-                    out_dir=Path(a.out_dir) if a.out_dir else None,
-                )
-            elif a.proof_ops_cmd == "verify":
-                payload = verify_continuous_proof(Path(a.root), Path(a.receipt))
-            else:
-                payload = continuous_proof_history(Path(a.root))
-        except (ContinuousProofError, OSError) as exc:
-            error = {
-                "schema": "factory.continuous-proof.error.v1",
-                "marker": "CONTINUOUS_PROOF_REFUSED",
-                "code": getattr(exc, "code", "CONTINUOUS_PROOF_INPUT_UNAVAILABLE"),
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if a.json
-                else f"proof-ops {a.proof_ops_cmd} refused: {error['code']}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        elif a.proof_ops_cmd == "assess":
-            print("factory continuous proof operations")
-            print("=" * 44)
-            print(f"route       : {payload['route']}")
-            print(f"next action : {payload['next_action']['action']}")
-            print(f"receipt     : {payload['artifacts']['json']}")
-            print(
-                "authority   : no execution, patch apply, approval, merge, publication, deployment, credential, connector, or network action"
-            )
-        elif a.proof_ops_cmd == "verify":
-            print(f"{payload['marker']} {payload.get('path', '')}")
-        else:
-            print("factory continuous proof history (read-only)")
-            print("=" * 44)
-            print(f"verified records : {payload['verified_record_count']}")
-            print(f"invalid or stale : {payload['invalid_or_stale_count']}")
-            print(
-                f"latest route     : {(payload['latest'] or {}).get('route', 'none')}"
-            )
-            print(
-                "claim boundary   : records are not unique users; no savings are inferred"
-            )
-        if a.proof_ops_cmd == "verify" and not payload["ok"]:
-            return 1
-        return 0
-
+        return _run_proof_ops(a)
     if a.cmd == "proof-review":
-        from .proof_review_workflow import (
-            ProofReviewError,
-            create_intent_contract,
-            create_proof_card,
-            create_quick_review,
-            install_hook_pack,
-            promote_regression,
-            prove_trajectory,
-            team_proof_inbox,
-            verify_proof_card,
-            verify_quick_review,
-            verify_trajectory,
-        )
-
-        root = Path(getattr(a, "root", "."))
-        try:
-            if a.proof_review_cmd == "contract":
-                payload = create_intent_contract(
-                    root, a.id, Path(a.draft), a.confirmed_by
-                )
-            elif a.proof_review_cmd == "quick":
-                payload = create_quick_review(
-                    root,
-                    a.id,
-                    Path(a.contract),
-                    a.changed,
-                    session_path=Path(a.session) if a.session else None,
-                    trajectory_path=Path(a.trajectory) if a.trajectory else None,
-                    repair_scope_path=Path(a.repair_scope) if a.repair_scope else None,
-                    repair_patch_path=Path(a.repair_patch) if a.repair_patch else None,
-                    prior_receipt_path=Path(a.prior_receipt)
-                    if a.prior_receipt
-                    else None,
-                    session_phase=a.session_phase,
-                    intake_parameters_path=Path(a.intake_parameters)
-                    if a.intake_parameters
-                    else None,
-                    require_intake=a.require_intake,
-                )
-            elif a.proof_review_cmd == "verify":
-                payload = verify_quick_review(root, Path(a.review))
-            elif a.proof_review_cmd == "hooks":
-                payload = install_hook_pack(root)
-            elif a.proof_review_cmd == "trajectory":
-                payload = prove_trajectory(root, Path(a.trace), Path(a.policy), a.id)
-            elif a.proof_review_cmd == "trajectory-verify":
-                payload = verify_trajectory(root, Path(a.trajectory))
-            elif a.proof_review_cmd == "learn":
-                payload = promote_regression(
-                    root, Path(a.review), a.id, a.confirmed_by, a.title
-                )
-            elif a.proof_review_cmd == "inbox":
-                payload = team_proof_inbox(root)
-            elif a.proof_review_cmd == "card":
-                payload = create_proof_card(root, Path(a.review), a.id)
-            else:
-                payload = verify_proof_card(Path(a.card))
-        except (ProofReviewError, OSError) as exc:
-            error = {
-                "schema": "factory.proof-review.error.v1",
-                "marker": "PROOF_REVIEW_REFUSED",
-                "code": getattr(exc, "code", "PROOF_REVIEW_INPUT_UNAVAILABLE"),
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if a.json
-                else f"proof-review {a.proof_review_cmd} refused: {error['code']}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            print(f"{payload.get('marker', 'PROOF_REVIEW_OK')}")
-            if payload.get("route"):
-                print(f"route       : {payload['route']}")
-            if payload.get("artifact"):
-                print(f"artifact    : {payload['artifact']}")
-            print(
-                "authority   : human review remains required; no execution, approval, merge, publication, deployment, credential, connector, or network action"
-            )
-        if a.proof_review_cmd in {
-            "verify",
-            "trajectory-verify",
-            "card-verify",
-        } and not payload.get("ok"):
-            return 1
-        return 0
-
+        return _run_proof_review(a)
     raise ValueError(f"unsupported evidence-chain command: {a.cmd}")

@@ -130,6 +130,68 @@ def _run_worklog(args: Any) -> int:
     return code
 
 
+def _proofsearch_payload(
+    args: Any,
+    create_plan: Any,
+    evaluate: Any,
+    plan_frontier: Any,
+    verify_frontier: Any,
+    verify_evaluation: Any,
+) -> dict[str, Any]:
+    if args.proofsearch_cmd == "plan":
+        return create_plan(
+            Path(args.root),
+            Path(args.baseline),
+            Path(args.candidate),
+            args.changed,
+            Path(args.out),
+        )
+    if args.proofsearch_cmd == "evaluate":
+        return evaluate(Path(args.root), Path(args.request), Path(args.out))
+    if args.proofsearch_cmd == "frontier":
+        if args.frontier_cmd == "plan":
+            return plan_frontier(Path(args.root), Path(args.request), Path(args.out))
+        return verify_frontier(Path(args.root), Path(args.frontier))
+    return verify_evaluation(Path(args.root), Path(args.evaluation))
+
+
+def _proofsearch_error(exc: Exception, frontier_error: type[Exception]) -> int:
+    schema = (
+        "factory.evidence-frontier.error.v1"
+        if isinstance(exc, frontier_error)
+        else "factory.proofsearch.error.v1"
+    )
+    print(
+        json.dumps({"schema": schema, "code": exc.code, "message": str(exc)}, indent=2),
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _print_proofsearch_payload(args: Any, payload: dict[str, Any]) -> None:
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print("factory ProofSearch (review only)")
+        print("=" * 44)
+        print(f"marker : {payload['marker']}")
+        if "winner" in payload:
+            print(f"winner : {payload['winner'] or 'none'}")
+        if "next_experiment" in payload:
+            print(f"next evidence : {payload['next_experiment'] or 'none'}")
+        if "path" in payload:
+            print(f"receipt: {payload['path']}")
+        print("apply  : locked")
+
+
+def _proofsearch_exit_code(args: Any, payload: dict[str, Any]) -> int:
+    if args.proofsearch_cmd == "verify" or (
+        args.proofsearch_cmd == "frontier" and args.frontier_cmd == "verify"
+    ):
+        return 0 if payload["valid"] else 1
+    return 0
+
+
 def _run_proofsearch(args: Any) -> int:
     from .evidence_frontier import (
         EvidenceFrontierError,
@@ -144,59 +206,18 @@ def _run_proofsearch(args: Any) -> int:
     )
 
     try:
-        if args.proofsearch_cmd == "plan":
-            payload = create_proofsearch_plan(
-                Path(args.root),
-                Path(args.baseline),
-                Path(args.candidate),
-                args.changed,
-                Path(args.out),
-            )
-        elif args.proofsearch_cmd == "evaluate":
-            payload = evaluate_proofsearch(
-                Path(args.root), Path(args.request), Path(args.out)
-            )
-        elif args.proofsearch_cmd == "frontier" and args.frontier_cmd == "plan":
-            payload = plan_evidence_frontier(
-                Path(args.root), Path(args.request), Path(args.out)
-            )
-        elif args.proofsearch_cmd == "frontier":
-            payload = verify_evidence_frontier(Path(args.root), Path(args.frontier))
-        else:
-            payload = verify_proofsearch_evaluation(
-                Path(args.root), Path(args.evaluation)
-            )
+        payload = _proofsearch_payload(
+            args,
+            create_proofsearch_plan,
+            evaluate_proofsearch,
+            plan_evidence_frontier,
+            verify_evidence_frontier,
+            verify_proofsearch_evaluation,
+        )
     except (ProofSearchError, EvidenceFrontierError) as exc:
-        schema = (
-            "factory.evidence-frontier.error.v1"
-            if isinstance(exc, EvidenceFrontierError)
-            else "factory.proofsearch.error.v1"
-        )
-        print(
-            json.dumps(
-                {"schema": schema, "code": exc.code, "message": str(exc)}, indent=2
-            ),
-            file=sys.stderr,
-        )
-        return 2
-    if args.json:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        print("factory ProofSearch (review only)")
-        print("=" * 44)
-        print(f"marker : {payload['marker']}")
-        if "winner" in payload:
-            print(f"winner : {payload['winner'] or 'none'}")
-        if "next_experiment" in payload:
-            print(f"next evidence : {payload['next_experiment'] or 'none'}")
-        if "path" in payload:
-            print(f"receipt: {payload['path']}")
-        print("apply  : locked")
-    if args.proofsearch_cmd == "verify" or (
-        args.proofsearch_cmd == "frontier" and args.frontier_cmd == "verify"
-    ):
-        return 0 if payload["valid"] else 1
-    return 0
+        return _proofsearch_error(exc, EvidenceFrontierError)
+    _print_proofsearch_payload(args, payload)
+    return _proofsearch_exit_code(args, payload)
 
 
 def run(args: Any) -> int:

@@ -376,6 +376,22 @@ class _WorkerResult:
 def _worker_result(
     root: Path, path: Path, session: dict[str, Any]
 ) -> tuple[Path, _WorkerResult, str]:
+    result_path, value, worker_id, candidate, supplied_tree = _worker_payload(
+        root, path, session
+    )
+    _validate_worker_writes(root, candidate, value, session)
+    usage = _worker_usage(value, session)
+    failure, progress = _worker_failure_progress(value)
+    return (
+        result_path,
+        _WorkerResult(worker_id, supplied_tree, usage, failure, progress),
+        _sha_path(result_path),
+    )
+
+
+def _worker_payload(
+    root: Path, path: Path, session: dict[str, Any]
+) -> tuple[Path, dict[str, Any], str, Path, str]:
     result_path = _under(
         root, path, "VERIFIER_PATH_REJECTED", "worker_result", directory=False
     )
@@ -404,6 +420,13 @@ def _worker_result(
             "VERIFIER_CANDIDATE_DRIFT",
             "worker result candidate tree does not match current candidate bytes",
         )
+
+    return result_path, value, worker_id, candidate, supplied_tree
+
+
+def _validate_worker_writes(
+    root: Path, candidate: Path, value: dict[str, Any], session: dict[str, Any]
+) -> None:
     writes = value.get("declared_writes")
     if not isinstance(writes, list):
         raise VerifierPlaneError(
@@ -429,6 +452,11 @@ def _worker_result(
             "VERIFIER_BUNDLE_WRITABLE",
             "worker result declares a write to verifier bundle",
         )
+
+
+def _worker_usage(
+    value: dict[str, Any], session: dict[str, Any]
+) -> dict[str, int | float]:
     raw_usage = value.get("usage")
     if not isinstance(raw_usage, dict):
         raise VerifierPlaneError(
@@ -448,7 +476,13 @@ def _worker_result(
         ),
         "cost_usd": _number(raw_usage.get("cost_usd"), "worker_result.usage.cost_usd"),
     }
-    budgets = session["budgets"]
+    _validate_worker_usage_budget(usage, session["budgets"])
+    return usage
+
+
+def _validate_worker_usage_budget(
+    usage: dict[str, int | float], budgets: dict[str, int | float]
+) -> None:
     if (
         usage["attempt"] < 1
         or usage["attempt"] > budgets["max_attempts"]
@@ -459,6 +493,11 @@ def _worker_result(
         raise VerifierPlaneError(
             "VERIFIER_BUDGET_EXCEEDED", "worker usage exceeds the session's hard budget"
         )
+
+
+def _worker_failure_progress(
+    value: dict[str, Any],
+) -> tuple[str | None, dict[str, int]]:
     failure = value.get("failure_signature")
     if failure is not None:
         failure = _text(failure, "worker_result.failure_signature", maximum=160)
@@ -473,11 +512,7 @@ def _worker_result(
         )
         for field in ("passed_checks", "failed_checks", "criteria_covered")
     }
-    return (
-        result_path,
-        _WorkerResult(worker_id, supplied_tree, usage, failure, progress),
-        _sha_path(result_path),
-    )
+    return failure, progress
 
 
 def _bundle_current(root: Path, session: dict[str, Any]) -> str:

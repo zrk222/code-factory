@@ -227,32 +227,62 @@ def _inventory() -> list[dict[str, Any]]:
     )
 
 
-def _validate(arguments: object) -> tuple[str, str | None, bool, int, str]:
+def _search_arguments(arguments: object) -> dict[str, Any]:
     if not isinstance(arguments, dict):
         raise AuditRuleSearchError("factory.search_audit_rules requires an object")
     allowed = {"query", "lane", "includeCrossCutting", "limit", "ranking"}
     unknown = sorted(set(arguments) - allowed)
     if unknown:
         raise AuditRuleSearchError("unsupported search fields: " + ", ".join(unknown))
+    return arguments
+
+
+def _validate_query(arguments: dict[str, Any]) -> str:
     query = arguments.get("query")
     if not isinstance(query, str) or not query.strip() or len(query) > 200:
         raise AuditRuleSearchError(
             "query must be a non-empty string of at most 200 characters"
         )
+    return query
+
+
+def _validate_lane(arguments: dict[str, Any]) -> str | None:
     lane = arguments.get("lane")
     if lane is not None and lane not in {key for key, _, _ in _LANE_SPECS}:
         raise AuditRuleSearchError(
             "lane must name one of the six mandatory audit lanes"
         )
+    return lane
+
+
+def _validate_cross_cutting(arguments: dict[str, Any]) -> bool:
     include_cross_cutting = arguments.get("includeCrossCutting", True)
     if type(include_cross_cutting) is not bool:
         raise AuditRuleSearchError("includeCrossCutting must be boolean")
+    return include_cross_cutting
+
+
+def _validate_limit(arguments: dict[str, Any]) -> int:
     limit = arguments.get("limit", 5)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
         raise AuditRuleSearchError("limit must be an integer from 1 to 20")
+    return limit
+
+
+def _validate_ranking(arguments: dict[str, Any]) -> str:
     ranking = arguments.get("ranking", "bm25f")
     if ranking not in {"lexical", "bm25", "bm25f"}:
         raise AuditRuleSearchError("ranking must be lexical, bm25, or bm25f")
+    return ranking
+
+
+def _validate(arguments: object) -> tuple[str, str | None, bool, int, str]:
+    values = _search_arguments(arguments)
+    query = _validate_query(values)
+    lane = _validate_lane(values)
+    include_cross_cutting = _validate_cross_cutting(values)
+    limit = _validate_limit(values)
+    ranking = _validate_ranking(values)
     return query.strip().lower(), lane, include_cross_cutting, limit, ranking
 
 
@@ -291,29 +321,46 @@ def _bm25_scores(
         for field in _SEARCH_FIELDS
     }
     if not fielded:
-        flattened = [
-            [token for values in item.values() for token in values]
-            for item in field_tokens
-        ]
-        avg = sum(len(tokens) for tokens in flattened) / n_docs if n_docs else 0.0
-        doc_frequency = {
-            term: sum(term in set(tokens) for tokens in flattened)
-            for term in query_terms
-        }
-        scores: dict[str, float] = {}
-        for rule, tokens in zip(rules, flattened):
-            counts = {term: tokens.count(term) for term in query_terms}
-            length = len(tokens)
-            score = 0.0
-            for term in query_terms:
-                df = doc_frequency[term]
-                if not counts[term] or not df:
-                    continue
-                idf = math.log(1.0 + (n_docs - df + 0.5) / (df + 0.5))
-                norm = 1.2 * (1.0 - 0.75 + 0.75 * length / avg) if avg else 1.2
-                score += idf * (counts[term] * 2.2) / (counts[term] + norm)
-            scores[str(rule["ruleId"])] = round(score, 8)
-        return scores
+        return _bm25_scores_flat(rules, query_terms, field_tokens)
+    return _bm25f_scores(rules, query_terms, field_tokens, avg_len)
+
+
+def _bm25_scores_flat(
+    rules: list[dict[str, Any]],
+    query_terms: list[str],
+    field_tokens: list[dict[str, list[str]]],
+) -> dict[str, float]:
+    flattened = [
+        [token for values in item.values() for token in values] for item in field_tokens
+    ]
+    n_docs = len(flattened)
+    avg = sum(len(tokens) for tokens in flattened) / n_docs if n_docs else 0.0
+    doc_frequency = {
+        term: sum(term in set(tokens) for tokens in flattened) for term in query_terms
+    }
+    scores: dict[str, float] = {}
+    for rule, tokens in zip(rules, flattened):
+        counts = {term: tokens.count(term) for term in query_terms}
+        length = len(tokens)
+        score = 0.0
+        for term in query_terms:
+            df = doc_frequency[term]
+            if not counts[term] or not df:
+                continue
+            idf = math.log(1.0 + (n_docs - df + 0.5) / (df + 0.5))
+            norm = 1.2 * (1.0 - 0.75 + 0.75 * length / avg) if avg else 1.2
+            score += idf * (counts[term] * 2.2) / (counts[term] + norm)
+        scores[str(rule["ruleId"])] = round(score, 8)
+    return scores
+
+
+def _bm25f_scores(
+    rules: list[dict[str, Any]],
+    query_terms: list[str],
+    field_tokens: list[dict[str, list[str]]],
+    avg_len: dict[str, float],
+) -> dict[str, float]:
+    n_docs = len(field_tokens)
 
     doc_frequency = {
         term: sum(

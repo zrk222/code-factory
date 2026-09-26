@@ -153,188 +153,214 @@ def add_parser(sub) -> None:
     memory_brief.add_argument("--json", action="store_true")
 
 
+def _run_memory(a) -> int:
+    from .developer_memory import developer_memory_brief
+
+    brief = developer_memory_brief(Path(a.root), base=a.base, changed=a.changed or None)
+    if a.json:
+        print(json.dumps(brief, indent=2, sort_keys=True))
+    else:
+        next_action = brief["next_action"]
+        team = brief["team"]
+        print("factory memory brief (read-only)")
+        print("=" * 44)
+        print(f"next action : {next_action['action']}")
+        print(f"actions     : {len(brief['actions'])}")
+        print(
+            f"team source : {team['source']['kind']} ({team['source']['roster_completeness']})"
+        )
+        print(
+            "authority   : no proof execution, approval, memory recall, publication, deployment, or credential access"
+        )
+    return 0
+
+
+def _intent_payload(a) -> dict:
+    from .intent_ledger import capture_intent_ledger, inspect_intent_ledger
+
+    root = Path(a.root)
+    if a.intent_cmd == "capture":
+        return capture_intent_ledger(
+            root,
+            change_list=a.change_list,
+            changed=a.changed,
+            confirmed_by=a.confirmed_by,
+            promise=a.promise,
+            non_goal=a.non_goal,
+            failure_case=a.failure_case,
+            confirmation=a.confirmation,
+        )
+    return inspect_intent_ledger(
+        root,
+        change_list=a.change_list,
+        changed=a.changed or None,
+        base=a.base,
+    )
+
+
+def _intent_error(a, exc: Exception) -> int:
+    code = getattr(exc, "code", "INTENT_LEDGER_INPUT_UNAVAILABLE")
+    error = {
+        "schema": "factory.intent-ledger.error.v1",
+        "marker": "INTENT_LEDGER_REFUSED",
+        "code": code,
+        "message": str(exc),
+    }
+    print(
+        json.dumps(error, indent=2, sort_keys=True)
+        if a.json
+        else f"intent {a.intent_cmd} refused: {code}: {exc}",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _print_intent(a, payload: dict) -> None:
+    if a.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    elif a.intent_cmd == "capture":
+        print(f"INTENT_LEDGER_CAPTURED {payload['path']}")
+        print(
+            "authority : local record only; no source, test, agent, approval, repair, merge, publication, deployment, signing, messaging, credential, connector, or memory-recall action ran"
+        )
+    else:
+        print("factory intent inspect (local, read-only)")
+        print("=" * 44)
+        print(f"change list : {payload['change_list']}")
+        print(f"state       : {payload['state']}")
+        print(f"next action : {payload['next_action']['action']}")
+        print(
+            "authority   : no record write, source write, execution, agent start, approval, repair, merge, publication, deployment, signing, messaging, credential, connector, or memory recall"
+        )
+
+
+def _run_intent(a) -> int:
+    from .change_review import ChangeReviewError
+    from .intent_ledger import IntentLedgerError
+
+    try:
+        payload = _intent_payload(a)
+    except (IntentLedgerError, ChangeReviewError, OSError) as exc:
+        return _intent_error(a, exc)
+    _print_intent(a, payload)
+    if a.intent_cmd == "inspect" and payload["state"] in {
+        "intent_ledger_invalid",
+        "change_review_unavailable",
+    }:
+        return 2
+    return 0
+
+
+def _judgment_payload(a) -> dict:
+    from .judgment import (
+        judgment_status,
+        promote_capsule,
+        propose_capsule,
+        reconsider_capsule,
+        safety_case,
+    )
+
+    if a.judgment_cmd == "propose":
+        candidate = json.loads(Path(a.capsule).read_text(encoding="utf-8"))
+        return propose_capsule(Path(a.root), candidate, proposed_by=a.proposed_by)
+    if a.judgment_cmd == "promote":
+        return promote_capsule(
+            Path(a.root),
+            a.capsule_id,
+            promoted_by=a.promoted_by,
+            reason=a.reason,
+        )
+    if a.judgment_cmd == "reconsider":
+        return reconsider_capsule(
+            Path(a.root),
+            a.capsule_id,
+            a.successor,
+            requested_by=a.requested_by,
+            reason=a.reason,
+        )
+    if a.judgment_cmd == "safety-case":
+        return safety_case(
+            Path(a.root),
+            changed=a.changed,
+            proof_receipts=[Path(item) for item in a.proof_receipt],
+            change_profile=Path(a.change_profile) if a.change_profile else None,
+        )
+    return judgment_status(Path(a.root))
+
+
+def _judgment_error(a, exc: Exception) -> int:
+    code = getattr(exc, "code", "JUDGMENT_INPUT_INVALID")
+    error = {
+        "schema": "factory.judgment.error.v1",
+        "marker": "JUDGMENT_REFUSED",
+        "code": code,
+        "message": str(exc),
+    }
+    print(
+        json.dumps(error, indent=2, sort_keys=True)
+        if a.json
+        else f"judgment {a.judgment_cmd} refused: {code}: {exc}",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _print_judgment(a, payload: dict) -> None:
+    if a.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    elif a.judgment_cmd == "status":
+        print("factory judgment status (read-only)")
+        print("=" * 44)
+        print(f"state    : {payload['state']}")
+        print(f"active   : {payload.get('counts', {}).get('active', 0)}")
+        print(f"proposed : {payload.get('counts', {}).get('proposed', 0)}")
+        print(
+            "authority: no model, source write, execution, approval, repair, merge, publication, deployment, signing, messaging, or credential access"
+        )
+    elif a.judgment_cmd == "safety-case":
+        print("factory judgment safety-case (read-only)")
+        print("=" * 44)
+        print(f"route         : {payload['route']}")
+        print(f"capsules      : {len(payload['matching_capsules'])}")
+        print(f"missing proofs: {len(payload['missing_obligations'])}")
+        print(f"unclassified  : {len(payload['unclassified_changed_paths'])}")
+        print(
+            "authority     : no execution, approval, repair, merge, publication, deployment, signing, messaging, or credential access"
+        )
+    else:
+        print(f"{payload['marker']} {payload['path']}")
+        print(
+            "authority: tracked human-decision metadata only; no source, proof, approval, repair, merge, publication, deployment, signing, messaging, credential, connector, or model action ran"
+        )
+
+
+def _judgment_exit_code(a, payload: dict) -> int:
+    if a.judgment_cmd == "safety-case" and payload["route"] in {"BLACK", "RED"}:
+        return 1
+    return 0
+
+
+def _run_judgment(a) -> int:
+    from .judgment import JudgmentError
+
+    try:
+        payload = _judgment_payload(a)
+    except (JudgmentError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return _judgment_error(a, exc)
+    _print_judgment(a, payload)
+    return _judgment_exit_code(a, payload)
+
+
+_COMMAND_RUNNERS = {
+    "memory": _run_memory,
+    "intent": _run_intent,
+    "judgment": _run_judgment,
+}
+
+
 def run(a) -> int:
     """Dispatch governance commands with human-owned authority boundaries."""
-    if a.cmd == "memory":
-        from .developer_memory import developer_memory_brief
-
-        brief = developer_memory_brief(
-            Path(a.root), base=a.base, changed=a.changed or None
-        )
-        if a.json:
-            print(json.dumps(brief, indent=2, sort_keys=True))
-        else:
-            next_action = brief["next_action"]
-            team = brief["team"]
-            print("factory memory brief (read-only)")
-            print("=" * 44)
-            print(f"next action : {next_action['action']}")
-            print(f"actions     : {len(brief['actions'])}")
-            print(
-                f"team source : {team['source']['kind']} ({team['source']['roster_completeness']})"
-            )
-            print(
-                "authority   : no proof execution, approval, memory recall, publication, deployment, or credential access"
-            )
-        return 0
-
-    if a.cmd == "intent":
-        from .change_review import ChangeReviewError
-        from .intent_ledger import (
-            IntentLedgerError,
-            capture_intent_ledger,
-            inspect_intent_ledger,
-        )
-
-        root = Path(a.root)
-        try:
-            if a.intent_cmd == "capture":
-                payload = capture_intent_ledger(
-                    root,
-                    change_list=a.change_list,
-                    changed=a.changed,
-                    confirmed_by=a.confirmed_by,
-                    promise=a.promise,
-                    non_goal=a.non_goal,
-                    failure_case=a.failure_case,
-                    confirmation=a.confirmation,
-                )
-            else:
-                payload = inspect_intent_ledger(
-                    root,
-                    change_list=a.change_list,
-                    changed=a.changed or None,
-                    base=a.base,
-                )
-        except (IntentLedgerError, ChangeReviewError, OSError) as exc:
-            code = getattr(exc, "code", "INTENT_LEDGER_INPUT_UNAVAILABLE")
-            error = {
-                "schema": "factory.intent-ledger.error.v1",
-                "marker": "INTENT_LEDGER_REFUSED",
-                "code": code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if a.json
-                else f"intent {a.intent_cmd} refused: {code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        elif a.intent_cmd == "capture":
-            print(f"INTENT_LEDGER_CAPTURED {payload['path']}")
-            print(
-                "authority : local record only; no source, test, agent, approval, repair, merge, publication, deployment, signing, messaging, credential, connector, or memory-recall action ran"
-            )
-        else:
-            print("factory intent inspect (local, read-only)")
-            print("=" * 44)
-            print(f"change list : {payload['change_list']}")
-            print(f"state       : {payload['state']}")
-            print(f"next action : {payload['next_action']['action']}")
-            print(
-                "authority   : no record write, source write, execution, agent start, approval, repair, merge, publication, deployment, signing, messaging, credential, connector, or memory recall"
-            )
-        return (
-            2
-            if a.intent_cmd == "inspect"
-            and payload["state"]
-            in {"intent_ledger_invalid", "change_review_unavailable"}
-            else 0
-        )
-
-    if a.cmd == "judgment":
-        from .judgment import (
-            JudgmentError,
-            judgment_status,
-            promote_capsule,
-            propose_capsule,
-            reconsider_capsule,
-            safety_case,
-        )
-
-        try:
-            if a.judgment_cmd == "propose":
-                candidate = json.loads(Path(a.capsule).read_text(encoding="utf-8"))
-                payload = propose_capsule(
-                    Path(a.root), candidate, proposed_by=a.proposed_by
-                )
-            elif a.judgment_cmd == "promote":
-                payload = promote_capsule(
-                    Path(a.root),
-                    a.capsule_id,
-                    promoted_by=a.promoted_by,
-                    reason=a.reason,
-                )
-            elif a.judgment_cmd == "reconsider":
-                payload = reconsider_capsule(
-                    Path(a.root),
-                    a.capsule_id,
-                    a.successor,
-                    requested_by=a.requested_by,
-                    reason=a.reason,
-                )
-            elif a.judgment_cmd == "safety-case":
-                payload = safety_case(
-                    Path(a.root),
-                    changed=a.changed,
-                    proof_receipts=[Path(item) for item in a.proof_receipt],
-                    change_profile=Path(a.change_profile) if a.change_profile else None,
-                )
-            else:
-                payload = judgment_status(Path(a.root))
-        except (
-            JudgmentError,
-            OSError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-        ) as exc:
-            code = getattr(exc, "code", "JUDGMENT_INPUT_INVALID")
-            error = {
-                "schema": "factory.judgment.error.v1",
-                "marker": "JUDGMENT_REFUSED",
-                "code": code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if a.json
-                else f"judgment {a.judgment_cmd} refused: {code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        elif a.judgment_cmd == "status":
-            print("factory judgment status (read-only)")
-            print("=" * 44)
-            print(f"state    : {payload['state']}")
-            print(f"active   : {payload.get('counts', {}).get('active', 0)}")
-            print(f"proposed : {payload.get('counts', {}).get('proposed', 0)}")
-            print(
-                "authority: no model, source write, execution, approval, repair, merge, publication, deployment, signing, messaging, or credential access"
-            )
-        elif a.judgment_cmd == "safety-case":
-            print("factory judgment safety-case (read-only)")
-            print("=" * 44)
-            print(f"route         : {payload['route']}")
-            print(f"capsules      : {len(payload['matching_capsules'])}")
-            print(f"missing proofs: {len(payload['missing_obligations'])}")
-            print(f"unclassified  : {len(payload['unclassified_changed_paths'])}")
-            print(
-                "authority     : no execution, approval, repair, merge, publication, deployment, signing, messaging, or credential access"
-            )
-        else:
-            print(f"{payload['marker']} {payload['path']}")
-            print(
-                "authority: tracked human-decision metadata only; no source, proof, approval, repair, merge, publication, deployment, signing, messaging, credential, connector, or model action ran"
-            )
-        return (
-            1
-            if a.judgment_cmd == "safety-case" and payload["route"] in {"BLACK", "RED"}
-            else 0
-        )
-
-    raise ValueError(f"unsupported governance command: {a.cmd}")
+    handler = _COMMAND_RUNNERS.get(a.cmd)
+    if handler is None:
+        raise ValueError(f"unsupported governance command: {a.cmd}")
+    return handler(a)

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { Beaker, Check, Gauge, LockKeyhole, Play, ShieldCheck, Sparkles, Trophy } from "lucide-react";
@@ -9,11 +10,20 @@ type Props = { agentSpec: Doc<"agentSpecs"> };
 const stages = ["Use case", "Evaluation set", "Search space", "Guardrails", "Optimize", "Review"] as const;
 
 const splitList = (value: string) => value.split(",").map((item) => item.trim()).filter(Boolean);
+type StudyResult = NonNullable<FunctionReturnType<typeof api.recipeLab.getStudy>>;
+
+function isStudyResult(value: unknown): value is StudyResult {
+  return Boolean(value && typeof value === "object" && "study" in value && "trials" in value);
+}
+
+function allTrialsTerminal(result: StudyResult | null, queued: number, running: number) {
+  return Boolean(result) && queued === 0 && running === 0;
+}
 
 /** Six-stage assembly surface for bounded, evidence-driven agent recipe optimization. */
 export function AgentRecipeLab({ agentSpec }: Props) {
   const response = useQuery(api.recipeLab.getStudy, { agentSpecId: agentSpec._id });
-  const result = response && typeof response === "object" && "study" in response && "trials" in response ? response : null;
+  const result = isStudyResult(response) ? response : null;
   const createStudy = useMutation(api.recipeLab.createStudy);
   const startStudy = useMutation(api.recipeLab.startStudy);
   const finalizeStudy = useMutation(api.recipeLab.finalizeStudy);
@@ -71,7 +81,7 @@ export function AgentRecipeLab({ agentSpec }: Props) {
     finally { setBusy(false); }
   }
 
-  const allTerminal = result ? counts.queued === 0 && counts.running === 0 : false;
+  const allTerminal = allTrialsTerminal(result, counts.queued, counts.running);
 
   return <section className="surface recipe-lab" data-evidence="RECIPE_LAB_SIX_STAGES" aria-labelledby="recipe-lab-title">
     <header className="recipe-lab-header">

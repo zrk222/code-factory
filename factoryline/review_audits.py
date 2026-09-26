@@ -37,12 +37,17 @@ def _unique_fields(pairs: list) -> dict:
     return result
 
 
-def _read(root: Path, path: str) -> tuple[bytes, dict]:
+def _relative_path(path: str) -> Path:
     if not isinstance(path, str) or not path or "\\" in path:
         raise ReviewAuditError("Use a nonempty workspace-relative POSIX path.")
     relative = Path(path)
     if relative.is_absolute() or PureWindowsPath(path).drive or ".." in relative.parts:
         raise ReviewAuditError(f"Path escapes workspace: {path}")
+    return relative
+
+
+def _read(root: Path, path: str) -> tuple[bytes, dict]:
+    relative = _relative_path(path)
     resolved = (root / relative).resolve()
     if not resolved.is_relative_to(root) or not resolved.is_file():
         raise ReviewAuditError(f"Missing or escaping file: {path}")
@@ -362,7 +367,7 @@ class _GuardPaths:
         }
 
 
-def _prepare(root: Path, policy: dict, cache: dict) -> tuple[list, list]:
+def _policy_parts(policy: dict) -> tuple[list, list]:
     if (
         not isinstance(policy, dict)
         or set(policy) != {"schema", "pattern_groups", "effect_rules"}
@@ -376,22 +381,36 @@ def _prepare(root: Path, policy: dict, cache: dict) -> tuple[list, list]:
         or not 1 <= len(groups) + len(effects) <= MAX_RULES
     ):
         raise ReviewAuditError(f"Policy requires 1..{MAX_RULES} rules.")
+    return groups, effects
+
+
+def _prepare_pattern(
+    root: Path, value: dict, cache: dict, seen: set[str]
+) -> tuple[dict, list, set[str]]:
+    rule = _rule(value, seen, {"members", "required_calls"})
+    calls = _call_names(rule["required_calls"])
+    if not isinstance(rule["members"], list) or not 2 <= len(rule["members"]) <= 32:
+        raise ReviewAuditError("Pattern groups require 2..32 peers.")
+    members = [_target(root, item, cache) for item in rule["members"]]
+    if len({(target["path"], target["symbol"]) for target, _ in members}) != len(
+        members
+    ):
+        raise ReviewAuditError("Duplicate peer target.")
+    return rule, members, calls
+
+
+def _prepare_effect(root: Path, value: dict, cache: dict, seen: set[str]) -> tuple:
+    rule = _rule(value, seen, {"target", "guard_call", "effect_call"})
+    _call_names([rule["guard_call"], rule["effect_call"]])
+    target, node = _target(root, rule["target"], cache)
+    return rule, target, node
+
+
+def _prepare(root: Path, policy: dict, cache: dict) -> tuple[list, list]:
+    groups, effects = _policy_parts(policy)
     seen: set[str] = set()
-    patterns, guards = [], []
-    for value in groups:
-        rule = _rule(value, seen, {"members", "required_calls"})
-        calls = _call_names(rule["required_calls"])
-        if not isinstance(rule["members"], list) or not 2 <= len(rule["members"]) <= 32:
-            raise ReviewAuditError("Pattern groups require 2..32 peers.")
-        members = [_target(root, item, cache) for item in rule["members"]]
-        if len({(t["path"], t["symbol"]) for t, _ in members}) != len(members):
-            raise ReviewAuditError("Duplicate peer target.")
-        patterns.append((rule, members, calls))
-    for value in effects:
-        rule = _rule(value, seen, {"target", "guard_call", "effect_call"})
-        _call_names([rule["guard_call"], rule["effect_call"]])
-        target, node = _target(root, rule["target"], cache)
-        guards.append((rule, target, node))
+    patterns = [_prepare_pattern(root, value, cache, seen) for value in groups]
+    guards = [_prepare_effect(root, value, cache, seen) for value in effects]
     return patterns, guards
 
 
@@ -547,6 +566,63 @@ def _write_fingerprint(root: Path, path: Path, value: dict) -> None:
     )
 
 
+def _fingerprint_baseline_file(workspace: Path, baseline_path: Path) -> Path:
+    """Resolve baseline evidence without allowing a path outside the workspace."""
+    baseline_file = (
+        (workspace / baseline_path).resolve()
+        if not baseline_path.is_absolute()
+        else baseline_path.resolve()
+    )
+    if not baseline_file.is_relative_to(workspace):
+        raise ReviewAuditError("Baseline fingerprint must remain inside the workspace.")
+    return baseline_file
+
+
+def _fingerprint_changes(before: dict, fingerprint: dict) -> dict:
+    """Compare policy, source, result, and finding identities independently."""
+    return {
+        "policy": before.get("policy_sha256") != fingerprint["policy_sha256"],
+        "sources": before.get("sources") != fingerprint["sources"],
+        "results": (
+            before.get("results") != fingerprint["results"]
+            or before.get("state") != fingerprint["state"]
+        ),
+        "finding_codes": {
+            "added": sorted(
+                set(fingerprint["finding_codes"]) - set(before.get("finding_codes", []))
+            ),
+            "removed": sorted(
+                set(before.get("finding_codes", [])) - set(fingerprint["finding_codes"])
+            ),
+        },
+    }
+
+
+def _classify_fingerprint_changes(result: dict) -> None:
+    """Fail closed when stable inputs yield contradictory results or drift."""
+    changes = result["changes"]
+    if not changes["policy"] and not changes["sources"] and changes["results"]:
+        result.update(
+            marker="AUDIT_FINGERPRINT_CONTRADICTORY",
+            state="CONTRADICTORY",
+            reusable=False,
+            code="E_AUDIT_RESULT_CONTRADICTION",
+            action_summary="Block reuse: identical policy and source bytes produced different audit results.",
+        )
+    elif changes["policy"] or changes["sources"]:
+        result.update(
+            marker="AUDIT_FINGERPRINT_DRIFT",
+            state="DRIFT_DETECTED",
+            reusable=False,
+            code="E_AUDIT_FINGERPRINT_STALE",
+            action_summary="Do not reuse the baseline: policy or audited source bytes changed; run a fresh review.",
+        )
+    else:
+        result["action_summary"] = (
+            "Baseline and current audit are byte-identical; reuse is content-addressed and still non-authorizing."
+        )
+
+
 def audit_fingerprint(
     root: Path,
     policy_path: str = ".factory/review-audits.json",
@@ -581,55 +657,13 @@ def audit_fingerprint(
             "claim_boundary": "Fresh local structural audit fingerprint only; no runtime correctness, security certification, or release authority.",
         }
         if baseline_path is not None:
-            baseline_file = (
-                (workspace / baseline_path).resolve()
-                if not baseline_path.is_absolute()
-                else baseline_path.resolve()
+            baseline = _read_fingerprint(
+                _fingerprint_baseline_file(workspace, baseline_path)
             )
-            if not baseline_file.is_relative_to(workspace):
-                raise ReviewAuditError(
-                    "Baseline fingerprint must remain inside the workspace."
-                )
-            baseline = _read_fingerprint(baseline_file)
-            before = baseline["fingerprint"]
-            policy_changed = before.get("policy_sha256") != fingerprint["policy_sha256"]
-            sources_changed = before.get("sources") != fingerprint["sources"]
-            results_changed = (
-                before.get("results") != fingerprint["results"]
-                or before.get("state") != fingerprint["state"]
+            result["changes"] = _fingerprint_changes(
+                baseline["fingerprint"], fingerprint
             )
-            added = sorted(
-                set(fingerprint["finding_codes"]) - set(before.get("finding_codes", []))
-            )
-            removed = sorted(
-                set(before.get("finding_codes", [])) - set(fingerprint["finding_codes"])
-            )
-            result["changes"] = {
-                "policy": policy_changed,
-                "sources": sources_changed,
-                "results": results_changed,
-                "finding_codes": {"added": added, "removed": removed},
-            }
-            if not policy_changed and not sources_changed and results_changed:
-                result.update(
-                    marker="AUDIT_FINGERPRINT_CONTRADICTORY",
-                    state="CONTRADICTORY",
-                    reusable=False,
-                    code="E_AUDIT_RESULT_CONTRADICTION",
-                    action_summary="Block reuse: identical policy and source bytes produced different audit results.",
-                )
-            elif policy_changed or sources_changed:
-                result.update(
-                    marker="AUDIT_FINGERPRINT_DRIFT",
-                    state="DRIFT_DETECTED",
-                    reusable=False,
-                    code="E_AUDIT_FINGERPRINT_STALE",
-                    action_summary="Do not reuse the baseline: policy or audited source bytes changed; run a fresh review.",
-                )
-            else:
-                result["action_summary"] = (
-                    "Baseline and current audit are byte-identical; reuse is content-addressed and still non-authorizing."
-                )
+            _classify_fingerprint_changes(result)
         else:
             result["action_summary"] = (
                 "Created a fresh content-addressed audit fingerprint; no baseline comparison was requested."
@@ -693,6 +727,199 @@ def _security_finding(
     }
 
 
+def _dynamic_execution_finding(
+    call: str, relative: str, node: ast.AST
+) -> dict[str, Any] | None:
+    if call not in {"eval", "exec", "builtins.eval", "builtins.exec"}:
+        return None
+    return _security_finding(
+        "SECURITY_DYNAMIC_EXECUTION",
+        relative,
+        node,
+        "Dynamic code execution is reachable from source.",
+        "HIGH",
+        call=call,
+    )
+
+
+def _os_command_finding(
+    call: str, relative: str, node: ast.AST
+) -> dict[str, Any] | None:
+    if call != "os.system":
+        return None
+    return _security_finding(
+        "SECURITY_OS_COMMAND",
+        relative,
+        node,
+        "os.system invokes a shell and should be replaced with an argv-based process boundary.",
+        "HIGH",
+    )
+
+
+def _shell_command_finding(
+    call: str, relative: str, node: ast.Call
+) -> dict[str, Any] | None:
+    if call not in {
+        "subprocess.run",
+        "subprocess.Popen",
+        "subprocess.call",
+        "subprocess.check_call",
+        "subprocess.check_output",
+    }:
+        return None
+    shell = next(
+        (keyword.value for keyword in node.keywords if keyword.arg == "shell"), None
+    )
+    if not isinstance(shell, ast.Constant) or shell.value is not True:
+        return None
+    return _security_finding(
+        "SECURITY_SHELL_COMMAND",
+        relative,
+        node,
+        "subprocess shell execution is enabled; shell metacharacters can cross the command boundary.",
+        "HIGH",
+        call=call,
+    )
+
+
+def _unsafe_deserialization_finding(
+    call: str, relative: str, node: ast.AST
+) -> dict[str, Any] | None:
+    if call not in {"pickle.load", "pickle.loads", "dill.load", "dill.loads"}:
+        return None
+    return _security_finding(
+        "SECURITY_UNSAFE_DESERIALIZATION",
+        relative,
+        node,
+        "Pickle-like deserialization can execute attacker-controlled code.",
+        "HIGH",
+        call=call,
+    )
+
+
+def _unsafe_yaml_finding(
+    call: str, relative: str, node: ast.Call
+) -> dict[str, Any] | None:
+    if call not in {"yaml.load", "yaml.unsafe_load", "yaml.full_load"}:
+        return None
+    loader = next(
+        (keyword.value for keyword in node.keywords if keyword.arg == "Loader"), None
+    )
+    loader_name = _name(loader) if isinstance(loader, ast.AST) else ""
+    unsafe_loader = loader_name.endswith("UnsafeLoader") or loader_name.endswith(
+        "FullLoader"
+    )
+    if call == "yaml.load" and loader is not None and not unsafe_loader:
+        return None
+    return _security_finding(
+        "SECURITY_UNSAFE_YAML",
+        relative,
+        node,
+        "YAML is loaded without an explicit reviewed Loader.",
+        "HIGH",
+        call=call,
+    )
+
+
+def _disabled_tls_finding(
+    call: str, relative: str, node: ast.Call
+) -> dict[str, Any] | None:
+    if call not in {"requests.get", "requests.post", "httpx.get", "httpx.post"}:
+        return None
+    verify = next(
+        (keyword.value for keyword in node.keywords if keyword.arg == "verify"), None
+    )
+    if not isinstance(verify, ast.Constant) or verify.value is not False:
+        return None
+    return _security_finding(
+        "SECURITY_TLS_VERIFY_DISABLED",
+        relative,
+        node,
+        "TLS certificate verification is disabled for an outbound request.",
+        "HIGH",
+        call=call,
+    )
+
+
+def _security_call_finding(
+    call: str, relative: str, node: ast.Call
+) -> dict[str, Any] | None:
+    detectors = (
+        _dynamic_execution_finding,
+        _os_command_finding,
+        _shell_command_finding,
+        _unsafe_deserialization_finding,
+        _unsafe_yaml_finding,
+        _disabled_tls_finding,
+    )
+    for detect in detectors:
+        finding = detect(call, relative, node)
+        if finding is not None:
+            return finding
+    return None
+
+
+def _bare_except_finding(
+    relative: str, node: ast.ExceptHandler
+) -> dict[str, Any] | None:
+    if node.type is not None:
+        return None
+    return _security_finding(
+        "QUALITY_BARE_EXCEPT",
+        relative,
+        node,
+        "Bare except hides every failure type and weakens deterministic recovery.",
+        "MEDIUM",
+    )
+
+
+def _secret_literal(node: ast.Assign | ast.AnnAssign) -> str | None:
+    value = node.value
+    if (
+        not isinstance(value, ast.Constant)
+        or not isinstance(value.value, str)
+        or len(value.value) < 8
+        or _PLACEHOLDER_SECRET.match(value.value.strip())
+    ):
+        return None
+    return value.value
+
+
+def _secret_assignment_finding(
+    relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr, value: str
+) -> dict[str, Any] | None:
+    if not isinstance(target, ast.Name) or not _SECRET_ASSIGNMENT.search(target.id):
+        return None
+    # Recognizable non-secret sentinels remain available to scanner self-tests.
+    if relative.startswith("tests/") and re.search(
+        r"(?i)(?:do[-_ ]not|fake|dummy|fixture|not[-_ ]real|test)", value
+    ):
+        return None
+    return _security_finding(
+        "SECURITY_HARDCODED_SECRET",
+        relative,
+        node,
+        "Credential-like material is assigned as a source literal.",
+        "CRITICAL",
+        name=target.id,
+    )
+
+
+def _secret_assignment_findings(
+    relative: str, node: ast.Assign | ast.AnnAssign
+) -> list[dict[str, Any]]:
+    value = _secret_literal(node)
+    if value is None:
+        return []
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    findings = []
+    for target in targets:
+        finding = _secret_assignment_finding(relative, node, target, value)
+        if finding is not None:
+            findings.append(finding)
+    return findings
+
+
 def _security_source_files(root: Path) -> list[Path]:
     ignored = {
         ".git",
@@ -730,212 +957,82 @@ def _security_scan_tree(root: Path, path: Path, tree: ast.AST) -> list[dict[str,
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             call = _normalized_call_name(node, aliases)
-            if call in {"eval", "exec", "builtins.eval", "builtins.exec"}:
-                findings.append(
-                    _security_finding(
-                        "SECURITY_DYNAMIC_EXECUTION",
-                        relative,
-                        node,
-                        "Dynamic code execution is reachable from source.",
-                        "HIGH",
-                        call=call,
-                    )
-                )
-            elif call == "os.system":
-                findings.append(
-                    _security_finding(
-                        "SECURITY_OS_COMMAND",
-                        relative,
-                        node,
-                        "os.system invokes a shell and should be replaced with an argv-based process boundary.",
-                        "HIGH",
-                    )
-                )
-            elif call in {
-                "subprocess.run",
-                "subprocess.Popen",
-                "subprocess.call",
-                "subprocess.check_call",
-                "subprocess.check_output",
-            }:
-                shell = next(
-                    (
-                        keyword.value
-                        for keyword in node.keywords
-                        if keyword.arg == "shell"
-                    ),
-                    None,
-                )
-                if isinstance(shell, ast.Constant) and shell.value is True:
-                    findings.append(
-                        _security_finding(
-                            "SECURITY_SHELL_COMMAND",
-                            relative,
-                            node,
-                            "subprocess shell execution is enabled; shell metacharacters can cross the command boundary.",
-                            "HIGH",
-                            call=call,
-                        )
-                    )
-            elif call in {"pickle.load", "pickle.loads", "dill.load", "dill.loads"}:
-                findings.append(
-                    _security_finding(
-                        "SECURITY_UNSAFE_DESERIALIZATION",
-                        relative,
-                        node,
-                        "Pickle-like deserialization can execute attacker-controlled code.",
-                        "HIGH",
-                        call=call,
-                    )
-                )
-            elif call in {"yaml.load", "yaml.unsafe_load", "yaml.full_load"}:
-                loader = next(
-                    (
-                        keyword.value
-                        for keyword in node.keywords
-                        if keyword.arg == "Loader"
-                    ),
-                    None,
-                )
-                loader_name = _name(loader) if isinstance(loader, ast.AST) else ""
-                unsafe_loader = loader_name.endswith(
-                    "UnsafeLoader"
-                ) or loader_name.endswith("FullLoader")
-                if call != "yaml.load" or loader is None or unsafe_loader:
-                    findings.append(
-                        _security_finding(
-                            "SECURITY_UNSAFE_YAML",
-                            relative,
-                            node,
-                            "YAML is loaded without an explicit reviewed Loader.",
-                            "HIGH",
-                            call=call,
-                        )
-                    )
-            elif call in {"requests.get", "requests.post", "httpx.get", "httpx.post"}:
-                verify = next(
-                    (
-                        keyword.value
-                        for keyword in node.keywords
-                        if keyword.arg == "verify"
-                    ),
-                    None,
-                )
-                if isinstance(verify, ast.Constant) and verify.value is False:
-                    findings.append(
-                        _security_finding(
-                            "SECURITY_TLS_VERIFY_DISABLED",
-                            relative,
-                            node,
-                            "TLS certificate verification is disabled for an outbound request.",
-                            "HIGH",
-                            call=call,
-                        )
-                    )
-        elif isinstance(node, ast.ExceptHandler) and node.type is None:
-            findings.append(
-                _security_finding(
-                    "QUALITY_BARE_EXCEPT",
-                    relative,
-                    node,
-                    "Bare except hides every failure type and weakens deterministic recovery.",
-                    "MEDIUM",
-                )
-            )
+            finding = _security_call_finding(call, relative, node)
+            if finding is not None:
+                findings.append(finding)
+        elif isinstance(node, ast.ExceptHandler):
+            finding = _bare_except_finding(relative, node)
+            if finding is not None:
+                findings.append(finding)
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            value = node.value
-            if (
-                isinstance(value, ast.Constant)
-                and isinstance(value.value, str)
-                and len(value.value) >= 8
-                and not _PLACEHOLDER_SECRET.match(value.value.strip())
-            ):
-                for target in targets:
-                    if isinstance(target, ast.Name) and _SECRET_ASSIGNMENT.search(
-                        target.id
-                    ):
-                        # Test fixtures may intentionally carry a non-secret sentinel to prove
-                        # redaction. They are reported only when the literal is not recognizable
-                        # as a fixture value, keeping the production gate strict without noise.
-                        if not (
-                            relative.startswith("tests/")
-                            and re.search(
-                                r"(?i)(?:do[-_ ]not|fake|dummy|fixture|not[-_ ]real|test)",
-                                value.value,
-                            )
-                        ):
-                            findings.append(
-                                _security_finding(
-                                    "SECURITY_HARDCODED_SECRET",
-                                    relative,
-                                    node,
-                                    "Credential-like material is assigned as a source literal.",
-                                    "CRITICAL",
-                                    name=target.id,
-                                )
-                            )
+            findings.extend(_secret_assignment_findings(relative, node))
     return findings
 
 
-def security_scan(root: Path) -> dict[str, Any]:
-    """Run a bounded AST security and code-quality scan without importing or executing source."""
-    workspace = Path(root).resolve()
-    files = _security_source_files(workspace)
-    findings: list[dict[str, Any]] = []
-    bindings: list[dict[str, Any]] = []
-    parse_errors = 0
-    for path in files:
-        try:
-            data = path.read_bytes()
-            if len(data) > MAX_BYTES:
-                findings.append(
+def _security_scan_file(
+    workspace: Path, path: Path
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], bool]:
+    """Scan one bounded Python source and return its byte binding and findings."""
+    relative = path.relative_to(workspace).as_posix()
+    binding: dict[str, Any] | None = None
+    try:
+        data = path.read_bytes()
+        if len(data) > MAX_BYTES:
+            return (
+                None,
+                [
                     _security_finding(
                         "SECURITY_SOURCE_TOO_LARGE",
-                        path.relative_to(workspace).as_posix(),
+                        relative,
                         ast.Module(body=[], type_ignores=[]),
                         f"Source exceeds the {MAX_BYTES}-byte scan limit.",
                         "HIGH",
                         bytes=len(data),
                     )
-                )
-                continue
-            bindings.append(
-                {
-                    "path": path.relative_to(workspace).as_posix(),
-                    "sha256": sha256(data).hexdigest(),
-                    "bytes": len(data),
-                }
+                ],
+                False,
             )
-            tree = ast.parse(data, filename=str(path))
-        except SyntaxError as exc:
-            parse_errors += 1
-            findings.append(
+        binding = {
+            "path": relative,
+            "sha256": sha256(data).hexdigest(),
+            "bytes": len(data),
+        }
+        tree = ast.parse(data, filename=str(path))
+    except SyntaxError as exc:
+        return (
+            binding,
+            [
                 _security_finding(
                     "QUALITY_SYNTAX_ERROR",
-                    path.relative_to(workspace).as_posix(),
+                    relative,
                     exc,
                     "Python source cannot be parsed deterministically.",
                     "HIGH",
                     detail=str(exc),
                 )
-            )
-            continue
-        except (OSError, UnicodeError) as exc:
-            parse_errors += 1
-            findings.append(
+            ],
+            True,
+        )
+    except (OSError, UnicodeError) as exc:
+        return (
+            binding,
+            [
                 _security_finding(
                     "SECURITY_SOURCE_UNREADABLE",
-                    path.relative_to(workspace).as_posix(),
+                    relative,
                     ast.Module(body=[], type_ignores=[]),
                     "Source could not be read for security analysis.",
                     "HIGH",
                     detail=type(exc).__name__,
                 )
-            )
-            continue
-        findings.extend(_security_scan_tree(workspace, path, tree))
-    # A concurrent edit must never be mistaken for a clean, hash-bound scan.
+            ],
+            True,
+        )
+    return binding, _security_scan_tree(workspace, path, tree), False
+
+
+def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -> None:
+    """Reject a source that changes after its scan but before receipt creation."""
     for binding in bindings:
         current = workspace / binding["path"]
         try:
@@ -951,6 +1048,22 @@ def security_scan(root: Path) -> dict[str, Any]:
             raise ReviewAuditError(
                 f"Evidence changed during security scan: {binding['path']}"
             )
+
+
+def security_scan(root: Path) -> dict[str, Any]:
+    """Run a bounded AST security and code-quality scan without importing or executing source."""
+    workspace = Path(root).resolve()
+    files = _security_source_files(workspace)
+    findings: list[dict[str, Any]] = []
+    bindings: list[dict[str, Any]] = []
+    parse_errors = 0
+    for path in files:
+        binding, file_findings, parse_error = _security_scan_file(workspace, path)
+        if binding is not None:
+            bindings.append(binding)
+        findings.extend(file_findings)
+        parse_errors += int(parse_error)
+    _verify_security_bindings(workspace, bindings)
     findings.sort(
         key=lambda item: (item["path"], item["line"], item["code"], item["column"])
     )

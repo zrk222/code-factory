@@ -31,11 +31,8 @@ def _execution_gap(code: str, action: str, path: str = ".") -> dict:
     return {"code": code, "path": path, "action": action}
 
 
-def _scope_gaps(plan: dict, inventory: dict) -> list:
-    """Source-derived obligations cannot be removed by a narrow PRD or lane."""
+def _obligation_gaps(obligations: list[dict], files: dict[str, dict]) -> list[dict]:
     gaps = []
-    files = {item["path"]: item for item in inventory["files"]}
-    obligations = plan["obligations"]
     for obligation in obligations:
         if not set(obligation["paths"] + obligation["requirements"]) <= files.keys():
             gaps.append(
@@ -57,19 +54,36 @@ def _scope_gaps(plan: dict, inventory: dict) -> list:
                         challenge["fixture_path"],
                     )
                 )
-    language_lanes = {}
+    return gaps
+
+
+def _language_lanes(plan: dict) -> dict[str, set[str]]:
+    by_family = {}
     for lane in plan["lanes"]:
-        language_lanes.setdefault(lane["family"], set()).update(lane["languages"])
+        by_family.setdefault(lane["family"], set()).update(lane["languages"])
+    return by_family
+
+
+def _source_families(language: str) -> set[str]:
+    families = {"secrets"}
+    if language == "dependency":
+        families.add("dependencies")
+    elif language == "configuration":
+        families.add("configuration")
+    elif language != "data":
+        families.update({"static", "runtime", "fuzz"})
+    return families
+
+
+def _source_gaps(
+    files: dict[str, dict],
+    language_lanes: dict[str, set[str]],
+    obligations: list[dict],
+) -> list[dict]:
+    gaps = []
     for path, item in files.items():
         language = item["language"]
-        families = {"secrets"}
-        if language == "dependency":
-            families.add("dependencies")
-        elif language == "configuration":
-            families.add("configuration")
-        elif language != "data":
-            families.update({"static", "runtime", "fuzz"})
-        for family in sorted(families):
+        for family in sorted(_source_families(language)):
             if language not in language_lanes.get(family, set()) or not any(
                 obligation["family"] == family and path in obligation["paths"]
                 for obligation in obligations
@@ -81,14 +95,28 @@ def _scope_gaps(plan: dict, inventory: dict) -> list:
                         path,
                     )
                 )
+    return gaps
+
+
+def _dependency_scope_gap(plan: dict) -> list[dict]:
     engines = {lane["engine"] for lane in plan["lanes"]}
-    if not {"syft", "osv"} <= engines:
-        gaps.append(
-            _execution_gap(
-                "DEPENDENCY_DEPTH",
-                "Declare both SBOM inventory (Syft) and vulnerability analysis (OSV).",
-            )
+    if {"syft", "osv"} <= engines:
+        return []
+    return [
+        _execution_gap(
+            "DEPENDENCY_DEPTH",
+            "Declare both SBOM inventory (Syft) and vulnerability analysis (OSV).",
         )
+    ]
+
+
+def _scope_gaps(plan: dict, inventory: dict) -> list:
+    """Source-derived obligations cannot be removed by a narrow PRD or lane."""
+    files = {item["path"]: item for item in inventory["files"]}
+    obligations = plan["obligations"]
+    gaps = _obligation_gaps(obligations, files)
+    gaps.extend(_source_gaps(files, _language_lanes(plan), obligations))
+    gaps.extend(_dependency_scope_gap(plan))
     return gaps
 
 
@@ -446,6 +474,155 @@ def _run_lanes(
             break
 
 
+def _check_resume(
+    root: Path,
+    resume: str | None,
+    manifest_sha256: str,
+    plan: dict,
+    read_run_json,
+    run_directory,
+) -> None:
+    if not resume:
+        return
+    previous = read_run_json(run_directory(root, resume), "state.json")
+    if (
+        previous["manifest_sha256"] != manifest_sha256
+        or previous["candidate_sha256"] != plan["candidate_sha256"]
+    ):
+        raise RuntimeAuditError(
+            "E_RESUME_DRIFT", "retry must bind the identical manifest and candidate"
+        )
+
+
+def _initial_run_state(
+    run_id: str,
+    resume: str | None,
+    manifest_sha256: str,
+    plan: dict,
+    authorized: dict,
+) -> dict:
+    return {
+        "schema": "factory.deep-run.v1",
+        "run_id": run_id,
+        "state": "RUNNING",
+        "candidate_sha256": plan["candidate_sha256"],
+        "manifest_sha256": manifest_sha256,
+        "manifest_content_sha256": digest(plan),
+        "parent_run": resume,
+        "authorization_sha256": digest(authorized),
+        "lanes": [],
+        "gaps": [],
+        "authority": "none",
+        "release_approval": False,
+    }
+
+
+def _capture_and_execute(
+    root: Path,
+    directory: Path,
+    state: dict,
+    plan: dict,
+    manifest_sha256: str,
+    authorization: Path,
+    trust_root: Path,
+    trust_root_sha256: str,
+    emit,
+    verify_authorization,
+    inventory_candidate,
+    write_run_json,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="factory-source-") as temporary:
+        # Canonicalize the trusted system temp parent (macOS /var is linked).
+        # inventory_candidate still rejects caller-supplied linked snapshots.
+        snapshot = Path(temporary).resolve(strict=True) / "src"
+        snapshot.mkdir()
+        inventory = inventory_candidate(root, snapshot)
+        write_run_json(directory, "inventory.json", inventory)
+        state["gaps"].extend(inventory["gaps"] + _scope_gaps(plan, inventory))
+        if inventory["candidate_sha256"] != plan["candidate_sha256"]:
+            state["gaps"].append(
+                _execution_gap(
+                    "CANDIDATE_DRIFT",
+                    "Regenerate the plan against the current complete inventory.",
+                )
+            )
+        # Rehash live inputs before execution so file changes during capture fail closed.
+        recheck = inventory_candidate(root)
+        if (
+            recheck["candidate_sha256"] != inventory["candidate_sha256"]
+            or recheck["gaps"] != inventory["gaps"]
+        ):
+            state["gaps"].append(
+                _execution_gap(
+                    "SNAPSHOT_DRIFT", "Stop source edits and retry snapshot capture."
+                )
+            )
+        _event(
+            directory,
+            state,
+            "inventory_completed",
+            {
+                "accounted_paths": inventory["accounted_paths"],
+                "gap_count": len(state["gaps"]),
+            },
+            emit,
+        )
+        if not state["gaps"]:
+            verify_authorization(
+                plan, manifest_sha256, authorization, trust_root, trust_root_sha256
+            )
+            _run_lanes(
+                root,
+                directory,
+                state,
+                snapshot,
+                inventory,
+                plan,
+                emit,
+                lambda: verify_authorization(
+                    plan,
+                    manifest_sha256,
+                    authorization,
+                    trust_root,
+                    trust_root_sha256,
+                ),
+            )
+        final = inventory_candidate(root)
+        if final["candidate_sha256"] != plan["candidate_sha256"] or final["gaps"]:
+            state["gaps"].append(
+                _execution_gap(
+                    "SOURCE_CHANGED_DURING_RUN",
+                    "Review the new candidate and rerun all affected analysis.",
+                )
+            )
+
+
+def _finish_scan(
+    directory: Path,
+    state: dict,
+    plan: dict,
+    emit,
+    write_run_json,
+) -> dict:
+    state.pop("active_lane", None)
+    state["state"] = "INCOMPLETE"
+    state["analysis_complete"] = (
+        not state["gaps"]
+        and len(state["lanes"]) == len(plan["lanes"])
+        and all(lane["state"] == "OBSERVED" for lane in state["lanes"])
+    )
+    state["review"] = "REQUIRED"
+    _event(
+        directory,
+        state,
+        "run_completed",
+        {"analysis_complete": state["analysis_complete"], "review": "REQUIRED"},
+        emit,
+    )
+    write_run_json(directory, "evidence.json", state)
+    return state
+
+
 def scan_deep_audit(
     root: Path,
     manifest: Path,
@@ -472,31 +649,10 @@ def scan_deep_audit(
     authorized = verify_execution_authorization(
         plan, manifest_sha256, authorization, trust_root, trust_root_sha256
     )
-    if resume:
-        previous = read_run_json(run_directory(root, resume), "state.json")
-        if (
-            previous["manifest_sha256"] != manifest_sha256
-            or previous["candidate_sha256"] != plan["candidate_sha256"]
-        ):
-            raise RuntimeAuditError(
-                "E_RESUME_DRIFT", "retry must bind the identical manifest and candidate"
-            )
+    _check_resume(root, resume, manifest_sha256, plan, read_run_json, run_directory)
     run_id = uuid.uuid4().hex
     directory = run_directory(root, run_id, create=True)
-    state = {
-        "schema": "factory.deep-run.v1",
-        "run_id": run_id,
-        "state": "RUNNING",
-        "candidate_sha256": plan["candidate_sha256"],
-        "manifest_sha256": manifest_sha256,
-        "manifest_content_sha256": digest(plan),
-        "parent_run": resume,
-        "authorization_sha256": digest(authorized),
-        "lanes": [],
-        "gaps": [],
-        "authority": "none",
-        "release_approval": False,
-    }
+    state = _initial_run_state(run_id, resume, manifest_sha256, plan, authorized)
     write_run_json(directory, "manifest.json", plan)
     write_run_json(
         directory, "authorization.json", strict_json(_execution_bytes(authorization))
@@ -509,71 +665,20 @@ def scan_deep_audit(
         emit,
     )
     try:
-        with tempfile.TemporaryDirectory(prefix="factory-source-") as temporary:
-            # Canonicalize the trusted system temp parent (macOS /var is linked).
-            # inventory_candidate still rejects caller-supplied linked snapshots.
-            snapshot = Path(temporary).resolve(strict=True) / "src"
-            snapshot.mkdir()
-            inventory = inventory_candidate(root, snapshot)
-            write_run_json(directory, "inventory.json", inventory)
-            state["gaps"].extend(inventory["gaps"] + _scope_gaps(plan, inventory))
-            if inventory["candidate_sha256"] != plan["candidate_sha256"]:
-                state["gaps"].append(
-                    _execution_gap(
-                        "CANDIDATE_DRIFT",
-                        "Regenerate the plan against the current complete inventory.",
-                    )
-                )
-            # Rehash live inputs before execution so file changes during capture fail closed.
-            recheck = inventory_candidate(root)
-            if (
-                recheck["candidate_sha256"] != inventory["candidate_sha256"]
-                or recheck["gaps"] != inventory["gaps"]
-            ):
-                state["gaps"].append(
-                    _execution_gap(
-                        "SNAPSHOT_DRIFT",
-                        "Stop source edits and retry snapshot capture.",
-                    )
-                )
-            _event(
-                directory,
-                state,
-                "inventory_completed",
-                {
-                    "accounted_paths": inventory["accounted_paths"],
-                    "gap_count": len(state["gaps"]),
-                },
-                emit,
-            )
-            if not state["gaps"]:
-                verify_execution_authorization(
-                    plan, manifest_sha256, authorization, trust_root, trust_root_sha256
-                )
-                _run_lanes(
-                    root,
-                    directory,
-                    state,
-                    snapshot,
-                    inventory,
-                    plan,
-                    emit,
-                    lambda: verify_execution_authorization(
-                        plan,
-                        manifest_sha256,
-                        authorization,
-                        trust_root,
-                        trust_root_sha256,
-                    ),
-                )
-            final = inventory_candidate(root)
-            if final["candidate_sha256"] != plan["candidate_sha256"] or final["gaps"]:
-                state["gaps"].append(
-                    _execution_gap(
-                        "SOURCE_CHANGED_DURING_RUN",
-                        "Review the new candidate and rerun all affected analysis.",
-                    )
-                )
+        _capture_and_execute(
+            root,
+            directory,
+            state,
+            plan,
+            manifest_sha256,
+            authorization,
+            trust_root,
+            trust_root_sha256,
+            emit,
+            verify_execution_authorization,
+            inventory_candidate,
+            write_run_json,
+        )
     except (OSError, ValueError, KeyError, TypeError, KeyboardInterrupt) as exc:
         state["gaps"].append(
             _execution_gap(
@@ -581,23 +686,7 @@ def scan_deep_audit(
                 "Inspect run events, restore prerequisites, and start an exact-bound retry.",
             )
         )
-    state.pop("active_lane", None)
-    state["state"] = "INCOMPLETE"
-    state["analysis_complete"] = (
-        not state["gaps"]
-        and len(state["lanes"]) == len(plan["lanes"])
-        and all(lane["state"] == "OBSERVED" for lane in state["lanes"])
-    )
-    state["review"] = "REQUIRED"
-    _event(
-        directory,
-        state,
-        "run_completed",
-        {"analysis_complete": state["analysis_complete"], "review": "REQUIRED"},
-        emit,
-    )
-    write_run_json(directory, "evidence.json", state)
-    return state
+    return _finish_scan(directory, state, plan, emit, write_run_json)
 
 
 def deep_run_status(root: Path, run_id: str) -> dict:

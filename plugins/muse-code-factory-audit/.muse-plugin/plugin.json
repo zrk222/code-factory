@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "name": "code-factory-build-audit",
   "displayName": "Code Factory Build Audit",
-  "version": "0.1.0",
-  "description": "Read-only Code Factory and ForgeLine audits after builds, with PRD/spec routing for AppForge and SaaS proof.",
+  "version": "0.2.0",
+  "description": "Muse-native Code Factory audit tools, automatic workspace checks, and actionable evidence for code reviews.",
   "compat": {
     "source": "native",
     "manifestDir": ".muse-plugin"
@@ -16,7 +16,13 @@
         "enabledDefault": true
       }
     ],
-    "commands": [],
+    "commands": [
+      {
+        "id": "verify-work",
+        "path": "commands/verify-work.md",
+        "enabledDefault": true
+      }
+    ],
     "hooks": [
       {
         "id": "post-build-audit",
@@ -40,7 +46,13 @@
         "statusMessage": "Checking final audit outcomes and required next actions"
       }
     ],
-    "mcpServers": [],
+    "mcpServers": [
+      {
+        "id": "code-factory-audit",
+        "transport": "stdio",
+        "command": ["node", "mcp/server.mjs"]
+      }
+    ],
     "reminders": []
   }
 }

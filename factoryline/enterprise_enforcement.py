@@ -745,9 +745,7 @@ def record_enterprise_decision(
     return {**core, "path": target.relative_to(workspace).as_posix()}
 
 
-def verify_enterprise_decision(root: Path, path: Path) -> dict[str, Any]:
-    """Verify one immutable local decision receipt before a separate runner consumes it."""
-    workspace = Path(root).resolve()
+def _decision_candidate(workspace: Path, path: Path) -> Path:
     candidate = (
         (workspace / path).resolve()
         if not Path(path).is_absolute()
@@ -759,6 +757,10 @@ def verify_enterprise_decision(root: Path, path: Path) -> dict[str, Any]:
         raise EnterpriseEnforcementError(
             "E_ENFORCEMENT_PATH", "decision must remain inside the workspace"
         ) from exc
+    return candidate
+
+
+def _verified_decision(candidate: Path) -> tuple[dict[str, Any], str]:
     value = _load_json(candidate)
     supplied = value.get("decision_sha256")
     unsigned = dict(value)
@@ -776,6 +778,10 @@ def verify_enterprise_decision(root: Path, path: Path) -> dict[str, Any]:
         raise EnterpriseEnforcementError(
             "E_DECISION_HASH_INVALID", "decision hash is invalid"
         )
+    return value, supplied
+
+
+def _decision_verification_inputs(value: dict[str, Any]) -> dict[str, Any]:
     inputs = value.get("verification_inputs")
     if not isinstance(inputs, dict) or set(inputs) != {
         "workload_identity_path",
@@ -787,8 +793,14 @@ def verify_enterprise_decision(root: Path, path: Path) -> dict[str, Any]:
             "E_DECISION_INPUT_BINDING",
             "decision must retain its signed verification inputs",
         )
+    return inputs
+
+
+def _reauthorize_decision(
+    workspace: Path, value: dict[str, Any], inputs: dict[str, Any]
+) -> dict[str, Any]:
     try:
-        reauthorized = authorize_enterprise_action(
+        return authorize_enterprise_action(
             workspace,
             value.get("request"),
             workload_identity_path=workspace
@@ -826,6 +838,11 @@ def verify_enterprise_decision(root: Path, path: Path) -> dict[str, Any]:
         )
     except EnterpriseEnforcementError:
         raise
+
+
+def _verify_reauthorization(
+    value: dict[str, Any], reauthorized: dict[str, Any]
+) -> None:
     for field in (
         "workload_identity_sha256",
         "policy_sha256",
@@ -837,6 +854,16 @@ def verify_enterprise_decision(root: Path, path: Path) -> dict[str, Any]:
                 "E_DECISION_REAUTHORIZATION_MISMATCH",
                 f"{field} no longer matches the signed input reauthorization",
             )
+
+
+def verify_enterprise_decision(root: Path, path: Path) -> dict[str, Any]:
+    """Verify one immutable local decision receipt before a separate runner consumes it."""
+    workspace = Path(root).resolve()
+    candidate = _decision_candidate(workspace, path)
+    value, supplied = _verified_decision(candidate)
+    inputs = _decision_verification_inputs(value)
+    reauthorized = _reauthorize_decision(workspace, value, inputs)
+    _verify_reauthorization(value, reauthorized)
     return {
         "decision": value,
         "decision_sha256": supplied,

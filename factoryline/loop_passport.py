@@ -153,6 +153,14 @@ def _validate_workspace(
     if not isinstance(workspace, dict):
         _error(errors, "workspace", "must be an object")
         return
+    _validate_workspace_mode(workspace, autonomy, errors)
+    _validate_workspace_paths(workspace, errors)
+    _validate_workspace_network(workspace, errors)
+
+
+def _validate_workspace_mode(
+    workspace: dict[str, Any], autonomy: str | None, errors: list[str]
+) -> None:
     mode = _nonempty_string(workspace.get("mode"), "workspace.mode", errors)
     if mode not in {"isolated", "ephemeral"}:
         _error(errors, "workspace.mode", "must be isolated or ephemeral")
@@ -162,6 +170,9 @@ def _validate_workspace(
             "workspace.mode",
             "autonomous loops require an ephemeral workspace contract",
         )
+
+
+def _validate_workspace_paths(workspace: dict[str, Any], errors: list[str]) -> None:
     paths = _string_list(
         workspace.get("allowed_paths"), "workspace.allowed_paths", errors
     )
@@ -181,6 +192,9 @@ def _validate_workspace(
                 "workspace.allowed_paths",
                 "must not contain absolute or parent-traversal paths",
             )
+
+
+def _validate_workspace_network(workspace: dict[str, Any], errors: list[str]) -> None:
     network = _nonempty_string(workspace.get("network"), "workspace.network", errors)
     if network not in {"deny", "allowlist"}:
         _error(errors, "workspace.network", "must be deny or allowlist")

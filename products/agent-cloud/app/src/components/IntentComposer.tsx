@@ -114,20 +114,74 @@ export function IntentComposer({ agentSpec }: { agentSpec: Doc<"agentSpecs"> }) 
         <button className="button primary composer-compile" disabled={busy || description.trim().length < 40} type="submit">{busy ? "Building your plan…" : "Build my agent plan"} <ArrowRight size={16} /></button>
       </form>
 
-      <aside className="composer-result" aria-live="polite">
-        {!compiled ? <div className="composer-empty"><Network size={28} /><h3>Your agent plan will appear here.</h3><p>You will see what it does, where a person stays in control, what proves success, and anything still missing.</p></div> : <>
-          <div className="composer-result-head"><span className={compiled.readiness === "ready-for-draft" ? "ready" : "blocked"}>{compiled.readiness === "ready-for-draft" ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}{compiled.readiness.replaceAll("-", " ")}</span><small>digest {compiled.compilerDigest.slice(0, 12)}</small></div>
-          <h3>{compiled.title}</h3>
-          <div className="plain-agent-summary"><small>What your agent will do</small><ul><li>{compiled.memoryPolicy === "governed" ? "Use only approved project knowledge and sources." : "Use only the information available for this run."}</li><li>{compiled.authorityPolicy === "approval-required" ? "Pause for a person before any important action." : "Prepare work inside the limits you described."}</li><li>Check the finished result against visible evidence before reporting success.</li></ul></div>
-          <details className="runtime-decision"><summary><Network size={19} /><span><small>Automatic setup</small><strong>{compiled.selectedRuntime}</strong></span></summary><p>{compiled.runtimeRationale}</p></details>
-          <div className="compiled-graph">{compiled.steps.map((step, index) => <article key={step.id}><b>{index + 1}</b><span><strong>{step.label}</strong><small>{step.kind} · {step.flow}{step.maxIterations ? ` ≤ ${step.maxIterations}` : ""}</small></span>{step.humanGate && <em><ShieldCheck size={12} /> human gate</em>}</article>)}</div>
-          {compiled.clarificationQuestions.length > 0 && <div className="composer-questions"><strong>A few details will make this agent reliable</strong><p>Answer in your own words. Agent Oven will add the safeguards for you.</p>{compiled.clarificationQuestions.map((question, index) => <label key={question} htmlFor={`composer-answer-${index}`}><span>{question}</span><textarea id={`composer-answer-${index}`} value={answers[question] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [question]: event.target.value }))} placeholder="Type a short answer…" /></label>)}<button type="button" className="button secondary" disabled={busy || compiled.clarificationQuestions.some((question) => !answers[question]?.trim())} onClick={() => void answerAndRecompile()}>Add details and update plan</button></div>}
-          <details className="proof-contract"><summary>How Agent Oven will check success ({compiled.evidenceChecks.length})</summary><ul>{compiled.evidenceChecks.map((check) => <li key={check}>{check}</li>)}</ul></details>
-          <button className="button secondary composer-save" disabled={busy || compiled.readiness !== "ready-for-draft"} onClick={() => void save()}>Save agent draft</button>
-          <p className="composer-boundary"><strong>You stay in control.</strong> Saving creates a draft, not a live agent. Agent Oven still checks connections, model access, budget, and your approval before a run.</p>
-        </>}
-      </aside>
+      <ComposerResultPanel compiled={compiled} busy={busy} answers={answers} onAnswer={(question, value) => setAnswers((current) => ({ ...current, [question]: value }))} onRecompile={() => void answerAndRecompile()} onSave={() => void save()} />
     </div>
     {notice && <p className="knowledge-notice" role="status">{notice}</p>}
   </section>;
+}
+
+function ComposerResultPanel({ compiled, busy, answers, onAnswer, onRecompile, onSave }: {
+  compiled: Compilation | null;
+  busy: boolean;
+  answers: Record<string, string>;
+  onAnswer: (question: string, value: string) => void;
+  onRecompile: () => void;
+  onSave: () => void;
+}) {
+  return <aside className="composer-result" aria-live="polite">
+    {!compiled ? <div className="composer-empty"><Network size={28} /><h3>Your agent plan will appear here.</h3><p>You will see what it does, where a person stays in control, what proves success, and anything still missing.</p></div> : <CompiledComposerPlan compiled={compiled} busy={busy} answers={answers} onAnswer={onAnswer} onRecompile={onRecompile} onSave={onSave} />}
+  </aside>;
+}
+
+function ComposerReadinessBadge({ compiled }: { compiled: Compilation }) {
+  const ready = compiled.readiness === "ready-for-draft";
+  return <span className={ready ? "ready" : "blocked"}>{ready ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}{compiled.readiness.replaceAll("-", " ")}</span>;
+}
+
+function ComposerPolicySummary({ compiled }: { compiled: Compilation }) {
+  return <div className="plain-agent-summary"><small>What your agent will do</small><ul>
+    <li>{compiled.memoryPolicy === "governed" ? "Use only approved project knowledge and sources." : "Use only the information available for this run."}</li>
+    <li>{compiled.authorityPolicy === "approval-required" ? "Pause for a person before any important action." : "Prepare work inside the limits you described."}</li>
+    <li>Check the finished result against visible evidence before reporting success.</li>
+  </ul></div>;
+}
+
+function CompiledStepList({ compiled }: { compiled: Compilation }) {
+  return <div className="compiled-graph">{compiled.steps.map((step, index) => <article key={step.id}><b>{index + 1}</b><span><strong>{step.label}</strong><small>{step.kind} · {step.flow}{step.maxIterations ? ` ≤ ${step.maxIterations}` : ""}</small></span>{step.humanGate && <em><ShieldCheck size={12} /> human gate</em>}</article>)}</div>;
+}
+
+function ComposerQuestions({ compiled, busy, answers, onAnswer, onRecompile }: {
+  compiled: Compilation;
+  busy: boolean;
+  answers: Record<string, string>;
+  onAnswer: (question: string, value: string) => void;
+  onRecompile: () => void;
+}) {
+  if (compiled.clarificationQuestions.length === 0) return null;
+  const complete = compiled.clarificationQuestions.every((question) => Boolean(answers[question]?.trim()));
+  return <div className="composer-questions"><strong>A few details will make this agent reliable</strong><p>Answer in your own words. Agent Oven will add the safeguards for you.</p>
+    {compiled.clarificationQuestions.map((question, index) => <label key={question} htmlFor={`composer-answer-${index}`}><span>{question}</span><textarea id={`composer-answer-${index}`} value={answers[question] ?? ""} onChange={(event) => onAnswer(question, event.target.value)} placeholder="Type a short answer…" /></label>)}
+    <button type="button" className="button secondary" disabled={busy || !complete} onClick={onRecompile}>Add details and update plan</button>
+  </div>;
+}
+
+function CompiledComposerPlan({ compiled, busy, answers, onAnswer, onRecompile, onSave }: {
+  compiled: Compilation;
+  busy: boolean;
+  answers: Record<string, string>;
+  onAnswer: (question: string, value: string) => void;
+  onRecompile: () => void;
+  onSave: () => void;
+}) {
+  return <>
+    <div className="composer-result-head"><ComposerReadinessBadge compiled={compiled} /><small>digest {compiled.compilerDigest.slice(0, 12)}</small></div>
+    <h3>{compiled.title}</h3>
+    <ComposerPolicySummary compiled={compiled} />
+    <details className="runtime-decision"><summary><Network size={19} /><span><small>Automatic setup</small><strong>{compiled.selectedRuntime}</strong></span></summary><p>{compiled.runtimeRationale}</p></details>
+    <CompiledStepList compiled={compiled} />
+    <ComposerQuestions compiled={compiled} busy={busy} answers={answers} onAnswer={onAnswer} onRecompile={onRecompile} />
+    <details className="proof-contract"><summary>How Agent Oven will check success ({compiled.evidenceChecks.length})</summary><ul>{compiled.evidenceChecks.map((check) => <li key={check}>{check}</li>)}</ul></details>
+    <button className="button secondary composer-save" disabled={busy || compiled.readiness !== "ready-for-draft"} onClick={onSave}>Save agent draft</button>
+    <p className="composer-boundary"><strong>You stay in control.</strong> Saving creates a draft, not a live agent. Agent Oven still checks connections, model access, budget, and your approval before a run.</p>
+  </>;
 }

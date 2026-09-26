@@ -41,6 +41,31 @@ def _required(value: Any, name: str) -> str:
     return value.strip()
 
 
+def _graph_record(record: dict[str, Any], tenant_id: str) -> dict[str, Any]:
+    """Validate and normalize one tenant-bound evidence record."""
+    if not isinstance(record, dict):
+        raise AssuranceError("E_GRAPH_RECORD", "graph records must be JSON objects")
+    evidence_id = _required(record.get("evidence_id"), "evidence_id")
+    record_tenant = _required(record.get("tenant_id"), "tenant_id")
+    if record_tenant != tenant_id:
+        raise AssuranceError("E_TENANT_BOUNDARY", "evidence graph cannot mix tenants")
+    parents = record.get("parent_ids", record.get("parents", []))
+    if not isinstance(parents, list) or not all(
+        isinstance(parent, str) and parent.strip() for parent in parents
+    ):
+        raise AssuranceError(
+            "E_GRAPH_PARENTS", f"parents for {evidence_id} must be a list of ids"
+        )
+    return {
+        "evidence_id": evidence_id,
+        "tenant_id": tenant_id,
+        "stage": str(record.get("stage", "unknown")),
+        "verdict": str(record.get("verdict", "UNKNOWN")),
+        "parent_ids": sorted(set(parents)),
+        "subject_digest": record.get("subject_digest"),
+    }
+
+
 def build_evidence_graph(
     records: Iterable[dict[str, Any]], *, tenant_id: str
 ) -> dict[str, Any]:
@@ -48,33 +73,13 @@ def build_evidence_graph(
     tenant_id = _required(tenant_id, "tenant_id")
     nodes: dict[str, dict[str, Any]] = {}
     for record in records:
-        if not isinstance(record, dict):
-            raise AssuranceError("E_GRAPH_RECORD", "graph records must be JSON objects")
-        evidence_id = _required(record.get("evidence_id"), "evidence_id")
-        record_tenant = _required(record.get("tenant_id"), "tenant_id")
-        if record_tenant != tenant_id:
-            raise AssuranceError(
-                "E_TENANT_BOUNDARY", "evidence graph cannot mix tenants"
-            )
+        node = _graph_record(record, tenant_id)
+        evidence_id = node["evidence_id"]
         if evidence_id in nodes:
             raise AssuranceError(
                 "E_GRAPH_DUPLICATE", f"duplicate evidence id: {evidence_id}"
             )
-        parents = record.get("parent_ids", record.get("parents", []))
-        if not isinstance(parents, list) or not all(
-            isinstance(parent, str) and parent.strip() for parent in parents
-        ):
-            raise AssuranceError(
-                "E_GRAPH_PARENTS", f"parents for {evidence_id} must be a list of ids"
-            )
-        nodes[evidence_id] = {
-            "evidence_id": evidence_id,
-            "tenant_id": tenant_id,
-            "stage": str(record.get("stage", "unknown")),
-            "verdict": str(record.get("verdict", "UNKNOWN")),
-            "parent_ids": sorted(set(parents)),
-            "subject_digest": record.get("subject_digest"),
-        }
+        nodes[evidence_id] = node
     for node in nodes.values():
         missing = [parent for parent in node["parent_ids"] if parent not in nodes]
         if missing:
@@ -210,20 +215,8 @@ class RiskDAG:
         }
 
 
-def run_constrained(
-    command: list[str],
-    *,
-    root: Path,
-    cwd: str = ".",
-    timeout: int = 60,
-    env_keys: Iterable[str] = (),
-) -> dict[str, Any]:
-    """Run a command with no shell, a contained cwd, and an allow-listed env.
-
-    This is a process boundary, not a kernel/container sandbox. The result
-    states that limitation so callers can require a stronger runner for
-    untrusted code.
-    """
+def _runner_work_path(command: list[str], root: Path, cwd: str) -> Path:
+    """Validate argv and resolve a working directory beneath the caller's root."""
     if not command or not all(isinstance(item, str) and item for item in command):
         raise AssuranceError(
             "E_RUNNER_COMMAND", "command must be a non-empty argv list"
@@ -238,6 +231,11 @@ def run_constrained(
         ) from exc
     if not work_path.is_dir():
         raise AssuranceError("E_RUNNER_CWD", "runner cwd does not exist")
+    return work_path
+
+
+def _runner_environment(env_keys: Iterable[str]) -> dict[str, str]:
+    """Keep only host process essentials and explicitly allowed variables."""
     # Keep only the runtime variables required to launch a process on the
     # host. Application secrets and user variables remain opt-in.
     runtime_keys = {"PATH", "PATHEXT", "SystemRoot", "WINDIR", "TEMP", "TMP"}
@@ -247,6 +245,25 @@ def run_constrained(
         if key in os.environ
     }
     env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def run_constrained(
+    command: list[str],
+    *,
+    root: Path,
+    cwd: str = ".",
+    timeout: int = 60,
+    env_keys: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Run argv with a contained cwd and an allow-listed environment.
+
+    This is a process boundary, not a kernel/container sandbox. The result
+    states that limitation so callers can require a stronger runner for
+    untrusted code.
+    """
+    work_path = _runner_work_path(command, root, cwd)
+    env = _runner_environment(env_keys)
     try:
         completed = subprocess.run(
             command,
@@ -338,57 +355,69 @@ def build_vex(entries: Iterable[dict[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _rule_mutations(policy: dict[str, Any], rules: list[Any]) -> list[dict[str, Any]]:
+    mutations: list[dict[str, Any]] = []
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict) or not rule.get("id"):
+            raise AssuranceError("E_POLICY_RULE", "each policy rule needs an id")
+        deleted = json.loads(json.dumps(policy))
+        deleted["rules"].pop(index)
+        deleted["mutation"] = {"kind": "delete", "rule_id": rule["id"]}
+        mutations.append(deleted)
+        for field in ("required", "enabled", "allow"):
+            if isinstance(rule.get(field), bool):
+                inverted = json.loads(json.dumps(policy))
+                inverted["rules"][index][field] = not rule[field]
+                inverted["mutation"] = {
+                    "kind": "invert",
+                    "rule_id": rule["id"],
+                    "field": field,
+                }
+                mutations.append(inverted)
+                break
+    return mutations
+
+
+def _boolean_paths(value: Any, path: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
+    if isinstance(value, dict):
+        return [
+            child
+            for key in sorted(value)
+            if key not in {"schema", "mutation"}
+            for child in _boolean_paths(value[key], path + (key,))
+        ]
+    return [path] if isinstance(value, bool) else []
+
+
+def _boolean_mutations(policy: dict[str, Any]) -> list[dict[str, Any]]:
+    mutations: list[dict[str, Any]] = []
+    for path in _boolean_paths(policy):
+        rule_id = ".".join(path)
+        deleted = json.loads(json.dumps(policy))
+        target = deleted
+        for key in path[:-1]:
+            target = target[key]
+        target.pop(path[-1])
+        deleted["mutation"] = {"kind": "delete", "rule_id": rule_id}
+        mutations.append(deleted)
+        inverted = json.loads(json.dumps(policy))
+        target = inverted
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = not target[path[-1]]
+        inverted["mutation"] = {"kind": "invert", "rule_id": rule_id}
+        mutations.append(inverted)
+    return mutations
+
+
 def policy_mutations(policy: dict[str, Any]) -> list[dict[str, Any]]:
     """Generate delete/invert mutations for explicit rules or boolean settings."""
     rules = policy.get("rules")
-    mutations: list[dict[str, Any]] = []
-    if isinstance(rules, list) and rules:
-        for index, rule in enumerate(rules):
-            if not isinstance(rule, dict) or not rule.get("id"):
-                raise AssuranceError("E_POLICY_RULE", "each policy rule needs an id")
-            deleted = json.loads(json.dumps(policy))
-            deleted["rules"].pop(index)
-            deleted["mutation"] = {"kind": "delete", "rule_id": rule["id"]}
-            mutations.append(deleted)
-            for field in ("required", "enabled", "allow"):
-                if isinstance(rule.get(field), bool):
-                    inverted = json.loads(json.dumps(policy))
-                    inverted["rules"][index][field] = not rule[field]
-                    inverted["mutation"] = {
-                        "kind": "invert",
-                        "rule_id": rule["id"],
-                        "field": field,
-                    }
-                    mutations.append(inverted)
-                    break
-    else:
-        boolean_paths: list[tuple[str, ...]] = []
-
-        def visit(value: Any, path: tuple[str, ...]) -> None:
-            if isinstance(value, dict):
-                for key in sorted(value):
-                    if key not in {"schema", "mutation"}:
-                        visit(value[key], path + (key,))
-            elif isinstance(value, bool):
-                boolean_paths.append(path)
-
-        visit(policy, ())
-        for path in boolean_paths:
-            rule_id = ".".join(path)
-            deleted = json.loads(json.dumps(policy))
-            target = deleted
-            for key in path[:-1]:
-                target = target[key]
-            target.pop(path[-1])
-            deleted["mutation"] = {"kind": "delete", "rule_id": rule_id}
-            mutations.append(deleted)
-            inverted = json.loads(json.dumps(policy))
-            target = inverted
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = not target[path[-1]]
-            inverted["mutation"] = {"kind": "invert", "rule_id": rule_id}
-            mutations.append(inverted)
+    mutations = (
+        _rule_mutations(policy, rules)
+        if isinstance(rules, list) and rules
+        else _boolean_mutations(policy)
+    )
     if not mutations:
         raise AssuranceError(
             "E_HOLLOW_POLICY", "policy has no mutable rules or boolean settings"
@@ -419,19 +448,10 @@ def verify_policy_mutations(
     }
 
 
-def verify_policy_command(
-    policy: dict[str, Any],
-    command: list[str],
-    *,
-    root: Path,
-    cwd: str = ".",
-    timeout: int = 60,
-) -> dict[str, Any]:
-    """Prove a policy evaluator fails when each policy rule is sabotaged.
-
-    ``command`` is argv, never a shell string, and must include ``{policy}``.
-    The original policy must pass before a mutation can count as caught.
-    """
+def _policy_challenge_work_path(
+    command: list[str], root: Path, cwd: str, timeout: int
+) -> tuple[Path, Path]:
+    """Validate the process boundary and resolve its workspace directory."""
     if (
         not isinstance(command, list)
         or not command
@@ -460,22 +480,37 @@ def verify_policy_command(
         ) from exc
     if not work.is_dir():
         raise AssuranceError("E_POLICY_CHALLENGE_CWD", "challenge cwd does not exist")
+    return root, work
 
-    def execute(candidate: dict[str, Any], path: Path) -> dict[str, Any]:
-        path.write_text(
-            json.dumps(candidate, indent=2, sort_keys=True), encoding="utf-8"
-        )
-        argv = [item.replace("{policy}", str(path)) for item in command]
-        result = run_constrained(
-            argv, root=root, cwd=str(work.relative_to(root)), timeout=timeout
-        )
-        if result.get("error"):
-            raise AssuranceError("E_POLICY_CHALLENGE_EXECUTION", result["error"])
-        return result
+
+def _execute_policy_candidate(
+    candidate: dict[str, Any],
+    path: Path,
+    command: list[str],
+    root: Path,
+    work: Path,
+    timeout: int,
+) -> dict[str, Any]:
+    path.write_text(json.dumps(candidate, indent=2, sort_keys=True), encoding="utf-8")
+    argv = [item.replace("{policy}", str(path)) for item in command]
+    result = run_constrained(
+        argv, root=root, cwd=str(work.relative_to(root)), timeout=timeout
+    )
+    if result.get("error"):
+        raise AssuranceError("E_POLICY_CHALLENGE_EXECUTION", result["error"])
+    return result
+
+
+def _challenge_policy_mutations(
+    policy: dict[str, Any], command: list[str], root: Path, work: Path, timeout: int
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Run the baseline and each mutation against the same constrained runner."""
 
     with tempfile.TemporaryDirectory(prefix="factory-policy-") as temporary:
         temporary_root = Path(temporary)
-        baseline = execute(policy, temporary_root / "baseline.json")
+        baseline = _execute_policy_candidate(
+            policy, temporary_root / "baseline.json", command, root, work, timeout
+        )
         if not baseline["ok"]:
             raise AssuranceError(
                 "E_POLICY_BASELINE",
@@ -483,7 +518,14 @@ def verify_policy_command(
             )
         results = []
         for index, mutation in enumerate(policy_mutations(policy)):
-            result = execute(mutation, temporary_root / f"mutation-{index}.json")
+            result = _execute_policy_candidate(
+                mutation,
+                temporary_root / f"mutation-{index}.json",
+                command,
+                root,
+                work,
+                timeout,
+            )
             results.append(
                 {
                     "mutation": mutation["mutation"],
@@ -491,6 +533,26 @@ def verify_policy_command(
                     "returncode": result["returncode"],
                 }
             )
+    return baseline, results
+
+
+def verify_policy_command(
+    policy: dict[str, Any],
+    command: list[str],
+    *,
+    root: Path,
+    cwd: str = ".",
+    timeout: int = 60,
+) -> dict[str, Any]:
+    """Prove a policy evaluator fails when each policy rule is sabotaged.
+
+    ``command`` is argv, never a shell string, and must include ``{policy}``.
+    The original policy must pass before a mutation can count as caught.
+    """
+    root, work = _policy_challenge_work_path(command, root, cwd, timeout)
+    baseline, results = _challenge_policy_mutations(
+        policy, command, root, work, timeout
+    )
     hollow = [item for item in results if not item["caught"]]
     return {
         "schema": ASSURANCE_SCHEMA,

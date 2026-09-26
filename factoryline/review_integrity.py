@@ -88,6 +88,102 @@ def _instant(value: object) -> datetime | None:
         return None
 
 
+def _validate_intent_contract(contract: dict[str, Any]) -> None:
+    if (
+        set(contract) != {"schema", "approved_paths", "forbidden_terms", "approval"}
+        or contract.get("schema") != "factory.intent-diff-contract.v1"
+        or not isinstance(contract.get("approved_paths"), list)
+    ):
+        raise RevenueForgeError(
+            "INTENT_DIFF_CONTRACT_INVALID",
+            "contract needs approved_paths, forbidden_terms, and human/trusted approval",
+        )
+
+
+def _validate_diff_manifest(manifest: dict[str, Any]) -> None:
+    if (
+        set(manifest)
+        != {"schema", "base_sha", "head_sha", "changed_paths", "added_text"}
+        or manifest.get("schema") != "factory.diff-manifest.v1"
+        or not isinstance(manifest.get("changed_paths"), list)
+        or not isinstance(manifest.get("added_text"), str)
+    ):
+        raise RevenueForgeError(
+            "INTENT_DIFF_MANIFEST_INVALID", "diff manifest must be explicit and bounded"
+        )
+
+
+def _intent_authority_findings(contract: dict[str, Any]) -> list[str]:
+    approval = contract["approval"]
+    if not isinstance(approval, dict) or approval.get("origin") not in {
+        "human_confirmed",
+        "trusted_source",
+    }:
+        return ["E_INTENT_AUTHORITY_MISSING"]
+    return []
+
+
+def _scope_allows_path(path: object, approved_paths: list[Any]) -> bool:
+    if not isinstance(path, str):
+        return False
+    return any(
+        scope == "." or path == scope or path.startswith(scope.rstrip("/") + "/")
+        for scope in approved_paths
+    )
+
+
+def _intent_scope_findings(
+    contract: dict[str, Any], manifest: dict[str, Any]
+) -> list[str]:
+    findings: list[str] = []
+    for path in manifest["changed_paths"]:
+        if not _scope_allows_path(path, contract["approved_paths"]):
+            findings.append("E_INTENT_SCOPE_DRIFT:" + str(path))
+    return findings
+
+
+def _forbidden_term_findings(
+    contract: dict[str, Any], manifest: dict[str, Any]
+) -> list[str]:
+    added_text = manifest["added_text"].lower()
+    return [
+        "E_INTENT_FORBIDDEN_BEHAVIOR:" + term
+        for term in contract.get("forbidden_terms", [])
+        if isinstance(term, str) and term and term.lower() in added_text
+    ]
+
+
+def _intent_diff_core(
+    root: Path,
+    contract_path: Path,
+    diff_path: Path,
+    contract: dict[str, Any],
+    manifest: dict[str, Any],
+    findings: list[str],
+) -> dict[str, Any]:
+    core = _base(
+        "intent_diff",
+        not findings,
+        findings,
+        {
+            "contract": contract_path.relative_to(root).as_posix(),
+            "diff": diff_path.relative_to(root).as_posix(),
+        },
+    )
+    core.update(
+        {
+            "action_summary": "Compare a declared diff against human-approved scope and forbidden behaviors before review promotion.",
+            "base_sha": manifest["base_sha"],
+            "head_sha": manifest["head_sha"],
+            "repair_plan": [
+                "Remove or separately approve the out-of-scope path or forbidden behavior."
+                for _ in findings
+            ],
+        }
+    )
+    return core
+
+
 def verify_intent_diff(
     root: Path, contract_path: Path, diff_path: Path, out: Path
 ) -> dict[str, Any]:
@@ -95,60 +191,94 @@ def verify_intent_diff(
     root = Path(root).resolve()
     c, cp = _read(root, contract_path)
     d, dp = _read(root, diff_path)
-    find = []
+    _validate_intent_contract(c)
+    find = _intent_authority_findings(c)
+    _validate_diff_manifest(d)
+    find.extend(_intent_scope_findings(c, d))
+    find.extend(_forbidden_term_findings(c, d))
+    core = _intent_diff_core(root, cp, dp, c, d, find)
+    return _write(root, out, core)
+
+
+def _validate_freshness_manifest(manifest: dict[str, Any]) -> None:
     if (
-        set(c) != {"schema", "approved_paths", "forbidden_terms", "approval"}
-        or c.get("schema") != "factory.intent-diff-contract.v1"
-        or not isinstance(c.get("approved_paths"), list)
+        set(manifest)
+        != {"schema", "current_commit", "environment_sha256", "now", "receipts"}
+        or manifest.get("schema") != "factory.receipt-freshness-manifest.v1"
+        or not isinstance(manifest.get("receipts"), list)
     ):
         raise RevenueForgeError(
-            "INTENT_DIFF_CONTRACT_INVALID",
-            "contract needs approved_paths, forbidden_terms, and human/trusted approval",
+            "RECEIPT_FRESHNESS_MANIFEST_INVALID",
+            "manifest needs current commit, environment digest, time, and receipts",
         )
-    if not isinstance(c["approval"], dict) or c["approval"].get("origin") not in {
-        "human_confirmed",
-        "trusted_source",
-    }:
-        find.append("E_INTENT_AUTHORITY_MISSING")
-    if (
-        set(d) != {"schema", "base_sha", "head_sha", "changed_paths", "added_text"}
-        or d.get("schema") != "factory.diff-manifest.v1"
-        or not isinstance(d.get("changed_paths"), list)
-        or not isinstance(d.get("added_text"), str)
-    ):
-        raise RevenueForgeError(
-            "INTENT_DIFF_MANIFEST_INVALID", "diff manifest must be explicit and bounded"
-        )
-    for p in d["changed_paths"]:
-        if not isinstance(p, str) or not any(
-            scope == "." or p == scope or p.startswith(scope.rstrip("/") + "/")
-            for scope in c["approved_paths"]
-        ):
-            find.append("E_INTENT_SCOPE_DRIFT:" + str(p))
-    for term in c.get("forbidden_terms", []):
-        if isinstance(term, str) and term and term.lower() in d["added_text"].lower():
-            find.append("E_INTENT_FORBIDDEN_BEHAVIOR:" + term)
+
+
+def _freshness_metadata_valid(receipt: object) -> bool:
+    return isinstance(receipt, dict) and set(receipt) == {
+        "id",
+        "commit",
+        "environment_sha256",
+        "expires_at",
+        "nonce",
+    }
+
+
+def _freshness_expired(receipt: dict[str, Any], manifest: dict[str, Any]) -> bool:
+    expires_at, manifest_now = (
+        _instant(receipt["expires_at"]),
+        _instant(manifest["now"]),
+    )
+    current_now = datetime.now(timezone.utc)
+    reference_now = (
+        max(current_now, manifest_now) if manifest_now is not None else current_now
+    )
+    return (
+        not isinstance(receipt["nonce"], str)
+        or not receipt["nonce"]
+        or expires_at is None
+        or manifest_now is None
+        or expires_at <= reference_now
+    )
+
+
+def _freshness_receipt_findings(
+    receipt: object, manifest: dict[str, Any], seen: set[Any]
+) -> list[str]:
+    if not _freshness_metadata_valid(receipt):
+        return ["E_RECEIPT_METADATA_LOOSE"]
+    if receipt["id"] in seen:
+        return ["E_RECEIPT_REPLAY:" + str(receipt["id"])]
+    seen.add(receipt["id"])
+    findings = []
+    if receipt["commit"] != manifest["current_commit"]:
+        findings.append("E_RECEIPT_STALE_COMMIT:" + str(receipt["id"]))
+    if receipt["environment_sha256"] != manifest["environment_sha256"]:
+        findings.append("E_RECEIPT_ENVIRONMENT_DRIFT:" + str(receipt["id"]))
+    if _freshness_expired(receipt, manifest):
+        findings.append("E_RECEIPT_EXPIRED:" + str(receipt["id"]))
+    return findings
+
+
+def _freshness_core(
+    root: Path, path: Path, manifest: dict[str, Any], findings: list[str]
+) -> dict[str, Any]:
     core = _base(
-        "intent_diff",
-        not find,
-        find,
-        {
-            "contract": cp.relative_to(root).as_posix(),
-            "diff": dp.relative_to(root).as_posix(),
-        },
+        "freshness",
+        not findings,
+        findings,
+        {"manifest": path.relative_to(root).as_posix()},
     )
     core.update(
         {
-            "action_summary": "Compare a declared diff against human-approved scope and forbidden behaviors before review promotion.",
-            "base_sha": d["base_sha"],
-            "head_sha": d["head_sha"],
+            "action_summary": "Reject stale, replayed, expired, or environment-mismatched release-critical receipts.",
+            "receipt_count": len(manifest["receipts"]),
             "repair_plan": [
-                "Remove or separately approve the out-of-scope path or forbidden behavior."
-                for _ in find
+                "Re-run the exact gate for the current commit and environment with a new expiry and nonce."
+                for _ in findings
             ],
         }
     )
-    return _write(root, out, core)
+    return core
 
 
 def verify_receipt_freshness(
@@ -156,110 +286,93 @@ def verify_receipt_freshness(
 ) -> dict[str, Any]:
     """Reject release receipts that are stale, replayed, expired, or environment mismatched."""
     root = Path(root).resolve()
-    m, mp = _read(root, manifest_path)
-    find = []
+    manifest, source = _read(root, manifest_path)
+    _validate_freshness_manifest(manifest)
+    seen: set[Any] = set()
+    findings = []
+    for receipt in manifest["receipts"]:
+        findings.extend(_freshness_receipt_findings(receipt, manifest, seen))
+    core = _freshness_core(root, source, manifest, findings)
+    return _write(root, out, core)
+
+
+def _validate_policy_pack(pack: dict[str, Any]) -> None:
     if (
-        set(m) != {"schema", "current_commit", "environment_sha256", "now", "receipts"}
-        or m.get("schema") != "factory.receipt-freshness-manifest.v1"
-        or not isinstance(m.get("receipts"), list)
+        set(pack) != {"schema", "owner", "version", "approval", "rules"}
+        or pack.get("schema") != "factory.team-policy-pack.v1"
+        or not isinstance(pack.get("rules"), list)
     ):
         raise RevenueForgeError(
-            "RECEIPT_FRESHNESS_MANIFEST_INVALID",
-            "manifest needs current commit, environment digest, time, and receipts",
+            "TEAM_POLICY_PACK_INVALID", "pack needs human-owned versioned rules"
         )
-    seen = set()
-    for r in m["receipts"]:
-        if not isinstance(r, dict) or set(r) != {
-            "id",
-            "commit",
-            "environment_sha256",
-            "expires_at",
-            "nonce",
-        }:
-            find.append("E_RECEIPT_METADATA_LOOSE")
-            continue
-        if r["id"] in seen:
-            find.append("E_RECEIPT_REPLAY:" + str(r["id"]))
-            continue
-        seen.add(r["id"])
-        if r["commit"] != m["current_commit"]:
-            find.append("E_RECEIPT_STALE_COMMIT:" + str(r["id"]))
-        if r["environment_sha256"] != m["environment_sha256"]:
-            find.append("E_RECEIPT_ENVIRONMENT_DRIFT:" + str(r["id"]))
-        expires_at, manifest_now = _instant(r["expires_at"]), _instant(m["now"])
-        current_now = datetime.now(timezone.utc)
-        reference_now = (
-            max(current_now, manifest_now) if manifest_now is not None else current_now
-        )
-        if (
-            not isinstance(r["nonce"], str)
-            or not r["nonce"]
-            or expires_at is None
-            or manifest_now is None
-            or expires_at <= reference_now
-        ):
-            find.append("E_RECEIPT_EXPIRED:" + str(r["id"]))
+
+
+def _policy_identity_findings(pack: dict[str, Any]) -> list[str]:
+    valid = (
+        isinstance(pack.get("owner"), str)
+        and bool(pack["owner"].strip())
+        and isinstance(pack.get("version"), str)
+        and bool(pack["version"].strip())
+    )
+    return [] if valid else ["E_POLICY_OWNER_OR_VERSION_MISSING"]
+
+
+def _policy_approval_findings(pack: dict[str, Any]) -> list[str]:
+    approval = pack.get("approval")
+    if not isinstance(approval, dict) or approval.get("origin") not in {
+        "human_confirmed",
+        "trusted_source",
+    }:
+        return ["E_POLICY_AGENT_OWNED"]
+    return []
+
+
+def _policy_rule_valid(rule: object) -> bool:
+    return (
+        isinstance(rule, dict)
+        and set(rule) == {"id", "requirement", "gate"}
+        and all(isinstance(rule[key], str) and rule[key] for key in rule)
+    )
+
+
+def _policy_rule_findings(pack: dict[str, Any]) -> list[str]:
+    rules = pack["rules"]
+    if not rules or not all(_policy_rule_valid(rule) for rule in rules):
+        return ["E_POLICY_RULE_LOOSE"]
+    return []
+
+
+def _policy_core(
+    root: Path, path: Path, pack: dict[str, Any], findings: list[str]
+) -> dict[str, Any]:
     core = _base(
-        "freshness", not find, find, {"manifest": mp.relative_to(root).as_posix()}
+        "policy_pack",
+        not findings,
+        findings,
+        {"pack": path.relative_to(root).as_posix()},
     )
     core.update(
         {
-            "action_summary": "Reject stale, replayed, expired, or environment-mismatched release-critical receipts.",
-            "receipt_count": len(m["receipts"]),
+            "action_summary": "Verify a human-owned, versioned team policy pack before it is selected as a review baseline.",
+            "owner": pack.get("owner"),
+            "version": pack.get("version"),
+            "rule_count": len(pack["rules"]),
             "repair_plan": [
-                "Re-run the exact gate for the current commit and environment with a new expiry and nonce."
-                for _ in find
+                "Have the designated human/trusted owner approve explicit rule-to-gate mappings."
+                for _ in findings
             ],
         }
     )
-    return _write(root, out, core)
+    return core
 
 
 def verify_policy_pack(root: Path, pack_path: Path, out: Path) -> dict[str, Any]:
     """Verify that a selected team policy pack is explicit, versioned, and human owned."""
     root = Path(root).resolve()
     p, pp = _read(root, pack_path)
-    find = []
-    if (
-        set(p) != {"schema", "owner", "version", "approval", "rules"}
-        or p.get("schema") != "factory.team-policy-pack.v1"
-        or not isinstance(p.get("rules"), list)
-    ):
-        raise RevenueForgeError(
-            "TEAM_POLICY_PACK_INVALID", "pack needs human-owned versioned rules"
-        )
-    if (
-        not isinstance(p.get("owner"), str)
-        or not p["owner"].strip()
-        or not isinstance(p.get("version"), str)
-        or not p["version"].strip()
-    ):
-        find.append("E_POLICY_OWNER_OR_VERSION_MISSING")
-    if not isinstance(p.get("approval"), dict) or p["approval"].get("origin") not in {
-        "human_confirmed",
-        "trusted_source",
-    }:
-        find.append("E_POLICY_AGENT_OWNED")
-    if not p["rules"] or not all(
-        isinstance(x, dict)
-        and set(x) == {"id", "requirement", "gate"}
-        and all(isinstance(x[k], str) and x[k] for k in x)
-        for x in p["rules"]
-    ):
-        find.append("E_POLICY_RULE_LOOSE")
-    core = _base(
-        "policy_pack", not find, find, {"pack": pp.relative_to(root).as_posix()}
-    )
-    core.update(
-        {
-            "action_summary": "Verify a human-owned, versioned team policy pack before it is selected as a review baseline.",
-            "owner": p.get("owner"),
-            "version": p.get("version"),
-            "rule_count": len(p["rules"]),
-            "repair_plan": [
-                "Have the designated human/trusted owner approve explicit rule-to-gate mappings."
-                for _ in find
-            ],
-        }
-    )
+    _validate_policy_pack(p)
+    find = _policy_identity_findings(p)
+    find.extend(_policy_approval_findings(p))
+    find.extend(_policy_rule_findings(p))
+    core = _policy_core(root, pp, p, find)
     return _write(root, out, core)

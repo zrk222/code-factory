@@ -11,6 +11,30 @@ const adapterRecipes = [
   { kind: "model" as const, provider: "openai", label: "OpenAI", secretRef: "env:OPENAI_API_KEY", Icon: Sparkles },
 ];
 
+function ConciergeNextAction({ hasProfile, hasLead, qualifiedNewLead, awaitingApproval, confirmedBooking, busy, onTestLead, onRequestSlot, onApproveSlot, onMarkAttended }: {
+  hasProfile: boolean;
+  hasLead: boolean;
+  qualifiedNewLead: boolean;
+  awaitingApproval: boolean;
+  confirmedBooking: boolean;
+  busy: boolean;
+  onTestLead: () => void;
+  onRequestSlot: () => void;
+  onApproveSlot: () => void;
+  onMarkAttended: () => void;
+}) {
+  if (!hasProfile) return <p className="next-action"><ArrowRight size={14} /> Save the setup to unlock a safe sample.</p>;
+  if (!hasLead) return <button className="button primary wide" disabled={busy} onClick={onTestLead}><Play size={16} /> Test with a sample lead</button>;
+  if (qualifiedNewLead) return <button className="button primary wide" disabled={busy} onClick={onRequestSlot}><CalendarCheck2 size={16} /> Request sample booking</button>;
+  if (awaitingApproval) return <button className="button primary wide" disabled={busy} onClick={onApproveSlot}><UserCheck size={16} /> Approve exact sample slot</button>;
+  if (confirmedBooking) return <button className="button primary wide" disabled={busy} onClick={onMarkAttended}><Check size={16} /> Record attended</button>;
+  return <p className="next-action success"><Check size={14} /> Sandbox journey complete.</p>;
+}
+
+function ProductionReadinessBadge({ ready }: { ready: boolean }) {
+  return <span className={ready ? "ready" : "blocked"}>{ready ? "PRODUCTION READY" : "SANDBOX ONLY"}</span>;
+}
+
 export function BookedJobConcierge({ agentSpec }: { agentSpec: Doc<"agentSpecs"> }) {
   const data = useQuery(api.concierge.overview, { agentSpecId: agentSpec._id });
   const saveProfile = useMutation(api.concierge.saveProfile);
@@ -65,11 +89,11 @@ export function BookedJobConcierge({ agentSpec }: { agentSpec: Doc<"agentSpecs">
       </article>
       <aside className="surface concierge-progress" aria-live="polite"><p className="kicker">Live work line</p><h3>See what the agent knows and what happens next.</h3><ol>{progress.map((item, index) => <li className={item.done ? "done" : ""} key={item.label}><span>{item.done ? <Check size={14} /> : index + 1}</span><div><strong>{item.label}</strong><small>{item.detail}</small></div></li>)}</ol>
         {latestLead && <div className="decision-explain"><small>Why this lead scored {latestLead.score}</small>{latestLead.decisionReasons.map((reason) => <span key={reason}><Check size={12} /> {reason.replaceAll("-", " ")}</span>)}</div>}
-        {!data?.profile ? <p className="next-action"><ArrowRight size={14} /> Save the setup to unlock a safe sample.</p> : !latestLead ? <button className="button primary wide" disabled={busy} onClick={() => void testLead()}><Play size={16} /> Test with a sample lead</button> : latestLead.status === "new" && latestLead.classification === "qualified" ? <button className="button primary wide" disabled={busy} onClick={() => void askForSlot()}><CalendarCheck2 size={16} /> Request sample booking</button> : pendingApproval ? <button className="button primary wide" disabled={busy} onClick={() => void approveSlot()}><UserCheck size={16} /> Approve exact sample slot</button> : latestBooking?.status === "confirmed" ? <button className="button primary wide" disabled={busy} onClick={() => void markAttended()}><Check size={16} /> Record attended</button> : <p className="next-action success"><Check size={14} /> Sandbox journey complete.</p>}
+        <ConciergeNextAction hasProfile={Boolean(data?.profile)} hasLead={Boolean(latestLead)} qualifiedNewLead={latestLead?.status === "new" && latestLead.classification === "qualified"} awaitingApproval={Boolean(pendingApproval)} confirmedBooking={latestBooking?.status === "confirmed"} busy={busy} onTestLead={() => void testLead()} onRequestSlot={() => void askForSlot()} onApproveSlot={() => void approveSlot()} onMarkAttended={() => void markAttended()} />
         {notice && <p className="concierge-notice" role="status">{notice}</p>}
       </aside>
     </div>
     <section className="concierge-metrics" aria-label="Booked job outcomes"><article><small>Qualified leads</small><strong>{data?.metrics.qualified ?? 0}</strong><span>of {data?.metrics.leads ?? 0} total</span></article><article><small>Booked jobs</small><strong>{data?.metrics.bookings ?? 0}</strong><span>{data?.metrics.attended ?? 0} attended</span></article><article className="modeled"><small>Modeled pipeline</small><strong>${((data?.metrics.modeledPipelineValueCents ?? 0) / 100).toLocaleString()}</strong><span>Estimate, not revenue</span></article><article className="observed"><small>Observed revenue</small><strong>{data?.metrics.observedRevenueCents ? `$${(data.metrics.observedRevenueCents / 100).toLocaleString()}` : "Not measured"}</strong><span>Only confirmed outcomes</span></article></section>
-    <section className="surface concierge-connections"><header><div><p className="kicker">4 / Go live when ready</p><h3>Connect the services you already use.</h3><p>Agent Oven stores an opaque vault or environment reference—not the key. A trusted validation worker must activate every connection.</p></div><span className={productionReady ? "ready" : "blocked"}>{productionReady ? "PRODUCTION READY" : "SANDBOX ONLY"}</span></header><div>{adapterRecipes.map(({ kind, provider, label, secretRef, Icon }) => { const adapter = data?.adapters.find((item) => item.kind === kind); return <article key={kind}><Icon size={19} /><span><strong>{label}</strong><small>{adapter?.status === "active" ? "Validated and active" : adapter?.status === "setup-required" ? "Waiting for tenant validation" : "Not connected"}</small></span><button className="text-button" disabled={busy || adapter?.status === "active"} onClick={() => void act(() => configureAdapter({ agentSpecId: agentSpec._id, kind, provider, accountLabel: label, secretRef }), `${label} reference saved. Tenant validation is still required.`)}><KeyRound size={13} /> {adapter ? "Update reference" : "Use secure reference"}</button></article>; })}</div></section>
+    <section className="surface concierge-connections"><header><div><p className="kicker">4 / Go live when ready</p><h3>Connect the services you already use.</h3><p>Agent Oven stores an opaque vault or environment reference—not the key. A trusted validation worker must activate every connection.</p></div><ProductionReadinessBadge ready={productionReady} /></header><div>{adapterRecipes.map(({ kind, provider, label, secretRef, Icon }) => { const adapter = data?.adapters.find((item) => item.kind === kind); return <article key={kind}><Icon size={19} /><span><strong>{label}</strong><small>{adapter?.status === "active" ? "Validated and active" : adapter?.status === "setup-required" ? "Waiting for tenant validation" : "Not connected"}</small></span><button className="text-button" disabled={busy || adapter?.status === "active"} onClick={() => void act(() => configureAdapter({ agentSpecId: agentSpec._id, kind, provider, accountLabel: label, secretRef }), `${label} reference saved. Tenant validation is still required.`)}><KeyRound size={13} /> {adapter ? "Update reference" : "Use secure reference"}</button></article>; })}</div></section>
   </section>;
 }
