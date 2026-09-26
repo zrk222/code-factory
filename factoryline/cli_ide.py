@@ -109,143 +109,167 @@ def add_parser(sub) -> None:
 def run(a) -> int:
     """Dispatch supervised repair or JetBrains proof work without applying changes."""
     if a.cmd == "repair":
-        from .repair_sandbox import (
-            RepairSandboxError,
-            create_repair_scope,
-            inspect_repair_candidate,
-            write_repair_candidate_artifacts,
-            write_repair_scope_artifacts,
+        return _run_repair(a)
+    return _run_jetbrains(a)
+
+
+def _run_repair(args) -> int:
+    from . import repair_sandbox
+
+    try:
+        result = _execute_repair_command(args, repair_sandbox)
+    except repair_sandbox.RepairSandboxError as exc:
+        return _repair_error(args, exc)
+    _render_repair_result(args, result)
+    return 0
+
+
+def _execute_repair_command(args, repair_sandbox):
+    if args.repair_cmd == "scope":
+        result = repair_sandbox.create_repair_scope(
+            Path(args.root),
+            args.change_list,
+            args.changed,
+            context_budget_bytes=args.context_budget_bytes,
         )
+        if args.out_dir:
+            result["artifacts"] = repair_sandbox.write_repair_scope_artifacts(
+                result, Path(args.root), Path(args.out_dir)
+            )
+        return result
+    result = repair_sandbox.inspect_repair_candidate(
+        Path(args.root), Path(args.scope), Path(args.patch)
+    )
+    if args.out_dir:
+        result["artifacts"] = repair_sandbox.write_repair_candidate_artifacts(
+            result, Path(args.root), Path(args.out_dir)
+        )
+    return result
 
-        try:
-            if a.repair_cmd == "scope":
-                result = create_repair_scope(
-                    Path(a.root),
-                    a.change_list,
-                    a.changed,
-                    context_budget_bytes=a.context_budget_bytes,
-                )
-                if a.out_dir:
-                    result["artifacts"] = write_repair_scope_artifacts(
-                        result, Path(a.root), Path(a.out_dir)
-                    )
-            else:
-                result = inspect_repair_candidate(
-                    Path(a.root), Path(a.scope), Path(a.patch)
-                )
-                if a.out_dir:
-                    result["artifacts"] = write_repair_candidate_artifacts(
-                        result, Path(a.root), Path(a.out_dir)
-                    )
-        except RepairSandboxError as exc:
-            schema = (
-                "factory.repair_scope.error.v1"
-                if a.repair_cmd == "scope"
-                else "factory.repair_candidate.error.v1"
-            )
-            marker = (
-                "REPAIR_SANDBOX_PATH_REJECTED"
-                if "PATH" in exc.code or exc.code == "REPAIR_CANDIDATE_OUT_OF_SCOPE"
-                else "REPAIR_SANDBOX_INPUT_UNAVAILABLE"
-            )
-            payload = {
-                "schema": schema,
-                "marker": marker,
-                "code": exc.code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(payload, indent=2, sort_keys=True)
-                if a.json
-                else f"repair {a.repair_cmd} failed: {exc.code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            print(json.dumps(result, indent=2, sort_keys=True))
-        else:
-            print(f"factory repair {a.repair_cmd} (supervised, no patch apply)")
-            print("=" * 54)
-            if a.repair_cmd == "scope":
-                print(f"scope       : {result['scope_id']}")
-                print(f"changed path: {len(result['paths'])}")
-                print(
-                    f"context     : {result['context_budget']['measured_bytes']} / {result['context_budget']['limit_bytes']} bytes ({result['context_budget']['decision']})"
-                )
-                print(
-                    "next        : external supervised candidate, independent verifier, human apply"
-                )
-            else:
-                print(f"candidate   : {result['candidate_sha256']}")
-                print(f"touched path: {len(result['touched_paths'])}")
-                print(
-                    "next        : independent verifier, then human diff review and apply"
-                )
-            if result.get("artifacts"):
-                print(f"packet      : {result['artifacts']['paths']['markdown']}")
-            print(
-                "authority   : no source modification, test execution, commit, merge, publication, deployment, credential, or network action"
-            )
-        return 0
 
-    from .jetbrains_handshake import (
-        JetBrainsHandshakeError,
-        build_agent_proof_mission,
-        evaluate_jetbrains_handshake,
-        jetbrains_handshake_projection,
-        write_jetbrains_handshake,
+def _repair_error(args, exc) -> int:
+    schema = (
+        "factory.repair_scope.error.v1"
+        if args.repair_cmd == "scope"
+        else "factory.repair_candidate.error.v1"
+    )
+    marker = (
+        "REPAIR_SANDBOX_PATH_REJECTED"
+        if "PATH" in exc.code or exc.code == "REPAIR_CANDIDATE_OUT_OF_SCOPE"
+        else "REPAIR_SANDBOX_INPUT_UNAVAILABLE"
+    )
+    payload = {
+        "schema": schema,
+        "marker": marker,
+        "code": exc.code,
+        "message": str(exc),
+    }
+    print(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if args.json
+        else f"repair {args.repair_cmd} failed: {exc.code}: {exc}",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _render_repair_result(args, result) -> None:
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    print(f"factory repair {args.repair_cmd} (supervised, no patch apply)")
+    print("=" * 54)
+    if args.repair_cmd == "scope":
+        print(f"scope       : {result['scope_id']}")
+        print(f"changed path: {len(result['paths'])}")
+        print(
+            f"context     : {result['context_budget']['measured_bytes']} / {result['context_budget']['limit_bytes']} bytes ({result['context_budget']['decision']})"
+        )
+        print(
+            "next        : external supervised candidate, independent verifier, human apply"
+        )
+    else:
+        print(f"candidate   : {result['candidate_sha256']}")
+        print(f"touched path: {len(result['touched_paths'])}")
+        print("next        : independent verifier, then human diff review and apply")
+    if result.get("artifacts"):
+        print(f"packet      : {result['artifacts']['paths']['markdown']}")
+    print(
+        "authority   : no source modification, test execution, commit, merge, publication, deployment, credential, or network action"
     )
 
-    root = Path(a.root).resolve()
+
+def _run_jetbrains(args) -> int:
+    from . import jetbrains_handshake
+
+    root = Path(args.root).resolve()
     try:
-        if a.jetbrains_cmd == "mission":
-            payload = build_agent_proof_mission(root, Path(a.scope), a.changed or None)
-        elif a.jetbrains_cmd == "status":
-            payload = jetbrains_handshake_projection(root)
-        else:
-            analysis_path = a.qodana_sarif or a.analysis_sarif
-            analysis_provider = "qodana" if a.qodana_sarif else a.analysis_provider
-            payload = evaluate_jetbrains_handshake(
-                root,
-                Path(a.scope),
-                a.changed,
-                Path(analysis_path),
-                Path(a.e2e_receipt) if a.e2e_receipt else None,
-                analysis_provider=analysis_provider,
-                max_new_errors=a.max_new_errors,
-                max_new_warnings=a.max_new_warnings,
-            )
-            write_jetbrains_handshake(root, payload, Path(a.out))
+        payload = _jetbrains_payload(args, root, jetbrains_handshake)
     except (
-        JetBrainsHandshakeError,
+        jetbrains_handshake.JetBrainsHandshakeError,
         OSError,
         UnicodeDecodeError,
         json.JSONDecodeError,
     ) as exc:
-        code = getattr(exc, "code", "JETBRAINS_HANDSHAKE_INPUT_INVALID")
-        error = {
-            "schema": "factory.jetbrains-proof-handshake.error.v1",
-            "marker": "JETBRAINS_PROOF_HANDSHAKE_REFUSED",
-            "code": code,
-            "message": str(exc),
-        }
-        print(
-            json.dumps(error, indent=2, sort_keys=True)
-            if a.json
-            else f"jetbrains {a.jetbrains_cmd} refused: {code}: {exc}",
-            file=sys.stderr,
+        return _jetbrains_error(args, exc)
+    _render_jetbrains_result(args, payload)
+    return _jetbrains_exit_code(args, payload)
+
+
+def _jetbrains_payload(args, root: Path, handshake):
+    if args.jetbrains_cmd == "mission":
+        return handshake.build_agent_proof_mission(
+            root, Path(args.scope), args.changed or None
         )
-        return 2
+    if args.jetbrains_cmd == "status":
+        return handshake.jetbrains_handshake_projection(root)
+    analysis_path = args.qodana_sarif or args.analysis_sarif
+    analysis_provider = "qodana" if args.qodana_sarif else args.analysis_provider
+    payload = handshake.evaluate_jetbrains_handshake(
+        root,
+        Path(args.scope),
+        args.changed,
+        Path(analysis_path),
+        Path(args.e2e_receipt) if args.e2e_receipt else None,
+        analysis_provider=analysis_provider,
+        max_new_errors=args.max_new_errors,
+        max_new_warnings=args.max_new_warnings,
+    )
+    handshake.write_jetbrains_handshake(root, payload, Path(args.out))
+    return payload
+
+
+def _jetbrains_error(args, exc) -> int:
+    code = getattr(exc, "code", "JETBRAINS_HANDSHAKE_INPUT_INVALID")
+    error = {
+        "schema": "factory.jetbrains-proof-handshake.error.v1",
+        "marker": "JETBRAINS_PROOF_HANDSHAKE_REFUSED",
+        "code": code,
+        "message": str(exc),
+    }
+    print(
+        json.dumps(error, indent=2, sort_keys=True)
+        if args.json
+        else f"jetbrains {args.jetbrains_cmd} refused: {code}: {exc}",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _render_jetbrains_result(args, payload) -> None:
     print(
         json.dumps(payload, indent=2, sort_keys=True)
-        if a.json
+        if args.json
         else payload.get(
             "mission_text", payload.get("marker", "JETBRAINS_PROOF_HANDSHAKE_OK")
         )
     )
-    return (
-        1
-        if a.jetbrains_cmd == "handshake"
+
+
+def _jetbrains_exit_code(args, payload) -> int:
+    if (
+        args.jetbrains_cmd == "handshake"
         and payload["verdict"] != "ready_for_human_review"
-        else 0
-    )
+    ):
+        return 1
+    return 0

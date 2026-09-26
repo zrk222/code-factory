@@ -245,35 +245,33 @@ def _source_bytes(root: Path, name: str) -> tuple[bytes, int]:
     return raw, stat.S_IMODE(before.st_mode)
 
 
-def inventory_candidate(root: Path, snapshot: Path | None = None) -> dict:
-    """Account for tracked/dirty/untracked inputs; optionally copy a private snapshot."""
-    root = Path(root).resolve()
-    files, gaps, seen, total = [], [], set(), 0
-    if snapshot is not None:
-        snapshot = Path(snapshot).absolute()
-        for component in (snapshot, *snapshot.parents):
-            info = component.lstat()
-            if (
-                stat.S_ISLNK(info.st_mode)
-                or getattr(info, "st_file_attributes", 0) & 0x400
-            ):
-                raise RuntimeAuditError(
-                    "E_SNAPSHOT_PATH", "snapshot ancestors must not be linked"
-                )
-        if (
-            snapshot.is_symlink()
-            or getattr(snapshot.lstat(), "st_file_attributes", 0) & 0x400
-            or any(snapshot.iterdir())
-        ):
+def _prepare_snapshot(root: Path, snapshot: Path | None) -> Path | None:
+    if snapshot is None:
+        return None
+    snapshot = Path(snapshot).absolute()
+    for component in (snapshot, *snapshot.parents):
+        info = component.lstat()
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
             raise RuntimeAuditError(
-                "E_SNAPSHOT_PATH", "snapshot must be a fresh empty regular directory"
+                "E_SNAPSHOT_PATH", "snapshot ancestors must not be linked"
             )
-        snapshot = snapshot.resolve()
-        if snapshot == root or root in snapshot.parents:
-            raise RuntimeAuditError(
-                "E_SNAPSHOT_PATH", "snapshot must be outside the source tree"
-            )
-    ignored = []
+    if (
+        snapshot.is_symlink()
+        or getattr(snapshot.lstat(), "st_file_attributes", 0) & 0x400
+        or any(snapshot.iterdir())
+    ):
+        raise RuntimeAuditError(
+            "E_SNAPSHOT_PATH", "snapshot must be a fresh empty regular directory"
+        )
+    snapshot = snapshot.resolve()
+    if snapshot == root or root in snapshot.parents:
+        raise RuntimeAuditError(
+            "E_SNAPSHOT_PATH", "snapshot must be outside the source tree"
+        )
+    return snapshot
+
+
+def _candidate_paths(root: Path, gaps: list[dict]) -> tuple[list[str], list[str]]:
     try:
         paths = _git_paths(root)
         ignored = sorted(
@@ -282,7 +280,7 @@ def inventory_candidate(root: Path, snapshot: Path | None = None) -> dict:
             if not name.startswith(".factory/deep-runs/")
         )
     except (OSError, subprocess.SubprocessError, UnicodeError, RuntimeAuditError):
-        paths = []
+        paths, ignored = [], []
         gaps.append(
             {
                 "code": "GIT_INVENTORY_FAILED",
@@ -298,8 +296,7 @@ def inventory_candidate(root: Path, snapshot: Path | None = None) -> dict:
                 "action": "Move non-product caches outside the audited checkout; include every build/runtime input as tracked or nonignored source.",
             }
         )
-    candidates = paths
-    if not candidates:
+    if not paths:
         gaps.append(
             {
                 "code": "EMPTY_CANDIDATE",
@@ -307,7 +304,7 @@ def inventory_candidate(root: Path, snapshot: Path | None = None) -> dict:
                 "action": "Include the product source before requesting a depth assessment.",
             }
         )
-    if len(candidates) > INVENTORY_LIMIT:
+    if len(paths) > INVENTORY_LIMIT:
         gaps.append(
             {
                 "code": "INVENTORY_LIMIT",
@@ -315,73 +312,121 @@ def inventory_candidate(root: Path, snapshot: Path | None = None) -> dict:
                 "action": "Partition the declared product into explicitly bound targets; inventory was truncated.",
             }
         )
-    for name in candidates[:INVENTORY_LIMIT]:
-        item = {"path": name, "sha256": None, "bytes": None, "language": "unknown"}
-        try:
-            relative_path(name)
-            if name.startswith(".factory/deep-runs/"):
-                raise RuntimeAuditError(
-                    "E_RESERVED_SOURCE", "tracked source collides with audit state"
-                )
-            if name.casefold() in seen:
-                raise RuntimeAuditError(
-                    "E_CASE_COLLISION", "case-colliding source paths"
-                )
-            seen.add(name.casefold())
-            if total >= SNAPSHOT_LIMIT:
-                raise RuntimeAuditError(
-                    "E_SNAPSHOT_SIZE", "snapshot total budget exhausted"
-                )
-            raw, mode = _source_bytes(root, name)
-            total += len(raw)
-            if total > SNAPSHOT_LIMIT:
-                raise RuntimeAuditError(
-                    "E_SNAPSHOT_SIZE", "snapshot exceeds total byte budget"
-                )
-            item.update(
-                sha256=sha256_bytes(raw),
-                bytes=len(raw),
-                mode=mode,
-                language=source_language(name, raw),
-            )
-            if snapshot is not None:
-                target = Path(snapshot) / name
-                current = snapshot
-                for part in relative_path(name).split("/")[:-1]:
-                    current /= part
-                    current.mkdir(exist_ok=True)
-                    info = current.lstat()
-                    if (
-                        not stat.S_ISDIR(info.st_mode)
-                        or getattr(info, "st_file_attributes", 0) & 0x400
-                    ):
-                        raise RuntimeAuditError(
-                            "E_SNAPSHOT_PATH", "linked snapshot parent"
-                        )
-                with target.open("xb") as stream:
-                    stream.write(raw)
-                target.chmod(mode)
-                if sha256_bytes(target.read_bytes()) != item["sha256"]:
-                    raise RuntimeAuditError(
-                        "E_SNAPSHOT_DRIFT", "snapshot copy differs from captured source"
-                    )
-            if item["language"] == "unknown":
-                gaps.append(
-                    {
-                        "code": "UNCLASSIFIED_INPUT",
-                        "path": name,
-                        "action": "Assign and validate a supported analyzer for this input; do not silently exclude it.",
-                    }
-                )
-        except (OSError, ValueError, RuntimeAuditError) as exc:
+    return paths, ignored
+
+
+def _capture_inventory_source(
+    root: Path, name: str, seen: set[str], total: list[int]
+) -> tuple[dict, bytes, int]:
+    relative_path(name)
+    if name.startswith(".factory/deep-runs/"):
+        raise RuntimeAuditError(
+            "E_RESERVED_SOURCE", "tracked source collides with audit state"
+        )
+    if name.casefold() in seen:
+        raise RuntimeAuditError("E_CASE_COLLISION", "case-colliding source paths")
+    seen.add(name.casefold())
+    if total[0] >= SNAPSHOT_LIMIT:
+        raise RuntimeAuditError("E_SNAPSHOT_SIZE", "snapshot total budget exhausted")
+    raw, mode = _source_bytes(root, name)
+    total[0] += len(raw)
+    if total[0] > SNAPSHOT_LIMIT:
+        raise RuntimeAuditError("E_SNAPSHOT_SIZE", "snapshot exceeds total byte budget")
+    item = {
+        "path": name,
+        "sha256": sha256_bytes(raw),
+        "bytes": len(raw),
+        "mode": mode,
+        "language": source_language(name, raw),
+    }
+    return item, raw, mode
+
+
+def _copy_snapshot_file(
+    snapshot: Path, name: str, raw: bytes, mode: int, expected_digest: str
+) -> None:
+    target = snapshot / name
+    current = snapshot
+    for part in relative_path(name).split("/")[:-1]:
+        current /= part
+        current.mkdir(exist_ok=True)
+        info = current.lstat()
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or getattr(info, "st_file_attributes", 0) & 0x400
+        ):
+            raise RuntimeAuditError("E_SNAPSHOT_PATH", "linked snapshot parent")
+    with target.open("xb") as stream:
+        stream.write(raw)
+    target.chmod(mode)
+    if sha256_bytes(target.read_bytes()) != expected_digest:
+        raise RuntimeAuditError(
+            "E_SNAPSHOT_DRIFT", "snapshot copy differs from captured source"
+        )
+
+
+def _inventory_candidate_file(
+    root: Path,
+    name: str,
+    seen: set[str],
+    total: list[int],
+    snapshot: Path | None,
+    gaps: list[dict],
+) -> dict:
+    item = {"path": name, "sha256": None, "bytes": None, "language": "unknown"}
+    try:
+        captured, raw, mode = _capture_inventory_source(root, name, seen, total)
+        item.update(captured)
+        if snapshot is not None:
+            _copy_snapshot_file(snapshot, name, raw, mode, item["sha256"])
+        if item["language"] == "unknown":
             gaps.append(
                 {
-                    "code": getattr(exc, "code", "SOURCE_UNREADABLE"),
+                    "code": "UNCLASSIFIED_INPUT",
                     "path": name,
-                    "action": "Restore regular readable source inside the worktree, then rerun inventory.",
+                    "action": "Assign and validate a supported analyzer for this input; do not silently exclude it.",
                 }
             )
-        files.append(item)
+    except (OSError, ValueError, RuntimeAuditError) as exc:
+        gaps.append(
+            {
+                "code": getattr(exc, "code", "SOURCE_UNREADABLE"),
+                "path": name,
+                "action": "Restore regular readable source inside the worktree, then rerun inventory.",
+            }
+        )
+    return item
+
+
+def _ignored_names(root: Path) -> list[str]:
+    return sorted(
+        name
+        for name in _git_names(root, False, ignored=True)
+        if not name.startswith(".factory/deep-runs/")
+    )
+
+
+def _verify_source_files(root: Path, files: list[dict], gaps: list[dict]) -> None:
+    for item in files:
+        if item["sha256"] is not None:
+            raw, mode = _source_bytes(root, item["path"])
+            if sha256_bytes(raw) != item["sha256"] or mode != item.get("mode"):
+                gaps.append(
+                    {
+                        "code": "SOURCE_DRIFT",
+                        "path": item["path"],
+                        "action": "Stop concurrent edits and recapture the candidate.",
+                    }
+                )
+
+
+def _verify_inventory_stability(
+    root: Path,
+    paths: list[str],
+    ignored: list[str],
+    files: list[dict],
+    gaps: list[dict],
+) -> None:
     try:
         if paths != _git_paths(root):
             gaps.append(
@@ -391,11 +436,7 @@ def inventory_candidate(root: Path, snapshot: Path | None = None) -> dict:
                     "action": "Retry against an immutable source snapshot.",
                 }
             )
-        if ignored != sorted(
-            name
-            for name in _git_names(root, False, ignored=True)
-            if not name.startswith(".factory/deep-runs/")
-        ):
+        if ignored != _ignored_names(root):
             gaps.append(
                 {
                     "code": "IGNORED_SCOPE_DRIFT",
@@ -403,17 +444,7 @@ def inventory_candidate(root: Path, snapshot: Path | None = None) -> dict:
                     "action": "Retry against stable source and ignored-input scope.",
                 }
             )
-        for item in files:
-            if item["sha256"] is not None:
-                raw, mode = _source_bytes(root, item["path"])
-                if sha256_bytes(raw) != item["sha256"] or mode != item.get("mode"):
-                    gaps.append(
-                        {
-                            "code": "SOURCE_DRIFT",
-                            "path": item["path"],
-                            "action": "Stop concurrent edits and recapture the candidate.",
-                        }
-                    )
+        _verify_source_files(root, files, gaps)
     except (OSError, subprocess.SubprocessError, UnicodeError, RuntimeAuditError):
         gaps.append(
             {
@@ -422,13 +453,18 @@ def inventory_candidate(root: Path, snapshot: Path | None = None) -> dict:
                 "action": "Restore Git inventory access and rerun.",
             }
         )
+
+
+def _inventory_result(
+    paths: list[str], files: list[dict], gaps: list[dict], ignored: list[str]
+) -> dict:
     return {
         "schema": "factory.deep-inventory.v1",
         "state": "INCOMPLETE" if gaps else "COMPLETE",
         "candidate_sha256": digest(files),
         "files": files,
         "gaps": gaps,
-        "discovered_paths": len(candidates),
+        "discovered_paths": len(paths),
         "accounted_paths": len(files),
         "languages": dict(sorted(Counter(item["language"] for item in files).items())),
         "ignored_paths": ignored,
@@ -439,6 +475,18 @@ def inventory_candidate(root: Path, snapshot: Path | None = None) -> dict:
         },
         "authority": "none",
     }
+
+
+def inventory_candidate(root: Path, snapshot: Path | None = None) -> dict:
+    """Account for tracked/dirty/untracked inputs; optionally copy a private snapshot."""
+    root = Path(root).resolve()
+    snapshot = _prepare_snapshot(root, snapshot)
+    files, gaps, seen, total = [], [], set(), [0]
+    paths, ignored = _candidate_paths(root, gaps)
+    for name in paths[:INVENTORY_LIMIT]:
+        files.append(_inventory_candidate_file(root, name, seen, total, snapshot, gaps))
+    _verify_inventory_stability(root, paths, ignored, files, gaps)
+    return _inventory_result(paths, files, gaps, ignored)
 
 
 def run_directory(root: Path, run_id: str, *, create: bool = False) -> Path:

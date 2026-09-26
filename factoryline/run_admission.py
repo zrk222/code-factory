@@ -156,6 +156,25 @@ def _checkpoint_fix(
     valid_until: datetime,
 ) -> dict[str, Any]:
     """Validate a human-approved, hash-bound fix that a harness may consume at a checkpoint."""
+    value = _checkpoint_fix_object(value)
+    checkpoint_id = _checkpoint_fix_id(value)
+    _require_checkpoint_write(actions)
+    paths = _checkpoint_fix_paths(value, request_paths)
+    patch_path, patch_sha256 = _checkpoint_fix_patch(root, value)
+    reason, approver, expires_at = _checkpoint_fix_approval(value, valid_until)
+    return {
+        "checkpoint_id": checkpoint_id,
+        "patch_path": patch_path,
+        "patch_sha256": patch_sha256,
+        "paths": paths,
+        "reason": reason,
+        "approved_by": approver,
+        "approval_expires_at": expires_at,
+    }
+
+
+def _checkpoint_fix_object(value: object) -> dict[str, Any]:
+    """Require the exact serialized checkpoint-fix fields."""
     if not isinstance(value, dict) or set(value) != {
         "checkpoint_id",
         "patch_path",
@@ -169,6 +188,11 @@ def _checkpoint_fix(
             "ADMISSION_CHECKPOINT_FIX_INVALID",
             "checkpoint_fix must contain the exact checkpoint, patch, scope, reason, and approval fields",
         )
+    return value
+
+
+def _checkpoint_fix_id(value: dict[str, Any]) -> str:
+    """Validate and return the checkpoint identifier."""
     checkpoint_id = value.get("checkpoint_id")
     if not isinstance(checkpoint_id, str) or not re.fullmatch(
         r"[A-Za-z][A-Za-z0-9_.:-]{0,95}", checkpoint_id
@@ -177,11 +201,20 @@ def _checkpoint_fix(
             "ADMISSION_CHECKPOINT_FIX_INVALID",
             "checkpoint_id must be a safe identifier",
         )
+    return checkpoint_id
+
+
+def _require_checkpoint_write(actions: list[str]) -> None:
+    """Require workspace-write authority in the declared request actions."""
     if "write_workspace" not in actions:
         raise AdmissionError(
             "ADMISSION_CHECKPOINT_FIX_UNAUTHORIZED",
             "checkpoint fixes require the declared write_workspace action",
         )
+
+
+def _checkpoint_fix_paths(value: dict[str, Any], request_paths: list[str]) -> list[str]:
+    """Normalize patch scope and reject paths outside the admitted request."""
     paths = [
         _relative_path(item, "checkpoint_fix.paths")
         for item in _string_list(value.get("paths"), "checkpoint_fix.paths")
@@ -197,6 +230,11 @@ def _checkpoint_fix(
             "ADMISSION_CHECKPOINT_FIX_SCOPE_ESCAPE",
             "checkpoint fix paths must remain inside the admitted request scope",
         )
+    return paths
+
+
+def _checkpoint_fix_patch(root: Path, value: dict[str, Any]) -> tuple[str, str]:
+    """Validate the workspace-bound patch path and content digest."""
     patch_path = _relative_path(value.get("patch_path"), "checkpoint_fix.patch_path")
     patch = _inside(root, root / patch_path)
     if not patch.is_file():
@@ -214,6 +252,13 @@ def _checkpoint_fix(
             "ADMISSION_CHECKPOINT_FIX_INVALID",
             "checkpoint_fix.patch_sha256 does not match the current patch artifact",
         )
+    return patch_path, patch_sha256
+
+
+def _checkpoint_fix_approval(
+    value: dict[str, Any], valid_until: datetime
+) -> tuple[str, str, str]:
+    """Require named human approval that outlives the admitted run."""
     reason = value.get("reason")
     approved_by = value.get("approved_by")
     if (
@@ -235,20 +280,11 @@ def _checkpoint_fix(
             "ADMISSION_CHECKPOINT_FIX_APPROVAL_INVALID",
             "checkpoint fix approval must outlive the admitted run",
         )
-    return {
-        "checkpoint_id": checkpoint_id,
-        "patch_path": patch_path,
-        "patch_sha256": patch_sha256,
-        "paths": paths,
-        "reason": reason.strip(),
-        "approved_by": approved_by.strip(),
-        "approval_expires_at": value["approval_expires_at"],
-    }
+    return reason.strip(), approved_by.strip(), value["approval_expires_at"]
 
 
-def _validate_request(
-    root: Path, request: dict[str, Any], passport: dict[str, Any]
-) -> dict[str, Any]:
+def _request_identifier(request: dict[str, Any]) -> str:
+    """Validate the request protocol and bounded identifier."""
     if request.get("schema") != ADMISSION_REQUEST_SCHEMA:
         raise AdmissionError(
             "ADMISSION_REQUEST_INVALID", "unsupported admission request schema"
@@ -258,6 +294,11 @@ def _validate_request(
         raise AdmissionError(
             "ADMISSION_REQUEST_INVALID", "id must be 1 through 160 characters"
         )
+    return request_id
+
+
+def _request_validity(request: dict[str, Any]) -> tuple[datetime, datetime]:
+    """Require a current expiry no more than one hour in the future."""
     now = datetime.now(timezone.utc)
     valid_until = _utc(request.get("valid_until"), "valid_until")
     if valid_until <= now:
@@ -268,12 +309,24 @@ def _validate_request(
         raise AdmissionError(
             "ADMISSION_VALIDITY_TOO_LONG", "valid_until may be at most one hour ahead"
         )
+    return now, valid_until
+
+
+def _request_trigger(
+    request: dict[str, Any], passport: dict[str, Any]
+) -> dict[str, Any]:
+    """Require the request trigger to match its Loop Passport."""
     trigger = request.get("trigger")
     if not isinstance(trigger, dict) or trigger != passport.get("trigger"):
         raise AdmissionError(
             "ADMISSION_TRIGGER_MISMATCH",
             "request trigger must exactly match the Loop Passport",
         )
+    return trigger
+
+
+def _request_actions(request: dict[str, Any], passport: dict[str, Any]) -> list[str]:
+    """Normalize actions and enforce the Loop Passport capability set."""
     actions = _string_list(request.get("actions"), "actions")
     declared_actions = set(passport.get("capabilities", {}).get("actions", []))
     if not set(actions).issubset(declared_actions):
@@ -281,6 +334,13 @@ def _validate_request(
             "ADMISSION_ACTION_UNDECLARED",
             "request action is absent from the Loop Passport",
         )
+    return actions
+
+
+def _request_paths(
+    root: Path, request: dict[str, Any], passport: dict[str, Any]
+) -> list[str]:
+    """Normalize requested paths and enforce passport scope and containment."""
     paths = [
         _relative_path(value, "paths")
         for value in _string_list(request.get("paths"), "paths")
@@ -302,6 +362,13 @@ def _validate_request(
                 "request path is absent from the Loop Passport",
             )
         _inside(root, root / item)
+    return paths
+
+
+def _request_budget(
+    request: dict[str, Any], passport: dict[str, Any]
+) -> dict[str, Any]:
+    """Require budget keys and values to stay within the Loop Passport."""
     budget = request.get("budget")
     declared_budget = passport.get("budgets")
     if (
@@ -324,6 +391,62 @@ def _validate_request(
             raise AdmissionError(
                 "ADMISSION_BUDGET_INVALID", f"request {key} exceeds the Loop Passport"
             )
+    return budget
+
+
+def _normalize_approval(
+    item: object,
+    required: set[str],
+    seen_actions: set[str],
+    valid_until: datetime,
+    now: datetime,
+) -> dict[str, str]:
+    """Validate one named approval and normalize its recorded fields."""
+    if not isinstance(item, dict) or set(item) != {
+        "action",
+        "approved_by",
+        "expires_at",
+    }:
+        raise AdmissionError(
+            "ADMISSION_REQUEST_INVALID",
+            "approval must have action, approved_by, and expires_at",
+        )
+    action, approver = item["action"], item["approved_by"]
+    if (
+        action not in required
+        or action in seen_actions
+        or not isinstance(approver, str)
+        or not approver.strip()
+    ):
+        raise AdmissionError(
+            "ADMISSION_APPROVAL_MISSING",
+            "approval action or named approver is invalid",
+        )
+    if _utc(item["expires_at"], "approval.expires_at") <= now:
+        raise AdmissionError(
+            "ADMISSION_APPROVAL_EXPIRED",
+            "approval expiry must be after current UTC time",
+        )
+    if valid_until > _utc(item["expires_at"], "approval.expires_at"):
+        raise AdmissionError(
+            "ADMISSION_VALIDITY_EXCEEDS_APPROVAL",
+            "valid_until may not outlive a required approval",
+        )
+    return {
+        "action": action,
+        "approved_by": approver.strip(),
+        "expires_at": item["expires_at"],
+    }
+
+
+def _request_approvals(
+    request: dict[str, Any],
+    passport: dict[str, Any],
+    actions: list[str],
+    valid_until: datetime,
+    now: datetime,
+) -> list[dict[str, str]]:
+    """Validate the exact approval set required for protected actions."""
     approvals = request.get("approvals")
     required = set(passport.get("approvals", {}).get("required_for", [])) & set(actions)
     if not isinstance(approvals, list) or len(approvals) != len(required):
@@ -334,44 +457,48 @@ def _validate_request(
     normalized_approvals: list[dict[str, str]] = []
     seen_actions: set[str] = set()
     for item in approvals:
-        if not isinstance(item, dict) or set(item) != {
-            "action",
-            "approved_by",
-            "expires_at",
-        }:
-            raise AdmissionError(
-                "ADMISSION_REQUEST_INVALID",
-                "approval must have action, approved_by, and expires_at",
-            )
-        action, approver = item["action"], item["approved_by"]
-        if (
-            action not in required
-            or action in seen_actions
-            or not isinstance(approver, str)
-            or not approver.strip()
-        ):
-            raise AdmissionError(
-                "ADMISSION_APPROVAL_MISSING",
-                "approval action or named approver is invalid",
-            )
-        if _utc(item["expires_at"], "approval.expires_at") <= now:
-            raise AdmissionError(
-                "ADMISSION_APPROVAL_EXPIRED",
-                "approval expiry must be after current UTC time",
-            )
-        if valid_until > _utc(item["expires_at"], "approval.expires_at"):
-            raise AdmissionError(
-                "ADMISSION_VALIDITY_EXCEEDS_APPROVAL",
-                "valid_until may not outlive a required approval",
-            )
+        normalized = _normalize_approval(item, required, seen_actions, valid_until, now)
+        action = normalized["action"]
         seen_actions.add(action)
-        normalized_approvals.append(
-            {
-                "action": action,
-                "approved_by": approver.strip(),
-                "expires_at": item["expires_at"],
-            }
+        normalized_approvals.append(normalized)
+    return sorted(normalized_approvals, key=lambda item: item["action"])
+
+
+def _request_intake_binding(root: Path, binding: object) -> dict[str, str]:
+    """Validate and normalize the request's content-bound intake reference."""
+    if not isinstance(binding, dict) or set(binding) != {
+        "path",
+        "parameter_sha256",
+    }:
+        raise AdmissionError(
+            "ADMISSION_INTAKE_BINDING_INVALID",
+            "intake_parameters must contain path and parameter_sha256",
         )
+    path = _relative_path(binding.get("path"), "intake_parameters.path")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(binding.get("parameter_sha256"))):
+        raise AdmissionError(
+            "ADMISSION_INTAKE_BINDING_INVALID",
+            "intake_parameters.parameter_sha256 must be a lowercase SHA-256 digest",
+        )
+    if not (_inside(root, root / path).is_file()):
+        raise AdmissionError(
+            "ADMISSION_INTAKE_BINDING_INVALID",
+            "intake_parameters.path must name an existing file",
+        )
+    return {"path": path, "parameter_sha256": binding["parameter_sha256"]}
+
+
+def _validate_request(
+    root: Path, request: dict[str, Any], passport: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate request phases in protocol order and return a canonical shape."""
+    request_id = _request_identifier(request)
+    now, valid_until = _request_validity(request)
+    trigger = _request_trigger(request, passport)
+    actions = _request_actions(request, passport)
+    paths = _request_paths(root, request, passport)
+    budget = _request_budget(request, passport)
+    approvals = _request_approvals(request, passport, actions, valid_until, now)
     normalized = {
         "schema": ADMISSION_REQUEST_SCHEMA,
         "id": request_id,
@@ -380,7 +507,7 @@ def _validate_request(
         "actions": actions,
         "paths": paths,
         "budget": budget,
-        "approvals": sorted(normalized_approvals, key=lambda item: item["action"]),
+        "approvals": approvals,
     }
     if "agent" in request:
         normalized["agent"] = normalize_agent_identity(request.get("agent"), "agent")
@@ -389,30 +516,9 @@ def _validate_request(
             request.get("oracle_contract"), "oracle_contract"
         )
     if "intake_parameters" in request:
-        binding = request.get("intake_parameters")
-        if not isinstance(binding, dict) or set(binding) != {
-            "path",
-            "parameter_sha256",
-        }:
-            raise AdmissionError(
-                "ADMISSION_INTAKE_BINDING_INVALID",
-                "intake_parameters must contain path and parameter_sha256",
-            )
-        path = _relative_path(binding.get("path"), "intake_parameters.path")
-        if not re.fullmatch(r"[0-9a-f]{64}", str(binding.get("parameter_sha256"))):
-            raise AdmissionError(
-                "ADMISSION_INTAKE_BINDING_INVALID",
-                "intake_parameters.parameter_sha256 must be a lowercase SHA-256 digest",
-            )
-        if not (_inside(root, root / path).is_file()):
-            raise AdmissionError(
-                "ADMISSION_INTAKE_BINDING_INVALID",
-                "intake_parameters.path must name an existing file",
-            )
-        normalized["intake_parameters"] = {
-            "path": path,
-            "parameter_sha256": binding["parameter_sha256"],
-        }
+        normalized["intake_parameters"] = _request_intake_binding(
+            root, request.get("intake_parameters")
+        )
     if "checkpoint_fix" in request:
         normalized["checkpoint_fix"] = _checkpoint_fix(
             root,
@@ -431,22 +537,8 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def prepare_admission(
-    root: Path,
-    passport_path: Path,
-    request_path: Path,
-    out_dir: Path | None = None,
-    *,
-    require_intake: bool = False,
-) -> dict[str, Any]:
-    """Seal one admissible external-run proposal without invoking a harness."""
-    workspace = Path(root).resolve()
-    passport_path = _inside(workspace, Path(passport_path))
-    request_path = _inside(workspace, Path(request_path))
-    if not passport_path.is_file() or not request_path.is_file():
-        raise AdmissionError(
-            "ADMISSION_INPUT_UNREADABLE", "passport and request files must exist"
-        )
+def _verified_passport(passport_path: Path) -> dict[str, Any]:
+    """Load a Loop Passport only after its verifier confirms the sealed form."""
     try:
         passport_result = verify_loop_passport(passport_path)
     except (OSError, json.JSONDecodeError) as exc:
@@ -457,49 +549,76 @@ def prepare_admission(
         raise AdmissionError(
             "ADMISSION_PASSPORT_INVALID", "Loop Passport does not verify"
         )
-    passport = _load(passport_path)
-    snapshot = graph_ops_snapshot(workspace)
-    if not snapshot.get("complete"):
-        raise AdmissionError(
-            "ADMISSION_GRAPH_INCOMPLETE", "Graph Ops snapshot is incomplete"
-        )
-    request = _validate_request(workspace, _load(request_path), passport)
+    return _load(passport_path)
+
+
+def _agent_license_for_admission(
+    workspace: Path, passport: dict[str, Any], request: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Translate license policy failures into stable admission failures."""
     try:
-        license_value = admission_license_decision(workspace, passport, request)
+        return admission_license_decision(workspace, passport, request)
     except AgentLicenseError as exc:
         raise AdmissionError(exc.code, str(exc)) from exc
-    requested_autonomy = str(passport.get("autonomy") or "human_controlled")
-    intake_binding = request.get("intake_parameters")
+
+
+def _intake_for_admission(
+    workspace: Path,
+    intake_binding: object,
+    request: dict[str, Any],
+    requested_autonomy: str,
+    require_intake: bool,
+) -> None:
+    """Require and verify authoritative intake evidence when bound."""
     if intake_binding is None and require_intake:
         raise AdmissionError(
             "E_INTAKE_BINDING_REQUIRED",
             "strict admission requires an authoritative intake_parameters binding",
         )
     if isinstance(intake_binding, dict):
-        binding = verify_intake_binding(
-            workspace,
-            Path(intake_binding["path"]),
-            scope_paths=request["paths"],
-            required_lanes=list(REQUIRED_AUDIT_LANES),
-            budgets=request["budget"],
-            mode=requested_autonomy,
-            expires_at=request["valid_until"],
-            binding_sha256=intake_binding["parameter_sha256"],
+        _verify_admission_intake(workspace, intake_binding, request, requested_autonomy)
+
+
+def _verify_admission_intake(
+    workspace: Path,
+    intake_binding: dict[str, Any],
+    request: dict[str, Any],
+    requested_autonomy: str,
+) -> None:
+    """Check the intake digest, lanes, scope, budget, mode, and expiry."""
+    binding = verify_intake_binding(
+        workspace,
+        Path(intake_binding["path"]),
+        scope_paths=request["paths"],
+        required_lanes=list(REQUIRED_AUDIT_LANES),
+        budgets=request["budget"],
+        mode=requested_autonomy,
+        expires_at=request["valid_until"],
+        binding_sha256=intake_binding["parameter_sha256"],
+    )
+    if not binding.get("ok"):
+        first = (
+            binding.get("errors")
+            or [
+                {
+                    "code": "E_INTAKE_PARAMETER_DRIFT",
+                    "detail": "intake binding failed",
+                }
+            ]
+        )[0]
+        raise AdmissionError(
+            str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")),
+            str(first.get("detail", "intake binding failed")),
         )
-        if not binding.get("ok"):
-            first = (
-                binding.get("errors")
-                or [
-                    {
-                        "code": "E_INTAKE_PARAMETER_DRIFT",
-                        "detail": "intake binding failed",
-                    }
-                ]
-            )[0]
-            raise AdmissionError(
-                str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")),
-                str(first.get("detail", "intake binding failed")),
-            )
+
+
+def _oracle_for_admission(
+    workspace: Path,
+    request: dict[str, Any],
+    requested_autonomy: str,
+    license_value: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Verify an optional Oracle contract and require one for licensed autonomy."""
     oracle_value = None
     if request.get("oracle_contract"):
         try:
@@ -520,13 +639,37 @@ def prepare_admission(
             "ORACLE_CONTRACT_REQUIRED",
             "autonomous admission requires a current sealed Oracle Firewall contract",
         )
-    if requested_autonomy == "autonomous":
-        activation = verify_activation_receipt(workspace, require_strict=True)
-        if activation.get("state") != "READY" or activation.get("verified") is not True:
-            raise AdmissionError(
-                "FIRST_LAP_ACTIVATION_REQUIRED",
-                "autonomous admission requires a strict, immutable First Lap activation receipt",
-            )
+    return oracle_value
+
+
+def _activation_for_admission(
+    workspace: Path, requested_autonomy: str
+) -> dict[str, Any] | None:
+    """Require a strict First Lap receipt when the passport permits autonomy."""
+    if requested_autonomy != "autonomous":
+        return None
+    activation = verify_activation_receipt(workspace, require_strict=True)
+    if activation.get("state") != "READY" or activation.get("verified") is not True:
+        raise AdmissionError(
+            "FIRST_LAP_ACTIVATION_REQUIRED",
+            "autonomous admission requires a strict, immutable First Lap activation receipt",
+        )
+    return activation
+
+
+def _seal_admission_packet(
+    workspace: Path,
+    passport_path: Path,
+    passport: dict[str, Any],
+    request: dict[str, Any],
+    snapshot: dict[str, Any],
+    out_dir: Path | None,
+    intake_binding: object,
+    license_value: dict[str, Any] | None,
+    oracle_value: dict[str, Any] | None,
+    activation: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Bind admission evidence into a new immutable local packet."""
     target_dir = _inside(
         workspace,
         Path(out_dir) if out_dir is not None else workspace / ".factory" / "admissions",
@@ -571,7 +714,7 @@ def prepare_admission(
             "requested_autonomy": oracle_value["requested_autonomy"],
             "scope_paths": oracle_value["scope_paths"],
         }
-    if requested_autonomy == "autonomous":
+    if activation is not None:
         core["first_lap_activation"] = {
             "receipt_sha256": activation["receipt_sha256"],
             "path": activation["path"],
@@ -584,6 +727,53 @@ def prepare_admission(
         )
     _atomic_json(path, packet)
     return {**packet, "path": str(path.resolve())}
+
+
+def prepare_admission(
+    root: Path,
+    passport_path: Path,
+    request_path: Path,
+    out_dir: Path | None = None,
+    *,
+    require_intake: bool = False,
+) -> dict[str, Any]:
+    """Seal one admissible external-run proposal without invoking a harness."""
+    workspace = Path(root).resolve()
+    passport_path = _inside(workspace, Path(passport_path))
+    request_path = _inside(workspace, Path(request_path))
+    if not passport_path.is_file() or not request_path.is_file():
+        raise AdmissionError(
+            "ADMISSION_INPUT_UNREADABLE", "passport and request files must exist"
+        )
+    passport = _verified_passport(passport_path)
+    snapshot = graph_ops_snapshot(workspace)
+    if not snapshot.get("complete"):
+        raise AdmissionError(
+            "ADMISSION_GRAPH_INCOMPLETE", "Graph Ops snapshot is incomplete"
+        )
+    request = _validate_request(workspace, _load(request_path), passport)
+    license_value = _agent_license_for_admission(workspace, passport, request)
+    requested_autonomy = str(passport.get("autonomy") or "human_controlled")
+    intake_binding = request.get("intake_parameters")
+    _intake_for_admission(
+        workspace, intake_binding, request, requested_autonomy, require_intake
+    )
+    oracle_value = _oracle_for_admission(
+        workspace, request, requested_autonomy, license_value
+    )
+    activation = _activation_for_admission(workspace, requested_autonomy)
+    return _seal_admission_packet(
+        workspace,
+        passport_path,
+        passport,
+        request,
+        snapshot,
+        out_dir,
+        intake_binding,
+        license_value,
+        oracle_value,
+        activation,
+    )
 
 
 def _packet_valid(payload: dict[str, Any]) -> bool:
@@ -686,21 +876,20 @@ def _intake_binding_is_current(
     return str(first.get("code", "E_INTAKE_PARAMETER_DRIFT"))
 
 
-def verify_admission(root: Path, packet_path: Path) -> dict[str, Any]:
-    """Revalidate a packet immediately before an external harness may consume it."""
-    workspace = Path(root).resolve()
-    packet_path = _inside(workspace, Path(packet_path))
+def _read_admission_packet(packet_path: Path) -> dict[str, Any] | None:
+    """Read a packet when present and syntactically valid."""
     if not packet_path.is_file():
-        return _blocked("packet_unreadable")
+        return None
     try:
-        packet = _load(packet_path)
+        return _load(packet_path)
     except AdmissionError:
-        return _blocked("packet_unreadable")
-    if not _packet_valid(packet):
-        return _blocked("packet_sha256_mismatch")
-    passport_path = _bound_passport_path(workspace, packet)
-    if passport_path is None or not _passport_binding_is_current(passport_path, packet):
-        return _blocked("passport_binding_invalid")
+        return None
+
+
+def _workspace_binding_status(
+    workspace: Path, packet: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Fail closed for incomplete graph evidence and mark changed workspaces stale."""
     snapshot = graph_ops_snapshot(workspace)
     graph_sha256 = snapshot.get("base_graph_sha256", snapshot.get("graph_sha256"))
     if not snapshot.get("complete"):
@@ -716,52 +905,81 @@ def verify_admission(root: Path, packet_path: Path) -> dict[str, Any]:
             "reason": "workspace_or_graph_changed",
             "authority": dict(_AUTHORITY),
         }
-    request_error = _request_binding_is_current(workspace, packet, passport_path)
-    if request_error:
-        return _blocked(request_error)
-    intake_error = _intake_binding_is_current(workspace, packet, passport_path)
-    if intake_error:
-        return _blocked(intake_error)
-    # A packet is only an immutable snapshot if its derived license cap is also
-    # re-derived at consumption time.  Otherwise an agent could keep a packet
-    # after a demotion or a scope reduction and present yesterday's authority.
-    passport = _load(passport_path)
+    return None
+
+
+def _current_license_state(
+    workspace: Path, packet: dict[str, Any], passport: dict[str, Any]
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Re-derive license scope and compare the sealed policy state."""
     stored_license = packet.get("agent_license")
     try:
         current_license = admission_license_decision(
             workspace, passport, packet.get("request", {})
         )
     except AgentLicenseError as exc:
-        return _blocked(exc.code)
+        return None, exc.code
     if isinstance(stored_license, dict):
         if not isinstance(current_license, dict):
-            return _blocked("agent_license_binding_invalid")
+            return current_license, "agent_license_binding_invalid"
         for field in ("tier", "allowed_paths", "expires_at", "identity_provenance"):
             if stored_license.get(field) != current_license.get(field):
-                return _blocked("agent_license_binding_invalid")
+                return current_license, "agent_license_binding_invalid"
         if stored_license.get("state_sha256") != _license_state_sha256(current_license):
-            return _blocked("agent_license_binding_invalid")
+            return current_license, "agent_license_binding_invalid"
+    return current_license, None
+
+
+def _oracle_binding_error(
+    workspace: Path,
+    packet: dict[str, Any],
+    passport: dict[str, Any],
+    current_license: dict[str, Any] | None,
+) -> str | None:
+    """Revalidate autonomous Oracle requirements and the sealed contract digest."""
     oracle = packet.get("oracle")
     requested_autonomy = str(passport.get("autonomy") or "human_controlled")
-    if (
+    if _oracle_contract_required(requested_autonomy, current_license, oracle):
+        return "ORACLE_CONTRACT_REQUIRED"
+    if isinstance(oracle, dict):
+        return _verify_oracle_packet_contract(workspace, packet, oracle)
+    return None
+
+
+def _oracle_contract_required(
+    requested_autonomy: str,
+    current_license: dict[str, Any] | None,
+    oracle: object,
+) -> bool:
+    """Determine whether an autonomous license requires a sealed Oracle contract."""
+    return (
         requested_autonomy == "autonomous"
         and isinstance(current_license, dict)
         and current_license.get("tier") == "autonomous"
         and not isinstance(oracle, dict)
-    ):
-        return _blocked("ORACLE_CONTRACT_REQUIRED")
-    if isinstance(oracle, dict):
-        try:
-            decision = admission_oracle_decision(
-                workspace,
-                Path(str(oracle.get("contract_path") or "")),
-                str(oracle.get("requested_autonomy") or "human_controlled"),
-                packet.get("request", {}).get("paths", []),
-            )
-            if decision.get("contract_sha256") != oracle.get("contract_sha256"):
-                return _blocked("oracle_contract_sha256_mismatch")
-        except (OracleFirewallError, TypeError, ValueError) as exc:
-            return _blocked(getattr(exc, "code", "oracle_binding_invalid"))
+    )
+
+
+def _verify_oracle_packet_contract(
+    workspace: Path, packet: dict[str, Any], oracle: dict[str, Any]
+) -> str | None:
+    """Re-run Oracle policy and compare the result with its sealed digest."""
+    try:
+        decision = admission_oracle_decision(
+            workspace,
+            Path(str(oracle.get("contract_path") or "")),
+            str(oracle.get("requested_autonomy") or "human_controlled"),
+            packet.get("request", {}).get("paths", []),
+        )
+    except (OracleFirewallError, TypeError, ValueError) as exc:
+        return getattr(exc, "code", "oracle_binding_invalid")
+    if decision.get("contract_sha256") != oracle.get("contract_sha256"):
+        return "oracle_contract_sha256_mismatch"
+    return None
+
+
+def _ready_admission_result(packet: dict[str, Any]) -> dict[str, Any]:
+    """Build the authority-free READY projection and optional checkpoint binding."""
     result = {
         "schema": ADMISSION_PACKET_SCHEMA,
         "verdict": "READY",
@@ -780,3 +998,37 @@ def verify_admission(root: Path, packet_path: Path) -> dict[str, Any]:
             "authority": "none",
         }
     return result
+
+
+def verify_admission(root: Path, packet_path: Path) -> dict[str, Any]:
+    """Revalidate a packet immediately before an external harness may consume it."""
+    workspace = Path(root).resolve()
+    packet_path = _inside(workspace, Path(packet_path))
+    packet = _read_admission_packet(packet_path)
+    if packet is None:
+        return _blocked("packet_unreadable")
+    if not _packet_valid(packet):
+        return _blocked("packet_sha256_mismatch")
+    passport_path = _bound_passport_path(workspace, packet)
+    if passport_path is None or not _passport_binding_is_current(passport_path, packet):
+        return _blocked("passport_binding_invalid")
+    workspace_status = _workspace_binding_status(workspace, packet)
+    if workspace_status is not None:
+        return workspace_status
+    request_error = _request_binding_is_current(workspace, packet, passport_path)
+    if request_error:
+        return _blocked(request_error)
+    intake_error = _intake_binding_is_current(workspace, packet, passport_path)
+    if intake_error:
+        return _blocked(intake_error)
+    # A packet is only an immutable snapshot if its derived license cap is also
+    # re-derived at consumption time.  Otherwise an agent could keep a packet
+    # after a demotion or a scope reduction and present yesterday's authority.
+    passport = _load(passport_path)
+    current_license, license_error = _current_license_state(workspace, packet, passport)
+    if license_error:
+        return _blocked(license_error)
+    oracle_error = _oracle_binding_error(workspace, packet, passport, current_license)
+    if oracle_error:
+        return _blocked(oracle_error)
+    return _ready_admission_result(packet)

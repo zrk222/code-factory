@@ -187,80 +187,10 @@ class Receipt:
     @classmethod
     def from_dict(cls, payload: dict) -> "Receipt":
         """Validate and construct a receipt from its serialized dictionary form."""
-        if not isinstance(payload, dict):
-            raise ValueError("receipt must be an object")
-        required = {"module", "stage", "feature", "ok"}
-        missing = required - payload.keys()
-        if missing:
-            raise ValueError(f"receipt missing required fields: {sorted(missing)}")
-        if not isinstance(payload["module"], str) or not payload["module"].strip():
-            raise ValueError("receipt module must be a non-empty string")
-        if not isinstance(payload["stage"], str) or not payload["stage"].strip():
-            raise ValueError("receipt stage must be a non-empty string")
-        if not isinstance(payload["feature"], str) or not payload["feature"].strip():
-            raise ValueError("receipt feature must be a non-empty string")
-        # Do not coerce truthy strings such as "false".  Receipts are evidence
-        # envelopes, so an ambiguous result must be rejected rather than
-        # interpreted as a passing stage.
-        if not isinstance(payload["ok"], bool):
-            raise ValueError("receipt ok must be a boolean")
-        # A receipt is an evidence envelope, not an arbitrary JSON object.
-        # Accepting unknown schemas or silently inventing run/timestamp data
-        # lets stale or forged files enter a readiness decision.  Migration of
-        # old v1 envelopes belongs in ``enterprise_receipts``; the assembly
-        # line consumes only the current, explicit protocol.
-        if payload.get("schema") != RECEIPT_SCHEMA:
-            raise ValueError(f"receipt schema must be {RECEIPT_SCHEMA}")
-        for field_name in ("tenant_id", "run_id"):
-            value = payload.get(field_name)
-            if (
-                not isinstance(value, str)
-                or not value.strip()
-                or len(value.strip()) > 256
-            ):
-                raise ValueError(
-                    f"receipt {field_name} must be a non-empty bounded string"
-                )
-        producer_version = payload.get("producer_version")
-        if producer_version is not None and (
-            not isinstance(producer_version, str) or len(producer_version.strip()) > 128
-        ):
-            raise ValueError("receipt producer_version must be a bounded string")
-        for field_name in ("inputs", "outputs"):
-            value = payload.get(field_name)
-            if not isinstance(value, dict):
-                raise ValueError(f"receipt {field_name} must be an object")
-        attribution = payload.get("attribution")
-        if attribution is not None:
-            from .attribution import Attribution
-
-            Attribution.from_dict(attribution)
-        meter = payload.get("meter", {})
-        if not isinstance(meter, dict) or set(meter) - {
-            "wall_ms",
-            "model_calls",
-            "tokens_in",
-            "tokens_out",
-        }:
-            raise ValueError("receipt meter must contain only known counters")
-        counters: dict[str, int] = {}
-        for name in ("wall_ms", "model_calls", "tokens_in", "tokens_out"):
-            value = meter.get(name, 0)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(f"receipt meter {name} must be a non-negative integer")
-            counters[name] = value
-        meter = Meter(**counters)
-        timestamp = payload.get("ts")
-        if (
-            not isinstance(timestamp, str)
-            or not timestamp.strip()
-            or len(timestamp) > 128
-        ):
-            raise ValueError("receipt ts must be a bounded ISO-8601 string")
-        try:
-            _dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValueError("receipt ts must be a valid ISO-8601 timestamp") from exc
+        _validate_receipt_payload(payload)
+        producer_version = _validate_receipt_metadata(payload)
+        meter = _meter_from_payload(payload)
+        timestamp = _timestamp_from_payload(payload)
         return cls(
             module=payload["module"].strip(),
             stage=payload["stage"].strip(),
@@ -268,16 +198,125 @@ class Receipt:
             ok=payload["ok"],
             tenant_id=payload["tenant_id"].strip(),
             schema=payload["schema"],
-            producer_version=producer_version.strip()
-            if isinstance(producer_version, str)
-            else producer_version,
+            producer_version=producer_version,
             run_id=payload["run_id"].strip(),
             inputs=payload["inputs"],
             outputs=payload["outputs"],
             meter=meter,
-            attribution=attribution,
-            ts=timestamp.strip(),
+            attribution=payload.get("attribution"),
+            ts=timestamp,
         )
+
+
+def _validate_receipt_payload(payload: dict) -> None:
+    """Validate required receipt fields and their non-empty identity values."""
+    if not isinstance(payload, dict):
+        raise ValueError("receipt must be an object")
+    required = {"module", "stage", "feature", "ok"}
+    missing = required - payload.keys()
+    if missing:
+        raise ValueError(f"receipt missing required fields: {sorted(missing)}")
+    _validate_receipt_identity(payload)
+    _validate_receipt_result(payload)
+
+
+def _validate_receipt_identity(payload: dict) -> None:
+    """Require non-empty module, stage, and feature identifiers."""
+    for field_name in ("module", "stage", "feature"):
+        value = payload[field_name]
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"receipt {field_name} must be a non-empty string")
+
+
+def _validate_receipt_result(payload: dict) -> None:
+    """Require an explicit boolean result and the current receipt schema."""
+    # Do not coerce truthy strings such as "false".  Receipts are evidence
+    # envelopes, so an ambiguous result must be rejected rather than
+    # interpreted as a passing stage.
+    if not isinstance(payload["ok"], bool):
+        raise ValueError("receipt ok must be a boolean")
+    # A receipt is an evidence envelope, not an arbitrary JSON object.
+    # Accepting unknown schemas or silently inventing run/timestamp data
+    # lets stale or forged files enter a readiness decision.  Migration of
+    # old v1 envelopes belongs in ``enterprise_receipts``; the assembly
+    # line consumes only the current, explicit protocol.
+    if payload.get("schema") != RECEIPT_SCHEMA:
+        raise ValueError(f"receipt schema must be {RECEIPT_SCHEMA}")
+
+
+def _validate_receipt_metadata(payload: dict) -> str | None:
+    """Validate bounded metadata and return the normalized producer version."""
+    _validate_receipt_ids(payload)
+    producer_version = _producer_version(payload)
+    _validate_receipt_objects(payload)
+    _validate_receipt_attribution(payload)
+    return producer_version
+
+
+def _validate_receipt_ids(payload: dict) -> None:
+    """Require non-empty, bounded tenant and run identifiers."""
+    for field_name in ("tenant_id", "run_id"):
+        value = payload.get(field_name)
+        if not isinstance(value, str) or not value.strip() or len(value.strip()) > 256:
+            raise ValueError(f"receipt {field_name} must be a non-empty bounded string")
+
+
+def _producer_version(payload: dict) -> str | None:
+    """Validate the optional bounded producer version."""
+    producer_version = payload.get("producer_version")
+    if producer_version is not None and (
+        not isinstance(producer_version, str) or len(producer_version.strip()) > 128
+    ):
+        raise ValueError("receipt producer_version must be a bounded string")
+    return producer_version.strip() if isinstance(producer_version, str) else None
+
+
+def _validate_receipt_objects(payload: dict) -> None:
+    """Require receipt inputs and outputs to be JSON objects."""
+    for field_name in ("inputs", "outputs"):
+        value = payload.get(field_name)
+        if not isinstance(value, dict):
+            raise ValueError(f"receipt {field_name} must be an object")
+
+
+def _validate_receipt_attribution(payload: dict) -> None:
+    """Validate optional failure attribution with its owning schema."""
+    attribution = payload.get("attribution")
+    if attribution is not None:
+        from .attribution import Attribution
+
+        Attribution.from_dict(attribution)
+
+
+def _meter_from_payload(payload: dict) -> Meter:
+    """Validate serialized usage counters and produce their typed meter."""
+    meter = payload.get("meter", {})
+    if not isinstance(meter, dict) or set(meter) - {
+        "wall_ms",
+        "model_calls",
+        "tokens_in",
+        "tokens_out",
+    }:
+        raise ValueError("receipt meter must contain only known counters")
+    counters: dict[str, int] = {}
+    for name in ("wall_ms", "model_calls", "tokens_in", "tokens_out"):
+        value = meter.get(name, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"receipt meter {name} must be a non-negative integer")
+        counters[name] = value
+    return Meter(**counters)
+
+
+def _timestamp_from_payload(payload: dict) -> str:
+    """Validate and normalize the receipt's explicit ISO-8601 timestamp."""
+    timestamp = payload.get("ts")
+    if not isinstance(timestamp, str) or not timestamp.strip() or len(timestamp) > 128:
+        raise ValueError("receipt ts must be a bounded ISO-8601 string")
+    try:
+        _dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("receipt ts must be a valid ISO-8601 timestamp") from exc
+    return timestamp.strip()
 
 
 def ensure_layout(root: Path) -> None:
