@@ -226,6 +226,8 @@ def test_automatic_update_check_is_limited_to_successful_human_cli_runs():
     )
     for argv, environment, input_stream, error_stream in (
         (["audit", "--json"], {}, tty, tty),
+        (["version"], {}, tty, tty),
+        (["studio"], {}, tty, tty),
         (["mcp", "serve"], {}, tty, tty),
         (["audit"], {"CI": "true"}, tty, tty),
         (["audit"], {"FACTORY_DISABLE_UPDATE_CHECK": "1"}, tty, tty),
@@ -258,6 +260,11 @@ def test_automatic_notice_prints_to_stderr_and_never_runs_on_failure(monkeypatch
     )
     monkeypatch.setattr(
         "factoryline.update_check.render", lambda result: "UPDATE NOTICE"
+    )
+    # This test covers output behavior; CI suppression is covered separately.
+    # GitHub Actions sets CI/GITHUB_ACTIONS, which must not affect this seam.
+    monkeypatch.setattr(
+        "factoryline.cli._interactive_update_check_allowed", lambda *_args: True
     )
     monkeypatch.setattr("factoryline.cli.sys.stderr", output)
     monkeypatch.setattr("factoryline.cli.sys.stdin", TTYBuffer())

@@ -4767,7 +4767,15 @@ def _interactive_update_check_allowed(
         value in {"--json", "--version", "-h", "--help"} for value in values
     ):
         return False
-    if values[0] in {"update", "update-check", "mcp", "hosted", "serve"}:
+    if values[0] in {
+        "update",
+        "update-check",
+        "version",
+        "mcp",
+        "hosted",
+        "serve",
+        "studio",
+    }:
         return False
     try:
         return bool(input_stream.isatty() and error_stream.isatty())
