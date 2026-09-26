@@ -171,9 +171,27 @@ def _build_binding(payload: dict[str, Any], manifest: dict[str, Any]) -> dict[st
     return result
 
 
-def _normalize_billing_event(
-    raw: object, product_map: dict[str, dict[str, Any]]
-) -> dict[str, Any]:
+def _valid_billing_identity(
+    provider: str,
+    event_type: str,
+    transaction_id: str,
+    product_id: str,
+    event_id: str,
+) -> bool:
+    """Check the five required billing identity fields together."""
+    return bool(
+        provider in {"app_store", "play_store", "server"}
+        and event_type in EVENT_TYPES
+        and transaction_id
+        and product_id
+        and event_id
+    )
+
+
+def _billing_event_identity(
+    raw: Any, product_map: dict[str, dict[str, Any]]
+) -> tuple[str, str, str, str, str]:
+    """Validate provider, event identity, and declared product binding."""
     if not isinstance(raw, dict):
         raise RevenueForgeError(
             "REVENUEFORGE_BILLING_INVALID", "each billing event must be an object"
@@ -183,12 +201,8 @@ def _normalize_billing_event(
     transaction_id = str(raw.get("transaction_id") or "").strip()
     product_id = str(raw.get("product_id") or "").strip()
     event_id = str(raw.get("event_id") or raw.get("id") or "").strip()
-    if (
-        provider not in {"app_store", "play_store", "server"}
-        or event_type not in EVENT_TYPES
-        or not transaction_id
-        or not product_id
-        or not event_id
+    if not _valid_billing_identity(
+        provider, event_type, transaction_id, product_id, event_id
     ):
         raise RevenueForgeError(
             "REVENUEFORGE_BILLING_INVALID",
@@ -199,6 +213,11 @@ def _normalize_billing_event(
             "REVENUEFORGE_BILLING_PRODUCT_UNDECLARED",
             f"product is not declared: {product_id}",
         )
+    return provider, event_type, transaction_id, product_id, event_id
+
+
+def _billing_verified(raw: dict[str, Any], event_type: str) -> bool:
+    """Require cryptographic verification for entitlement-changing events."""
     verified = raw.get("verified")
     if event_type in VERIFIED_EVENTS and verified is not True:
         raise RevenueForgeError(
@@ -209,7 +228,15 @@ def _normalize_billing_event(
         raise RevenueForgeError(
             "REVENUEFORGE_BILLING_UNVERIFIED", "verified must be a boolean"
         )
-    occurred_at = _iso(raw.get("occurred_at"), "occurred_at")
+    return verified
+
+
+def _billing_entitlement(
+    raw: dict[str, Any],
+    product_id: str,
+    product_map: dict[str, dict[str, Any]],
+) -> str:
+    """Reject an entitlement absent from the declared product manifest."""
     entitlement = str(raw.get("entitlement") or "").strip()
     entitlements = set(product_map[product_id]["entitlements"])
     if entitlement and entitlement not in entitlements:
@@ -217,6 +244,18 @@ def _normalize_billing_event(
             "REVENUEFORGE_BILLING_ENTITLEMENT_INVALID",
             f"entitlement is not declared for {product_id}: {entitlement}",
         )
+    return entitlement
+
+
+def _normalize_billing_event(
+    raw: object, product_map: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    provider, event_type, transaction_id, product_id, event_id = (
+        _billing_event_identity(raw, product_map)
+    )
+    verified = _billing_verified(raw, event_type)
+    occurred_at = _iso(raw.get("occurred_at"), "occurred_at")
+    entitlement = _billing_entitlement(raw, product_id, product_map)
     identity = f"{provider}\0{transaction_id}\0{occurred_at}"
     idempotency_key = _sha(identity)
     return {
@@ -389,6 +428,19 @@ def _contains_forbidden(value: object) -> bool:
     return False
 
 
+def _validate_approval_identity(approver: str, proposed_by: str, digest: str) -> None:
+    """Enforce independent approval and a canonical approval digest."""
+    if (
+        not approver
+        or approver == proposed_by
+        or not re.fullmatch(r"[0-9a-f]{64}", digest)
+    ):
+        raise RevenueForgeError(
+            "REVENUEFORGE_EXPERIMENT_SOD_VIOLATION",
+            "approver must be distinct and approval_sha256 must be 64 hex characters",
+        )
+
+
 def _experiment_approval(
     raw: object, experiment_id: str, proposed_by: str
 ) -> dict[str, str] | None:
@@ -402,15 +454,7 @@ def _experiment_approval(
     approver = str(raw.get("approved_by") or "").strip()
     approved_at = _iso(raw.get("approved_at"), "approval.approved_at")
     digest = str(raw.get("approval_sha256") or "").strip().lower()
-    if (
-        not approver
-        or approver == proposed_by
-        or not re.fullmatch(r"[0-9a-f]{64}", digest)
-    ):
-        raise RevenueForgeError(
-            "REVENUEFORGE_EXPERIMENT_SOD_VIOLATION",
-            "approver must be distinct and approval_sha256 must be 64 hex characters",
-        )
+    _validate_approval_identity(approver, proposed_by, digest)
     expected = _sha(
         {
             "experiment_id": experiment_id,
@@ -431,16 +475,25 @@ def _experiment_approval(
     }
 
 
-def plan_revenue_experiment(
-    root: Path | str,
-    products_path: Path | str,
-    experiment_path: Path | str,
-    out: Path | str,
-) -> dict[str, Any]:
-    """Compile a guarded experiment plan without starting or promoting it."""
-    workspace = Path(root).resolve()
-    manifest = validate_products(workspace, Path(products_path))["manifest"]
-    raw, source = _read_json(workspace, Path(experiment_path))
+def _valid_experiment_fields(
+    experiment_id: str,
+    proposed_by: str,
+    hypothesis: str,
+    primary_metric: str,
+    provenance: str,
+) -> bool:
+    """Check all required hypothesis and provenance fields together."""
+    return bool(
+        experiment_id
+        and proposed_by
+        and hypothesis
+        and primary_metric in METRICS
+        and provenance in PROVENANCE
+    )
+
+
+def _experiment_identity(raw: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    """Validate a plan's identity and refuse price, winner, and dark-pattern claims."""
     forbidden_authority = {
         "price",
         "price_change",
@@ -459,12 +512,8 @@ def plan_revenue_experiment(
     hypothesis = str(raw.get("hypothesis") or "").strip()
     primary_metric = str(raw.get("primary_metric") or "").strip()
     provenance = str(raw.get("provenance") or "agent_proposed").strip()
-    if (
-        not experiment_id
-        or not proposed_by
-        or not hypothesis
-        or primary_metric not in METRICS
-        or provenance not in PROVENANCE
+    if not _valid_experiment_fields(
+        experiment_id, proposed_by, hypothesis, primary_metric, provenance
     ):
         raise RevenueForgeError(
             "REVENUEFORGE_EXPERIMENT_INVALID",
@@ -475,83 +524,120 @@ def plan_revenue_experiment(
             "REVENUEFORGE_DARK_PATTERN_REJECTED",
             "experiment content contains a forbidden paywall pattern",
         )
+    return experiment_id, proposed_by, hypothesis, primary_metric, provenance
+
+
+def _valid_treatment_fields(
+    treatment_id: str,
+    role: str,
+    ids: Any,
+    product_ids: set[str],
+    seen: set[str],
+) -> bool:
+    """Require a unique id, supported role, and declared product ids."""
+    return bool(
+        treatment_id
+        and treatment_id not in seen
+        and role in {"control", "variant"}
+        and isinstance(ids, list)
+        and ids
+        and set(ids).issubset(product_ids)
+    )
+
+
+def _normalize_treatment(
+    treatment: Any, product_ids: set[str], seen: set[str], roles: Counter[str]
+) -> dict[str, Any]:
+    """Validate one declared variant and update its identity and role counts."""
+    if not isinstance(treatment, dict):
+        raise RevenueForgeError(
+            "REVENUEFORGE_EXPERIMENT_INVALID", "each treatment must be an object"
+        )
+    treatment_id = str(treatment.get("id") or "").strip()
+    role = str(treatment.get("role") or "").strip().lower()
+    ids = treatment.get("product_ids", [])
+    if not _valid_treatment_fields(treatment_id, role, ids, product_ids, seen):
+        raise RevenueForgeError(
+            "REVENUEFORGE_EXPERIMENT_INVALID",
+            "treatments need unique ids, one control/variant role, and declared product_ids",
+        )
+    seen.add(treatment_id)
+    roles[role] += 1
+    return {
+        "id": treatment_id,
+        "role": role,
+        "product_ids": sorted(set(str(item) for item in ids)),
+        "label": str(treatment.get("label") or treatment_id).strip()[:200],
+    }
+
+
+def _experiment_treatments(
+    raw: dict[str, Any], manifest: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Require two or three variants, exactly one control, and declared products."""
     treatments = raw.get("treatments")
     if not isinstance(treatments, list) or not 2 <= len(treatments) <= MAX_TREATMENTS:
         raise RevenueForgeError(
             "REVENUEFORGE_EXPERIMENT_INVALID", "treatments must contain 2-3 variants"
         )
     product_ids = {item["id"] for item in manifest["products"]}
-    normalized_treatments: list[dict[str, Any]] = []
-    treatment_ids: set[str] = set()
+    seen: set[str] = set()
     roles: Counter[str] = Counter()
-    for treatment in treatments:
-        if not isinstance(treatment, dict):
-            raise RevenueForgeError(
-                "REVENUEFORGE_EXPERIMENT_INVALID", "each treatment must be an object"
-            )
-        treatment_id = str(treatment.get("id") or "").strip()
-        role = str(treatment.get("role") or "").strip().lower()
-        ids = treatment.get("product_ids", [])
-        if (
-            not treatment_id
-            or treatment_id in treatment_ids
-            or role not in {"control", "variant"}
-            or not isinstance(ids, list)
-            or not ids
-            or not set(ids).issubset(product_ids)
-        ):
-            raise RevenueForgeError(
-                "REVENUEFORGE_EXPERIMENT_INVALID",
-                "treatments need unique ids, one control/variant role, and declared product_ids",
-            )
-        treatment_ids.add(treatment_id)
-        roles[role] += 1
-        normalized_treatments.append(
-            {
-                "id": treatment_id,
-                "role": role,
-                "product_ids": sorted(set(str(item) for item in ids)),
-                "label": str(treatment.get("label") or treatment_id).strip()[:200],
-            }
-        )
+    normalized = [
+        _normalize_treatment(treatment, product_ids, seen, roles)
+        for treatment in treatments
+    ]
     if roles["control"] != 1 or roles["variant"] < 1:
         raise RevenueForgeError(
             "REVENUEFORGE_EXPERIMENT_INVALID",
             "exactly one control and at least one variant are required",
         )
+    return sorted(normalized, key=lambda item: item["id"])
+
+
+def _normalize_guardrail(guardrail: Any) -> dict[str, Any]:
+    """Validate a supported metric, comparison operator, and finite threshold."""
+    if (
+        not isinstance(guardrail, dict)
+        or str(guardrail.get("metric") or "") not in METRICS
+        or str(guardrail.get("operator") or "") not in OPERATORS
+    ):
+        raise RevenueForgeError(
+            "REVENUEFORGE_EXPERIMENT_INVALID",
+            "guardrails need supported metric and operator",
+        )
+    threshold = guardrail.get("threshold")
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or not math.isfinite(float(threshold))
+    ):
+        raise RevenueForgeError(
+            "REVENUEFORGE_EXPERIMENT_INVALID",
+            "guardrail threshold must be finite numeric",
+        )
+    return {
+        "metric": str(guardrail["metric"]),
+        "operator": str(guardrail["operator"]),
+        "threshold": float(threshold),
+    }
+
+
+def _experiment_guardrails(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize one to eight numeric guardrails in deterministic order."""
     guardrails = raw.get("guardrails")
     if not isinstance(guardrails, list) or not 1 <= len(guardrails) <= MAX_GUARDRAILS:
         raise RevenueForgeError(
             "REVENUEFORGE_EXPERIMENT_INVALID", "1-8 numeric guardrails are required"
         )
-    normalized_guardrails: list[dict[str, Any]] = []
-    for guardrail in guardrails:
-        if (
-            not isinstance(guardrail, dict)
-            or str(guardrail.get("metric") or "") not in METRICS
-            or str(guardrail.get("operator") or "") not in OPERATORS
-        ):
-            raise RevenueForgeError(
-                "REVENUEFORGE_EXPERIMENT_INVALID",
-                "guardrails need supported metric and operator",
-            )
-        threshold = guardrail.get("threshold")
-        if (
-            isinstance(threshold, bool)
-            or not isinstance(threshold, (int, float))
-            or not math.isfinite(float(threshold))
-        ):
-            raise RevenueForgeError(
-                "REVENUEFORGE_EXPERIMENT_INVALID",
-                "guardrail threshold must be finite numeric",
-            )
-        normalized_guardrails.append(
-            {
-                "metric": str(guardrail["metric"]),
-                "operator": str(guardrail["operator"]),
-                "threshold": float(threshold),
-            }
-        )
+    return sorted(
+        (_normalize_guardrail(item) for item in guardrails),
+        key=lambda item: (item["metric"], item["operator"], item["threshold"]),
+    )
+
+
+def _experiment_cohort(raw: dict[str, Any]) -> dict[str, Any]:
+    """Require a named cohort with allocation between one and 100 percent."""
     cohort = raw.get("cohort")
     if (
         not isinstance(cohort, dict)
@@ -564,6 +650,14 @@ def plan_revenue_experiment(
             "REVENUEFORGE_EXPERIMENT_INVALID",
             "cohort name and allocation_percent 1-100 are required",
         )
+    return {
+        "name": str(cohort["name"]).strip(),
+        "allocation_percent": float(cohort["allocation_percent"]),
+    }
+
+
+def _experiment_window(raw: dict[str, Any]) -> tuple[int, int]:
+    """Validate the bounded runtime window and minimum sample size."""
     window_days = raw.get("window_days")
     sample_size = raw.get("minimum_sample_size")
     if (
@@ -578,6 +672,26 @@ def plan_revenue_experiment(
             "REVENUEFORGE_EXPERIMENT_INVALID",
             "window_days must be 1-90 and minimum_sample_size must be 20-1000000",
         )
+    return window_days, sample_size
+
+
+def plan_revenue_experiment(
+    root: Path | str,
+    products_path: Path | str,
+    experiment_path: Path | str,
+    out: Path | str,
+) -> dict[str, Any]:
+    """Compile a guarded experiment plan without starting or promoting it."""
+    workspace = Path(root).resolve()
+    manifest = validate_products(workspace, Path(products_path))["manifest"]
+    raw, source = _read_json(workspace, Path(experiment_path))
+    experiment_id, proposed_by, hypothesis, primary_metric, provenance = (
+        _experiment_identity(raw)
+    )
+    normalized_treatments = _experiment_treatments(raw, manifest)
+    normalized_guardrails = _experiment_guardrails(raw)
+    cohort = _experiment_cohort(raw)
+    window_days, sample_size = _experiment_window(raw)
     approval = _experiment_approval(raw.get("approval"), experiment_id, proposed_by)
     normalized = {
         "schema": EXPERIMENT_SCHEMA,
@@ -588,15 +702,9 @@ def plan_revenue_experiment(
         "provenance": provenance,
         "hypothesis": hypothesis,
         "primary_metric": primary_metric,
-        "treatments": sorted(normalized_treatments, key=lambda item: item["id"]),
-        "guardrails": sorted(
-            normalized_guardrails,
-            key=lambda item: (item["metric"], item["operator"], item["threshold"]),
-        ),
-        "cohort": {
-            "name": str(cohort["name"]).strip(),
-            "allocation_percent": float(cohort["allocation_percent"]),
-        },
+        "treatments": normalized_treatments,
+        "guardrails": normalized_guardrails,
+        "cohort": cohort,
         "window_days": window_days,
         "minimum_sample_size": sample_size,
         "approval": approval,
@@ -629,28 +737,13 @@ def _verify_sealed(root: Path, path: Path, schema: str) -> tuple[dict[str, Any],
     return payload, _sha_bytes(source.read_bytes())
 
 
-def evaluate_revenue_integrity(
-    root: Path | str,
-    products_path: Path | str,
-    ledger_path: Path | str,
-    experiment_path: Path | str | None = None,
-    baseline_path: Path | str | None = None,
-    out: Path | str = ".factory/revenueforge/default/integrity.json",
-) -> dict[str, Any]:
-    """Evaluate manifest, billing, experiment, and baseline integrity without provider actions."""
-    workspace = Path(root).resolve()
-    manifest = validate_products(workspace, Path(products_path))["manifest"]
-    ledger, ledger_file_sha = _verify_sealed(
-        workspace, Path(ledger_path), LEDGER_SCHEMA
-    )
-    findings: list[dict[str, Any]] = []
-    controls = [
-        {
-            "id": "revenue.manifest",
-            "status": "PASSED",
-            "reason": "current manifest validated",
-        }
-    ]
+def _integrity_ledger_control(
+    manifest: dict[str, Any],
+    ledger: dict[str, Any],
+    findings: list[dict[str, Any]],
+    controls: list[dict[str, Any]],
+) -> None:
+    """Bind billing evidence to the current manifest and surface conflicts."""
     if ledger.get("manifest_sha256") != manifest["manifest_sha256"]:
         findings.append(
             {
@@ -678,29 +771,16 @@ def evaluate_revenue_integrity(
             "receipt_sha256": ledger.get("receipt_sha256"),
         }
     )
-    experiment = None
-    experiment_file_sha = None
-    if experiment_path is not None:
-        experiment, experiment_file_sha = _verify_sealed(
-            workspace, Path(experiment_path), EXPERIMENT_SCHEMA
-        )
-        if experiment.get("status") == "AWAITING_HUMAN_APPROVAL":
-            findings.append(
-                {
-                    "code": "E_EXPERIMENT_APPROVAL_REQUIRED",
-                    "message": "experiment plan is not independently approved",
-                }
-            )
-        controls.append(
-            {
-                "id": "revenue.experiment.guardrails",
-                "status": "PASSED"
-                if experiment.get("status") == "READY_FOR_HUMAN_START"
-                else "BLOCKED",
-                "receipt_sha256": experiment.get("receipt_sha256"),
-            }
-        )
-    else:
+
+
+def _integrity_experiment_control(
+    workspace: Path,
+    experiment_path: Path | str | None,
+    findings: list[dict[str, Any]],
+    controls: list[dict[str, Any]],
+) -> str | None:
+    """Verify an optional experiment receipt or mark the lane advisory."""
+    if experiment_path is None:
         controls.append(
             {
                 "id": "revenue.experiment.guardrails",
@@ -708,41 +788,96 @@ def evaluate_revenue_integrity(
                 "reason": "no experiment plan supplied",
             }
         )
-    if baseline_path is not None:
-        baseline_raw, _ = _read_json(workspace, Path(baseline_path))
-        baseline_hash = str(
-            baseline_raw.get("manifest_sha256")
-            if isinstance(baseline_raw, dict)
-            else baseline_raw
-        ).strip()
-        if baseline_hash and baseline_hash != manifest["manifest_sha256"]:
-            findings.append(
-                {
-                    "code": "E_MANIFEST_DRIFT",
-                    "message": "current manifest differs from the approved baseline",
-                    "expected": baseline_hash,
-                    "actual": manifest["manifest_sha256"],
-                }
-            )
-    blocked = bool(findings)
-    next_action = (
-        "human_manifest_reassessment"
-        if any(item["code"] == "E_MANIFEST_DRIFT" for item in findings)
-        else (
-            "review_billing_conflict"
-            if any(
-                item["code"] == "E_BILLING_RECONCILIATION_BLOCKED" for item in findings
-            )
-            else (
-                "obtain_independent_human_approval"
-                if any(
-                    item["code"] == "E_EXPERIMENT_APPROVAL_REQUIRED"
-                    for item in findings
-                )
-                else "human_release_review"
-            )
-        )
+        return None
+    experiment, file_sha = _verify_sealed(
+        workspace, Path(experiment_path), EXPERIMENT_SCHEMA
     )
+    if experiment.get("status") == "AWAITING_HUMAN_APPROVAL":
+        findings.append(
+            {
+                "code": "E_EXPERIMENT_APPROVAL_REQUIRED",
+                "message": "experiment plan is not independently approved",
+            }
+        )
+    controls.append(
+        {
+            "id": "revenue.experiment.guardrails",
+            "status": "PASSED"
+            if experiment.get("status") == "READY_FOR_HUMAN_START"
+            else "BLOCKED",
+            "receipt_sha256": experiment.get("receipt_sha256"),
+        }
+    )
+    return file_sha
+
+
+def _integrity_baseline_findings(
+    workspace: Path,
+    baseline_path: Path | str | None,
+    manifest: dict[str, Any],
+    findings: list[dict[str, Any]],
+) -> None:
+    """Compare a supplied approved baseline to the current manifest hash."""
+    if baseline_path is None:
+        return
+    baseline_raw, _ = _read_json(workspace, Path(baseline_path))
+    baseline_hash = str(
+        baseline_raw.get("manifest_sha256")
+        if isinstance(baseline_raw, dict)
+        else baseline_raw
+    ).strip()
+    if baseline_hash and baseline_hash != manifest["manifest_sha256"]:
+        findings.append(
+            {
+                "code": "E_MANIFEST_DRIFT",
+                "message": "current manifest differs from the approved baseline",
+                "expected": baseline_hash,
+                "actual": manifest["manifest_sha256"],
+            }
+        )
+
+
+def _integrity_next_action(findings: list[dict[str, Any]]) -> str:
+    """Return the first remediation in established release priority order."""
+    codes = {item["code"] for item in findings}
+    if "E_MANIFEST_DRIFT" in codes:
+        return "human_manifest_reassessment"
+    if "E_BILLING_RECONCILIATION_BLOCKED" in codes:
+        return "review_billing_conflict"
+    if "E_EXPERIMENT_APPROVAL_REQUIRED" in codes:
+        return "obtain_independent_human_approval"
+    return "human_release_review"
+
+
+def evaluate_revenue_integrity(
+    root: Path | str,
+    products_path: Path | str,
+    ledger_path: Path | str,
+    experiment_path: Path | str | None = None,
+    baseline_path: Path | str | None = None,
+    out: Path | str = ".factory/revenueforge/default/integrity.json",
+) -> dict[str, Any]:
+    """Evaluate manifest, billing, experiment, and baseline integrity without provider actions."""
+    workspace = Path(root).resolve()
+    manifest = validate_products(workspace, Path(products_path))["manifest"]
+    ledger, ledger_file_sha = _verify_sealed(
+        workspace, Path(ledger_path), LEDGER_SCHEMA
+    )
+    findings: list[dict[str, Any]] = []
+    controls = [
+        {
+            "id": "revenue.manifest",
+            "status": "PASSED",
+            "reason": "current manifest validated",
+        }
+    ]
+    _integrity_ledger_control(manifest, ledger, findings, controls)
+    experiment_file_sha = _integrity_experiment_control(
+        workspace, experiment_path, findings, controls
+    )
+    _integrity_baseline_findings(workspace, baseline_path, manifest, findings)
+    blocked = bool(findings)
+    next_action = _integrity_next_action(findings)
     result = {
         "schema": INTEGRITY_SCHEMA,
         "marker": "REVENUEFORGE_INTEGRITY_REVIEW_REQUIRED"
