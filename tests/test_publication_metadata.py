@@ -283,7 +283,8 @@ def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
         "needs: [guard, validate_python, validate_vscode, validate_intellij]"
         in workflow
     )
-    assert "ref: ${{ inputs.release_tag }}" in workflow
+    assert "ref: ${{ needs.guard.outputs.candidate_commit }}" in workflow
+    assert 'git merge-base --is-ancestor "$candidate_commit" origin/main' in workflow
     assert "must exist and remain a draft" in workflow
     assert "environment: pypi" in workflow
     assert "id-token: write" in workflow
