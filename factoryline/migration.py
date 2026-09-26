@@ -236,28 +236,44 @@ def _verify_bound_records(values: object, label: str) -> list[str]:
         return [f"{label} records must be a list"]
     errors: list[str] = []
     for index, item in enumerate(values):
-        if not isinstance(item, dict):
-            errors.append(f"{label} record {index} must be an object")
+        shape_error = _bound_record_shape_error(item, label, index)
+        if shape_error is not None:
+            errors.append(shape_error)
             continue
-        raw_path = item.get("path")
-        digest = item.get("sha256")
-        if not isinstance(raw_path, str) or not raw_path.strip():
-            errors.append(f"{label} record {index} path is invalid")
-            continue
-        if (
-            not isinstance(digest, str)
-            or len(digest) != 64
-            or any(char not in "0123456789abcdef" for char in digest)
-        ):
-            errors.append(f"{label} record {index} sha256 is invalid")
-            continue
-        try:
-            path = Path(raw_path).resolve()
-            if not path.is_file() or _sha_path(path) != digest:
-                errors.append(f"{label} drift: {path}")
-        except (OSError, ValueError) as exc:
-            errors.append(f"{label} record {index} is invalid: {exc}")
+        drift_error = _bound_record_drift_error(item, label, index)
+        if drift_error is not None:
+            errors.append(drift_error)
     return errors
+
+
+def _bound_record_shape_error(item: object, label: str, index: int) -> str | None:
+    if not isinstance(item, dict):
+        return f"{label} record {index} must be an object"
+    raw_path = item.get("path")
+    digest = item.get("sha256")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return f"{label} record {index} path is invalid"
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(char not in "0123456789abcdef" for char in digest)
+    ):
+        return f"{label} record {index} sha256 is invalid"
+    return None
+
+
+def _bound_record_drift_error(
+    item: dict[str, Any], label: str, index: int
+) -> str | None:
+    raw_path = item["path"]
+    digest = item["sha256"]
+    try:
+        path = Path(raw_path).resolve()
+        if not path.is_file() or _sha_path(path) != digest:
+            return f"{label} drift: {path}"
+    except (OSError, ValueError) as exc:
+        return f"{label} record {index} is invalid: {exc}"
+    return None
 
 
 def verify_migration_readiness(receipt_path: Path) -> dict[str, Any]:
