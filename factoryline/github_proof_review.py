@@ -96,18 +96,8 @@ def _reject(message: str) -> None:
     raise GitHubProofReviewError("GITHUB_PROOF_REVIEW_INPUT_INVALID", message)
 
 
-def _valid_review(review: object) -> dict[str, Any]:
-    if not isinstance(review, dict) or review.get("schema") != CHANGE_REVIEW_SCHEMA:
-        _reject("a factory.change_review.v1 payload is required")
-    if set(review) - (
-        _REVIEW_CORE_KEYS | _REVIEW_RENDERED_KEYS | _REVIEW_OPTIONAL_CORE_KEYS
-    ):
-        _reject("the change-review payload contains unsupported fields")
-    if not _REVIEW_CORE_KEYS.issubset(review) or not _REVIEW_RENDERED_KEYS - {
-        "artifacts"
-    } <= set(review):
-        _reject("the change-review payload is incomplete")
-    if (
+def _valid_review_paths_and_markers(review: dict[str, Any]) -> bool:
+    return not (
         not isinstance(review["markers"], list)
         or not all(isinstance(marker, str) for marker in review["markers"])
         or "DIFF_TO_PROOF_REVIEW_V1" not in review["markers"]
@@ -117,53 +107,67 @@ def _valid_review(review: object) -> dict[str, Any]:
         )
         or not isinstance(review["changed_paths"], list)
         or not all(isinstance(path, str) and path for path in review["changed_paths"])
-        or any(
-            not isinstance(review[key], dict)
+    )
+
+
+def _valid_review_findings(review: dict[str, Any]) -> bool:
+    return isinstance(review["findings"], list) and not any(
+        not isinstance(finding, dict)
+        or not all(
+            isinstance(finding.get(key), str) for key in ("kind", "severity", "message")
+        )
+        for finding in review["findings"]
+    )
+
+
+def _valid_review_analysis(review: dict[str, Any]) -> bool:
+    return (
+        all(
+            isinstance(review[key], dict)
             for key in ("impact", "coverage", "risk", "next_action")
         )
-        or not all(
+        and all(
             isinstance(review["next_action"].get(key), str)
             for key in ("action", "reason")
         )
-        or not isinstance(review["findings"], list)
-        or any(
-            not isinstance(finding, dict)
-            or not all(
-                isinstance(finding.get(key), str)
-                for key in ("kind", "severity", "message")
-            )
-            for finding in review["findings"]
-        )
-        or not isinstance(review["unproven_claims"], list)
-        or not all(isinstance(claim, str) for claim in review["unproven_claims"])
-        or review["authority"] != CHANGE_REVIEW_AUTHORITY
-        or not isinstance(review["scope_limits"], list)
-        or not all(isinstance(limit, str) for limit in review["scope_limits"])
-    ):
-        _reject(
-            "the change-review payload has an invalid field shape or authority boundary"
-        )
-    core = {key: review[key] for key in _REVIEW_CORE_KEYS}
-    if "code_audits" in review:
-        _valid_code_audits(review["code_audits"])
-        core["code_audits"] = review["code_audits"]
-    expected = _sha(core)
-    if review.get("review_sha256") != expected:
-        _reject("the change-review SHA-256 does not match its canonical facts")
-    return review
+        and _valid_review_findings(review)
+    )
 
 
-def _valid_code_audits(value: object) -> None:
-    if value == {
-        "state": "not_configured",
-        "unconfigured_tools": ["patterns", "guard-paths"],
-    }:
-        return
+def _valid_review_claims_and_limits(review: dict[str, Any]) -> bool:
+    return (
+        isinstance(review["unproven_claims"], list)
+        and all(isinstance(claim, str) for claim in review["unproven_claims"])
+        and review["authority"] == CHANGE_REVIEW_AUTHORITY
+        and isinstance(review["scope_limits"], list)
+        and all(isinstance(limit, str) for limit in review["scope_limits"])
+    )
+
+
+def _valid_code_audit_binding(binding: object) -> bool:
+    return (
+        isinstance(binding, dict)
+        and set(binding) == {"path", "sha256", "bytes"}
+        and isinstance(binding["path"], str)
+        and bool(binding["path"])
+        and isinstance(binding["sha256"], str)
+        and len(binding["sha256"]) == 64
+        and all(char in "0123456789abcdef" for char in binding["sha256"])
+        and isinstance(binding["bytes"], int)
+        and 0 < binding["bytes"] <= 1_000_000
+    )
+
+
+def _audit_record(value: object) -> dict[str, Any]:
     if (
         not isinstance(value, dict)
         or value.get("schema") != "factory.code-review-audits.v1"
     ):
         _reject("the code-audit lane has an invalid schema")
+    return value
+
+
+def _validate_audit_header(value: dict[str, Any]) -> set[str]:
     expected_keys = {
         "schema",
         "tool",
@@ -195,79 +199,149 @@ def _valid_code_audits(value: object) -> None:
     states = {"incomplete", "findings", "no_structural_findings"}
     if not isinstance(value.get("state"), str) or value["state"] not in states:
         _reject("the code-audit lane has an invalid state")
+    return states
 
-    def valid_binding(binding: object) -> bool:
-        return (
-            isinstance(binding, dict)
-            and set(binding) == {"path", "sha256", "bytes"}
-            and isinstance(binding["path"], str)
-            and bool(binding["path"])
-            and isinstance(binding["sha256"], str)
-            and len(binding["sha256"]) == 64
-            and all(char in "0123456789abcdef" for char in binding["sha256"])
-            and isinstance(binding["bytes"], int)
-            and 0 < binding["bytes"] <= 1_000_000
-        )
 
-    if not valid_binding(value.get("policy")):
-        _reject("the code-audit policy binding is invalid")
-    sources = value.get("sources")
+def _validate_audit_sources(value: object) -> list[dict[str, Any]]:
     if (
-        not isinstance(sources, list)
-        or not 1 <= len(sources) <= 64
-        or not all(valid_binding(item) for item in sources)
+        not isinstance(value, list)
+        or not 1 <= len(value) <= 64
+        or not all(_valid_code_audit_binding(item) for item in value)
     ):
         _reject("the code-audit source bindings are invalid")
-    if len({item["path"] for item in sources}) != len(sources):
+    if len({item["path"] for item in value}) != len(value):
         _reject("the code-audit source bindings must be unique")
-    results = value.get("results")
-    if not isinstance(results, list) or not results or len(results) > 128:
+    return value
+
+
+def _valid_audit_result(result: object, states: set[str]) -> bool:
+    return not (
+        not isinstance(result, dict)
+        or not isinstance(result.get("rule_id"), str)
+        or not result["rule_id"]
+        or result.get("tool") not in {"patterns", "guard-paths"}
+        or result.get("state") not in states
+        or not isinstance(result.get("findings"), list)
+    )
+
+
+def _validate_audit_results(value: object, states: set[str]) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not value or len(value) > 128:
         _reject("the code-audit results are missing or exceed the bound")
-    for result in results:
-        if (
-            not isinstance(result, dict)
-            or not isinstance(result.get("rule_id"), str)
-            or not result["rule_id"]
-            or result.get("tool") not in {"patterns", "guard-paths"}
-            or result.get("state") not in states
-            or not isinstance(result.get("findings"), list)
-        ):
+    for result in value:
+        if not _valid_audit_result(result, states):
             _reject("the code-audit result shape is invalid")
-    findings = value.get("findings")
-    if not isinstance(findings, list) or any(
-        not isinstance(item, dict) for item in findings
-    ):
+    return value
+
+
+def _validate_audit_findings(
+    value: object, results: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
         _reject("the code-audit findings are invalid")
     flattened = [item for result in results for item in result["findings"]]
-    if findings != flattened:
+    if value != flattened:
         _reject("the code-audit finding summary does not match inspected results")
-    missing_tools = value.get("unconfigured_tools")
-    if not isinstance(missing_tools, list) or any(
-        item not in {"patterns", "guard-paths"} for item in missing_tools
+    return value
+
+
+def _validate_unconfigured_tools(value: object) -> list[str]:
+    if not isinstance(value, list) or any(
+        item not in {"patterns", "guard-paths"} for item in value
     ):
         _reject("the code-audit unconfigured-tool summary is invalid")
-    limits = value.get("limits")
+    return value
+
+
+def _validate_audit_limits(value: object) -> list[str]:
     if (
-        not isinstance(limits, list)
-        or not limits
-        or not all(isinstance(item, str) and item for item in limits)
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(item, str) and item for item in value)
     ):
         _reject("the code-audit scope limits are invalid")
-    derived_state = (
+    return value
+
+
+def _derived_audit_state(
+    missing_tools: list[str],
+    results: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
+) -> str:
+    return (
         "incomplete"
         if missing_tools or any(result["state"] == "incomplete" for result in results)
         else "findings"
         if findings
         else "no_structural_findings"
     )
+
+
+def _validate_audit_state(value: dict[str, Any], derived_state: str) -> None:
     if value["state"] != derived_state:
         _reject("the code-audit state contradicts its inspected evidence")
+
+
+def _validate_audit_digest(value: dict[str, Any]) -> None:
     core = {key: item for key, item in value.items() if key != "audit_sha256"}
     if (
         value.get("audit_sha256")
         != sha256(json.dumps(core, sort_keys=True).encode()).hexdigest()
     ):
         _reject("the code-audit SHA-256 does not match its facts")
+
+
+def _review_envelope(review: object) -> dict[str, Any]:
+    if not isinstance(review, dict) or review.get("schema") != CHANGE_REVIEW_SCHEMA:
+        _reject("a factory.change_review.v1 payload is required")
+    if set(review) - (
+        _REVIEW_CORE_KEYS | _REVIEW_RENDERED_KEYS | _REVIEW_OPTIONAL_CORE_KEYS
+    ):
+        _reject("the change-review payload contains unsupported fields")
+    if not _REVIEW_CORE_KEYS.issubset(review) or not _REVIEW_RENDERED_KEYS - {
+        "artifacts"
+    } <= set(review):
+        _reject("the change-review payload is incomplete")
+    return review
+
+
+def _valid_review(review: object) -> dict[str, Any]:
+    review = _review_envelope(review)
+    if (
+        not _valid_review_paths_and_markers(review)
+        or not _valid_review_analysis(review)
+        or not _valid_review_claims_and_limits(review)
+    ):
+        _reject(
+            "the change-review payload has an invalid field shape or authority boundary"
+        )
+    core = {key: review[key] for key in _REVIEW_CORE_KEYS}
+    if "code_audits" in review:
+        _valid_code_audits(review["code_audits"])
+        core["code_audits"] = review["code_audits"]
+    expected = _sha(core)
+    if review.get("review_sha256") != expected:
+        _reject("the change-review SHA-256 does not match its canonical facts")
+    return review
+
+
+def _valid_code_audits(value: object) -> None:
+    if value == {
+        "state": "not_configured",
+        "unconfigured_tools": ["patterns", "guard-paths"],
+    }:
+        return
+    audit = _audit_record(value)
+    states = _validate_audit_header(audit)
+    if not _valid_code_audit_binding(audit.get("policy")):
+        _reject("the code-audit policy binding is invalid")
+    _validate_audit_sources(audit.get("sources"))
+    results = _validate_audit_results(audit.get("results"), states)
+    findings = _validate_audit_findings(audit.get("findings"), results)
+    missing_tools = _validate_unconfigured_tools(audit.get("unconfigured_tools"))
+    _validate_audit_limits(audit.get("limits"))
+    _validate_audit_state(audit, _derived_audit_state(missing_tools, results, findings))
+    _validate_audit_digest(audit)
 
 
 def _valid_head_sha(head_sha: str) -> str:

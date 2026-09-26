@@ -55,25 +55,56 @@ def _check(check_id: str, passed: bool, evidence: str) -> dict[str, Any]:
     return {"id": check_id, "passed": passed, "evidence": evidence}
 
 
-def _fan_in_check(workflow: str) -> dict[str, Any]:
-    """Check the reviewed, draft-first publication path and its artifact fan-in."""
+def _mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _sequence(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _checkout_uses_requested_tag(job: Any) -> bool:
+    if not isinstance(job, dict):
+        return False
+    steps = job.get("steps", [])
+    if not isinstance(steps, list):
+        return False
+    return any(
+        isinstance(step, dict)
+        and step.get("uses") == "actions/checkout@v5"
+        and isinstance(step.get("with"), dict)
+        and step["with"].get("ref") == "${{ needs.guard.outputs.candidate_commit }}"
+        for step in steps
+    )
+
+
+def _validator_has_tagged_artifact(job: Any, artifact_name: str) -> bool:
+    if not isinstance(job, dict):
+        return False
+    steps = job.get("steps", [])
+    if not isinstance(steps, list):
+        return False
+    return any(
+        isinstance(step, dict)
+        and step.get("uses") == "actions/upload-artifact@v7.0.1"
+        and isinstance(step.get("with"), dict)
+        and step["with"].get("name") == artifact_name
+        for step in steps
+    )
+
+
+def _fan_in_context(workflow: str) -> dict[str, Any]:
     try:
         document = yaml.load(workflow, Loader=yaml.BaseLoader)
     except yaml.YAMLError:
         document = None
 
-    document = document if isinstance(document, dict) else {}
-    triggers = document.get("on", {})
-    triggers = triggers if isinstance(triggers, dict) else {}
-    dispatch = triggers.get("workflow_dispatch", {})
-    dispatch = dispatch if isinstance(dispatch, dict) else {}
-    inputs = dispatch.get("inputs", {})
-    inputs = inputs if isinstance(inputs, dict) else {}
-    release_tag_input = inputs.get("release_tag", {})
-    release_tag_input = release_tag_input if isinstance(release_tag_input, dict) else {}
-
-    jobs = document.get("jobs", {})
-    jobs = jobs if isinstance(jobs, dict) else {}
+    document = _mapping(document)
+    triggers = _mapping(document.get("on"))
+    dispatch = _mapping(triggers.get("workflow_dispatch"))
+    inputs = _mapping(dispatch.get("inputs"))
+    release_tag_input = _mapping(inputs.get("release_tag"))
+    jobs = _mapping(document.get("jobs"))
     validator_names = ("validate_python", "validate_vscode", "validate_intellij")
     validator_jobs = [jobs.get(name, {}) for name in validator_names]
     artifact_names = (
@@ -82,51 +113,18 @@ def _fan_in_check(workflow: str) -> dict[str, Any]:
         "release-intellij-${{ inputs.release_tag }}",
     )
     publish_job = jobs.get("publish", {})
-    publish_steps = publish_job.get("steps", [])
-    publish_steps = publish_steps if isinstance(publish_steps, list) else []
+    publish_steps = _sequence(publish_job.get("steps", []))
     step_content = [
         step.get("uses", step.get("run", ""))
         for step in publish_steps
         if isinstance(step, dict)
     ]
-
-    def checkout_uses_requested_tag(job: Any) -> bool:
-        if not isinstance(job, dict):
-            return False
-        steps = job.get("steps", [])
-        if not isinstance(steps, list):
-            return False
-        return any(
-            isinstance(step, dict)
-            and step.get("uses") == "actions/checkout@v5"
-            and isinstance(step.get("with"), dict)
-            and step["with"].get("ref") == "${{ needs.guard.outputs.candidate_commit }}"
-            for step in steps
-        )
-
-    def validator_has_tagged_artifact(job: Any, artifact_name: str) -> bool:
-        if not isinstance(job, dict):
-            return False
-        steps = job.get("steps", [])
-        if not isinstance(steps, list):
-            return False
-        return any(
-            isinstance(step, dict)
-            and step.get("uses") == "actions/upload-artifact@v7.0.1"
-            and isinstance(step.get("with"), dict)
-            and step["with"].get("name") == artifact_name
-            for step in steps
-        )
-
     guard = jobs.get("guard", {})
     guard_steps = guard.get("steps", []) if isinstance(guard, dict) else []
     guard_script = "\n".join(
         step.get("run", "") for step in guard_steps if isinstance(step, dict)
     )
-    publish_permissions = publish_job.get("permissions", {})
-    publish_permissions = (
-        publish_permissions if isinstance(publish_permissions, dict) else {}
-    )
+    publish_permissions = _mapping(publish_job.get("permissions", {}))
     publish_environment = publish_job.get("environment", {})
     if isinstance(publish_environment, dict):
         publish_environment = publish_environment.get("name", "")
@@ -154,15 +152,44 @@ def _fan_in_check(workflow: str) -> dict[str, Any]:
         ),
         -1,
     )
+    return {
+        "document": document,
+        "triggers": triggers,
+        "release_tag_input": release_tag_input,
+        "jobs": jobs,
+        "validator_names": validator_names,
+        "validator_jobs": validator_jobs,
+        "artifact_names": artifact_names,
+        "publish_job": publish_job,
+        "publish_steps": publish_steps,
+        "guard": guard,
+        "guard_script": guard_script,
+        "publish_permissions": publish_permissions,
+        "publish_environment": publish_environment,
+        "downloaded_artifacts": downloaded_artifacts,
+        "pypi_position": pypi_position,
+        "public_release_position": public_release_position,
+    }
 
-    passed = (
+
+def _dispatch_rules_pass(context: dict[str, Any]) -> bool:
+    document = context["document"]
+    triggers = context["triggers"]
+    release_tag_input = context["release_tag_input"]
+    return (
         set(triggers) == {"workflow_dispatch"}
         and document.get("concurrency", {}).get("group") == "publish-release-train"
         and document.get("concurrency", {}).get("cancel-in-progress") == "false"
         and release_tag_input.get("required") == "true"
         and release_tag_input.get("type") == "string"
-        and set(jobs) >= {"guard", *validator_names, "publish"}
-        and isinstance(guard, dict)
+    )
+
+
+def _guard_rules_pass(context: dict[str, Any]) -> bool:
+    guard = context["guard"]
+    guard_script = context["guard_script"]
+    return (
+        isinstance(guard, dict)
         and '[[ "$GITHUB_REF" == "refs/heads/main" ]]' in guard_script
         and r'[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]' in guard_script
         and 'gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq \'.isDraft\''
@@ -173,49 +200,64 @@ def _fan_in_check(workflow: str) -> dict[str, Any]:
         and 'item["published_at"]' in guard_script
         and guard.get("outputs", {}).get("candidate_commit")
         == "${{ steps.candidate.outputs.commit }}"
-        and all(
-            isinstance(job, dict)
-            and job.get("needs") == ["guard"]
-            and checkout_uses_requested_tag(job)
-            and validator_has_tagged_artifact(job, artifact)
-            for job, artifact in zip(validator_jobs, artifact_names, strict=True)
-        )
-        and isinstance(publish_job, dict)
+    )
+
+
+def _validator_jobs_pass(context: dict[str, Any]) -> bool:
+    jobs = context["jobs"]
+    names = context["validator_names"]
+    artifacts = context["artifact_names"]
+    return set(jobs) >= {"guard", *names, "publish"} and all(
+        isinstance(job, dict)
+        and job.get("needs") == ["guard"]
+        and _checkout_uses_requested_tag(job)
+        and _validator_has_tagged_artifact(job, artifact)
+        for job, artifact in zip(context["validator_jobs"], artifacts, strict=True)
+    )
+
+
+def _publish_job_passes(context: dict[str, Any]) -> bool:
+    publish_job = context["publish_job"]
+    publish_steps = context["publish_steps"]
+    validator_names = context["validator_names"]
+    artifact_names = context["artifact_names"]
+    return (
+        isinstance(publish_job, dict)
         and publish_job.get("needs") == ["guard", *validator_names]
-        and publish_environment == "pypi"
-        and publish_permissions.get("contents") == "write"
-        and publish_permissions.get("id-token") == "write"
-        and checkout_uses_requested_tag(publish_job)
-        and downloaded_artifacts == list(artifact_names)
-        and pypi_position >= 0
-        and public_release_position > pypi_position
-        and all(
-            _tag_guard_precedes(step, action)
-            for step, action in (
-                (
-                    next(
-                        (
-                            item
-                            for item in publish_steps
-                            if "gh release upload" in str(item.get("run", ""))
-                        ),
-                        {},
-                    ),
-                    "gh release upload",
-                ),
-                (
-                    next(
-                        (
-                            item
-                            for item in publish_steps
-                            if "gh release edit" in str(item.get("run", ""))
-                        ),
-                        {},
-                    ),
-                    "gh release edit",
-                ),
-            )
+        and context["publish_environment"] == "pypi"
+        and context["publish_permissions"].get("contents") == "write"
+        and context["publish_permissions"].get("id-token") == "write"
+        and _checkout_uses_requested_tag(publish_job)
+        and context["downloaded_artifacts"] == list(artifact_names)
+        and context["pypi_position"] >= 0
+        and context["public_release_position"] > context["pypi_position"]
+        and _publish_tag_guards_pass(publish_steps)
+    )
+
+
+def _publish_tag_guards_pass(publish_steps: list[Any]) -> bool:
+    action_scripts = (
+        ("gh release upload", "gh release upload"),
+        ("gh release edit", "gh release edit"),
+    )
+    for search, action in action_scripts:
+        step = next(
+            (item for item in publish_steps if search in str(item.get("run", ""))),
+            {},
         )
+        if not _tag_guard_precedes(step, action):
+            return False
+    return True
+
+
+def _fan_in_check(workflow: str) -> dict[str, Any]:
+    """Check the reviewed, draft-first publication path and its artifact fan-in."""
+    context = _fan_in_context(workflow)
+    passed = (
+        _dispatch_rules_pass(context)
+        and _guard_rules_pass(context)
+        and _validator_jobs_pass(context)
+        and _publish_job_passes(context)
     )
     return _check(
         "RELEASE_FAN_IN_EXACT",
@@ -243,17 +285,29 @@ def _tag_guard_precedes(step: dict, action: str) -> bool:
     )
 
 
-def _candidate_preflight_check(workflow: str) -> dict[str, Any]:
-    """Require the release owner to supply a sealed candidate receipt before upload.
+def _candidate_preflight_marker(publish: str, marker: str) -> bool:
+    return bool(publish) and marker in publish
 
-    A green language-specific build is not a release identity proof.  The
-    publication job must therefore fail closed when the protected environment
-    has not supplied a workspace-contained release contract, and it must run
-    the exact candidate preflight before the first external upload step.
-    """
-    publish = _job(workflow, "publish")
-    marker = "Require sealed release candidate preflight before external publication"
-    command = "python -m factoryline.cli release preflight"
+
+def _candidate_contract_path_required(publish: str) -> bool:
+    return (
+        "RELEASE_CONTRACT_PATH" in publish
+        and 'test -n "$RELEASE_CONTRACT_PATH"' in publish
+        and 'test -f "$RELEASE_CONTRACT_PATH"' in publish
+    )
+
+
+def _candidate_preflight_command_bound(publish: str, command: str) -> bool:
+    return (
+        command in publish
+        and '--contract "$RELEASE_CONTRACT_PATH"' in publish
+        and "--artifact-dir release-bundle/python" in publish
+        and "--artifact-dir release-bundle/editors" in publish
+        and "--metadata-path context/PROGRESS.md" in publish
+    )
+
+
+def _candidate_preflight_ordered(publish: str, marker: str) -> bool:
     try:
         gate_index = publish.index(marker)
         upload_index = publish.index("gh release upload")
@@ -268,19 +322,25 @@ def _candidate_preflight_check(workflow: str) -> dict[str, Any]:
         and gate_index < pypi_index
     )
     no_bypass = ordered and "continue-on-error" not in publish[gate_index:upload_index]
+    return ordered and no_bypass
+
+
+def _candidate_preflight_check(workflow: str) -> dict[str, Any]:
+    """Require the release owner to supply a sealed candidate receipt before upload.
+
+    A green language-specific build is not a release identity proof.  The
+    publication job must therefore fail closed when the protected environment
+    has not supplied a workspace-contained release contract, and it must run
+    the exact candidate preflight before the first external upload step.
+    """
+    publish = _job(workflow, "publish")
+    marker = "Require sealed release candidate preflight before external publication"
+    command = "python -m factoryline.cli release preflight"
     passed = (
-        bool(publish)
-        and marker in publish
-        and "RELEASE_CONTRACT_PATH" in publish
-        and 'test -n "$RELEASE_CONTRACT_PATH"' in publish
-        and 'test -f "$RELEASE_CONTRACT_PATH"' in publish
-        and command in publish
-        and '--contract "$RELEASE_CONTRACT_PATH"' in publish
-        and "--artifact-dir release-bundle/python" in publish
-        and "--artifact-dir release-bundle/editors" in publish
-        and "--metadata-path context/PROGRESS.md" in publish
-        and ordered
-        and no_bypass
+        _candidate_preflight_marker(publish, marker)
+        and _candidate_contract_path_required(publish)
+        and _candidate_preflight_command_bound(publish, command)
+        and _candidate_preflight_ordered(publish, marker)
     )
     return _check(
         "RELEASE_CANDIDATE_PREFLIGHT_REQUIRED",
@@ -325,26 +385,44 @@ def _partition_check(workflow: str) -> dict[str, Any]:
     )
 
 
-def _openvsx_check(workflow: str) -> dict[str, Any]:
-    authorize = _job(workflow, "authorize")
-    validate = _job(workflow, "validate")
-    publish = _job(workflow, "publish")
-    passed = (
+def _openvsx_authorization_passes(authorize: str) -> bool:
+    return (
         "if: inputs.publish == true" in authorize
         and "environment: openvsx" in authorize
         and "Require the scoped Open VSX publisher token before candidate work"
         in authorize
-        and "needs: authorize" in validate
+    )
+
+
+def _openvsx_dependency_passes(validate: str, publish: str) -> bool:
+    return (
+        "needs: authorize" in validate
         and "inputs.publish == false || needs.authorize.result == 'success'" in validate
         and "needs: [authorize, validate]" in publish
         and "needs.authorize.result == 'success'" in publish
-        and "OPENVSX_TOKEN" in authorize
-        and "release_contract:" in workflow
+    )
+
+
+def _openvsx_preflight_passes(workflow: str, validate: str, publish: str) -> bool:
+    return (
+        "release_contract:" in workflow
         and "python -m factoryline.cli release preflight" in validate
         and "--metadata-path context/PROGRESS.md" in validate
         and "scripts/verify_release_preflight.py" in validate
         and "scripts/verify_release_preflight.py" in publish
         and "openvsx-preflight.json" in publish
+    )
+
+
+def _openvsx_check(workflow: str) -> dict[str, Any]:
+    authorize = _job(workflow, "authorize")
+    validate = _job(workflow, "validate")
+    publish = _job(workflow, "publish")
+    passed = (
+        _openvsx_authorization_passes(authorize)
+        and _openvsx_dependency_passes(validate, publish)
+        and "OPENVSX_TOKEN" in authorize
+        and _openvsx_preflight_passes(workflow, validate, publish)
     )
     return _check(
         "OPENVSX_AUTHORIZATION_EARLY",
@@ -519,10 +597,7 @@ def render_release_integrity(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _review_git_delta(root: Path, base: str) -> tuple[list[str], str | None]:
-    """Read a bounded Git delta without interpreting file content as instructions."""
-    if not isinstance(base, str) or not base or len(base) > 200 or "\0" in base:
-        return [], "Git base is missing or invalid."
+def _resolve_git_base(root: Path, base: str) -> tuple[str | None, str | None]:
     try:
         resolved = subprocess.run(
             ["git", "rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}"],
@@ -532,8 +607,15 @@ def _review_git_delta(root: Path, base: str) -> tuple[list[str], str | None]:
             check=False,
         )
         oid = resolved.stdout.decode("ascii").strip()
-        if resolved.returncode or not re.fullmatch(r"[a-fA-F0-9]{40,64}", oid):
-            return [], "Git base does not resolve to one commit."
+    except (OSError, UnicodeError, subprocess.TimeoutExpired):
+        return None, "Git history could not be inspected."
+    if resolved.returncode or not re.fullmatch(r"[a-fA-F0-9]{40,64}", oid):
+        return None, "Git base does not resolve to one commit."
+    return oid, None
+
+
+def _git_evidence_delta(root: Path, oid: str) -> tuple[bytes, str | None]:
+    try:
         result = subprocess.run(
             [
                 "git",
@@ -551,13 +633,17 @@ def _review_git_delta(root: Path, base: str) -> tuple[list[str], str | None]:
             check=False,
         )
     except (OSError, UnicodeError, subprocess.TimeoutExpired):
-        return [], "Git history could not be inspected."
+        return b"", "Git history could not be inspected."
     if result.returncode or len(result.stdout) > 1_000_000:
-        return [], "Git delta is unavailable or exceeds the review bound."
-    if not result.stdout:
+        return b"", "Git delta is unavailable or exceeds the review bound."
+    return result.stdout, None
+
+
+def _changed_evidence_paths(output: bytes) -> tuple[list[str], str | None]:
+    if not output:
         return [], None
     try:
-        parts = result.stdout.decode("utf-8").rstrip("\0").split("\0")
+        parts = output.decode("utf-8").rstrip("\0").split("\0")
     except UnicodeError:
         return [], "Git delta contains a non-UTF-8 path."
     if len(parts) % 2:
@@ -568,6 +654,19 @@ def _review_git_delta(root: Path, base: str) -> tuple[list[str], str | None]:
         if status != "A" and re.search(r"\d{4}-\d{2}-\d{2}.*\.json$", path)
     ]
     return changed, None
+
+
+def _review_git_delta(root: Path, base: str) -> tuple[list[str], str | None]:
+    """Read a bounded Git delta without interpreting file content as instructions."""
+    if not isinstance(base, str) or not base or len(base) > 200 or "\0" in base:
+        return [], "Git base is missing or invalid."
+    oid, error = _resolve_git_base(root, base)
+    if error:
+        return [], error
+    output, error = _git_evidence_delta(root, oid)
+    if error:
+        return [], error
+    return _changed_evidence_paths(output)
 
 
 def _release_review_conflict(root: Path) -> tuple[bool, str | None]:
