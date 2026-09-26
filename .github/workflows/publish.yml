@@ -19,6 +19,8 @@ jobs:
   guard:
     name: require a draft release tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # GitHub requires write access to read unpublished drafts.
     outputs:
       candidate_commit: ${{ steps.candidate.outputs.commit }}
     steps:

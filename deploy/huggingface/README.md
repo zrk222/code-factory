@@ -20,7 +20,7 @@ tags:
   - local-first
 pinned: false
 license: apache-2.0
-short_description: Trace AI changes from intent to reviewable proof.
+short_description: Audit code, review evidence, and resolve defects.
 ---
 
 # Code Factory
@@ -32,6 +32,8 @@ Specialty AI audit evidence is available in [the reviewed change and findings](h
 The preview highlights audit progress, actionable repair tasks, source-bound evidence and specialty AI review. It is a static walkthrough, not a hosted repository scanner. CF pattern/guard-path audits need project policy; its security scan covers Python ASTs. ForgeLine repo-wide QA is static inventory. Agent review does not establish exhaustive native scanner coverage: Gitleaks per-file accounting remains incomplete.
 
 
+Code Factory is a local-first code audit system spanning requirements, architecture, security checks, behavioral evidence, workflow integrity, specialty AI review, and actionable repairs.
+
 The current source preview connects the original request, agent handoffs,
 verification routes, current receipts, and human review. It also makes stale
 repair loops and missing evidence easier to spot. Six audit lanes stay in the
@@ -41,9 +43,9 @@ This is the browser preview for
 [Code Factory](https://github.com/zrk222/code-factory), an open-source,
 local-first proof layer for AI-assisted code.
 
-> **Catch AI-generated tests that could never fail — before review.**
+> **Audit code. Review evidence. Resolve defects.**
 
-**One command answers one question: can this test actually fail?** Run
+**First Proof is one starter example within the larger audit system.** Run
 `factory first-proof --root .` to see a safe negative-control demonstration and
 receive a local receipt. It does not upload or change your project.
 
