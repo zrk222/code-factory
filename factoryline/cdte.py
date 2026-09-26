@@ -81,6 +81,47 @@ def _plain(value: Any) -> Any:
 # ---------------------------------------------------------------------------
 # Phase 1 output — the NFR constraint record
 # ---------------------------------------------------------------------------
+def _constraint_id(value: dict[str, Any], index: int) -> str:
+    label = f"constraints[{index}]"
+    constraint_id = value.get("constraintId") or f"c-{index:03d}"
+    if not isinstance(constraint_id, str) or not constraint_id.strip():
+        raise CDTEError(
+            "CONSTRAINT_ID_INVALID", f"{label}.constraintId must be a non-empty string"
+        )
+    return constraint_id
+
+
+def _constraint_text_fields(value: dict[str, Any], label: str) -> tuple[str, str]:
+    category = value.get("category")
+    metric = value.get("metric")
+    for field, raw in (("category", category), ("metric", metric)):
+        if not isinstance(raw, str) or not raw.strip():
+            raise CDTEError(
+                "CONSTRAINT_FIELD_MISSING",
+                f"{label}.{field} is required and must be a string",
+            )
+    return category, metric
+
+
+def _constraint_operator(value: dict[str, Any], label: str) -> str | None:
+    operator = value.get("operator")
+    if operator is not None and operator not in VALID_OPERATORS:
+        raise CDTEError(
+            "OPERATOR_INVALID",
+            f"{label}.operator must be one of {', '.join(VALID_OPERATORS)} or null",
+        )
+    return operator
+
+
+def _constraint_value(value: dict[str, Any], label: str) -> Any:
+    raw_value = value.get("value")
+    if isinstance(raw_value, bool):
+        # bool is an int subclass; treating True as 1 in a threshold comparison
+        # would be a silent correctness bug.
+        raise CDTEError("VALUE_INVALID", f"{label}.value must not be a boolean")
+    return _plain(raw_value) if raw_value is not None else None
+
+
 def normalize_constraint(value: dict[str, Any], index: int) -> dict[str, Any]:
     """Validate and canonicalize one NFR constraint, raising CDTEError if invalid.
 
@@ -91,41 +132,17 @@ def normalize_constraint(value: dict[str, Any], index: int) -> dict[str, Any]:
     label = f"constraints[{index}]"
     if not isinstance(value, dict):
         raise CDTEError("CONSTRAINT_INVALID", f"{label} must be an object")
-
-    constraint_id = value.get("constraintId") or f"c-{index:03d}"
-    if not isinstance(constraint_id, str) or not constraint_id.strip():
-        raise CDTEError(
-            "CONSTRAINT_ID_INVALID", f"{label}.constraintId must be a non-empty string"
-        )
-
-    category = value.get("category")
-    metric = value.get("metric")
-    for field, raw in (("category", category), ("metric", metric)):
-        if not isinstance(raw, str) or not raw.strip():
-            raise CDTEError(
-                "CONSTRAINT_FIELD_MISSING",
-                f"{label}.{field} is required and must be a string",
-            )
-
-    operator = value.get("operator")
-    if operator is not None and operator not in VALID_OPERATORS:
-        raise CDTEError(
-            "OPERATOR_INVALID",
-            f"{label}.operator must be one of {', '.join(VALID_OPERATORS)} or null",
-        )
-
-    raw_value = value.get("value")
-    if isinstance(raw_value, bool):
-        # bool is an int subclass; treating True as 1 in a threshold comparison
-        # would be a silent correctness bug.
-        raise CDTEError("VALUE_INVALID", f"{label}.value must not be a boolean")
+    constraint_id = _constraint_id(value, index)
+    category, metric = _constraint_text_fields(value, label)
+    operator = _constraint_operator(value, label)
+    normalized_value = _constraint_value(value, label)
 
     return {
         "constraintId": constraint_id.strip(),
         "category": category.strip().lower(),
         "metric": metric.strip().lower(),
         "operator": operator,
-        "value": _plain(raw_value) if raw_value is not None else None,
+        "value": normalized_value,
         "originatingSignalId": value.get("originatingSignalId"),
         "description": value.get("description"),
     }
@@ -191,7 +208,7 @@ def load_registry(path: Path | None = None) -> dict[str, Any]:
     return data
 
 
-def _validate_side(side: Any, pair_id: str, which: str) -> None:
+def _validate_side_fields(side: Any, pair_id: str, which: str) -> None:
     if not isinstance(side, dict):
         raise CDTEError("PAIR_SIDE_INVALID", f"{pair_id}.{which} must be an object")
     for field in ("category", "metric"):
@@ -199,6 +216,10 @@ def _validate_side(side: Any, pair_id: str, which: str) -> None:
             raise CDTEError(
                 "PAIR_SIDE_INVALID", f"{pair_id}.{which}.{field} is required"
             )
+
+
+def _validate_side(side: Any, pair_id: str, which: str) -> None:
+    _validate_side_fields(side, pair_id, which)
     has_threshold = "operator" in side and "threshold" in side
     has_values = "value_in" in side
     if not has_threshold and not has_values:
@@ -216,7 +237,7 @@ def _validate_side(side: Any, pair_id: str, which: str) -> None:
         )
 
 
-def _validate_pair(pair: Any, seen: set[str]) -> None:
+def _pair_id(pair: Any, seen: set[str]) -> str:
     if not isinstance(pair, dict):
         raise CDTEError("PAIR_INVALID", "each registry pair must be an object")
     pair_id = pair.get("id")
@@ -225,14 +246,23 @@ def _validate_pair(pair: Any, seen: set[str]) -> None:
     if pair_id in seen:
         raise CDTEError("PAIR_ID_DUPLICATE", f"duplicate pair id {pair_id}")
     seen.add(pair_id)
+    return pair_id
+
+
+def _validate_pair_severity(pair: dict[str, Any], pair_id: str) -> None:
     if pair.get("severity") not in VALID_SEVERITIES:
         raise CDTEError(
             "PAIR_SEVERITY_INVALID",
             f"{pair_id}.severity must be one of {VALID_SEVERITIES}",
         )
+
+
+def _validate_pair_sides(pair: dict[str, Any], pair_id: str) -> None:
     _validate_side(pair.get("left"), pair_id, "left")
     _validate_side(pair.get("right"), pair_id, "right")
 
+
+def _proof_tier(pair: dict[str, Any], pair_id: str) -> tuple[dict[str, Any], str]:
     proof = pair.get("proof")
     if not isinstance(proof, dict) or proof.get("tier") not in VALID_TIERS:
         raise CDTEError(
@@ -240,23 +270,40 @@ def _validate_pair(pair: Any, seen: set[str]) -> None:
             f"{pair_id}.proof.tier must be one of {VALID_TIERS}",
         )
     tier = proof["tier"]
-    if tier == "structural" and not isinstance(proof.get("statement"), str):
+    return proof, tier
+
+
+def _validate_structural_proof(proof: dict[str, Any], pair_id: str) -> None:
+    if proof["tier"] == "structural" and not isinstance(proof.get("statement"), str):
         raise CDTEError(
             "PAIR_PROOF_INVALID", f"{pair_id} structural proof requires a statement"
         )
-    if tier in ("modeled", "measured"):
-        if not isinstance(proof.get("formula"), str):
-            raise CDTEError(
-                "PAIR_PROOF_INVALID", f"{pair_id} {tier} proof requires a formula"
-            )
-        if not isinstance(proof.get("assumptions"), list) or not proof["assumptions"]:
-            # A modeled number without printed assumptions is indistinguishable
-            # from a measurement to the reader. That is the failure this whole
-            # product exists to prevent.
-            raise CDTEError(
-                "PAIR_PROOF_ASSUMPTIONS_REQUIRED",
-                f"{pair_id} {tier} proof requires a non-empty assumptions list",
-            )
+
+
+def _validate_quantified_proof(proof: dict[str, Any], pair_id: str, tier: str) -> None:
+    if tier not in ("modeled", "measured"):
+        return
+    if not isinstance(proof.get("formula"), str):
+        raise CDTEError(
+            "PAIR_PROOF_INVALID", f"{pair_id} {tier} proof requires a formula"
+        )
+    if not isinstance(proof.get("assumptions"), list) or not proof["assumptions"]:
+        # A modeled number without printed assumptions is indistinguishable
+        # from a measurement to the reader. That is the failure this whole
+        # product exists to prevent.
+        raise CDTEError(
+            "PAIR_PROOF_ASSUMPTIONS_REQUIRED",
+            f"{pair_id} {tier} proof requires a non-empty assumptions list",
+        )
+
+
+def _validate_pair(pair: Any, seen: set[str]) -> None:
+    pair_id = _pair_id(pair, seen)
+    _validate_pair_severity(pair, pair_id)
+    _validate_pair_sides(pair, pair_id)
+    proof, tier = _proof_tier(pair, pair_id)
+    _validate_structural_proof(proof, pair_id)
+    _validate_quantified_proof(proof, pair_id, tier)
 
 
 # ---------------------------------------------------------------------------

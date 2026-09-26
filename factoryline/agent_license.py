@@ -255,10 +255,9 @@ def _event_core(value: dict[str, Any]) -> dict[str, Any]:
     return core
 
 
-def _validate_ledger_event(
-    root: Path, value: dict[str, Any], *, require_evidence_files: bool = True
-) -> dict[str, Any]:
-    core = _event_core(value)
+def _validate_event_identity(
+    core: dict[str, Any],
+) -> tuple[str, datetime, dict[str, str], str | None]:
     event_id = _text(core.get("event_id"), "event_id", maximum=96)
     if not _TASK_IDENTIFIER.fullmatch(event_id):
         raise AgentLicenseError(
@@ -275,6 +274,12 @@ def _validate_ledger_event(
             "E_LICENSE_EVENT_INVALID",
             "task_id must be omitted or a lowercase task identifier",
         )
+    return event_id, recorded_at, agent, task_id
+
+
+def _validate_event_bindings(
+    core: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     admission = core.get("admission")
     result = core.get("result_receipt")
     verification = core.get("verification")
@@ -293,6 +298,12 @@ def _validate_ledger_event(
         raise AgentLicenseError(
             "E_LICENSE_EVENT_INVALID", "verification must contain subject and receipt"
         )
+    return admission, result, verification
+
+
+def _validate_event_verifier(
+    verification: dict[str, Any], agent: dict[str, str]
+) -> tuple[str, dict[str, Any]]:
     verifier_subject = _text(verification.get("subject"), "verification.subject")
     if verifier_subject == agent["subject"]:
         raise AgentLicenseError(
@@ -308,55 +319,82 @@ def _validate_ledger_event(
             "E_LICENSE_EVENT_INVALID",
             "verification.receipt must contain path and sha256",
         )
-    passed = core.get("passed")
-    if not isinstance(passed, bool):
-        raise AgentLicenseError("E_LICENSE_EVENT_INVALID", "passed must be boolean")
-    failures = core.get("failure_classes")
-    if not isinstance(failures, list) or len(failures) > len(FailureClass):
+    return verifier_subject, verifier_receipt
+
+
+def _normalized_failure_classes(value: object) -> list[str]:
+    if not isinstance(value, list) or len(value) > len(FailureClass):
         raise AgentLicenseError(
             "E_LICENSE_EVENT_INVALID", "failure_classes must be a bounded list"
         )
-    normalized_failures: list[str] = []
-    for failure in failures:
+    normalized: list[str] = []
+    for failure in value:
         if not isinstance(failure, str):
             raise AgentLicenseError(
                 "E_LICENSE_EVENT_INVALID", "failure_classes must contain strings"
             )
         try:
-            normalized_failures.append(FailureClass(failure).value)
+            normalized.append(FailureClass(failure).value)
         except ValueError as exc:
             raise AgentLicenseError(
                 "E_LICENSE_EVENT_INVALID", f"unsupported failure class: {failure}"
             ) from exc
-    if len(set(normalized_failures)) != len(normalized_failures):
+    if len(set(normalized)) != len(normalized):
         raise AgentLicenseError(
             "E_LICENSE_EVENT_INVALID", "failure_classes must be unique"
         )
-    if passed and normalized_failures:
+    return normalized
+
+
+def _validate_event_outcome(core: dict[str, Any]) -> tuple[bool, list[str]]:
+    passed = core.get("passed")
+    if not isinstance(passed, bool):
+        raise AgentLicenseError("E_LICENSE_EVENT_INVALID", "passed must be boolean")
+    failures = _normalized_failure_classes(core.get("failure_classes"))
+    if passed and failures:
         raise AgentLicenseError(
             "E_LICENSE_EVENT_INVALID", "passing events cannot declare failure classes"
         )
-    if not passed and not normalized_failures:
+    if not passed and not failures:
         raise AgentLicenseError(
             "E_LICENSE_EVENT_INVALID",
             "failed events must declare at least one failure class",
         )
+    return passed, failures
+
+
+def _validate_event_evidence_files(
+    root: Path,
+    result: dict[str, Any],
+    verifier_receipt: dict[str, Any],
+) -> None:
+    for label, binding in (
+        ("result_receipt", result),
+        ("verification.receipt", verifier_receipt),
+    ):
+        evidence_path, _ = _relative(root, binding["path"], label)
+        if (
+            not evidence_path.is_file()
+            or hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+            != binding["sha256"]
+        ):
+            raise AgentLicenseError(
+                "E_LICENSE_EVIDENCE_STALE",
+                f"{label} hash does not match the referenced workspace file",
+            )
+
+
+def _validate_ledger_event(
+    root: Path, value: dict[str, Any], *, require_evidence_files: bool = True
+) -> dict[str, Any]:
+    core = _event_core(value)
+    event_id, recorded_at, agent, task_id = _validate_event_identity(core)
+    _, result, verification = _validate_event_bindings(core)
+    verifier_subject, verifier_receipt = _validate_event_verifier(verification, agent)
+    passed, normalized_failures = _validate_event_outcome(core)
     paths = _normalized_paths(core.get("paths"), "paths")
     if require_evidence_files:
-        for label, binding in (
-            ("result_receipt", result),
-            ("verification.receipt", verifier_receipt),
-        ):
-            evidence_path, _ = _relative(root, binding["path"], label)
-            if (
-                not evidence_path.is_file()
-                or hashlib.sha256(evidence_path.read_bytes()).hexdigest()
-                != binding["sha256"]
-            ):
-                raise AgentLicenseError(
-                    "E_LICENSE_EVIDENCE_STALE",
-                    f"{label} hash does not match the referenced workspace file",
-                )
+        _validate_event_evidence_files(root, result, verifier_receipt)
     return {
         **core,
         "event_id": event_id,
@@ -377,8 +415,7 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
-def _event_from_input(root: Path, input_value: dict[str, Any]) -> dict[str, Any]:
-    """Validate a new event against the ready packet before any ledger write."""
+def _validate_run_input_shape(input_value: dict[str, Any]) -> None:
     allowed = {
         "schema",
         "id",
@@ -395,13 +432,21 @@ def _event_from_input(root: Path, input_value: dict[str, Any]) -> dict[str, Any]
             "E_LICENSE_INPUT_INVALID",
             f"run input must use {AGENT_RUN_SCHEMA} and its exact fields",
         )
+
+
+def _run_input_identity(input_value: dict[str, Any]) -> tuple[str, dict[str, str]]:
     event_id = _text(input_value.get("id"), "id", maximum=96)
     if not _TASK_IDENTIFIER.fullmatch(event_id):
         raise AgentLicenseError(
             "E_LICENSE_INPUT_INVALID",
             "id must use lowercase letters, digits, and hyphens",
         )
-    agent = normalize_agent_identity(input_value.get("agent"))
+    return event_id, normalize_agent_identity(input_value.get("agent"))
+
+
+def _verified_admission_context(
+    root: Path, input_value: dict[str, Any], agent: dict[str, str]
+) -> tuple[str, dict[str, Any], list[str]]:
     admission_path, admission_relative = _relative(
         root, input_value.get("admission"), "admission"
     )
@@ -419,24 +464,21 @@ def _event_from_input(root: Path, input_value: dict[str, Any]) -> dict[str, Any]
             "E_LICENSE_ADMISSION_INVALID", "admission packet must verify as READY"
         )
     packet = _load_json(admission_path)
-    packet_agent = (
-        packet.get("request", {}).get("agent")
-        if isinstance(packet.get("request"), dict)
-        else None
-    )
+    request = packet.get("request")
+    packet_agent = request.get("agent") if isinstance(request, dict) else None
     if normalize_agent_identity(packet_agent, "admission.request.agent") != agent:
         raise AgentLicenseError(
             "E_LICENSE_IDENTITY_MISMATCH",
             "run identity must exactly match the admission request",
         )
-    packet_paths = (
-        packet.get("request", {}).get("paths")
-        if isinstance(packet.get("request"), dict)
-        else None
-    )
+    packet_paths = request.get("paths") if isinstance(request, dict) else None
     paths = _normalized_paths(packet_paths, "admission.request.paths")
-    result = _file_binding(root, input_value.get("result_receipt"), "result_receipt")
-    verification = input_value.get("verification")
+    return admission_relative, ready, paths
+
+
+def _run_input_verifier(
+    root: Path, verification: object, agent: dict[str, str]
+) -> tuple[str, dict[str, str]]:
     if not isinstance(verification, dict) or set(verification) != {
         "subject",
         "receipt",
@@ -452,6 +494,20 @@ def _event_from_input(root: Path, input_value: dict[str, Any]) -> dict[str, Any]
         )
     verifier_receipt = _file_binding(
         root, verification.get("receipt"), "verification.receipt"
+    )
+    return verifier_subject, verifier_receipt
+
+
+def _event_from_input(root: Path, input_value: dict[str, Any]) -> dict[str, Any]:
+    """Validate a new event against the ready packet before any ledger write."""
+    _validate_run_input_shape(input_value)
+    event_id, agent = _run_input_identity(input_value)
+    admission_relative, ready, paths = _verified_admission_context(
+        root, input_value, agent
+    )
+    result = _file_binding(root, input_value.get("result_receipt"), "result_receipt")
+    verifier_subject, verifier_receipt = _run_input_verifier(
+        root, input_value.get("verification"), agent
     )
     passed = input_value.get("passed")
     failures = input_value.get("failure_classes")
@@ -703,10 +759,7 @@ def _license_evidence(
 
 def _license_tier(evidence: dict[str, Any]) -> tuple[str, str]:
     current, all_events = evidence["current"], evidence["all"]
-    if (
-        evidence["oracle_incidents"]
-        and len(evidence["clean"]) < POST_INCIDENT_REQUALIFICATION_RUNS
-    ):
+    if _oracle_incident_demotes(evidence):
         return "human_controlled", "ORACLE_WEAKENING_DEMOTION"
     if not current:
         return (
@@ -728,6 +781,13 @@ def _license_tier(evidence: dict[str, Any]) -> tuple[str, str]:
     if len(evidence["clean"]) >= SUPERVISED_MIN_CLEAN_RUNS:
         return "supervised", "CURRENT_GOVERNED_EVIDENCE_REQUIRES_SUPERVISION"
     return "human_controlled", "INSUFFICIENT_CLEAN_GOVERNED_EVIDENCE"
+
+
+def _oracle_incident_demotes(evidence: dict[str, Any]) -> bool:
+    return bool(
+        evidence["oracle_incidents"]
+        and len(evidence["clean"]) < POST_INCIDENT_REQUALIFICATION_RUNS
+    )
 
 
 def derive_license(

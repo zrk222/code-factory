@@ -130,9 +130,9 @@ def _sealed(value: object) -> bool:
     )
 
 
-def _contract(
-    root: Path, value: dict[str, Any], candidate: dict[str, str]
-) -> tuple[dict[str, Any], list[Path]]:
+def _contract_design_and_platforms(
+    value: dict[str, Any], candidate: dict[str, str]
+) -> tuple[str, list[str]]:
     required = {
         "schema",
         "candidate",
@@ -164,7 +164,10 @@ def _contract(
             "APPFORGE_NATIVE_SURFACE_CONTRACT_INVALID",
             "platforms must be a unique non-empty iphone/ipad list",
         )
-    source_files = value.get("source_files")
+    return design_hash, platforms
+
+
+def _contract_sources(root: Path, source_files: object) -> list[Path]:
     if not isinstance(source_files, list) or not 1 <= len(source_files) <= 100:
         raise RevenueForgeError(
             "APPFORGE_NATIVE_SURFACE_CONTRACT_INVALID",
@@ -183,7 +186,11 @@ def _contract(
                 "APPFORGE_NATIVE_SURFACE_INPUT_TOO_LARGE", "Swift source exceeds 1 MiB"
             )
         sources.append(path)
-    adaptive = value.get("adaptive")
+
+    return sources
+
+
+def _adaptive_contract(adaptive: object, platforms: list[str]) -> dict[str, Any]:
     if not isinstance(adaptive, dict) or set(adaptive) != {
         "iphone_navigation",
         "ipad_navigation",
@@ -215,7 +222,11 @@ def _contract(
             "APPFORGE_NATIVE_SURFACE_CONTRACT_INVALID",
             "iPad support must declare split_or_sidebar, and iPhone-only apps must declare not_supported",
         )
-    accessibility = value.get("accessibility")
+
+    return adaptive
+
+
+def _accessibility_contract(accessibility: object) -> dict[str, Any]:
     expected_accessibility = {
         "dynamic_type",
         "reduce_motion",
@@ -231,7 +242,11 @@ def _contract(
             "APPFORGE_NATIVE_SURFACE_CONTRACT_INVALID",
             "all native accessibility expectations must be explicitly true",
         )
-    materials = value.get("materials")
+
+    return accessibility
+
+
+def _materials_contract(materials: object) -> dict[str, Any]:
     if not isinstance(materials, dict) or set(materials) != {
         "system_components_preferred",
         "content_layer_glass_allowed",
@@ -251,7 +266,13 @@ def _contract(
             "APPFORGE_NATIVE_SURFACE_CONTRACT_INVALID",
             "materials must prefer system components, disallow content glass, and cap custom glass at 0-3",
         )
-    storyboard = value.get("storyboard")
+
+    return materials
+
+
+def _storyboard_contract(
+    storyboard: object, platforms: list[str]
+) -> list[dict[str, Any]]:
     if not isinstance(storyboard, list) or not storyboard or len(storyboard) > 20:
         raise RevenueForgeError(
             "APPFORGE_NATIVE_SURFACE_CONTRACT_INVALID",
@@ -286,6 +307,19 @@ def _contract(
             "APPFORGE_NATIVE_SURFACE_CONTRACT_INVALID",
             "storyboard must show every declared platform",
         )
+
+    return storyboard
+
+
+def _contract(
+    root: Path, value: dict[str, Any], candidate: dict[str, str]
+) -> tuple[dict[str, Any], list[Path]]:
+    design_hash, platforms = _contract_design_and_platforms(value, candidate)
+    sources = _contract_sources(root, value.get("source_files"))
+    adaptive = _adaptive_contract(value.get("adaptive"), platforms)
+    accessibility = _accessibility_contract(value.get("accessibility"))
+    materials = _materials_contract(value.get("materials"))
+    storyboard = _storyboard_contract(value.get("storyboard"), platforms)
     return {
         "candidate": candidate,
         "user_design_input_sha256": design_hash,
@@ -345,11 +379,31 @@ def _evidence(
     }
 
 
-def _scan(
-    root: Path, sources: list[Path], contract: dict[str, Any]
-) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+def _accessibility_signals(text: str) -> dict[str, bool]:
+    return {
+        "dynamic_type": any(
+            signal in text for signal in ("dynamicTypeSize", "DynamicTypeSize")
+        ),
+        "reduce_motion": "accessibilityReduceMotion" in text,
+        "reduce_transparency": "accessibilityReduceTransparency" in text,
+    }
+
+
+def _source_observation(root: Path, source: Path, text: str) -> dict[str, Any]:
+    return {
+        "path": source.relative_to(root).as_posix(),
+        "sha256": _file_sha(source),
+        "system_icons": text.count("Image(systemName:"),
+        "explicit_icon_labels": text.count(".accessibilityLabel(")
+        + text.count("Label("),
+        "custom_glass_effects": text.count("glassEffect("),
+        "adaptive_api_hits": [api for api in ADAPTIVE_APIS if api in text],
+        "observed_accessibility_signals": _accessibility_signals(text),
+    }
+
+
+def _scan_sources(root: Path, sources: list[Path]) -> tuple[list[dict[str, Any]], str]:
     observations: list[dict[str, Any]] = []
-    findings: list[dict[str, str]] = []
     all_text = ""
     for source in sources:
         try:
@@ -359,50 +413,41 @@ def _scan(
                 "APPFORGE_NATIVE_SURFACE_INPUT_INVALID", "Swift source must be UTF-8"
             ) from exc
         all_text += "\n" + text
-        observations.append(
-            {
-                "path": source.relative_to(root).as_posix(),
-                "sha256": _file_sha(source),
-                "system_icons": text.count("Image(systemName:"),
-                "explicit_icon_labels": text.count(".accessibilityLabel(")
-                + text.count("Label("),
-                "custom_glass_effects": text.count("glassEffect("),
-                "adaptive_api_hits": [api for api in ADAPTIVE_APIS if api in text],
-                "observed_accessibility_signals": {
-                    "dynamic_type": any(
-                        signal in text
-                        for signal in ("dynamicTypeSize", "DynamicTypeSize")
-                    ),
-                    "reduce_motion": "accessibilityReduceMotion" in text,
-                    "reduce_transparency": "accessibilityReduceTransparency" in text,
-                },
-            }
-        )
+        observations.append(_source_observation(root, source, text))
+    return observations, all_text
+
+
+def _geometry_findings(all_text: str) -> list[dict[str, str]]:
     forbidden = [token for token in FORBIDDEN_SCREEN_GEOMETRY if token in all_text]
     if forbidden:
-        findings.append(
+        return [
             {
                 "code": "APPFORGE_NATIVE_FIXED_SCREEN_GEOMETRY",
                 "detail": f"source references non-adaptive screen geometry: {', '.join(forbidden)}",
             }
-        )
+        ]
+    return []
+
+
+def _adaptive_findings(all_text: str, contract: dict[str, Any]) -> list[dict[str, str]]:
     if "ipad" in contract["platforms"] and not any(
         api in all_text for api in ADAPTIVE_APIS
     ):
-        findings.append(
+        return [
             {
                 "code": "APPFORGE_NATIVE_ADAPTIVE_API_MISSING",
                 "detail": "iPad support has no recognized adaptive SwiftUI API in the sealed sources",
             }
-        )
-    accessibility_signals = {
-        "dynamic_type": any(
-            signal in all_text for signal in ("dynamicTypeSize", "DynamicTypeSize")
-        ),
-        "reduce_motion": "accessibilityReduceMotion" in all_text,
-        "reduce_transparency": "accessibilityReduceTransparency" in all_text,
-    }
-    for name, observed in accessibility_signals.items():
+        ]
+    return []
+
+
+def _accessibility_findings(
+    all_text: str, contract: dict[str, Any]
+) -> list[dict[str, str]]:
+    signals = _accessibility_signals(all_text)
+    findings: list[dict[str, str]] = []
+    for name, observed in signals.items():
         if contract["accessibility"][name] and not observed:
             findings.append(
                 {
@@ -410,23 +455,45 @@ def _scan(
                     "detail": f"sealed source has no recognized {name} accessibility signal",
                 }
             )
+    return findings
+
+
+def _material_findings(all_text: str, contract: dict[str, Any]) -> list[dict[str, str]]:
     glass_count = all_text.count("glassEffect(")
     if glass_count > contract["materials"]["max_custom_glass_controls"]:
-        findings.append(
+        return [
             {
                 "code": "APPFORGE_NATIVE_GLASS_OVERUSE",
                 "detail": f"sealed source declares {glass_count} custom glass effects; contract allows {contract['materials']['max_custom_glass_controls']}",
             }
-        )
+        ]
+    return []
+
+
+def _icon_label_findings(all_text: str) -> list[dict[str, str]]:
     icons = all_text.count("Image(systemName:")
     labels = all_text.count(".accessibilityLabel(") + all_text.count("Label(")
     if icons and labels < icons:
-        findings.append(
+        return [
             {
                 "code": "APPFORGE_NATIVE_ICON_LABEL_REVIEW_REQUIRED",
                 "detail": f"sealed source has {icons} system-icon declarations but only {labels} explicit label signals; verify every custom icon with VoiceOver",
             }
-        )
+        ]
+    return []
+
+
+def _scan(
+    root: Path, sources: list[Path], contract: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    observations, all_text = _scan_sources(root, sources)
+    findings = [
+        *_geometry_findings(all_text),
+        *_adaptive_findings(all_text, contract),
+        *_accessibility_findings(all_text, contract),
+        *_material_findings(all_text, contract),
+        *_icon_label_findings(all_text),
+    ]
     return observations, findings
 
 

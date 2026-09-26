@@ -330,9 +330,7 @@ def _validate_trust_root(root: dict) -> dict:
     return root
 
 
-def _verify_envelope(
-    envelope: dict, *, expected_payload_type: str, trust_root: dict
-) -> tuple[dict, dict, bytes]:
+def _verified_payload_bytes(envelope: dict, expected_payload_type: str) -> bytes:
     if envelope.get("schema") != DSSE_SCHEMA:
         raise EnterpriseReceiptError(
             "E_INVALID_ENVELOPE", "unsupported DSSE envelope schema"
@@ -346,6 +344,10 @@ def _verify_envelope(
         raise EnterpriseReceiptError(
             "E_PAYLOAD_DIGEST_MISMATCH", "payload digest does not match bytes"
         )
+    return payload_bytes
+
+
+def _envelope_signature(envelope: dict) -> dict:
     signatures = envelope.get("signatures")
     if not isinstance(signatures, list) or len(signatures) != 1:
         raise EnterpriseReceiptError(
@@ -356,6 +358,10 @@ def _verify_envelope(
         raise EnterpriseReceiptError(
             "E_UNSUPPORTED_SIGNATURE", "only Ed25519 signatures are supported"
         )
+    return signature
+
+
+def _trusted_signer(signature: dict, trust_root: dict) -> tuple[Any, Any]:
     keyid = signature.get("keyid")
     key = next(
         (
@@ -374,7 +380,15 @@ def _verify_envelope(
             "E_IDENTITY_MISMATCH",
             "signature identity or issuer differs from trust root",
         )
-    public_key = _load_public_key(key.get("public_key"))
+    return key, _load_public_key(key.get("public_key"))
+
+
+def _verify_signature(
+    signature: dict,
+    public_key: Any,
+    expected_payload_type: str,
+    payload_bytes: bytes,
+) -> None:
     try:
         public_key.verify(
             _b64d(signature.get("sig"), "signature"),
@@ -384,6 +398,9 @@ def _verify_envelope(
         raise EnterpriseReceiptError(
             "E_SIGNATURE_INVALID", "DSSE signature verification failed"
         )
+
+
+def _decode_envelope_payload(payload_bytes: bytes) -> dict:
     try:
         payload = json.loads(payload_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -392,6 +409,17 @@ def _verify_envelope(
         raise EnterpriseReceiptError(
             "E_INVALID_PAYLOAD", "DSSE payload must be an object"
         )
+    return payload
+
+
+def _verify_envelope(
+    envelope: dict, *, expected_payload_type: str, trust_root: dict
+) -> tuple[dict, dict, bytes]:
+    payload_bytes = _verified_payload_bytes(envelope, expected_payload_type)
+    signature = _envelope_signature(envelope)
+    _, public_key = _trusted_signer(signature, trust_root)
+    _verify_signature(signature, public_key, expected_payload_type, payload_bytes)
+    payload = _decode_envelope_payload(payload_bytes)
     return payload, signature, payload_bytes
 
 

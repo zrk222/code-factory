@@ -147,8 +147,16 @@ def _release_candidate(value: object, field: str) -> dict[str, str] | None:
     }
 
 
-def _contract(value: dict[str, Any]) -> dict[str, Any]:
-    provider = value.get("provider")
+def _validate_issuer(issuer_value: str) -> None:
+    issuer = urlparse(issuer_value)
+    if issuer.scheme != "https" or not issuer.netloc or issuer.fragment:
+        raise SaasProofError(
+            "SAAS_PROOF_ISSUER_INVALID",
+            "provider.issuer must be an absolute HTTPS URL without a fragment",
+        )
+
+
+def _provider_contract(provider: object) -> dict[str, Any]:
     claims = provider.get("claims") if isinstance(provider, dict) else None
     if not isinstance(provider, dict) or not isinstance(claims, dict):
         raise SaasProofError(
@@ -177,13 +185,12 @@ def _contract(value: dict[str, Any]) -> dict[str, Any]:
             for key in ("subject", "tenant", "roles")
         },
     }
-    issuer = urlparse(normalized_provider["issuer"])
-    if issuer.scheme != "https" or not issuer.netloc or issuer.fragment:
-        raise SaasProofError(
-            "SAAS_PROOF_ISSUER_INVALID",
-            "provider.issuer must be an absolute HTTPS URL without a fragment",
-        )
-    promises = value.get("promises")
+    _validate_issuer(normalized_provider["issuer"])
+
+    return normalized_provider
+
+
+def _contract_promises(promises: object) -> list[dict[str, str]]:
     if not isinstance(promises, list) or not promises or len(promises) > 50:
         raise SaasProofError(
             "SAAS_PROOF_CONTRACT_INVALID", "promises must contain 1-50 entries"
@@ -204,13 +211,71 @@ def _contract(value: dict[str, Any]) -> dict[str, Any]:
             )
         ids.add(item["id"])
         normalized.append(item)
+
+    return normalized
+
+
+def _contract(value: dict[str, Any]) -> dict[str, Any]:
+    normalized_provider = _provider_contract(value.get("provider"))
+    normalized_promises = _contract_promises(value.get("promises"))
     return {
         "app_id": _text(value.get("app_id"), "app_id"),
         "provider": normalized_provider,
-        "promises": normalized,
+        "promises": normalized_promises,
         "release_candidate": _release_candidate(
             value.get("release_candidate"), "contract.release_candidate"
         ),
+    }
+
+
+def _event_sequence(raw: object) -> int:
+    if (
+        not isinstance(raw, dict)
+        or isinstance(raw.get("sequence"), bool)
+        or not isinstance(raw.get("sequence"), int)
+    ):
+        raise SaasProofError(
+            "SAAS_PROOF_EVIDENCE_INVALID", "each event requires an integer sequence"
+        )
+    return raw["sequence"]
+
+
+def _event_identifier(raw: dict[str, Any], ids: set[str], prior: int) -> str:
+    event_id = _text(raw.get("id"), "event.id")
+    if event_id in ids or raw["sequence"] <= prior:
+        raise SaasProofError(
+            "SAAS_PROOF_EVENT_ORDER_INVALID",
+            "event ids must be unique and sequence must strictly increase",
+        )
+    return event_id
+
+
+def _optional_event_text(raw: dict[str, Any], field: str) -> str | None:
+    return str(raw.get(field) or "").strip() or None
+
+
+def _optional_event_bool(raw: dict[str, Any], field: str) -> bool | None:
+    value = raw.get(field)
+    return value if isinstance(value, bool) else None
+
+
+def _normalized_event(
+    raw: dict[str, Any], event_id: str, sequence: int
+) -> dict[str, Any]:
+    return {
+        "id": event_id,
+        "provider_event_id": _optional_event_text(raw, "provider_event_id"),
+        "sequence": sequence,
+        "type": _text(raw.get("type"), "event.type"),
+        "subject": _optional_event_text(raw, "subject"),
+        "tenant": _optional_event_text(raw, "tenant"),
+        "role": _optional_event_text(raw, "role"),
+        "sku": _optional_event_text(raw, "sku"),
+        "entitlement": _optional_event_text(raw, "entitlement"),
+        "verified": _optional_event_bool(raw, "verified"),
+        "issuer": _optional_event_text(raw, "issuer"),
+        "audience": _optional_event_text(raw, "audience"),
+        "token_active": _optional_event_bool(raw, "token_active"),
     }
 
 
@@ -222,44 +287,11 @@ def _events(value: dict[str, Any]) -> list[dict[str, Any]]:
         )
     result, ids, prior = [], set(), -1
     for raw in raw_events:
-        if (
-            not isinstance(raw, dict)
-            or isinstance(raw.get("sequence"), bool)
-            or not isinstance(raw.get("sequence"), int)
-        ):
-            raise SaasProofError(
-                "SAAS_PROOF_EVIDENCE_INVALID", "each event requires an integer sequence"
-            )
-        event_id = _text(raw.get("id"), "event.id")
-        if event_id in ids or raw["sequence"] <= prior:
-            raise SaasProofError(
-                "SAAS_PROOF_EVENT_ORDER_INVALID",
-                "event ids must be unique and sequence must strictly increase",
-            )
+        sequence = _event_sequence(raw)
+        event_id = _event_identifier(raw, ids, prior)
         ids.add(event_id)
-        prior = raw["sequence"]
-        result.append(
-            {
-                "id": event_id,
-                "provider_event_id": str(raw.get("provider_event_id") or "").strip()
-                or None,
-                "sequence": raw["sequence"],
-                "type": _text(raw.get("type"), "event.type"),
-                "subject": str(raw.get("subject") or "").strip() or None,
-                "tenant": str(raw.get("tenant") or "").strip() or None,
-                "role": str(raw.get("role") or "").strip() or None,
-                "sku": str(raw.get("sku") or "").strip() or None,
-                "entitlement": str(raw.get("entitlement") or "").strip() or None,
-                "verified": raw.get("verified")
-                if isinstance(raw.get("verified"), bool)
-                else None,
-                "issuer": str(raw.get("issuer") or "").strip() or None,
-                "audience": str(raw.get("audience") or "").strip() or None,
-                "token_active": raw.get("token_active")
-                if isinstance(raw.get("token_active"), bool)
-                else None,
-            }
-        )
+        prior = sequence
+        result.append(_normalized_event(raw, event_id, sequence))
     return result
 
 
@@ -279,6 +311,97 @@ def _event_check(event_type: str, candidates: list[dict[str, Any]]) -> dict[str,
     }
 
 
+def _event_contract_findings(
+    event: dict[str, Any],
+    promises: set[tuple[str, str]],
+    provider_ids: set[str],
+) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    provider_id = event["provider_event_id"]
+    if provider_id and provider_id in provider_ids:
+        findings.append(
+            {"code": "SAAS_PROOF_DUPLICATE_PROVIDER_EVENT", "event_id": event["id"]}
+        )
+    if provider_id:
+        provider_ids.add(provider_id)
+    if (
+        event["type"] in {"checkout_completed", "entitlement_granted", "feature_access"}
+        and (event["sku"], event["entitlement"]) not in promises
+    ):
+        findings.append({"code": "SAAS_PROOF_PROMISE_DRIFT", "event_id": event["id"]})
+    if event["type"] in REQUIRED_EVENTS and not all(
+        (event["subject"], event["tenant"], event["entitlement"])
+    ):
+        findings.append(
+            {"code": "SAAS_PROOF_IDENTITY_BINDING_MISSING", "event_id": event["id"]}
+        )
+    if event["type"] in {"authorization_bound", "feature_access"} and not event["role"]:
+        findings.append(
+            {"code": "SAAS_PROOF_ROLE_BINDING_MISSING", "event_id": event["id"]}
+        )
+    return findings
+
+
+def _identity_lifecycle_findings(group: list[dict[str, Any]]) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    positions = {event["type"]: event["sequence"] for event in group}
+    required = [positions.get(name) for name in REQUIRED_EVENTS]
+    if all(value is not None for value in required) and required != sorted(required):
+        findings.append(
+            {
+                "code": "SAAS_PROOF_LIFECYCLE_ORDER_INVALID",
+                "event_id": group[-1]["id"],
+            }
+        )
+    if "feature_access" in positions and (
+        "entitlement_granted" not in positions
+        or positions["feature_access"] < positions["entitlement_granted"]
+    ):
+        findings.append(
+            {
+                "code": "SAAS_PROOF_ACCESS_WITHOUT_ENTITLEMENT",
+                "event_id": group[-1]["id"],
+            }
+        )
+    terminal = max(
+        positions.get("cancellation", -1),
+        positions.get("refund", -1),
+        positions.get("subscription_expired", -1),
+    )
+    if terminal >= 0 and positions.get("entitlement_revoked", -1) <= terminal:
+        findings.append(
+            {"code": "SAAS_PROOF_STALE_ENTITLEMENT", "event_id": group[-1]["id"]}
+        )
+    if "feature_access" in positions and any(
+        name not in positions for name in REQUIRED_EVENTS
+    ):
+        findings.append(
+            {
+                "code": "SAAS_PROOF_CROSS_IDENTITY_OR_TENANT_JOURNEY",
+                "event_id": group[-1]["id"],
+            }
+        )
+    return findings
+
+
+def _token_binding_findings(
+    contract: dict[str, Any], events: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    provider = contract["provider"]
+    findings: list[dict[str, str]] = []
+    auth = [event for event in events if event["type"] == "auth_success"]
+    for event in auth:
+        if (
+            event["issuer"] != provider["issuer"]
+            or event["audience"] != provider["audience"]
+            or event["token_active"] is not True
+        ):
+            findings.append(
+                {"code": "SAAS_PROOF_TOKEN_BINDING_INVALID", "event_id": event["id"]}
+            )
+    return findings
+
+
 def _semantic_findings(
     contract: dict[str, Any], events: list[dict[str, Any]]
 ) -> list[dict[str, str]]:
@@ -291,85 +414,10 @@ def _semantic_findings(
     for event in events:
         key = (event["subject"], event["tenant"], event["entitlement"])
         by_identity[key].append(event)
-        provider_id = event["provider_event_id"]
-        if provider_id and provider_id in provider_ids:
-            findings.append(
-                {"code": "SAAS_PROOF_DUPLICATE_PROVIDER_EVENT", "event_id": event["id"]}
-            )
-        if provider_id:
-            provider_ids.add(provider_id)
-        if (
-            event["type"]
-            in {"checkout_completed", "entitlement_granted", "feature_access"}
-            and (event["sku"], event["entitlement"]) not in promises
-        ):
-            findings.append(
-                {"code": "SAAS_PROOF_PROMISE_DRIFT", "event_id": event["id"]}
-            )
-        if event["type"] in REQUIRED_EVENTS and not all(
-            (event["subject"], event["tenant"], event["entitlement"])
-        ):
-            findings.append(
-                {"code": "SAAS_PROOF_IDENTITY_BINDING_MISSING", "event_id": event["id"]}
-            )
-        if (
-            event["type"] in {"authorization_bound", "feature_access"}
-            and not event["role"]
-        ):
-            findings.append(
-                {"code": "SAAS_PROOF_ROLE_BINDING_MISSING", "event_id": event["id"]}
-            )
+        findings.extend(_event_contract_findings(event, promises, provider_ids))
     for group in by_identity.values():
-        positions = {event["type"]: event["sequence"] for event in group}
-        required = [positions.get(name) for name in REQUIRED_EVENTS]
-        if all(value is not None for value in required) and required != sorted(
-            required
-        ):
-            findings.append(
-                {
-                    "code": "SAAS_PROOF_LIFECYCLE_ORDER_INVALID",
-                    "event_id": group[-1]["id"],
-                }
-            )
-        if "feature_access" in positions and (
-            "entitlement_granted" not in positions
-            or positions["feature_access"] < positions["entitlement_granted"]
-        ):
-            findings.append(
-                {
-                    "code": "SAAS_PROOF_ACCESS_WITHOUT_ENTITLEMENT",
-                    "event_id": group[-1]["id"],
-                }
-            )
-        terminal = max(
-            positions.get("cancellation", -1),
-            positions.get("refund", -1),
-            positions.get("subscription_expired", -1),
-        )
-        if terminal >= 0 and positions.get("entitlement_revoked", -1) <= terminal:
-            findings.append(
-                {"code": "SAAS_PROOF_STALE_ENTITLEMENT", "event_id": group[-1]["id"]}
-            )
-        if "feature_access" in positions and any(
-            name not in positions for name in REQUIRED_EVENTS
-        ):
-            findings.append(
-                {
-                    "code": "SAAS_PROOF_CROSS_IDENTITY_OR_TENANT_JOURNEY",
-                    "event_id": group[-1]["id"],
-                }
-            )
-    auth = [event for event in events if event["type"] == "auth_success"]
-    provider = contract["provider"]
-    for event in auth:
-        if (
-            event["issuer"] != provider["issuer"]
-            or event["audience"] != provider["audience"]
-            or event["token_active"] is not True
-        ):
-            findings.append(
-                {"code": "SAAS_PROOF_TOKEN_BINDING_INVALID", "event_id": event["id"]}
-            )
+        findings.extend(_identity_lifecycle_findings(group))
+    findings.extend(_token_binding_findings(contract, events))
     return sorted(findings, key=lambda item: (item["code"], item["event_id"]))
 
 
